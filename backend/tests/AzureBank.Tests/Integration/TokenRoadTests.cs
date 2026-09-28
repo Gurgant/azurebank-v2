@@ -34,7 +34,10 @@ public class TokenRoadTests : IntegrationTestBase
 {
     public TokenRoadTests(CustomWebApplicationFactory factory) : base(factory) { }
 
-    /// <summary>The five token endpoints, each with a body it would otherwise accept.</summary>
+    /// <summary>
+    /// The five token endpoints and the stamp feed (06 §5.3), each with a body it would otherwise
+    /// accept.
+    /// </summary>
     public static TheoryData<string> TokenEndpoints() =>
     [
         "/api/auth/login",
@@ -42,6 +45,7 @@ public class TokenRoadTests : IntegrationTestBase
         "/api/auth/refresh",
         "/api/auth/revoke",
         "/api/auth/logout",
+        "/api/auth/session-stamps",
     ];
 
     private async Task<(string Access, string Grant)> SignInAsync()
@@ -75,6 +79,7 @@ public class TokenRoadTests : IntegrationTestBase
                 lastName = "Road",
             },
             "/api/auth/revoke" => new { refreshTokens = new[] { grant } },
+            "/api/auth/session-stamps" => new { userIds = new[] { Guid.CreateVersion7() } },
             _ => new { refreshToken = grant },
         };
         var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = JsonContent.Create(body) };
@@ -155,6 +160,29 @@ public class TokenRoadTests : IntegrationTestBase
         var response = await client.SendAsync(request);
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Theory]
+    [InlineData(0, HttpStatusCode.NotFound)]
+    [InlineData(1, HttpStatusCode.OK)]
+    [InlineData(2, HttpStatusCode.NotFound)]
+    public async Task TheStampFeed_FromLoopback_AnswersOnlyExactlyOneMarker(int markers, HttpStatusCode expected)
+    {
+        // The stamp feed gets the token endpoints' rule (06 §5.3): it tells whoever reads it which
+        // users were signed out, and only the BFF's own watcher has a reason to. The 200 is the
+        // control that the 404s are the road's and not the body's.
+        var (access, grant) = await SignInAsync();
+        using var client = Factory.CreateClient();
+        client.DefaultRequestHeaders.Remove(ServiceCredentialOptions.TokenRoadHeaderName);
+        var request = Post("/api/auth/session-stamps", grant, access, from: "127.0.0.1");
+        for (var i = 0; i < markers; i++)
+        {
+            request.Headers.Add(ServiceCredentialOptions.TokenRoadHeaderName, ServiceCredentialOptions.TokenRoadMarker);
+        }
+
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(expected);
     }
 
     [Fact]

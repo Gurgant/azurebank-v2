@@ -181,8 +181,8 @@ a profile this system meets.
 
 ### 4.2 The token endpoints answer only the BFF's own client, over loopback
 
-- The five token endpoints are login, register, refresh, revoke and logout. The stamp feed of §5.3
-  gets the same rule when it is built.
+- The five token endpoints are login, register, refresh, revoke and logout. The stamp feed of §5.3,
+  `POST /api/auth/session-stamps`, gets the same rule.
 - The API answers **404**, the answer an unknown path gets, unless `Connection.RemoteIpAddress` is
   loopback (an IPv4 address mapped into IPv6 counts). A null address is accepted only where the test
   host sets an explicit option, which no configuration can set (F1).
@@ -191,7 +191,7 @@ a profile this system meets.
   - the YARP transform strips any copy a browser sends, next to where it strips the service key;
   - the API requires exactly one value, as it does for the key (F15).
 - `/api/auth/revoke` and `/api/auth/logout` also join the BFF's blocked proxied paths, beside login,
-  register and refresh.
+  register and refresh, and so does `/api/auth/session-stamps`.
 - The check is a middleware on endpoint metadata (`TokenEndpointAttribute`, `TokenRoadMiddleware`).
   It runs after the service-key check, so a caller without the key still gets that check's 401, and
   before authentication and model binding.
@@ -244,8 +244,8 @@ a profile this system meets.
     (RFC 7009 §2.2.1) (F12).
   - Repeating it changes nothing, so an EF retry is harmless.
 - `POST /api/auth/logout` keeps its effect: it revokes every grant of the user, now with the reason
-  `SignOutEverywhere`. When the stamp of §5.3 is built, it also adds 1 to the user's stamp. Nothing
-  in the app calls it, and no button leads to it; the Bruno collection does.
+  `SignOutEverywhere`, and in the same transaction adds 1 to the user's stamp (§5.3). Nothing in the
+  app calls it, and no button leads to it; the Bruno collection does.
 
 ### 4.5 BFF renewal
 
@@ -300,7 +300,7 @@ a profile this system meets.
   - a session whose grant the API calls invalid;
   - an old session whose cookie arrives with a new sign-in or registration: that session now ends
     (F13);
-  - a stamp change, once the stamp of §5.3 is built.
+  - a stamp below the latest the BFF knows for its user (§5.3).
 - **Graceful stop (F7).** When the host stops, every session is marked `Ended`, and every held and
   queued grant goes to the API in one `/api/auth/revoke` call (split into calls of 1000 beyond that)
   within the shutdown grace period. The drain waits at most 5 s for renewals caught in flight, and
@@ -338,7 +338,7 @@ The BFF's inactivity timeout is 15 minutes (it was 30). The absolute limit stays
 | Lever | How it works | Effect on a signed-in browser | Code |
 |---|---|---|---|
 | **One session now: "Esci"** | Under the session lock, the BFF marks the session `Ended`, removes it, deletes the cookie and answers 200. `GrantRevoker` then revokes that grant (`SessionEnded`), after any renewal in flight | Signed out at once: the next request with that cookie, from any tab, gets 401. Its access token lived only in that session and goes with it | The core of PR-1 (§4.6) |
-| **One user everywhere now** | `POST /api/auth/logout` (no button yet), or the runbook's SQL for one user (§5.4). All the user's grants are revoked (`SignOutEverywhere`, or `ReuseContainment` when it answers a tripwire); with the stamp, in the same transaction, the user's stamp goes up by 1 | With the stamp: within 15 s, at the next request (§5.3). Without it: at each session's next renewal, after up to half the token's life (7.5 minutes) of continued use | The stamp is decided and not yet built (§5.3); without it, nothing beyond the revoke |
+| **One user everywhere now** | `POST /api/auth/logout` (no button yet), or the runbook's SQL for one user (§5.4). In one transaction, all the user's grants are revoked (`SignOutEverywhere`, or `ReuseContainment` when it answers a tripwire) and the user's stamp goes up by 1 | Signed out at the first request after the BFF's next read of the stamps: within 15 s (§5.3). While the BFF cannot read them, at each session's next successful renewal, after up to half the token's life (7.5 minutes) of continued use | The stamp, its own commit of PR-1 (§5.3): the revoke and the raise in `RevokeAllForUserAsync`, `POST /api/auth/session-stamps`, `SessionStampWatcher` and the store's check |
 | **Everyone now** | Restart the revision: the portal's Restart, or `az containerapp revision restart` (<https://learn.microsoft.com/en-us/cli/azure/containerapp/revision#az-containerapp-revision-restart>). Stopping and starting the app also works, with downtime | Signed out at the next request, after a cold start, because no session exists any more (§5.2). The access tokens die with the process memory | None. On a graceful stop the drain of §4.6 also revokes the grants |
 | **Nuclear** | One revision rotates `Jwt:Secret` and `ServiceCredential:BffKey` together (a key rotation is already "a deployment event on both sides", ADR-0055 D4). Then SQL sets `Incident` on every live grant created before that revision | Signed out at the next request, since a new revision is a restart. Every access token ever minted fails its signature check. Every grant is useless without the new key, and is revoked | None: the runbook in §5.4 |
 
@@ -361,30 +361,56 @@ The BFF's inactivity timeout is 15 minutes (it was 30). The absolute limit stays
 - This stops being true the day sessions move to a shared store or to two replicas. "Everyone now"
   would then need a global stamp: the same mechanism as §5.3 with one extra row.
 
-### 5.3 The security stamp: decided, not yet built
+### 5.3 The session stamp
 
-The stamp is decided as its own commit of PR-1, so that review can drop it. At the time of writing
-(2026-09-28) it is not in the code, and neither `SessionStamp` nor the watcher exists.
+Built as its own commit of PR-1, so that review can drop it.
 
-- **What:** a per-user counter, `SessionStamp`, in a new column of `AspNetUsers`. It is not
-  Identity's own `SecurityStamp`, which has existed since `InitialCreate` and keeps its Identity
-  meaning.
-- **Writes:** sign-in, registration and re-authentication return the current value, and the BFF
-  stores it on the session. Every per-user sign-out adds 1, in the same transaction as its revoke.
-- **Check:** `SessionStampWatcher`, a BFF hosted service, calls `POST /api/auth/session-stamps
-  {userIds}` every 15 s for the users that hold sessions, and makes no call when nobody does. The
-  endpoint gets the loopback, key and marker rule of §4.2. The session validity check refuses a
-  session whose stamp is below the latest known value, and that session then ends by the path of
-  §4.6. A sign-out that starts inside the BFF updates the watcher's map at once.
-- **If the watcher's call fails,** the map keeps its last values. The lever itself needed the
-  database and revoked the grants, so those sessions still end at their next successful renewal.
-- **Why it is worth building:** it is the only way to sign one user out now without signing everyone
-  else out, and it gives the operator a precise answer to a tripwire row now that the automatic
+- **What:** a per-user counter, `SessionStamp`, in a new column of `AspNetUsers` (its own migration,
+  every existing user at 0). It is not Identity's own `SecurityStamp`, which has existed since
+  `InitialCreate` and keeps its Identity meaning.
+- **Writes:**
+  - Sign-in, registration and re-authentication (a sign-in at the API) answer the user's current
+    stamp in `TokenResponse.sessionStamp`, and the BFF keeps it on the session.
+  - Login answers the stamp it read BEFORE it issued the grant, so a sign-out everywhere that
+    commits during the sign-in leaves the new session with a stamp below the user's: it ends within
+    one read, even when its grant was issued after the revoke. The race errs toward signing out.
+  - Every per-user sign-out adds 1, in the same transaction as its revoke:
+    `RefreshTokenService.RevokeAllForUserAsync`, which `POST /api/auth/logout` calls, and the SQL
+    of both runbooks that sign a user out. `POST /api/auth/revoke` ("Esci", one session) does not
+    touch it.
+  - The raise also gives the user a new `ConcurrencyStamp`. Identity's `UpdateAsync` writes back
+    every column of a user loaded earlier, and checks only that one: a PIN change that loaded the
+    user before the raise put the old stamp back and succeeded (measured 2026-09-28 on LocalDB,
+    for the API's raise and the runbooks' SQL alike, 1 back to 0). With the new value that write
+    fails as a concurrency failure and the stamp stays raised.
+- **Check:**
+  - `SessionStampWatcher`, a BFF hosted service, calls `POST /api/auth/session-stamps {userIds}`
+    every 15 s for the users that hold sessions, and makes no call when nobody does. The endpoint
+    has the loopback, key and marker rule of §4.2, and the BFF's proxy answers it 404.
+  - What it reads goes into `SessionStamps`, a map of the highest stamp known per signed-in user,
+    which only ever rises. Each new session also feeds the map with the stamp its sign-in answered,
+    so a sign-in that reveals a higher stamp ends the user's older sessions without waiting for a
+    read. No sign-out of every session starts inside the BFF ("Esci" ends one), so these are its
+    only two sources.
+  - The store's validity check refuses a session whose stamp is below the map's value for its user,
+    and that session then ends by the path of §4.6: removed, and its grant queued for `/revoke`.
+- **If the watcher's call fails** (a refusal, a 5xx, a timeout, a network error or an unreadable
+  answer), the map keeps its last values. The first failure of a run is a Warning and the rest are
+  Debug, and the recovery is logged. The lever itself needed the database and revoked the grants,
+  so those sessions still end at their next successful renewal.
+- **Why it is built:** it is the only way to sign one user out now without signing everyone else
+  out, and it gives the operator a precise answer to a tripwire row now that the automatic
   containment is gone (F3).
-- **Cost (estimated):** one column, one endpoint, one hosted service and one check, about 150 lines
-  and 3 tests; one primary-key query every 15 s while someone is signed in, and none otherwise.
-- **Without it:** a per-user sign-out takes up to 7.5 minutes to reach the browser. To make it happen
-  now, restart, which signs everyone else out too.
+- **Cost:** one column, one endpoint, one hosted service and one check. Measured with `git diff` on
+  2026-09-28: 579 lines of C# added under `backend/src`, 287 of them code, that is neither blank,
+  nor a `//` or `///` comment, nor inside a `/* */` block (the migration's generated designer and
+  the model snapshot not counted); the design estimated about 150. At run time, one primary-key
+  query every 15 s while someone is signed in, and none otherwise.
+- **Tests (§10 O2j):** `SessionStampLeverTests` (the logout lever, EF InMemory) and
+  `SessionStampLeverSqlServerTests` (both levers on SQL Server, and a sign-out whose stamp raise
+  fails revokes nothing), end to end through the real BFF and API, each also showing that a user
+  loaded before the lever cannot be written back over it; `SessionStampWatcherTests` for the
+  watcher on its own.
 
 ### 5.4 Runbook: a tripwire row, and the nuclear lever
 
@@ -403,10 +429,10 @@ nobody checks. What that runbook rests on is decided here.
   innocent that costs this row and nothing else — the residual in §7, a renewal the API stamped
   more than 30 s after the BFF sent it, or a bug — or code inside the replica. The row cannot tell
   them apart, and nothing automatic acts on it (F3). The operator picks a lever.
-- **The user's sessions:** revoke every live grant of that user, with the reason
-  `ReuseContainment`. Each session then ends at its next renewal, after up to 7.5 minutes of
-  continued use (§5). Once the stamp of §5.3 is built, that revoke and a raise of the user's stamp
-  belong in one transaction.
+- **The user's sessions:** in one transaction, revoke every live grant of that user with the reason
+  `ReuseContainment` and raise the user's stamp. Each session is then refused at its first request
+  after the BFF's next read, within 15 s (§5.3); while the BFF cannot read the stamp, at its next
+  successful renewal, after up to 7.5 minutes of continued use (§5).
 - **Everyone's sessions:** restart the revision (§5, "Everyone now").
 - **The nuclear lever, when code inside the replica is suspected** (§7: no token scheme can see
   it): rotate `Jwt:Secret` and `ServiceCredential:BffKey` together in one revision, which is a
@@ -491,12 +517,16 @@ nobody checks. What that runbook rests on is decided here.
   (`RevokeAsync`) or a user's (`RevokeAllForUserAsync`, with a reason), and no longer rotates.
   `AuthController` gains `POST /api/auth/revoke`; `ReceivedAtMiddleware` and `TokenRoadMiddleware`
   are new; `JwtService` takes an optional `notAfter`; `RefreshResponse` drops its refresh token and
-  `TokenResponse` gains `refreshTokenExpiresAt`. One migration adds `RevokedReason`.
+  `TokenResponse` gains `refreshTokenExpiresAt`. One migration adds `RevokedReason`. The stamp's
+  commit adds `ApplicationUser.SessionStamp` with a second migration, `TokenResponse.sessionStamp`,
+  the raise inside `RevokeAllForUserAsync` and `POST /api/auth/session-stamps`.
 - **BFF:** `TokenRefresher` is rewritten as §4.5 says; `UserSession` gains the grant's expiry, the
   absolute expiry, `Ended`, `InFlightRenewal` and the lock; `InMemoryTokenStore` ends every session
   through one path; `GrantRevoker` is new; the proxy strips the marker and maps key refusals to 503.
   A named BFF-to-API timeout option, `BackendApi:TimeoutSeconds`, defaults to 100 s,
-  `HttpClient`'s own default, so naming it changed nothing; PR-2 of the plan sets its value.
+  `HttpClient`'s own default, so naming it changed nothing; PR-2 of the plan sets its value. The
+  stamp's commit adds `UserSession.SessionStamp`, `SessionStamps`, `SessionStampWatcher` and the
+  store's check.
 - **Contract:** the OpenAPI document, the frontend's generated types, the Bruno collection and the
   Schemathesis hooks follow; the direct callers send the marker. No SPA application code changes: a
   503 is already retried.
@@ -601,9 +631,16 @@ replays of O1 are not among it.
   (`RefreshTokenRotationSqlServerTests.EightConcurrentRenewalsOfOneGrant_AllSucceed_AndChangeNothing`).
 - **h.** A capture sink finds no grant in any log line or audit row.
 - **i.** A transfer during the outage is still debited once.
-- **j. Stamp**, once built: sessions A and B of one user and C of another; raise the stamp through
-  `/api/auth/logout`, and separately through the runbook's SQL; A and B get 401 at their first
-  request after at most 15 s, C keeps getting 200, and removing the check turns it red.
+- **j. Stamp.** Sessions A and B of one user and C of another, signed in through the real BFF;
+  raise the stamp through `/api/auth/logout`, and separately through the runbook's SQL as printed;
+  advance the watcher's clock one 15 s period; A and B get 401 at their first request, C keeps
+  getting 200, and a sign-in after the lever carries the raised stamp and gets 200
+  (`SessionStampLeverTests`, `SessionStampLeverSqlServerTests`). **Measured 2026-09-28:** with the
+  store's check removed, all three runs went red, A answering 200 where 401 was expected. And a
+  user loaded before either lever and written back whole after it, as a PIN change does, fails as
+  `ConcurrencyFailure` with the stamp still 1; with the `ConcurrencyStamp` rotation removed from the
+  API's raise and from the runbook's SQL, all three runs went red, the write succeeding and the
+  stamp back at 0.
 - **k. Detector**, once built: 4 renewals of one grant within one token lifetime all get 200 and
   raise one `RefreshRenewalRateHigh`; 2 renewals raise nothing.
 
@@ -615,8 +652,10 @@ replays of O1 are not among it.
 - The delay before the `ReceivedAt` stamp under a hang is not measured (O1).
 - Whether the API sidecar still answers the drain after the stop signal reaches both containers of
   the replica, on Azure. The drain's "left" count will show it.
-- The 15 s watcher period, the detector's limit of 3, the revoker's 4 in parallel and 1000 in the
-  queue, and "about 150 lines" are choices or estimates.
+- The 15 s watcher period, the detector's limit of 3, and the revoker's 4 in parallel and 1000 in
+  the queue are choices.
+- The watcher's period is exercised on a fake clock in the tests; a 15 s poll against the real stack
+  is not measured.
 - The PSD2 text was read only through the legislation.gov.uk copy; EUR-Lex answered HTTP 202 with 0
   bytes when the red team tried it.
 - Scale-to-zero still ends in-memory sessions. That belongs to the cold-start work or to a shared
@@ -633,6 +672,8 @@ replays of O1 are not among it.
   `Jwt:RefreshTokenLifetimeMinutes`, 60 minutes by default.
 - The token endpoints are reachable only by the BFF's own client over loopback, not by whoever holds
   the service key.
+- One user can be signed out of every session within 15 s, without signing anyone else out
+  (§5.3).
 
 **Negative**
 

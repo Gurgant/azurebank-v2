@@ -15,9 +15,9 @@ namespace AzureBank.Api.Controllers;
 /// Authentication controller handling login, registration, logout, and PIN operations.
 /// </summary>
 /// <remarks>
-/// The five token endpoints — login, register, refresh, revoke and logout — carry
-/// <see cref="TokenEndpointAttribute"/>: they answer only the BFF's own client over loopback, and
-/// 404 to anything else (06 §4.2, <see cref="TokenRoadMiddleware"/>).
+/// The five token endpoints — login, register, refresh, revoke and logout — and the stamp feed,
+/// session-stamps, carry <see cref="TokenEndpointAttribute"/>: they answer only the BFF's own client
+/// over loopback, and 404 to anything else (06 §4.2, §5.3, <see cref="TokenRoadMiddleware"/>).
 /// </remarks>
 [ApiController]
 [Route("api/auth")]
@@ -140,6 +140,28 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
+    /// Read session stamps
+    /// </summary>
+    /// <remarks>
+    /// The current session stamp of each listed user. Signing a user out of every session raises
+    /// theirs, and a session given a lower one at sign-in has been signed out since. An unknown user
+    /// has no entry in the answer.
+    /// </remarks>
+    /// <param name="request">The users to read</param>
+    /// <returns>Each known user's session stamp</returns>
+    [HttpPost("session-stamps")]
+    [AllowAnonymous] // the BFF asks for every user it holds a session of; the key, the marker and loopback apply
+    [TokenEndpoint]
+    [ProducesResponseType(typeof(ApiResponse<SessionStampsResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<ApiResponse<SessionStampsResponse>>> SessionStamps(
+        [FromBody] SessionStampsRequest request)
+    {
+        var stamps = await _authService.GetSessionStampsAsync(request.UserIds, HttpContext.RequestAborted);
+        return Ok(ApiResponse<SessionStampsResponse>.Success(new SessionStampsResponse { Stamps = stamps }));
+    }
+
+    /// <summary>
     /// Get current user
     /// </summary>
     /// <remarks>
@@ -161,8 +183,8 @@ public class AuthController : ControllerBase
     /// Logout from every session
     /// </summary>
     /// <remarks>
-    /// Sign the user out of every session on every device: every grant of the user is revoked. One
-    /// session ends through revoke instead.
+    /// Sign the user out of every session on every device: every grant of the user is revoked and
+    /// the user's session stamp is raised, together. One session ends through revoke instead.
     /// </remarks>
     /// <returns>Success message</returns>
     [HttpPost("logout")]

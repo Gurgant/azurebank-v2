@@ -11,9 +11,10 @@ says what each lever does and how fast it reaches a browser; this page is how to
 
 **Running the SQL.** Every statement here runs against the API's database. With `sqlcmd`, pass
 `-I`: without it every UPDATE below fails with Msg 1934 (`QUOTED_IDENTIFIER`), because
-`RefreshTokens` carries a filtered index, `IX_RefreshTokens_ReplacedByTokenId`. Measured
-2026-09-28 against LocalDB, each UPDATE inside a transaction that was rolled back; the reads ran
-without the flag ([`engineering-traps.md`](../engineering-traps.md) has why).
+`RefreshTokens` and `AspNetUsers` carry filtered indexes (`IX_RefreshTokens_ReplacedByTokenId`;
+`EmailIndex` and `UserNameIndex`). Measured 2026-09-28 against LocalDB, each UPDATE inside a
+transaction that was rolled back; the reads ran without the flag
+([`engineering-traps.md`](../engineering-traps.md) has why).
 
 ---
 
@@ -52,19 +53,39 @@ than 30 s after the BFF sent it, or a bug — or code inside the replica. The ro
 a lever: step 4 for the user, step 5 for everyone, step 6 when code inside the replica is
 suspected.
 
-## 4. One user: revoke every live grant
+## 4. One user: revoke every live grant and raise the session stamp
 
-Each of the user's sessions then ends at its next renewal, after up to half its access token's life
-(7.5 minutes) of continued use (ADR-0057 §5):
+Both statements run in one transaction: the revoke and the raise of the user's `SessionStamp`
+commit together or not at all, as they do when `POST /api/auth/logout` pulls the same lever
+(ADR-0057 §5.3). Paste the user's id into both places:
 
 ```sql
+SET XACT_ABORT ON;
+BEGIN TRANSACTION;
+
 UPDATE RefreshTokens
 SET RevokedAt = SYSUTCDATETIME(), RevokedReason = N'ReuseContainment'
 WHERE UserId = '<ActorUserId from the row>' AND RevokedAt IS NULL AND ExpiresAt > SYSUTCDATETIME();
+
+UPDATE AspNetUsers
+SET SessionStamp = SessionStamp + 1, ConcurrencyStamp = CONVERT(nvarchar(36), NEWID())
+WHERE Id = '<ActorUserId from the row>';
+
+COMMIT TRANSACTION;
 ```
 
-When the security stamp of ADR-0057 §5.3 is built, this statement and a raise of the user's stamp
-belong in one transaction, and this step must say so.
+The new `ConcurrencyStamp` is not optional. A request that loaded the user before the commit — a
+PIN change, say — writes the whole row back through Identity, stamp included, and Identity checks
+only `ConcurrencyStamp`: without the new value that write puts the old stamp back and the lever
+undoes itself. With it the write fails, and the stamp stays raised.
+
+The BFF reads every signed-in user's stamp every 15 s, so each of the user's sessions is refused at
+its first request after that read: within 15 s of the commit. The revoke is the fallback: while the
+BFF cannot read the stamp, each session still ends at its next successful renewal, after up to half
+its access token's life (7.5 minutes) of continued use (ADR-0057 §5).
+
+The first statement reports how many grants it revoked, 0 when none was live. The second must
+report 1: a 0 there means the id matched no user, and nobody was signed out.
 
 ## 5. Everyone: restart the revision
 

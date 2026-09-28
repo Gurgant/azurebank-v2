@@ -34,9 +34,17 @@ public interface IAuthService
 
     /// <summary>
     /// Signs the user out of EVERY session: revokes all of their active grants as
-    /// <c>SignOutEverywhere</c>, stamped with <paramref name="receivedAt"/>.
+    /// <c>SignOutEverywhere</c>, stamped with <paramref name="receivedAt"/>, and raises the user's
+    /// session stamp in the same transaction (06 §5.3).
     /// </summary>
     Task LogoutAsync(Guid userId, DateTime receivedAt);
+
+    /// <summary>
+    /// The current session stamp of each listed user the database knows; an unknown id has no entry.
+    /// Read by the BFF's watcher for the users who hold sessions (06 §5.3).
+    /// </summary>
+    Task<IReadOnlyList<UserSessionStamp>> GetSessionStampsAsync(
+        IReadOnlyCollection<Guid> userIds, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gets the current authenticated user's information.

@@ -521,4 +521,35 @@ public class RefreshTokenServiceTests : IDisposable
         // A different user's grant is untouched and still renews.
         (await _sut.RenewAsync(othersGrant.RefreshToken, DateTime.UtcNow)).User.Id.Should().Be(other.Id);
     }
+
+    [Fact]
+    public async Task RevokeAllForUserAsync_RaisesThatUsersSessionStampBy1_AndNoOneElses()
+    {
+        // 06 §5.3: a per-user sign-out raises the stamp with its revoke, which is what ends the user's
+        // BFF sessions within one poll. Each sign-out raises it again, even with no grant left to
+        // revoke: the stamp, not the revoke, is what reaches a session that has not renewed yet.
+        var user = SeedUser();
+        var other = SeedUser();
+        await _sut.IssueAsync(user);
+
+        await _sut.RevokeAllForUserAsync(user.Id, RefreshTokenRevokedReason.SignOutEverywhere, DateTime.UtcNow);
+        await _sut.RevokeAllForUserAsync(user.Id, RefreshTokenRevokedReason.ReuseContainment, DateTime.UtcNow);
+
+        _context.ChangeTracker.Clear();
+        (await _context.Users.AsNoTracking().SingleAsync(u => u.Id == user.Id)).SessionStamp.Should().Be(2);
+        (await _context.Users.AsNoTracking().SingleAsync(u => u.Id == other.Id)).SessionStamp.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task RevokeAsync_OfOneSessionsGrant_LeavesTheSessionStampAlone()
+    {
+        // "Esci" ends one session (06 §4.6). A raised stamp would end every other session of the user.
+        var user = SeedUser();
+        var grant = await _sut.IssueAsync(user);
+
+        (await _sut.RevokeAsync([grant.RefreshToken], DateTime.UtcNow)).Should().Be(1, "the revoke did happen");
+
+        _context.ChangeTracker.Clear();
+        (await _context.Users.AsNoTracking().SingleAsync(u => u.Id == user.Id)).SessionStamp.Should().Be(0);
+    }
 }

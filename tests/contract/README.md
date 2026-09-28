@@ -17,15 +17,15 @@ docker pull schemathesis/schemathesis:stable
 ```
 
 Whichever you use, run it on the machine the API listens on. The five token endpoints — login,
-register, refresh, revoke and logout — answer 404 to a caller whose address is not loopback, and to
-one that does not send exactly one `X-AzureBank-Token-Road` (`TokenRoadMiddleware`). The document
-declares no 404 on any of the five, so such a run fails rather than skipping them. Measured on
-2026-09-28 from loopback with the hooks as they were before the marker, which the API refuses with
-the same 404: run on the four anonymous operations, login, register, refresh and revoke each
-failed `Undocumented HTTP status code` (`4 failures`); run on an operation that needs a token, with
-none handed over, it stopped at the throwaway user's registration (*Troubleshooting*, below).
-From a container, whether the API sees loopback depends on how the container reaches it; not
-measured.
+register, refresh, revoke and logout — and the session-stamp feed answer 404 to a caller whose
+address is not loopback, and to one that does not send exactly one `X-AzureBank-Token-Road`
+(`TokenRoadMiddleware`). The document declares no 404 on any of the six, so such a run fails rather
+than skipping them. Measured on 2026-09-28 from loopback with the hooks as they were before the
+marker, which the API refuses with the same 404: run on the four anonymous operations, login,
+register, refresh and revoke each failed `Undocumented HTTP status code` (`4 failures`); run on an
+operation that needs a token, with none handed over, it stopped at the throwaway user's registration
+(*Troubleshooting*, below). From a container, whether the API sees loopback depends on how the
+container reaches it; not measured.
 
 ## Quick Start
 
@@ -54,11 +54,11 @@ schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapi
 What the two files add to that line:
 
 - **`hooks.py`** sends `X-AzureBank-Service-Key` on every request (ADR-0055), and with it exactly
-  one `X-AzureBank-Token-Road`, the marker the BFF's own client sends: the five token endpoints
-  answer 404 without it. It also sends a bearer token on every operation the contract does not
-  declare anonymous — register, login, refresh and revoke go without — for a throwaway user it
-  registers itself, unless `AZUREBANK_CONTRACT_TOKEN` hands over the token of a user who already
-  exists. CI hands over the seeded demo user's.
+  one `X-AzureBank-Token-Road`, the marker the BFF's own client sends: the five token endpoints and
+  the session-stamp feed answer 404 without it. It also sends a bearer token on every operation the
+  contract does not declare anonymous — register, login, refresh, revoke and session-stamps go
+  without — for a throwaway user it registers itself, unless `AZUREBANK_CONTRACT_TOKEN` hands over
+  the token of a user who already exists. CI hands over the seeded demo user's.
 - **`schemathesis.toml`** sets the base URL and the shape of the run (one worker, 100 examples
   per operation, positive and negative inputs, all four phases, seed 42), loads `hooks.py`, and
   runs every check. CI's conformance job runs this same file (backlog row 41); until then the file
@@ -252,10 +252,12 @@ run rather than an illustration:
 
 The operation count comes from the committed document, so it moves when the contract does; the
 step after the run fails the job if it drops below the floor. **It has moved since that run**: the
-withdrawal mint took the document to 28 operations on 2026-09-21 (ADR-0056), and revoke took it
-to 29 on 2026-09-28; the floor was raised with each, so the 27 above is what THAT run tested and
-not what a run tests today. The transcript is left as it was recorded rather than edited to match,
-because a quoted run that is quietly updated stops being evidence.
+withdrawal mint took the document to 28 operations on 2026-09-21 (ADR-0056), revoke took it
+to 29 on 2026-09-28, and `POST /api/auth/session-stamps` to 30 the same day (ADR-0057 §5.3); the
+floor was raised with each, so the 27 above is what THAT run tested and not what a run tests today.
+No full run has been measured since session-stamps joined. The transcript is left as it was
+recorded rather than edited to match, because a quoted run that is quietly updated stops being
+evidence.
 
 *(What stood here until 2026-09-21 was an invented transcript: it announced `Collected API
 operations: 20` against a document that declares 27, listed `GET /api/users/search` — a route

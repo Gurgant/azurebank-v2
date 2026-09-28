@@ -54,11 +54,14 @@ public class AuthLevelMiddleware
       the SPA never called it. /api/auth/revoke is new and has no browser caller either. Neither has a
       dedicated YARP route, so the note above does not apply to them: the catch-all would carry them,
       which is why they are named here rather than left to the transform's marker strip alone.
+      /api/auth/session-stamps joined for the same reason with the stamp (06 §5.3): the API answers
+      it only to the BFF's own watcher, and no browser has a reason to read who holds a session.
     */
     private static readonly HashSet<string> BlockedProxiedAuthPaths =
         new(StringComparer.OrdinalIgnoreCase)
         {
-            "/api/auth/login", "/api/auth/register", "/api/auth/revoke", "/api/auth/logout"
+            "/api/auth/login", "/api/auth/register", "/api/auth/revoke", "/api/auth/logout",
+            "/api/auth/session-stamps"
         };
 
     /*

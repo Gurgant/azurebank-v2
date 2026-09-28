@@ -20,6 +20,7 @@ using AzureBank.Shared.Constants;
 using AzureBank.Shared.Observability;
 using AzureBank.Shared.Options;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Serilog;
 using Serilog.Formatting.Compact;
@@ -216,6 +217,11 @@ try
     // (06 §4.6). One instance: the store queues into it, and the host starts and stops it.
     builder.Services.AddSingleton<GrantRevoker>();
     builder.Services.AddHostedService(services => services.GetRequiredService<GrantRevoker>());
+    // The latest session stamp known per signed-in user, which the store's validity check reads, and
+    // the watcher that reads the stamps every 15 s while anyone holds a session (06 §5.3).
+    builder.Services.AddSingleton<SessionStamps>();
+    builder.Services.TryAddSingleton(TimeProvider.System);
+    builder.Services.AddHostedService<SessionStampWatcher>();
 
     // HTTP client for backend API
     builder.Services.AddTransient<ServiceCredentialHandler>();

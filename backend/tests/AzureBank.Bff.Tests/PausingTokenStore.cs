@@ -57,5 +57,7 @@ internal sealed class PausingTokenStore(ITokenStoreService inner) : ITokenStoreS
 
     public IReadOnlyList<GrantRevocation> EndAllSessions() => inner.EndAllSessions();
 
+    public IReadOnlySet<Guid> SignedInUserIds() => inner.SignedInUserIds();
+
     public Task CleanupExpiredSessionsAsync() => inner.CleanupExpiredSessionsAsync();
 }

@@ -20,10 +20,14 @@ public interface ISessionService
     /// Null when there is no grant.
     /// </param>
     /// <param name="userInfo">User information to cache in session</param>
+    /// <param name="sessionStamp">
+    /// The user's session stamp as the API answered this sign-in (06 §5.3). The session ends once a
+    /// higher one is known. 0, every user's first value, when a caller has none to give.
+    /// </param>
     /// <returns>A secure session ID to be stored in a cookie</returns>
     string CreateSession(
         string accessToken, DateTime tokenExpiry, string? refreshToken, DateTime? refreshTokenExpiresAt,
-        UserLoginInfo userInfo);
+        UserLoginInfo userInfo, int sessionStamp = 0);
 
     /// <summary>
     /// Gets the full session data for a session ID.

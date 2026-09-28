@@ -63,6 +63,14 @@ public class UserSession
     public required DateTime AbsoluteExpiresAt { get; init; }
 
     /// <summary>
+    /// The user's session stamp as the API answered it at sign-in (06 §5.3). Every sign-out of all
+    /// the user's sessions raises the stamp at the API; once <see cref="Services.SessionStamps"/>
+    /// knows a higher value, the store's validity check refuses this session and it ends by the one
+    /// path every ending takes (06 §4.6). Fixed for the session's life.
+    /// </summary>
+    public int SessionStamp { get; init; }
+
+    /// <summary>
     /// Last user activity - for inactivity timeout enforcement.
     /// Updated on every authenticated request.
     /// </summary>
@@ -113,8 +121,9 @@ public class UserSession
 
     /// <summary>
     /// True once the session has ended ("Esci", idle expiry, the cap, re-authentication, a new
-    /// sign-in over its cookie, a dead grant, a graceful stop). Never goes back to false. Set only
-    /// under <see cref="SyncRoot"/>; nothing renews, and no renewal result is stored, after it.
+    /// sign-in over its cookie, a dead grant, a raised stamp, a graceful stop). Never goes back to
+    /// false. Set only under <see cref="SyncRoot"/>; nothing renews, and no renewal result is stored,
+    /// after it.
     /// </summary>
     public bool Ended { get; set; }
 

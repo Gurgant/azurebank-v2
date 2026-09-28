@@ -113,6 +113,7 @@ export const TokenResponse = z.object({
   accessToken: z.string(),
   refreshToken: z.string().nullable().optional(),
   refreshTokenExpiresAt: z.iso.datetime().nullable().optional(),
+  sessionStamp: z.number().int(),
   expiresIn: z.number().int(),
   tokenType: z.string().optional(),
   expiresAt: z.iso.datetime(),
@@ -173,6 +174,17 @@ export const RegisterResponse = z.object({
 export type ApiResponseOfRegisterResponse = z.infer<typeof ApiResponseOfRegisterResponse>;
 export const ApiResponseOfRegisterResponse = z
   .object({ data: RegisterResponse.nullable(), message: z.string().nullable() })
+  .partial();
+
+export type UserSessionStamp = z.infer<typeof UserSessionStamp>;
+export const UserSessionStamp = z.object({ userId: z.uuid(), sessionStamp: z.number().int() });
+
+export type SessionStampsResponse = z.infer<typeof SessionStampsResponse>;
+export const SessionStampsResponse = z.object({ stamps: z.array(UserSessionStamp) });
+
+export type ApiResponseOfSessionStampsResponse = z.infer<typeof ApiResponseOfSessionStampsResponse>;
+export const ApiResponseOfSessionStampsResponse = z
+  .object({ data: SessionStampsResponse.nullable(), message: z.string().nullable() })
   .partial();
 
 export type StepUpAuthorizationResponse = z.infer<typeof StepUpAuthorizationResponse>;
@@ -349,6 +361,9 @@ export const RegisterRequest = z.object({
 
 export type RevokeRequest = z.infer<typeof RevokeRequest>;
 export const RevokeRequest = z.object({ refreshTokens: z.array(z.string()).min(1).max(1000) });
+
+export type SessionStampsRequest = z.infer<typeof SessionStampsRequest>;
+export const SessionStampsRequest = z.object({ userIds: z.array(z.uuid()).min(1).max(1000) });
 
 export type SetPinRequest = z.infer<typeof SetPinRequest>;
 export const SetPinRequest = z.object({

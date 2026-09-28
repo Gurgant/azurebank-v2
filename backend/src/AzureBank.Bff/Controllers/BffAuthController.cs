@@ -94,15 +94,16 @@ public class BffAuthController : ControllerBase
 
             var loginResponse = apiResponse!.Data!;
 
-            // Create server-side session with the JWT, its grant (for renewals) and the grant's
-            // expiry (the session's cap, 06 §4.1), and user info. The same token object registration
-            // answers, read the same way.
+            // Create server-side session with the JWT, its grant (for renewals), the grant's expiry
+            // (the session's cap, 06 §4.1), user info and the user's session stamp (06 §5.3). The
+            // same token object registration answers, read the same way.
             var sessionId = _sessionService.CreateSession(
                 loginResponse.Token.AccessToken,
                 loginResponse.Token.ExpiresAt,
                 loginResponse.Token.RefreshToken,
                 loginResponse.Token.RefreshTokenExpiresAt,
-                loginResponse.User);
+                loginResponse.User,
+                loginResponse.Token.SessionStamp);
 
             // Set HTTP-only session cookie
             SetSessionCookie(sessionId);
@@ -171,7 +172,8 @@ public class BffAuthController : ControllerBase
                 registerResponse.Token.ExpiresAt,
                 registerResponse.Token.RefreshToken,
                 registerResponse.Token.RefreshTokenExpiresAt,
-                registerResponse.User);
+                registerResponse.User,
+                registerResponse.Token.SessionStamp);
 
             // Set HTTP-only session cookie
             SetSessionCookie(sessionId);
@@ -285,7 +287,8 @@ public class BffAuthController : ControllerBase
                 loginResponse.Token.ExpiresAt,
                 loginResponse.Token.RefreshToken,
                 loginResponse.Token.RefreshTokenExpiresAt,
-                loginResponse.User);
+                loginResponse.User,
+                loginResponse.Token.SessionStamp);
 
             // Same cookie NAME, so the browser replaces the old value and cannot present the old id
             // again. Session fixation is handled by construction: CreateSession generates the id.

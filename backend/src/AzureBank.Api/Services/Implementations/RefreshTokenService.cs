@@ -23,7 +23,8 @@ namespace AzureBank.Api.Services.Implementations;
 ///   answer is lost, whose commit EF retries as if it had rolled back, or which a hung database
 ///   holds, has nothing to lose, so the BFF can simply send it again with the same grant.
 /// - Revocation is per session (<see cref="RevokeAsync"/>, reason SessionEnded) or per user
-///   (<see cref="RevokeAllForUserAsync"/>). A grant whose session ENDED, presented in a request the
+///   (<see cref="RevokeAllForUserAsync"/>, which also raises the user's session stamp in the same
+///   transaction, 06 §5.3). A grant whose session ENDED, presented in a request the
 ///   API received after that revoke, is the tripwire: it is logged and audited, and it revokes
 ///   nothing (06 F3).
 ///
@@ -258,14 +259,70 @@ public class RefreshTokenService : IRefreshTokenService
         // now, so nothing can appear behind the UPDATE except a NEW sign-in's grant — a session the
         // user opened after asking to be signed out, which is theirs to keep.
         var now = DateTime.UtcNow;
-        var revoked = await RevokeWhereAsync(
-            _context.RefreshTokens.Where(t => t.UserId == userId && t.RevokedAt == null && t.ExpiresAt > now),
-            reason,
-            revokedAt,
-            cancellationToken);
+        var grants = _context.RefreshTokens
+            .Where(t => t.UserId == userId && t.RevokedAt == null && t.ExpiresAt > now);
+
+        int revoked;
+        if (_context.Database.IsRelational())
+        {
+            /*
+              THE REVOKE AND THE STAMP COMMIT TOGETHER (06 §5.3). The stamp is what ends the user's
+              BFF sessions within one 15-second poll; the revoke is what ends them at their next
+              renewal if the BFF never reads the stamp. One without the other would leave a lever
+              that looks pulled and is half pulled.
+
+              Through the execution strategy, because production retries (EnableRetryOnFailure) and
+              EF refuses a user-initiated transaction under a retrying strategy otherwise. A retry
+              after a commit whose outcome was lost revokes nothing more (RevokedAt IS NULL) and adds
+              1 again. The stamp only has to rise: one higher still ends every session the user held
+              before the sign-out, and at worst also one that signed in between the two commits.
+
+              THE RAISE ALSO ROTATES ConcurrencyStamp, or a whole-row write can lower the stamp
+              again. Identity's UpdateAsync writes every column of a user it loaded earlier, and
+              checks only ConcurrencyStamp: SetPinAsync loads the user, spends the hash time, then
+              writes the row back with the stamp it read. Measured 2026-09-28 on LocalDB: a raise
+              between that load and that write went from 1 back to 0, and the write succeeded.
+              With the rotation the write fails as ConcurrencyFailure and the stamp stays 1.
+            */
+            revoked = await _context.Database.CreateExecutionStrategy().ExecuteAsync(
+                async token =>
+                {
+                    await using var transaction = await _context.Database.BeginTransactionAsync(token);
+                    var count = await RevokeWhereAsync(grants, reason, revokedAt, token);
+                    await _context.Users
+                        .Where(u => u.Id == userId)
+                        .ExecuteUpdateAsync(s => s
+                            .SetProperty(u => u.SessionStamp, u => u.SessionStamp + 1)
+                            .SetProperty(u => u.ConcurrencyStamp, Guid.NewGuid().ToString()), token);
+                    await transaction.CommitAsync(token);
+                    return count;
+                },
+                cancellationToken);
+        }
+        else
+        {
+            // The EF InMemory test host has neither ExecuteUpdate nor transactions: both changes go
+            // in one SaveChanges.
+            var active = await grants.ToListAsync(cancellationToken);
+            foreach (var token in active)
+            {
+                token.RevokedAt = revokedAt;
+                token.RevokedReason = reason;
+            }
+
+            if (await _context.Users.SingleOrDefaultAsync(u => u.Id == userId, cancellationToken) is { } user)
+            {
+                user.SessionStamp++;
+                user.ConcurrencyStamp = Guid.NewGuid().ToString();
+            }
+
+            await _context.SaveChangesAsync(cancellationToken);
+            revoked = active.Count;
+        }
 
         _logger.LogInformation(
-            "Revoked {Count} grants of user {UserId} ({Reason})", revoked, userId, reason.ToString());
+            "Revoked {Count} grants of user {UserId} ({Reason}) and raised the user's session stamp",
+            revoked, userId, reason.ToString());
         return revoked;
     }
 

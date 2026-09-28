@@ -652,6 +652,8 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
     // it revokes every grant of the user.
     [InlineData("/api/auth/revoke")]
     [InlineData("/api/auth/logout")]
+    // The stamp feed since the stamp (06 §5.3): only the BFF's own watcher reads it.
+    [InlineData("/api/auth/session-stamps")]
     public async Task TheProxiedAuthPair_NeverReachesTheApi_AndHandsOutNothing(string path)
     {
         /*

@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Time.Testing;
 using Yarp.ReverseProxy.Forwarder;
 
 namespace AzureBank.Tests.Fixtures;
@@ -36,6 +37,21 @@ namespace AzureBank.Tests.Fixtures;
 public sealed class BffOverApiFactory(CustomWebApplicationFactory api, string serviceKey)
     : WebApplicationFactory<bff::Program>
 {
+    private FakeTimeProvider? _clock;
+
+    /// <summary>
+    /// Gives the BFF a <see cref="FakeTimeProvider"/> and returns it. Call before the host starts.
+    /// </summary>
+    /// <remarks>
+    /// In the BFF's own code only the session-stamp watcher reads <see cref="TimeProvider"/> (06 §5.3),
+    /// so this moves its 15 s period: sessions, the revoker and the sweep read the wall clock.
+    /// </remarks>
+    public FakeTimeProvider UseFakeClock()
+    {
+        _clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        return _clock;
+    }
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
@@ -46,6 +62,10 @@ public sealed class BffOverApiFactory(CustomWebApplicationFactory api, string se
             services.AddHttpClient("BackendApi")
                 .ConfigurePrimaryHttpMessageHandler(() => api.Server.CreateHandler());
             services.Replace(ServiceDescriptor.Singleton<IForwarderHttpClientFactory>(new ToTheApi(api)));
+            if (_clock is not null)
+            {
+                services.Replace(ServiceDescriptor.Singleton<TimeProvider>(_clock));
+            }
         });
     }
 

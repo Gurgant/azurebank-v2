@@ -34,7 +34,7 @@ public class SessionService : ISessionService
     /// <inheritdoc />
     public string CreateSession(
         string accessToken, DateTime tokenExpiry, string? refreshToken, DateTime? refreshTokenExpiresAt,
-        UserLoginInfo userInfo)
+        UserLoginInfo userInfo, int sessionStamp = 0)
     {
         var sessionId = GenerateSecureSessionId();
         var now = DateTime.UtcNow;
@@ -57,6 +57,7 @@ public class SessionService : ISessionService
             GrantExpiresAt = grantExpiresAt,
             SessionCreated = now,
             AbsoluteExpiresAt = grantExpiresAt is { } grantEnd && grantEnd < cap ? grantEnd : cap,
+            SessionStamp = sessionStamp,
             LastActivity = now,
             AuthLevel = 1, // Level 1 = authenticated via email/password
             PinVerifiedAt = null,

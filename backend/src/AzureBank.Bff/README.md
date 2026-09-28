@@ -133,6 +133,8 @@ AzureBank.Bff/
 │   │   ├── TokenRefresher.cs           # Renewal with a non-rotating grant, single flight per session
 │   │   └── InMemoryTokenStore.cs       # In-memory token storage; every session ending goes through it
 │   ├── GrantRevoker.cs                 # Revokes ended sessions' grants; drains them on a graceful stop
+│   ├── SessionStamps.cs                # Latest session stamp known per signed-in user (06 §5.3)
+│   ├── SessionStampWatcher.cs          # Reads those stamps every 15 s while anyone is signed in
 │   └── SessionCleanupService.cs        # Background cleanup (every 5 min)
 │
 ├── 📁 Middleware/
@@ -194,7 +196,7 @@ AzureBank.Bff/
 
 | BFF Route | Backend Route | What the BFF requires |
 |-----------|---------------|-----------------------|
-| `/api/auth/login`, `/api/auth/register`, `/api/auth/refresh`, `/api/auth/revoke`, `/api/auth/logout` | — never proxied | answered `404` whatever the session |
+| `/api/auth/login`, `/api/auth/register`, `/api/auth/refresh`, `/api/auth/revoke`, `/api/auth/logout`, `/api/auth/session-stamps` | — never proxied | answered `404` whatever the session |
 | `/api/accounts` | `/api/accounts` | session (level 1) |
 | `/api/transactions` | `/api/transactions` | session (level 1) |
 | `/api/transfers` | `/api/transfers` | session (level 1) — **PIN NOT checked here** |
@@ -278,7 +280,7 @@ DELETE verbs of row 2 on 2026-08-20 (`d74603c`):
 
 | Request | Session cookie | Answer |
 |---|---|---|
-| `/api/auth/login`, `/api/auth/register`, `/api/auth/refresh`, `/api/auth/revoke`, `/api/auth/logout` | any, even a live one | `404` |
+| `/api/auth/login`, `/api/auth/register`, `/api/auth/refresh`, `/api/auth/revoke`, `/api/auth/logout`, `/api/auth/session-stamps` | any, even a live one | `404` |
 | any other `/api/*` route, any method | none, never issued, or replayed after logout | `401` — the API's own `AUTH_TOKEN_MISSING` body, no `X-Auth-Level-*` header |
 | `GET /api/accounts/{id}/full-number` | live, level 1 | `403 STEP_UP_REQUIRED`, `X-Auth-Level-Required: 2`, `X-Auth-Level-Current: 1` |
 | `POST /api/transfers` | live, level 1 | proxied — `400` model-state from the API on `{}`; its proof is the one-shot authorisation in the `Step-Up-Authorization` header, which the API binds and spends (ADR-0042) |
@@ -324,8 +326,14 @@ public class UserSession
 6. **Cleanup**: Background service ends expired sessions every 5 min
 7. **Logout**: Immediately end this session and clear the cookie; the user's other sessions are
    untouched. Every ending — logout, expiry, re-authentication, a new sign-in over an old cookie, a
-   graceful stop — queues the session's grant on `GrantRevoker`, which revokes it with
-   `POST /api/auth/revoke`
+   raised session stamp, a graceful stop — queues the session's grant on `GrantRevoker`, which
+   revokes it with `POST /api/auth/revoke`
+8. **Sign-out everywhere**: each session keeps the user's session stamp from sign-in. When a user is
+   signed out of every session at the API (`POST /api/auth/logout`, or a runbook's SQL), the stamp
+   goes up; `SessionStampWatcher` reads the stamps of the signed-in users every 15 s through
+   `POST /api/auth/session-stamps` (and makes no call when nobody is signed in), and a session whose
+   stamp is below the one read is refused at its next request. A failed read keeps the last values
+   (06 §5.3)
 
 ### Session Security
 

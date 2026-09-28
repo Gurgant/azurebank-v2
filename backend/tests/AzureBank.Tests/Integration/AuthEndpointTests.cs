@@ -17,7 +17,7 @@ namespace AzureBank.Tests.Integration;
 /// <summary>
 /// Integration tests for Authentication endpoints.
 /// Tests: /api/auth/register, /api/auth/login, /api/auth/me, /api/auth/refresh, /api/auth/revoke,
-/// /api/auth/logout. Which callers the token endpoints answer at all is TokenRoadTests.
+/// /api/auth/logout, /api/auth/session-stamps. Which callers the token endpoints answer at all is TokenRoadTests.
 /// </summary>
 public class AuthEndpointTests : IntegrationTestBase
 {
@@ -321,6 +321,7 @@ public class AuthEndpointTests : IntegrationTestBase
             ("expiresIn", JsonValueKind.Number),
             ("refreshToken", JsonValueKind.String),
             ("refreshTokenExpiresAt", JsonValueKind.String),
+            ("sessionStamp", JsonValueKind.Number),
             ("tokenType", JsonValueKind.String));
         loginData.EnumerateObject().Select(p => p.Name).Should().BeEquivalentTo(
             ["token", "user"], "expiresAt and refreshToken live inside token now, and only there");
@@ -820,6 +821,115 @@ public class AuthEndpointTests : IntegrationTestBase
         var response = await Client.PostAsJsonAsync("/api/auth/refresh",
             new RefreshRequest { RefreshToken = refresh }, JsonOptions);
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    #endregion
+
+    #region Session stamps (06 §5.3)
+
+    /// <summary>Registers a fresh user: its email, access token, grant, id and session stamp.</summary>
+    private async Task<(string Email, string Access, Guid UserId, int Stamp)> RegisterForStampAsync()
+    {
+        var unique = Guid.NewGuid().ToString("N")[..8];
+        var email = $"st{unique}@example.com";
+        var response = await Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
+        {
+            AzureTag = $"st_{unique}",
+            Email = email,
+            Password = "SecurePass123!",
+            FirstName = "Session",
+            LastName = "Stamp"
+        }, JsonOptions);
+        response.EnsureSuccessStatusCode();
+        var data = (await response.Content.ReadFromJsonAsync<ApiResponse<RegisterResponse>>(JsonOptions))!.Data!;
+        return (email, data.Token.AccessToken, data.User.Id, data.Token.SessionStamp);
+    }
+
+    private async Task<IReadOnlyList<UserSessionStamp>> ReadStampsAsync(params Guid[] userIds)
+    {
+        var response = await Client.PostAsJsonAsync("/api/auth/session-stamps",
+            new SessionStampsRequest { UserIds = userIds }, JsonOptions);
+        response.StatusCode.Should().Be(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        return (await response.Content.ReadFromJsonAsync<ApiResponse<SessionStampsResponse>>(JsonOptions))!.Data!.Stamps;
+    }
+
+    private async Task LogoutEverywhereAsync(string access)
+    {
+        SetAuthHeader(access);
+        (await Client.PostAsync("/api/auth/logout", content: null)).StatusCode.Should().Be(HttpStatusCode.OK);
+        ClearAuthHeader();
+    }
+
+    [Fact]
+    public async Task SessionStamp_StartsAt0_EachLogoutRaisesItBy1_AndASignInAnswersTheCurrentOne()
+    {
+        var (email, access, userId, registeredStamp) = await RegisterForStampAsync();
+        registeredStamp.Should().Be(0, "a new user starts at 0");
+
+        await LogoutEverywhereAsync(access);
+        (await ReadStampsAsync(userId)).Should().ContainSingle().Which.SessionStamp.Should().Be(1);
+
+        var login = await Client.PostAsJsonAsync("/api/auth/login",
+            new LoginRequest { Email = email, Password = "SecurePass123!" }, JsonOptions);
+        login.EnsureSuccessStatusCode();
+        var signedIn = (await login.Content.ReadFromJsonAsync<ApiResponse<LoginResponse>>(JsonOptions))!.Data!.Token;
+        signedIn.SessionStamp.Should().Be(1, "a sign-in after the sign-out carries the raised stamp, so it is not ended by it");
+
+        await LogoutEverywhereAsync(signedIn.AccessToken);
+        (await ReadStampsAsync(userId)).Single().SessionStamp.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Revoke_EndsOneSession_AndDoesNotRaiseTheStamp()
+    {
+        // "Esci" ends ONE session through /revoke (06 §4.6). Raising the stamp there would end every
+        // other session of the user within 15 s: the sign-out-everywhere PR-1 removed from "Esci".
+        var unique = Guid.NewGuid().ToString("N")[..8];
+        var (_, grant) = await RegisterAndGetTokensAsync($"rv{unique}@example.com");
+        var userId = await UserIdOfAsync($"rv{unique}@example.com");
+
+        (await Client.PostAsJsonAsync("/api/auth/revoke", new RevokeRequest { RefreshTokens = [grant] }, JsonOptions))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+
+        (await RenewAsync(grant)).StatusCode.Should().Be(HttpStatusCode.Unauthorized, "the revoke did happen");
+        (await ReadStampsAsync(userId)).Single().SessionStamp.Should().Be(0);
+    }
+
+    private async Task<Guid> UserIdOfAsync(string email)
+    {
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        return await db.Users.AsNoTracking().Where(u => u.Email == email).Select(u => u.Id).SingleAsync();
+    }
+
+    [Fact]
+    public async Task SessionStamps_AnswersEachKnownUser_AndNothingForAnUnknownOne()
+    {
+        var (_, raisedAccess, raised, _) = await RegisterForStampAsync();
+        var (_, _, untouched, _) = await RegisterForStampAsync();
+        var unknown = Guid.CreateVersion7();
+        await LogoutEverywhereAsync(raisedAccess);
+
+        var stamps = await ReadStampsAsync(raised, untouched, unknown, raised);
+
+        stamps.Should().BeEquivalentTo(new[]
+        {
+            new UserSessionStamp { UserId = raised, SessionStamp = 1 },
+            new UserSessionStamp { UserId = untouched, SessionStamp = 0 },
+        }, "one entry per known user, whatever the list repeats; an unknown user is left out");
+    }
+
+    [Theory]
+    [InlineData("""{"userIds":[]}""")]
+    [InlineData("""{"userIds":[null]}""")]
+    [InlineData("""{"userIds":["not-a-user-id"]}""")]
+    [InlineData("""{}""")]
+    public async Task SessionStamps_WithoutAListOfUserIds_Is400(string body)
+    {
+        var response = await Client.PostAsync("/api/auth/session-stamps",
+            new StringContent(body, System.Text.Encoding.UTF8, "application/json"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest, await response.Content.ReadAsStringAsync());
     }
 
     #endregion

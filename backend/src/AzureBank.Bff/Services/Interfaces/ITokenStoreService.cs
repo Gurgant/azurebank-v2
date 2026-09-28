@@ -41,6 +41,12 @@ public interface ITokenStoreService
     IReadOnlyList<GrantRevocation> EndAllSessions();
 
     /// <summary>
+    /// The users who hold at least one stored session: whose session stamps the watcher reads
+    /// (06 §5.3). Empty when nobody is signed in.
+    /// </summary>
+    IReadOnlySet<Guid> SignedInUserIds();
+
+    /// <summary>
     /// Cleans up expired sessions (called periodically by background service).
     /// </summary>
     Task CleanupExpiredSessionsAsync();

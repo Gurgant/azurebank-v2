@@ -59,11 +59,12 @@ would rather not turn verification off.
 `BrunoEnvironmentSecretTests` fails the build if that value stops being empty in `local.bru`, or if
 this file starts telling you to write it there.
 
-The five token endpoints — login, register, refresh, revoke and logout — take one thing more.
-They answer 404 unless the request carries exactly one `X-AzureBank-Token-Road`, the marker the
-BFF's own client sends, and comes from the machine the API listens on (loopback). So the requests
-that call them — register, login, revoke, logout and the transfers folder's register-recipient —
-send `X-AzureBank-Token-Road: bff` themselves. It is not a secret: the API checks that exactly one
+The five token endpoints — login, register, refresh, revoke and logout — and the BFF's
+session-stamp feed, which no request here calls, take one thing more. They answer 404 unless the
+request carries exactly one `X-AzureBank-Token-Road`, the marker the BFF's own client sends, and
+comes from the machine the API listens on (loopback). So the requests that call them — register,
+login, revoke, logout and the transfers folder's register-recipient — send
+`X-AzureBank-Token-Road: bff` themselves. It is not a secret: the API checks that exactly one
 arrived and that it is not empty, not what it says. Measured on 2026-09-28 against the API as
 `Contract tests` starts it: this collection before the marker, 28 of 28 requests failed, register,
 login and logout on 404; with it, all green (below).

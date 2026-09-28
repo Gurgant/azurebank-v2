@@ -64,10 +64,10 @@ can still open the documentation. Calling an API OPERATION by hand — curl, Bru
 `local.bru` and is passed per run instead: `cd tests/api-collection && bru run . -r --env local
 --env-var serviceKey="$SERVICE_KEY" --insecure`. The `-r` is not optional — without it bru sends no
 requests at all and still reports PASS. The five token endpoints — login, register, refresh, revoke
-and logout — also answer 404 unless the call comes over loopback and carries exactly one
-`X-AzureBank-Token-Road`, the marker the BFF's own client adds; calling one by hand needs that
-header too, and the Bruno requests that call them send it. In production the API also has no
-public address; the key is the second line behind that.
+and logout — and the session-stamp feed also answer 404 unless the call comes over loopback and
+carries exactly one `X-AzureBank-Token-Road`, the marker the BFF's own client adds; calling one by
+hand needs that header too, and the Bruno requests that call them send it. In production the API
+also has no public address; the key is the second line behind that.
 
 `Audit:ChainKey` keys the audit trail's hash chain and `Audit:AnchorKey` authenticates the anchor
 records that say what the chain looked like at an instant (ADR-0044). Both are 32+ characters and

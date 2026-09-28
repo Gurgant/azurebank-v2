@@ -27,13 +27,13 @@ as the address. `.example.com` is a domain reserved by RFC 2606, so mail to it r
   by its grant: the grant lives 60 minutes from sign-in, fixed then and never extended, and no
   access token minted from it outlives it (ADR-0057).
 - **One grant per session, which does not rotate, and which only the BFF's own client can
-  present.** The API answers its five token endpoints (login, register, refresh, revoke and logout)
-  with 404 unless the request comes over loopback with exactly one `X-AzureBank-Token-Road` header,
-  besides the service key. A renewal only reads the grant, so a lost answer or a database outage
-  has nothing to break. A grant whose session ended, presented again, is refused and recorded as a
-  `RefreshTokenReuse` security event with an audit row. It revokes nothing: only code inside the
-  API's own replica can present a grant, and revoking one user's tokens would not contain that
-  code; the incident runbook does
+  present.** The API answers its five token endpoints (login, register, refresh, revoke and logout),
+  and the session-stamp feed the BFF polls, with 404 unless the request comes over loopback with
+  exactly one `X-AzureBank-Token-Road` header, besides the service key. A renewal only reads the
+  grant, so a lost answer or a database outage has nothing to break. A grant whose session ended,
+  presented again, is refused and recorded as a `RefreshTokenReuse` security event with an audit
+  row. It revokes nothing: only code inside the API's own replica can present a grant, and
+  revoking one user's tokens would not contain that code; the incident runbook does
   ([`docs/runbooks/refresh-token-reuse-recorded.md`](docs/runbooks/refresh-token-reuse-recorded.md),
   ADR-0057 §5.4).
   _(Until 2026-09-28 these two bullets said the refresh token lived 7 days, rotated on every use,

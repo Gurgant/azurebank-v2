@@ -32,6 +32,23 @@ public class ApplicationUser : IdentityUser<Guid>
     /// </summary>
     public DateTimeOffset? PinLockoutEnd { get; set; }
 
+    /// <summary>
+    /// How many times every session of this user has been signed out at once (06 §5.3). Sign-in,
+    /// registration and re-authentication hand the value to the BFF, which keeps it on the session;
+    /// every per-user sign-out — <c>POST /api/auth/logout</c>, or a runbook's SQL — adds 1 in the same
+    /// transaction as its grant revoke. The BFF then refuses every session whose value is below the
+    /// one it last read (<c>POST /api/auth/session-stamps</c>), within one 15-second poll.
+    /// </summary>
+    /// <remarks>
+    /// Not Identity's <c>SecurityStamp</c>, which has been in this table since InitialCreate and keeps
+    /// its Identity meaning: Identity rewrites that one on a password or two-factor change, and those
+    /// are not sign-outs. A counter, not a random value, so "below" means "older" and a read that
+    /// arrives late can never lower what the BFF knows. Every raise also rotates
+    /// <c>ConcurrencyStamp</c>: Identity's <c>UpdateAsync</c> writes back every column of a user it
+    /// loaded before the raise, this one included, and that rotation makes such a write fail instead.
+    /// </remarks>
+    public int SessionStamp { get; set; }
+
     [Required]
     public required string FirstName { get; set; }
     [Required]

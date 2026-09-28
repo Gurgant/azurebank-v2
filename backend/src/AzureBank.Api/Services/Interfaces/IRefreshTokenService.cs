@@ -43,8 +43,10 @@ public interface IRefreshTokenService
         IReadOnlyCollection<string> presentedTokens, DateTime receivedAt, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Revokes every active grant of the user with <paramref name="reason"/>, stamping
-    /// <paramref name="revokedAt"/>. Returns how many rows it revoked.
+    /// Signs the user out of every session: revokes every active grant of the user with
+    /// <paramref name="reason"/>, stamping <paramref name="revokedAt"/>, and adds 1 to the user's
+    /// <c>SessionStamp</c> in the same transaction, so the BFF ends those sessions within one poll
+    /// (06 §5.3). Returns how many grants it revoked.
     /// </summary>
     Task<int> RevokeAllForUserAsync(
         Guid userId,

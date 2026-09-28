@@ -1034,6 +1034,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/session-stamps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read session stamps
+         * @description The current session stamp of each listed user. Signing a user out of every session raises
+         *     theirs, and a session given a lower one at sign-in has been signed out since. An unknown user
+         *     has no entry in the answer.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            /** @description The users to read */
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SessionStampsRequest"];
+                    "text/json": components["schemas"]["SessionStampsRequest"];
+                    "application/*+json": components["schemas"]["SessionStampsRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiResponseOfSessionStampsResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                415: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/me": {
         parameters: {
             query?: never;
@@ -1102,8 +1168,8 @@ export interface paths {
         put?: never;
         /**
          * Logout from every session
-         * @description Sign the user out of every session on every device: every grant of the user is revoked. One
-         *     session ends through revoke instead.
+         * @description Sign the user out of every session on every device: every grant of the user is revoked and
+         *     the user's session stamp is raised, together. One session ends through revoke instead.
          */
         post: {
             parameters: {
@@ -2934,6 +3000,10 @@ export interface components {
             data?: null | components["schemas"]["RegisterResponse"];
             message?: null | string;
         };
+        ApiResponseOfSessionStampsResponse: {
+            data?: null | components["schemas"]["SessionStampsResponse"];
+            message?: null | string;
+        };
         ApiResponseOfStepUpAuthorizationResponse: {
             data?: null | components["schemas"]["StepUpAuthorizationResponse"];
             message?: null | string;
@@ -3218,6 +3288,19 @@ export interface components {
              */
             refreshTokens: string[];
         };
+        /** @description Request body for POST /api/auth/session-stamps: the users who hold a session in the BFF. */
+        SessionStampsRequest: {
+            /**
+             * @description The users whose session stamps to read. An unknown user is not an error: the answer simply
+             *     has no entry for it.
+             */
+            userIds: string[];
+        };
+        /** @description What POST /api/auth/session-stamps answers: one entry per known user asked about. */
+        SessionStampsResponse: {
+            /** @description The stamps, in no particular order. An unknown user has no entry. */
+            stamps: components["schemas"]["UserSessionStamp"][];
+        };
         SetPinRequest: {
             /** @description PIN must be exactly 6 digits. */
             pin: string;
@@ -3266,6 +3349,12 @@ export interface components {
              *     is, after a registration whose best-effort grant failed.
              */
             refreshTokenExpiresAt?: null | string;
+            /**
+             * Format: int32
+             * @description The user's session stamp when this sign-in was answered. Every sign-out of all the user's
+             *     sessions raises it, and the BFF ends a session whose stamp is below the latest it has read.
+             */
+            sessionStamp: number;
             /**
              * Format: int32
              * @description Token expiration time in seconds
@@ -3418,6 +3507,20 @@ export interface components {
             email: string;
             firstName: string;
             lastName: string;
+        };
+        /** @description One user's session stamp. */
+        UserSessionStamp: {
+            /**
+             * Format: uuid
+             * @description The user.
+             */
+            userId: string;
+            /**
+             * Format: int32
+             * @description The user's current session stamp. A session that was given a lower one at sign-in has been
+             *     signed out since.
+             */
+            sessionStamp: number;
         };
         VerifyPinRequest: {
             /** @description PIN must be exactly 6 digits. */

@@ -60,8 +60,11 @@ tests {
     // Login used to answer a bare string with expiresAt and refreshToken beside it, while
     // register nested all three in token (measured 2026-09-23). One shape now, and only one.
     // refreshTokenExpiresAt joined it when the grant stopped rotating: the BFF caps its session there.
+    // sessionStamp joined it with ADR-0057, section 5.3: the BFF keeps it on the session it creates.
     expect(res.body.data.token).to.have.all.keys(
-      'accessToken', 'refreshToken', 'refreshTokenExpiresAt', 'expiresIn', 'tokenType', 'expiresAt');
+      'accessToken', 'refreshToken', 'refreshTokenExpiresAt', 'sessionStamp', 'expiresIn', 'tokenType',
+      'expiresAt');
+    expect(res.body.data.token.sessionStamp).to.be.a('number');
     expect(res.body.data.token.tokenType).to.equal('Bearer');
     expect(res.body.data).to.not.have.any.keys('expiresAt', 'refreshToken');
   });

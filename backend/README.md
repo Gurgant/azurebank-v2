@@ -495,7 +495,8 @@ The API is documented using **Scalar**, available at:
 |                  | `/api/auth/refresh`          | POST   | Renew the access token with the session's grant | No (the grant is the credential) |
 |                  | `/api/auth/revoke`           | POST   | Revoke the grants of ended sessions | No (the grant is the credential) |
 |                  | `/api/auth/me`               | GET    | Get current user    | Yes       |
-|                  | `/api/auth/logout`           | POST   | Revoke every grant of the user (every session) | Yes |
+|                  | `/api/auth/logout`           | POST   | Revoke every grant of the user (every session) and raise the user's session stamp | Yes |
+|                  | `/api/auth/session-stamps`   | POST   | Read the listed users' session stamps (the BFF's watcher) | No (the BFF's own client) |
 |                  | `/api/auth/pin`              | POST   | Set/update PIN      | Yes       |
 |                  | `/api/auth/pin/verify`       | POST   | Verify PIN          | Yes       |
 | **Accounts**     | `/api/accounts`              | GET    | List user accounts  | Yes       |

@@ -29,6 +29,12 @@ public class TokenResponse
     public DateTime? RefreshTokenExpiresAt { get; set; }
 
     /// <summary>
+    /// The user's session stamp when this sign-in was answered. Every sign-out of all the user's
+    /// sessions raises it, and the BFF ends a session whose stamp is below the latest it has read.
+    /// </summary>
+    public int SessionStamp { get; set; }
+
+    /// <summary>
     /// Token expiration time in seconds
     /// </summary>
     public int ExpiresIn { get; set; }

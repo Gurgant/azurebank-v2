@@ -124,8 +124,9 @@ with a dated note against the clause it corrects, under the rule in
 indexes those notes and nothing else — a row without a matching note in the ADR is the defect to
 fix — and a pointer an ADR carries with no date is listed as *undated*. The lifecycle statuses at
 the end of this page are the template's; only Accepted has ever been used. *(2026-09-28: "shipped"
-has one exception. Two parts of ADR-0057 are decided and not yet built, and it says so where it
-states them: the security stamp of its §5.3 and the renewal-rate detector of its §6.)*
+has one exception. One part of ADR-0057 is decided and not yet built, and it says so where it
+states it: the renewal-rate detector of its §6. Its §5.3 session stamp, the other such part when
+this note was written, was built the same day.)*
 
 <details>
 <summary>What changed in each decision after it was accepted — 42 records</summary>

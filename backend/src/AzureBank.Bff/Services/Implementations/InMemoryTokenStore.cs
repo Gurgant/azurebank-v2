@@ -20,11 +20,11 @@ namespace AzureBank.Bff.Services.Implementations;
 /// <remarks>
 /// <para>
 /// <b>Every ending goes through <see cref="End"/></b>: "Esci", idle expiry and the cap found on a
-/// read or by the sweep, re-authentication, a new sign-in over an old cookie, a dead grant, and a
-/// graceful stop (06 §4.6). It marks the session ended and removes it under the session's own lock,
-/// then hands its grant to <see cref="GrantRevoker"/> with the renewal it caught in flight. Before
-/// PR-1 an expired session was only dropped from this dictionary, and its refresh token lived on at
-/// the API for days with no holder.
+/// read or by the sweep, re-authentication, a new sign-in over an old cookie, a dead grant, a stamp
+/// below the latest known (06 §5.3), and a graceful stop (06 §4.6). It marks the session ended and
+/// removes it under the session's own lock, then hands its grant to <see cref="GrantRevoker"/> with
+/// the renewal it caught in flight. Before PR-1 an expired session was only dropped from this
+/// dictionary, and its refresh token lived on at the API for days with no holder.
 /// </para>
 /// </remarks>
 public class InMemoryTokenStore : ITokenStoreService
@@ -32,20 +32,26 @@ public class InMemoryTokenStore : ITokenStoreService
     private readonly ConcurrentDictionary<string, UserSession> _sessions = new();
     private readonly BffSessionOptions _sessionOptions;
     private readonly GrantRevoker _grantRevoker;
+    private readonly SessionStamps _stamps;
     private readonly ILogger<InMemoryTokenStore> _logger;
 
     public InMemoryTokenStore(
         IOptions<BffSessionOptions> sessionOptions,
         GrantRevoker grantRevoker,
+        SessionStamps stamps,
         ILogger<InMemoryTokenStore> logger)
     {
         _sessionOptions = sessionOptions.Value;
         _grantRevoker = grantRevoker;
+        _stamps = stamps;
         _logger = logger;
     }
 
     public Task StoreSessionAsync(UserSession session)
     {
+        // A sign-in answers the user's current stamp, which can be above what the watcher last read:
+        // the user's older sessions are then refused at their next read, without waiting for a poll.
+        _stamps.Observe(session.UserId, session.SessionStamp);
         _sessions[session.SessionId] = session;
         _logger.LogDebug("Session stored for user {UserId}", session.UserId);
         return Task.CompletedTask;
@@ -84,6 +90,17 @@ public class InMemoryTokenStore : ITokenStoreService
 
     public Task<bool> EndSessionAsync(string sessionId) =>
         Task.FromResult(_sessions.TryGetValue(sessionId, out var session) && End(session));
+
+    public IReadOnlySet<Guid> SignedInUserIds()
+    {
+        var userIds = new HashSet<Guid>();
+        foreach (var kvp in _sessions)
+        {
+            userIds.Add(kvp.Value.UserId);
+        }
+
+        return userIds;
+    }
 
     public IReadOnlyList<GrantRevocation> EndAllSessions()
     {
@@ -178,6 +195,13 @@ public class InMemoryTokenStore : ITokenStoreService
 
         // Check inactivity timeout
         if (now >= session.LastActivity.AddMinutes(_sessionOptions.InactivityTimeoutMinutes))
+        {
+            return false;
+        }
+
+        // A sign-out of every session of this user happened after this session's sign-in: the API
+        // raised the user's stamp, and the watcher or a newer sign-in told us (06 §5.3).
+        if (!_stamps.IsCurrent(session.UserId, session.SessionStamp))
         {
             return false;
         }
