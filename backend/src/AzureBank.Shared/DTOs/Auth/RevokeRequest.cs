@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using AzureBank.Shared.Validation;
 
 namespace AzureBank.Shared.DTOs.Auth;
 
@@ -19,12 +20,14 @@ public class RevokeRequest
 
     /// <summary>
     /// The grants to revoke. An unknown one, or one already revoked, is not an error: the answer is
-    /// the same 200 either way (RFC 7009 §2.2).
+    /// the same 200 either way (RFC 7009 §2.2). A null one names no grant, and the request is refused
+    /// with 400.
     /// </summary>
     // Length, not MinLength and MaxLength: the API's schema transformer reads those two as string
     // lengths, and published minLength and maxLength on an array. Length publishes minItems and
     // maxItems only, and counts the list at run time the same way.
     [Required]
     [Length(1, MaxRefreshTokens)]
+    [NoNullItems]
     public required IReadOnlyList<string> RefreshTokens { get; set; }
 }

@@ -768,6 +768,23 @@ public class AuthEndpointTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task Revoke_WithANullGrant_Is400_AndRevokesNothing()
+    {
+        // The contract publishes the items as strings, and a null names no grant: the request is
+        // malformed, not a revocation of an unknown grant. Schemathesis's conformance run posted
+        // {"refreshTokens": [null]} and got 200 "Revoked" (measured 2026-09-28): "API accepted
+        // schema-violating request". Refused before anything is revoked, the live grant beside it
+        // included.
+        var (_, grant) = await RegisterAndGetTokensAsync();
+
+        var response = await Client.PostAsJsonAsync("/api/auth/revoke",
+            new RevokeRequest { RefreshTokens = [grant, null!] }, JsonOptions);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await RenewAsync(grant)).StatusCode.Should().Be(HttpStatusCode.OK, "a refused request revokes nothing");
+    }
+
+    [Fact]
     public async Task Logout_RevokesEveryGrantOfTheUser_AsSignOutEverywhere()
     {
         // /api/auth/logout keeps its effect: every session of the user (06 §4.4), with the reason

@@ -4278,7 +4278,7 @@
             "items": {
               "type": "string"
             },
-            "description": "The grants to revoke. An unknown one, or one already revoked, is not an error: the answer is\r\nthe same 200 either way (RFC 7009 §2.2)."
+            "description": "The grants to revoke. An unknown one, or one already revoked, is not an error: the answer is\r\nthe same 200 either way (RFC 7009 §2.2). A null one names no grant, and the request is refused\r\nwith 400."
           }
         },
         "description": "Request body for POST /api/auth/revoke: the grants of sessions the BFF has ended. One\r\nfor \"Esci\", idle expiry or a new sign-in; several when the BFF drains every session it holds on a\r\ngraceful stop."
