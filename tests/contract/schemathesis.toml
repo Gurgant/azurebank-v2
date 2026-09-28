@@ -5,8 +5,9 @@
 #   export AZUREBANK_SERVICE_KEY="..."    # the value of the API's ServiceCredential:BffKey
 #   schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapiv1.json
 #
-# What it adds to that command: the service key and a bearer token on every request (hooks.py),
-# and the shape of the run. CI's conformance job runs this same file (backlog row 41), so a local
+# What it adds to that command: the service key and the token-road marker on every request, and
+# a bearer token on every operation the document does not declare anonymous (hooks.py), and the
+# shape of the run. CI's conformance job runs this same file (backlog row 41), so a local
 # run and CI run the same checks: every one of them. At the bottom, three operations carry what
 # those checks have to be told about them.
 #
@@ -34,8 +35,8 @@ request-timeout = 30
 # key on every request, and a file that switched verification off would switch it off for any
 # --url given with it. For the local HTTPS profile's development certificate, see the README.
 
-# The service key and the throwaway user's bearer token. A dotted module, resolved from the
-# working directory -- hence the repository root.
+# The service key, the token-road marker and the throwaway user's bearer token. A dotted
+# module, resolved from the working directory -- hence the repository root.
 hooks = "tests.contract.hooks"
 
 [phases]

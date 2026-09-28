@@ -112,6 +112,7 @@ export type TokenResponse = z.infer<typeof TokenResponse>;
 export const TokenResponse = z.object({
   accessToken: z.string(),
   refreshToken: z.string().nullable().optional(),
+  refreshTokenExpiresAt: z.iso.datetime().nullable().optional(),
   expiresIn: z.number().int(),
   tokenType: z.string().optional(),
   expiresAt: z.iso.datetime(),
@@ -155,11 +156,7 @@ export const ApiResponseOfRecipientLookupResponse = z
   .partial();
 
 export type RefreshResponse = z.infer<typeof RefreshResponse>;
-export const RefreshResponse = z.object({
-  accessToken: z.string(),
-  refreshToken: z.string(),
-  expiresAt: z.iso.datetime(),
-});
+export const RefreshResponse = z.object({ accessToken: z.string(), expiresAt: z.iso.datetime() });
 
 export type ApiResponseOfRefreshResponse = z.infer<typeof ApiResponseOfRefreshResponse>;
 export const ApiResponseOfRefreshResponse = z
@@ -349,6 +346,9 @@ export const RegisterRequest = z.object({
   firstName: z.string().min(2).max(50).regex(new RegExp("^[a-zA-ZÀ-ÖØ-öø-ÿ\\s'-]{2,50}$")),
   lastName: z.string().min(2).max(50).regex(new RegExp("^[a-zA-ZÀ-ÖØ-öø-ÿ\\s'-]{2,50}$")),
 });
+
+export type RevokeRequest = z.infer<typeof RevokeRequest>;
+export const RevokeRequest = z.object({ refreshTokens: z.array(z.string()).min(1).max(1000) });
 
 export type SetPinRequest = z.infer<typeof SetPinRequest>;
 export const SetPinRequest = z.object({

@@ -4811,7 +4811,7 @@
     "securitySchemes": {
       "Bearer": {
         "type": "http",
-        "description": "Enter your JWT token. Get a token by calling POST /api/auth/login",
+        "description": "Enter your JWT token. Get one from POST /api/auth/login, called from the API's own machine (loopback) with the X-AzureBank-Service-Key header and exactly one X-AzureBank-Token-Road header.",
         "scheme": "bearer",
         "bearerFormat": "JWT"
       }
