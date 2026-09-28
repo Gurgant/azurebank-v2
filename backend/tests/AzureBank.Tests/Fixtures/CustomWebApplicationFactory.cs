@@ -92,6 +92,14 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
     public const string PinPepper =
         "integration-tests-only-pin-pepper-0123456789abcdef0123456789";
 
+    /// <summary>
+    /// Whether this host accepts a request with no remote address on the token endpoints, as every
+    /// test host does by default: TestServer has no socket, so it gives every request a null
+    /// address. False leaves <c>TokenRoadOptions</c> exactly as the API registers it, which is how
+    /// <c>TokenRoadTests</c> shows the production value (06 F1).
+    /// </summary>
+    public bool AcceptMissingRemoteAddress { get; init; } = true;
+
     private string? _connectionString;
     private bool _enableSqlRetryOnFailure;
     private readonly List<IInterceptor> _interceptors = new();
@@ -343,10 +351,14 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             /*
               TestServer has no socket, so every request it carries has a null RemoteIpAddress, and
               the token endpoints refuse a null address unless code says otherwise (06 F1). This is
-              that code, and the only place it exists. TokenRoadTests turns it back off, and sets
-              real addresses through FakeRemoteAddressStartupFilter, to show the refusals.
+              that code, and the only place it exists. TokenRoadTests builds a host without it
+              (AcceptMissingRemoteAddress = false), and sets real addresses through
+              FakeRemoteAddressStartupFilter, to show the refusals.
             */
-            services.Configure<TokenRoadOptions>(o => o.AcceptMissingRemoteAddress = true);
+            if (AcceptMissingRemoteAddress)
+            {
+                services.Configure<TokenRoadOptions>(o => o.AcceptMissingRemoteAddress = true);
+            }
             services.AddSingleton<Microsoft.AspNetCore.Hosting.IStartupFilter, FakeRemoteAddressStartupFilter>();
 
             if (_clock is not null)

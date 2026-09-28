@@ -318,6 +318,36 @@ public class RefreshTokenServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RenewAsync_TheUnknownGrantsRow_IsWrittenEvenWhenTheCallerHangsUpDuringIt()
+    {
+        /*
+          The unknown grant's refusal row is evidence, as the tripwire's is, and the interface says
+          the caller's token cancels the read only (IRefreshTokenService). Here the caller hangs up
+          while the row is being written, and the audit stand-in honours the token it was given, as
+          the real write's SaveChangesAsync does: given the caller's, it would write nothing. The
+          read went out on a live token, so it is the write this is about.
+        */
+        using var caller = new CancellationTokenSource();
+        var written = new List<string>();
+        _audit.Setup(a => a.RecordRefusalAsync(
+                SecurityEvents.RefreshTokenUnknown, AuditOutcome.Refused,
+                It.IsAny<Guid?>(), It.IsAny<string?>(), It.IsAny<Guid?>(), It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Returns((string securityEvent, AuditOutcome _, Guid? _, string? _, Guid? _, string? _, CancellationToken token) =>
+            {
+                caller.Cancel();
+                token.ThrowIfCancellationRequested();
+                written.Add(securityEvent);
+                return Task.CompletedTask;
+            });
+
+        await ((Func<Task>)(() => _sut.RenewAsync("does-not-exist", DateTime.UtcNow, caller.Token)))
+            .Should().ThrowAsync<AuthenticationException>("the refusal is still the uniform 401");
+
+        written.Should().Equal([SecurityEvents.RefreshTokenUnknown], "the row is written although the caller hung up");
+    }
+
+    [Fact]
     public async Task RenewAsync_AnEndedSessionsGrant_ReceivedAfterTheRevoke_IsTheTripwire_AndRevokesNothing()
     {
         /*

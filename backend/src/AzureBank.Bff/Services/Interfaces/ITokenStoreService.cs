@@ -35,8 +35,8 @@ public interface ITokenStoreService
     Task<bool> EndSessionAsync(string sessionId);
 
     /// <summary>
-    /// Ends every stored session for a graceful stop, and hands back their grants for one revoke
-    /// call instead of queueing each (06 §4.6, F7).
+    /// Ends every stored session for a graceful stop, and hands back their grants for the drain to
+    /// revoke together instead of queueing each (06 §4.6, F7).
     /// </summary>
     IReadOnlyList<GrantRevocation> EndAllSessions();
 

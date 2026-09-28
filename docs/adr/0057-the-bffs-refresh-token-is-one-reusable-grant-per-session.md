@@ -301,13 +301,26 @@ a profile this system meets.
   - an old session whose cookie arrives with a new sign-in or registration: that session now ends
     (F13);
   - a stamp below the latest the BFF knows for its user (§5.3).
-- **Graceful stop (F7).** When the host stops, every session is marked `Ended`, and every held and
-  queued grant goes to the API in one `/api/auth/revoke` call (split into calls of 1000 beyond that)
-  within the shutdown grace period. The drain waits at most 5 s for renewals caught in flight, and
-  the log says how many grants were revoked and how many were left.
+- **Graceful stop (F7).** The drain starts when the host begins to stop (`ApplicationStopping`),
+  before any of the BFF's services is asked to stop. Every session is marked `Ended`, and the grants
+  go to the API at once in one `/api/auth/revoke` call (split into calls of 1000 beyond that); a grant
+  whose session had a renewal in flight goes in a second call once the renewal settles, 5 s at most.
+  After the services have stopped, what is left goes in one more call: a session a request still in
+  flight stored or ended after the first pass, and the revoker's queue. Each half runs on a budget of
+  its own, not on the host's shutdown token, and the log says how many grants were revoked and how
+  many were left.
   - This matters because the replica scales to zero about 5 minutes after its last request (the
     platform's 300 s scale-down wait), before the 15-minute idle expiry would end those sessions.
   - A kill (SIGKILL) leaves those grants alive, with no holder, until their cap. That is a residual.
+  - **The drain needs an API that is still up, and that is not in its hands.** On compose the API
+    lives in the BFF's network namespace, so it depends on the BFF, and Compose stops a service
+    before the services it depends on: the API has stopped before the BFF gets its stop signal. There
+    the drain revokes nothing and logs every grant as left. The pre-review saw this on a probe with
+    the same topology on 2026-09-29: the API was sent its stop signal first, and a connect from the
+    BFF at its own stop signal was refused. On Azure both containers of the replica get the stop
+    signal at once, so the drain races the sidecar's own stop. Which one wins is to be measured at
+    the first deployment (the plan's step C2), from the "left" count (§11). A grant the drain misses
+    is the kill's residual above.
 
 ### 4.7 Key refusals on proxied calls (F4)
 
@@ -339,7 +352,7 @@ The BFF's inactivity timeout is 15 minutes (it was 30). The absolute limit stays
 |---|---|---|---|
 | **One session now: "Esci"** | Under the session lock, the BFF marks the session `Ended`, removes it, deletes the cookie and answers 200. `GrantRevoker` then revokes that grant (`SessionEnded`), after any renewal in flight | Signed out at once: the next request with that cookie, from any tab, gets 401. Its access token lived only in that session and goes with it | The core of PR-1 (§4.6) |
 | **One user everywhere now** | `POST /api/auth/logout` (no button yet), or the runbook's SQL for one user (§5.4). In one transaction, all the user's grants are revoked (`SignOutEverywhere`, or `ReuseContainment` when it answers a tripwire) and the user's stamp goes up by 1 | Signed out at the first request after the BFF's next read of the stamps: within 15 s (§5.3). While the BFF cannot read them, at each session's next successful renewal, after up to half the token's life (7.5 minutes) of continued use | The stamp, its own commit of PR-1 (§5.3): the revoke and the raise in `RevokeAllForUserAsync`, `POST /api/auth/session-stamps`, `SessionStampWatcher` and the store's check |
-| **Everyone now** | Restart the revision: the portal's Restart, or `az containerapp revision restart` (<https://learn.microsoft.com/en-us/cli/azure/containerapp/revision#az-containerapp-revision-restart>). Stopping and starting the app also works, with downtime | Signed out at the next request, after a cold start, because no session exists any more (§5.2). The access tokens die with the process memory | None. On a graceful stop the drain of §4.6 also revokes the grants |
+| **Everyone now** | Restart the revision: the portal's Restart, or `az containerapp revision restart` (<https://learn.microsoft.com/en-us/cli/azure/containerapp/revision#az-containerapp-revision-restart>). Stopping and starting the app also works, with downtime | Signed out at the next request, after a cold start, because no session exists any more (§5.2). The access tokens die with the process memory | None. On a graceful stop the drain of §4.6 also revokes the grants if the API still answers: not on compose, and on Azure not yet measured |
 | **Nuclear** | One revision rotates `Jwt:Secret` and `ServiceCredential:BffKey` together (a key rotation is already "a deployment event on both sides", ADR-0055 D4). Then SQL sets `Incident` on every live grant created before that revision | Signed out at the next request, since a new revision is a restart. Every access token ever minted fails its signature check. Every grant is useless without the new key, and is revoked | None: the runbook in §5.4 |
 
 ### 5.1 How fast: the BFF session against the access token
@@ -454,7 +467,8 @@ nobody checks. What that runbook rests on is decided here.
   - The legitimate BFF cannot send a renewal after the session has ended, because `Ended` is checked
     under the session lock (F2).
   - A session lost to a crash or a SIGKILL had no revoke, so its grant still renews until its cap.
-    That cannot be detected; it is a residual.
+    That cannot be detected; it is a residual. So is a session held at a graceful stop whose drain
+    did not reach the API (§4.6).
 - **Writes:** the tripwire, 401, a `RefreshTokenReuse` log line and audit row, and no revoke. In
   flight: Information. Revoked for another reason (`SignOutEverywhere`, `Incident`, `Deployment`):
   Information or Warning, since a live session can innocently learn of those revokes late.
@@ -512,7 +526,7 @@ nobody checks. What that runbook rests on is decided here.
 | Script in the browser (XSS, an extension) | Bounded | The grant never reaches the browser, and the token endpoints refuse the proxy. The script can use the session until the 15- and 60-minute limits or "Esci", as before |
 | Stolen session cookie | Bounded, not detected | 15 minutes idle, 60 absolute, "Esci", a new sign-in in that browser (F13), or the per-user lever (§5) |
 | The service key alone | Bounded | The token endpoints answer 404 to any address that is not loopback (F1), and log a Warning naming what was missing. Without the key, the API answers 401 `SERVICE_CREDENTIAL_REQUIRED` and logs the Warning "no valid service credential" |
-| A memory image of the BFF | Bounded | Usable only from inside the replica. Grants die within 60 minutes, or at "Esci", idle expiry or a graceful stop |
+| A memory image of the BFF | Bounded | Usable only from inside the replica. Grants die within 60 minutes, or at "Esci" or idle expiry, or at a graceful stop whose drain reaches the API (§4.6) |
 | Code running in the replica | Accepted; handled as an incident | It holds everything live, and no token scheme can see it. Answer: the nuclear lever (§5.4) |
 | A second holder of a **live** grant | Accepted, bounded | Unseen until its session ends, at most 60 minutes; under rotation, at most about 15 (§3, F8). Anomaly 2 covers a copy that renews often |
 | An **ended** grant presented again | Detected, not contained automatically | The tripwire: 401, an audit row, a security event (F3). The operator reads the audit trail and pulls a lever (§5.4) |
@@ -520,7 +534,7 @@ nobody checks. What that runbook rests on is decided here.
 | A half-applied key rotation | Bounded | 503 on renewal and on proxied calls (F4). The session is kept and the SPA stays signed in |
 | A false tripwire | Residual, to measure | The revoke waits for the renewal in flight (at most 30 s), so a false tripwire needs the API to stamp an abandoned renewal more than 30 s after it was sent (F9c, measured by O1). The road by which a removed session came back is closed (F2). The cost is one audit row, and nobody is signed out |
 | An access token after its session ends | Accepted, bounded | At most 15 minutes, and only code inside the replica could present it (§5.1) |
-| A revoke lost (an outage, then a kill) | Bounded | Nobody holds the grant, and it dies at its cap. The revoker retries (F12); a graceful stop drains (F7) |
+| A revoke lost (an outage, then a kill) | Bounded | Nobody holds the grant, and it dies at its cap. The revoker retries (F12); a graceful stop drains while the API still answers (F7, §4.6) |
 | An insider replays ended grants | Accepted | One audit row each; they are already inside |
 | The API moves to its own host | Stop | The first precondition fails: DPoP or mTLS first (F1) |
 
@@ -641,7 +655,8 @@ replays of O1 are not among it.
 - **f. Scope.** "Esci" on A marks only A's row `SessionEnded`, and B still renews; re-authentication
   and a new sign-in carrying an old cookie (F13) mark the old grant `SessionEnded`; idle expiry
   revokes the grant within one 5-minute sweep; an "Esci" during a paused SQL is revoked after SQL
-  returns; a graceful stop with 2 sessions revokes both grants and logs "left 0" (F7).
+  returns; a graceful stop with 2 sessions revokes both grants and logs "left 0" (F7), and sends
+  them before any of the BFF's services is asked to stop (`SessionEndingTests`).
 - **g.** 8 concurrent renewals give 8 × 200 with `RowVersion` unchanged
   (`RefreshTokenRotationSqlServerTests.EightConcurrentRenewalsOfOneGrant_AllSucceed_AndChangeNothing`).
 - **h.** A capture sink finds no grant in any log line or audit row.
@@ -678,8 +693,9 @@ replays of O1 are not among it.
 - YARP short-circuiting to 503 from a request transform is seen in tests, through `TestServer`, and
   not yet on the wire.
 - The delay before the `ReceivedAt` stamp under a hang is not measured (O1).
-- Whether the API sidecar still answers the drain after the stop signal reaches both containers of
-  the replica, on Azure. The drain's "left" count will show it.
+- Whether the API sidecar still answers the drain on Azure, where the stop signal reaches both
+  containers of the replica at once and the drain races the sidecar's own stop. The drain's "left"
+  count at the first deployment will show it. On compose it does not: the API stops first (§4.6).
 - The 15 s watcher period, the detector's limit of 3 and its 10 000 grants, and the revoker's 4 in
   parallel and 1000 in the queue are choices.
 - The watcher's period is exercised on a fake clock in the tests; a 15 s poll against the real stack
@@ -736,7 +752,8 @@ replays of O1 are not among it.
   `/bff/auth/session-status`. Oracle O2e.
 - **F6:** the thresholds come from the token's own lifetime; the grant guard applies in both
   branches, and renewal stops when it gains nothing.
-- **F7:** a drain when the host stops, with counts. SIGKILL is stated as a residual.
+- **F7:** a drain when the host begins to stop, with counts. SIGKILL, and an API that has stopped
+  first (compose), are stated as residuals.
 - **F8:** the trade-off against rotation is stated in §3 and §7, and the write-free rate detector is
   recommended (§6).
 - **F9:** (a) the log lines are named before the run; (b) HANG 150 allows 5xx; (c) the send time is

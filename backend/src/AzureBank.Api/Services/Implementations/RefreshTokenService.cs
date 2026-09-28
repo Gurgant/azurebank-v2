@@ -111,9 +111,11 @@ public class RefreshTokenService : IRefreshTokenService
               RecordRefusalAsync, not Record: this path throws, so anything enlisted in the caller's
               unit of work would be rolled back with the 401 — the refusal would erase its own
               record. No actor: the whole point is that nobody could be identified (ADR-0044).
+              CancellationToken.None, as for the tripwire below: the row is the evidence, and a
+              caller that hangs up must not be able to take it back.
             */
             await _audit.RecordRefusalAsync(
-                SecurityEvents.RefreshTokenUnknown, AuditOutcome.Refused, cancellationToken: cancellationToken);
+                SecurityEvents.RefreshTokenUnknown, AuditOutcome.Refused, cancellationToken: CancellationToken.None);
             throw InvalidRefreshToken();
         }
 

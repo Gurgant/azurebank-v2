@@ -61,11 +61,19 @@ public sealed class GrantRevocation(string sessionId, string grant, DateTime ret
 /// the service key, over loopback (06 §3).
 /// </para>
 /// <para>
-/// <b>Graceful stop (F7).</b> When the host begins to stop, every session still held is ended. Once
-/// the workers have stopped, every grant still to revoke — the ended sessions', the queued ones and
-/// those a worker was retrying — goes to the API in one call, and the log says how many were revoked
-/// and how many were left. The replica scales to zero minutes after its last request, long before
-/// the idle sweep would have ended those sessions. A kill leaves them live until their cap.
+/// <b>Graceful stop (F7).</b> The replica scales to zero minutes after its last request, long before
+/// the idle sweep would have ended its sessions, so the drain revokes their grants on the way out.
+/// It starts the moment the host BEGINS to stop, before any service is asked to: the API is a
+/// sidecar that gets its own stop signal at the same moment, and a drain sent once this process's
+/// services had stopped reached an API already gone (the pre-review of PR-1). Every session still
+/// held is ended then, and their grants go to the API at once, in one call — those whose session had
+/// a renewal in flight in a second call, once it settles, 5 s at most. When the workers have
+/// stopped, what is left goes in one more call: a session a request still in flight stored or ended
+/// after the first half, and what was queued or being retried. The log says how many were revoked
+/// and how many were left. Each half runs on a budget of its own, never on the host's shutdown
+/// token, which is already cancelled when a request held Kestrel's stop past its timeout. A grant
+/// the API did not get — a kill, or an API that stopped first, as it does under compose — is live
+/// until its cap, with nobody holding it.
 /// </para>
 /// </remarks>
 public sealed class GrantRevoker : BackgroundService
@@ -96,6 +104,15 @@ public sealed class GrantRevoker : BackgroundService
     /// </summary>
     private static readonly TimeSpan DrainRenewalWait = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// Each half of the graceful-stop drain, from its start to its last call: the renewal wait and
+    /// then a call of <see cref="CallTimeout"/>, with room for a second call past
+    /// <c>RevokeRequest.MaxRefreshTokens</c> grants. Its own, not the host's shutdown token: a request
+    /// that holds Kestrel's graceful stop to its timeout cancels that token before the drain has
+    /// sent anything.
+    /// </summary>
+    private static readonly TimeSpan DrainBudget = TimeSpan.FromSeconds(15);
+
     private readonly Channel<GrantRevocation> _queue = Channel.CreateBounded<GrantRevocation>(
         new BoundedChannelOptions(Capacity) { FullMode = BoundedChannelFullMode.Wait });
 
@@ -114,6 +131,17 @@ public sealed class GrantRevoker : BackgroundService
 
     /// <summary>The graceful-stop drain, once it has started: every later stop waits for it.</summary>
     private TaskCompletionSource? _drain;
+
+    /// <summary>
+    /// The first half of the drain, started when the host began to stop; null until then. Set under
+    /// <see cref="_drainGate"/>, so a stop that reads it finds either nothing or the whole first half.
+    /// </summary>
+    private Task? _drainAtStopping;
+    private readonly Lock _drainGate = new();
+
+    /// <summary>How many grants the drain has taken, and how many of them the API revoked.</summary>
+    private int _drainTaken;
+    private int _drainRevoked;
 
     public GrantRevoker(
         IHttpClientFactory httpClientFactory,
@@ -149,14 +177,37 @@ public sealed class GrantRevoker : BackgroundService
     public override Task StartAsync(CancellationToken cancellationToken)
     {
         // ApplicationStopping fires before any hosted service is asked to stop, so from here on
-        // nothing renews a session and no renewal can race the drain below (06 F7).
-        _onStopping = _lifetime.ApplicationStopping.Register(EndEverySession);
+        // nothing renews a session and no renewal can race the drain (06 F7).
+        _onStopping = _lifetime.ApplicationStopping.Register(BeginDrain);
         return base.StartAsync(cancellationToken);
     }
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
         Task.WhenAll(Enumerable.Range(0, Parallelism)
             .Select(_ => Task.Run(() => WorkAsync(stoppingToken), CancellationToken.None)));
+
+    /// <summary>
+    /// The host has begun to stop, and nothing has been asked to stop yet — on Azure the API sidecar
+    /// has just been sent its own stop signal. Ends every session held and starts revoking their
+    /// grants now rather than after this process's services have stopped (06 F7).
+    /// </summary>
+    private void BeginDrain()
+    {
+        lock (_drainGate)
+        {
+            if (_drainAtStopping is not null)
+            {
+                return;
+            }
+
+            EndEverySession();
+            var ended = TakeEndedAtStop();
+
+            // Task.Run: this runs on the thread that is stopping the host, which must not wait for
+            // the API.
+            _drainAtStopping = Task.Run(() => DrainAsync(ended));
+        }
+    }
 
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
@@ -181,7 +232,48 @@ public sealed class GrantRevoker : BackgroundService
 
         try
         {
-            await DrainAsync(cancellationToken);
+            // The first half, started when the host began to stop, on its own budget. None when
+            // nothing signalled the stop first: the half below then takes every grant.
+            Task? first;
+            lock (_drainGate)
+            {
+                first = _drainAtStopping;
+            }
+            if (first is not null)
+            {
+                await first;
+            }
+
+            // The second half: only what the first could not have taken. Ending every session again
+            // finds those a request still in flight stored after the first pass (a session already
+            // ended is not ended twice); then what the workers had queued or were retrying.
+            EndEverySession();
+            var rest = TakeEndedAtStop();
+            rest.AddRange(_inProgress.Keys);
+            while (_queue.Reader.TryRead(out var queued))
+            {
+                rest.Add(queued);
+            }
+
+            // From here a late ending is logged as dropped rather than queued for nobody.
+            _queue.Writer.TryComplete();
+
+            await DrainAsync(rest);
+
+            // Said even when there was nothing to send, so "the drain ran and found no grant" reads
+            // differently from "the drain never ran" (06 F7, §11 rely on this count).
+            var revoked = Volatile.Read(ref _drainRevoked);
+            var left = Volatile.Read(ref _drainTaken) - revoked;
+            if (left == 0)
+            {
+                _logger.LogInformation(
+                    "Graceful stop: {Revoked} grants revoked, {Left} left", revoked, left);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Graceful stop: {Revoked} grants revoked, {Left} left live until they expire", revoked, left);
+            }
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
@@ -195,83 +287,103 @@ public sealed class GrantRevoker : BackgroundService
     }
 
     /// <summary>
-    /// Ends every session still held, then revokes every grant still to revoke in one call, and
-    /// logs how many were revoked and how many were left (06 §4.6, F7).
+    /// Revokes <paramref name="grants"/> on a graceful stop, on a budget of its own: those whose
+    /// session had no renewal in flight in one call at once, the others in one call once their
+    /// renewals settle, <see cref="DrainRenewalWait"/> at most (06 §4.6, F7). Not retried: the host
+    /// is going away, and a grant this misses dies at its cap with nobody holding it.
     /// </summary>
-    private async Task DrainAsync(CancellationToken cancellationToken)
+    private async Task DrainAsync(IReadOnlyList<GrantRevocation> grants)
     {
-        // Idempotent: a session ended at ApplicationStopping is not ended twice.
-        EndEverySession();
-
-        var pending = new List<GrantRevocation>();
-        while (_endedAtStop.TryDequeue(out var ended))
+        if (grants.Count == 0)
         {
-            pending.Add(ended);
-        }
-        pending.AddRange(_inProgress.Keys);
-        while (_queue.Reader.TryRead(out var queued))
-        {
-            pending.Add(queued);
-        }
-
-        // From here a late ending is logged as dropped rather than queued for nobody.
-        _queue.Writer.TryComplete();
-
-        if (pending.Count == 0)
-        {
-            // Said even when there is nothing to send, so "the drain ran and found no grant" reads
-            // differently from "the drain never ran" (06 F7, §11 rely on this count).
-            _logger.LogInformation("Graceful stop: {Revoked} grants revoked, {Left} left", 0, 0);
             return;
         }
 
-        var renewals = pending
-            .Select(p => p.InFlightRenewal)
-            .OfType<Task>()
-            .Where(t => !t.IsCompleted)
-            .ToArray();
-        if (renewals.Length > 0)
+        Interlocked.Add(ref _drainTaken, grants.Count);
+        using var budget = new CancellationTokenSource(DrainBudget);
+
+        var now = new List<GrantRevocation>();
+        var afterRenewal = new List<(GrantRevocation Grant, Task Renewal)>();
+        foreach (var grant in grants)
         {
-            try
+            if (grant.InFlightRenewal is { IsCompleted: false } renewal)
             {
-                await Task.WhenAll(renewals).WaitAsync(DrainRenewalWait, cancellationToken);
+                afterRenewal.Add((grant, renewal));
             }
-            catch (Exception ex) when (ex is TimeoutException or OperationCanceledException)
+            else
             {
-                // Out of time: revoke anyway. A late renewal costs one audit row, never a sign-out.
+                now.Add(grant);
             }
         }
 
-        // One call (more only past RevokeRequest.MaxRefreshTokens grants), not retried: the host is
-        // going away, and a grant this misses dies at its cap with nobody holding it.
-        var revoked = 0;
+        await Task.WhenAll(
+            SendAtStopAsync(now, budget.Token),
+            SendAfterRenewalsAsync(afterRenewal, budget.Token));
+    }
+
+    /// <summary>
+    /// Waits for the renewals the sessions had in flight, <see cref="DrainRenewalWait"/> at most, then
+    /// sends their grants: a revoke that overtook a renewal sent before it would make that renewal
+    /// the tripwire at the API (06 §4.6, F2).
+    /// </summary>
+    private async Task SendAfterRenewalsAsync(
+        List<(GrantRevocation Grant, Task Renewal)> pending, CancellationToken budget)
+    {
+        if (pending.Count == 0)
+        {
+            return;
+        }
+
         try
         {
-            foreach (var chunk in pending.Chunk(RevokeRequest.MaxRefreshTokens))
+            await Task.WhenAll(pending.Select(p => p.Renewal)).WaitAsync(DrainRenewalWait, budget);
+        }
+        catch (Exception ex) when (ex is TimeoutException or OperationCanceledException)
+        {
+            // Out of time: revoke anyway. A late renewal costs one audit row, never a sign-out.
+        }
+
+        await SendAtStopAsync([.. pending.Select(p => p.Grant)], budget);
+    }
+
+    /// <summary>
+    /// One call (more only past <c>RevokeRequest.MaxRefreshTokens</c> grants), counting what the
+    /// API revoked. Never throws: what was not sent is counted as left.
+    /// </summary>
+    private async Task SendAtStopAsync(IReadOnlyList<GrantRevocation> grants, CancellationToken budget)
+    {
+        try
+        {
+            foreach (var chunk in grants.Chunk(RevokeRequest.MaxRefreshTokens))
             {
-                var (result, _) = await SendAsync([.. chunk.Select(p => p.Grant)], cancellationToken);
+                var (result, _) = await SendAsync([.. chunk.Select(p => p.Grant)], budget);
                 if (result == SendResult.Revoked)
                 {
-                    revoked += chunk.Length;
+                    Interlocked.Add(ref _drainRevoked, chunk.Length);
                 }
             }
         }
         catch (OperationCanceledException)
         {
-            // The shutdown grace period ran out: what was not revoked is counted as left below.
+            // The drain's budget ran out.
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // A stop must never fail because a revoke did: the grants left die at their cap.
+            _logger.LogError(ex, "Graceful stop: a revoke call of the drain failed");
+        }
+    }
+
+    /// <summary>The grants of the sessions ended because the host is stopping, not yet taken.</summary>
+    private List<GrantRevocation> TakeEndedAtStop()
+    {
+        var ended = new List<GrantRevocation>();
+        while (_endedAtStop.TryDequeue(out var grant))
+        {
+            ended.Add(grant);
         }
 
-        var left = pending.Count - revoked;
-        if (left == 0)
-        {
-            _logger.LogInformation(
-                "Graceful stop: {Revoked} grants revoked, {Left} left", revoked, left);
-        }
-        else
-        {
-            _logger.LogWarning(
-                "Graceful stop: {Revoked} grants revoked, {Left} left live until they expire", revoked, left);
-        }
+        return ended;
     }
 
     public override void Dispose()

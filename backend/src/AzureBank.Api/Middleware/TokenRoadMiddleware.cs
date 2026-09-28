@@ -25,7 +25,7 @@ public sealed class TokenRoadOptions
 /// <summary>
 /// Answers 404 to a token endpoint (<see cref="TokenEndpointAttribute"/>) unless the request came
 /// over loopback AND carries exactly one <see cref="ServiceCredentialOptions.TokenRoadHeaderName"/>
-/// (06 §4.2).
+/// whose value is <see cref="ServiceCredentialOptions.TokenRoadMarker"/> (06 §4.2).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -34,8 +34,11 @@ public sealed class TokenRoadOptions
 /// inside the replica has. Loopback alone does not hold that line: the BFF's proxy also reaches the
 /// API over loopback, and adds the key to every browser request. So the BFF's own client adds the
 /// marker, its proxy strips any copy a browser sends, and this refuses a request without exactly one:
-/// two would arrive as two values, and picking one is how a smuggled header gets believed — the rule
-/// the key follows in <see cref="ServiceCredentialMiddleware"/>.
+/// picking one of two is how a smuggled header gets believed — the rule the key follows in
+/// <see cref="ServiceCredentialMiddleware"/>. Two can arrive as two values, or, over a real socket,
+/// as ONE value: SocketsHttpHandler writes two values of a header on one line, "bff, bff", and
+/// Kestrel hands the line over whole (measured by the pre-review of PR-1). The key's rule holds
+/// either way because its value is compared; so the marker's value is compared too, exactly.
 /// </para>
 /// <para>
 /// <b>404, not 401 or 403,</b> so a caller off the road is told only what an unknown path tells it.
@@ -105,9 +108,21 @@ public sealed class TokenRoadMiddleware
         }
 
         var markers = context.Request.Headers[ServiceCredentialOptions.TokenRoadHeaderName];
-        if (markers.Count != 1 || string.IsNullOrEmpty(markers[0]))
+        if (markers.Count > 1)
         {
-            return markers.Count > 1 ? "more than one token-road marker" : "no token-road marker";
+            return "more than one token-road marker";
+        }
+
+        if (markers.Count == 0 || string.IsNullOrEmpty(markers[0]))
+        {
+            return "no token-road marker";
+        }
+
+        // The one value must be the marker itself: two markers sent over a socket arrive as ONE
+        // value, "bff, bff", which a count of values takes for one.
+        if (!string.Equals(markers[0], ServiceCredentialOptions.TokenRoadMarker, StringComparison.Ordinal))
+        {
+            return "a token-road marker that is not the BFF's";
         }
 
         return null;

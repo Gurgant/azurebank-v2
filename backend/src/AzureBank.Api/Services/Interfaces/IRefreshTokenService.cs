@@ -28,7 +28,7 @@ public interface IRefreshTokenService
     /// </summary>
     /// <param name="presentedToken">The grant's plaintext.</param>
     /// <param name="receivedAt">When the API received the request (<c>ReceivedAtClock</c>).</param>
-    /// <param name="cancellationToken">Cancels the read only; the tripwire's audit write ignores it.</param>
+    /// <param name="cancellationToken">Cancels the read only; neither refusal's audit write takes it.</param>
     Task<RenewResult> RenewAsync(
         string presentedToken, DateTime receivedAt, CancellationToken cancellationToken = default);
 

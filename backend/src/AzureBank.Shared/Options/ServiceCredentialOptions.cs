@@ -22,7 +22,10 @@ public class ServiceCredentialOptions
     public const string TokenRoadHeaderName = "X-AzureBank-Token-Road";
 
     /// <summary>The value the BFF's own client sends in <see cref="TokenRoadHeaderName"/>.</summary>
-    /// <remarks>Not a secret, and the API does not compare it: what counts is that exactly one arrived.</remarks>
+    /// <remarks>
+    /// Not a secret. The API compares it all the same, exactly: two markers sent over a socket arrive
+    /// as one value, <c>bff, bff</c>, and only the comparison refuses that (TokenRoadMiddleware).
+    /// </remarks>
     public const string TokenRoadMarker = "bff";
 
     /// <summary>

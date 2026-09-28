@@ -8,16 +8,19 @@ using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.Options;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
-using Microsoft.AspNetCore.TestHost;
+using FluentAssertions.Execution;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace AzureBank.Tests.Integration;
 
 /// <summary>
 /// The token endpoints answer only the BFF's own client over loopback (06 §4.2, O2d): 404 to an
-/// address that is not loopback, to a request without exactly one token-road marker, and to a null
-/// address unless the test host says otherwise — the key and a live grant notwithstanding.
+/// address that is not loopback, to a request without exactly one token-road marker whose value is
+/// the BFF's, and to a null address unless the test host says otherwise — the key and a live grant
+/// notwithstanding.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -48,17 +51,30 @@ public class TokenRoadTests : IntegrationTestBase
         "/api/auth/session-stamps",
     ];
 
-    private async Task<(string Access, string Grant)> SignInAsync()
+    /// <summary>
+    /// Registers a user through <paramref name="client"/> (the class's own by default), from
+    /// <paramref name="from"/> when a host needs an address, and returns its tokens.
+    /// </summary>
+    private async Task<(string Access, string Grant)> SignInAsync(HttpClient? client = null, string? from = null)
     {
         var unique = Guid.NewGuid().ToString("N")[..8];
-        var response = await Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/register")
         {
-            AzureTag = $"road_{unique}",
-            Email = $"road{unique}@example.com",
-            Password = TestUserPassword,
-            FirstName = "Token",
-            LastName = "Road"
-        }, JsonOptions);
+            Content = JsonContent.Create(new RegisterRequest
+            {
+                AzureTag = $"road_{unique}",
+                Email = $"road{unique}@example.com",
+                Password = TestUserPassword,
+                FirstName = "Token",
+                LastName = "Road"
+            }, options: JsonOptions)
+        };
+        if (from is not null)
+        {
+            request.Headers.Add(FakeRemoteAddressStartupFilter.HeaderName, from);
+        }
+
+        var response = await (client ?? Client).SendAsync(request);
         response.EnsureSuccessStatusCode();
         var token = (await response.Content.ReadFromJsonAsync<ApiResponse<RegisterResponse>>(JsonOptions))!.Data!.Token;
         return (token.AccessToken, token.RefreshToken!);
@@ -163,6 +179,30 @@ public class TokenRoadTests : IntegrationTestBase
     }
 
     [Theory]
+    [InlineData("/api/auth/refresh", "bff, bff")] // two markers as a socket carries them: one line
+    [InlineData("/api/auth/refresh", "bff,bff")]
+    [InlineData("/api/auth/refresh", "BFF")]
+    [InlineData("/api/auth/refresh", "x")]
+    [InlineData("/api/auth/session-stamps", "bff, bff")]
+    public async Task FromLoopback_OneMarkerValueThatIsNotExactlyTheBffs_Is404(string path, string marker)
+    {
+        // Over a real socket two markers need not arrive as two values. SocketsHttpHandler, which the
+        // BFF's client and its proxy both use, writes two values of one header on one line, and
+        // Kestrel hands that line over as ONE value, "bff, bff" (measured by the pre-review on .NET
+        // 10; TestServer, which keeps them apart, cannot show it). Counting values misses that, so
+        // the one value must be the BFF's marker itself. FromLoopback_WithTheMarker is the control.
+        var (access, grant) = await SignInAsync();
+        using var client = Factory.CreateClient();
+        client.DefaultRequestHeaders.Remove(ServiceCredentialOptions.TokenRoadHeaderName);
+        var request = Post(path, grant, access, from: "127.0.0.1");
+        request.Headers.TryAddWithoutValidation(ServiceCredentialOptions.TokenRoadHeaderName, marker);
+
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Theory]
     [InlineData(0, HttpStatusCode.NotFound)]
     [InlineData(1, HttpStatusCode.OK)]
     [InlineData(2, HttpStatusCode.NotFound)]
@@ -186,21 +226,38 @@ public class TokenRoadTests : IntegrationTestBase
     }
 
     [Fact]
-    public async Task ANullAddress_IsRefused_UnlessTheHostSaysOtherwise()
+    public async Task ANullAddress_IsRefused_ByTheOptionsTheApiRegisters_WhateverTheConfigurationSays()
     {
-        // 06 F1: a null address is accepted only when code sets the option, and only the test host
-        // does. Turned back off here, a request with no address — TestServer's — is refused.
-        var (access, grant) = await SignInAsync();
-        using var strict = Factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
-            services.PostConfigure<TokenRoadOptions>(o => o.AcceptMissingRemoteAddress = false)));
-        using var client = strict.CreateClient();
+        /*
+          06 F1: a null address is accepted only when code sets the option, and only the test host
+          does. This host leaves the API's own registration as it is, and is given settings that
+          would turn the option on if anything bound it to configuration. The value the host resolves
+          must still be false, nothing may be registered to configure it, and a request with no
+          address — TestServer's — is refused while the same grant renews over loopback.
+        */
+        using var production = new CustomWebApplicationFactory { AcceptMissingRemoteAddress = false };
+        using var host = production.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting("TokenRoad:AcceptMissingRemoteAddress", "true");
+            builder.UseSetting("TokenRoadOptions:AcceptMissingRemoteAddress", "true");
+            builder.UseSetting("AcceptMissingRemoteAddress", "true");
+        });
+        using var client = host.CreateClient();
+        var (access, grant) = await SignInAsync(client, from: "127.0.0.1");
 
         var refused = await client.SendAsync(Post("/api/auth/refresh", grant, access, from: null));
         var fromLoopback = await client.SendAsync(Post("/api/auth/refresh", grant, access, from: "127.0.0.1"));
 
-        refused.StatusCode.Should().Be(HttpStatusCode.NotFound);
-        fromLoopback.StatusCode.Should().Be(HttpStatusCode.OK, "the same host answers the same grant over loopback");
-        new TokenRoadOptions().AcceptMissingRemoteAddress.Should().BeFalse("never by default");
+        using (new AssertionScope())
+        {
+            host.Services.GetRequiredService<IOptions<TokenRoadOptions>>().Value.AcceptMissingRemoteAddress
+                .Should().BeFalse("no configuration can set it");
+            host.Services.GetServices<IConfigureOptions<TokenRoadOptions>>().Should().BeEmpty(
+                "nothing configures the option in the API: not a binding under any section, not code");
+            host.Services.GetServices<IPostConfigureOptions<TokenRoadOptions>>().Should().BeEmpty();
+            refused.StatusCode.Should().Be(HttpStatusCode.NotFound);
+            fromLoopback.StatusCode.Should().Be(HttpStatusCode.OK, "the same host answers the same grant over loopback");
+        }
     }
 
     [Fact]

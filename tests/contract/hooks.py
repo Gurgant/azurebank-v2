@@ -44,8 +44,7 @@ import schemathesis
 SERVICE_KEY_ENV = "AZUREBANK_SERVICE_KEY"
 SERVICE_KEY_HEADER = "X-AzureBank-Service-Key"
 # The BFF's own marker (ServiceCredentialOptions.TokenRoadHeaderName and TokenRoadMarker). Not a
-# secret, and the API does not compare the value: what counts is that exactly one arrived, and
-# that it is not empty.
+# secret, but the API compares the value exactly: one header, and that value, or 404.
 TOKEN_ROAD_HEADER = "X-AzureBank-Token-Road"
 TOKEN_ROAD_MARKER = "bff"
 # Optional: the bearer token of a user who already exists, used instead of registering one.

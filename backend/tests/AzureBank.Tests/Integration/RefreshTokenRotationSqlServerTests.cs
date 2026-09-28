@@ -1,16 +1,20 @@
+using System.Data.Common;
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AzureBank.Api.Services.Interfaces;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.Enums;
+using AzureBank.Shared.Exceptions;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Serilog.Events;
 
@@ -282,6 +286,76 @@ public sealed class RefreshTokenRotationSqlServerTests : IDisposable
         commands.Writes.Should().BeEmpty("the detector counts in memory; nothing reaches the database");
         (await CountAllAuditRowsAsync()).Should().Be(auditRowsBefore, "the event is a log line, never an audit row");
         (await CountAuditAsync(userId, SecurityEvents.RefreshRenewalRateHigh)).Should().Be(0);
+    }
+
+    [SqlServerFact]
+    public async Task AnUnknownGrantsAuditRow_IsWrittenEvenWhenTheCallerHangsUpDuringIt()
+    {
+        /*
+          The unknown grant's refusal on real SQL Server, through the real audit service. The caller's
+          token is cancelled as the row's INSERT is about to go out, and SqlClient refuses a command
+          whose token is already cancelled: a write given the caller's token writes nothing. The row
+          must be there all the same (IRefreshTokenService: the token cancels the read only).
+        */
+        _factory = new CustomWebApplicationFactory();
+        _factory.SetConnectionString(SqlServerFactAttribute.ConnectionString!);
+        _factory.CreateClient().Dispose();
+        using var caller = new CancellationTokenSource();
+        var hangUp = new HangUpAtTheAuditInsert(caller);
+        var before = await CountAllAuditRowsAsync(SecurityEvents.RefreshTokenUnknown);
+        _factory.AddInterceptor(hangUp);
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var grants = scope.ServiceProvider.GetRequiredService<IRefreshTokenService>();
+            var renewal = () => grants.RenewAsync($"never-issued-{Guid.NewGuid():N}", DateTime.UtcNow, caller.Token);
+
+            await renewal.Should().ThrowAsync<AuthenticationException>("the refusal is still the uniform 401");
+        }
+
+        hangUp.Fired.Should().BeTrue("the caller must have hung up during the write, or the row proves nothing");
+        (await CountAllAuditRowsAsync(SecurityEvents.RefreshTokenUnknown)).Should().Be(before + 1,
+            "the refusal's row is written although the caller hung up");
+    }
+
+    /// <summary>Cancels the caller's token as the first AuditEvents INSERT is about to be sent.</summary>
+    private sealed class HangUpAtTheAuditInsert(CancellationTokenSource caller) : DbCommandInterceptor
+    {
+        private int _armed = 1;
+
+        public bool Fired => Volatile.Read(ref _armed) == 0;
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            HangUpAt(command);
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            HangUpAt(command);
+            return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        private void HangUpAt(DbCommand command)
+        {
+            if (command.CommandText.Contains("INSERT INTO [AuditEvents]", StringComparison.Ordinal)
+                && Interlocked.CompareExchange(ref _armed, 0, 1) == 1)
+            {
+                caller.Cancel();
+            }
+        }
+    }
+
+    private async Task<int> CountAllAuditRowsAsync(string securityEvent)
+    {
+        using var scope = _factory!.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        return await db.AuditEvents.AsNoTracking().CountAsync(e => e.Event == securityEvent);
     }
 
     private async Task<int> CountAllAuditRowsAsync()

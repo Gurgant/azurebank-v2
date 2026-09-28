@@ -263,6 +263,21 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
     private static UserSessionRef Session(WebApplicationFactory<Program> factory, string sessionId) =>
         new(factory.Services.GetRequiredService<ISessionService>().GetSession(sessionId));
 
+    /// <summary>
+    /// Whether the session has a renewal running. A renewal is registered on the session, under its
+    /// lock, before the request that started it goes on, and cleared only after its call to the API
+    /// has returned. So, right after a response, nothing in flight and then no call counted — read in
+    /// that order — means no renewal started: no wait, and nothing a slow thread pool could outrun.
+    /// </summary>
+    private static bool RenewalInFlight(WebApplicationFactory<Program> factory, string sessionId)
+    {
+        var session = Session(factory, sessionId).Value!;
+        lock (session.SyncRoot)
+        {
+            return session.InFlightRenewal is not null;
+        }
+    }
+
     private readonly record struct UserSessionRef(AzureBank.Bff.Models.UserSession? Value);
 
     /// <summary>Polls until <paramref name="condition"/> holds, or the timeout passes.</summary>
@@ -417,6 +432,42 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
             await client.SendAsync(Proxied(HttpMethod.Get, "/api/accounts", cookieName, sessionId));
             api.RefreshCalls.Should().Be(1, "no renewal starts within 15 s of a failed one");
             forwarder.Forwarded.Should().HaveCount(2).And.OnlyContain(f => f.Auth == $"Bearer {held}");
+        }
+    }
+
+    [Theory]
+    [InlineData(3, false)] // 5 s or less left: 503, nothing forwarded
+    [InlineData(15, true)] // more than 5 s left: the held token is sent
+    public async Task AfterAFailedRenewal_TheHeldTokenIsSentOnlyWithMoreThan5sLeft(int leftSeconds, bool forwarded)
+    {
+        // 06 §4.5 (critique #15): after a failed renewal the held token goes out only with MORE than
+        // 5 s left. With less it could expire on its way, and the API, which checks expiry with no
+        // clock skew, would answer 401 AUTH_TOKEN_EXPIRED: the sign-out this PR closes (06 §1). Both
+        // rows are inside the foreground window (min(60 s, L/4)), so the caller waits for the
+        // renewal, which the API answers 500 at once; T4 is the far side of the margin, T10 an
+        // expired token.
+        var api = new FakeApi { OnRefresh = _ => new HttpResponseMessage(HttpStatusCode.InternalServerError) };
+        var (factory, forwarder) = Build(api);
+        var (sessionId, cookieName, held) = NewJwtSession(factory, lifetimeSeconds: 900, leftSeconds: leftSeconds);
+
+        var response = await factory.CreateClient().SendAsync(Proxied(HttpMethod.Get, "/api/accounts", cookieName, sessionId));
+
+        api.RefreshCalls.Should().Be(1, "the renewal must have been tried, and failed, for the margin to apply");
+        using (new AssertionScope())
+        {
+            Session(factory, sessionId).Value.Should().NotBeNull("a 5xx on renewal keeps the session");
+            if (forwarded)
+            {
+                response.StatusCode.Should().Be(HttpStatusCode.OK);
+                forwarder.Forwarded.Should().ContainSingle().Which.Auth.Should().Be($"Bearer {held}");
+            }
+            else
+            {
+                response.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable,
+                    $"a token with {leftSeconds} s left could expire before the API reads it");
+                response.Headers.RetryAfter.Should().NotBeNull();
+                forwarder.Forwarded.Should().BeEmpty("a token with 5 s or less left is not sent");
+            }
         }
     }
 
@@ -789,8 +840,9 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
         }
         else
         {
-            // The rows above that renew are this row's positive control: same harness, same wait.
-            await Task.Delay(200);
+            // The rows above that renew are this row's positive control: the same request, with a
+            // renewal due. No wait here: see RenewalInFlight.
+            RenewalInFlight(factory, sessionId).Should().BeFalse("more than half the token's life is left");
             api.RefreshCalls.Should().Be(0, "more than half the token's life is left");
             Session(factory, sessionId).Value!.AccessToken.Should().Be(held);
         }
@@ -943,9 +995,10 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
             "a renewal ran, and gained nothing");
 
         await client.SendAsync(Proxied(HttpMethod.Get, "/api/accounts", cookieName, sessionId));
-        await Task.Delay(200);
         using (new AssertionScope())
         {
+            RenewalInFlight(factory, sessionId).Should().BeFalse(
+                "the second request is in the background window too, and starts nothing");
             api.RefreshCalls.Should().Be(1, "the second request is in the background window too, and starts nothing");
             Session(factory, sessionId).Value!.AccessToken.Should().Be(held, "an expiry that is not later is not stored");
         }
@@ -963,8 +1016,8 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
             grantExpiresAt: expiresAt.AddMilliseconds(500));
 
         await factory.CreateClient().SendAsync(Proxied(HttpMethod.Get, "/api/accounts", cookieName, sessionId));
-        await Task.Delay(200);
 
+        RenewalInFlight(factory, sessionId).Should().BeFalse("a renewal could gain less than a second");
         api.RefreshCalls.Should().Be(0, "a renewal could gain less than a second");
         forwarder.Forwarded.Should().ContainSingle().Which.Auth.Should().Be($"Bearer {held}");
     }

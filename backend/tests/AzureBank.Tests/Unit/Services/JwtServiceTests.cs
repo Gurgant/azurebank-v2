@@ -1,9 +1,11 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using AzureBank.Api.Services;
 using AzureBank.Api.Services.Implementations;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Options;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -239,25 +241,6 @@ public class JwtServiceTests
 
         result.ExpiresAt.Should().BeCloseTo(before.AddMinutes(_options.ExpirationMinutes), TimeSpan.FromSeconds(5),
             "a cap later than the normal lifetime changes nothing");
-    }
-
-    [Fact]
-    public void GenerateToken_WithANotAfterReadBackFromSqlServer_TreatsItAsUtc()
-    {
-        /*
-          SQL Server hands a datetime2 back as DateTimeKind.Unspecified, and the token library
-          converts an Unspecified value AS LOCAL TIME. On a machine east of UTC that would end the
-          token hours before its grant; west of UTC, hours after it — past the grant, which is the
-          one thing 06 §4.1 forbids. Only a machine whose zone is not UTC can see this fail.
-        */
-        var user = CreateTestUser();
-        var utc = DateTime.UtcNow.AddMinutes(5);
-        var unspecified = DateTime.SpecifyKind(utc, DateTimeKind.Unspecified);
-
-        var result = _sut.GenerateToken(user, unspecified);
-
-        result.ExpiresAt.Should().BeCloseTo(utc, TimeSpan.FromSeconds(1));
-        result.ExpiresAt.Should().BeOnOrBefore(utc);
     }
 
     [Fact]
@@ -507,4 +490,55 @@ public class JwtServiceTests
     }
 
     #endregion
+}
+
+/// <summary>
+/// The JwtService proof that depends on the process's local time zone, run in a zone it sets itself
+/// (<see cref="LocalTimeZone"/>), so it can fail on CI's UTC runners as well as on a machine east or
+/// west of UTC.
+/// </summary>
+[Collection(LocalTimeZoneCollection.Name)]
+public class JwtServiceLocalTimeZoneTests
+{
+    [Fact]
+    public void GenerateToken_WithANotAfterReadBackFromSqlServer_TreatsItAsUtc_WhateverTheLocalZone()
+    {
+        /*
+          SQL Server hands a datetime2 back as DateTimeKind.Unspecified, and the token library
+          converts an Unspecified value AS LOCAL TIME. West of UTC that makes the token outlive its
+          grant by hours, the one thing 06 §4.1 forbids; east of UTC it ends hours early. In UTC the
+          conversion changes nothing, so this test used to be green there with the guard deleted:
+          it now puts the process seven hours west of UTC itself.
+        */
+        var sut = new JwtService(
+            Options.Create(new JwtOptions
+            {
+                Secret = "ThisIsAVeryLongSecretKeyForTestingPurposesAtLeast32Chars!",
+                Issuer = "AzureBank.Tests",
+                Audience = "AzureBank.Api.Tests",
+                ExpirationMinutes = 15
+            }),
+            new Mock<ILogger<JwtService>>().Object);
+        var user = new ApplicationUser
+        {
+            Id = Guid.NewGuid(),
+            Email = "test@example.com",
+            AzureTag = "test.user",
+            FirstName = "Test",
+            LastName = "User"
+        };
+        var utc = DateTime.UtcNow.AddMinutes(5);
+        var unspecified = DateTime.SpecifyKind(utc, DateTimeKind.Unspecified);
+
+        TokenResult result;
+        using (LocalTimeZone.Use(LocalTimeZone.SevenHoursWestOfUtc))
+        {
+            TimeZoneInfo.Local.GetUtcOffset(utc).Should().Be(TimeSpan.FromHours(-7),
+                "the zone must have reached the process, or the proof runs in the machine's zone");
+            result = sut.GenerateToken(user, unspecified);
+        }
+
+        result.ExpiresAt.Should().BeCloseTo(utc, TimeSpan.FromSeconds(1));
+        result.ExpiresAt.Should().BeOnOrBefore(utc, "no access token outlives the grant it came from");
+    }
 }

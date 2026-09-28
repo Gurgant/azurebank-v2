@@ -5,14 +5,17 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using AzureBank.Bff.Options;
+using AzureBank.Bff.Services;
 using AzureBank.Bff.Services.Interfaces;
 using AzureBank.Shared.DTOs.Auth;
+using AzureBank.Shared.Utilities;
 using FluentAssertions;
 using FluentAssertions.Execution;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Serilog.Core;
 using Serilog.Events;
@@ -50,9 +53,28 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
     /// </summary>
     private sealed class Upstream
     {
+        private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+        private readonly TaskCompletionSource _firstRevoke = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _revokeCalls;
+        private volatile bool _gone;
         public int RevokeCalls => Volatile.Read(ref _revokeCalls);
         public ConcurrentQueue<string> RevokedGrants { get; } = new();
+
+        /// <summary>Each revoke call as it arrived: when, on this upstream's own clock, and its grants.</summary>
+        public ConcurrentQueue<(TimeSpan At, string[] Grants)> RevokeCallLog { get; } = new();
+
+        /// <summary>Completes when the first revoke call arrives.</summary>
+        public Task FirstRevoke => _firstRevoke.Task;
+
+        /// <summary>
+        /// Set once the API has stopped: from then on every call fails as a connect to a closed port
+        /// does, which is how a sidecar that stopped first answers the BFF.
+        /// </summary>
+        public bool Gone
+        {
+            get => _gone;
+            set => _gone = value;
+        }
 
         /// <summary>
         /// The answer to POST /api/auth/revoke, after it is recorded. Default: 200.
@@ -71,17 +93,26 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
 
         public HttpResponseMessage Respond(HttpRequestMessage request)
         {
+            if (_gone)
+            {
+                throw new HttpRequestException("Connection refused: the API has stopped");
+            }
+
             switch (request.RequestUri!.AbsolutePath)
             {
                 case "/api/auth/revoke":
                     Interlocked.Increment(ref _revokeCalls);
+                    var grants = new List<string>();
                     using (var body = JsonDocument.Parse(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult()))
                     {
                         foreach (var grant in body.RootElement.GetProperty("refreshTokens").EnumerateArray())
                         {
+                            grants.Add(grant.GetString()!);
                             RevokedGrants.Enqueue(grant.GetString()!);
                         }
                     }
+                    RevokeCallLog.Enqueue((_clock.Elapsed, [.. grants]));
+                    _firstRevoke.TrySetResult();
                     return OnRevoke();
 
                 case "/api/auth/login":
@@ -155,15 +186,105 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
         public void Emit(LogEvent logEvent) => events.Enqueue(logEvent);
     }
 
+    /// <summary>
+    /// A hosted service registered after GrantRevoker, so the host asks it to stop first. At its stop
+    /// it notes whether a revoke had reached the API by then — waiting up to 10 s, so the answer is
+    /// about order and not about a few milliseconds — and then does what the test gives it.
+    /// </summary>
+    /// <remarks>
+    /// The test host is stopped twice, by the factory and by Program's own <c>app.Run()</c>
+    /// (GrantRevoker.StopAsync says how that was measured). Every call returns the one stop, so
+    /// neither of them gets past this service before it is done.
+    /// </remarks>
+    private sealed class StoppedBeforeTheRevoker(Action<Upstream, IServiceProvider> atStop) : IHostedService
+    {
+        private readonly Lock _gate = new();
+        private Task? _stop;
+
+        public Upstream? Upstream { get; set; }
+        public IServiceProvider? Services { get; set; }
+
+        /// <summary>Whether a revoke had reached the API when the host asked this service to stop.</summary>
+        public bool RevokeHadArrived { get; private set; }
+
+        public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task StopAsync(CancellationToken cancellationToken)
+        {
+            lock (_gate)
+            {
+                return _stop ??= StopOnceAsync();
+            }
+        }
+
+        private async Task StopOnceAsync()
+        {
+            var first = Upstream!.FirstRevoke;
+            RevokeHadArrived = await Task.WhenAny(first, Task.Delay(TimeSpan.FromSeconds(10))) == first;
+            atStop(Upstream, Services!);
+        }
+    }
+
+    /// <summary>What <see cref="HeldRevokes"/> holds, shared by every handler the client factory builds.</summary>
+    private sealed class RevokeHold
+    {
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>Every grant a revoke call has brought in, held or not.</summary>
+        public ConcurrentDictionary<string, byte> Arrived { get; } = new();
+
+        public Task Released => _release.Task;
+
+        public void Release() => _release.TrySetResult();
+    }
+
+    /// <summary>
+    /// The "BackendApi" handler of an API that sits on every revoke until <see cref="RevokeHold.Release"/>.
+    /// It waits asynchronously, holding no pool thread, and with its call's own cancellation token;
+    /// then, and for every other call, <paramref name="upstream"/> answers.
+    /// </summary>
+    private sealed class HeldRevokes(Upstream upstream, RevokeHold hold) : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.AbsolutePath == "/api/auth/revoke")
+            {
+                using (var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken)))
+                {
+                    foreach (var grant in body.RootElement.GetProperty("refreshTokens").EnumerateArray())
+                    {
+                        hold.Arrived.TryAdd(grant.GetString()!, 0);
+                    }
+                }
+                await hold.Released.WaitAsync(cancellationToken);
+            }
+            return upstream.Respond(request);
+        }
+    }
+
     private (WebApplicationFactory<Program> Host, Upstream Upstream) NewHost(
-        ConcurrentQueue<LogEvent>? log = null, bool disposeWithTheClass = true)
+        ConcurrentQueue<LogEvent>? log = null, bool disposeWithTheClass = true,
+        StoppedBeforeTheRevoker? stopper = null, RevokeHold? hold = null)
     {
         var upstream = new Upstream();
         var host = _factory.WithWebHostBuilder(builder =>
         {
             builder.ConfigureTestServices(services =>
-                services.AddHttpClient("BackendApi").ConfigurePrimaryHttpMessageHandler(
-                    () => new FakeBackendApiHandler(upstream.Respond)));
+            {
+                services.AddHttpClient("BackendApi").ConfigurePrimaryHttpMessageHandler(() => hold is null
+                    ? new FakeBackendApiHandler(upstream.Respond)
+                    : new HeldRevokes(upstream, hold));
+                if (stopper is not null)
+                {
+                    stopper.Upstream = upstream;
+                    services.AddHostedService(provider =>
+                    {
+                        stopper.Services = provider;
+                        return stopper;
+                    });
+                }
+            });
             if (log is not null)
             {
                 builder.ConfigureServices(services => services.AddSingleton<ILogEventSink>(new QueueSink(log)));
@@ -178,7 +299,11 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
 
     private static string NewSession(
         WebApplicationFactory<Program> host, string grant, DateTime? grantExpiresAt = null) =>
-        host.Services.GetRequiredService<ISessionService>().CreateSession(
+        NewSession(host.Services, grant, grantExpiresAt);
+
+    private static string NewSession(
+        IServiceProvider services, string grant, DateTime? grantExpiresAt = null) =>
+        services.GetRequiredService<ISessionService>().CreateSession(
             "jwt-0",
             DateTime.UtcNow.AddMinutes(15),
             grant,
@@ -366,6 +491,161 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
             summary.Should().ContainSingle("the drain ran once, and said so");
             summary.Single().Properties["Revoked"].ToString().Should().Be("0");
             summary.Single().Properties["Left"].ToString().Should().Be("0");
+        }
+    }
+
+    [Fact]
+    public async Task AGracefulStop_SendsTheHeldGrantsBeforeAnyServiceIsAskedToStop()
+    {
+        /*
+          06 F7, as the pre-review found it. The API is a sidecar that stops with the BFF: on Azure
+          both containers get the stop signal at once. A drain sent only once the BFF's own services
+          had stopped reached an API already gone, and revoked nothing. It starts now when the host
+          BEGINS to stop, before any service is asked to. The stand-in below is stopped before
+          GrantRevoker, and takes the API away when it is: what the drain has not sent by then is left.
+        */
+        var log = new ConcurrentQueue<LogEvent>();
+        var stopper = new StoppedBeforeTheRevoker((upstream, _) => upstream.Gone = true);
+        var (host, upstream) = NewHost(log, disposeWithTheClass: false, stopper);
+        NewSession(host, "rt-held-1");
+        NewSession(host, "rt-held-2");
+        host.CreateClient();
+
+        await host.DisposeAsync();
+
+        var summary = Named(log, "Graceful stop:").ToList();
+        using (new AssertionScope())
+        {
+            stopper.RevokeHadArrived.Should().BeTrue(
+                "the drain starts when the host begins to stop, not after its services have stopped");
+            upstream.RevokedGrants.Should().BeEquivalentTo(["rt-held-1", "rt-held-2"]);
+            summary.Should().ContainSingle();
+            summary.Single().Properties["Revoked"].ToString().Should().Be("2");
+            summary.Single().Properties["Left"].ToString().Should().Be("0");
+        }
+    }
+
+    [Fact]
+    public async Task AGracefulStop_SendsTheGrantsWithNoRenewalInFlightAtOnce_AndTheOthersWithin5s()
+    {
+        /*
+          06 §4.6 and F2, at the stop. A revoke that overtook a renewal sent before it would make that
+          renewal the tripwire at the API, so the grant of a session renewing when the host stops
+          waits for its renewal: 5 s at most, the drain's share of the grace period. Nothing else
+          waits for it. The renewal here is one the API sits on past the stop, so the 5 s run out.
+        */
+        var log = new ConcurrentQueue<LogEvent>();
+        var (host, upstream) = NewHost(log, disposeWithTheClass: false);
+        NewSession(host, "rt-idle");
+        var renewing = host.Services.GetRequiredService<ISessionService>().GetSession(NewSession(host, "rt-renewing"))!;
+        var renewal = new TaskCompletionSource();
+        lock (renewing.SyncRoot)
+        {
+            // Registered as TokenRefresher registers one: under the session's lock.
+            renewing.InFlightRenewal = renewal.Task;
+        }
+        host.CreateClient();
+
+        await host.DisposeAsync();
+
+        var calls = upstream.RevokeCallLog.ToArray();
+        var summary = Named(log, "Graceful stop:").ToList();
+        calls.Select(c => c.Grants).Should().BeEquivalentTo(
+            [new[] { "rt-idle" }, ["rt-renewing"]], o => o.WithStrictOrdering(),
+            "the grant with no renewal in flight goes first, on its own");
+        using (new AssertionScope())
+        {
+            (calls[1].At - calls[0].At).Should().BeGreaterThan(TimeSpan.FromSeconds(4),
+                "the renewing session's grant waited for its renewal")
+                .And.BeLessThan(TimeSpan.FromSeconds(8), "for 5 s at most");
+            summary.Should().ContainSingle();
+            summary.Single().Properties["Revoked"].ToString().Should().Be("2");
+            summary.Single().Properties["Left"].ToString().Should().Be("0");
+        }
+    }
+
+    [Fact]
+    public async Task AGracefulStop_RevokesASessionStoredAfterItBegan_InASecondCall()
+    {
+        /*
+          A sign-in still in flight when the host begins to stop can store its session after the
+          first half of the drain has taken what was held. The second half, once the services have
+          stopped, takes what is left, and only that: each grant is sent once.
+        */
+        var log = new ConcurrentQueue<LogEvent>();
+        var stopper = new StoppedBeforeTheRevoker((_, services) => NewSession(services, "rt-late"));
+        var (host, upstream) = NewHost(log, disposeWithTheClass: false, stopper);
+        NewSession(host, "rt-held");
+        host.CreateClient();
+
+        await host.DisposeAsync();
+
+        var summary = Named(log, "Graceful stop:").ToList();
+        using (new AssertionScope())
+        {
+            stopper.RevokeHadArrived.Should().BeTrue("the first half went when the host began to stop");
+            upstream.RevokeCallLog.Select(c => c.Grants).Should().BeEquivalentTo(
+                [new[] { "rt-held" }, ["rt-late"]], o => o.WithStrictOrdering());
+            summary.Should().ContainSingle();
+            summary.Single().Properties["Revoked"].ToString().Should().Be("2");
+            summary.Single().Properties["Left"].ToString().Should().Be("0");
+        }
+    }
+
+    [Fact]
+    public async Task WhenTheRevokeQueueIsFull_AnEndingIsDropped_SaysSo_AndDoesNotWait()
+    {
+        /*
+          06 F12. Every worker is on a revoke the API sits on, and the queue holds Capacity more, so
+          the next ending finds no room. It must not wait for any — "Esci" answers at once — and must
+          log GrantRevokeDropped, naming the session and never the grant. Once the API answers, every
+          grant that found room is revoked, and the dropped one is not.
+        */
+        var log = new ConcurrentQueue<LogEvent>();
+        var hold = new RevokeHold();
+        var (host, upstream) = NewHost(log, hold: hold);
+        var sessions = host.Services.GetRequiredService<ISessionService>();
+
+        try
+        {
+            for (var i = 0; i < GrantRevoker.Parallelism; i++)
+            {
+                sessions.EndSession(NewSession(host, $"rt-working-{i}"));
+            }
+            (await Eventually(() => hold.Arrived.Count == GrantRevoker.Parallelism)).Should().BeTrue(
+                "every worker must be on a revoke the API sits on, or it is not the queue that fills");
+
+            for (var i = 0; i < GrantRevoker.Capacity; i++)
+            {
+                sessions.EndSession(NewSession(host, $"rt-queued-{i}"));
+            }
+            Named(log, "GrantRevokeDropped:").Should().BeEmpty("each of those found room in the queue");
+
+            var last = NewSession(host, "rt-dropped");
+            var ending = Task.Run(() => sessions.EndSession(last));
+            (await Task.WhenAny(ending, Task.Delay(TimeSpan.FromSeconds(5)))).Should().BeSameAs(ending,
+                "an ending never waits for room in the queue");
+
+            var dropped = Named(log, "GrantRevokeDropped:").ToList();
+            dropped.Should().ContainSingle();
+            ((ScalarValue)dropped.Single().Properties["SessionId"]).Value.Should().Be(SecretPrefix.Of(last));
+            sessions.GetSession(last).Should().BeNull("the session ended all the same");
+        }
+        finally
+        {
+            hold.Release();
+        }
+
+        (await Eventually(() => upstream.RevokedGrants.Count == GrantRevoker.Parallelism + GrantRevoker.Capacity))
+            .Should().BeTrue("every grant that found room is revoked once the API answers");
+        using (new AssertionScope())
+        {
+            upstream.RevokedGrants.Should().NotContain("rt-dropped");
+            string[] grants = ["rt-working-", "rt-queued-", "rt-dropped"];
+            log.Should().NotContain(e => grants.Any(g =>
+                    e.RenderMessage(CultureInfo.InvariantCulture).Contains(g)
+                    || e.Properties.Values.Any(v => v.ToString().Contains(g))),
+                "no grant in any log line (06 O2h)");
         }
     }
 
