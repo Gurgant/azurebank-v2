@@ -49,16 +49,20 @@ Everything downstream is a consequence:
 - **No CORS anywhere.** Same-origin topology, so there is no cross-origin grant to misconfigure.
   Cross-site state-changing requests are rejected by Fetch-Metadata headers on top of
   `SameSite=Strict`.
-- **The 15-minute access token is invisible.** When it expires, the BFF silently re-mints it from
-  a rotating refresh token; the user's session is bounded by inactivity and absolute timeouts, not
-  by token lifetime. Refresh tokens rotate on every use and a reuse is treated as theft — the
-  whole family is revoked.
+- **The 15-minute access token is invisible.** Before it expires, the BFF silently renews it with
+  the session's refresh token, its grant; the user's session is bounded by inactivity and absolute
+  timeouts, not by token lifetime. The grant does not rotate and lives 60 minutes from sign-in, so
+  nothing from one sign-in outlives the session's cap. Only the BFF's own client, over loopback,
+  can present it, and one presented after its session ended is recorded as a security event.
+  *(Until 2026-09-28 this said the refresh token rotated on every use and a reuse revoked the whole
+  family. ADR-0057 replaced that: a renewal whose answer was lost, to a database hang for
+  instance, signed users out.)*
 - **Session expiry is a data-loss event, so it is designed rather than accepted.** No unsubmitted
   financial intent is persisted anywhere; a draft transfer is lost on expiry rather than resumed
   against a session that may no longer be yours.
 
-*Depth: ADR-0001 (BFF), ADR-0018 (origin hardening), ADR-0021 (refresh rotation), ADR-0019
-(SPA/BFF contract).*
+*Depth: ADR-0001 (BFF), ADR-0018 (origin hardening), ADR-0021 (silent re-mint), ADR-0057 (one
+grant per session), ADR-0019 (SPA/BFF contract).*
 
 ## Moving money exactly once
 

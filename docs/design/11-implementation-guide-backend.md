@@ -729,6 +729,12 @@ public class Transaction
 
 ### 4.5 RefreshToken Entity (Post-MVP)
 
+> *(2026-09-28: the built entity stores only a SHA-256 hash of the token, and since
+> [ADR-0057](../adr/0057-the-bffs-refresh-token-is-one-reusable-grant-per-session.md) the token
+> does not rotate: a renewal writes nothing, `ReplacedByTokenId` is a legacy column nothing
+> writes, and a revoked row carries a `RevokedReason`. The same holds for the configuration sample
+> in §5.5.)*
+
 ```csharp
 // AzureBank.Shared/Entities/RefreshToken.cs
 namespace AzureBank.Shared.Entities;
@@ -3232,6 +3238,12 @@ public class TransactionsController : ControllerBase
 The BFF (Backend-for-Frontend) acts as a security gateway between the browser and the API. JWT tokens are stored server-side in BFF sessions, never exposed to the browser.
 
 ### 7.1 BFF Service Interfaces
+
+> *(2026-09-28: the built `ISessionService` differs from this sample. Since
+> [ADR-0057](../adr/0057-the-bffs-refresh-token-is-one-reusable-grant-per-session.md) it has
+> `EndSession`, which removes the session and queues its grant for revocation at the API, and its
+> `RefreshSession` stores only an access token that expires later than the one held, never a new
+> refresh token.)*
 
 ```csharp
 // AzureBank.Bff/Services/Interfaces/ISessionService.cs

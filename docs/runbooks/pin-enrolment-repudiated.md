@@ -26,6 +26,12 @@ not equally partial.
   subscriber also says they never set the first PIN, look for a `PinEnrolled` notice as well and
   treat that one by the rule above.
 
+**Running the SQL.** Every statement here runs against the API's database. With `sqlcmd`, pass
+`-I`: without it the UPDATEs in §2 and §3 fail with Msg 1934 (`QUOTED_IDENTIFIER`), because
+`AspNetUsers` and `RefreshTokens` both carry filtered indexes. Measured 2026-09-28 against LocalDB,
+each UPDATE inside a transaction that was rolled back; reads work without the flag
+([`engineering-traps.md`](../engineering-traps.md)).
+
 ## 1. Find the notice and the event it belongs to
 
 The reference is the notice id as the notice prints it: 32 hex digits, no hyphens.
@@ -187,17 +193,25 @@ down who ran it and when, beside the reference, somewhere the database cannot re
 
 ## 3. Cut the sessions
 
-Refresh tokens are the API's long-lived sessions. `RefreshTokenService.RevokeAllForUserAsync` does
-this in code, and nothing exposes it to an operator, so by hand:
+Each BFF session holds one refresh token, its grant, which lives 60 minutes from sign-in
+(`Jwt:RefreshTokenLifetimeMinutes`). `RefreshTokenService.RevokeAllForUserAsync` revokes every live
+grant of a user in code, and `POST /api/auth/logout` calls it; nothing exposes it to an operator, so
+by hand:
 
 ```sql
 UPDATE RefreshTokens
-SET RevokedAt = SYSUTCDATETIME()
-WHERE UserId = '<UserId>' AND RevokedAt IS NULL;
+SET RevokedAt = SYSUTCDATETIME(), RevokedReason = N'SignOutEverywhere'
+WHERE UserId = '<UserId>' AND RevokedAt IS NULL AND ExpiresAt > SYSUTCDATETIME();
 ```
 
-Access tokens already issued live until they expire — 15 minutes (`Jwt:ExpirationMinutes`) — and the
-BFF's own session has its own windows (15 minutes idle, 60 absolute; 10 and 20 in Development).
+Write the reason. `SignOutEverywhere` is what the API writes for the same act, and a row revoked
+with no reason reads as a legacy one (ADR-0057 §4.1).
+
+Each of the user's BFF sessions ends at its next renewal, after up to half its access token's life
+(7.5 minutes) of continued use. Access tokens already issued live until they expire — 15 minutes
+(`Jwt:ExpirationMinutes`) — but once a session has ended only code inside the API's own replica can
+present its token (ADR-0057 §5.1). The BFF's own session also has its own windows (15 minutes idle,
+60 absolute; 10 and 20 in Development).
 Whether that matters depends on which kind you are treating. For a `PinEnrolled` repudiation it does
 not: that attacker proved the password and can sign in again, so the window is not the point. For a
 `PinChanged` repudiation it IS the point — a session is the only thing that attacker still holds
@@ -220,14 +234,16 @@ so until that access token dies the session still reads the account, its transac
 acted. A transfer needs an authorisation that was minted with the OLD PIN, so one already minted and
 unspent can still be presented inside its own two-minute window.
 
-How long that is depends on what the attacker holds. A bearer token presented to the API directly
-lives its full 15 minutes — and a direct caller is who the change path is reachable by, since the
-client turns away anyone who already has a PIN. A BFF session ends sooner: inside the token's last
-60 seconds the BFF tries to refresh it, the API refuses the refresh token step 3 revoked, and the
-BFF drops the session there; `/bff/auth/me` may still answer from what it cached, but nothing more
-reaches the API. **Plan the clock on the 15 minutes** — the shorter case is a bonus, not the bound —
-treat the account as contained only after it has passed, and note the time you ran step 2 so the
-record shows when it closed.
+How long that is depends on what the attacker holds. An access token lives its full 15 minutes at
+the API, but only code inside the API's own replica can present one there (ADR-0057 §5.1): the API
+listens on loopback only and refuses any request without the BFF's service key (ADR-0055). So a
+direct caller — who the change path is reachable by, since the client turns away anyone who
+already has a PIN — holds a BFF session, and a BFF session ends sooner: once half its token's life
+is gone (7.5 of its 15 minutes), the BFF renews it at the next request, the API refuses the grant
+step 3 revoked, and the BFF ends the session there; `/bff/auth/me` may still answer from what it
+cached, but nothing more reaches the API. **Plan the clock on the 15 minutes** — the shorter case
+is a bonus, not the bound — treat the account as contained only after it has passed, and note the
+time you ran step 2 so the record shows when it closed.
 
 After it, the remedy is complete for this attacker unless the subscriber ALSO repudiates the
 original enrolment, or the PIN they lost is one they reuse elsewhere. Say which of the three

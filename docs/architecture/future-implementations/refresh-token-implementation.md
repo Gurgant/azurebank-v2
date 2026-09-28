@@ -6,6 +6,10 @@
 # Refresh Token Implementation Plan
 
 **Status:** PLANNED (Not Implemented)
+*(2026-09-28: built with rotation under ADR-0021, accepted 2026-07-22. Since
+[ADR-0057](../../adr/0057-the-bffs-refresh-token-is-one-reusable-grant-per-session.md) the refresh
+token does not rotate: it is one reusable grant per BFF session, living 60 minutes from sign-in.
+The rotation, theft-detection and 7-day sections below describe this plan, not the code.)*
 **Priority:** High
 **Created:** January 2026
 

@@ -2,6 +2,13 @@
 > has not been kept in step with the code since. Where it disagrees with the code or with the
 > generated contract, [`docs/api/openapiv1.json`](../api/openapiv1.json), those win and this
 > document is wrong. What is current starts at [`docs/README.md`](../README.md).
+>
+> *(2026-09-28: the topology below, the API as its own app that the BFF reaches over a private
+> endpoint, is the one the first precondition of
+> [ADR-0057](../adr/0057-the-bffs-refresh-token-is-one-reusable-grant-per-session.md#preconditions)
+> makes a stop. The API runs as a sidecar of the BFF and listens on loopback, and its token endpoints
+> answer 404 to any address that is not loopback, so the BFF drawn here could sign nobody in. If the
+> API is ever reached over a network, DPoP or mutual TLS comes first.)*
 
 # Azure VNET: BFF-to-API Secure Communication
 

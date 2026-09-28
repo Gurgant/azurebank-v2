@@ -111,7 +111,7 @@ erDiagram
 | `AspNetUsers` | User accounts | Identity integration, AzureTag unique |
 | `Accounts` | Bank accounts | Soft delete, optimistic concurrency |
 | `Transactions` | Transaction history | Immutable records |
-| `RefreshTokens` | JWT refresh tokens | Token rotation support |
+| `RefreshTokens` | The BFF sessions' refresh tokens (grants), one per session | Hash only, never rotated, revoked with a reason (ADR-0057) |
 
 ---
 

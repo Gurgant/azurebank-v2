@@ -66,6 +66,8 @@ public sealed class RunbookSqlParsesSqlServerTests
         { "docs/runbooks/audit-chain-unavailable.md", 4, ["<session_id>"] },
         // Its placeholders sit inside string literals ('<UserId>'): every block parses as written.
         { "docs/runbooks/pin-enrolment-repudiated.md", 6, [] },
+        // Its placeholders sit inside string literals too; ADR-0057 §5.4 decides what it does.
+        { "docs/runbooks/refresh-token-reuse-recorded.md", 5, [] },
     };
 
     /// <summary>

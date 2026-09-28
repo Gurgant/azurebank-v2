@@ -152,9 +152,11 @@ export async function login(): Promise<Wire> {
  * End the session. Not under the auth rate-limit policy — measured 2026-09-03 (the transcript
  * `rejectIfRateLimited` cites): twelve logouts in a row with a dead cookie all answered 200, never
  * 429. On the real target the deleting Set-Cookie replaces the jar with an empty value, and the
- * BFF's logout reaches the API, which revokes every refresh token the fixture user holds
- * (`AuthService.LogoutAsync`); each file signs in afresh, so nothing in the suite notices. The
- * mock sends no Set-Cookie and its jar stays the hand-seeded one, which it ignores anyway.
+ * BFF ends this session alone: its grant is revoked in the background through
+ * `/api/auth/revoke`, and the fixture user's other sessions are untouched (ADR-0057). Each file
+ * signs in afresh anyway. (Until 2026-09-28 this said the BFF's logout reached the API's logout,
+ * which revoked every refresh token the fixture user held.) The mock sends no Set-Cookie and its
+ * jar stays the hand-seeded one, which it ignores anyway.
  */
 export async function logout(): Promise<Wire> {
   return call('/bff/auth/logout', { method: 'POST' });

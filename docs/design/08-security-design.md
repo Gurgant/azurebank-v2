@@ -207,9 +207,13 @@ services.AddSession(options =>
 | **Inactivity** | 15 min | 10 min | Session expires after idle |
 | **Absolute** | 60 min | 20 min | Maximum session lifetime |
 
-> The 15-min access token no longer bounds the session: the BFF silently re-mints it via
-> refresh-token rotation (ADR-0021), so an active session slides within the inactivity/absolute
-> budgets above. A refresh-token reuse/revocation (or logout) ends the session immediately.
+> The 15-min access token no longer bounds the session: the BFF silently renews it with the
+> session's refresh token (ADR-0021), which does not rotate and lives 60 minutes from sign-in
+> (ADR-0057), so an active session slides within the inactivity/absolute budgets above. "Esci" ends
+> the session at once; a grant revoked any other way ends it at its next renewal.
+> *(Until 2026-09-28 this said the token was re-minted via refresh-token rotation and that a reuse,
+> a revocation or a logout ended the session immediately, and the sample below called the refresh
+> token "Rotated".)*
 
 ### 3.4 Session Data Structure
 
@@ -219,7 +223,7 @@ public class UserSession
     public string UserId { get; set; }
     public string AccessToken { get; set; }
     public DateTime TokenExpiry { get; set; }
-    public string? RefreshToken { get; set; }  // Rotated; drives silent re-mint (ADR-0021)
+    public string? RefreshToken { get; set; }  // The grant: never rotated (ADR-0057)
     public DateTime SessionCreated { get; set; }
     public DateTime LastActivity { get; set; }
     public int AuthLevel { get; set; }  // Current authentication level

@@ -20,7 +20,8 @@ as of January 2026 and are kept as design history; errata are listed per decisio
 > - The frontend is wired to this contract, and it has MSW handlers (`frontend/src/mocks/`): the
 >   `07` row's "never implemented" and D5's closing note are both out of date.
 > - Of the five known gaps at the bottom, four shipped: idempotency keys (ADR-0009),
->   refresh-token rotation, the frontend wiring, and OpenTelemetry in both hosts. The BFF's
+>   refresh-token rotation (replaced on 2026-09-28 by one reusable refresh token per session,
+>   ADR-0057), the frontend wiring, and OpenTelemetry in both hosts. The BFF's
 >   session store is still in memory (`InMemoryTokenStore`).
 > - Testcontainers is no longer a dependency (removed 2026-08-10, `ac0a2f9`); D4's other versions
 >   still match `backend/Directory.Packages.props`.

@@ -132,7 +132,7 @@ gate: the `conformance` job in `ci.yml` runs its four response-conformance check
 media type, headers, body schema — against the running API on every PR, with its own SQL Server, a
 bearer token from the real login, the version pinned at 4.27.1, no `|| true`, and a floor of
 ~~27~~ ~~28~~ 29 operations in the JUnit report so a run that tested nothing cannot pass *(raised
-2026-09-21 with the withdrawal mint, ADR-0056, and 2026-09-28 with `POST /api/auth/revoke`)*.
+2026-09-21 with the withdrawal mint, ADR-0056, and 2026-09-28 with `POST /api/auth/revoke`, ADR-0057)*.
 Claim 3 has its guard.
 What its first run found, against a document every gate here had passed: `415` on all fifteen
 operations that take a body (the framework's refusal of a non-JSON body, never declared), a second
