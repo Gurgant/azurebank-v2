@@ -75,6 +75,30 @@ public static class SecurityEvents
     public const string RefreshTokenReuseRevokeFailed = "RefreshTokenReuseRevokeFailed";
 
     /// <summary>
+    /// One grant was renewed more than three times within one access-token lifetime (06 §6, anomaly
+    /// 2). 06 reasons, and nothing has measured, that the legitimate BFF renews at most twice in that
+    /// time, so this is how a second holder of a LIVE grant shows up, if it renews often. The renewal
+    /// was answered: nothing is refused, revoked or written.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// No OWASP counterpart. <c>authn_token_reuse</c>, which <see cref="RefreshTokenReuse"/> maps
+    /// to, is the near miss: this grant is live and every renewal of it is valid, so a reuse alert
+    /// firing here would describe a presentation that did not happen. <c>excess_rate_limit_exceeded</c>
+    /// is the other, and <see cref="RateLimitExceeded"/> holds it for requests a limiter refused;
+    /// nothing is refused here.
+    /// </para>
+    /// <para>
+    /// LOG-ONLY BY DESIGN, and the design is ADR-0057's: a renewal writes nothing since PR-1, and an
+    /// audit row would be a write. The count lives only in the API's memory
+    /// (<c>RefreshRenewalRateDetector</c>), so a restart forgets it, and on Azure, where application
+    /// logs are off, nobody sees the line. Raised at most once per grant per token lifetime. It
+    /// catches a copy that renews often, not a patient one.
+    /// </para>
+    /// </remarks>
+    public const string RefreshRenewalRateHigh = "RefreshRenewalRateHigh";
+
+    /// <summary>
     /// The API refused the BFF's renewal of a session with 401 <c>REFRESH_TOKEN_INVALID</c>: the grant
     /// is dead, so the session was ended and its grant queued for revoke (06 §4.5). Since PR-1 no
     /// other answer raises it: a refused key, any other 401, a 5xx or a timeout keeps the session.

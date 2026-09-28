@@ -19,8 +19,9 @@ namespace AzureBank.Tests.Integration;
 /// <summary>
 /// The grant of 06 §4 against REAL SQL Server: renewal sends no write, eight concurrent renewals all
 /// succeed and change nothing, a revoke racing a renewal's read is not theft, the tripwire fires on a
-/// real replay, a revoke whose write fails answers 503, and the lifetime and the access-token cap hold
-/// for rows SQL Server hands back. <i>(Until PR-1 this class proved rotation: the self-referencing
+/// real replay, a revoke whose write fails answers 503, the renewal-rate detector's event costs no
+/// write, and the lifetime and the access-token cap hold for rows SQL Server hands back.
+/// <i>(Until PR-1 this class proved rotation: the self-referencing
 /// successor write, the rowversion guard against a forked chain, and reuse revoking the family.)</i>
 /// </summary>
 [Trait("Category", "SqlServer")]
@@ -244,6 +245,50 @@ public sealed class RefreshTokenRotationSqlServerTests : IDisposable
             "the recorder must have seen the renewal's own read of the grant, or the zero below proves nothing");
         commands.Writes.Should().BeEmpty(
             "a renewal only reads the grant and mints an access token in memory (06 §4.3: Writes = none)");
+    }
+
+    [SqlServerFact]
+    public async Task FourRenewalsThatRaiseTheRateEvent_SendNoWriteCommand_AndWriteNoAuditRow()
+    {
+        /*
+          06 §6, anomaly 2: the detector counts in memory and writes nothing. Four renewals of one
+          grant within one token lifetime, recorded on the wire: all 200, one RefreshRenewalRateHigh
+          log line, and not one command that is not a SELECT. The event line is what makes the zero
+          mean something: the recorder was listening across the very renewal that raised it.
+        */
+        _factory = new CustomWebApplicationFactory();
+        _factory.SetConnectionString(SqlServerFactAttribute.ConnectionString!);
+        _factory.CaptureLog(LogEventLevel.Warning);
+        var client = _factory.CreateClient();
+        var (userId, _, grant) = await RegisterAsync(client);
+        var auditRowsBefore = await CountAllAuditRowsAsync();
+
+        var commands = new CommandRecordingInterceptor();
+        _factory.AddInterceptor(commands);
+
+        commands.Start();
+        for (var i = 0; i < 4; i++)
+        {
+            var renewal = await client.PostAsJsonAsync("/api/auth/refresh", new RefreshRequest { RefreshToken = grant }, Json);
+            renewal.StatusCode.Should().Be(HttpStatusCode.OK, $"renewal {i + 1}: the detector refuses nothing");
+        }
+
+        commands.Stop();
+
+        _factory.CapturedLog.Count(l => l.Contains(SecurityEvents.RefreshRenewalRateHigh)).Should().Be(1,
+            "the fourth renewal within one token lifetime raises the event, once");
+        commands.Selects.Should().HaveCountGreaterThanOrEqualTo(4,
+            "each renewal reads its grant; a recorder that saw fewer was not listening");
+        commands.Writes.Should().BeEmpty("the detector counts in memory; nothing reaches the database");
+        (await CountAllAuditRowsAsync()).Should().Be(auditRowsBefore, "the event is a log line, never an audit row");
+        (await CountAuditAsync(userId, SecurityEvents.RefreshRenewalRateHigh)).Should().Be(0);
+    }
+
+    private async Task<int> CountAllAuditRowsAsync()
+    {
+        using var scope = _factory!.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        return await db.AuditEvents.AsNoTracking().CountAsync();
     }
 
     private sealed record GrantRow(

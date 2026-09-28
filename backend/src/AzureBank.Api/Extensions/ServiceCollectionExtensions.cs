@@ -204,6 +204,9 @@ public static class ServiceCollectionExtensions
         // for forensics, so it needs the request's HttpContext.
         services.AddHttpContextAccessor();
         services.AddScoped<IRefreshTokenService, RefreshTokenService>();
+        // Its renewal-rate count (06 §6, anomaly 2): a singleton, because the count must outlive the
+        // request, and it lives only in this process's memory; it writes nothing.
+        services.AddSingleton<Services.RefreshRenewalRateDetector>();
         // One clock per process for the ReceivedAt stamp (06 §4.3, F10), and the token road's
         // options, which nothing in configuration binds: only code can widen the road (06 F1).
         services.AddSingleton(ReceivedAtClock.ForThisProcess);

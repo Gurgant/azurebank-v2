@@ -211,7 +211,7 @@ a profile this system meets.
 | Revoked `SessionEnded`, request received at or before the revoke | 401 | none | Information: revoked while its renewal was in flight |
 | Revoked for any other reason, or a legacy row with no reason | 401 | none | Information naming the reason; Warning for `Incident` and `ReuseContainment` |
 | Expired, or less than 1 s of life left | 401 | none | Information |
-| Active | 200 `{accessToken, expiresAt}`, with no refresh token in the body | **none** | the existing "Refreshed access token" line; the detector's counter once it is built (§6) |
+| Active | 200 `{accessToken, expiresAt}`, with no refresh token in the body | **none** | the existing "Refreshed access token" line; the detector's count, in memory (§6) |
 
 - **The tripwire records; it does not revoke (F3).**
   - Only code inside the replica can trip it (§3), and revoking one user's grants does not contain
@@ -461,13 +461,26 @@ nobody checks. What that runbook rests on is decided here.
 
 **2. Too many renewals of one grant**
 
-- **Covered by:** a detector at the API, decided as its own commit of PR-1 so that review can drop
-  it, and not in the code at the time of writing.
-  - An in-memory count of 200 answers per grant, over one access-token lifetime.
-  - Above 3 it raises a Warning. It never refuses and writes nothing.
-  - The legitimate BFF renews at most twice per token lifetime (single flight, the half-life
-    threshold, and the stop near the cap, §4.5), so a limit of 3 leaves one spare.
-  - It catches a copy that renews often, not a patient one.
+- **Covered by:** a detector at the API, `RefreshRenewalRateDetector`, built as its own commit of
+  PR-1 so that review can drop it.
+  - An in-memory count of the renewals the grant check accepts, per grant, over one access-token
+    lifetime (`Jwt:ExpirationMinutes`), on the requests' `ReceivedAt` stamps.
+  - Above 3 it raises a Warning, at most once per grant per token lifetime. It never refuses and
+    writes nothing.
+  - The legitimate BFF renews about twice per token lifetime (single flight, the half-life
+    threshold, and the stop near the cap, §4.5), so a limit of 3 leaves one spare. This is
+    reasoned, not measured. Because a token's `exp` is whole seconds, two renewals can come a
+    little under half a lifetime apart, and one window can then hold three: that uses the spare
+    and still raises nothing (the detector's tests pin it at 449 s apart).
+  - It catches a copy that renews often, not a patient one, and a restart forgets every count.
+  - Its memory is bounded. An entry is removed by a sweep that runs at most once per token
+    lifetime, on a renewal, once its last renewal is more than one lifetime old, so it is held for
+    up to about two lifetimes. A sweep also runs whenever a new grant finds the map full. The
+    detector holds at most 10 000 grants. A grant that arrives while every entry is still live is
+    not counted, and a Warning says so, at most once per token lifetime.
+  - A long database hang can raise it falsely (read in the code, not measured): a renewal the BFF
+    gave up on after 30 s is still counted once the database answers, and the BFF sends another
+    after its 15 s cooldown. That costs one log line, and nobody is refused.
 - **Writes:** `RefreshRenewalRateHigh`, a Warning, in the logs only. On Azure it is invisible while
   logs are off; locally, in CI and in the plan's measurement runs, it is seen. Putting it in the audit
   trail would need a write, and this decision removes writes from renewal.
@@ -501,7 +514,7 @@ nobody checks. What that runbook rests on is decided here.
 | The service key alone | Bounded | The token endpoints answer 404 to any address that is not loopback (F1), and log a Warning naming what was missing. Without the key, the API answers 401 `SERVICE_CREDENTIAL_REQUIRED` and logs the Warning "no valid service credential" |
 | A memory image of the BFF | Bounded | Usable only from inside the replica. Grants die within 60 minutes, or at "Esci", idle expiry or a graceful stop |
 | Code running in the replica | Accepted; handled as an incident | It holds everything live, and no token scheme can see it. Answer: the nuclear lever (§5.4) |
-| A second holder of a **live** grant | Accepted, bounded | Unseen until its session ends, at most 60 minutes; under rotation, at most about 15 (§3, F8). Anomaly 2 covers a copy that renews often, once the detector is built |
+| A second holder of a **live** grant | Accepted, bounded | Unseen until its session ends, at most 60 minutes; under rotation, at most about 15 (§3, F8). Anomaly 2 covers a copy that renews often |
 | An **ended** grant presented again | Detected, not contained automatically | The tripwire: 401, an audit row, a security event (F3). The operator reads the audit trail and pulls a lever (§5.4) |
 | A lost answer, a database outage, an uncertain EF commit | Eliminated | A renewal writes nothing. An expired token during an outage gives 503, never 401 |
 | A half-applied key rotation | Bounded | 503 on renewal and on proxied calls (F4). The session is kept and the SPA stays signed in |
@@ -519,7 +532,9 @@ nobody checks. What that runbook rests on is decided here.
   are new; `JwtService` takes an optional `notAfter`; `RefreshResponse` drops its refresh token and
   `TokenResponse` gains `refreshTokenExpiresAt`. One migration adds `RevokedReason`. The stamp's
   commit adds `ApplicationUser.SessionStamp` with a second migration, `TokenResponse.sessionStamp`,
-  the raise inside `RevokeAllForUserAsync` and `POST /api/auth/session-stamps`.
+  the raise inside `RevokeAllForUserAsync` and `POST /api/auth/session-stamps`. The detector's
+  commit adds `RefreshRenewalRateDetector`, a singleton that `RenewAsync` gives each accepted
+  renewal's `ReceivedAt`, and the `RefreshRenewalRateHigh` constant.
 - **BFF:** `TokenRefresher` is rewritten as §4.5 says; `UserSession` gains the grant's expiry, the
   absolute expiry, `Ended`, `InFlightRenewal` and the lock; `InMemoryTokenStore` ends every session
   through one path; `GrantRevoker` is new; the proxy strips the marker and maps key refusals to 503.
@@ -641,8 +656,21 @@ replays of O1 are not among it.
   `ConcurrencyFailure` with the stamp still 1; with the `ConcurrencyStamp` rotation removed from the
   API's raise and from the runbook's SQL, all three runs went red, the write succeeding and the
   stamp back at 0.
-- **k. Detector**, once built: 4 renewals of one grant within one token lifetime all get 200 and
-  raise one `RefreshRenewalRateHigh`; 2 renewals raise nothing.
+- **k. Detector.** 4 renewals of one grant within one token lifetime all get 200 and raise one
+  `RefreshRenewalRateHigh`; 2 renewals raise nothing (`RenewalRateDetectorTests`, through the API
+  host). On SQL Server the 4 renewals send no command that is not a `SELECT` and add no audit row
+  (`RefreshTokenRotationSqlServerTests.FourRenewalsThatRaiseTheRateEvent_SendNoWriteCommand_AndWriteNoAuditRow`).
+  That a refused renewal is not counted is `RefreshTokenServiceTests`' two
+  `…PresentedFourTimes_IsNotCounted` tests, an ended session's grant and an expired one. The limit,
+  the one event per lifetime, the expiry of entries and the capacity are
+  `RefreshRenewalRateDetectorTests`. **Measured 2026-09-28:** with the count removed from
+  `RenewAsync`, the three tests that renew through it went red, finding no event; with an audit
+  write added after the count, the SQL Server test went red on the write command it saw, and the
+  service's unit test on the audit call. With the count moved above the revoked check, both
+  refused-renewal tests went red, each finding the event; moved between the revoked and the expiry
+  checks, the expired one did. In the detector, raising at 3 renewals, never running the periodic
+  sweep, dropping the once-per-lifetime gate and dropping the capacity check each turned its own
+  tests red (4, 1, 2 and 1 of them).
 
 ## 11. Not verified
 
@@ -652,8 +680,8 @@ replays of O1 are not among it.
 - The delay before the `ReceivedAt` stamp under a hang is not measured (O1).
 - Whether the API sidecar still answers the drain after the stop signal reaches both containers of
   the replica, on Azure. The drain's "left" count will show it.
-- The 15 s watcher period, the detector's limit of 3, and the revoker's 4 in parallel and 1000 in
-  the queue are choices.
+- The 15 s watcher period, the detector's limit of 3 and its 10 000 grants, and the revoker's 4 in
+  parallel and 1000 in the queue are choices.
 - The watcher's period is exercised on a fake clock in the tests; a 15 s poll against the real stack
   is not measured.
 - The PSD2 text was read only through the legislation.gov.uk copy; EUR-Lex answered HTTP 202 with 0

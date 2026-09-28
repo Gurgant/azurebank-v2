@@ -27,6 +27,9 @@ namespace AzureBank.Api.Services.Implementations;
 ///   transaction, 06 §5.3). A grant whose session ENDED, presented in a request the
 ///   API received after that revoke, is the tripwire: it is logged and audited, and it revokes
 ///   nothing (06 F3).
+/// - Every accepted renewal is counted in memory by <see cref="RefreshRenewalRateDetector"/>, which
+///   logs <c>RefreshRenewalRateHigh</c> when one grant renews more than three times in one
+///   access-token lifetime (06 §6, anomaly 2). It refuses nothing and writes nothing.
 ///
 /// <i>Until PR-1 this rotated the token on every renewal and treated a revoked token presented again
 /// as theft, revoking every token of the user. Measured (06 §1): a renewal that met a 10 s
@@ -52,19 +55,22 @@ public class RefreshTokenService : IRefreshTokenService
     private readonly JwtOptions _jwtOptions;
     private readonly ILogger<RefreshTokenService> _logger;
     private readonly IAuditService _audit;
+    private readonly RefreshRenewalRateDetector _renewalRate;
 
     public RefreshTokenService(
         AzureBankDbContext context,
         IHttpContextAccessor httpContextAccessor,
         IOptions<JwtOptions> jwtOptions,
         ILogger<RefreshTokenService> logger,
-        IAuditService audit)
+        IAuditService audit,
+        RefreshRenewalRateDetector renewalRate)
     {
         _context = context;
         _httpContextAccessor = httpContextAccessor;
         _jwtOptions = jwtOptions.Value;
         _logger = logger;
         _audit = audit;
+        _renewalRate = renewalRate;
     }
 
     /// <inheritdoc />
@@ -133,6 +139,10 @@ public class RefreshTokenService : IRefreshTokenService
                 "Refresh token {TokenId} (user {UserId}) is expired", grant.Id, grant.UserId);
             throw InvalidRefreshToken();
         }
+
+        // 06 §6, anomaly 2: count this accepted renewal in memory. It refuses nothing and writes
+        // nothing; more than three in one access-token lifetime raises RefreshRenewalRateHigh.
+        _renewalRate.Record(grant.Id, grant.UserId, receivedAt);
 
         // Non-null: loaded via Include, and the non-nullable UserId FK (Cascade) admits no orphan.
         return new RenewResult(grant.User!, grant.ExpiresAt);

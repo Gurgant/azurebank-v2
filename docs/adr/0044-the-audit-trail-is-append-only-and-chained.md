@@ -8,7 +8,8 @@ Art. 72 evidence pack). Supersedes nothing.
 ## Context
 
 Seventeen security events are logged *(sixteen since 2026-09-28: PR-1 stopped raising
-`RefreshTokenReuseRevokeFailed`, see the note under D1)*, and that is all that happens to them. A log is a stream: it
+`RefreshTokenReuseRevokeFailed`, see the note under D1; and seventeen again from the same PR, which
+added the log-only `RefreshRenewalRateHigh`, see "What is wired")*, and that is all that happens to them. A log is a stream: it
 rotates, it is writable by whoever can reach the host, and nothing about it is evidence. PCI DSS v4
 10.3.2 asks that audit logs be protected from modification; NIST SP 800-53 AU-9 asks the same;
 PSD2 Art. 72 requires an institution to be able to reconstruct what happened. None of that is
@@ -1142,8 +1143,9 @@ taking the tail lock that every real movement queues behind.
 `ATransferRefusedForDailyLimit_WritesNoRow_AndThatIsTheDecision` asserts the absence, at both
 sites, so nobody re-reading the inventory thinks it was forgotten._
 
-The remaining ten logged events are deliberately log-only, with reasons that were measured rather
-than assumed:
+The remaining ~~ten~~ eleven logged events *(eleven since 2026-09-28: PR-1 added
+`RefreshRenewalRateHigh`, the last item below)* are deliberately log-only, with reasons that were
+measured rather than assumed:
 
 - **Registration refusals** (`DuplicateRegistration`, `RegistrationRejected`) — `/api/auth/register`
   is unauthenticated, and the API carries **no rate limiter of its own** (checked: zero
@@ -1163,6 +1165,17 @@ than assumed:
   signals about a random-id generator, not acts by a principal, and they are raised inside a `catch`
   that `continue`s a retry loop. An enlisted row would die with the attempt that failed; a
   self-committing one would write one row per attempt. Both wrong, and the log is right.
+- **A grant renewed more often than the BFF renews one** (`RefreshRenewalRateHigh`, *added
+  2026-09-28 by PR-1*, [ADR-0057](0057-the-bffs-refresh-token-is-one-reusable-grant-per-session.md)
+  §6, anomaly 2) — more than three renewals of one grant within one access-token lifetime, which is
+  how a second holder of a live grant shows up if it renews often. Log-only because a row would be
+  a write on the renewal path, and that ADR's fix is that a renewal writes nothing: a renewal that
+  writes can lose its answer, be retried by EF as if it had rolled back, or wait on a hung
+  database. The count lives in the API's memory, at most one line per grant per token lifetime, and
+  nothing is refused. Its outcome is `Succeeded`, since the renewal was answered, so it is the one
+  `Succeeded` site with no row.
+  `FourRenewalsThatRaiseTheRateEvent_SendNoWriteCommand_AndWriteNoAuditRow` shows it on SQL Server:
+  the four renewals send no command that is not a `SELECT`, and the table gains no row.
 
 **The first half of the next sentence stopped being true on 2026-08-23** and is left standing
 because an ADR is a record: `tools/AzureBank.AuditVerifier` reads this table, and `VerifyAsync` is

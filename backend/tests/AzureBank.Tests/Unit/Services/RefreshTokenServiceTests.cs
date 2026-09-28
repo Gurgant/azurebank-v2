@@ -1,3 +1,4 @@
+using AzureBank.Api.Services;
 using AzureBank.Api.Services.Interfaces;
 using System.Security.Cryptography;
 using System.Text;
@@ -33,6 +34,10 @@ public class RefreshTokenServiceTests : IDisposable
     private readonly Mock<IAuditService> _audit = new();
     private readonly Mock<ILogger<RefreshTokenService>> _logger = new();
 
+    // What every detector built below logs (06 §6, anomaly 2), readable as lines.
+    private readonly RecordingLoggerProvider _detectorLogs = new();
+    private readonly LoggerFactory _detectorLoggerFactory;
+
     // Both held so a second context can join the SAME InMemory database (the fault-injection tests).
     private readonly string _databaseName = Guid.NewGuid().ToString();
 
@@ -50,6 +55,7 @@ public class RefreshTokenServiceTests : IDisposable
 
     public RefreshTokenServiceTests()
     {
+        _detectorLoggerFactory = new LoggerFactory([_detectorLogs]);
         _context = new AzureBankDbContext(DbOptions());
         _sut = BuildService(_context, new JwtOptions());
     }
@@ -57,6 +63,7 @@ public class RefreshTokenServiceTests : IDisposable
     public void Dispose()
     {
         _context.Dispose();
+        _detectorLoggerFactory.Dispose();
         GC.SuppressFinalize(this);
     }
 
@@ -80,12 +87,14 @@ public class RefreshTokenServiceTests : IDisposable
     {
         var httpContextAccessor = new HttpContextAccessor { HttpContext = new DefaultHttpContext() };
         httpContextAccessor.HttpContext!.Request.Headers.UserAgent = "xunit/1.0";
+        var options = Microsoft.Extensions.Options.Options.Create(jwtOptions);
         return new RefreshTokenService(
             context,
             httpContextAccessor,
-            Microsoft.Extensions.Options.Options.Create(jwtOptions),
+            options,
             _logger.Object,
-            _audit.Object);
+            _audit.Object,
+            new RefreshRenewalRateDetector(options, _detectorLoggerFactory.CreateLogger<RefreshRenewalRateDetector>()));
     }
 
     /// <summary>A service over the SAME database whose every SaveChanges throws.</summary>
@@ -209,6 +218,90 @@ public class RefreshTokenServiceTests : IDisposable
         after[0].ExpiresAt.Should().Be(before.ExpiresAt, "the grant's expiry is fixed at issue and never extended");
         _audit.VerifyNoOtherCalls();
     }
+
+    [Fact]
+    public async Task RenewAsync_FourRenewalsOfOneGrantWithinOneTokenLifetime_AllSucceed_RaiseOneRateEvent_AndWriteNothing()
+    {
+        /*
+          06 §10 O2k through the service, on a context whose every SaveChanges throws: four renewals
+          of one grant within one access-token lifetime all succeed, and the fourth raises one
+          RefreshRenewalRateHigh (06 §6, anomaly 2). None could have written, and no audit row is
+          asked for: the event is a log line only.
+        */
+        var user = SeedUser();
+        var issued = await _sut.IssueAsync(user);
+        var grantId = (await _context.RefreshTokens.AsNoTracking().SingleAsync()).Id;
+        var receivedAt = DateTime.UtcNow;
+
+        var faulty = SutOverAContextThatCannotSave(out var faultyContext);
+        await using (faultyContext)
+        {
+            for (var i = 0; i < 4; i++)
+            {
+                (await faulty.RenewAsync(issued.RefreshToken, receivedAt.AddSeconds(i))).User.Id.Should().Be(user.Id);
+                if (i == 1)
+                {
+                    RateEvents().Should().BeEmpty("two renewals are within what the BFF itself sends");
+                }
+            }
+
+            faultyContext.ChangeTracker.Entries().Should().BeEmpty("a renewal tracks nothing it could later save");
+        }
+
+        RateEvents().Should().ContainSingle().Which.Should().Contain(grantId.ToString(),
+            "the line names the grant's row id, never the grant");
+        RateEvents()[0].Should().NotContain(issued.RefreshToken, "a grant is never logged (06 O2h)");
+        _audit.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task RenewAsync_AnEndedSessionsGrantPresentedFourTimes_IsNotCounted()
+    {
+        // 06 §6 counts 200 answers only. Four tripwire refusals of one grant, within one token
+        // lifetime, are four 401s: the tripwire writes its rows, and the detector counts none of them.
+        var user = SeedUser();
+        var ended = await _sut.IssueAsync(user);
+        var revokedAt = DateTime.UtcNow;
+        (await _sut.RevokeAsync([ended.RefreshToken], revokedAt)).Should().Be(1);
+
+        for (var i = 1; i <= 4; i++)
+        {
+            await ((Func<Task>)(() => _sut.RenewAsync(ended.RefreshToken, revokedAt.AddSeconds(i))))
+                .Should().ThrowAsync<AuthenticationException>();
+        }
+
+        VerifyTheTripwireRowWritten(Times.Exactly(4));
+        RateEvents().Should().BeEmpty("only a renewal the grant check accepted is counted (06 §6)");
+    }
+
+    [Fact]
+    public async Task RenewAsync_AnExpiredGrantPresentedFourTimes_IsNotCounted()
+    {
+        // The expiry check comes after the revoked one, so counting between the two would count
+        // these; 06 F11's floor on the lifetime means the row is backdated instead.
+        var user = SeedUser();
+        var issued = await _sut.IssueAsync(user);
+        _context.ChangeTracker.Clear();
+        var grant = await _context.RefreshTokens.SingleAsync();
+        grant.ExpiresAt = DateTime.UtcNow.AddSeconds(-1);
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+        var receivedAt = DateTime.UtcNow;
+
+        for (var i = 0; i < 4; i++)
+        {
+            await ((Func<Task>)(() => _sut.RenewAsync(issued.RefreshToken, receivedAt.AddSeconds(i))))
+                .Should().ThrowAsync<AuthenticationException>();
+        }
+
+        RateEvents().Should().BeEmpty("only a renewal the grant check accepted is counted (06 §6)");
+    }
+
+    private List<string> RateEvents() =>
+        _detectorLogs.Lines
+            .Where(l => l.Level == LogLevel.Warning && l.Message.Contains(SecurityEvents.RefreshRenewalRateHigh))
+            .Select(l => l.Message)
+            .ToList();
 
     // ── Renew: the refusals ────────────────────────────────────────────────────────────────────
 

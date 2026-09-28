@@ -415,7 +415,9 @@ public class SecurityEventConstantTests
 
         // 17 until PR-1, which removed RefreshTokenReuseRevokeFailed's one site: the tripwire that
         // replaced reuse detection revokes nothing, so there is no failed revoke left to report (06 F3).
-        const int apiSites = 16;
+        // And 17 again with PR-1's renewal-rate detector, whose RefreshRenewalRateHigh is a log line
+        // and nothing else (06 §6, anomaly 2).
+        const int apiSites = 17;
         const int bffSites = 8;
 
         /*
@@ -465,9 +467,10 @@ public class SecurityEventConstantTests
 
         perProject["Api"].Should().Be(
             apiSites,
-            "ADR-0044 says \"Sixteen security events are logged\" since PR-1 (seventeen before it "
-            + "dropped RefreshTokenReuseRevokeFailed). If the API's count moved, update that ADR's Context "
-            + "and its \"What is wired\" section, and AuditOutcome's per-outcome tallies, in the same commit");
+            "ADR-0044 says \"Seventeen security events are logged\" since PR-1, which dropped "
+            + "RefreshTokenReuseRevokeFailed and added RefreshRenewalRateHigh. If the API's count moved, "
+            + "update that ADR's Context and its \"What is wired\" section, and AuditOutcome's "
+            + "per-outcome tallies, in the same commit");
 
         perProject["Bff"].Should().Be(
             bffSites,
@@ -530,10 +533,11 @@ public class SecurityEventConstantTests
                 + "would make that sentence describe something else");
 
         (perProject["Api"] + perProject["Bff"] + perProject["Infrastructure"]).Should().Be(
-            26,
+            27,
             "AuditOutcome's remarks derive the four outcomes from the security-event log sites — 27 "
-            + "when they were written, 26 since PR-1 removed the one MitigationFailed site — and tally "
-            + "\"17 of the 26\" as Refused; both have to move with this");
+            + "when they were written, and 27 again since PR-1 removed the one MitigationFailed site "
+            + "and added one Succeeded site that writes no row, RefreshRenewalRateHigh — and tally "
+            + "\"17 of the 27\" as Refused and 5 as Succeeded; all of them have to move with this");
     }
 
     /// <summary>
