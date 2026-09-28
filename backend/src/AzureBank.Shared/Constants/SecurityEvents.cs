@@ -44,17 +44,33 @@ public static class SecurityEvents
     /// </remarks>
     public const string RefreshTokenUnknown = "RefreshTokenUnknown";
 
-    /// <summary>A revoked refresh token was presented again — the theft signal (ADR-0021).</summary>
-    /// <remarks>OWASP: <c>authn_token_reuse[:userid,tokenid]</c>. An exact match.</remarks>
+    /// <summary>
+    /// The tripwire (06 §4.3): a grant whose session had ENDED was presented again, in a request the
+    /// API received after the revoke. The BFF held that grant nowhere else, so nothing legitimate
+    /// sends it.
+    /// </summary>
+    /// <remarks>
+    /// <para>OWASP: <c>authn_token_reuse[:userid,tokenid]</c>. An exact match.</para>
+    /// <para>
+    /// It records; it revokes NOTHING, since PR-1 (06 F3). Until then it also revoked every token of
+    /// the user, and a sign-out on one device was enough to raise it falsely at the user's next
+    /// renewal elsewhere. Only code inside the replica can present a grant now, and revoking one
+    /// user's tokens does not contain that; the incident runbook does. A grant revoked for any other
+    /// reason, or while the renewal was in flight, is refused without this event.
+    /// </para>
+    /// </remarks>
     public const string RefreshTokenReuse = "RefreshTokenReuse";
 
     /// <summary>
     /// Reuse was detected but revoking the token family FAILED — the mitigation did not happen.
     /// </summary>
     /// <remarks>
-    /// No OWASP counterpart: the vocabulary names events, not failures to respond to them. This is
-    /// deliberately its own name and logged at Error, because it is the one case where a detected
-    /// compromise was left un-contained and a human has to act.
+    /// No OWASP counterpart: the vocabulary names events, not failures to respond to them.
+    /// <para>
+    /// NO LONGER RAISED, since PR-1: the tripwire that replaced reuse detection revokes nothing, so
+    /// there is no mitigation left to fail (06 F3). Kept because audit rows carrying this name exist
+    /// and the table is never purged; a reader of an old row still needs the name to mean something.
+    /// </para>
     /// </remarks>
     public const string RefreshTokenReuseRevokeFailed = "RefreshTokenReuseRevokeFailed";
 

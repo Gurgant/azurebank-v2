@@ -21,13 +21,23 @@ as the address. `.example.com` is a domain reserved by RFC 2606, so mail to it r
   _(This line used to say "Argon2id password hashing (ADR-0003)". ADR-0003 decided that, and it
   was built for PINs, never for passwords — the API registers Identity with no custom password
   hasher. ADR-0003 now carries the correction.)_
-- **A 15-minute access token, silently re-minted** by the BFF from a 7-day rotating refresh token.
-  Short-lived so a leaked token is nearly worthless; re-minted server-side so the user never sees
-  an expiry. An active session is bounded by inactivity and absolute timeouts, not by the token
-  (ADR-0021).
-- **Refresh tokens rotate on every use, and a reuse revokes the whole family** — a replayed
-  refresh token is the signature of theft, so the response is to end every session descended from
-  it rather than to serve the request (ADR-0021).
+- **A 15-minute access token, silently re-minted** by the BFF from the session's refresh token, its
+  grant. Short-lived so a leaked token is nearly worthless; re-minted server-side so the user never
+  sees an expiry. An active session is bounded by inactivity and absolute timeouts (ADR-0021), and
+  by its grant: the grant lives 60 minutes from sign-in, fixed then and never extended, and no
+  access token minted from it outlives it.
+- **One grant per session, which does not rotate, and which only the BFF's own client can
+  present.** The API answers its five token endpoints (login, register, refresh, revoke and logout)
+  with 404 unless the request comes over loopback with exactly one `X-AzureBank-Token-Road` header,
+  besides the service key. A renewal only reads the grant, so a lost answer or a database outage
+  has nothing to break. A grant whose session ended, presented again, is refused and recorded as a
+  `RefreshTokenReuse` security event with an audit row. It revokes nothing: only code inside the
+  API's own replica can present a grant, and revoking one user's tokens would not contain that
+  code; the incident runbook does.
+  _(Until 2026-09-28 these two bullets said the refresh token lived 7 days, rotated on every use,
+  and that a reuse revoked the whole family. Rotation turned a renewal whose answer was lost, to a
+  database hang for instance, into a sign-out, and the family revoke could then sign out every
+  other session of the user under a false reuse event.)_
 - **A PIN for every move of money and for closing an account, on two rails.** ~~on three rails. A
   withdrawal carries the PIN in its request body.~~ *(Struck 2026-09-21: ADR-0056 moved the
   withdrawal onto the mint rail, and the body-PIN rail it was the last user of no longer exists.)*

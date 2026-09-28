@@ -497,93 +497,72 @@ public sealed class AuditChainSqlServerTests : IDisposable
     }
 
     [SqlServerFact]
-    public async Task WhenTheReuseAuditRowCannotBeWritten_TheStolenFamilyIsStillRevoked()
+    public async Task WhenTheTripwiresAuditRowCannotBeWritten_TheAnswerIs500_AndTheOtherSessionStaysActive()
     {
         /*
-          THE ONE PLACE WHERE D1 MUST NOT APPLY, and the reason the audit wiring in this branch had
-          to be reordered. Everywhere else "no evidence, no action" is the right trade. Here the
-          action is CONTAINMENT of a token already proven stolen, and refusing to contain it because
-          the logging failed hands the attacker the family.
+          THE TRIPWIRE'S LOUD FAILURE (06 §4.3, §9). This test used to pin the one exception to D1:
+          the reuse branch revoked the user's whole token family FIRST and wrote its row after, so a
+          failed audit write could not leave a stolen family alive. PR-1 removed that containment
+          (06 F3) — only code inside the replica can present a grant, and revoking one user's tokens
+          does not contain it — so the exception went with it, and the rewrite asserts the opposite
+          half: when the tripwire's row cannot be written, the failure surfaces as a 500, as the
+          unknown-grant refusal's always did, and NOTHING is revoked, so the user's other session
+          still renews.
 
-          The first wiring awaited RecordRefusalAsync BEFORE the try that guards the family revoke.
-          RecordRefusalAsync is deliberately allowed to throw and runs on its own connection, so a
-          command timeout or an unwritable audit table escaped RotateAsync with the revoke never
-          attempted, no MitigationFailed row either, and a 500 instead of the uniform 401 — the exact
-          outcome the comment inside that catch calls out as inviting a retry of the stolen token.
-
-          Found by an adversarial sweep of the audit write path, not by a bot and not by the suite.
+          Two sessions of one user. A's grant is revoked through /revoke, as the BFF does when A
+          ends; through /logout the replay would be only an Info event, because that revokes as
+          SignOutEverywhere, not SessionEnded. Then A's grant is presented again with the tripwire's
+          audit insert failing for real (SQL Server's truncation error, not an exception thrown in
+          .NET).
         */
         var services = CreateSqlServices();
         var client = _factory!.CreateClient();
 
         var unique = Guid.NewGuid().ToString("N")[..8];
+        var email = $"tripwire{unique}@example.com";
         var register = await client.PostAsJsonAsync("/api/auth/register", new
         {
-            azureTag = $"reuse_{unique}",
-            email = $"reuse{unique}@example.com",
+            azureTag = $"trip_{unique}",
+            email,
             password = "TestPass123!",
-            firstName = "Reuse",
-            lastName = "Containment",
+            firstName = "Trip",
+            lastName = "Wire",
         });
         register.EnsureSuccessStatusCode();
+        var sessionA = (await register.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("data").GetProperty("token").GetProperty("refreshToken").GetString();
+        sessionA.Should().NotBeNullOrEmpty("the tripwire needs a real grant to present again");
 
-        var registered = await register.Content.ReadFromJsonAsync<JsonElement>();
-        var stolen = registered.GetProperty("data").GetProperty("token")
-            .GetProperty("refreshToken").GetString();
-        stolen.Should().NotBeNullOrEmpty("the reuse branch needs a real token to replay");
-
-        /*
-          LOG OUT, THEN LOG BACK IN, and both halves are load-bearing — the first two attempts at
-          this setup each proved nothing, which is why the reasoning is written down.
-
-          Logging out rather than ROTATING: RotateAsync treats a token that HAS a successor and was
-          revoked inside RotationGraceWindow (10 s) as a benign lost-response retry and writes no
-          audit row at all, so a rotate-then-replay never reaches the reuse branch. Logout calls
-          RevokeAllForUserAsync, which revokes WITHOUT a successor — the shape the code itself names
-          as genuine reuse ("explicit logout / theft response").
-
-          Logging back IN afterwards: logout revokes everything, so replaying against that state
-          leaves the family revoke with nothing to do and "zero active tokens" holds whether or not
-          containment ran. The fresh session is what gives the mitigation a victim, and it is what
-          makes this test able to fail — verified by putting the audit write back ahead of the
-          containment and watching it go red.
-        */
-        var accessToken = registered.GetProperty("data").GetProperty("token")
-            .GetProperty("accessToken").GetString();
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-        (await client.PostAsync("/api/auth/logout", content: null)).EnsureSuccessStatusCode();
-        client.DefaultRequestHeaders.Authorization = null;
-
-        var login = await client.PostAsJsonAsync("/api/auth/login", new
-        {
-            email = $"reuse{unique}@example.com",
-            password = "TestPass123!",
-        });
+        var login = await client.PostAsJsonAsync("/api/auth/login", new { email, password = "TestPass123!" });
         login.EnsureSuccessStatusCode();
+        var sessionB = (await login.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("data").GetProperty("token").GetProperty("refreshToken").GetString();
+
+        (await client.PostAsJsonAsync("/api/auth/revoke", new { refreshTokens = new[] { sessionA } }))
+            .StatusCode.Should().Be(System.Net.HttpStatusCode.OK, "session A ends, as the BFF ends it");
 
         var fault = new OverlongAuditEventInterceptor(SecurityEvents.RefreshTokenReuse);
         _factory.AddInterceptor(fault);
 
-        var replay = await client.PostAsJsonAsync("/api/auth/refresh", new { refreshToken = stolen });
+        var replay = await client.PostAsJsonAsync("/api/auth/refresh", new { refreshToken = sessionA });
 
-        fault.Fired.Should().BeTrue("the test proves nothing if the reuse audit insert never failed");
-        replay.IsSuccessStatusCode.Should().BeFalse("a replayed token is always rejected");
+        fault.Fired.Should().BeTrue("the test proves nothing if the tripwire's audit insert never failed");
+        replay.StatusCode.Should().Be(System.Net.HttpStatusCode.InternalServerError,
+            "a tripwire that cannot record itself fails loudly (ADR-0044), as the unknown-grant refusal does");
 
         using var scope = services.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
-        var user = await context.Users.AsNoTracking()
-            .SingleAsync(u => u.Email == $"reuse{unique}@example.com");
+        var user = await context.Users.AsNoTracking().SingleAsync(u => u.Email == email);
 
         var active = await context.RefreshTokens.AsNoTracking()
             .Where(t => t.UserId == user.Id && t.RevokedAt == null)
             .CountAsync();
+        active.Should().Be(1, "the tripwire revokes nothing: session B's grant is still active (06 F3)");
 
-        active.Should().Be(
-            0,
-            "the session opened after the logout must die with the rest: containment cannot be "
-            + "reachable only when logging works");
+        (await client.PostAsJsonAsync("/api/auth/refresh", new { refreshToken = sessionB }))
+            .StatusCode.Should().Be(System.Net.HttpStatusCode.OK, "and session B still renews");
 
-        _output.WriteLine($"reuse audit insert refused -> {(int)replay.StatusCode}, active tokens left {active}");
+        _output.WriteLine($"tripwire audit insert refused -> {(int)replay.StatusCode}, active grants left {active}");
     }
 
     [SqlServerFact]

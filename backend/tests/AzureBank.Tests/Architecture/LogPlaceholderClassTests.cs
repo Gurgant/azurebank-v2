@@ -136,6 +136,7 @@ public class LogPlaceholderClassTests
         ["Partition"] = Operational,
         ["PendingRows"] = Operational,
         ["PeriodSeconds"] = Operational,
+        ["Reason"] = Operational, // a code's name: why a grant was revoked (RefreshTokenRevokedReason), or which token-road check refused
         ["Receipt"] = Operational,
         ["RequestMethod"] = Operational,
         ["Resource"] = Operational, // one of five constants the BFF derives from the first path segment, never the segment itself

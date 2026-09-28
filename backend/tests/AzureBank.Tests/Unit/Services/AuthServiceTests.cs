@@ -8,6 +8,7 @@ using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.Entities;
+using AzureBank.Shared.Enums;
 using AzureBank.Shared.Exceptions;
 using AzureBank.Shared.Services.Interfaces;
 using FluentAssertions;
@@ -41,6 +42,9 @@ public class AuthServiceTests : IDisposable
     private readonly Mock<ILoginTimingEqualizer> _timingEqualizerMock;
     private readonly AuthService _sut;
 
+    /// <summary>The expiry the mocked grant carries, so a test can see it reach the response.</summary>
+    private static readonly DateTime GrantExpiresAt = new(2026, 9, 28, 13, 0, 0, DateTimeKind.Utc);
+
     public AuthServiceTests()
     {
         var options = new DbContextOptionsBuilder<AzureBankDbContext>()
@@ -73,12 +77,11 @@ public class AuthServiceTests : IDisposable
 
         _jwtServiceMock = new Mock<IJwtService>();
         _refreshTokenServiceMock = new Mock<IRefreshTokenService>();
-        // Login/register issue a refresh token; default the mock so LoginResponse/TokenResponse
-        // get a non-null value (the rotation mechanics themselves are covered in
-        // RefreshTokenServiceTests).
+        // Login/register issue a grant; default the mock so LoginResponse/TokenResponse get a
+        // non-null value (the grant itself is covered in RefreshTokenServiceTests).
         _refreshTokenServiceMock
             .Setup(x => x.IssueAsync(It.IsAny<ApplicationUser>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync("refresh-token-plaintext");
+            .ReturnsAsync(new IssuedGrant("refresh-token-plaintext", GrantExpiresAt));
         _passwordHasherMock = new Mock<IPasswordHasher>();
         _userMapper = new UserMapper();
         _accountMapper = new AccountMapper();
@@ -214,7 +217,7 @@ public class AuthServiceTests : IDisposable
         ex.StatusCode.Should().Be(429);
         ex.ErrorCode.Should().Be(ErrorCodes.AccountLocked);
         ((int)ex.Details!["retryAfterSeconds"]).Should().BePositive();
-        _jwtServiceMock.Verify(x => x.GenerateToken(It.IsAny<ApplicationUser>()), Times.Never);
+        _jwtServiceMock.Verify(x => x.GenerateToken(It.IsAny<ApplicationUser>(), It.IsAny<DateTime?>()), Times.Never);
     }
 
     [Fact]
@@ -239,7 +242,7 @@ public class AuthServiceTests : IDisposable
     {
         var user = SeedUserInContext(failed: 3);
         _userManagerMock.Setup(x => x.CheckPasswordAsync(user, "correct")).ReturnsAsync(true);
-        _jwtServiceMock.Setup(x => x.GenerateToken(user))
+        _jwtServiceMock.Setup(x => x.GenerateToken(user, null))
             .Returns(new TokenResult("jwt", DateTime.UtcNow.AddMinutes(15)));
 
         var result = await _sut.LoginAsync(new LoginRequest { Email = user.Email!, Password = "correct" });
@@ -267,7 +270,7 @@ public class AuthServiceTests : IDisposable
     {
         var user = SeedUserInContext(failed: 3, lockoutEnd: DateTimeOffset.UtcNow.AddMinutes(-1)); // expired
         _userManagerMock.Setup(x => x.CheckPasswordAsync(user, "correct")).ReturnsAsync(true);
-        _jwtServiceMock.Setup(x => x.GenerateToken(user))
+        _jwtServiceMock.Setup(x => x.GenerateToken(user, null))
             .Returns(new TokenResult("jwt", DateTime.UtcNow.AddMinutes(15)));
 
         var result = await _sut.LoginAsync(new LoginRequest { Email = user.Email!, Password = "correct" });
@@ -287,7 +290,7 @@ public class AuthServiceTests : IDisposable
         user.LockoutEnabled = false;
         _context.SaveChanges();
         _userManagerMock.Setup(x => x.CheckPasswordAsync(user, "correct")).ReturnsAsync(true);
-        _jwtServiceMock.Setup(x => x.GenerateToken(user))
+        _jwtServiceMock.Setup(x => x.GenerateToken(user, null))
             .Returns(new TokenResult("jwt", DateTime.UtcNow.AddMinutes(15)));
 
         var result = await _sut.LoginAsync(new LoginRequest { Email = user.Email!, Password = "correct" });
@@ -337,7 +340,7 @@ public class AuthServiceTests : IDisposable
 
         var expiresAt = DateTime.UtcNow.AddMinutes(15);
         _jwtServiceMock
-            .Setup(x => x.GenerateToken(user))
+            .Setup(x => x.GenerateToken(user, null))
             .Returns(new TokenResult("test-jwt-token", expiresAt));
 
         // Act
@@ -347,6 +350,8 @@ public class AuthServiceTests : IDisposable
         result.Should().NotBeNull();
         result.Token.AccessToken.Should().Be("test-jwt-token");
         result.Token.RefreshToken.Should().Be("refresh-token-plaintext");
+        result.Token.RefreshTokenExpiresAt.Should().Be(GrantExpiresAt,
+            "the grant's own fixed expiry, which the BFF caps the session at (06 §4.1)");
         result.Token.ExpiresAt.Should().Be(expiresAt, "the token's own exp, never recomputed");
         result.Token.TokenType.Should().Be("Bearer");
         result.Token.ExpiresIn.Should().BeInRange(890, 900, "what is left of a 15-minute token");
@@ -640,6 +645,61 @@ public class AuthServiceTests : IDisposable
         await act.Should().ThrowAsync<DbUpdateException>(
             "a non-duplicate write failure must propagate so the strategy can retry it, rather than "
                 + "being reported to the caller as a duplicate");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RegisterAsync_TheGrantsExpiry_IsNullExactlyWhenTheGrantIs(bool grantFails)
+    {
+        /*
+          The registration's grant is best-effort: it is issued after the transaction commits, and a
+          failure there still answers the registration. TokenResponse promises RefreshTokenExpiresAt
+          is null exactly when RefreshToken is, and the BFF relies on the pair: a session with no
+          grant keeps SessionCreated + 60 and the hard stop at token expiry (06 §4.1, F15), so an
+          expiry without a grant, or the reverse, would describe a grant that is not there. Both
+          halves, so the null below is the failure's and not the path's.
+        */
+        var request = new RegisterRequest
+        {
+            Email = "grantless@example.com",
+            Password = "SecurePass123!",
+            AzureTag = "grantless",
+            FirstName = "Grant",
+            LastName = "Less"
+        };
+        _userManagerMock
+            .Setup(x => x.FindByEmailAsync(request.Email))
+            .ReturnsAsync((ApplicationUser?)null);
+        _userManagerMock
+            .Setup(x => x.CreateAsync(It.IsAny<ApplicationUser>(), request.Password))
+            .ReturnsAsync(IdentityResult.Success);
+        _jwtServiceMock
+            .Setup(x => x.GenerateToken(It.IsAny<ApplicationUser>(), null))
+            .Returns(new TokenResult("test-jwt-token", DateTime.UtcNow.AddMinutes(15)));
+        if (grantFails)
+        {
+            _refreshTokenServiceMock
+                .Setup(x => x.IssueAsync(It.IsAny<ApplicationUser>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new InvalidOperationException("the grant's INSERT failed"));
+        }
+
+        var result = await _sut.RegisterAsync(request);
+
+        _refreshTokenServiceMock.Verify(
+            x => x.IssueAsync(It.IsAny<ApplicationUser>(), It.IsAny<CancellationToken>()), Times.Once,
+            "the grant was asked for once, after the registration committed");
+        result.Token.AccessToken.Should().Be("test-jwt-token", "the registration itself succeeded");
+        if (grantFails)
+        {
+            result.Token.RefreshToken.Should().BeNull();
+            result.Token.RefreshTokenExpiresAt.Should().BeNull("null exactly when the grant is");
+        }
+        else
+        {
+            result.Token.RefreshToken.Should().Be("refresh-token-plaintext");
+            result.Token.RefreshTokenExpiresAt.Should().Be(GrantExpiresAt);
+        }
     }
 
     #endregion
@@ -995,17 +1055,39 @@ public class AuthServiceTests : IDisposable
     #region LogoutAsync Tests
 
     [Fact]
-    public async Task LogoutAsync_RevokesAllRefreshTokensForUser()
+    public async Task LogoutAsync_RevokesEveryGrantOfTheUser_AsSignOutEverywhere_AtItsReceivedAt()
     {
-        // Arrange
+        // /api/auth/logout keeps its effect — every session of the user — with the reason that says
+        // so, and the request's ReceivedAt as RevokedAt (06 §4.4). One session ends through revoke.
         var userId = Guid.NewGuid();
+        var receivedAt = DateTime.UtcNow.AddSeconds(-2);
 
-        // Act
-        await _sut.LogoutAsync(userId);
+        await _sut.LogoutAsync(userId, receivedAt);
 
-        // Assert - logout must genuinely end the session's ability to re-mint access tokens.
         _refreshTokenServiceMock.Verify(
-            x => x.RevokeAllForUserAsync(userId, It.IsAny<CancellationToken>()), Times.Once);
+            x => x.RevokeAllForUserAsync(
+                userId, RefreshTokenRevokedReason.SignOutEverywhere, receivedAt, It.IsAny<CancellationToken>()),
+            Times.Once);
+        _refreshTokenServiceMock.Verify(
+            x => x.RevokeAsync(It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task RevokeAsync_RevokesThePresentedGrants_AtItsReceivedAt()
+    {
+        var receivedAt = DateTime.UtcNow.AddSeconds(-1);
+        string[] grants = ["grant-a", "grant-b"];
+
+        await _sut.RevokeAsync(new RevokeRequest { RefreshTokens = grants }, receivedAt);
+
+        _refreshTokenServiceMock.Verify(
+            x => x.RevokeAsync(grants, receivedAt, It.IsAny<CancellationToken>()), Times.Once);
+        _refreshTokenServiceMock.Verify(
+            x => x.RevokeAllForUserAsync(
+                It.IsAny<Guid>(), It.IsAny<RefreshTokenRevokedReason>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "ending one session must not touch the user's others");
     }
 
     #endregion
@@ -1013,44 +1095,49 @@ public class AuthServiceTests : IDisposable
     #region RefreshAsync Tests
 
     [Fact]
-    public async Task RefreshAsync_RotatesAndMintsAccessTokenForRotatedUser()
+    public async Task RefreshAsync_MintsAnAccessTokenCappedAtTheGrant_AndHandsBackNoRefreshToken()
     {
-        // Arrange - rotation returns the owning user + the NEW refresh token.
+        // Arrange - renewal returns the owning user and the grant's expiry, and nothing else.
         var user = CreateTestUser();
+        var receivedAt = DateTime.UtcNow;
+        var grantExpiresAt = DateTime.UtcNow.AddMinutes(7);
         _refreshTokenServiceMock
-            .Setup(x => x.RotateAsync("old-refresh", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new RefreshRotationResult(user, "new-refresh"));
+            .Setup(x => x.RenewAsync("the-grant", receivedAt, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new RenewResult(user, grantExpiresAt));
         _jwtServiceMock
-            .Setup(x => x.GenerateToken(user))
-            .Returns(new TokenResult("new-access", DateTime.UtcNow.AddMinutes(15)));
+            .Setup(x => x.GenerateToken(user, grantExpiresAt))
+            .Returns(new TokenResult("new-access", grantExpiresAt));
 
         // Act
-        var result = await _sut.RefreshAsync(new RefreshRequest { RefreshToken = "old-refresh" });
+        var result = await _sut.RefreshAsync(new RefreshRequest { RefreshToken = "the-grant" }, receivedAt);
 
-        // Assert - the access token is minted for the rotated user, and the NEW refresh
-        // token is handed back (never the presented one).
+        // Assert - the access token is minted for the grant's user, capped at the grant's expiry
+        // (06 §4.1), and the answer carries only it: the grant is not rotated (06 §4.3).
         result.AccessToken.Should().Be("new-access");
-        result.RefreshToken.Should().Be("new-refresh");
-        result.ExpiresAt.Should().BeCloseTo(DateTime.UtcNow.AddMinutes(15), TimeSpan.FromMinutes(1));
-        _jwtServiceMock.Verify(x => x.GenerateToken(user), Times.Once);
+        result.ExpiresAt.Should().Be(grantExpiresAt);
+        typeof(RefreshResponse).GetProperties().Select(p => p.Name)
+            .Should().BeEquivalentTo(["AccessToken", "ExpiresAt"]);
+        _jwtServiceMock.Verify(x => x.GenerateToken(user, grantExpiresAt), Times.Once);
+        _refreshTokenServiceMock.Verify(
+            x => x.IssueAsync(It.IsAny<ApplicationUser>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
     public async Task RefreshAsync_InvalidToken_PropagatesAndMintsNoAccessToken()
     {
-        // Arrange - the rotation service is the single arbiter of validity; a rejection
+        // Arrange - the grant service is the single arbiter of validity; a rejection
         // must surface as-is and never reach JWT minting.
         _refreshTokenServiceMock
-            .Setup(x => x.RotateAsync("bad", It.IsAny<CancellationToken>()))
+            .Setup(x => x.RenewAsync("bad", It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new AuthenticationException("Invalid refresh token.", ErrorCodes.RefreshTokenInvalid));
 
         // Act
-        var act = () => _sut.RefreshAsync(new RefreshRequest { RefreshToken = "bad" });
+        var act = () => _sut.RefreshAsync(new RefreshRequest { RefreshToken = "bad" }, DateTime.UtcNow);
 
         // Assert
         (await act.Should().ThrowAsync<AuthenticationException>())
             .Which.ErrorCode.Should().Be(ErrorCodes.RefreshTokenInvalid);
-        _jwtServiceMock.Verify(x => x.GenerateToken(It.IsAny<ApplicationUser>()), Times.Never);
+        _jwtServiceMock.Verify(x => x.GenerateToken(It.IsAny<ApplicationUser>(), It.IsAny<DateTime?>()), Times.Never);
     }
 
     #endregion

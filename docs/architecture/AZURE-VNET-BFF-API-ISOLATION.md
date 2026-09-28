@@ -165,7 +165,7 @@ This guide explains how to deploy the AzureBank solution to Azure with:
     "Issuer": "AzureBank.Api",
     "Audience": "AzureBank.Bff",
     "ExpirationMinutes": 15,
-    "RefreshTokenExpirationDays": 7
+    "RefreshTokenLifetimeMinutes": 60
   },
   "AllowedHosts": "*",
   "Kestrel": {

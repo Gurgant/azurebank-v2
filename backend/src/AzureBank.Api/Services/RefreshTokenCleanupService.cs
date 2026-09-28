@@ -10,12 +10,13 @@ namespace AzureBank.Api.Services;
 ///
 /// Notes:
 /// - Cleanup is HYGIENE, not correctness: every read path already filters on expiry and
-///   revocation (RotateAsync treats an expired/absent token as invalid), so an un-swept row
-///   is inert. This sweep just stops the table growing unbounded — each login and each
-///   rotation writes a row.
+///   revocation (RenewAsync treats an expired/absent grant as invalid), so an un-swept row
+///   is inert. This sweep just stops the table growing unbounded — each sign-in writes a row.
+///   A grant presented after its row is swept is an unknown one (06 §6, anomaly 3).
 /// - The RefreshTokens table self-references itself (ReplacedByTokenId, DeleteBehavior.Restrict)
-///   to form the rotation chain, so a single set-based DELETE can trip the FK when a surviving
-///   row still points at a row being deleted. We first NULL every link whose TARGET is expiring
+///   in the LEGACY rotation chain, which nothing writes since PR-1 but rows written before still
+///   carry, so a single set-based DELETE can trip the FK when a surviving row still points at a
+///   row being deleted. We first NULL every link whose TARGET is expiring
 ///   (from live rows too, not just expired ones), then delete. Nulling by target — rather than
 ///   by the holder's own expiry — stays correct even if the token lifetime config is SHRUNK
 ///   (or the clock jumps back), which can leave a still-live predecessor pointing at an
@@ -28,7 +29,8 @@ namespace AzureBank.Api.Services;
 ///   does, for the timer and for what counts as expired, so a test can move time instead of waiting.
 ///   RefreshTokenService stamps ExpiresAt, and RefreshToken.IsExpired reads it, on DateTime.UtcNow, so
 ///   the sweep and the read path agree while the registered clock is the system one -- every host
-///   outside tests. A fake clock moved seven days or more would sweep tokens the read path still takes.
+///   outside tests. A fake clock moved past a grant's lifetime would sweep grants the read path still
+///   takes.
 /// </summary>
 public class RefreshTokenCleanupService : BackgroundService
 {

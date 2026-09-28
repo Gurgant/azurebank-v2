@@ -108,6 +108,56 @@ public class JwtOptionsTests
             .Which.Message.Should().Contain("Jwt:Secret must be configured");
     }
 
+    private static ServiceProvider RootWithLifetime(string? lifetimeMinutes, string? accessMinutes = null)
+    {
+        var values = new Dictionary<string, string?> { ["Jwt:Secret"] = CustomWebApplicationFactory.JwtSecret };
+        if (lifetimeMinutes is not null)
+        {
+            values["Jwt:RefreshTokenLifetimeMinutes"] = lifetimeMinutes;
+        }
+
+        if (accessMinutes is not null)
+        {
+            values["Jwt:ExpirationMinutes"] = accessMinutes;
+        }
+
+        var services = new ServiceCollection();
+        services.AddJwtOptions(new ConfigurationBuilder().AddInMemoryCollection(values).Build());
+        return services.BuildServiceProvider();
+    }
+
+    [Theory]
+    [InlineData("14", null)]   // under the floor (06 F11)
+    [InlineData("1441", null)] // over a day
+    [InlineData("0", null)]
+    [InlineData("-60", null)]
+    [InlineData("20", "30")]   // below the access token's own lifetime
+    public void AGrantLifetimeOutOfRange_OrBelowTheAccessToken_StopsTheHostAtStart(string lifetime, string? access)
+    {
+        using var root = RootWithLifetime(lifetime, access);
+
+        var act = () => root.GetRequiredService<IStartupValidator>().Validate();
+
+        act.Should().Throw<OptionsValidationException>()
+            .Which.Message.Should().Contain(
+                "Jwt:RefreshTokenLifetimeMinutes must be between 15 and 1440, and not below Jwt:ExpirationMinutes.");
+    }
+
+    [Theory]
+    [InlineData(null, null, 60)]    // nothing configured: the BFF's absolute cap
+    [InlineData("15", null, 15)]
+    [InlineData("1440", null, 1440)]
+    [InlineData("30", "30", 30)]    // equal to the access token is allowed
+    public void AGrantLifetimeInRange_StartsAndBinds(string? lifetime, string? access, int minutes)
+    {
+        using var root = RootWithLifetime(lifetime, access);
+
+        var act = () => root.GetRequiredService<IStartupValidator>().Validate();
+
+        act.Should().NotThrow();
+        root.GetRequiredService<IOptions<JwtOptions>>().Value.RefreshTokenLifetimeMinutes.Should().Be(minutes);
+    }
+
     private static ServiceProvider RootWithInterval(string? interval)
     {
         var values = new Dictionary<string, string?> { ["Jwt:Secret"] = CustomWebApplicationFactory.JwtSecret };

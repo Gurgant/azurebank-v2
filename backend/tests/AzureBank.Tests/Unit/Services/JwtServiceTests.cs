@@ -213,6 +213,54 @@ public class JwtServiceTests
     }
 
     [Fact]
+    public void GenerateToken_WithANotAfterSoonerThanItsLifetime_ExpiresNoLaterThanIt()
+    {
+        // 06 §4.1: a renewal passes its grant's expiry, and no access token outlives the grant.
+        // The exp claim is whole seconds, truncated, so it may end up to a second BEFORE the cap,
+        // never after it.
+        var user = CreateTestUser();
+        var grantExpiresAt = DateTime.UtcNow.AddMinutes(4).AddMilliseconds(700);
+
+        var result = _sut.GenerateToken(user, grantExpiresAt);
+        var jwt = new JwtSecurityTokenHandler().ReadJwtToken(result.AccessToken);
+
+        jwt.ValidTo.Should().BeOnOrBefore(grantExpiresAt);
+        jwt.ValidTo.Should().BeAfter(grantExpiresAt.AddSeconds(-1));
+        result.ExpiresAt.Should().Be(jwt.ValidTo, "the returned expiry stays the token's own exp");
+    }
+
+    [Fact]
+    public void GenerateToken_WithANotAfterLaterThanItsLifetime_KeepsItsLifetime()
+    {
+        var user = CreateTestUser();
+        var before = DateTime.UtcNow;
+
+        var result = _sut.GenerateToken(user, before.AddHours(1));
+
+        result.ExpiresAt.Should().BeCloseTo(before.AddMinutes(_options.ExpirationMinutes), TimeSpan.FromSeconds(5),
+            "a cap later than the normal lifetime changes nothing");
+    }
+
+    [Fact]
+    public void GenerateToken_WithANotAfterReadBackFromSqlServer_TreatsItAsUtc()
+    {
+        /*
+          SQL Server hands a datetime2 back as DateTimeKind.Unspecified, and the token library
+          converts an Unspecified value AS LOCAL TIME. On a machine east of UTC that would end the
+          token hours before its grant; west of UTC, hours after it — past the grant, which is the
+          one thing 06 §4.1 forbids. Only a machine whose zone is not UTC can see this fail.
+        */
+        var user = CreateTestUser();
+        var utc = DateTime.UtcNow.AddMinutes(5);
+        var unspecified = DateTime.SpecifyKind(utc, DateTimeKind.Unspecified);
+
+        var result = _sut.GenerateToken(user, unspecified);
+
+        result.ExpiresAt.Should().BeCloseTo(utc, TimeSpan.FromSeconds(1));
+        result.ExpiresAt.Should().BeOnOrBefore(utc);
+    }
+
+    [Fact]
     public void GenerateToken_DifferentUsersGetDifferentTokens()
     {
         // Arrange

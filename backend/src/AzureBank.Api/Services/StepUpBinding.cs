@@ -15,7 +15,7 @@ namespace AzureBank.Api.Services;
 /// </para>
 ///
 /// <para>
-/// Lives beside <c>TokenResult</c> and <c>RefreshRotationResult</c> rather than in
+/// Lives beside <c>TokenResult</c> and <c>RenewResult</c> rather than in
 /// <c>Services.Interfaces</c>, because <c>NamingConventionTests.ServiceInterfaces_ShouldStartWithI</c>
 /// requires every type in that namespace to be an interface — and it caught this one.
 /// </para>

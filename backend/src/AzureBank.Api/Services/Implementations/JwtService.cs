@@ -29,11 +29,31 @@ public class JwtService : IJwtService
     /// its exact expiry so callers never recompute the lifetime (no config drift, no
     /// UtcNow skew — the returned expiry is read back from the token's own exp claim).
     /// </summary>
-    public TokenResult GenerateToken(ApplicationUser user)
+    /// <param name="user">Whom the token is for.</param>
+    /// <param name="notAfter">
+    /// When given, the token expires then if that is sooner than its normal lifetime: a renewal
+    /// passes its grant's expiry, so no access token outlives the grant it came from (06 §4.1). The
+    /// <c>exp</c> claim is whole seconds, truncated, so the token never ends even a fraction of a
+    /// second after <paramref name="notAfter"/>.
+    /// </param>
+    public TokenResult GenerateToken(ApplicationUser user, DateTime? notAfter = null)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_options.Secret));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
         var expiresAt = DateTime.UtcNow.AddMinutes(_options.ExpirationMinutes);
+        if (notAfter is { } cap)
+        {
+            // A grant's expiry read back from SQL Server arrives as Unspecified, and the token
+            // library converts an Unspecified value AS LOCAL TIME: on a machine two hours east of
+            // UTC the token would end two hours early. Every DateTime this API stores is UTC.
+            cap = cap.Kind == DateTimeKind.Unspecified
+                ? DateTime.SpecifyKind(cap, DateTimeKind.Utc)
+                : cap.ToUniversalTime();
+            if (cap < expiresAt)
+            {
+                expiresAt = cap;
+            }
+        }
 
         var claims = new[]
         {

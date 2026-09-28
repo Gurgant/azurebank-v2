@@ -19,14 +19,24 @@ public interface IAuthService
     Task<RegisterResponse> RegisterAsync(RegisterRequest request);
 
     /// <summary>
-    /// Exchanges a valid refresh token for a fresh access + refresh token pair (rotation).
+    /// Presents a grant for a fresh access token, capped at the grant's expiry. The grant is read,
+    /// not rotated: the same one renews again (06 §4.3).
     /// </summary>
-    Task<RefreshResponse> RefreshAsync(RefreshRequest request);
+    /// <param name="request">The grant.</param>
+    /// <param name="receivedAt">When the API received the request (the tripwire compares it).</param>
+    Task<RefreshResponse> RefreshAsync(RefreshRequest request, DateTime receivedAt);
 
     /// <summary>
-    /// Logs out a user, revoking all of their active refresh tokens.
+    /// Revokes the grants of sessions the BFF has ended (06 §4.4), stamped with
+    /// <paramref name="receivedAt"/>. Unknown and already-revoked grants are not an error.
     /// </summary>
-    Task LogoutAsync(Guid userId);
+    Task RevokeAsync(RevokeRequest request, DateTime receivedAt);
+
+    /// <summary>
+    /// Signs the user out of EVERY session: revokes all of their active grants as
+    /// <c>SignOutEverywhere</c>, stamped with <paramref name="receivedAt"/>.
+    /// </summary>
+    Task LogoutAsync(Guid userId, DateTime receivedAt);
 
     /// <summary>
     /// Gets the current authenticated user's information.

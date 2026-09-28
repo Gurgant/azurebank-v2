@@ -128,14 +128,12 @@ public class TokenRefresher : ITokenRefresher
     {
         var client = _httpClientFactory.CreateClient("BackendApi");
 
-        // The refresh POST is a MUTATION: the API rotates (revokes old + issues new) the instant it
-        // handles the request. PostAsJsonAsync buffers the whole response (ResponseContentRead), so
-        // its token covers send+receive; driving it off the CALLER's token (RequestAborted) would let
-        // a browser disconnect mid-flight cancel it AFTER the API committed the rotation — we'd return
-        // the stale token, never persist the successor, and the next re-mint would reuse a now-revoked
-        // token and trip reuse-detection (killing the session). So run it on an INDEPENDENT bounded
-        // timeout, decoupled from the caller — the same pattern as logout's RevokeApiTokensAsync. (The
-        // caller's token still gated the single-flight wait upstream, before we committed to rotating.)
+        // Since PR-1 the API's renewal is a READ: it no longer rotates the grant, so a lost answer
+        // costs nothing and the same grant renews again (06 §4.3). The call still runs on an
+        // INDEPENDENT bounded timeout, decoupled from the caller (RequestAborted), as it did when a
+        // disconnect mid-flight could strand a committed rotation; 06 §4.5 rewrites this class and
+        // its timeouts. PostAsJsonAsync buffers the whole response (ResponseContentRead), so the
+        // token covers send+receive.
         using var cts = new CancellationTokenSource(RefreshCallTimeout);
 
         HttpResponseMessage response;
@@ -158,8 +156,8 @@ public class TokenRefresher : ITokenRefresher
         {
             if (response.StatusCode == HttpStatusCode.Unauthorized)
             {
-                // The refresh token is dead (revoked / expired / reuse-detected) — the session
-                // cannot recover, so end it and force a fresh login.
+                // The grant is dead (unknown / revoked / expired) — the session cannot recover, so
+                // end it and force a fresh login. (06 §4.5 narrows this to REFRESH_TOKEN_INVALID.)
                 _sessionService.RevokeSession(sessionId);
                 _gates.TryRemove(sessionId, out _);
                 _logger.LogWarning(
@@ -177,10 +175,9 @@ public class TokenRefresher : ITokenRefresher
                 return currentAccessToken;
             }
 
-            // We have a 200: the API has ALREADY rotated the refresh token. Read and store the
-            // successor even if the CALLER's request was aborted (read with CancellationToken.None,
-            // not the caller's token) — discarding a committed rotation would leave the old, now
-            // server-side-revoked token on the session and force a needless re-login on next use.
+            // We have a 200: read and store the new access token even if the CALLER's request was
+            // aborted (read with CancellationToken.None, not the caller's token), so the renewal the
+            // API already answered is not wasted.
             RefreshResponse? refreshed;
             try
             {
@@ -201,8 +198,10 @@ public class TokenRefresher : ITokenRefresher
                 return currentAccessToken;
             }
 
+            // The API no longer rotates the grant (06 §4.3), so its answer carries none: keep the one
+            // just presented. The rewrite of this class in 06 §4.5 stops passing a grant here at all.
             _sessionService.RefreshSession(
-                sessionId, refreshed.AccessToken, refreshed.ExpiresAt, refreshed.RefreshToken);
+                sessionId, refreshed.AccessToken, refreshed.ExpiresAt, refreshToken);
             _logger.LogDebug("Re-minted access token for session {SessionId}", SecretPrefix.Of(sessionId));
             return refreshed.AccessToken;
         }

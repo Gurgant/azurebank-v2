@@ -1,3 +1,5 @@
+using AzureBank.Api.Attributes;
+using AzureBank.Api.Middleware;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
@@ -12,6 +14,11 @@ namespace AzureBank.Api.Controllers;
 /// <summary>
 /// Authentication controller handling login, registration, logout, and PIN operations.
 /// </summary>
+/// <remarks>
+/// The five token endpoints — login, register, refresh, revoke and logout — carry
+/// <see cref="TokenEndpointAttribute"/>: they answer only the BFF's own client over loopback, and
+/// 404 to anything else (06 §4.2, <see cref="TokenRoadMiddleware"/>).
+/// </remarks>
 [ApiController]
 [Route("api/auth")]
 [Produces("application/json")]
@@ -47,6 +54,7 @@ public class AuthController : ControllerBase
     /// <returns>JWT token and user information</returns>
     [HttpPost("login")]
     [AllowAnonymous]
+    [TokenEndpoint]
     [ProducesResponseType(typeof(ApiResponse<LoginResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
@@ -69,6 +77,7 @@ public class AuthController : ControllerBase
     /// <returns>User, account, and token information</returns>
     [HttpPost("register")]
     [AllowAnonymous]
+    [TokenEndpoint]
     [ProducesResponseType(typeof(ApiResponse<RegisterResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
@@ -85,19 +94,49 @@ public class AuthController : ControllerBase
     /// Refresh access token
     /// </summary>
     /// <remarks>
-    /// Exchange a refresh token for a fresh access + refresh token pair (rotation).
+    /// Present the session's grant for a fresh access token, which expires no later than the grant.
+    /// The grant is not consumed: the same one renews again until its session ends or it expires,
+    /// and the answer carries no refresh token.
     /// </remarks>
-    /// <param name="request">The current refresh token</param>
-    /// <returns>New access token, new refresh token, and its expiry</returns>
+    /// <param name="request">The session's grant</param>
+    /// <returns>New access token and its expiry</returns>
     [HttpPost("refresh")]
-    [AllowAnonymous] // the refresh token IS the credential; the access token may be expired
+    [AllowAnonymous] // the grant IS the credential; the access token may be expired
+    [TokenEndpoint]
     [ProducesResponseType(typeof(ApiResponse<RefreshResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)] // invalid/expired/reused
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)] // unknown/revoked/expired
     public async Task<ActionResult<ApiResponse<RefreshResponse>>> Refresh([FromBody] RefreshRequest request)
     {
-        var result = await _authService.RefreshAsync(request);
+        // No cancellation: a renewal of an active grant only reads, and the audit rows two refusals
+        // write — the unknown grant's and the tripwire's — must not be taken back by a caller that
+        // hangs up (06 §4.3).
+        var result = await _authService.RefreshAsync(request, HttpContext.ReceivedAt());
         return Ok(ApiResponse<RefreshResponse>.Success(result, "Token refreshed"));
+    }
+
+    /// <summary>
+    /// Revoke grants
+    /// </summary>
+    /// <remarks>
+    /// Revoke the grants of sessions that have ended: one, or several when the BFF drains its
+    /// sessions on a graceful stop. Revoked and unknown grants get the same 200 (RFC 7009 §2.2), and
+    /// repeating the call changes nothing. A 503 means the revocation was not recorded; send it again.
+    /// </remarks>
+    /// <param name="request">The grants to revoke</param>
+    /// <returns>Success message</returns>
+    [HttpPost("revoke")]
+    [AllowAnonymous] // the grant IS the credential; the service key, the marker and loopback still apply
+    [TokenEndpoint]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status503ServiceUnavailable)]
+    public async Task<ActionResult<ApiResponse>> Revoke([FromBody] RevokeRequest request)
+    {
+        // No cancellation either: the UPDATE is short and idempotent, and finishing it after the
+        // caller hung up only ends the grant sooner. The caller's retry finds it done.
+        await _authService.RevokeAsync(request, HttpContext.ReceivedAt());
+        return Ok(ApiResponse.Success("Revoked"));
     }
 
     /// <summary>
@@ -119,19 +158,21 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
-    /// Logout
+    /// Logout from every session
     /// </summary>
     /// <remarks>
-    /// Logout and invalidate session.
+    /// Sign the user out of every session on every device: every grant of the user is revoked. One
+    /// session ends through revoke instead.
     /// </remarks>
     /// <returns>Success message</returns>
     [HttpPost("logout")]
     [Authorize]
+    [TokenEndpoint]
     [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status200OK)]
     public async Task<ActionResult<ApiResponse>> Logout()
     {
         var userId = GetCurrentUserId();
-        await _authService.LogoutAsync(userId);
+        await _authService.LogoutAsync(userId, HttpContext.ReceivedAt());
         return Ok(ApiResponse.Success("Logged out successfully"));
     }
 

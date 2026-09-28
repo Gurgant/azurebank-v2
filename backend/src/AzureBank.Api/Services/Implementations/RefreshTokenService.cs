@@ -13,30 +13,38 @@ using Microsoft.Extensions.Options;
 namespace AzureBank.Api.Services.Implementations;
 
 /// <summary>
-/// Refresh-token rotation with reuse-detection (RFC 9700 §4.14.2 / OWASP OAuth2 Cheat Sheet).
+/// The grant: one reusable refresh token per BFF session, which does not rotate (06 §3, §4).
 ///
-/// - Tokens are 256 bits of CSPRNG entropy, stored ONLY as a SHA-256 hash — a database leak
-///   yields useless hashes, never a usable token.
-/// - Rotate-on-use: every refresh revokes the presented token and issues a chained successor
-///   (ReplacedByTokenId), so a stolen token can be used at most once before divergence.
-/// - Reuse-detection: replaying an already-revoked token is the signature of theft (attacker
-///   and client both hold a copy); the response is to revoke the user's ENTIRE active token
-///   set and force a fresh login. Matches the entity's documented "revoke ALL user tokens".
+/// - Grants are 256 bits of CSPRNG entropy, stored ONLY as a SHA-256 hash — a database leak
+///   yields useless hashes, never a usable grant.
+/// - A grant lives <c>Jwt:RefreshTokenLifetimeMinutes</c> from issue (60 by default), fixed then
+///   and never extended, and every access token minted from it is capped at that instant.
+/// - A renewal READS the grant and writes nothing. That is the whole fix for 06 §1: a renewal whose
+///   answer is lost, whose commit EF retries as if it had rolled back, or which a hung database
+///   holds, has nothing to lose, so the BFF can simply send it again with the same grant.
+/// - Revocation is per session (<see cref="RevokeAsync"/>, reason SessionEnded) or per user
+///   (<see cref="RevokeAllForUserAsync"/>). A grant whose session ENDED, presented in a request the
+///   API received after that revoke, is the tripwire: it is logged and audited, and it revokes
+///   nothing (06 F3).
 ///
-/// Concurrency: rotation is guarded by an optimistic-concurrency rowversion on the presented
-/// token, so two concurrent rotations of the SAME token cannot both commit (the loser gets a
-/// benign 401) — the chain is un-forkable regardless of caller, so reuse-detection cannot be
-/// silently bypassed. A just-rotated token replayed within a short grace window is treated as
-/// a benign lost-response retry, not theft.
+/// <i>Until PR-1 this rotated the token on every renewal and treated a revoked token presented again
+/// as theft, revoking every token of the user. Measured (06 §1): a renewal that met a 10 s
+/// database hang signed someone out in 8 runs of 8, and in 4 of them signed out every session of the
+/// user and wrote a false reuse event. FAPI 2.0 §5.3.2.1 item 9 reads "shall not use refresh token
+/// rotation except in extraordinary circumstances"; 06 §3 argues why that holds here without FAPI's
+/// client authentication: presenting a grant takes the grant, the service key and a socket on the
+/// API's loopback interface.</i>
 /// </summary>
 public class RefreshTokenService : IRefreshTokenService
 {
-    // A just-rotated token replayed within this window is a benign lost-response retry, not a
-    // theft signal. The 10-second duration is purely LOCAL APPLICATION POLICY — an
-    // availability/security trade-off that bounds the theft-tolerance window. (RFC 9700 defines
-    // rotation + reuse-detection but does NOT define a grace window.) A client that loses the
-    // rotation response and receives a 401 recovers by re-authenticating.
-    private static readonly TimeSpan RotationGraceWindow = TimeSpan.FromSeconds(10);
+    /// <summary>The <c>Retry-After</c> a failed revoke answers with.</summary>
+    private const int RevokeRetryAfterSeconds = 5;
+
+    /// <summary>
+    /// Less life than this left on a grant and a renewal refuses it as expired: an access token
+    /// capped at the grant, in whole seconds, would already be dead.
+    /// </summary>
+    private static readonly TimeSpan MinimumRemainingLife = TimeSpan.FromSeconds(1);
 
     private readonly AzureBankDbContext _context;
     private readonly IHttpContextAccessor _httpContextAccessor;
@@ -59,7 +67,7 @@ public class RefreshTokenService : IRefreshTokenService
     }
 
     /// <inheritdoc />
-    public async Task<string> IssueAsync(ApplicationUser user, CancellationToken cancellationToken = default)
+    public async Task<IssuedGrant> IssueAsync(ApplicationUser user, CancellationToken cancellationToken = default)
     {
         var plaintext = GenerateToken();
         var token = BuildToken(user.Id, plaintext);
@@ -67,22 +75,26 @@ public class RefreshTokenService : IRefreshTokenService
         _context.RefreshTokens.Add(token);
         await _context.SaveChangesAsync(cancellationToken);
 
-        _logger.LogInformation("Issued refresh token {TokenId} for user {UserId}", token.Id, user.Id);
-        return plaintext;
+        _logger.LogInformation(
+            "Issued refresh token {TokenId} for user {UserId}, expires at {ExpiresAt}",
+            token.Id, user.Id, token.ExpiresAt);
+        return new IssuedGrant(plaintext, token.ExpiresAt);
     }
 
     /// <inheritdoc />
-    public async Task<RefreshRotationResult> RotateAsync(
-        string presentedToken, CancellationToken cancellationToken = default)
+    public async Task<RenewResult> RenewAsync(
+        string presentedToken, DateTime receivedAt, CancellationToken cancellationToken = default)
     {
         var hash = ComputeHash(presentedToken);
 
-        // The User is needed to mint a fresh access token AND to build the successor row.
-        var existing = await _context.RefreshTokens
+        // The User is needed to mint the access token. AsNoTracking: nothing on this path saves,
+        // and a tracked entity would only invite a later SaveChanges in this scope to write it.
+        var grant = await _context.RefreshTokens
+            .AsNoTracking()
             .Include(t => t.User)
             .SingleOrDefaultAsync(t => t.TokenHash == hash, cancellationToken);
 
-        if (existing is null)
+        if (grant is null)
         {
             // Never existed, or already reaped by cleanup. Uniform 401 (no oracle).
             _logger.LogWarning(
@@ -98,205 +110,194 @@ public class RefreshTokenService : IRefreshTokenService
             throw InvalidRefreshToken();
         }
 
-        if (existing.IsRevoked)
+        // Revoked BEFORE expired, as it always was: an ended session's grant presented after its
+        // expiry is still the tripwire, which an expiry check first would hide as a routine refusal.
+        if (grant.RevokedAt is { } revokedAt)
         {
-            // A token that was already ROTATED (has a successor) and revoked within the grace
-            // window is a benign lost-response retry — the client re-sent before it saw the new
-            // pair — NOT theft, so reject it WITHOUT revoking the family. Outside the window, or
-            // a token revoked WITHOUT a successor (explicit logout / theft response), is genuine
-            // REUSE: an already-invalidated token replayed is the hallmark of a stolen token
-            // used alongside the legitimate client → revoke the user's ENTIRE active set so
-            // neither party can continue (RFC 9700 §4.14.2).
-            var rotatedWithinGrace = existing.ReplacedByTokenId is not null
-                && existing.RevokedAt is { } revokedAt
-                && DateTime.UtcNow - revokedAt <= RotationGraceWindow;
-
-            if (rotatedWithinGrace)
-            {
-                _logger.LogInformation(
-                    "Refresh token {TokenId} (user {UserId}) replayed within the rotation grace window; benign retry",
-                    existing.Id, existing.UserId);
-            }
-            else
-            {
-                _logger.LogWarning(
-                    "SecurityEvent {SecurityEvent}: reuse of revoked refresh token {TokenId} (user {UserId}); revoking all active tokens",
-                    SecurityEvents.RefreshTokenReuse, existing.Id, existing.UserId);
-
-                /*
-                  CONTAIN FIRST, RECORD SECOND, and the order is not cosmetic — it was the other way
-                  round when the audit row was first wired in, which quietly made this path
-                  fail-open. RecordRefusalAsync is deliberately allowed to throw (ADR-0044: a
-                  swallowed audit failure is the silent gap this work exists to close) and it runs on
-                  its own connection, so a command timeout or an unwritable audit table raises from
-                  it. Placed ahead of the try below, that exception escaped RotateAsync BEFORE the
-                  family revoke ran: a token confirmed STOLEN kept its whole family alive, the catch
-                  never ran so no MitigationFailed row was written either, and the caller got a 500 —
-                  the exact outcome the comment inside that catch calls out as inviting a retry of
-                  the stolen token.
-
-                  Containment is the urgent half and must not be reachable only when logging works.
-                  Recording afterwards keeps the loud-failure posture: if THAT write fails the
-                  exception still surfaces, but by then the family is already dead, so the 5xx no
-                  longer hands the attacker a usable retry.
-                */
-                try
-                {
-                    await RevokeAllForUserAsync(existing.UserId, cancellationToken);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    // The 401 is the CONTRACT; the family revoke is a MITIGATION. Letting the
-                    // mitigation's failure decide the status code broke both halves at once: the
-                    // caller got a 500 instead of the uniform rejection this endpoint promises
-                    // everywhere else (see the concurrency-loss branch below, which returns 401
-                    // precisely so a race cannot be told apart from a rejection), and a 5xx invites
-                    // the caller to RETRY the very token that was just detected as stolen.
-                    //
-                    // The set-based revoke is the one unguarded database write on this path, and it
-                    // runs while concurrent rotations are touching the same index, so a deadlock
-                    // victim or a command timeout lands exactly here. Found by reading the path,
-                    // not by catching it in the act: it has never been observed failing in CI, and
-                    // it did not reproduce locally under deliberate contention. The guard is
-                    // therefore about the reachable failure mode, not about a logged incident.
-                    //
-                    // Swallowed rather than surfaced because surfacing it never helped: the 500 did
-                    // not revoke anything either, so the exposure of a failed revoke is IDENTICAL
-                    // before and after this guard. Only the status code changes.
-                    //
-                    // Do not read the swallow as "harmless". A failed revoke leaves the stolen
-                    // family active, and it is NOT always self-healing: if the attacker rotated
-                    // first, the legitimate client is the one that gets the 401, so there may be no
-                    // further replay to re-run the revoke, and the attacker's successor survives
-                    // until logout or the 7-day expiry. Bounded, but real — tracked as a residual
-                    // in ADR-0021. That is why this logs at Error with a SecurityEvent marker: a
-                    // failed revoke must be loud in the sink even though it is quiet on the wire.
-                    //
-                    // Cancellation still propagates — a disconnected caller is not a failed
-                    // mitigation.
-                    _logger.LogError(
-                        ex,
-                        "SecurityEvent {SecurityEvent}: family revoke FAILED after reuse detection for user {UserId}; "
-                            + "the 401 stands and the next replay re-runs the revoke",
-                        SecurityEvents.RefreshTokenReuseRevokeFailed, existing.UserId);
-
-                    /*
-                      MitigationFailed, the only outcome of its kind: a compromise was detected and
-                      NOT contained. Written on its own connection precisely because everything
-                      around it is failing — if this one is lost, the single case where a human has
-                      to act leaves no trace at all.
-                    */
-                    await _audit.RecordRefusalAsync(
-                        SecurityEvents.RefreshTokenReuseRevokeFailed, AuditOutcome.MitigationFailed,
-                        actorUserId: existing.UserId, subjectType: "RefreshToken", subjectId: existing.Id,
-                        cancellationToken: cancellationToken);
-                }
-
-                // The theft signal of ADR-0021, and the one event here an operator is most likely
-                // to be woken by. Out-of-band because this path ends in a 401 whose rollback would
-                // otherwise take the record with it; AFTER the containment above, for the reason
-                // spelled out where that try begins.
-                await _audit.RecordRefusalAsync(
-                    SecurityEvents.RefreshTokenReuse, AuditOutcome.Refused,
-                    actorUserId: existing.UserId, subjectType: "RefreshToken", subjectId: existing.Id,
-                    cancellationToken: cancellationToken);
-            }
+            await RefuseRevokedAsync(grant, revokedAt, receivedAt);
             throw InvalidRefreshToken();
         }
 
-        if (existing.IsExpired)
+        /*
+          Expired, or ending within the second. The access token minted from it is capped at the
+          grant's expiry, and its exp claim is whole seconds, truncated: with half a second left, exp
+          would fall on the second already begun, and the answer would be a 200 carrying a token that
+          had expired before it was sent. With at least a second left, the truncated exp is still
+          after now. The grant is at its end either way, so the refusal costs its session at most
+          that second.
+        */
+        if (grant.ExpiresAt - DateTime.UtcNow < MinimumRemainingLife)
         {
             _logger.LogInformation(
-                "Refresh token {TokenId} (user {UserId}) is expired", existing.Id, existing.UserId);
+                "Refresh token {TokenId} (user {UserId}) is expired", grant.Id, grant.UserId);
             throw InvalidRefreshToken();
         }
-
-        // Happy path: rotate. Mint a successor, revoke the presented token, and chain them so a
-        // later replay of THIS token is caught by the reuse branch above.
-        var newPlaintext = GenerateToken();
-        var successor = BuildToken(existing.UserId, newPlaintext);
-        _context.RefreshTokens.Add(successor);
-
-        existing.RevokedAt = DateTime.UtcNow;
-        existing.ReplacedByTokenId = successor.Id;
-
-        try
-        {
-            // The presented row carries a rowversion, so a concurrent rotation of the SAME
-            // token makes this UPDATE match zero rows. EF then rolls back the whole unit
-            // (successor INSERT + this UPDATE) — no fork, no orphan.
-            await _context.SaveChangesAsync(cancellationToken);
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            // EF does not auto-revert entity states after a concurrency failure: the successor
-            // (Added) and the presented row (Modified) stay tracked. Detach both so a later
-            // SaveChanges in this request scope can't retry the losing INSERT/UPDATE (matches the
-            // detach-after-write pattern in AuthService.ResetLoginLockoutAsync).
-            _context.Entry(successor).State = EntityState.Detached;
-            _context.Entry(existing).State = EntityState.Detached;
-
-            // Lost a concurrent rotation of this exact token (another request rotated it first).
-            // Benign race, NOT reuse of an already-revoked token — uniform 401, no family revoke.
-            _logger.LogInformation(
-                "Refresh token {TokenId} (user {UserId}) lost a concurrent rotation race; rejecting without family revocation",
-                existing.Id, existing.UserId);
-            throw InvalidRefreshToken();
-        }
-
-        _logger.LogInformation(
-            "Rotated refresh token {OldId} -> {NewId} for user {UserId}",
-            existing.Id, successor.Id, existing.UserId);
 
         // Non-null: loaded via Include, and the non-nullable UserId FK (Cascade) admits no orphan.
-        return new RefreshRotationResult(existing.User!, newPlaintext);
+        return new RenewResult(grant.User!, grant.ExpiresAt);
+    }
+
+    /// <summary>
+    /// The revoked rows of 06 §4.3's table. Every one ends in the same 401; they differ only in what
+    /// is written about it.
+    /// </summary>
+    private async Task RefuseRevokedAsync(RefreshToken grant, DateTime revokedAt, DateTime receivedAt)
+    {
+        switch (grant.RevokedReason)
+        {
+            // THE TRIPWIRE. The BFF revoked this grant because it ended the session, and it held the
+            // grant nowhere else, so a request that ARRIVED after that revoke did not come from a
+            // live session. Both instants are stamps from ReceivedAtClock, so a wall-clock step
+            // between them cannot reorder them (F10).
+            case RefreshTokenRevokedReason.SessionEnded when receivedAt > revokedAt:
+                // The log line BEFORE the audit write, as it always was, so it is written even when
+                // the audit write then fails.
+                _logger.LogWarning(
+                    "SecurityEvent {SecurityEvent}: refresh token {TokenId} (user {UserId}) presented after its session ended; refused, nothing revoked",
+                    SecurityEvents.RefreshTokenReuse, grant.Id, grant.UserId);
+
+                /*
+                  RECORD, DO NOT REVOKE (06 F3). Until PR-1 this branch revoked every token of the
+                  user. Only code inside the replica can present a grant (06 §3), and revoking one
+                  user's tokens does not contain that code; the incident runbook does. What the
+                  containment did do was sign out every session of a user whenever an innocent path
+                  got here — a lost answer, a stall, "Esci" on another device.
+
+                  CancellationToken.None: the row is the evidence, and a caller that hangs up must
+                  not be able to take it back. If the write FAILS, the exception surfaces and the
+                  exception handler answers 500, as the unknown-grant refusal above does (ADR-0044's
+                  loud failure). Nothing is revoked or issued either way, and the grant is already
+                  revoked, so a retry can only try the audit write again.
+                */
+                await _audit.RecordRefusalAsync(
+                    SecurityEvents.RefreshTokenReuse, AuditOutcome.Refused,
+                    actorUserId: grant.UserId, subjectType: "RefreshToken", subjectId: grant.Id,
+                    cancellationToken: CancellationToken.None);
+                return;
+
+            // Received before the revoke and read after it: the renewal was in flight when the
+            // session ended. The BFF drops its answer anyway.
+            case RefreshTokenRevokedReason.SessionEnded:
+                _logger.LogInformation(
+                    "Refresh token {TokenId} (user {UserId}) was revoked while its renewal was in flight; refused",
+                    grant.Id, grant.UserId);
+                return;
+
+            // The two reasons an operator writes during an incident. A Warning, so a session that
+            // keeps knocking afterwards is visible, but no event: a session that was running when
+            // the lever was pulled learns of it here, innocently.
+            case RefreshTokenRevokedReason.Incident or RefreshTokenRevokedReason.ReuseContainment:
+                _logger.LogWarning(
+                    "Refresh token {TokenId} (user {UserId}) is revoked ({Reason}); refused",
+                    grant.Id, grant.UserId, grant.RevokedReason.ToString());
+                return;
+
+            // SignOutEverywhere, Deployment, or a legacy row with no reason (rotated away or signed
+            // out before the column existed).
+            default:
+                _logger.LogInformation(
+                    "Refresh token {TokenId} (user {UserId}) is revoked ({Reason}); refused",
+                    grant.Id, grant.UserId, grant.RevokedReason?.ToString() ?? "legacy");
+                return;
+        }
     }
 
     /// <inheritdoc />
-    public async Task RevokeAllForUserAsync(Guid userId, CancellationToken cancellationToken = default)
+    public async Task<int> RevokeAsync(
+        IReadOnlyCollection<string> presentedTokens, DateTime receivedAt, CancellationToken cancellationToken = default)
     {
-        // Loop until a pass revokes nothing. A rotation racing this revoke can commit a successor
-        // that a single bulk UPDATE misses (a phantom row under READ COMMITTED); the next pass
-        // catches it. This TERMINATES: a successor can only be minted by rotating an ACTIVE parent,
-        // and once every active row is revoked the parent's rowversion-guarded rotation UPDATE
-        // fails — so no new successor can appear. Capped as a safety net against a pathological
-        // sustained race (a straggler then falls to the next reuse-replay / logout / expiry).
-        const int maxPasses = 5;
-        var now = DateTime.UtcNow;
-
-        for (var pass = 0; pass < maxPasses; pass++)
+        // A null or empty entry can name no grant; skip it rather than hash it. Distinct, because a
+        // drain may list one grant twice and the IN list needs it once.
+        var hashes = presentedTokens
+            .Where(t => !string.IsNullOrEmpty(t))
+            .Select(ComputeHash)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (hashes.Count == 0)
         {
-            int revoked;
-            if (_context.Database.IsRelational())
-            {
-                // Set-based revoke over IX_RefreshTokens_UserId_Active: one round-trip, nothing tracked.
-                revoked = await _context.RefreshTokens
-                    .Where(t => t.UserId == userId && t.RevokedAt == null && t.ExpiresAt > now)
-                    .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, now), cancellationToken);
-            }
-            else
-            {
-                // ExecuteUpdate is relational-only; the EF InMemory test host loads + mutates + saves.
-                var active = await _context.RefreshTokens
-                    .Where(t => t.UserId == userId && t.RevokedAt == null && t.ExpiresAt > now)
-                    .ToListAsync(cancellationToken);
-                foreach (var token in active)
-                {
-                    token.RevokedAt = now;
-                }
-                await _context.SaveChangesAsync(cancellationToken);
-                revoked = active.Count;
-            }
-
-            if (revoked == 0)
-            {
-                return;
-            }
+            return 0;
         }
 
-        _logger.LogWarning(
-            "RevokeAllForUserAsync hit the {MaxPasses}-pass cap for user {UserId}; a straggler token may survive until expiry",
-            maxPasses, userId);
+        int revoked;
+        try
+        {
+            revoked = await RevokeWhereAsync(
+                _context.RefreshTokens.Where(t => hashes.Contains(t.TokenHash) && t.RevokedAt == null),
+                RefreshTokenRevokedReason.SessionEnded,
+                receivedAt,
+                cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            /*
+              503, NOT 500 (06 §4.4, F12; RFC 7009 §2.2.1). The only work here is one idempotent
+              UPDATE, so a failure is the database's, and the answer that helps is "try again": the
+              BFF keeps the grant queued and retries with backoff until the grant expires. A 500 would
+              read as a verdict on the request. Error, with the exception, so a failure that is not
+              the database's is still loud here.
+            */
+            _logger.LogError(ex, "Revoking {Count} grants failed; answering 503", hashes.Count);
+            throw new ServiceUnavailableException(
+                "The revocation could not be recorded now. Retry it.", RevokeRetryAfterSeconds);
+        }
+
+        _logger.LogInformation(
+            "Revoked {Count} of {Attempted} presented grants (SessionEnded)", revoked, hashes.Count);
+        return revoked;
+    }
+
+    /// <inheritdoc />
+    public async Task<int> RevokeAllForUserAsync(
+        Guid userId,
+        RefreshTokenRevokedReason reason,
+        DateTime revokedAt,
+        CancellationToken cancellationToken = default)
+    {
+        // One pass. While renewal rotated, a rotation racing this revoke could commit a successor
+        // the UPDATE missed, so this looped until a pass revoked nothing. A renewal writes nothing
+        // now, so nothing can appear behind the UPDATE except a NEW sign-in's grant — a session the
+        // user opened after asking to be signed out, which is theirs to keep.
+        var now = DateTime.UtcNow;
+        var revoked = await RevokeWhereAsync(
+            _context.RefreshTokens.Where(t => t.UserId == userId && t.RevokedAt == null && t.ExpiresAt > now),
+            reason,
+            revokedAt,
+            cancellationToken);
+
+        _logger.LogInformation(
+            "Revoked {Count} grants of user {UserId} ({Reason})", revoked, userId, reason.ToString());
+        return revoked;
+    }
+
+    /// <summary>
+    /// Sets <c>RevokedAt</c> and <c>RevokedReason</c> on every row of <paramref name="rows"/>, in one
+    /// set-based UPDATE on a relational provider.
+    /// </summary>
+    private async Task<int> RevokeWhereAsync(
+        IQueryable<RefreshToken> rows,
+        RefreshTokenRevokedReason reason,
+        DateTime revokedAt,
+        CancellationToken cancellationToken)
+    {
+        if (_context.Database.IsRelational())
+        {
+            // One round-trip, nothing tracked. Idempotent, so the retrying strategy may re-run it.
+            return await rows.ExecuteUpdateAsync(
+                s => s
+                    .SetProperty(t => t.RevokedAt, (DateTime?)revokedAt)
+                    .SetProperty(t => t.RevokedReason, (RefreshTokenRevokedReason?)reason),
+                cancellationToken);
+        }
+
+        // ExecuteUpdate is relational-only; the EF InMemory test host loads + mutates + saves.
+        var active = await rows.ToListAsync(cancellationToken);
+        foreach (var token in active)
+        {
+            token.RevokedAt = revokedAt;
+            token.RevokedReason = reason;
+        }
+        await _context.SaveChangesAsync(cancellationToken);
+        return active.Count;
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -308,8 +309,8 @@ public class RefreshTokenService : IRefreshTokenService
 
         return new RefreshToken
         {
-            // Set the key explicitly (UUIDv7, matching the value generator) so the rotation
-            // chain can reference it before SaveChanges assigns database values.
+            // Set the key explicitly (UUIDv7, matching the value generator) so the issue log line
+            // can name the row before SaveChanges assigns database values.
             Id = Guid.CreateVersion7(),
             UserId = userId,
             // Deliberately NOT setting the User navigation: DbContext.Add cascades an INSERT to
@@ -318,7 +319,8 @@ public class RefreshTokenService : IRefreshTokenService
             // issuance safe regardless of the principal's tracking state.
             TokenHash = ComputeHash(plaintext),
             CreatedAt = now,                                       // not a BaseEntity → set here
-            ExpiresAt = now.AddDays(_jwtOptions.RefreshTokenExpirationDays),
+            // Fixed here and never extended: nothing from one sign-in outlives this (06 §4.1).
+            ExpiresAt = now.AddMinutes(_jwtOptions.RefreshTokenLifetimeMinutes),
             IpAddress = ip,
             UserAgent = userAgent
         };
@@ -339,9 +341,9 @@ public class RefreshTokenService : IRefreshTokenService
         Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
 
     /// <summary>
-    /// Best-effort caller fingerprint for theft forensics. Never a security boundary (a NAT
-    /// or proxy hop changes the IP legitimately) — recorded, not enforced. Truncated to the
-    /// column widths so an oversized User-Agent can never overflow the write.
+    /// Best-effort caller fingerprint for forensics. Never a security boundary (a NAT or proxy hop
+    /// changes the IP legitimately) — recorded, not enforced. Truncated to the column widths so an
+    /// oversized User-Agent can never overflow the write.
     /// </summary>
     private (string Ip, string UserAgent) ReadClientContext()
     {

@@ -11,6 +11,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Time.Testing;
 using System.Collections.Concurrent;
 using System.Globalization;
+using AzureBank.Api.Middleware;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 using Serilog.Core;
@@ -276,15 +277,24 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
     }
 
     /// <summary>
-    /// Every client this factory hands out speaks as the BFF does, service credential included
-    /// (ADR-0055): these tests are about what the API answers its one client. The tests about what
-    /// it answers anyone else are <c>ServiceCredentialTests</c>, which take the header off again.
+    /// Every client this factory hands out speaks as the BFF's own client does: the service
+    /// credential (ADR-0055) and the token-road marker (06 §4.2), one of each. These tests are about
+    /// what the API answers its one client. The tests about what it answers anyone else take the
+    /// headers off again: <c>ServiceCredentialTests</c> the key, <c>TokenRoadTests</c> the marker.
     /// </summary>
+    /// <remarks>
+    /// The marker goes on every request, not only the token endpoints', because the BFF's own client
+    /// does the same; the API ignores it elsewhere. A test must not add a second one: two values are
+    /// refused, as they are for the key.
+    /// </remarks>
     protected override void ConfigureClient(HttpClient client)
     {
         base.ConfigureClient(client);
         client.DefaultRequestHeaders.Add(
             AzureBank.Shared.Options.ServiceCredentialOptions.HeaderName, ServiceCredentialKey);
+        client.DefaultRequestHeaders.Add(
+            AzureBank.Shared.Options.ServiceCredentialOptions.TokenRoadHeaderName,
+            AzureBank.Shared.Options.ServiceCredentialOptions.TokenRoadMarker);
     }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -330,6 +340,15 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         // AddDailyLimit's TryAdd) rather than being replaced by it.
         builder.ConfigureTestServices(services =>
         {
+            /*
+              TestServer has no socket, so every request it carries has a null RemoteIpAddress, and
+              the token endpoints refuse a null address unless code says otherwise (06 F1). This is
+              that code, and the only place it exists. TokenRoadTests turns it back off, and sets
+              real addresses through FakeRemoteAddressStartupFilter, to show the refusals.
+            */
+            services.Configure<TokenRoadOptions>(o => o.AcceptMissingRemoteAddress = true);
+            services.AddSingleton<Microsoft.AspNetCore.Hosting.IStartupFilter, FakeRemoteAddressStartupFilter>();
+
             if (_clock is not null)
             {
                 services.Replace(ServiceDescriptor.Singleton<TimeProvider>(_clock));

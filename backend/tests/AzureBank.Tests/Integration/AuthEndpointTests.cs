@@ -16,7 +16,8 @@ namespace AzureBank.Tests.Integration;
 
 /// <summary>
 /// Integration tests for Authentication endpoints.
-/// Tests: /api/auth/register, /api/auth/login, /api/auth/me, /api/auth/logout
+/// Tests: /api/auth/register, /api/auth/login, /api/auth/me, /api/auth/refresh, /api/auth/revoke,
+/// /api/auth/logout. Which callers the token endpoints answer at all is TokenRoadTests.
 /// </summary>
 public class AuthEndpointTests : IntegrationTestBase
 {
@@ -319,6 +320,7 @@ public class AuthEndpointTests : IntegrationTestBase
             ("expiresAt", JsonValueKind.String),
             ("expiresIn", JsonValueKind.Number),
             ("refreshToken", JsonValueKind.String),
+            ("refreshTokenExpiresAt", JsonValueKind.String),
             ("tokenType", JsonValueKind.String));
         loginData.EnumerateObject().Select(p => p.Name).Should().BeEquivalentTo(
             ["token", "user"], "expiresAt and refreshToken live inside token now, and only there");
@@ -605,16 +607,19 @@ public class AuthEndpointTests : IntegrationTestBase
 
     #endregion
 
-    #region Refresh Tests (ADR-0021)
+    #region Refresh Tests (ADR-0021, 06 §4)
 
-    /// <summary>Registers a fresh user and returns its (access, refresh) token pair.</summary>
-    private async Task<(string Access, string Refresh)> RegisterAndGetTokensAsync()
+    /// <summary>Registers a fresh user and returns its access token, grant and user id.</summary>
+    private async Task<(string Access, string Refresh)> RegisterAndGetTokensAsync() =>
+        await RegisterAndGetTokensAsync($"rt{Guid.NewGuid().ToString("N")[..8]}@example.com");
+
+    private async Task<(string Access, string Refresh)> RegisterAndGetTokensAsync(string email)
     {
         var uniqueId = Guid.NewGuid().ToString("N")[..8];
         var response = await Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
         {
             AzureTag = $"rt_{uniqueId}",
-            Email = $"rt{uniqueId}@example.com",
+            Email = email,
             Password = "SecurePass123!",
             FirstName = "Refresh",
             LastName = "User"
@@ -625,73 +630,83 @@ public class AuthEndpointTests : IntegrationTestBase
         return (result!.Data!.Token.AccessToken, result.Data.Token.RefreshToken!);
     }
 
-    [Fact]
-    public async Task Register_And_Login_IssueRefreshTokens()
+    /// <summary>A second session of the same user: a login, and its grant.</summary>
+    private async Task<string> LoginAndGetGrantAsync(string email)
     {
-        var (_, registerRefresh) = await RegisterAndGetTokensAsync();
-        registerRefresh.Should().NotBeNullOrEmpty("registration must issue a refresh token");
+        var login = await Client.PostAsJsonAsync("/api/auth/login",
+            new LoginRequest { Email = email, Password = "SecurePass123!" }, JsonOptions);
+        login.EnsureSuccessStatusCode();
+        return (await login.Content.ReadFromJsonAsync<ApiResponse<LoginResponse>>(JsonOptions))!.Data!.Token.RefreshToken!;
+    }
 
-        // A subsequent login issues its own (distinct) refresh token.
+    private async Task<HttpResponseMessage> RenewAsync(string grant) =>
+        await Client.PostAsJsonAsync("/api/auth/refresh", new RefreshRequest { RefreshToken = grant }, JsonOptions);
+
+    [Fact]
+    public async Task Register_And_Login_IssueRefreshTokens_WithTheirSixtyMinuteExpiry()
+    {
         var email = $"rtlogin{Guid.NewGuid():N}@example.com";
-        (await Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
+        var register = await Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
         {
             AzureTag = $"rtl_{Guid.NewGuid().ToString("N")[..8]}",
             Email = email,
             Password = "SecurePass123!",
             FirstName = "Ref",
             LastName = "Log"
-        }, JsonOptions)).EnsureSuccessStatusCode();
+        }, JsonOptions);
+        register.EnsureSuccessStatusCode();
+        var registered = (await register.Content.ReadFromJsonAsync<ApiResponse<RegisterResponse>>(JsonOptions))!.Data!.Token;
+        registered.RefreshToken.Should().NotBeNullOrEmpty("registration must issue a refresh token");
+        registered.RefreshTokenExpiresAt.Should().BeCloseTo(DateTime.UtcNow.AddMinutes(60), TimeSpan.FromMinutes(1),
+            "the grant lives 60 minutes from sign-in, and the answer says when (06 §4.1)");
+
+        // A subsequent login issues its own (distinct) grant, with its own expiry.
         var login = await Client.PostAsJsonAsync("/api/auth/login",
             new LoginRequest { Email = email, Password = "SecurePass123!" }, JsonOptions);
         login.StatusCode.Should().Be(HttpStatusCode.OK);
-        var loginBody = await login.Content.ReadFromJsonAsync<ApiResponse<LoginResponse>>(JsonOptions);
-        loginBody!.Data!.Token.RefreshToken.Should().NotBeNullOrEmpty("login must issue a refresh token");
+        var loginToken = (await login.Content.ReadFromJsonAsync<ApiResponse<LoginResponse>>(JsonOptions))!.Data!.Token;
+        loginToken.RefreshToken.Should().NotBeNullOrEmpty("login must issue a refresh token")
+            .And.NotBe(registered.RefreshToken);
+        loginToken.RefreshTokenExpiresAt.Should().BeCloseTo(DateTime.UtcNow.AddMinutes(60), TimeSpan.FromMinutes(1));
+        loginToken.ExpiresAt.Should().BeOnOrBefore(loginToken.RefreshTokenExpiresAt!.Value,
+            "the sign-in's access token ends inside its grant's life (06 F11)");
     }
 
     [Fact]
-    public async Task Refresh_WithValidToken_RotatesAndReturnsNewPair()
+    public async Task Refresh_WithValidToken_ReturnsAnAccessToken_AndNoRefreshToken()
     {
         var (_, refresh) = await RegisterAndGetTokensAsync();
 
-        var response = await Client.PostAsJsonAsync("/api/auth/refresh",
-            new RefreshRequest { RefreshToken = refresh }, JsonOptions);
+        var response = await RenewAsync(refresh);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var result = await response.Content.ReadFromJsonAsync<ApiResponse<RefreshResponse>>(JsonOptions);
-        result!.Data!.AccessToken.Should().NotBeNullOrEmpty();
-        result.Data.RefreshToken.Should().NotBeNullOrEmpty()
-            .And.NotBe(refresh, "rotation must hand back a NEW refresh token");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var data = body.RootElement.GetProperty("data");
+        data.EnumerateObject().Select(p => p.Name).Should().BeEquivalentTo(
+            ["accessToken", "expiresAt"],
+            "the grant is not rotated, so the answer carries no refresh token (06 §4.3)");
+        data.GetProperty("accessToken").GetString().Should().NotBeNullOrEmpty();
         // ExpiresAt tracks the access token's own exp (JwtOptions.ExpirationMinutes = 15).
-        result.Data.ExpiresAt.Should().BeCloseTo(DateTime.UtcNow.AddMinutes(15), TimeSpan.FromMinutes(1));
+        data.GetProperty("expiresAt").GetDateTime().Should().BeCloseTo(DateTime.UtcNow.AddMinutes(15), TimeSpan.FromMinutes(1));
     }
 
     [Fact]
-    public async Task Refresh_ImmediateReplayWithinGrace_Is401_ButLeavesSuccessorUsable()
+    public async Task Refresh_TheSameGrantTwice_AnswersOkBothTimes()
     {
-        var (_, refresh) = await RegisterAndGetTokensAsync();
+        // 06 §10 O0-2 item 1. The grant is one reusable credential per session (06 §3, §4.3): a
+        // renewal whose answer was lost is simply sent again, with the same grant, and must work.
+        // Red on main, where the first renewal rotates the grant away and the second is refused.
+        var (_, grant) = await RegisterAndGetTokensAsync();
 
-        // First rotation succeeds and yields a successor.
         var first = await Client.PostAsJsonAsync("/api/auth/refresh",
-            new RefreshRequest { RefreshToken = refresh }, JsonOptions);
-        first.StatusCode.Should().Be(HttpStatusCode.OK);
-        var successor = (await first.Content
-            .ReadFromJsonAsync<ApiResponse<RefreshResponse>>(JsonOptions))!.Data!.RefreshToken;
+            new RefreshRequest { RefreshToken = grant }, JsonOptions);
+        var second = await Client.PostAsJsonAsync("/api/auth/refresh",
+            new RefreshRequest { RefreshToken = grant }, JsonOptions);
 
-        // Replaying the ORIGINAL token immediately is a benign lost-response retry (within the
-        // rotation grace window) → rejected with 401 + the UNIFORM invalid-token code (so it is
-        // indistinguishable from an unknown/expired token — no oracle).
-        var reuse = await Client.PostAsJsonAsync("/api/auth/refresh",
-            new RefreshRequest { RefreshToken = refresh }, JsonOptions);
-        reuse.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
-        (await reuse.Content.ReadFromJsonAsync<JsonElement>(JsonOptions))
-            .GetProperty("errorCode").GetString().Should().Be(ErrorCodes.RefreshTokenInvalid);
-
-        // ...but the family is NOT revoked — the successor still rotates (genuine reuse-revoke,
-        // aged past the grace window, is proved on the SQL-gated path + in unit tests).
-        var successorUse = await Client.PostAsJsonAsync("/api/auth/refresh",
-            new RefreshRequest { RefreshToken = successor }, JsonOptions);
-        successorUse.StatusCode.Should().Be(HttpStatusCode.OK,
-            "an immediate replay is a benign retry, not theft — it must not revoke the family");
+        first.StatusCode.Should().Be(HttpStatusCode.OK,
+            $"a live grant renews (body: {await first.Content.ReadAsStringAsync()})");
+        second.StatusCode.Should().Be(HttpStatusCode.OK,
+            $"the same grant renews again: renewal writes nothing, so it consumes nothing (body: {await second.Content.ReadAsStringAsync()})");
     }
 
     [Fact]
@@ -703,6 +718,75 @@ public class AuthEndpointTests : IntegrationTestBase
         // Same code as the replay/expired paths — the response must not reveal WHY it failed.
         (await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions))
             .GetProperty("errorCode").GetString().Should().Be(ErrorCodes.RefreshTokenInvalid);
+    }
+
+    [Fact]
+    public async Task Revoke_EndsOnlyThePresentedGrant_AndTheUsersOtherSessionStillRenews()
+    {
+        // "Esci" on session A, as the BFF sends it (06 §4.4): only A's grant ends.
+        var email = $"rv{Guid.NewGuid():N}@example.com";
+        var (_, sessionA) = await RegisterAndGetTokensAsync(email);
+        var sessionB = await LoginAndGetGrantAsync(email);
+
+        var revoke = await Client.PostAsJsonAsync("/api/auth/revoke",
+            new RevokeRequest { RefreshTokens = [sessionA] }, JsonOptions);
+
+        revoke.StatusCode.Should().Be(HttpStatusCode.OK, "revoke is anonymous: the grant is the credential");
+        (await RenewAsync(sessionA)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await RenewAsync(sessionB)).StatusCode.Should().Be(HttpStatusCode.OK, "the other session is not touched");
+
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        var grants = await db.RefreshTokens.AsNoTracking()
+            .Where(t => t.User!.Email == email).ToListAsync();
+        grants.Should().ContainSingle(t => t.RevokedAt != null)
+            .Which.RevokedReason.Should().Be(RefreshTokenRevokedReason.SessionEnded);
+    }
+
+    [Fact]
+    public async Task Revoke_OfAnUnknownOrAlreadyRevokedGrant_Is200_AsForALiveOne()
+    {
+        // RFC 7009 §2.2: the answer does not say whether the grant existed. And repeating it
+        // changes nothing, so a retried revoke is harmless.
+        var (_, grant) = await RegisterAndGetTokensAsync();
+        var revoke = new RevokeRequest { RefreshTokens = [grant] };
+
+        (await Client.PostAsJsonAsync("/api/auth/revoke", revoke, JsonOptions)).StatusCode.Should().Be(HttpStatusCode.OK);
+        (await Client.PostAsJsonAsync("/api/auth/revoke", revoke, JsonOptions)).StatusCode.Should().Be(HttpStatusCode.OK);
+        (await Client.PostAsJsonAsync("/api/auth/revoke",
+                new RevokeRequest { RefreshTokens = ["never-issued"] }, JsonOptions))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Revoke_WithNoGrants_Is400()
+    {
+        var response = await Client.PostAsJsonAsync("/api/auth/revoke",
+            new RevokeRequest { RefreshTokens = [] }, JsonOptions);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Logout_RevokesEveryGrantOfTheUser_AsSignOutEverywhere()
+    {
+        // /api/auth/logout keeps its effect: every session of the user (06 §4.4), with the reason
+        // that says so — which is why presenting one of them later is not the tripwire.
+        var email = $"lo{Guid.NewGuid():N}@example.com";
+        var (access, sessionA) = await RegisterAndGetTokensAsync(email);
+        var sessionB = await LoginAndGetGrantAsync(email);
+
+        SetAuthHeader(access);
+        (await Client.PostAsync("/api/auth/logout", content: null)).StatusCode.Should().Be(HttpStatusCode.OK);
+        ClearAuthHeader();
+
+        (await RenewAsync(sessionA)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await RenewAsync(sessionB)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        (await db.RefreshTokens.AsNoTracking().Where(t => t.User!.Email == email).ToListAsync())
+            .Should().HaveCount(2)
+            .And.OnlyContain(t => t.RevokedReason == RefreshTokenRevokedReason.SignOutEverywhere);
     }
 
     [Fact]

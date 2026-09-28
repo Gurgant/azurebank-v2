@@ -7,7 +7,8 @@ Art. 72 evidence pack). Supersedes nothing.
 
 ## Context
 
-Seventeen security events are logged, and that is all that happens to them. A log is a stream: it
+Seventeen security events are logged *(sixteen since 2026-09-28: PR-1 stopped raising
+`RefreshTokenReuseRevokeFailed`, see the note under D1)*, and that is all that happens to them. A log is a stream: it
 rotates, it is writable by whoever can reach the host, and nothing about it is evidence. PCI DSS v4
 10.3.2 asks that audit logs be protected from modification; NIST SP 800-53 AU-9 asks the same;
 PSD2 Art. 72 requires an institution to be able to reconstruct what happened. None of that is
@@ -50,8 +51,18 @@ unwritable audit table meant the revoke never ran, no `MitigationFailed` row was
 the caller got the 500 that the comment inside that very catch calls out as inviting a retry of the
 stolen token. Containment now runs first and the row is written after it. The row can still fail
 loudly — the 5xx just no longer buys the attacker anything, because the family is already dead.
-Pinned by `WhenTheReuseAuditRowCannotBeWritten_TheStolenFamilyIsStillRevoked`, which was verified to
-go red when the order is put back.
+~~Pinned by WhenTheReuseAuditRowCannotBeWritten_TheStolenFamilyIsStillRevoked, which was verified to
+go red when the order is put back.~~
+
+*(Closed 2026-09-28 by PR-1, whose design ADR-0057 records. The grant no longer rotates, and presenting
+an ENDED session's grant again is a tripwire that records, and revokes NOTHING: only code inside the
+replica can present a grant, and revoking one user's tokens does not contain that code — the
+incident runbook does. With no containment there is nothing to put ahead of the record, so D1 has
+no exception left on this path: if the tripwire's audit write fails, the exception surfaces and the
+caller gets a 500, as the unknown-grant refusal always did, and nothing is revoked or issued either
+way. `RefreshTokenReuseRevokeFailed` and `MitigationFailed` are no longer raised; both names stay
+for the rows already written. Pinned by
+`WhenTheTripwiresAuditRowCannotBeWritten_TheAnswerIs500_AndTheOtherSessionStaysActive`.)*
 
 ### D1 re-examined against industry practice, 2026-08-20 — and kept
 
@@ -918,8 +929,9 @@ about the command line. The ring-refusal test now asks all ~~four~~ five verbs *
 
 ## What is wired, and what is not
 
-**~~Fourteen~~ Fifteen events write a row today** *(struck 2026-09-06: `AccountDeletionRefused`
-joined, below)*. Eight are administrative: `AccountDeleted`,
+**~~Fourteen~~ ~~Fifteen~~ Fourteen events write a row today** *(struck 2026-09-06: `AccountDeletionRefused`
+joined, below; and struck again 2026-09-28: PR-1 stopped raising `RefreshTokenReuseRevokeFailed`,
+so seven of the eight administrative events below still write one)*. Eight are administrative: `AccountDeleted`,
 `AccountNumberRevealed`, `AzureTagRenamed`, `PinChanged`, `PinEnrolled`, `RefreshTokenUnknown`,
 `RefreshTokenReuse` and `RefreshTokenReuseRevokeFailed`. For those the log line is kept alongside the
 row — two destinations, two jobs. `PinChanged` is the exception to that pairing and was **added
@@ -990,6 +1002,13 @@ paths: the
 withdrawal's own locked-PIN and wrong-PIN sites left with the PIN itself, and the withdrawal's
 absent-authorisation site came in — two out, one in. Measured on the branch:
 `grep -c "_audit.RecordRefusalAsync(" backend/src` = 8.)*
+
+*(Moved 2026-09-28, PR-1: `RefreshTokenService` holds **TWO** token-path sites, not three — the
+unknown grant and the tripwire. The third wrote `RefreshTokenReuseRevokeFailed` when the family
+revoke failed, and the tripwire revokes nothing (ADR-0057). So the source holds **SEVEN**
+`RecordRefusalAsync` calls. Measured on the branch, per file, `grep -rc "_audit.RecordRefusalAsync("
+backend/src`: `TransferService` 2, `RefreshTokenService` 2, `AccountService` 1,
+`StepUpAuthorizationService` 1, `TransactionService` 1.)*
 
 ⚠️ **The `Detail` rule INVERTS on these ~~two~~ three, and D5 is why it inverts rather than
 lapsing.** *(struck 2026-09-06: `AccountDeletionRefused` carries `AUTHORIZATION_REQUIRED` the same

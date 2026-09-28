@@ -413,7 +413,9 @@ public class SecurityEventConstantTests
             "StepUpWithoutSession",
         ];
 
-        const int apiSites = 17;
+        // 17 until PR-1, which removed RefreshTokenReuseRevokeFailed's one site: the tripwire that
+        // replaced reuse detection revokes nothing, so there is no failed revoke left to report (06 F3).
+        const int apiSites = 16;
         const int bffSites = 8;
 
         /*
@@ -463,9 +465,9 @@ public class SecurityEventConstantTests
 
         perProject["Api"].Should().Be(
             apiSites,
-            "ADR-0044 says \"Seventeen security events are logged\" and \"Fifteen events write a "
-            + "row today\". If the API's count moved, update that ADR's Context and its "
-            + "\"What is wired\" section, and AuditOutcome's per-outcome tallies, in the same commit");
+            "ADR-0044 says \"Sixteen security events are logged\" since PR-1 (seventeen before it "
+            + "dropped RefreshTokenReuseRevokeFailed). If the API's count moved, update that ADR's Context "
+            + "and its \"What is wired\" section, and AuditOutcome's per-outcome tallies, in the same commit");
 
         perProject["Bff"].Should().Be(
             bffSites,
@@ -496,7 +498,7 @@ public class SecurityEventConstantTests
             + "administrative, B1 added four money movements, and ADR-0047 added the PIN change. "
             + "Moving this means moving that section in the same commit");
         refusals.Should().Be(
-            8,
+            7,
             "the out-of-band half is counted separately because it answers a different question — "
             + "which refusals survive their own rollback. Three were token paths; two were added "
             + "on 2026-08-29 for an absent step-up at both transfer kinds; the sixth on 2026-09-06 "
@@ -507,8 +509,10 @@ public class SecurityEventConstantTests
             + "deletion: the withdrawal's own locked-PIN and wrong-PIN sites LEFT with the PIN "
             + "itself, and the mint's single site already covers both for every operation — two "
             + "out, one in. Insufficient funds is NOT among them, on purpose, and neither are the "
-            + "closure's two 422 guards. Moving this means moving ADR-0044's \"What is wired\" "
-            + "section too");
+            + "closure's two 422 guards. WENT DOWN TO SEVEN with PR-1: RefreshTokenReuseRevokeFailed's "
+            + "MitigationFailed row went with the family revoke it reported on (06 F3), so the token "
+            + "paths hold two — the unknown grant and the tripwire. Moving this means moving "
+            + "ADR-0044's \"What is wired\" section too");
 
         perProject["Infrastructure"].Should().Be(
             2,
@@ -526,9 +530,10 @@ public class SecurityEventConstantTests
                 + "would make that sentence describe something else");
 
         (perProject["Api"] + perProject["Bff"] + perProject["Infrastructure"]).Should().Be(
-            27,
-            "AuditOutcome's remarks derive the four outcomes from \"the 27 existing security-event log "
-            + "sites\" and tally \"17 of the 27\" as Refused; both have to move with this");
+            26,
+            "AuditOutcome's remarks derive the four outcomes from the security-event log sites — 27 "
+            + "when they were written, 26 since PR-1 removed the one MitigationFailed site — and tally "
+            + "\"17 of the 26\" as Refused; both have to move with this");
     }
 
     /// <summary>
