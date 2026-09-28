@@ -222,7 +222,7 @@ services:
       - BackendApi__BaseUrl=http://api-internal:7215  # 👈 Internal Docker DNS
       - Garnet__ConnectionString=redis:6379
       - Session__CookieName=.AzureBank.Session
-      - Session__InactivityTimeoutMinutes=30
+      - Session__InactivityTimeoutMinutes=15
       - Session__AbsoluteTimeoutMinutes=60
     networks:
       - frontend

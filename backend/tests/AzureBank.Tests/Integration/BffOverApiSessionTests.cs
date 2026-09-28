@@ -126,7 +126,7 @@ public sealed class BffOverApiSessionTests
         // cannot succeed, since the API refuses its key.
         var sessions = bffHost.Services.GetRequiredService<BffSessions>();
         var sessionId = sessions.CreateSession(
-            token.AccessToken, token.ExpiresAt, token.RefreshToken, registered.User);
+            token.AccessToken, token.ExpiresAt, token.RefreshToken, token.RefreshTokenExpiresAt, registered.User);
 
         var proxied = await browser.SendAsync(WithSession(bffHost, HttpMethod.Get, "/api/accounts", sessionId));
         var body = await proxied.Content.ReadAsStringAsync();

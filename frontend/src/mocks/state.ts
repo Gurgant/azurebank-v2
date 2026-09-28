@@ -478,8 +478,8 @@ export const MOCK_PASSWORD = 'Password1!';
 /** The one seeded PIN the mock verifies withdrawals (and step-up) against. */
 export const MOCK_PIN = '123456';
 
-/** Matches the BFF's base appsettings (30/60). Development runs 10/20; tests set what they need. */
-export const MOCK_INACTIVITY_WINDOW_MS = 30 * 60_000;
+/** Matches the BFF's base appsettings (15/60). Development runs 10/20; tests set what they need. */
+export const MOCK_INACTIVITY_WINDOW_MS = 15 * 60_000;
 export const MOCK_ABSOLUTE_WINDOW_MS = 60 * 60_000;
 
 /**

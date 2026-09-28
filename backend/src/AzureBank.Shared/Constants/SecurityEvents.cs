@@ -74,7 +74,11 @@ public static class SecurityEvents
     /// </remarks>
     public const string RefreshTokenReuseRevokeFailed = "RefreshTokenReuseRevokeFailed";
 
-    /// <summary>The BFF's refresh of a proxied session was rejected; the session was revoked.</summary>
+    /// <summary>
+    /// The API refused the BFF's renewal of a session with 401 <c>REFRESH_TOKEN_INVALID</c>: the grant
+    /// is dead, so the session was ended and its grant queued for revoke (06 §4.5). Since PR-1 no
+    /// other answer raises it: a refused key, any other 401, a 5xx or a timeout keeps the session.
+    /// </summary>
     /// <remarks>OWASP: <c>session_expired:[userid,reason]</c> — the outcome is the session ending.</remarks>
     public const string RefreshRejected = "RefreshRejected";
 
@@ -110,7 +114,9 @@ public static class SecurityEvents
     /// A caller reached the proxied <c>/api/auth/login</c> or <c>/api/auth/register</c> directly.
     /// The SPA never does: it signs in through the BFF's own <c>/bff/auth/*</c> controller, which
     /// keeps the API token server-side. Reaching the proxied pair means asking the BFF for the
-    /// credential the BFF exists to withhold.
+    /// credential the BFF exists to withhold. Since PR-1 the same event names a proxied
+    /// <c>/api/auth/revoke</c> or <c>/api/auth/logout</c>: token endpoints that answer only the
+    /// BFF's own client (06 §4.2), and that no browser has a reason to reach.
     /// </summary>
     /// <remarks>OWASP: <c>malicious_direct_reference:[userid|IP, useragent]</c>.</remarks>
     public const string RawAuthEntryBlocked = "RawAuthEntryBlocked";

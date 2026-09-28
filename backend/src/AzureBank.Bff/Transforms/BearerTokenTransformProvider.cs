@@ -1,3 +1,4 @@
+using AzureBank.Bff.Http;
 using AzureBank.Bff.Options;
 using AzureBank.Bff.Services.Interfaces;
 using AzureBank.Shared.Options;
@@ -13,6 +14,13 @@ namespace AzureBank.Bff.Transforms;
 ///
 /// This is the core of the BFF security pattern - JWT tokens are stored
 /// server-side and injected into API requests by the BFF, never exposed to browser.
+///
+/// <para>
+/// Two answers never leave here as the API's 401, because the SPA reads a 401 as a sign-out and
+/// neither is one (06 §4.5, §4.7): a renewal that could not be had while the held token has 5 s or
+/// less left, and the API refusing this host's service key. Both become a 503 with
+/// <c>Retry-After</c>, and the session is kept.
+/// </para>
 /// </summary>
 public class BearerTokenTransformProvider : ITransformProvider
 {
@@ -69,6 +77,16 @@ public class BearerTokenTransformProvider : ITransformProvider
             transformContext.ProxyRequest.Headers.Remove(ServiceCredentialOptions.HeaderName);
 
             /*
+              AND THE TOKEN-ROAD MARKER, WHICH IS NEVER SET ON THIS ROAD (06 §4.2). The API's token
+              endpoints answer only a request carrying exactly one, over loopback — and this proxy
+              reaches the API over loopback too, with the key on every browser request. The marker is
+              the one thing that tells the BFF's own client from a browser's request passing through,
+              so a browser's copy goes here, before anything else can see it. AuthLevelMiddleware
+              404s the token paths as well; this holds even if a path slipped past that list.
+            */
+            transformContext.ProxyRequest.Headers.Remove(ServiceCredentialOptions.TokenRoadHeaderName);
+
+            /*
               OVER TLS OR TO THIS MACHINE ONLY, AND NOTHING IS FORWARDED OTHERWISE. Startup refuses
               such a destination, but YARP reloads its configuration while the host runs, so the
               rule is asked again per request.
@@ -109,18 +127,64 @@ public class BearerTokenTransformProvider : ITransformProvider
             if (httpContext.Request.Cookies.TryGetValue(cookieName, out var sessionId)
                 && !string.IsNullOrEmpty(sessionId))
             {
-                // Silently re-mint the access token if it is within the refresh skew window, so
-                // the 15-minute JWT no longer hard-kills an active session (ADR-0021, PR-2). A
-                // null result (session gone / refresh token dead) means we inject NO Authorization
-                // header — the API then 401s and the SPA's existing session-expired path fires.
+                // The session's access token, renewed first when it runs short (06 §4.5), so the
+                // 15-minute JWT no longer hard-kills an active session.
                 var refresher = httpContext.RequestServices.GetRequiredService<ITokenRefresher>();
-                var token = await refresher.GetFreshAccessTokenAsync(sessionId, httpContext.RequestAborted);
-                if (!string.IsNullOrEmpty(token))
+                var result = await refresher.GetAccessTokenAsync(sessionId, httpContext.RequestAborted);
+                switch (result.Outcome)
                 {
-                    transformContext.ProxyRequest.Headers.Authorization =
-                        new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                    case AccessTokenOutcome.Token:
+                        transformContext.ProxyRequest.Headers.Authorization =
+                            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", result.AccessToken);
+                        break;
+
+                    case AccessTokenOutcome.Unavailable:
+                        /*
+                          ANSWERED HERE, NOT FORWARDED. Writing a response from a request transform is
+                          YARP's documented short-circuit: it forwards nothing once the transform has
+                          set a status other than 200 (HttpForwarder checks IsResponseSet). The token
+                          it would have sent has 5 s or less left, or has expired, and the API would
+                          answer it 401 AUTH_TOKEN_EXPIRED — which the SPA reads as a sign-out.
+                        */
+                        await ServiceUnavailable.WriteAsync(
+                            httpContext,
+                            "The session could not be renewed just now. Try again shortly.",
+                            result.RetryAfterSeconds);
+                        return;
+
+                    case AccessTokenOutcome.SessionEnded:
+                        // No token: the API answers 401 and the SPA's session-expired path fires.
+                        break;
                 }
             }
+        });
+
+        /*
+          THE API REFUSING THIS HOST'S KEY IS NOT THE BROWSER'S 401 (06 §4.7, F4). A key rotation
+          applied on one side only makes the API refuse every proxied call with 401
+          SERVICE_CREDENTIAL_REQUIRED, and until PR-1 YARP passed it through: measured in O0 (item 6),
+          the browser got the API's own body with its 401 and the SPA signed the user out. The API
+          marks that refusal with a header; this turns exactly that response into a 503 the SPA
+          retries, and replaces the body so the API's refusal text goes no further.
+        */
+        context.AddResponseTransform(async responseContext =>
+        {
+            if (responseContext.ProxyResponse is not { } proxied || !ServiceKeyRefusal.Is(proxied))
+            {
+                return;
+            }
+
+            var httpContext = responseContext.HttpContext;
+            httpContext.RequestServices
+                .GetRequiredService<ILogger<BearerTokenTransformProvider>>()
+                .LogWarning("The API refused this host's service key on a proxied call; answering 503");
+
+            responseContext.SuppressResponseBody = true;
+            httpContext.Response.Headers.Remove(ServiceCredentialOptions.RefusalHeaderName);
+            await ServiceUnavailable.WriteAsync(
+                httpContext,
+                "The service is temporarily unavailable. Try again shortly.",
+                ServiceUnavailable.KeyRefusalRetryAfterSeconds);
         });
     }
 }

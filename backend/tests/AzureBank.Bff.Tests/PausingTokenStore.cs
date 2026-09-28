@@ -1,4 +1,5 @@
 using AzureBank.Bff.Models;
+using AzureBank.Bff.Services;
 using AzureBank.Bff.Services.Interfaces;
 
 namespace AzureBank.Bff.Tests;
@@ -52,7 +53,9 @@ internal sealed class PausingTokenStore(ITokenStoreService inner) : ITokenStoreS
 
     public Task<UserSession?> GetSessionAsync(string sessionId) => inner.GetSessionAsync(sessionId);
 
-    public Task RemoveSessionAsync(string sessionId) => inner.RemoveSessionAsync(sessionId);
+    public Task<bool> EndSessionAsync(string sessionId) => inner.EndSessionAsync(sessionId);
+
+    public IReadOnlyList<GrantRevocation> EndAllSessions() => inner.EndAllSessions();
 
     public Task CleanupExpiredSessionsAsync() => inner.CleanupExpiredSessionsAsync();
 }

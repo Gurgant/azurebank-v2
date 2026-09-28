@@ -1,7 +1,9 @@
+using System.Globalization;
 using AzureBank.Bff.Options;
 using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace AzureBank.Bff.Tests;
 
@@ -213,5 +215,45 @@ public class SessionOptionsPipelineTests : IClassFixture<WebApplicationFactory<P
         exception.Should().NotBeNull(
             "a whitespace-only cookie name must fail ValidateOnStart, not boot a BFF " +
             "whose every session read is silently broken");
+    }
+}
+
+/// <summary>
+/// <c>BackendApi:TimeoutSeconds</c> becomes the BFF's own client's <c>HttpClient.Timeout</c>, which
+/// takes at most <c>int.MaxValue</c> milliseconds. A value past that must stop the host at startup:
+/// with a lower bound alone it started, and every <c>CreateClient("BackendApi")</c> threw afterwards.
+/// </summary>
+public class BackendApiTimeoutPipelineTests : IClassFixture<WebApplicationFactory<Program>>
+{
+    private readonly WebApplicationFactory<Program> _factory;
+
+    public BackendApiTimeoutPipelineTests(WebApplicationFactory<Program> factory) => _factory = factory;
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(BackendApiOptions.MaxTimeoutSeconds + 1)] // one second past what HttpClient takes
+    public void AnUnusableTimeout_FailsStartup(int seconds)
+    {
+        var factory = _factory.WithWebHostBuilder(builder =>
+            builder.UseSetting("BackendApi:TimeoutSeconds", seconds.ToString(CultureInfo.InvariantCulture)));
+
+        var exception = Record.Exception(() => factory.CreateClient());
+
+        exception.Should().NotBeNull("a timeout HttpClient cannot take must fail ValidateOnStart");
+    }
+
+    [Fact]
+    public void TheLongestTimeoutHttpClientTakes_Starts_AndTheClientIsBuilt()
+    {
+        // The control for the row above: one second less is accepted, and the client is built with it.
+        var factory = _factory.WithWebHostBuilder(builder =>
+            builder.UseSetting(
+                "BackendApi:TimeoutSeconds",
+                BackendApiOptions.MaxTimeoutSeconds.ToString(CultureInfo.InvariantCulture)));
+        factory.CreateClient();
+
+        var client = factory.Services.GetRequiredService<IHttpClientFactory>().CreateClient("BackendApi");
+
+        client.Timeout.Should().Be(TimeSpan.FromSeconds(BackendApiOptions.MaxTimeoutSeconds));
     }
 }

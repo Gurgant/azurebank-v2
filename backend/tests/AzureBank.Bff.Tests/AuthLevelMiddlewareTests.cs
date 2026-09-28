@@ -99,7 +99,19 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
         {
             configure?.Invoke(builder);
             builder.ConfigureTestServices(services =>
-                services.Replace(ServiceDescriptor.Singleton<IForwarderHttpClientFactory>(recorder)));
+            {
+                services.Replace(ServiceDescriptor.Singleton<IForwarderHttpClientFactory>(recorder));
+
+                // The BFF's OWN client, not the proxy road recorded above. Since PR-1 a host that
+                // stops revokes the grants of the sessions it held (GrantRevoker's drain, 06 §4.6),
+                // and without this the drain dialled the default API address and waited for the
+                // refusal: measured 0.03 s -> 4.1 s per test that made a session.
+                services.AddHttpClient("BackendApi").ConfigurePrimaryHttpMessageHandler(() =>
+                    new FakeBackendApiHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent("""{"message":"ok"}""", Encoding.UTF8, "application/json")
+                    }));
+            });
         });
         _derivedFactories.Add(factory);
         return (factory, recorder);
@@ -114,6 +126,7 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
             "fake-jwt",
             DateTime.UtcNow.AddHours(1),
             "fake-refresh",
+            DateTime.UtcNow.AddMinutes(60),
             new UserLoginInfo
             {
                 Id = Guid.NewGuid(),
@@ -260,13 +273,13 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
     [Fact]
     public async Task FullNumber_AfterTheSessionIsRevoked_Is401_ExactlyLikeANeverIssuedId()
     {
-        // The cookie was real once. Logout revokes the session and deletes the cookie, but a
+        // The cookie was real once. Logout ends the session and deletes the cookie, but a
         // browser tab that kept the old value — or a client that never saw the Set-Cookie — still
         // sends it. That is the state the mock modelled as a step-up.
         var (factory, backend) = WithRecorder();
         var (sessionId, cookieName, sessions) = CreateSession(factory);
         var client = factory.CreateClient();
-        sessions.RevokeSession(sessionId);
+        sessions.EndSession(sessionId);
 
         var response = await client.SendAsync(Request(
             HttpMethod.Get, $"/api/accounts/{Guid.NewGuid()}/full-number", cookieName, sessionId));
@@ -634,6 +647,11 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
     [Theory]
     [InlineData("/api/auth/login")]
     [InlineData("/api/auth/register")]
+    // Token endpoints since PR-1 (06 §4.2): the proxy reaches the API over loopback with the key on
+    // every browser request, so these must stop here too. /api/auth/logout used to be proxied, and
+    // it revokes every grant of the user.
+    [InlineData("/api/auth/revoke")]
+    [InlineData("/api/auth/logout")]
     public async Task TheProxiedAuthPair_NeverReachesTheApi_AndHandsOutNothing(string path)
     {
         /*

@@ -3657,7 +3657,7 @@ public class BearerTokenTransformProvider : ITransformProvider
     "BaseUrl": "https://localhost:5002"
   },
   "Session": {
-    "IdleTimeout": 30,
+    "IdleTimeout": 15,
     "MaxSessionDuration": 60
   }
 }

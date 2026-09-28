@@ -14,10 +14,16 @@ public interface ISessionService
     /// </summary>
     /// <param name="accessToken">The JWT access token to store</param>
     /// <param name="tokenExpiry">Token expiration time</param>
-    /// <param name="refreshToken">The refresh token for silent re-mint (null if none was issued)</param>
+    /// <param name="refreshToken">The session's grant, for renewals (null if none was issued)</param>
+    /// <param name="refreshTokenExpiresAt">
+    /// When the grant expires, as the API answered it; the session ends no later (06 §4.1, F5).
+    /// Null when there is no grant.
+    /// </param>
     /// <param name="userInfo">User information to cache in session</param>
     /// <returns>A secure session ID to be stored in a cookie</returns>
-    string CreateSession(string accessToken, DateTime tokenExpiry, string? refreshToken, UserLoginInfo userInfo);
+    string CreateSession(
+        string accessToken, DateTime tokenExpiry, string? refreshToken, DateTime? refreshTokenExpiresAt,
+        UserLoginInfo userInfo);
 
     /// <summary>
     /// Gets the full session data for a session ID.
@@ -43,9 +49,11 @@ public interface ISessionService
     bool ValidateSession(string sessionId);
 
     /// <summary>
-    /// Revokes a session, removing all stored data.
+    /// Ends a session: marks it ended and removes it, then queues its grant for revocation at the API,
+    /// after any renewal in flight (06 §4.6). Only this session; the user's others are untouched.
+    /// Ending an unknown or already-ended session does nothing.
     /// </summary>
-    void RevokeSession(string sessionId);
+    void EndSession(string sessionId);
 
     /// <summary>
     /// Upgrades session to PIN-verified level (AuthLevel 2).
@@ -69,8 +77,12 @@ public interface ISessionService
     void UpdateUserInfo(string sessionId, Action<UserSessionInfo> update);
 
     /// <summary>
-    /// Refreshes a session with a re-minted access token AND its rotated refresh token
-    /// (rotation issues a new refresh token on every use — store the successor).
+    /// Stores a renewed access token on <paramref name="session"/>, and only if it expires later than
+    /// the one held. The grant is never touched: it does not rotate (06 §4.5). Call it holding the
+    /// session's <see cref="UserSession.SyncRoot"/>, as the renewal does.
     /// </summary>
-    void RefreshSession(string sessionId, string newToken, DateTime expiresAt, string? newRefreshToken);
+    /// <returns>
+    /// False when nothing was stored: the session has ended, or the new token expires no later.
+    /// </returns>
+    bool RefreshSession(UserSession session, string newToken, DateTime expiresAt);
 }

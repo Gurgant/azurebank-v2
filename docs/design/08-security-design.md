@@ -170,7 +170,7 @@ AzureBank/
   "Session": {
     "CookieName": ".AzureBank.Session",
     "AccessTokenMinutes": 15,
-    "InactivityTimeoutMinutes": 30,
+    "InactivityTimeoutMinutes": 15,
     "AbsoluteTimeoutMinutes": 60
   }
 }
@@ -194,7 +194,7 @@ services.AddSession(options =>
     options.Cookie.HttpOnly = true;           // Not accessible via JavaScript
     options.Cookie.SecurePolicy = CookieSecurePolicy.Always;  // HTTPS only
     options.Cookie.SameSite = SameSiteMode.Strict;  // CSRF protection
-    options.IdleTimeout = TimeSpan.FromMinutes(30);
+    options.IdleTimeout = TimeSpan.FromMinutes(15);
     options.Cookie.IsEssential = true;
 });
 ```
@@ -204,7 +204,7 @@ services.AddSession(options =>
 | Timeout Type | Production | Development | Description |
 |--------------|------------|-------------|-------------|
 | **Access Token** | 15 min | 5 min | JWT validity period |
-| **Inactivity** | 30 min | 10 min | Session expires after idle |
+| **Inactivity** | 15 min | 10 min | Session expires after idle |
 | **Absolute** | 60 min | 20 min | Maximum session lifetime |
 
 > The 15-min access token no longer bounds the session: the BFF silently re-mints it via

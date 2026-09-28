@@ -597,7 +597,7 @@ reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
 {
   "Session": {
     "CookieName": ".AzureBank.Session",
-    "InactivityTimeoutMinutes": 30,
+    "InactivityTimeoutMinutes": 15,
     "AbsoluteTimeoutMinutes": 60
   },
   "Security": {

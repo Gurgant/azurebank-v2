@@ -135,7 +135,7 @@ This guide explains how to deploy the AzureBank solution to Azure with:
   },
   "Session": {
     "CookieName": ".AzureBank.Session",
-    "InactivityTimeoutMinutes": 30,
+    "InactivityTimeoutMinutes": 15,
     "AbsoluteTimeoutMinutes": 60
   },
   "ReverseProxy": {

@@ -121,6 +121,7 @@ public class LogPlaceholderClassTests
         ["Interval"] = Operational,
         ["IntervalSeconds"] = Operational,
         ["LeaseSeconds"] = Operational,
+        ["Left"] = Operational, // grants a graceful stop could not revoke: a count
         ["Max"] = Operational,
         ["MaxPasses"] = Operational,
         // An exception's message: figure-free by rule (3769dc9), but NOT handle-free for a domain
@@ -139,6 +140,7 @@ public class LogPlaceholderClassTests
         ["Reason"] = Operational, // a code's name: why a grant was revoked (RefreshTokenRevokedReason), or which token-road check refused
         ["Receipt"] = Operational,
         ["RequestMethod"] = Operational,
+        ["Revoked"] = Operational, // grants a graceful stop revoked: a count
         ["Resource"] = Operational, // one of five constants the BFF derives from the first path segment, never the segment itself
         ["RoutePattern"] = Operational, // "/api/users/{azureTag}": a constant of the code, never a value
         ["Runner"] = Operational,

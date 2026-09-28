@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using AzureBank.Bff.DTOs;
+using AzureBank.Bff.Http;
 using AzureBank.Bff.Models;
 using AzureBank.Bff.Options;
 using AzureBank.Bff.Services.Interfaces;
@@ -37,9 +38,9 @@ public class BffAuthController : ControllerBase
     private readonly ILogger<BffAuthController> _logger;
 
     /// <summary>
-    /// Ceiling on the /me read-through. Matches <c>TokenRefresher.RefreshCallTimeout</c>, the only
-    /// other bounded out-of-band call here, and covers the re-mint plus the GET together — the
-    /// budget is for the whole read, not per hop.
+    /// Ceiling on the /me read-through, for the token and the GET together — the budget is for the
+    /// whole read, not per hop. It equals the renewal's foreground wait (06 §4.5), so a renewal that
+    /// has not come back by then leaves the whole budget spent and the cached block is served.
     /// </summary>
     private static readonly TimeSpan ReadThroughTimeout = TimeSpan.FromSeconds(5);
 
@@ -93,16 +94,19 @@ public class BffAuthController : ControllerBase
 
             var loginResponse = apiResponse!.Data!;
 
-            // Create server-side session with the JWT, its refresh token (for silent re-mint),
-            // and user info. The same token object registration answers, read the same way.
+            // Create server-side session with the JWT, its grant (for renewals) and the grant's
+            // expiry (the session's cap, 06 §4.1), and user info. The same token object registration
+            // answers, read the same way.
             var sessionId = _sessionService.CreateSession(
                 loginResponse.Token.AccessToken,
                 loginResponse.Token.ExpiresAt,
                 loginResponse.Token.RefreshToken,
+                loginResponse.Token.RefreshTokenExpiresAt,
                 loginResponse.User);
 
             // Set HTTP-only session cookie
             SetSessionCookie(sessionId);
+            EndTheSessionThisRequestCameWith(sessionId);
 
             _logger.LogInformation("User {UserId} logged in via BFF", loginResponse.User.Id);
 
@@ -160,16 +164,18 @@ public class BffAuthController : ControllerBase
 
             var registerResponse = apiResponse!.Data!;
 
-            // Create server-side session with the JWT, its refresh token (nullable — registration
-            // issues it best-effort), and user info.
+            // Create server-side session with the JWT, its grant (nullable — registration issues it
+            // best-effort) and the grant's expiry, and user info.
             var sessionId = _sessionService.CreateSession(
                 registerResponse.Token.AccessToken,
                 registerResponse.Token.ExpiresAt,
                 registerResponse.Token.RefreshToken,
+                registerResponse.Token.RefreshTokenExpiresAt,
                 registerResponse.User);
 
             // Set HTTP-only session cookie
             SetSessionCookie(sessionId);
+            EndTheSessionThisRequestCameWith(sessionId);
 
             _logger.LogInformation("User {UserId} registered via BFF", registerResponse.User.Id);
 
@@ -216,19 +222,18 @@ public class BffAuthController : ControllerBase
     /// and an unsound sole credential for creating one.
     /// </para>
     /// <para>
-    /// <b>The old session is dropped LOCALLY and the API is never told.</b> Not an oversight — the
-    /// API's <c>/api/auth/logout</c> calls <c>RevokeAllForUserAsync</c>, which revokes <i>every</i>
-    /// refresh token the user holds. Calling it after the new pair is minted would revoke that pair
-    /// too, and the replacement session would die silently the moment its access token needed a
-    /// re-mint; calling it before means a mistyped password ends the session it was trying to save.
-    /// The old refresh token is therefore left to expire on its own, which costs nothing reachable:
-    /// its only copy lived in the session record deleted two lines below, and it was never in the
-    /// browser. The API offers no single-token revoke, so this is the whole option set.
+    /// <b>The old session ends, and only its grant is revoked at the API</b> (06 §4.6). Until PR-1
+    /// the API offered no single-grant revoke, only <c>/api/auth/logout</c>, which revokes
+    /// <i>every</i> grant the user holds — the new one included, so the replacement session would
+    /// have died silently at its first renewal. The old grant was therefore left to expire, for up
+    /// to seven days. Now the old session ends through the same path as "Esci": its grant goes to
+    /// <c>GrantRevoker</c>, which revokes that one grant with <c>/api/auth/revoke</c> and nothing
+    /// else. The API's logout is still never called here.
     /// </para>
     /// <para>
-    /// <b>Order is load-bearing.</b> Authenticate first, mint second, revoke third. Any earlier
-    /// revocation turns a wrong password into a sign-out — strictly worse than the screen this
-    /// replaces, which at least left the user where they were.
+    /// <b>Order is load-bearing</b> (ADR-0026): authenticate, mint, set the new cookie, end the old
+    /// session, queue its grant. Any earlier ending turns a wrong password into a sign-out — strictly
+    /// worse than the screen this replaces, which at least left the user where they were.
     /// </para>
     /// </remarks>
     [HttpPost("reauthenticate")]
@@ -279,13 +284,15 @@ public class BffAuthController : ControllerBase
                 loginResponse.Token.AccessToken,
                 loginResponse.Token.ExpiresAt,
                 loginResponse.Token.RefreshToken,
+                loginResponse.Token.RefreshTokenExpiresAt,
                 loginResponse.User);
 
             // Same cookie NAME, so the browser replaces the old value and cannot present the old id
             // again. Session fixation is handled by construction: CreateSession generates the id.
             SetSessionCookie(newSessionId);
 
-            _sessionService.RevokeSession(session.SessionId);
+            // Ends the old session and queues its grant, and only its grant, for revocation.
+            _sessionService.EndSession(session.SessionId);
 
             _logger.LogInformation(
                 "User {UserId} re-authenticated at the session cap; a new session was issued",
@@ -366,7 +373,7 @@ public class BffAuthController : ControllerBase
                     AuthLevel = _sessionService.GetAuthLevel(session.SessionId),
                     CreatedAt = session.SessionCreated,
                     LastActivity = session.LastActivity,
-                    ExpiresAt = session.SessionCreated.AddMinutes(_sessionOptions.AbsoluteTimeoutMinutes),
+                    ExpiresAt = session.AbsoluteExpiresAt,
                     InactivityExpiresAt = session.LastActivity.AddMinutes(_sessionOptions.InactivityTimeoutMinutes),
                     IsPinVerified = isPinVerified,
                     PinExpiresAt = isPinVerified
@@ -420,8 +427,9 @@ public class BffAuthController : ControllerBase
               on a read costs nothing but freshness, and freshness is exactly what we are prepared
               to trade.
 
-              Five seconds to match TokenRefresher.RefreshCallTimeout, the only other bounded
-              out-of-band call in this service. NOT covered by a test, and it is worth saying why
+              Five seconds, the renewal's foreground wait (06 §4.5): the renewal itself runs
+              detached on its own 30 s, so giving up here abandons only this read of it. (Until
+              PR-1 this matched a 5 s renewal call.) NOT covered by a test, and it is worth saying why
               rather than implying coverage: FakeBackendApiHandler builds its response synchronously
               (Task.FromResult over a Func), so a responder that blocks parks the calling thread
               before any awaitable exists and no token can interrupt it. The harness cannot express
@@ -431,14 +439,16 @@ public class BffAuthController : ControllerBase
                 HttpContext.RequestAborted);
             deadline.CancelAfter(ReadThroughTimeout);
 
-            // Same re-mint as every other out-of-band call here: this path bypasses the YARP
-            // transform, so nothing else would attach a token.
-            var token = await _tokenRefresher.GetFreshAccessTokenAsync(
-                session.SessionId, deadline.Token);
-            if (string.IsNullOrEmpty(token))
+            // Same renewal as every other out-of-band call here: this path bypasses the YARP
+            // transform, so nothing else would attach a token. No token for any reason — the
+            // session ended, or the renewal is unavailable (06 §4.5) — serves the cached block.
+            var result = await _tokenRefresher.GetAccessTokenAsync(session.SessionId, deadline.Token);
+            if (result.Outcome != AccessTokenOutcome.Token || string.IsNullOrEmpty(result.AccessToken))
             {
                 return cached;
             }
+
+            var token = result.AccessToken;
 
             using var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
             request.Headers.Authorization =
@@ -499,20 +509,31 @@ public class BffAuthController : ControllerBase
     }
 
     /// <summary>
-    /// Logout - revokes session, clears cookie.
+    /// Logout ("Esci") - ends THIS session, clears cookie. The user's other sessions are untouched.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Ends the session here and answers at once</b> (06 §4.6). Under the session's lock it is
+    /// marked ended, its renewal in flight is captured, and it is removed; the grant is then queued
+    /// on <c>GrantRevoker</c>, which revokes that one grant at the API after the renewal settles.
+    /// </para>
+    /// <para>
+    /// <b>What it no longer does, and why.</b> It used to renew the access token and call the API's
+    /// <c>/api/auth/logout</c> before answering. That revoked every grant the user held on every
+    /// device, and the next renewal of any of the user's other sessions was then read as token theft:
+    /// a 401, that session signed out, and a false <c>RefreshTokenReuse</c> in the audit trail
+    /// (measured in O0, item 3). The renewal was wasted as well, and it was the one request "Esci"
+    /// still sent after the session was gone (O0, item 7).
+    /// </para>
+    /// </remarks>
     [HttpPost("logout")]
     [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status200OK)]
-    public async Task<IActionResult> Logout()
+    public IActionResult Logout()
     {
         if (Request.Cookies.TryGetValue(_sessionOptions.CookieName, out var sessionId)
             && !string.IsNullOrEmpty(sessionId))
         {
-            // Propagate to the API so it revokes this user's refresh tokens — otherwise logout
-            // would end the BFF session but leave the refresh tokens alive server-side. Strictly
-            // best-effort: a failure here must never block the local logout.
-            await RevokeApiTokensAsync(sessionId);
-            _sessionService.RevokeSession(sessionId);
+            _sessionService.EndSession(sessionId);
             _logger.LogInformation("User logged out via BFF");
         }
 
@@ -521,46 +542,6 @@ public class BffAuthController : ControllerBase
         // evicted by a Secure, Path=/ expiration.
         Response.Cookies.Delete(_sessionOptions.CookieName, BuildSessionCookieOptions());
         return Ok(ApiResponse.Success("Logged out successfully"));
-    }
-
-    /// <summary>
-    /// Best-effort call to the API's /api/auth/logout so it revokes this user's refresh tokens.
-    /// Uses a freshly re-minted access token (the stored one may be within skew). Never throws.
-    /// </summary>
-    private async Task RevokeApiTokensAsync(string sessionId)
-    {
-        try
-        {
-            // Independent, BOUNDED timeout — deliberately NOT HttpContext.RequestAborted: this
-            // revocation is the whole point of the call and must complete even if the browser
-            // tears down the connection right after sending the logout request.
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-
-            var accessToken = await _tokenRefresher.GetFreshAccessTokenAsync(sessionId, cts.Token);
-            if (string.IsNullOrEmpty(accessToken))
-            {
-                // No usable token: the session was already dead (its refresh token was revoked or
-                // expired), so the API-side tokens are already moot.
-                return;
-            }
-
-            using var apiRequest = new HttpRequestMessage(HttpMethod.Post, "/api/auth/logout");
-            apiRequest.Headers.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
-            using var response = await _httpClient.SendAsync(apiRequest, cts.Token);
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogWarning(
-                    "API logout returned {StatusCode} during BFF logout", (int)response.StatusCode);
-            }
-        }
-        catch (Exception ex)
-        {
-            // Strictly best-effort: this must NEVER bubble into Logout() and skip the local session
-            // revocation + cookie deletion. A bare OperationCanceledException (e.g. from a gate
-            // wait), a malformed response, or any transient are all swallowed here by design.
-            _logger.LogWarning(ex, "API logout call failed during BFF logout; proceeding locally");
-        }
     }
 
     /// <summary>
@@ -592,30 +573,39 @@ public class BffAuthController : ControllerBase
             IsPinVerified = _sessionService.IsPinVerificationValid(session.SessionId),
             ServerTime = DateTime.UtcNow,
             InactivityExpiresAt = session.LastActivity.AddMinutes(_sessionOptions.InactivityTimeoutMinutes),
-            AbsoluteExpiresAt = session.SessionCreated.AddMinutes(_sessionOptions.AbsoluteTimeoutMinutes)
+            AbsoluteExpiresAt = session.AbsoluteExpiresAt
         });
     }
 
     /// <summary>
-    /// Re-mints the session's access token for the PIN paths, which bypass the YARP transform (so
-    /// the stored token may be within the skew window). Returns the fresh token, or a ready-to-return
-    /// 401 when the session is gone / its refresh token is dead — the single place that 401 is shaped.
+    /// The session's access token for the PIN paths and the rename, which bypass the YARP transform
+    /// (so the stored token may need renewing first). Returns the token, or a ready-to-return refusal
+    /// — the single place each is shaped: 401 when the session has ended or its grant is dead, and
+    /// 503 with <c>Retry-After</c> when a renewal could not be had and the held token has 5 s or less
+    /// left (06 §4.5). The 503 keeps the session; the 401 is the SPA's sign-out.
     /// </summary>
     private async Task<(string? AccessToken, IActionResult? Unauthorized)> ReMintOrUnauthorizedAsync(
         string sessionId)
     {
-        var accessToken = await _tokenRefresher.GetFreshAccessTokenAsync(
-            sessionId, HttpContext.RequestAborted);
-        if (accessToken is null)
+        var result = await _tokenRefresher.GetAccessTokenAsync(sessionId, HttpContext.RequestAborted);
+        switch (result.Outcome)
         {
-            return (null, Unauthorized(new ProblemDetails
-            {
-                Title = "Unauthorized",
-                Detail = "Session expired or invalid",
-                Status = 401
-            }));
+            case AccessTokenOutcome.Token:
+                return (result.AccessToken, null);
+
+            case AccessTokenOutcome.Unavailable:
+                return (null, ServiceUnavailableResult(
+                    "The session could not be renewed just now. Try again shortly.",
+                    result.RetryAfterSeconds));
+
+            default:
+                return (null, Unauthorized(new ProblemDetails
+                {
+                    Title = "Unauthorized",
+                    Detail = "Session expired or invalid",
+                    Status = 401
+                }));
         }
-        return (accessToken, null);
     }
 
     /// <summary>
@@ -638,8 +628,8 @@ public class BffAuthController : ControllerBase
             });
         }
 
-        // These paths bypass the YARP transform, so re-mint here too (the access token may be
-        // within the skew window).
+        // These paths bypass the YARP transform, so the token is fetched here too: it may need
+        // renewing first (06 §4.5).
         var (accessToken, unauthorized) = await ReMintOrUnauthorizedAsync(session.SessionId);
         if (unauthorized is not null)
         {
@@ -727,8 +717,8 @@ public class BffAuthController : ControllerBase
             });
         }
 
-        // These paths bypass the YARP transform, so re-mint here too (the access token may be
-        // within the skew window).
+        // These paths bypass the YARP transform, so the token is fetched here too: it may need
+        // renewing first (06 §4.5).
         var (accessToken, unauthorized) = await ReMintOrUnauthorizedAsync(session.SessionId);
         if (unauthorized is not null)
         {
@@ -813,7 +803,8 @@ public class BffAuthController : ControllerBase
             });
         }
 
-        // Same reason as set-pin: this path bypasses the YARP transform, so re-mint here too.
+        // Same reason as set-pin: this path bypasses the YARP transform, so the token is fetched
+        // here too, renewed first if it needs it (06 §4.5).
         var (accessToken, unauthorized) = await ReMintOrUnauthorizedAsync(session.SessionId);
         if (unauthorized is not null)
         {
@@ -863,9 +854,10 @@ public class BffAuthController : ControllerBase
                   spans SendAsync above and this line, while UpdateUserInfo mutates the stored
                   reference (InMemoryTokenStore hands back the live object) so a lock inside it would
                   guard a single reference assignment that is already atomic. And "disproportionate"
-                  was contradicted sixty lines away: TokenRefresher already ships the per-session
-                  single-flight gate, which is precisely why Program.cs registers it as a singleton.
-                  The lock was rejected for bad reasons; it is now unnecessary for a real one.
+                  was contradicted sixty lines away: the renewal already ships a per-session single
+                  flight (a lock on each session since PR-1, 06 §4.5; before it, a gate TokenRefresher
+                  kept as a singleton). The lock was rejected for bad reasons; it is now unnecessary
+                  for a real one.
                 */
                 _sessionService.UpdateUserInfo(session.SessionId, userInfo => userInfo.AzureTag = renamed);
             }
@@ -912,6 +904,33 @@ public class BffAuthController : ControllerBase
         Response.Cookies.Append(_sessionOptions.CookieName, sessionId, BuildSessionCookieOptions());
     }
 
+    /// <summary>
+    /// A new sign-in or registration ends the session whose cookie came with it (06 §4.6, F13).
+    /// </summary>
+    /// <remarks>
+    /// Called after the new session exists and its cookie is set, the order re-authentication keeps
+    /// (ADR-0026): a failed sign-in never gets here, so it leaves the old session as it was. Without
+    /// this the old session lived on beside the new one until it idled out, holding a live grant
+    /// that no cookie in this browser named any more.
+    /// </remarks>
+    private void EndTheSessionThisRequestCameWith(string newSessionId)
+    {
+        if (Request.Cookies.TryGetValue(_sessionOptions.CookieName, out var oldSessionId)
+            && !string.IsNullOrEmpty(oldSessionId)
+            && oldSessionId != newSessionId)
+        {
+            _sessionService.EndSession(oldSessionId);
+        }
+    }
+
+    /// <summary>A 503 in the API's own shape, with <c>Retry-After</c>: the session is kept.</summary>
+    private ObjectResult ServiceUnavailableResult(string detail, int retryAfterSeconds) =>
+        new(ServiceUnavailable.Problem(HttpContext, detail, retryAfterSeconds))
+        {
+            StatusCode = StatusCodes.Status503ServiceUnavailable,
+            ContentTypes = { "application/problem+json" }
+        };
+
     private CookieOptions BuildSessionCookieOptions()
     {
         return new CookieOptions
@@ -934,8 +953,22 @@ public class BffAuthController : ControllerBase
     /// A non-JSON body (proxy HTML, empty 502) must not escape as an unhandled 500 —
     /// it becomes a generic 502 ProblemDetails instead.
     /// </summary>
+    /// <remarks>
+    /// One exception to "verbatim": the API refusing this host's service key becomes a 503 with
+    /// <c>Retry-After</c> (06 §4.7, F4). It is a key rotation applied on one side, not a verdict on
+    /// the user, and forwarded as the 401 it is it would sign the user out of the SPA. Every call
+    /// site gets it here: sign-in, registration, re-authentication, verify-pin, set-pin and rename.
+    /// </remarks>
     private IActionResult ForwardUpstreamError(HttpResponseMessage response, string content)
     {
+        if (ServiceKeyRefusal.Is(response))
+        {
+            _logger.LogWarning("The API refused this host's service key; answering 503");
+            return ServiceUnavailableResult(
+                "The service is temporarily unavailable. Try again shortly.",
+                ServiceUnavailable.KeyRefusalRetryAfterSeconds);
+        }
+
         try
         {
             using var document = JsonDocument.Parse(content);

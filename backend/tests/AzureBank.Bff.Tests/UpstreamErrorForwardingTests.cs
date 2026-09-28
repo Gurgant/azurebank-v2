@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using AzureBank.Shared.Constants;
+using AzureBank.Shared.Options;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -52,6 +54,38 @@ public class UpstreamErrorForwardingTests : IClassFixture<WebApplicationFactory<
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         body.GetProperty("errorCode").GetString().Should().Be("INVALID_CREDENTIALS");
         body.GetProperty("traceId").GetString().Should().Be("deadbeef");
+    }
+
+    [Fact]
+    public async Task TheApiRefusingThisHostsKey_Becomes503WithRetryAfter_NotTheSignOut401()
+    {
+        // 06 §4.7 (F4). The API marks its refusal of the service key with a header; a key rotation
+        // applied on one side is the service failing, and forwarded as its 401 it would sign the user
+        // out. JsonUpstreamError_IsForwardedVerbatim_WithItsStatus is the control: a 401 WITHOUT the
+        // header still passes through untouched.
+        var client = _factory.WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+                services.AddHttpClient("BackendApi").ConfigurePrimaryHttpMessageHandler(() =>
+                    new FakeBackendApiHandler(_ =>
+                    {
+                        var refusal = new HttpResponseMessage(HttpStatusCode.Unauthorized)
+                        {
+                            Content = new StringContent(
+                                """{"status":401,"title":"Unauthorized","detail":"This API is reached through the BFF.","errorCode":"SERVICE_CREDENTIAL_REQUIRED"}""",
+                                Encoding.UTF8, "application/problem+json")
+                        };
+                        refusal.Headers.Add(
+                            ServiceCredentialOptions.RefusalHeaderName, ServiceCredentialOptions.ServiceCredentialRefusal);
+                        return refusal;
+                    })))).CreateClient();
+
+        var response = await PostLogin(client);
+
+        response.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
+        response.Headers.RetryAfter.Should().NotBeNull();
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.ServiceUnavailable);
+        body.GetRawText().Should().NotContain("reached through the BFF", "the API's refusal text goes no further");
     }
 
     [Fact]

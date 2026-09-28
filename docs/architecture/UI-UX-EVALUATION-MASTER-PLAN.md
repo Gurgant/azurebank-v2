@@ -80,7 +80,7 @@ Based on backend API analysis from `CLAUDE-CONTEXT.md`:
 |---------|---------|---------------------|
 | **Step-Up Auth** | Withdrawal, External transfer | PIN verification modal |
 | **Idempotency** | All mutations | Loading states, Retry prevention |
-| **Session Expiry** | 30 min inactivity | Session warning, Auto-logout |
+| **Session Expiry** | 15 min inactivity | Session warning, Auto-logout |
 
 ---
 

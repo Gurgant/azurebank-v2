@@ -197,7 +197,7 @@ WHERE UserId = '<UserId>' AND RevokedAt IS NULL;
 ```
 
 Access tokens already issued live until they expire — 15 minutes (`Jwt:ExpirationMinutes`) — and the
-BFF's own session has its own windows (30 minutes idle, 60 absolute; 10 and 20 in Development).
+BFF's own session has its own windows (15 minutes idle, 60 absolute; 10 and 20 in Development).
 Whether that matters depends on which kind you are treating. For a `PinEnrolled` repudiation it does
 not: that attacker proved the password and can sign in again, so the window is not the point. For a
 `PinChanged` repudiation it IS the point — a session is the only thing that attacker still holds
