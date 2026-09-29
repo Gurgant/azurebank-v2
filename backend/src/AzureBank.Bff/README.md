@@ -213,7 +213,7 @@ move that still sends its PIN in the body. The BFF no longer gates a transfer at
 double-gating would leave the weaker of the two checks in the path and keep the five-minute session
 window alive for money movement. `/full-number` is the only route behind the level-2 gate. The
 no-session refusal is not transfer-specific either: since `d74603c` (2026-08-20) every `/api/*`
-request that is not one of the three 404'd auth paths above, any method, is refused at the BFF with
+request that is not one of the six 404'd auth paths above, any method, is refused at the BFF with
 the API's own 401 shape unless a live session resolves.
 
 ---
@@ -253,13 +253,18 @@ Three refusals, in this order, all decided in the BFF before the request reaches
 tests pin the forwarded-path list empty for each (`AuthLevelMiddlewareTests`):
 
 ```csharp
-// The two proxied auth entry points are answered 404 — as if the routes did not exist — before the
-// session is read, so they answer 404 even to a valid session. The SPA signs in through the BFF's
-// own /bff/auth/* controller; a raw proxied login had no legitimate caller and handed out the very
-// JWT the BFF exists to withhold (measured 2026-08-19, ADR-0041 amendment). /api/auth/refresh is
-// answered 404 by the branch just above this one (ADR-0021).
+// These five auth paths are answered 404 — as if the routes did not exist — before the session is
+// read, so they answer 404 even to a valid session. The SPA signs in through the BFF's own
+// /bff/auth/* controller; a raw proxied login had no legitimate caller and handed out the very JWT
+// the BFF exists to withhold (measured 2026-08-19, ADR-0041 amendment). Revoke, logout and the
+// session-stamp feed are token endpoints the API answers only to the BFF's own client
+// (ADR-0057 §4.2, §5.3). /api/auth/refresh is answered 404 by the branch just above this one.
 private static readonly HashSet<string> BlockedProxiedAuthPaths =
-    new(StringComparer.OrdinalIgnoreCase) { "/api/auth/login", "/api/auth/register" };
+    new(StringComparer.OrdinalIgnoreCase)
+    {
+        "/api/auth/login", "/api/auth/register", "/api/auth/revoke", "/api/auth/logout",
+        "/api/auth/session-stamps"
+    };
 
 // EVERY proxied request — any method — needs a live session, decided HERE rather than delegated to
 // the API. There is no exception list: the set that used to hold one is deleted, not emptied.
@@ -482,7 +487,8 @@ Nothing queues — a request over the limit is refused immediately.
     "LookupWindowSeconds": 60
   },
   "BackendApi": {
-    "BaseUrl": "https://localhost:7215"
+    "BaseUrl": "https://localhost:7215",
+    "TimeoutSeconds": 100
   },
   "ReverseProxy": {
     "Routes": {
