@@ -736,6 +736,53 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
     }
 
     [Fact]
+    public async Task AGracefulStop_WhoseWorkerIsOnACallTheApiNeverAnswers_EndsWithinTheDrainsBudget_AndCountsItsGrantAsLeft()
+    {
+        /*
+          CodeRabbit on #217. Before its second half the stop waits for the revoker's workers, and a
+          worker's call is cancelled by the workers' own stop, not by the drain's budget. The API
+          here takes the worker's call and never answers it, not even once the call is cancelled.
+          While that wait was bounded by the host's token alone it lasted until the host's shutdown
+          timeout, 30 s by default: past the drain's 8 s. Now it draws from the drain's budget and
+          says when it ran out. The worker still owns its grant: the drain does not send it again,
+          and counts it as left. The held session is revoked by the first half, as ever. The budget
+          is the shipped one.
+        */
+        var log = new ConcurrentQueue<LogEvent>();
+        var (host, upstream) = NewHost(log, disposeWithTheClass: false, firstRevokeUnanswered: true);
+        var sessions = host.Services.GetRequiredService<ISessionService>();
+        sessions.EndSession(NewSession(host, "rt-working"));
+        (await Eventually(() => upstream.RevokeCalls == 1)).Should().BeTrue(
+            "a worker must be on the call the API never answers, or it is not the workers' wait that is timed");
+        NewSession(host, "rt-held");
+        var drain = host.Services.GetRequiredService<GrantRevoker>().DrainBudget + TimeSpan.FromSeconds(1);
+        host.CreateClient();
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var stop = host.DisposeAsync().AsTask();
+        // Past the host's 30 s shutdown timeout, so a stop that waits for it is measured too.
+        var stopped = await Task.WhenAny(stop, Task.Delay(TimeSpan.FromSeconds(40))) == stop;
+        clock.Stop();
+
+        var cut = Named(log, "Graceful stop: the revoke workers did not stop in time").ToList();
+        var summary = Named(log, "Graceful stop:").Where(e => e.Properties.ContainsKey("Revoked")).ToList();
+        using (new AssertionScope())
+        {
+            stopped.Should().BeTrue();
+            clock.Elapsed.Should().BeLessThan(drain + TimeSpan.FromSeconds(1),
+                "the wait for the workers ends with the drain's budget, and 1 s is room for a slow machine");
+            cut.Should().ContainSingle();
+            cut.Should().OnlyContain(e => e.Level == LogEventLevel.Warning && e.Properties["Count"].ToString() == "1");
+            upstream.RevokeCallLog.Select(c => c.Grants).Should().BeEquivalentTo(
+                [new[] { "rt-working" }, ["rt-held"]], o => o.WithStrictOrdering(),
+                "the grant a worker is still sending is not sent again");
+            summary.Should().ContainSingle();
+            summary.Should().OnlyContain(e => e.Properties["Revoked"].ToString() == "1"
+                && e.Properties["Left"].ToString() == "1", "the held grant was revoked, the worker's is unanswered");
+        }
+    }
+
+    [Fact]
     public async Task WhenTheRevokeQueueIsFull_AnEndingIsDropped_SaysSo_AndDoesNotWait()
     {
         /*

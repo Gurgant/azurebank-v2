@@ -77,10 +77,12 @@ public sealed class GrantRevocation(string sessionId, string grant, DateTime ret
 /// and how many were left. Both halves draw from ONE budget, started when the host began to stop,
 /// never from the host's shutdown token, which is already cancelled when a request held Kestrel's
 /// stop past its timeout: the second half gets only what the first left, and sends nothing once it
-/// is spent. The whole drain is over one second past that budget at most, whether or not its calls
-/// have ended, inside the grace Docker gives the BFF (<see cref="DrainBudget"/> says why that
-/// number). A grant the API did not get — a kill, or an API that stopped first, as it does under
-/// compose — is live until its cap, with nobody holding it.
+/// is spent. The wait for the workers draws from it too: a grant a worker is still sending when it
+/// runs out is not sent again, and counts as left. The whole drain is over one second past that
+/// budget at most, whether or not its calls have ended, inside the grace Docker gives the BFF
+/// (<see cref="DrainBudget"/> says why that number). A grant the API did not get — a kill, or an
+/// API that stopped first, as it does under compose — is live until its cap, with nobody holding
+/// it.
 /// </para>
 /// </remarks>
 public sealed class GrantRevoker : BackgroundService
@@ -117,10 +119,10 @@ public sealed class GrantRevoker : BackgroundService
 
     /// <summary>
     /// The whole graceful-stop drain, both halves together, from the moment the host began to stop
-    /// to its last call: the first half's calls, the renewal wait inside it, and the second half,
-    /// which gets only what the first left. Its own, not the host's shutdown token: a request that
-    /// holds Kestrel's graceful stop to its timeout cancels that token before the drain has sent
-    /// anything.
+    /// to its last call: the first half's calls, the renewal wait inside it, the wait for the
+    /// workers, and the second half, which gets only what the first left. Its own, not the host's
+    /// shutdown token: a request that holds Kestrel's graceful stop to its timeout cancels that
+    /// token before the drain has sent anything.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -149,8 +151,11 @@ public sealed class GrantRevoker : BackgroundService
     private readonly Channel<GrantRevocation> _queue = Channel.CreateBounded<GrantRevocation>(
         new BoundedChannelOptions(Capacity) { FullMode = BoundedChannelFullMode.Wait });
 
-    /// <summary>What a worker has taken and not finished: the drain sends these too.</summary>
-    private readonly ConcurrentDictionary<GrantRevocation, byte> _inProgress =
+    /// <summary>
+    /// What a worker has taken and not finished, and whether it has let go of it: true once it
+    /// stopped on it, and the drain sends it; false while its call may still be running.
+    /// </summary>
+    private readonly ConcurrentDictionary<GrantRevocation, bool> _inProgress =
         new(ReferenceEqualityComparer.Instance);
 
     /// <summary>The grants of the sessions ended because the host is stopping.</summary>
@@ -179,7 +184,10 @@ public sealed class GrantRevoker : BackgroundService
     private CancellationTokenSource? _drainBudget;
     private long _drainStartedAt;
 
-    /// <summary>How many grants the drain has taken, and how many of them the API revoked.</summary>
+    /// <summary>
+    /// How many grants the drain has taken or found a worker still sending, and how many of them the
+    /// API revoked.
+    /// </summary>
     private int _drainTaken;
     private int _drainRevoked;
 
@@ -268,9 +276,6 @@ public sealed class GrantRevoker : BackgroundService
 
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
-        // The workers first. Each leaves the item it was on in _inProgress when it stops.
-        await base.StopAsync(cancellationToken);
-
         /*
           ONE DRAIN, AND EVERY STOP WAITS FOR IT. Measured under WebApplicationFactory: this was
           called twice per stop, and the first version drained twice, sending the same grants again.
@@ -278,7 +283,8 @@ public sealed class GrantRevoker : BackgroundService
           ObjectDisposedException in the HTTP client factory: the host's services were disposed
           under it. Read, not traced: Program's own app.Run() stops the host and then disposes it,
           while the factory's dispose stops it as well. Waiting here holds either caller until the
-          one drain is done.
+          one drain is done, its wait for the workers included; only the first caller touches the
+          drain's budget, which Dispose disposes.
         */
         var mine = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         if (Interlocked.CompareExchange(ref _drain, mine, null) is { } running)
@@ -289,17 +295,37 @@ public sealed class GrantRevoker : BackgroundService
 
         try
         {
-            // The first half, started when the host began to stop, and the budget it started. None
-            // when nothing signalled the stop first: the half below then takes every grant, and the
-            // budget starts here. Awaited bare because DrainAsync bounds itself by that one budget:
-            // by the time the host gets here it may be long spent, and a wait of its own would add
-            // to it.
-            Task? first;
+            // The drain's one budget, started here when nothing signalled the stop first: the wait
+            // for the workers below draws from it too.
             CancellationToken budget;
             lock (_drainGate)
             {
-                first = _drainAtStopping;
                 budget = StartDrainClock();
+            }
+
+            /*
+              THE WORKERS FIRST, ON THE DRAIN'S BUDGET. Each lets go of the item it was on when it
+              stops, and the second half sends it. Their stop cancels a worker's call, but the call
+              ends only when the handler under it honours that (measured on .NET 10.0.12), and
+              base.StopAsync waits for its workers until the token it is given fires, then returns
+              without them (measured too). On the host's token alone that is the host's shutdown
+              timeout, 30 s by default: SessionEndingTests measured a stop held 30 s by one such
+              call, against the drain's 8 s (ADR-0057 §4.6).
+            */
+            using (var join = CancellationTokenSource.CreateLinkedTokenSource(budget, cancellationToken))
+            {
+                await base.StopAsync(join.Token);
+            }
+            var workersStopped = ExecuteTask is null or { IsCompleted: true };
+
+            // The first half, started when the host began to stop. None when nothing signalled the
+            // stop first: the half below then takes every grant, on the budget started above.
+            // Awaited bare because DrainAsync bounds itself by that one budget: by the time the host
+            // gets here it may be long spent, and a wait of its own would add to it.
+            Task? first;
+            lock (_drainGate)
+            {
+                first = _drainAtStopping;
             }
             if (first is not null)
             {
@@ -308,10 +334,41 @@ public sealed class GrantRevoker : BackgroundService
 
             // The second half: only what the first could not have taken. Ending every session again
             // finds those a request still in flight stored after the first pass (a session already
-            // ended is not ended twice); then what the workers had queued or were retrying.
+            // ended is not ended twice); then what the workers let go of or had queued.
             EndEverySession();
             var rest = TakeEndedAtStop();
-            rest.AddRange(_inProgress.Keys);
+
+            /*
+              NOT WHAT A WORKER IS STILL SENDING, when the wait above ran out on it. That call may
+              already be at the API and may yet be answered: the grant is still the worker's. Sent
+              here as well, it would reach the API twice, and the API's "Revoked {Count} of
+              {Attempted}" would count the second arrival as presented and not revoked, as it counts
+              a grant it does not know: no longer the same count as this stop's, which ADR-0057 §4.6
+              reads it against. It counts as left instead: true unless the worker's call lands, and
+              a grant reported live that is not costs an operator a look, where the reverse would
+              hide one. When every worker stopped, every item here was let go of and is sent, as
+              before.
+            */
+            var stillSending = 0;
+            foreach (var (grant, letGo) in _inProgress)
+            {
+                if (letGo)
+                {
+                    rest.Add(grant);
+                }
+                else
+                {
+                    stillSending++;
+                }
+            }
+            Interlocked.Add(ref _drainTaken, stillSending);
+            if (!workersStopped)
+            {
+                _logger.LogWarning(
+                    "Graceful stop: the revoke workers did not stop in time; the {Count} grants they "
+                    + "are still sending are not sent again, and count as left", stillSending);
+            }
+
             while (_queue.Reader.TryRead(out var queued))
             {
                 rest.Add(queued);
@@ -509,14 +566,15 @@ public sealed class GrantRevoker : BackgroundService
         {
             await foreach (var revocation in _queue.Reader.ReadAllAsync(stoppingToken))
             {
-                _inProgress[revocation] = 0;
+                _inProgress[revocation] = false;
                 try
                 {
                     await RevokeAsync(revocation, stoppingToken);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
-                    // Stopping: left in _inProgress for the drain.
+                    // Stopping: let go of, and left in _inProgress for the drain to send.
+                    _inProgress[revocation] = true;
                     throw;
                 }
                 catch (Exception ex)

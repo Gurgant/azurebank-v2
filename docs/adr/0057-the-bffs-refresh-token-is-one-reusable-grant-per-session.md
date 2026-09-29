@@ -319,6 +319,11 @@ a profile this system meets.
     shutdown token. The renewal wait and both halves draw from it: the second half gets only what
     the first left, and sends nothing once it is spent. A call whose handler ignores the cancel is
     waited for 1 s more, so the drain is over 8 s after the stop began, answered or not.
+  - The wait for the revoker's workers before the second half draws from the same budget. A
+    worker's call whose handler ignores the cancel held that wait until the host's shutdown timeout,
+    30 s by default. When the budget runs out first, the stop logs a warning and goes on. The grant
+    that worker is still sending is not sent again, since the API would count a second arrival as
+    presented and not revoked. It counts as left.
   - Why 8 s: compose sets no `stop_grace_period` for the BFF, so Docker kills it 10 s after its stop
     signal, and the other 2 s are left to the rest of the stop. It was a budget per half before,
     15 s and 1 s more each, one after the other: up to 32 s. Azure Container Apps gives a replica a
@@ -724,9 +729,12 @@ The evidence recorded for this record is O0 on main, the CI tests on the branch,
   revokes the grant within one 5-minute sweep; an "Esci" during a paused SQL is revoked after SQL
   returns; a graceful stop with 2 sessions revokes both grants and logs "left 0" (F7), and sends
   them before any of the BFF's services is asked to stop; a stop whose API answers neither half
-  ends within the drain's 8 s, and one whose first half never ends sends nothing past the budget
-  (`SessionEndingTests`). **Measured 2026-09-29:** with a budget per half put back, the first stop
-  took 10.0 s against its 9 s bound, and the second sent its second half's grant. **Ran** in-process:
+  ends within the drain's 8 s, and one whose first half never ends sends nothing past the budget;
+  a stop with a revoker worker on a call that never ends ends within the budget, does not send
+  that grant again and counts it as left (`SessionEndingTests`). **Measured 2026-09-29:** with a
+  budget per half put back, the first stop took 10.0 s against its 9 s bound, and the second sent
+  its second half's grant; with the wait for the workers on the host's token alone, the third took
+  30.0 s against its 9 s bound, and 7.0 s on the budget. **Ran** in-process:
   `BffOverApiSessionTests.SigningOutOneSession_LeavesTheUsersOtherSessionRenewing_AndRecordsNoReuse`,
   `AuthEndpointTests.Revoke_EndsOnlyThePresentedGrant_AndTheUsersOtherSessionStillRenews`,
   `ReauthenticateTests.ItRevokesOnlyTheOldGrant_AndNeverCallsTheApiLogout`, `SessionEndingTests`
