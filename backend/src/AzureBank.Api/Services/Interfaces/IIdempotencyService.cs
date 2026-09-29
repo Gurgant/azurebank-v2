@@ -57,8 +57,10 @@ public interface IIdempotencyService
     /// Processing (provably nothing committed). An Executed record is kept so
     /// retries get 409 IDEMPOTENCY_RESULT_UNKNOWN instead of re-executing.
     /// Uses its own DbContext scope: the request-scoped context may hold
-    /// failed business changes that must never be re-flushed.
+    /// failed business changes that must never be re-flushed. The caller bounds
+    /// it with <paramref name="cancellationToken"/>, which must not be the
+    /// request's own: on this path that one may already be cancelled.
     /// </summary>
     Task ReleaseIfNotExecutedAsync(
-        Guid userId, string endpoint, Guid key, Guid claimTimeClaimId);
+        Guid userId, string endpoint, Guid key, Guid claimTimeClaimId, CancellationToken cancellationToken = default);
 }

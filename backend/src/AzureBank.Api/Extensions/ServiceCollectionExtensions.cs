@@ -145,6 +145,7 @@ public static class ServiceCollectionExtensions
             .ValidateOnStart();
 
         services.AddDailyLimit(configuration);
+        services.AddRequestDeadline(configuration);
 
         // Audit trail chain key (ADR-0044). A secret, with the same fail-fast treatment as
         // StepUp:BindingKey and Idempotency:HashKey, and SEPARATE from both: one leaked key must not
@@ -619,10 +620,42 @@ public static class ServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddExceptionHandlers(this IServiceCollection services)
     {
+        // A client that hung up first, so nothing below writes to it or logs its request as an
+        // error; the outage 503 after the domain handlers, so a refusal keeps its own status, and
+        // before the global 500 (ADR-0058).
+        services.AddExceptionHandler<ClientAbortedExceptionHandler>();
         services.AddExceptionHandler<ValidationExceptionHandler>();
         services.AddExceptionHandler<AppExceptionHandler>();
+        services.AddExceptionHandler<ServiceUnavailableExceptionHandler>();
         services.AddExceptionHandler<GlobalExceptionHandler>();
         services.AddProblemDetails();
+
+        return services;
+    }
+
+    /// <summary>
+    /// The request deadline and the commit gate (ADR-0058): <c>RequestDeadline:Seconds</c>, checked
+    /// at startup, the scoped holder the gate finds a request's deadline through, and the gate
+    /// itself, which <c>AddInfrastructure</c> puts on every context it builds (it adds each
+    /// <see cref="Microsoft.EntityFrameworkCore.Diagnostics.IInterceptor"/> registered here).
+    /// </summary>
+    /// <remarks>
+    /// Its own method, as <see cref="AddDailyLimit"/> is, so a test drives the option's rule through
+    /// <c>IStartupValidator</c> without building the whole host.
+    /// </remarks>
+    public static IServiceCollection AddRequestDeadline(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        services.AddOptions<RequestDeadlineOptions>()
+            .Bind(configuration.GetSection(RequestDeadlineOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        services.AddScoped<RequestDeadlineScope>();
+        services.AddSingleton<Data.CommitGateInterceptor>();
+        services.AddSingleton<Microsoft.EntityFrameworkCore.Diagnostics.IInterceptor>(
+            sp => sp.GetRequiredService<Data.CommitGateInterceptor>());
 
         return services;
     }
@@ -736,6 +769,10 @@ public static class ServiceCollectionExtensions
                 // refused like an invalid one, not read as absent.
                 options.ModelBinderProviders.Insert(
                     0, new ModelBinding.EmptyQueryValueRejectingBinderProvider(options.ModelBinderProviders));
+
+                // The request deadline is turned off before any result is written, so a result that
+                // exists is sent whole (ADR-0058, DeadlineResultFilter).
+                options.Filters.Add<DeadlineResultFilter>();
             })
             .AddJsonOptions(options =>
             {

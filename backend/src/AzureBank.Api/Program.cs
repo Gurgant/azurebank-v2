@@ -187,6 +187,13 @@ try
     // Must be early in pipeline, before routing processes the request
     app.UseInvalidRequestHandling();
 
+    // The request deadline (ADR-0058): a request still running after RequestDeadline:Seconds is
+    // cancelled and answers 503. Inside the exception handler, which writes that answer; before the
+    // service credential, authentication and the idempotency claim, so everything they and the
+    // endpoint do runs under its token; before anything builds UserManager, which captures the
+    // request's token when it is built.
+    app.UseRequestDeadline();
+
     // No app.UseHttpsRedirection() (removed 2026-09-25). The API's one client is the BFF, which
     // follows no redirect (ADR-0055), so a redirect here can only turn its call into a failure.
     // Measured on the two containers with an https port made discoverable (ASPNETCORE_HTTPS_PORT=443

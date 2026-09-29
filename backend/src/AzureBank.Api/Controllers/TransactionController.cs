@@ -21,6 +21,14 @@ namespace AzureBank.Api.Controllers;
 [Produces("application/json")]
 public class TransactionController : ControllerBase
 {
+    /*
+      EVERY ACTION'S cancellationToken <param> COMES FIRST in its doc block (ADR-0058). The OpenAPI
+      generator writes a <param> it cannot match to an operation parameter onto the request body,
+      the last one winning, and a CancellationToken is never an operation parameter: placed after
+      the body's own <param>, its sentence replaced the body's description in the published
+      document. CommittedOpenApiDocumentTests catches it.
+    */
+
     private readonly ITransactionService _transactionService;
     private readonly IValidator<DepositRequest> _depositValidator;
     private readonly IValidator<WithdrawRequest> _withdrawValidator;
@@ -44,14 +52,16 @@ public class TransactionController : ControllerBase
     /// <remarks>
     /// Get transaction history with filtering and pagination.
     /// </remarks>
+    /// <param name="cancellationToken">The request's token: cancelled by its deadline or by the caller hanging up (ADR-0058).</param>
     /// <param name="filter">Filter and pagination options</param>
     /// <returns>Paginated list of transactions</returns>
     [HttpGet]
     [ProducesResponseType(typeof(PaginatedResponse<TransactionResponse>), StatusCodes.Status200OK)]
-    public async Task<ActionResult<PaginatedResponse<TransactionResponse>>> GetTransactions([FromQuery] TransactionFilter filter)
+    public async Task<ActionResult<PaginatedResponse<TransactionResponse>>> GetTransactions(
+        [FromQuery] TransactionFilter filter, CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
-        var result = await _transactionService.GetTransactionsAsync(userId, filter);
+        var result = await _transactionService.GetTransactionsAsync(userId, filter, cancellationToken);
         return Ok(result);
     }
 
@@ -62,16 +72,17 @@ public class TransactionController : ControllerBase
     /// Get aggregated income/expenses/net and pending count over a date window
     /// (defaults to the current UTC calendar month).
     /// </remarks>
+    /// <param name="cancellationToken">The request's token: cancelled by its deadline or by the caller hanging up (ADR-0058).</param>
     /// <param name="filter">Optional inclusive date window</param>
     /// <returns>Server-side aggregated totals for the caller's accounts</returns>
     [HttpGet("summary")]
     [ProducesResponseType(typeof(ApiResponse<TransactionSummaryResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<ApiResponse<TransactionSummaryResponse>>> GetSummary(
-        [FromQuery] TransactionSummaryFilter filter)
+        [FromQuery] TransactionSummaryFilter filter, CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
-        var result = await _transactionService.GetSummaryAsync(userId, filter);
+        var result = await _transactionService.GetSummaryAsync(userId, filter, cancellationToken);
         return Ok(ApiResponse<TransactionSummaryResponse>.Success(result));
     }
 
@@ -81,16 +92,18 @@ public class TransactionController : ControllerBase
     /// <remarks>
     /// Get a specific transaction by ID.
     /// </remarks>
+    /// <param name="cancellationToken">The request's token: cancelled by its deadline or by the caller hanging up (ADR-0058).</param>
     /// <param name="id">Transaction ID</param>
     /// <returns>Transaction details</returns>
     [HttpGet("{id:guid}")]
     [ProducesResponseType(typeof(ApiResponse<TransactionResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
-    public async Task<ActionResult<ApiResponse<TransactionResponse>>> GetTransaction(Guid id)
+    public async Task<ActionResult<ApiResponse<TransactionResponse>>> GetTransaction(
+        Guid id, CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
-        var transaction = await _transactionService.GetTransactionByIdAsync(id, userId);
+        var transaction = await _transactionService.GetTransactionByIdAsync(id, userId, cancellationToken);
         return Ok(ApiResponse<TransactionResponse>.Success(transaction));
     }
 
@@ -100,6 +113,7 @@ public class TransactionController : ControllerBase
     /// <remarks>
     /// Deposit money into an account.
     /// </remarks>
+    /// <param name="cancellationToken">The request's token: cancelled by its deadline or by the caller hanging up (ADR-0058).</param>
     /// <param name="request">Deposit details</param>
     /// <returns>Transaction details and new balance</returns>
     [HttpPost("deposit")]
@@ -109,12 +123,13 @@ public class TransactionController : ControllerBase
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
-    public async Task<ActionResult<ApiResponse<DepositResponse>>> Deposit([FromBody] DepositRequest request)
+    public async Task<ActionResult<ApiResponse<DepositResponse>>> Deposit(
+        [FromBody] DepositRequest request, CancellationToken cancellationToken)
     {
-        await _depositValidator.ValidateAndThrowAsync(request);
+        await _depositValidator.ValidateAndThrowAsync(request, cancellationToken);
 
         var userId = GetCurrentUserId();
-        var result = await _transactionService.DepositAsync(userId, request);
+        var result = await _transactionService.DepositAsync(userId, request, cancellationToken);
 
         return StatusCode(StatusCodes.Status201Created,
             ApiResponse<DepositResponse>.Success(result, "Deposit successful"));
@@ -128,6 +143,7 @@ public class TransactionController : ControllerBase
     /// The authorisation is valid only for this account and this amount, is accepted once,
     /// and expires.
     /// </remarks>
+    /// <param name="cancellationToken">The request's token: cancelled by its deadline or by the caller hanging up (ADR-0058).</param>
     /// <param name="request">The account, the amount, and the PIN</param>
     /// <returns>The authorisation reference to send in the Step-Up-Authorization header, and when it expires</returns>
     /*
@@ -154,13 +170,15 @@ public class TransactionController : ControllerBase
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)] // PIN_LOCKED (ADR-0010)
     public async Task<ActionResult<ApiResponse<StepUpAuthorizationResponse>>> AuthoriseWithdrawal(
-        [Description("The account, the amount, and the PIN")][FromBody] WithdrawalAuthorizationRequest request)
+        [Description("The account, the amount, and the PIN")][FromBody] WithdrawalAuthorizationRequest request,
+        CancellationToken cancellationToken)
     {
         // Same two-layer guard as the transfer mints: DataAnnotations from [ApiController], then
         // FluentValidation, which is the only layer that checks the money SCALE.
-        await _withdrawalAuthValidator.ValidateAndThrowAsync(request);
+        await _withdrawalAuthValidator.ValidateAndThrowAsync(request, cancellationToken);
 
-        var result = await _transactionService.AuthoriseWithdrawalAsync(GetCurrentUserId(), request);
+        var result = await _transactionService.AuthoriseWithdrawalAsync(
+            GetCurrentUserId(), request, cancellationToken);
 
         return StatusCode(StatusCodes.Status201Created,
             ApiResponse<StepUpAuthorizationResponse>.Success(result, "Withdrawal authorised"));
@@ -201,12 +219,14 @@ public class TransactionController : ControllerBase
     public async Task<ActionResult<ApiResponse<WithdrawResponse>>> Withdraw(
         [Description("Withdrawal details")][FromBody] WithdrawRequest request,
         [Description("Authorisation reference minted by POST /api/transactions/withdraw/authorizations (ADR-0056). REQUIRED to make a withdrawal: presenting none is refused 401 AUTHORIZATION_REQUIRED and recorded; one minted for another amount, for a transfer, already spent, or not the caller's own is refused 401 AUTHORIZATION_INVALID; one past its window is refused 401 AUTHORIZATION_EXPIRED. The funds rule (422 INSUFFICIENT_FUNDS) is checked BEFORE the header is.")]
-        [FromHeader(Name = StepUpConstants.HeaderName)] Guid? stepUpAuthorizationId = null)
+        [FromHeader(Name = StepUpConstants.HeaderName)] Guid? stepUpAuthorizationId = null,
+        CancellationToken cancellationToken = default)
     {
-        await _withdrawValidator.ValidateAndThrowAsync(request);
+        await _withdrawValidator.ValidateAndThrowAsync(request, cancellationToken);
 
         var userId = GetCurrentUserId();
-        var result = await _transactionService.WithdrawAsync(userId, request, stepUpAuthorizationId);
+        var result = await _transactionService.WithdrawAsync(
+            userId, request, stepUpAuthorizationId, cancellationToken);
 
         return StatusCode(StatusCodes.Status201Created,
             ApiResponse<WithdrawResponse>.Success(result, "Withdrawal successful"));

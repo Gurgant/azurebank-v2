@@ -29,9 +29,9 @@ public class UserService : IUserService
     }
 
     /// <inheritdoc />
-    public async Task<UserResponse> GetUserByIdAsync(Guid userId)
+    public async Task<UserResponse> GetUserByIdAsync(Guid userId, CancellationToken cancellationToken = default)
     {
-        var user = await _context.Users.FindAsync(userId);
+        var user = await _context.Users.FindAsync([userId], cancellationToken);
 
         if (user == null)
         {
@@ -42,7 +42,8 @@ public class UserService : IUserService
     }
 
     /// <inheritdoc />
-    public async Task<RecipientLookupResponse> GetUserByAzureTagAsync(string azureTag, Guid currentUserId)
+    public async Task<RecipientLookupResponse> GetUserByAzureTagAsync(
+        string azureTag, Guid currentUserId, CancellationToken cancellationToken = default)
     {
         // AzureTags are stored lower-cased; normalise the same way (invariant, not the
         // current culture — a Turkish-I difference would silently mismatch).
@@ -54,7 +55,7 @@ public class UserService : IUserService
         var match = await _context.Users
             .Where(u => u.AzureTag == normalizedTag)
             .Select(u => new { u.Id, u.FirstName, u.LastName })
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(cancellationToken);
 
         // Looking up yourself is not a valid transfer recipient — report not-found without
         // echoing a name (the transfer endpoint blocks self-transfer separately).
@@ -72,19 +73,21 @@ public class UserService : IUserService
     }
 
     /// <inheritdoc />
-    public async Task<string> RenameAzureTagAsync(Guid userId, string newAzureTag)
+    public async Task<string> RenameAzureTagAsync(
+        Guid userId, string newAzureTag, CancellationToken cancellationToken = default)
     {
         var normalized = newAzureTag.ToLowerInvariant();
 
         // Reject a handle already held by someone else. Unlike registration, revealing
         // "taken" here is fine — the exact-match lookup already confirms handle existence.
-        var takenByOther = await _context.Users.AnyAsync(u => u.AzureTag == normalized && u.Id != userId);
+        var takenByOther = await _context.Users.AnyAsync(
+            u => u.AzureTag == normalized && u.Id != userId, cancellationToken);
         if (takenByOther)
         {
             throw new ConflictException("That handle is already taken.", ErrorCodes.AzureTagTaken);
         }
 
-        var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId)
+        var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId, cancellationToken)
             ?? throw new NotFoundException("User", userId);
 
         if (user.AzureTag == normalized)
@@ -115,7 +118,7 @@ public class UserService : IUserService
         {
             // A plain column update — UserName is the immutable id, so no Identity username
             // change is involved (ADR-0015). The audit row added above rides THIS save.
-            await _context.SaveChangesAsync();
+            await _context.SaveChangesAsync(cancellationToken);
         }
         catch (DbUpdateException ex) when (ConcurrencyRetry.IsAzureTagCollision(ex))
         {

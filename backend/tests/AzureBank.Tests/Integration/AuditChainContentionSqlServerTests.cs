@@ -156,10 +156,13 @@ public sealed class AuditChainContentionSqlServerTests : IDisposable
             + $"in {refused.ElapsedMilliseconds}ms");
 
         second.StatusCode.Should().Be(
-            HttpStatusCode.InternalServerError,
-            "measured: the bounded tail read surfaces as a command timeout through "
-            + "GlobalExceptionHandler. Pinned rather than left as 'not a success' so that a DIFFERENT "
-            + "failure — a validation error, a rate limit — cannot quietly satisfy this test");
+            HttpStatusCode.ServiceUnavailable,
+            "the bounded tail read surfaces as a command timeout (-2), which answers the outage 503 "
+            + "(ADR-0058; it was a 500 through GlobalExceptionHandler before). Pinned rather than left "
+            + "as 'not a success' so that a DIFFERENT failure — a validation error, a rate limit — "
+            + "cannot quietly satisfy this test");
+        (await second.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("errorCode").GetString().Should().Be(AzureBank.Shared.Constants.ErrorCodes.ServiceUnavailable);
 
         refused.ElapsedMilliseconds.Should().BeLessThan(
             3_000,

@@ -41,27 +41,30 @@ public class AccountService : IAccountService
     }
 
     /// <inheritdoc />
-    public async Task<List<AccountResponse>> GetUserAccountsAsync(Guid userId)
+    public async Task<List<AccountResponse>> GetUserAccountsAsync(
+        Guid userId, CancellationToken cancellationToken = default)
     {
         var accounts = await _context.Accounts
             .AsNoTracking()
             .Where(a => a.UserId == userId && !a.IsDeleted)
             .OrderByDescending(a => a.IsPrimary)
             .ThenBy(a => a.CreatedAt)
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
         return _mapper.ToResponseList(accounts);
     }
 
     /// <inheritdoc />
-    public async Task<AccountResponse> GetAccountByIdAsync(Guid accountId, Guid userId)
+    public async Task<AccountResponse> GetAccountByIdAsync(
+        Guid accountId, Guid userId, CancellationToken cancellationToken = default)
     {
-        var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(accountId, userId);
+        var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(accountId, userId, cancellationToken);
         return _mapper.ToResponse(account);
     }
 
     /// <inheritdoc />
-    public async Task<AccountResponse> CreateAccountAsync(Guid userId, CreateAccountRequest request)
+    public async Task<AccountResponse> CreateAccountAsync(
+        Guid userId, CreateAccountRequest request, CancellationToken cancellationToken = default)
     {
         var account = new Account
         {
@@ -75,7 +78,7 @@ public class AccountService : IAccountService
         };
 
         _context.Accounts.Add(account);
-        await ConcurrencyRetry.SaveNewAccountAsync(_context, account, _logger, userId);
+        await ConcurrencyRetry.SaveNewAccountAsync(_context, account, _logger, userId, cancellationToken);
 
         _logger.LogInformation("Created account {AccountId} for user {UserId}", account.Id, userId);
 
@@ -83,14 +86,15 @@ public class AccountService : IAccountService
     }
 
     /// <inheritdoc />
-    public async Task<AccountResponse> UpdateAccountAsync(Guid accountId, Guid userId, UpdateAccountRequest request)
+    public async Task<AccountResponse> UpdateAccountAsync(
+        Guid accountId, Guid userId, UpdateAccountRequest request, CancellationToken cancellationToken = default)
     {
-        var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(accountId, userId);
+        var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(accountId, userId, cancellationToken);
 
         account.Name = request.Name;
         account.UpdatedAt = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync();
+        await _context.SaveChangesAsync(cancellationToken);
 
         // The account id, not the new name (ADR-0017's log-identifier rule, 2026-09-11): the name
         // is text the user chose, so it can hold anything, a name or an address included.
@@ -121,7 +125,8 @@ public class AccountService : IAccountService
     internal static string PrimaryLockResource(Guid userId) => $"set-primary:{userId:D}";
 
     /// <inheritdoc />
-    public async Task SetPrimaryAccountAsync(Guid userId, Guid accountId)
+    public async Task SetPrimaryAccountAsync(
+        Guid userId, Guid accountId, CancellationToken cancellationToken = default)
     {
         /*
           TWO SAVES IN ONE TRANSACTION, THE OLD PRIMARY FIRST. UX_Accounts_UserId_Primary allows one
@@ -167,40 +172,45 @@ public class AccountService : IAccountService
         {
             try
             {
-                await strategy.ExecuteAsync(async () =>
+                await strategy.ExecuteAsync(async ct =>
                 {
-                    await using var dbTransaction = await _context.Database.BeginTransactionAsync();
+                    await using var dbTransaction = await _context.Database.BeginTransactionAsync(ct);
 
                     if (_context.Database.IsRelational())
                     {
+                        // The values as a collection, then the token: appended to the params
+                        // overload, the token would be bound as a third SQL parameter, which
+                        // compiles and fails at run time, on SQL Server only (ADR-0058).
                         await _context.Database.ExecuteSqlRawAsync(
                             PrimaryLockSql,
-                            PrimaryLockResource(userId),
-                            PrimaryLockTimeoutMilliseconds);
+                            new object[] { PrimaryLockResource(userId), PrimaryLockTimeoutMilliseconds },
+                            ct);
                     }
 
                     foreach (var entry in _context.ChangeTracker.Entries<Account>().ToList())
                     {
-                        await entry.ReloadAsync();
+                        await entry.ReloadAsync(ct);
                     }
 
-                    var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(accountId, userId);
+                    var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(accountId, userId, ct);
                     var currentPrimary = await _context.Accounts
-                        .FirstOrDefaultAsync(a => a.UserId == userId && a.IsPrimary && !a.IsDeleted);
+                        .FirstOrDefaultAsync(a => a.UserId == userId && a.IsPrimary && !a.IsDeleted, ct);
 
                     if (currentPrimary != null && currentPrimary.Id != accountId)
                     {
                         currentPrimary.IsPrimary = false;
                         currentPrimary.UpdatedAt = DateTime.UtcNow;
-                        await _context.SaveChangesAsync();
+                        await _context.SaveChangesAsync(ct);
                     }
 
                     account.IsPrimary = true;
                     account.UpdatedAt = DateTime.UtcNow;
-                    await _context.SaveChangesAsync();
+                    await _context.SaveChangesAsync(ct);
 
-                    await dbTransaction.CommitAsync();
-                });
+                    // Through the commit gate (ADR-0058): refused if the request deadline has
+                    // fired, and once started, nothing cancels it.
+                    await dbTransaction.CommitAsync(ct);
+                }, cancellationToken);
                 break;
             }
             catch (DbUpdateConcurrencyException ex) when (ConcurrencyRetry.ShouldRetry(ex, attempt))
@@ -208,7 +218,7 @@ public class AccountService : IAccountService
                 _logger.LogInformation(
                     "Concurrency conflict setting account {AccountId} as primary (attempt {Attempt}); retrying",
                     accountId, attempt);
-                await Task.Delay(Random.Shared.Next(5, 30));
+                await Task.Delay(Random.Shared.Next(5, 30), cancellationToken);
             }
         }
 
@@ -244,20 +254,21 @@ public class AccountService : IAccountService
 
     /// <inheritdoc />
     public async Task<StepUpAuthorizationResponse> AuthoriseDeletionAsync(
-        Guid userId, Guid accountId, string pin)
+        Guid userId, Guid accountId, string pin, CancellationToken cancellationToken = default)
     {
         // Ownership first, exactly as the transfer mints do: an unknown or foreign account is a
         // 404/403 before the PIN is ever consulted, so a probe of someone else's account costs no
         // attempt. Then the two guards, for the same reason — a closure that cannot happen must not
         // be a cheaper PIN oracle than one that can.
-        var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(accountId, userId);
+        var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(accountId, userId, cancellationToken);
         RefuseIfNotClosable(account);
 
         var authorization = await _stepUp.MintAsync(
             userId,
             StepUpOperation.AccountDeletion,
             StepUpBinding.ForAccountDeletion(accountId),
-            pin);
+            pin,
+            cancellationToken);
 
         return new StepUpAuthorizationResponse
         {
@@ -267,9 +278,10 @@ public class AccountService : IAccountService
     }
 
     /// <inheritdoc />
-    public async Task DeleteAccountAsync(Guid accountId, Guid userId, Guid? stepUpAuthorizationId)
+    public async Task DeleteAccountAsync(
+        Guid accountId, Guid userId, Guid? stepUpAuthorizationId, CancellationToken cancellationToken = default)
     {
-        var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(accountId, userId);
+        var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(accountId, userId, cancellationToken);
 
         /*
           THE GUARDS STAY AHEAD OF THE PRESENCE CHECK, and that is a deliberate departure from
@@ -300,7 +312,9 @@ public class AccountService : IAccountService
             await _audit.RecordRefusalAsync(
                 SecurityEvents.AccountDeletionRefused, AuditOutcome.Refused,
                 actorUserId: userId, subjectType: "Account", subjectId: accountId,
-                detail: ErrorCodes.AuthorizationRequired);
+                detail: ErrorCodes.AuthorizationRequired,
+                // Never the request's token: the refusal's row must land (ADR-0044 D1, ADR-0058).
+                cancellationToken: CancellationToken.None);
             throw new AuthenticationException(
                 "This account closure has not been authorised.", ErrorCodes.AuthorizationRequired);
         }
@@ -310,7 +324,8 @@ public class AccountService : IAccountService
         // hashes differently (the operation name is in the payload) and is refused as INVALID.
         await _stepUp.ValidateAsync(
             userId, authorizationId, StepUpOperation.AccountDeletion,
-            StepUpBinding.ForAccountDeletion(accountId));
+            StepUpBinding.ForAccountDeletion(accountId),
+            cancellationToken);
 
         /*
           AN EXPLICIT TRANSACTION, WHERE THIS METHOD USED TO HAVE NONE. The soft delete and its
@@ -348,7 +363,7 @@ public class AccountService : IAccountService
         {
             try
             {
-                await strategy.ExecuteAsync(async () =>
+                await strategy.ExecuteAsync(async ct =>
                 {
                     /*
                       RE-ENTRANCY DISCIPLINE, at the top of the delegate because EnableRetryOnFailure
@@ -386,7 +401,7 @@ public class AccountService : IAccountService
                       closed the funded account (mutated and restored 2026-09-06: 422
                       NON_ZERO_BALANCE, IsDeleted=False, Balance=5, authorisation Pending).
                     */
-                    await ConcurrencyRetry.ResetToStoreAsync(_context, account);
+                    await ConcurrencyRetry.ResetToStoreAsync(_context, [account], ct);
                     if (account.IsDeleted)
                     {
                         throw new NotFoundException("Account", accountId);
@@ -394,7 +409,7 @@ public class AccountService : IAccountService
 
                     RefuseIfNotClosable(account);
 
-                    await using var dbTransaction = await _context.Database.BeginTransactionAsync();
+                    await using var dbTransaction = await _context.Database.BeginTransactionAsync(ct);
 
                     try
                     {
@@ -416,25 +431,28 @@ public class AccountService : IAccountService
                             actorUserId: userId, subjectType: "Account", subjectId: accountId,
                             detail: AuditDetails.ConsumedAuthorisation(authorizationId));
 
-                        await _context.SaveChangesAsync();
+                        await _context.SaveChangesAsync(ct);
 
                         // Spent inside this transaction and after the rows exist, as the transfers do. A
                         // closure produces no ledger row, so consumed-by is null rather than a value the
                         // evidence verb's join on movement id could never match.
-                        await _stepUp.ConsumeAsync(userId, authorizationId, consumedByTransactionId: null);
+                        await _stepUp.ConsumeAsync(userId, authorizationId, consumedByTransactionId: null, ct);
 
-                        await dbTransaction.CommitAsync();
+                        // Through the commit gate (ADR-0058): refused if the request deadline has
+                        // fired, and once started, nothing cancels it.
+                        await dbTransaction.CommitAsync(ct);
                     }
                     catch
                     {
                         // Preserve the ORIGINAL fault (e.g. the transient the execution strategy must see
                         // to retry): rolling back a transaction whose connection/commit already failed can
-                        // itself throw and would otherwise mask it. Same shape as TransferService.
-                        try { await dbTransaction.RollbackAsync(); }
+                        // itself throw and would otherwise mask it. Same shape as TransferService, and
+                        // never the request's token for the same reason.
+                        try { await dbTransaction.RollbackAsync(CancellationToken.None); }
                         catch { /* best effort: the transaction may already be gone */ }
                         throw;
                     }
-                });
+                }, cancellationToken);
 
                 break;
             }
@@ -442,7 +460,7 @@ public class AccountService : IAccountService
             {
                 // The RowVersion moved under this attempt. Reload, jitter, and go round: the top
                 // of the delegate decides whether there is still a closure to make.
-                await ConcurrencyRetry.PrepareNextAttemptAsync(_context, account);
+                await ConcurrencyRetry.PrepareNextAttemptAsync(_context, [account], cancellationToken);
             }
         }
 
@@ -504,9 +522,10 @@ public class AccountService : IAccountService
     }
 
     /// <inheritdoc />
-    public async Task<BalanceResponse> GetBalanceAsync(Guid accountId, Guid userId, DateTime? atTime = null)
+    public async Task<BalanceResponse> GetBalanceAsync(
+        Guid accountId, Guid userId, DateTime? atTime = null, CancellationToken cancellationToken = default)
     {
-        var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(accountId, userId);
+        var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(accountId, userId, cancellationToken);
 
         if (atTime == null || atTime >= DateTime.UtcNow)
         {
@@ -515,15 +534,16 @@ public class AccountService : IAccountService
         }
 
         // Calculate historical balance by summing transactions
-        var historicalBalance = await CalculateHistoricalBalanceAsync(accountId, atTime.Value);
+        var historicalBalance = await CalculateHistoricalBalanceAsync(accountId, atTime.Value, cancellationToken);
 
         return _mapper.ToHistoricalBalanceResponse(accountId, historicalBalance, atTime.Value);
     }
 
     /// <inheritdoc />
-    public async Task<AccountNumberResponse> GetFullAccountNumberAsync(Guid accountId, Guid userId)
+    public async Task<AccountNumberResponse> GetFullAccountNumberAsync(
+        Guid accountId, Guid userId, CancellationToken cancellationToken = default)
     {
-        var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(accountId, userId);
+        var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(accountId, userId, cancellationToken);
 
         /*
           Detective audit line (SecurityEvent series): WHO revealed WHICH account — never the number
@@ -555,7 +575,7 @@ public class AccountService : IAccountService
         _audit.Record(
             SecurityEvents.AccountNumberRevealed, AuditOutcome.Succeeded,
             actorUserId: userId, subjectType: "Account", subjectId: accountId);
-        await _context.SaveChangesAsync();
+        await _context.SaveChangesAsync(cancellationToken);
 
         // Deliberately NOT via AccountMapper: the mapper's contract is "account numbers
         // leave masked". Constructing the one unmasked shape by hand keeps that invariant
@@ -571,14 +591,15 @@ public class AccountService : IAccountService
     /// Calculates the account balance at a specific point in time.
     /// Works by getting all transactions up to that time and calculating the final balance.
     /// </summary>
-    private async Task<decimal> CalculateHistoricalBalanceAsync(Guid accountId, DateTime atTime)
+    private async Task<decimal> CalculateHistoricalBalanceAsync(
+        Guid accountId, DateTime atTime, CancellationToken cancellationToken)
     {
         // Get the most recent transaction before or at the specified time
         var lastTransaction = await _context.Transactions
             .AsNoTracking()
             .Where(t => t.AccountId == accountId && t.CreatedAt <= atTime)
             .OrderByDescending(t => t.CreatedAt)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(cancellationToken);
 
         if (lastTransaction == null)
         {

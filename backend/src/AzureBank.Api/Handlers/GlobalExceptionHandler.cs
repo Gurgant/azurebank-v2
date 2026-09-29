@@ -26,12 +26,17 @@ public class GlobalExceptionHandler : IExceptionHandler
         Exception exception,
         CancellationToken cancellationToken)
     {
-        // Log full exception details
+        // Log full exception details, with every SQL error number and the type of every exception
+        // in the chain (ADR-0058): SqlException.Number is only the first error, and what failed is
+        // usually wrapped (a DbUpdateException, EF's transient-failure wrapper), so the outer message
+        // alone did not say which database error a 500 was.
         _logger.LogError(
             exception,
-            "Unhandled exception: {ExceptionType} - {Message}",
+            "Unhandled exception: {ExceptionType} - {Message}; SQL errors {SqlErrorNumbers}; chain {ExceptionTypes}",
             exception.GetType().Name,
-            exception.Message);
+            exception.Message,
+            ServiceUnavailableExceptionHandler.SqlErrorNumbers(exception),
+            ServiceUnavailableExceptionHandler.ExceptionTypes(exception));
 
         // Record the fault on the current trace span. The instrumentation's RecordException can't
         // see it because THIS handler marks the exception handled — without this, an error trace is

@@ -128,6 +128,11 @@ money. What changes is that it is refused in about a second instead of holding a
 rest of the money path behind it for half a minute. Measured with the bound at one second and the
 tail stalled for eight: **500 in 1,122 ms**. A command timeout rather than `SET LOCK_TIMEOUT`,
 because the latter is SESSION-scoped and would ride a pooled connection into unrelated statements.
+*(Amended 2026-09-29, ADR-0058: the refusal answers **503** `SERVICE_UNAVAILABLE` now, with
+`retryAfterSeconds`, not 500. The bound surfaces as a command timeout, SQL error -2, and the API
+answers every -2 with its outage 503: the database did not answer in time, which is what a 503
+says. D1 is untouched, since nothing moves either way. `AuditChainContentionSqlServerTests` pins
+the new status. The application lock's own timeout is a raised error, 50000, and stays a 500.)*
 
 **The "alternate path" turned out not to exist, and that is the interesting finding.** The plan was
 to report the refusal through `RecordRefusalAsync`, which opens its own connection — the shape

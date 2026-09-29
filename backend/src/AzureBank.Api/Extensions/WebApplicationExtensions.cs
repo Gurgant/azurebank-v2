@@ -1,7 +1,9 @@
 using AzureBank.Infrastructure.Data;
+using AzureBank.Shared.Options;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Options;
 
 namespace AzureBank.Api.Extensions;
 
@@ -16,7 +18,7 @@ public static class WebApplicationExtensions
     /// <summary>
     /// Logs one line, once the host has started, with the database limits this process runs with
     /// (ADR-0058): the connect timeout, SqlClient's connect retries, the pool size and its blocking
-    /// period, and EF's retry count and cap.
+    /// period, EF's retry count and cap, and the request deadline.
     /// </summary>
     /// <remarks>
     /// From <c>ApplicationStarted</c>, like the success line in <c>Program.cs</c> and for its reason:
@@ -53,12 +55,14 @@ public static class WebApplicationExtensions
         logger.LogInformation(
             "Database limits: connect timeout {ConnectTimeoutSeconds} s, connect retries {ConnectRetryCount}, "
             + "pool {MaxPoolSize}, pool blocking {PoolBlockingPeriod}; "
-            + "EF retries {MaxRetryCount}, back-off capped at {MaxRetryDelay}",
+            + "EF retries {MaxRetryCount}, back-off capped at {MaxRetryDelay}; "
+            + "request deadline {RequestDeadlineSeconds} s",
             opened.ConnectTimeout,
             opened.ConnectRetryCount,
             opened.MaxPoolSize,
             opened.PoolBlockingPeriod,
             strategy?.MaxRetryCount ?? 0,
-            strategy?.MaxRetryDelay ?? TimeSpan.Zero);
+            strategy?.MaxRetryDelay ?? TimeSpan.Zero,
+            services.GetRequiredService<IOptions<RequestDeadlineOptions>>().Value.Seconds);
     }
 }

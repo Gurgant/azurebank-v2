@@ -1,0 +1,11 @@
+# Analyzer settings for the backend's production code. Only settings with a reason written next to
+# them belong here; formatting is left to dotnet format's defaults.
+
+# CA2016, forward the CancellationToken, is an ERROR in the API and in Infrastructure (ADR-0058).
+# The request deadline cancels one token and caps only what receives it: a call that drops the
+# token it could forward runs to its own command timeout whatever the deadline says. The rule is a
+# suggestion by default, so nothing enforced it; here a call that must not be cancelled (a rollback,
+# a refusal's audit row) says so by passing CancellationToken.None. CancellationFlowTests catches
+# the methods that take no token at all, which this rule cannot see.
+[{AzureBank.Api,AzureBank.Infrastructure}/**.cs]
+dotnet_diagnostic.CA2016.severity = error

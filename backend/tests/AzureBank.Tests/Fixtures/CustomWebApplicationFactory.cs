@@ -184,6 +184,23 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         _dailyLimitLockTimeoutSeconds = seconds;
     }
 
+    private int? _requestDeadlineSeconds;
+
+    /// <summary>
+    /// Overrides <c>RequestDeadline:Seconds</c> — how long a request may run before the API gives
+    /// up on it and answers 503 (ADR-0058). Call before <c>CreateClient()</c>.
+    /// </summary>
+    /// <remarks>
+    /// The same reason <c>SetAuditTailTimeoutSeconds</c> exists: a proof that the deadline FIRES
+    /// has to hit it in a second or two, not the forty the production default allows. Through
+    /// <c>UseSetting</c>, so the value is bound and validated at start like a real one. Every request
+    /// this host serves runs under it, so a test does its setup through a second host without it.
+    /// </remarks>
+    public void SetRequestDeadlineSeconds(int seconds)
+    {
+        _requestDeadlineSeconds = seconds;
+    }
+
     private FakeTimeProvider? _clock;
 
     /// <summary>
@@ -347,6 +364,11 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
                 lockTimeout.ToString(CultureInfo.InvariantCulture));
         }
 
+        if (_requestDeadlineSeconds is { } deadline)
+        {
+            builder.UseSetting("RequestDeadline:Seconds", deadline.ToString(CultureInfo.InvariantCulture));
+        }
+
         // After the application's own registrations, so the swap replaces the TimeProvider.System
         // singleton the host carries (registered by the framework's AddAuthentication and echoed by
         // AddDailyLimit's TryAdd) rather than being replaced by it.
@@ -413,6 +435,10 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
                         }
                     });
 
+                    // The API's own interceptors first, as AddInfrastructure adds them: the commit
+                    // gate (ADR-0058), so a SQL test's commits are gated by the request deadline
+                    // as a deployment's are. Then a test's own.
+                    options.AddInterceptors(provider.GetServices<IInterceptor>());
                     if (_interceptors.Count > 0)
                     {
                         options.AddInterceptors(_interceptors);

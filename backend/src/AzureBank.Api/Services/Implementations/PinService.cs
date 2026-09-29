@@ -37,12 +37,12 @@ public sealed class PinService : IPinVerifier
     }
 
     /// <inheritdoc />
-    public async Task<bool> VerifyPinAsync(Guid userId, string pin)
+    public async Task<bool> VerifyPinAsync(Guid userId, string pin, CancellationToken cancellationToken = default)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
 
-        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId);
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
         if (user is null)
         {
             _logger.LogWarning("PIN verification attempted for non-existent user {UserId}", userId);
@@ -70,7 +70,7 @@ public sealed class PinService : IPinVerifier
             // Success: clear any accumulated failures / expired lock.
             if (user.PinAccessFailedCount != 0 || user.PinLockoutEnd is not null)
             {
-                await ResetLockoutAsync(db, user);
+                await ResetLockoutAsync(db, user, cancellationToken);
             }
             // Transparent pepper migration (ADR-0011): if the stored hash predates the
             // active pepper key, re-hash the PIN now that the plaintext is available and
@@ -81,9 +81,11 @@ public sealed class PinService : IPinVerifier
             {
                 try
                 {
-                    await UpgradePinHashAsync(db, user, pin);
+                    await UpgradePinHashAsync(db, user, pin, cancellationToken);
                 }
-                catch (Exception ex)
+                // Not a request that was cancelled (ADR-0058): that is no failed upgrade, and the
+                // request is ending anyway, so the cancellation goes on up instead of an Error line.
+                catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
                 {
                     _logger.LogError(ex,
                         "Transparent PIN-hash upgrade failed for user {UserId}; the correct PIN still " +
@@ -111,7 +113,7 @@ public sealed class PinService : IPinVerifier
         // which a concurrent late increment could clear a just-applied lock and let
         // a burst of parallel wrong PINs slip past the threshold.
         var until = now.AddMinutes(ValidationRules.PinLockoutMinutes);
-        var lockoutEnd = await IncrementAndMaybeLockAsync(db, user, now, until);
+        var lockoutEnd = await IncrementAndMaybeLockAsync(db, user, now, until, cancellationToken);
 
         if (lockoutEnd is { } enforcedUntil && enforcedUntil > now)
         {
@@ -138,7 +140,8 @@ public sealed class PinService : IPinVerifier
     /// account (a late increment updates zero rows). Returns the resulting PinLockoutEnd.
     /// </summary>
     private static async Task<DateTimeOffset?> IncrementAndMaybeLockAsync(
-        AzureBankDbContext db, ApplicationUser user, DateTimeOffset now, DateTimeOffset until)
+        AzureBankDbContext db, ApplicationUser user, DateTimeOffset now, DateTimeOffset until,
+        CancellationToken cancellationToken)
     {
         var max = ValidationRules.MaxPinAttempts;
 
@@ -151,9 +154,9 @@ public sealed class PinService : IPinVerifier
                         u => u.PinAccessFailedCount + 1 >= max ? 0 : u.PinAccessFailedCount + 1)
                     .SetProperty(u => u.PinLockoutEnd,
                         u => u.PinAccessFailedCount + 1 >= max ? (DateTimeOffset?)until : null)
-                    .SetProperty(u => u.UpdatedAt, (DateTime?)DateTime.UtcNow));
+                    .SetProperty(u => u.UpdatedAt, (DateTime?)DateTime.UtcNow), cancellationToken);
             return await db.Users.Where(u => u.Id == user.Id)
-                .Select(u => u.PinLockoutEnd).FirstAsync();
+                .Select(u => u.PinLockoutEnd).FirstAsync(cancellationToken);
         }
 
         if (user.PinAccessFailedCount + 1 >= max)
@@ -170,7 +173,7 @@ public sealed class PinService : IPinVerifier
             }
         }
         user.UpdatedAt = DateTime.UtcNow;   // parity with the relational writer's audit bump
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(cancellationToken);
         return user.PinLockoutEnd;
     }
 
@@ -180,7 +183,8 @@ public sealed class PinService : IPinVerifier
     /// hash column is not part of any concurrency-sensitive counter, so a single
     /// set-based update is sufficient.
     /// </summary>
-    private async Task UpgradePinHashAsync(AzureBankDbContext db, ApplicationUser user, string pin)
+    private async Task UpgradePinHashAsync(
+        AzureBankDbContext db, ApplicationUser user, string pin, CancellationToken cancellationToken)
     {
         var newHash = _passwordHasher.HashPin(pin);
         if (db.Database.IsRelational())
@@ -193,17 +197,18 @@ public sealed class PinService : IPinVerifier
             await db.Users.Where(u => u.Id == user.Id)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(u => u.PinHash, newHash)
-                    .SetProperty(u => u.UpdatedAt, (DateTime?)DateTime.UtcNow));
+                    .SetProperty(u => u.UpdatedAt, (DateTime?)DateTime.UtcNow), cancellationToken);
         }
         else
         {
             user.PinHash = newHash;
-            await db.SaveChangesAsync();   // UpdateTimestamps stamps UpdatedAt on this path
+            await db.SaveChangesAsync(cancellationToken);   // UpdateTimestamps stamps UpdatedAt on this path
         }
         _logger.LogInformation("Upgraded PIN hash to the active pepper for user {UserId}", user.Id);
     }
 
-    private static async Task ResetLockoutAsync(AzureBankDbContext db, ApplicationUser user)
+    private static async Task ResetLockoutAsync(
+        AzureBankDbContext db, ApplicationUser user, CancellationToken cancellationToken)
     {
         if (db.Database.IsRelational())
         {
@@ -211,13 +216,13 @@ public sealed class PinService : IPinVerifier
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(u => u.PinAccessFailedCount, 0)
                     .SetProperty(u => u.PinLockoutEnd, (DateTimeOffset?)null)
-                    .SetProperty(u => u.UpdatedAt, (DateTime?)DateTime.UtcNow));
+                    .SetProperty(u => u.UpdatedAt, (DateTime?)DateTime.UtcNow), cancellationToken);
             return;
         }
 
         user.PinAccessFailedCount = 0;
         user.PinLockoutEnd = null;
         user.UpdatedAt = DateTime.UtcNow;   // parity with the relational writer's audit bump
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(cancellationToken);
     }
 }

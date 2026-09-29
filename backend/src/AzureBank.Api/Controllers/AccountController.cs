@@ -25,6 +25,14 @@ public class AccountController(
     IValidator<UpdateAccountRequest> updateValidator,
     IValidator<AccountDeletionAuthorizationRequest> deletionAuthValidator) : ControllerBase
 {
+    /*
+      EVERY ACTION'S cancellationToken <param> COMES FIRST in its doc block (ADR-0058). The OpenAPI
+      generator writes a <param> it cannot match to an operation parameter onto the request body,
+      the last one winning, and a CancellationToken is never an operation parameter: placed after
+      the body's own <param>, its sentence replaced the body's description in the published
+      document. CommittedOpenApiDocumentTests catches it.
+    */
+
     private readonly IAccountService _accountService = accountService;
     private readonly IValidator<CreateAccountRequest> _createValidator = createValidator;
     private readonly IValidator<UpdateAccountRequest> _updateValidator = updateValidator;
@@ -40,10 +48,10 @@ public class AccountController(
     /// <returns>List of user's accounts</returns>
     [HttpGet]
     [ProducesResponseType(typeof(ApiResponse<List<AccountResponse>>), StatusCodes.Status200OK)]
-    public async Task<ActionResult<ApiResponse<List<AccountResponse>>>> GetAccounts()
+    public async Task<ActionResult<ApiResponse<List<AccountResponse>>>> GetAccounts(CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
-        var accounts = await _accountService.GetUserAccountsAsync(userId);
+        var accounts = await _accountService.GetUserAccountsAsync(userId, cancellationToken);
         return Ok(ApiResponse<List<AccountResponse>>.Success(accounts));
     }
 
@@ -53,16 +61,17 @@ public class AccountController(
     /// <remarks>
     /// Get a specific account by ID.
     /// </remarks>
+    /// <param name="cancellationToken">The request's token: cancelled by its deadline or by the caller hanging up (ADR-0058).</param>
     /// <param name="id">Account ID</param>
     /// <returns>Account details</returns>
     [HttpGet("{id:guid}")]
     [ProducesResponseType(typeof(ApiResponse<AccountResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
-    public async Task<ActionResult<ApiResponse<AccountResponse>>> GetAccount(Guid id)
+    public async Task<ActionResult<ApiResponse<AccountResponse>>> GetAccount(Guid id, CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
-        var account = await _accountService.GetAccountByIdAsync(id, userId);
+        var account = await _accountService.GetAccountByIdAsync(id, userId, cancellationToken);
         return Ok(ApiResponse<AccountResponse>.Success(account));
     }
 
@@ -72,6 +81,7 @@ public class AccountController(
     /// <remarks>
     /// Get account balance (current or historical).
     /// </remarks>
+    /// <param name="cancellationToken">The request's token: cancelled by its deadline or by the caller hanging up (ADR-0058).</param>
     /// <param name="id">Account ID</param>
     /// <param name="at">Optional: Get balance at specific point in time (ISO 8601)</param>
     /// <returns>Balance information</returns>
@@ -79,10 +89,11 @@ public class AccountController(
     [ProducesResponseType(typeof(ApiResponse<BalanceResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
-    public async Task<ActionResult<ApiResponse<BalanceResponse>>> GetBalance(Guid id, [FromQuery] DateTime? at = null)
+    public async Task<ActionResult<ApiResponse<BalanceResponse>>> GetBalance(
+        Guid id, [FromQuery] DateTime? at = null, CancellationToken cancellationToken = default)
     {
         var userId = GetCurrentUserId();
-        var balance = await _accountService.GetBalanceAsync(id, userId, at);
+        var balance = await _accountService.GetBalanceAsync(id, userId, at, cancellationToken);
         return Ok(ApiResponse<BalanceResponse>.Success(balance));
     }
 
@@ -94,16 +105,18 @@ public class AccountController(
     /// Every other endpoint returns the masked form; behind the BFF this exact path is
     /// step-up-gated (PIN, auth level 2) and the response must never be cached.
     /// </remarks>
+    /// <param name="cancellationToken">The request's token: cancelled by its deadline or by the caller hanging up (ADR-0058).</param>
     /// <param name="id">Account ID</param>
     /// <returns>The full account number</returns>
     [HttpGet("{id:guid}/full-number")]
     [ProducesResponseType(typeof(ApiResponse<AccountNumberResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
-    public async Task<ActionResult<ApiResponse<AccountNumberResponse>>> GetFullAccountNumber(Guid id)
+    public async Task<ActionResult<ApiResponse<AccountNumberResponse>>> GetFullAccountNumber(
+        Guid id, CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
-        var result = await _accountService.GetFullAccountNumberAsync(id, userId);
+        var result = await _accountService.GetFullAccountNumberAsync(id, userId, cancellationToken);
 
         // ASVS 14.3.2: the one response carrying the unmasked number must never land in
         // a browser or intermediary cache (YARP forwards response headers untouched).
@@ -119,17 +132,19 @@ public class AccountController(
     /// <remarks>
     /// Create a new bank account.
     /// </remarks>
+    /// <param name="cancellationToken">The request's token: cancelled by its deadline or by the caller hanging up (ADR-0058).</param>
     /// <param name="request">Account creation details</param>
     /// <returns>Created account</returns>
     [HttpPost]
     [ProducesResponseType(typeof(ApiResponse<AccountResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<ApiResponse<AccountResponse>>> CreateAccount([FromBody] CreateAccountRequest request)
+    public async Task<ActionResult<ApiResponse<AccountResponse>>> CreateAccount(
+        [FromBody] CreateAccountRequest request, CancellationToken cancellationToken)
     {
-        await _createValidator.ValidateAndThrowAsync(request);
+        await _createValidator.ValidateAndThrowAsync(request, cancellationToken);
 
         var userId = GetCurrentUserId();
-        var account = await _accountService.CreateAccountAsync(userId, request);
+        var account = await _accountService.CreateAccountAsync(userId, request, cancellationToken);
 
         return StatusCode(StatusCodes.Status201Created,
             ApiResponse<AccountResponse>.Success(account, "Account created successfully"));
@@ -141,6 +156,7 @@ public class AccountController(
     /// <remarks>
     /// Update account details (name only).
     /// </remarks>
+    /// <param name="cancellationToken">The request's token: cancelled by its deadline or by the caller hanging up (ADR-0058).</param>
     /// <param name="id">Account ID</param>
     /// <param name="request">Update details</param>
     /// <returns>Updated account</returns>
@@ -149,12 +165,13 @@ public class AccountController(
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
-    public async Task<ActionResult<ApiResponse<AccountResponse>>> UpdateAccount(Guid id, [FromBody] UpdateAccountRequest request)
+    public async Task<ActionResult<ApiResponse<AccountResponse>>> UpdateAccount(
+        Guid id, [FromBody] UpdateAccountRequest request, CancellationToken cancellationToken)
     {
-        await _updateValidator.ValidateAndThrowAsync(request);
+        await _updateValidator.ValidateAndThrowAsync(request, cancellationToken);
 
         var userId = GetCurrentUserId();
-        var account = await _accountService.UpdateAccountAsync(id, userId, request);
+        var account = await _accountService.UpdateAccountAsync(id, userId, request, cancellationToken);
         return Ok(ApiResponse<AccountResponse>.Success(account, "Account updated successfully"));
     }
 
@@ -164,16 +181,17 @@ public class AccountController(
     /// <remarks>
     /// Set an account as the primary account.
     /// </remarks>
+    /// <param name="cancellationToken">The request's token: cancelled by its deadline or by the caller hanging up (ADR-0058).</param>
     /// <param name="id">Account ID to set as primary</param>
     /// <returns>Success message</returns>
     [HttpPatch("{id:guid}/set-primary")]
     [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
-    public async Task<ActionResult<ApiResponse>> SetPrimaryAccount(Guid id)
+    public async Task<ActionResult<ApiResponse>> SetPrimaryAccount(Guid id, CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
-        await _accountService.SetPrimaryAccountAsync(userId, id);
+        await _accountService.SetPrimaryAccountAsync(userId, id, cancellationToken);
         return Ok(ApiResponse.Success("Account set as primary"));
     }
 
@@ -184,6 +202,7 @@ public class AccountController(
     /// Authorise the closure of one owned account (ADR-0049).
     /// The account must be closable — zero balance, not primary — before the PIN is consulted.
     /// </remarks>
+    /// <param name="cancellationToken">The request's token: cancelled by its deadline or by the caller hanging up (ADR-0058).</param>
     /// <param name="id">Account ID</param>
     /// <param name="request">The PIN</param>
     /// <returns>The authorisation reference to present on DELETE, and when it expires</returns>
@@ -210,13 +229,14 @@ public class AccountController(
     // PRIMARY_ACCOUNT_DELETE, PIN_REQUIRED) — which is what the document carried until 2026-09-06.
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<ApiResponse<StepUpAuthorizationResponse>>> AuthoriseDeletion(
-        Guid id, [FromBody] AccountDeletionAuthorizationRequest request)
+        Guid id, [FromBody] AccountDeletionAuthorizationRequest request, CancellationToken cancellationToken)
     {
         // Same two-layer guard as the transfer mints: DataAnnotations from [ApiController], then
         // FluentValidation.
-        await _deletionAuthValidator.ValidateAndThrowAsync(request);
+        await _deletionAuthValidator.ValidateAndThrowAsync(request, cancellationToken);
 
-        var result = await _accountService.AuthoriseDeletionAsync(GetCurrentUserId(), id, request.Pin);
+        var result = await _accountService.AuthoriseDeletionAsync(
+            GetCurrentUserId(), id, request.Pin, cancellationToken);
 
         return StatusCode(StatusCodes.Status201Created,
             ApiResponse<StepUpAuthorizationResponse>.Success(result, "Account closure authorised"));
@@ -229,6 +249,7 @@ public class AccountController(
     /// Delete (soft delete) an account.
     /// Balance must be zero and account cannot be primary.
     /// </remarks>
+    /// <param name="cancellationToken">The request's token: cancelled by its deadline or by the caller hanging up (ADR-0058).</param>
     /// <param name="id">Account ID</param>
     /// <param name="stepUpAuthorizationId">The authorisation reference minted for this
     /// account</param>
@@ -257,10 +278,11 @@ public class AccountController(
     public async Task<ActionResult<ApiResponse>> DeleteAccount(
         Guid id,
         [Description("Authorisation reference minted by POST /api/accounts/{id}/deletion-authorizations (ADR-0049). REQUIRED to close an account: presenting none is refused 401 AUTHORIZATION_REQUIRED and recorded; one minted for a transfer, already spent, or not the caller's own is refused 401 AUTHORIZATION_INVALID; one past its window is refused 401 AUTHORIZATION_EXPIRED. The balance and primary-account rules (422) are checked before the header is.")]
-        [FromHeader(Name = StepUpConstants.HeaderName)] Guid? stepUpAuthorizationId = null)
+        [FromHeader(Name = StepUpConstants.HeaderName)] Guid? stepUpAuthorizationId = null,
+        CancellationToken cancellationToken = default)
     {
         var userId = GetCurrentUserId();
-        await _accountService.DeleteAccountAsync(id, userId, stepUpAuthorizationId);
+        await _accountService.DeleteAccountAsync(id, userId, stepUpAuthorizationId, cancellationToken);
         return Ok(ApiResponse.Success("Account deleted successfully"));
     }
 

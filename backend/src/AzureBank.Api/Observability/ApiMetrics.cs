@@ -30,4 +30,13 @@ public static class ApiMetrics
     /// <summary>Idempotency replays served — a retry that returned the stored response (ADR-0009).</summary>
     public static readonly Counter<long> IdempotencyReplays =
         Meter.CreateCounter<long>("azurebank.idempotency.replays", unit: "{replay}", description: "Idempotency replays served.");
+
+    /// <summary>
+    /// Commits of a request's own context that the request deadline let start and that landed
+    /// (ADR-0058, <c>CommitGateInterceptor</c>). A successful money request adds exactly one: its
+    /// movement commits once, and the idempotency claim and the stored answer are single statements
+    /// outside any transaction.
+    /// </summary>
+    public static readonly Counter<long> CommitGateEntered =
+        Meter.CreateCounter<long>("azurebank.commit_gate.entered", unit: "{commit}", description: "Commits the request deadline let start, that landed.");
 }

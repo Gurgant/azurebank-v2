@@ -42,9 +42,11 @@ public class TransactionService : ITransactionService
     }
 
     /// <inheritdoc />
-    public async Task<DepositResponse> DepositAsync(Guid userId, DepositRequest request)
+    public async Task<DepositResponse> DepositAsync(
+        Guid userId, DepositRequest request, CancellationToken cancellationToken = default)
     {
-        var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(request.AccountId, userId);
+        var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(
+            request.AccountId, userId, cancellationToken);
 
         // Optimistic-concurrency retry: a parallel operation on the SAME
         // account bumps its RowVersion between our read and commit; the
@@ -95,14 +97,14 @@ public class TransactionService : ITransactionService
 
             try
             {
-                await _context.SaveChangesAsync();
+                await _context.SaveChangesAsync(cancellationToken);
             }
             catch (DbUpdateConcurrencyException ex) when (ConcurrencyRetry.ShouldRetry(ex, attempt))
             {
                 _logger.LogInformation(
                     "Concurrency conflict on deposit to account {AccountId} (attempt {Attempt}); retrying",
                     account.Id, attempt);
-                await ConcurrencyRetry.PrepareNextAttemptAsync(_context, account);
+                await ConcurrencyRetry.PrepareNextAttemptAsync(_context, [account], cancellationToken);
                 continue;
             }
             catch (DbUpdateException ex) when (ConcurrencyRetry.IsTransactionNumberCollision(ex, attempt))
@@ -118,7 +120,7 @@ public class TransactionService : ITransactionService
                     "SecurityEvent {SecurityEvent}: transaction-number collision on deposit to "
                         + "account {AccountId} (attempt {Attempt}); regenerating",
                     SecurityEvents.TransactionNumberCollision, account.Id, attempt);
-                await ConcurrencyRetry.PrepareNextAttemptAsync(_context, account);
+                await ConcurrencyRetry.PrepareNextAttemptAsync(_context, [account], cancellationToken);
                 continue;
             }
 
@@ -135,7 +137,7 @@ public class TransactionService : ITransactionService
 
     /// <inheritdoc />
     public async Task<StepUpAuthorizationResponse> AuthoriseWithdrawalAsync(
-        Guid userId, WithdrawalAuthorizationRequest request)
+        Guid userId, WithdrawalAuthorizationRequest request, CancellationToken cancellationToken = default)
     {
         /*
           OWNERSHIP FIRST, exactly as the transfer mints and the closure mint do: an unknown or
@@ -143,7 +145,8 @@ public class TransactionService : ITransactionService
           account costs no PIN attempt. Getting this order wrong would make this endpoint a
           cheaper oracle than the withdrawal itself, which is the whole thing the rail prevents.
         */
-        var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(request.AccountId, userId);
+        var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(
+            request.AccountId, userId, cancellationToken);
 
         /*
           AND NO FUNDS CHECK HERE, deliberately (ADR-0050 D4, followed by ADR-0056).
@@ -162,7 +165,8 @@ public class TransactionService : ITransactionService
             userId,
             StepUpOperation.Withdrawal,
             StepUpBinding.ForWithdrawal(account.Id, request.Amount),
-            request.Pin);
+            request.Pin,
+            cancellationToken);
 
         return new StepUpAuthorizationResponse
         {
@@ -173,9 +177,11 @@ public class TransactionService : ITransactionService
 
     /// <inheritdoc />
     public async Task<WithdrawResponse> WithdrawAsync(
-        Guid userId, WithdrawRequest request, Guid? stepUpAuthorizationId)
+        Guid userId, WithdrawRequest request, Guid? stepUpAuthorizationId,
+        CancellationToken cancellationToken = default)
     {
-        var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(request.AccountId, userId);
+        var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(
+            request.AccountId, userId, cancellationToken);
 
         /*
           THE FUNDS GUARD RUNS BEFORE THE AUTHORISATION IS EVEN LOOKED AT, and that ordering is the
@@ -219,7 +225,9 @@ public class TransactionService : ITransactionService
             await _audit.RecordRefusalAsync(
                 SecurityEvents.MoneyWithdrawalRefused, AuditOutcome.Refused,
                 actorUserId: userId, subjectType: "Account", subjectId: account.Id,
-                detail: ErrorCodes.AuthorizationRequired);
+                detail: ErrorCodes.AuthorizationRequired,
+                // Never the request's token: the refusal's row must land (ADR-0044 D1, ADR-0058).
+                cancellationToken: CancellationToken.None);
             throw new AuthenticationException(
                 "This withdrawal has not been authorised.", ErrorCodes.AuthorizationRequired);
         }
@@ -230,7 +238,8 @@ public class TransactionService : ITransactionService
         // refused as INVALID rather than quietly accepted.
         await _stepUp.ValidateAsync(
             userId, authorizationId, StepUpOperation.Withdrawal,
-            StepUpBinding.ForWithdrawal(account.Id, request.Amount));
+            StepUpBinding.ForWithdrawal(account.Id, request.Amount),
+            cancellationToken);
 
         /*
           AN EXPLICIT TRANSACTION, WHERE THIS METHOD USED TO HAVE NONE (ADR-0050 reserved the
@@ -267,7 +276,7 @@ public class TransactionService : ITransactionService
         {
             try
             {
-                await strategy.ExecuteAsync(async () =>
+                await strategy.ExecuteAsync(async ct =>
                 {
                     /*
                       RE-ENTRANCY DISCIPLINE, at the top of the delegate, because EnableRetryOnFailure
@@ -283,7 +292,7 @@ public class TransactionService : ITransactionService
                       surfaces 409 RESULT_UNKNOWN. Without it, a lost acknowledgement would move the
                       money twice under one Idempotency-Key.
                     */
-                    await ConcurrencyRetry.PrepareIdempotentAttemptAsync(_context, account);
+                    await ConcurrencyRetry.PrepareIdempotentAttemptAsync(_context, [account], ct);
 
                     /*
                       AND THE GUARD AGAIN, against the balance this attempt actually reloaded. The
@@ -319,7 +328,7 @@ public class TransactionService : ITransactionService
 
                     _context.Transactions.Add(transaction);
 
-                    await using var dbTransaction = await _context.Database.BeginTransactionAsync();
+                    await using var dbTransaction = await _context.Database.BeginTransactionAsync(ct);
 
                     try
                     {
@@ -340,22 +349,25 @@ public class TransactionService : ITransactionService
                             actorUserId: userId, subjectType: "Transaction", subjectId: transaction.Id,
                             detail: AuditDetails.ConsumedAuthorisation(authorizationId));
 
-                        await _context.SaveChangesAsync();
+                        await _context.SaveChangesAsync(ct);
 
                         // Spent inside this transaction and after the rows exist. consumedByTransactionId
                         // is the ledger row, NOT null as a closure passes: a withdrawal produces a
                         // movement, and the evidence verb joins the authorisation to it on this id.
                         await _stepUp.ConsumeAsync(
-                            userId, authorizationId, consumedByTransactionId: transaction.Id);
+                            userId, authorizationId, consumedByTransactionId: transaction.Id, ct);
 
-                        await dbTransaction.CommitAsync();
+                        // Through the commit gate (ADR-0058): refused if the request deadline has
+                        // fired, and once started, nothing cancels it.
+                        await dbTransaction.CommitAsync(ct);
                     }
                     catch
                     {
                         // Preserve the ORIGINAL fault (e.g. the transient the execution strategy must
                         // see to retry): rolling back a transaction whose connection or commit already
-                        // failed can itself throw and would otherwise mask it.
-                        try { await dbTransaction.RollbackAsync(); }
+                        // failed can itself throw and would otherwise mask it. Never the request's
+                        // token: a cancelled request is exactly the one whose rollback must run.
+                        try { await dbTransaction.RollbackAsync(CancellationToken.None); }
                         catch { /* best effort: the transaction may already be gone */ }
                         throw;
                     }
@@ -366,7 +378,7 @@ public class TransactionService : ITransactionService
                         account.Id, transaction.TransactionNumber);
 
                     response = _mapper.ToWithdrawResponse(transaction, balanceAfter);
-                });
+                }, cancellationToken);
 
                 break;
             }
@@ -375,7 +387,7 @@ public class TransactionService : ITransactionService
                 _logger.LogInformation(
                     "Concurrency conflict on withdrawal from account {AccountId} (attempt {Attempt}); retrying",
                     account.Id, attempt);
-                await ConcurrencyRetry.PrepareNextAttemptAsync(_context, account);
+                await ConcurrencyRetry.PrepareNextAttemptAsync(_context, [account], cancellationToken);
             }
             catch (DbUpdateException ex) when (ConcurrencyRetry.IsTransactionNumberCollision(ex, attempt))
             {
@@ -389,7 +401,7 @@ public class TransactionService : ITransactionService
                     "SecurityEvent {SecurityEvent}: transaction-number collision on withdrawal "
                         + "from account {AccountId} (attempt {Attempt}); regenerating",
                     SecurityEvents.TransactionNumberCollision, account.Id, attempt);
-                await ConcurrencyRetry.PrepareNextAttemptAsync(_context, account);
+                await ConcurrencyRetry.PrepareNextAttemptAsync(_context, [account], cancellationToken);
             }
         }
 
@@ -399,14 +411,15 @@ public class TransactionService : ITransactionService
     }
 
     /// <inheritdoc />
-    public async Task<PaginatedResponse<TransactionResponse>> GetTransactionsAsync(Guid userId, TransactionFilter filter)
+    public async Task<PaginatedResponse<TransactionResponse>> GetTransactionsAsync(
+        Guid userId, TransactionFilter filter, CancellationToken cancellationToken = default)
     {
         // Get user's account IDs for filtering
         var userAccountIds = await _context.Accounts
             .AsNoTracking()
             .Where(a => a.UserId == userId && !a.IsDeleted)
             .Select(a => a.Id)
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
         if (!userAccountIds.Any())
         {
@@ -450,7 +463,7 @@ public class TransactionService : ITransactionService
         }
 
         // Get total count
-        var totalItems = await query.CountAsync();
+        var totalItems = await query.CountAsync(cancellationToken);
 
         /*
           Order and paginate. The Id tiebreaker is NOT decoration: CreatedAt is stamped once per
@@ -484,7 +497,7 @@ public class TransactionService : ITransactionService
                 .ThenByDescending(t => t.Id)
                 .Skip((int)offset)
                 .Take(filter.PageSize)
-                .ToListAsync();
+                .ToListAsync(cancellationToken);
 
         var totalPages = (int)Math.Ceiling((double)totalItems / filter.PageSize);
 
@@ -502,7 +515,8 @@ public class TransactionService : ITransactionService
     }
 
     /// <inheritdoc />
-    public async Task<TransactionSummaryResponse> GetSummaryAsync(Guid userId, TransactionSummaryFilter filter)
+    public async Task<TransactionSummaryResponse> GetSummaryAsync(
+        Guid userId, TransactionSummaryFilter filter, CancellationToken cancellationToken = default)
     {
         // Resolve the window: default = the current UTC calendar month so far.
         var now = DateTime.UtcNow;
@@ -536,7 +550,7 @@ public class TransactionService : ITransactionService
                 .AsNoTracking()
                 .AnyAsync(a => a.Id == filter.AccountId.Value
                     && a.UserId == userId
-                    && !a.IsDeleted);
+                    && !a.IsDeleted, cancellationToken);
 
             if (!owned)
             {
@@ -575,7 +589,7 @@ public class TransactionService : ITransactionService
                     .Sum(t => (decimal?)t.Amount) ?? 0m,
                 Pending = g.Count(t => t.Status == TransactionStatus.Pending)
             })
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(cancellationToken);
 
         if (totals != null)
         {
@@ -589,12 +603,13 @@ public class TransactionService : ITransactionService
     }
 
     /// <inheritdoc />
-    public async Task<TransactionResponse> GetTransactionByIdAsync(Guid transactionId, Guid userId)
+    public async Task<TransactionResponse> GetTransactionByIdAsync(
+        Guid transactionId, Guid userId, CancellationToken cancellationToken = default)
     {
         var transaction = await _context.Transactions
             .AsNoTracking()
             .Include(t => t.Account)
-            .FirstOrDefaultAsync(t => t.Id == transactionId);
+            .FirstOrDefaultAsync(t => t.Id == transactionId, cancellationToken);
 
         if (transaction == null)
         {

@@ -178,10 +178,10 @@ public class TransferService : ITransferService
     /// </para>
     /// </summary>
     private async Task<(ApplicationUser Sender, ApplicationUser Recipient, Account RecipientAccount)>
-        ResolveExternalPayeeAsync(Guid userId, string recipientAzureTag)
+        ResolveExternalPayeeAsync(Guid userId, string recipientAzureTag, CancellationToken cancellationToken)
     {
         // Get sender user for self-transfer check
-        var senderUser = await _context.Users.FindAsync(userId);
+        var senderUser = await _context.Users.FindAsync([userId], cancellationToken);
         if (senderUser == null)
         {
             throw new NotFoundException("User", userId);
@@ -198,7 +198,7 @@ public class TransferService : ITransferService
         // Find recipient by AzureTag
         var recipient = await _context.Users
             .Include(u => u.Accounts)
-            .FirstOrDefaultAsync(u => u.AzureTag == recipientAzureTag.ToLower());
+            .FirstOrDefaultAsync(u => u.AzureTag == recipientAzureTag.ToLower(), cancellationToken);
 
         if (recipient == null)
         {
@@ -219,13 +219,13 @@ public class TransferService : ITransferService
 
     /// <inheritdoc />
     public async Task<StepUpAuthorizationResponse> AuthoriseTransferAsync(
-        Guid userId, TransferAuthorizationRequest request)
+        Guid userId, TransferAuthorizationRequest request, CancellationToken cancellationToken = default)
     {
         // Ownership first, exactly as the transfer does: an unknown source account is a 404 before
         // the PIN is ever consulted, so a probe of someone else's account costs no attempt.
-        await _accountAccess.GetAccountWithOwnershipCheckAsync(request.FromAccountId, userId);
+        await _accountAccess.GetAccountWithOwnershipCheckAsync(request.FromAccountId, userId, cancellationToken);
 
-        var (_, recipient, _) = await ResolveExternalPayeeAsync(userId, request.RecipientAzureTag);
+        var (_, recipient, _) = await ResolveExternalPayeeAsync(userId, request.RecipientAzureTag, cancellationToken);
 
         /*
           THE DAY'S CEILING, BEFORE THE PIN (ADR-0050 D4). The mint checks nothing about money today —
@@ -248,13 +248,14 @@ public class TransferService : ITransferService
           /api/users/* only). Pre-existing since ADR-0042; this check neither widens nor narrows
           it, because it answers nothing about the payee.
         */
-        await _dailyLimit.AssertCanMoveAsync(userId, request.Amount);
+        await _dailyLimit.AssertCanMoveAsync(userId, request.Amount, cancellationToken);
 
         var authorization = await _stepUp.MintAsync(
             userId,
             StepUpOperation.Transfer,
             new StepUpBinding(request.FromAccountId, null, recipient.Id, request.Amount),
-            request.Pin);
+            request.Pin,
+            cancellationToken);
 
         return new StepUpAuthorizationResponse
         {
@@ -265,10 +266,10 @@ public class TransferService : ITransferService
 
     /// <inheritdoc />
     public async Task<StepUpAuthorizationResponse> AuthoriseInternalTransferAsync(
-        Guid userId, InternalTransferAuthorizationRequest request)
+        Guid userId, InternalTransferAuthorizationRequest request, CancellationToken cancellationToken = default)
     {
-        await _accountAccess.GetAccountWithOwnershipCheckAsync(request.FromAccountId, userId);
-        await _accountAccess.GetAccountWithOwnershipCheckAsync(request.ToAccountId, userId);
+        await _accountAccess.GetAccountWithOwnershipCheckAsync(request.FromAccountId, userId, cancellationToken);
+        await _accountAccess.GetAccountWithOwnershipCheckAsync(request.ToAccountId, userId, cancellationToken);
 
         if (request.FromAccountId == request.ToAccountId)
         {
@@ -281,7 +282,8 @@ public class TransferService : ITransferService
             userId,
             StepUpOperation.InternalTransfer,
             new StepUpBinding(request.FromAccountId, request.ToAccountId, null, request.Amount),
-            request.Pin);
+            request.Pin,
+            cancellationToken);
 
         return new StepUpAuthorizationResponse
         {
@@ -292,10 +294,12 @@ public class TransferService : ITransferService
 
     /// <inheritdoc />
     public async Task<TransferResponse> TransferAsync(
-        Guid userId, TransferRequest request, Guid? stepUpAuthorizationId)
+        Guid userId, TransferRequest request, Guid? stepUpAuthorizationId,
+        CancellationToken cancellationToken = default)
     {
         // Get sender's account with ownership check
-        var fromAccount = await _accountAccess.GetAccountWithOwnershipCheckAsync(request.FromAccountId, userId);
+        var fromAccount = await _accountAccess.GetAccountWithOwnershipCheckAsync(
+            request.FromAccountId, userId, cancellationToken);
 
         /*
           RECORDED AT THE CALL SITE, not inside RequireAuthorization, for a reason that decides the
@@ -313,17 +317,19 @@ public class TransferService : ITransferService
             await _audit.RecordRefusalAsync(
                 SecurityEvents.MoneyTransferRefused, AuditOutcome.Refused,
                 actorUserId: userId, subjectType: "Account", subjectId: fromAccount.Id,
-                detail: ErrorCodes.AuthorizationRequired);
+                detail: ErrorCodes.AuthorizationRequired,
+                // Never the request's token: the refusal's row must land (ADR-0044 D1, ADR-0058).
+                cancellationToken: CancellationToken.None);
             throw;
         }
 
         var (senderUser, recipient, recipientAccount) =
-            await ResolveExternalPayeeAsync(userId, request.RecipientAzureTag);
+            await ResolveExternalPayeeAsync(userId, request.RecipientAzureTag, cancellationToken);
 
         // Bound to recipient.Id, not the tag: a handle is renameable (ADR-0015), so an authorisation
         // naming @admin would survive @admin becoming someone else's handle.
         var binding = new StepUpBinding(request.FromAccountId, null, recipient.Id, request.Amount);
-        await _stepUp.ValidateAsync(userId, authorizationId, StepUpOperation.Transfer, binding);
+        await _stepUp.ValidateAsync(userId, authorizationId, StepUpOperation.Transfer, binding, cancellationToken);
 
         /*
           THE DAY'S CEILING, PRE-CHECK (ADR-0050 D4). After ValidateAsync, so an expired or invalid
@@ -340,7 +346,7 @@ public class TransferService : ITransferService
           transfers from two DIFFERENT accounts of one user both pass it together, which is why the
           authoritative check sits inside the transaction below.
         */
-        await _dailyLimit.AssertCanMoveAsync(userId, request.Amount);
+        await _dailyLimit.AssertCanMoveAsync(userId, request.Amount, cancellationToken);
 
         // Use transaction for atomicity; retry optimistic-concurrency
         // conflicts on the accounts (see ConcurrencyRetry).
@@ -357,14 +363,14 @@ public class TransferService : ITransferService
 
             try
             {
-                return await strategy.ExecuteAsync(async () =>
+                return await strategy.ExecuteAsync(async ct =>
                 {
                     // EnableRetryOnFailure re-runs this whole delegate on a
                     // transient fault against the SAME DbContext. Make each
                     // attempt idempotent: discard the failed attempt's tracked
                     // work (Case A) and never re-execute an already-committed
                     // transfer (Case B). See PrepareTransferAttemptAsync.
-                    await PrepareTransferAttemptAsync(fromAccount, recipientAccount);
+                    await PrepareTransferAttemptAsync([fromAccount, recipientAccount], ct);
 
                     // Funds re-check against the reloaded balance: a transient
                     // retry may run after a concurrent debit moved the balance.
@@ -373,7 +379,7 @@ public class TransferService : ITransferService
                         throw new InsufficientFundsException(fromAccount.Balance, request.Amount);
                     }
 
-                    await using var dbTransaction = await _context.Database.BeginTransactionAsync();
+                    await using var dbTransaction = await _context.Database.BeginTransactionAsync(ct);
 
                     try
                     {
@@ -434,13 +440,16 @@ public class TransferService : ITransferService
                         */
                         if (_context.Database.IsRelational())
                         {
+                            // The values as a collection, then the token: appended to the params
+                            // overload, the token would be bound as a third SQL parameter, which
+                            // compiles and fails at run time, on SQL Server only (ADR-0058).
                             await _context.Database.ExecuteSqlRawAsync(
                                 DailyLimitLockSql,
-                                DailyLimitLockResource(userId),
-                                _dailyLimitOptions.LockTimeoutMilliseconds);
+                                new object[] { DailyLimitLockResource(userId), _dailyLimitOptions.LockTimeoutMilliseconds },
+                                ct);
                         }
 
-                        await _dailyLimit.AssertCanMoveAsync(userId, request.Amount);
+                        await _dailyLimit.AssertCanMoveAsync(userId, request.Amount, ct);
 
                         var transactionNumber = IdGenerator.GenerateTransactionNumber();
 
@@ -531,12 +540,12 @@ public class TransferService : ITransferService
                             actorUserId: userId, subjectType: "Transaction",
                             subjectId: outgoingTransaction.Id,
                             detail: AuditDetails.ConsumedAuthorisation(authorizationId));
-                        await _context.SaveChangesAsync();
+                        await _context.SaveChangesAsync(ct);
 
                         // Write-once back-link (permitted by the immutability
                         // guard: RelatedTransactionId null -> value only)
                         outgoingTransaction.RelatedTransactionId = incomingTransaction.Id;
-                        await _context.SaveChangesAsync();
+                        await _context.SaveChangesAsync(ct);
 
                         /*
                           Spend the authorisation INSIDE this transaction, and after the rows exist
@@ -548,10 +557,12 @@ public class TransferService : ITransferService
                         */
                         if (stepUpAuthorizationId is { } toConsume)
                         {
-                            await _stepUp.ConsumeAsync(userId, toConsume, outgoingTransaction.Id);
+                            await _stepUp.ConsumeAsync(userId, toConsume, outgoingTransaction.Id, ct);
                         }
 
-                        await dbTransaction.CommitAsync();
+                        // Through the commit gate (ADR-0058): refused if the request deadline has
+                        // fired, and once started, nothing cancels it.
+                        await dbTransaction.CommitAsync(ct);
 
                         // No amount in the log line: logs are exported (Loki), and a money amount
                         // is financial data — the transaction number is the audit-trail key.
@@ -579,19 +590,22 @@ public class TransferService : ITransferService
                         // Preserve the ORIGINAL fault (e.g. the transient the
                         // execution strategy must see to retry): rolling back a
                         // transaction whose connection/commit already failed can
-                        // itself throw and would otherwise mask it.
-                        try { await dbTransaction.RollbackAsync(); }
+                        // itself throw and would otherwise mask it. Never the
+                        // request's token: a cancelled request is exactly the one
+                        // whose rollback must run.
+                        try { await dbTransaction.RollbackAsync(CancellationToken.None); }
                         catch { /* best effort: the transaction may already be gone */ }
                         throw;
                     }
-                });
+                }, cancellationToken);
             }
             catch (DbUpdateConcurrencyException ex) when (ConcurrencyRetry.ShouldRetry(ex, attempt))
             {
                 _logger.LogInformation(
                     "Concurrency conflict on transfer from account {AccountId} (attempt {Attempt}); retrying",
                     fromAccount.Id, attempt);
-                await ConcurrencyRetry.PrepareNextAttemptAsync(_context, fromAccount, recipientAccount);
+                await ConcurrencyRetry.PrepareNextAttemptAsync(
+                    _context, [fromAccount, recipientAccount], cancellationToken);
             }
             catch (DbUpdateException ex) when (ConcurrencyRetry.IsTransactionNumberCollision(ex, attempt))
             {
@@ -606,18 +620,22 @@ public class TransferService : ITransferService
                     "SecurityEvent {SecurityEvent}: transaction-number collision on transfer from "
                         + "account {AccountId} to {RecipientAccountId} (attempt {Attempt}); regenerating",
                     SecurityEvents.TransactionNumberCollision, fromAccount.Id, recipientAccount.Id, attempt);
-                await ConcurrencyRetry.PrepareNextAttemptAsync(_context, fromAccount, recipientAccount);
+                await ConcurrencyRetry.PrepareNextAttemptAsync(
+                    _context, [fromAccount, recipientAccount], cancellationToken);
             }
         }
     }
 
     /// <inheritdoc />
     public async Task<InternalTransferResponse> InternalTransferAsync(
-        Guid userId, InternalTransferRequest request, Guid? stepUpAuthorizationId)
+        Guid userId, InternalTransferRequest request, Guid? stepUpAuthorizationId,
+        CancellationToken cancellationToken = default)
     {
         // Validate accounts belong to user
-        var fromAccount = await _accountAccess.GetAccountWithOwnershipCheckAsync(request.FromAccountId, userId);
-        var toAccount = await _accountAccess.GetAccountWithOwnershipCheckAsync(request.ToAccountId, userId);
+        var fromAccount = await _accountAccess.GetAccountWithOwnershipCheckAsync(
+            request.FromAccountId, userId, cancellationToken);
+        var toAccount = await _accountAccess.GetAccountWithOwnershipCheckAsync(
+            request.ToAccountId, userId, cancellationToken);
 
         /*
           AFTER BOTH OWNERSHIP CHECKS here, where the external path refuses before resolving its
@@ -651,7 +669,9 @@ public class TransferService : ITransferService
                 // point, so the nearer variable is the destination -- and naming it here would put
                 // the refusal on the wrong account while every test still passed.
                 actorUserId: userId, subjectType: "Account", subjectId: fromAccount.Id,
-                detail: ErrorCodes.AuthorizationRequired);
+                detail: ErrorCodes.AuthorizationRequired,
+                // Never the request's token: the refusal's row must land (ADR-0044 D1, ADR-0058).
+                cancellationToken: CancellationToken.None);
             throw;
         }
 
@@ -667,7 +687,8 @@ public class TransferService : ITransferService
             userId,
             authorizationId,
             StepUpOperation.InternalTransfer,
-            new StepUpBinding(request.FromAccountId, request.ToAccountId, null, request.Amount));
+            new StepUpBinding(request.FromAccountId, request.ToAccountId, null, request.Amount),
+            cancellationToken);
 
         // No daily-limit check on this rail, and no application lock below: internal moves are not
         // counted (ADR-0050 D2). The row this path writes carries no RecipientAzureTag, which is
@@ -688,14 +709,14 @@ public class TransferService : ITransferService
 
             try
             {
-                return await strategy.ExecuteAsync(async () =>
+                return await strategy.ExecuteAsync(async ct =>
                 {
                     // EnableRetryOnFailure re-runs this whole delegate on a
                     // transient fault against the SAME DbContext. Make each
                     // attempt idempotent: discard the failed attempt's tracked
                     // work (Case A) and never re-execute an already-committed
                     // transfer (Case B). See PrepareTransferAttemptAsync.
-                    await PrepareTransferAttemptAsync(fromAccount, toAccount);
+                    await PrepareTransferAttemptAsync([fromAccount, toAccount], ct);
 
                     // Funds re-check against the reloaded balance: a transient
                     // retry may run after a concurrent debit moved the balance.
@@ -704,7 +725,7 @@ public class TransferService : ITransferService
                         throw new InsufficientFundsException(fromAccount.Balance, request.Amount);
                     }
 
-                    await using var dbTransaction = await _context.Database.BeginTransactionAsync();
+                    await using var dbTransaction = await _context.Database.BeginTransactionAsync(ct);
 
                     try
                     {
@@ -765,19 +786,20 @@ public class TransferService : ITransferService
                             actorUserId: userId, subjectType: "Transaction",
                             subjectId: outgoingTransaction.Id,
                             detail: AuditDetails.ConsumedAuthorisation(authorizationId));
-                        await _context.SaveChangesAsync();
+                        await _context.SaveChangesAsync(ct);
 
                         // Write-once back-link (see immutability guard)
                         outgoingTransaction.RelatedTransactionId = incomingTransaction.Id;
-                        await _context.SaveChangesAsync();
+                        await _context.SaveChangesAsync(ct);
 
                         // Spent inside the transaction, same as the external transfer above.
                         if (stepUpAuthorizationId is { } toConsume)
                         {
-                            await _stepUp.ConsumeAsync(userId, toConsume, outgoingTransaction.Id);
+                            await _stepUp.ConsumeAsync(userId, toConsume, outgoingTransaction.Id, ct);
                         }
 
-                        await dbTransaction.CommitAsync();
+                        // Through the commit gate, as the external transfer's commit above.
+                        await dbTransaction.CommitAsync(ct);
 
                         // No amount in the log line (financial data in an exported log — see above).
                         _logger.LogInformation(
@@ -804,19 +826,21 @@ public class TransferService : ITransferService
                         // Preserve the ORIGINAL fault (e.g. the transient the
                         // execution strategy must see to retry): rolling back a
                         // transaction whose connection/commit already failed can
-                        // itself throw and would otherwise mask it.
-                        try { await dbTransaction.RollbackAsync(); }
+                        // itself throw and would otherwise mask it. Never the
+                        // request's token, as above.
+                        try { await dbTransaction.RollbackAsync(CancellationToken.None); }
                         catch { /* best effort: the transaction may already be gone */ }
                         throw;
                     }
-                });
+                }, cancellationToken);
             }
             catch (DbUpdateConcurrencyException ex) when (ConcurrencyRetry.ShouldRetry(ex, attempt))
             {
                 _logger.LogInformation(
                     "Concurrency conflict on internal transfer from account {AccountId} (attempt {Attempt}); retrying",
                     fromAccount.Id, attempt);
-                await ConcurrencyRetry.PrepareNextAttemptAsync(_context, fromAccount, toAccount);
+                await ConcurrencyRetry.PrepareNextAttemptAsync(
+                    _context, [fromAccount, toAccount], cancellationToken);
             }
             catch (DbUpdateException ex) when (ConcurrencyRetry.IsTransactionNumberCollision(ex, attempt))
             {
@@ -831,7 +855,8 @@ public class TransferService : ITransferService
                     "SecurityEvent {SecurityEvent}: transaction-number collision on internal transfer "
                         + "from account {AccountId} to {ToAccountId} (attempt {Attempt}); regenerating",
                     SecurityEvents.TransactionNumberCollision, fromAccount.Id, toAccount.Id, attempt);
-                await ConcurrencyRetry.PrepareNextAttemptAsync(_context, fromAccount, toAccount);
+                await ConcurrencyRetry.PrepareNextAttemptAsync(
+                    _context, [fromAccount, toAccount], cancellationToken);
             }
         }
     }
@@ -867,6 +892,6 @@ public class TransferService : ITransferService
     /// The idempotency step is a no-op when no record is tracked (e.g. a direct
     /// service-level call outside the middleware): there is nothing to guard.
     /// </remarks>
-    private Task PrepareTransferAttemptAsync(params Account[] accounts) =>
-        ConcurrencyRetry.PrepareIdempotentAttemptAsync(_context, accounts);
+    private Task PrepareTransferAttemptAsync(Account[] accounts, CancellationToken cancellationToken) =>
+        ConcurrencyRetry.PrepareIdempotentAttemptAsync(_context, accounts, cancellationToken);
 }

@@ -78,13 +78,13 @@ public class TransferController : ControllerBase
     */
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<ApiResponse<StepUpAuthorizationResponse>>> AuthoriseTransfer(
-        [FromBody] TransferAuthorizationRequest request)
+        [FromBody] TransferAuthorizationRequest request, CancellationToken cancellationToken)
     {
         // Same two-layer guard as the transfer itself: DataAnnotations from [ApiController], then
         // FluentValidation. Only the first was mirrored at first, and the scale rule lives here.
-        await _transferAuthValidator.ValidateAndThrowAsync(request);
+        await _transferAuthValidator.ValidateAndThrowAsync(request, cancellationToken);
 
-        var result = await _transferService.AuthoriseTransferAsync(GetCurrentUserId(), request);
+        var result = await _transferService.AuthoriseTransferAsync(GetCurrentUserId(), request, cancellationToken);
 
         return StatusCode(StatusCodes.Status201Created,
             ApiResponse<StepUpAuthorizationResponse>.Success(result, "Transfer authorised"));
@@ -107,11 +107,12 @@ public class TransferController : ControllerBase
     // names this action's one 422 code, and an attribute would outrank it with the bare phrase.
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<ApiResponse<StepUpAuthorizationResponse>>> AuthoriseInternalTransfer(
-        [FromBody] InternalTransferAuthorizationRequest request)
+        [FromBody] InternalTransferAuthorizationRequest request, CancellationToken cancellationToken)
     {
-        await _internalTransferAuthValidator.ValidateAndThrowAsync(request);
+        await _internalTransferAuthValidator.ValidateAndThrowAsync(request, cancellationToken);
 
-        var result = await _transferService.AuthoriseInternalTransferAsync(GetCurrentUserId(), request);
+        var result = await _transferService.AuthoriseInternalTransferAsync(
+            GetCurrentUserId(), request, cancellationToken);
 
         return StatusCode(StatusCodes.Status201Created,
             ApiResponse<StepUpAuthorizationResponse>.Success(result, "Internal transfer authorised"));
@@ -145,12 +146,13 @@ public class TransferController : ControllerBase
     public async Task<ActionResult<ApiResponse<TransferResponse>>> Transfer(
         [Description("Transfer details")][FromBody] TransferRequest request,
         [Description("Authorisation reference minted by POST /api/transfers/authorizations (ADR-0042). REQUIRED to EXECUTE a transfer: presenting none is refused 401 AUTHORIZATION_REQUIRED. A retry of a completed transfer is the one exception — the idempotency middleware returns its stored response before this action runs, so a replay needs no header.")]
-        [FromHeader(Name = StepUpConstants.HeaderName)] Guid? stepUpAuthorizationId = null)
+        [FromHeader(Name = StepUpConstants.HeaderName)] Guid? stepUpAuthorizationId = null,
+        CancellationToken cancellationToken = default)
     {
-        await _transferValidator.ValidateAndThrowAsync(request);
+        await _transferValidator.ValidateAndThrowAsync(request, cancellationToken);
 
         var userId = GetCurrentUserId();
-        var result = await _transferService.TransferAsync(userId, request, stepUpAuthorizationId);
+        var result = await _transferService.TransferAsync(userId, request, stepUpAuthorizationId, cancellationToken);
 
         return StatusCode(StatusCodes.Status201Created,
             ApiResponse<TransferResponse>.Success(result, "Transfer successful"));
@@ -176,12 +178,14 @@ public class TransferController : ControllerBase
     public async Task<ActionResult<ApiResponse<InternalTransferResponse>>> InternalTransfer(
         [Description("Internal transfer details")][FromBody] InternalTransferRequest request,
         [Description("Authorisation reference minted by POST /api/transfers/internal/authorizations (ADR-0042). REQUIRED to EXECUTE a transfer: presenting none is refused 401 AUTHORIZATION_REQUIRED. A retry of a completed transfer is the one exception — the idempotency middleware returns its stored response before this action runs, so a replay needs no header.")]
-        [FromHeader(Name = StepUpConstants.HeaderName)] Guid? stepUpAuthorizationId = null)
+        [FromHeader(Name = StepUpConstants.HeaderName)] Guid? stepUpAuthorizationId = null,
+        CancellationToken cancellationToken = default)
     {
-        await _internalTransferValidator.ValidateAndThrowAsync(request);
+        await _internalTransferValidator.ValidateAndThrowAsync(request, cancellationToken);
 
         var userId = GetCurrentUserId();
-        var result = await _transferService.InternalTransferAsync(userId, request, stepUpAuthorizationId);
+        var result = await _transferService.InternalTransferAsync(
+            userId, request, stepUpAuthorizationId, cancellationToken);
 
         return StatusCode(StatusCodes.Status201Created,
             ApiResponse<InternalTransferResponse>.Success(result, "Internal transfer successful"));

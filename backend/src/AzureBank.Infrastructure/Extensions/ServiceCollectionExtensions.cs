@@ -98,6 +98,12 @@ public static class ServiceCollectionExtensions
                 .Ignore(CoreEventId.PossibleIncorrectRequiredNavigationWithQueryFilterInteractionWarning)
                 .Log((CoreEventId.ExecutionStrategyRetrying, LogLevel.Warning)));
 
+            // Every interceptor the host registers. The API registers its commit gate (ADR-0058),
+            // which lets a request's commit start only before the request deadline fires; the other
+            // hosts register none. Read from the provider this context's options are built from,
+            // which for the API's requests is the request's scope.
+            options.AddInterceptors(serviceProvider.GetServices<IInterceptor>());
+
             // Development: Enable detailed logging
             if (environment.IsDevelopment())
             {

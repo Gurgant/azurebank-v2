@@ -15,5 +15,5 @@ public interface IPinVerifier
     /// <see cref="AzureBank.Shared.Exceptions.PinLockedException"/> (HTTP 429)
     /// when the PIN is already locked or when this attempt crosses the threshold.
     /// </summary>
-    Task<bool> VerifyPinAsync(Guid userId, string pin);
+    Task<bool> VerifyPinAsync(Guid userId, string pin, CancellationToken cancellationToken = default);
 }

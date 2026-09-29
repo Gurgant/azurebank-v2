@@ -181,7 +181,7 @@ public class ConnectionDefaultsTests
             .Should().ContainSingle().Which.Should().Be((
             LogLevel.Information,
             "Database limits: connect timeout 10 s, connect retries 0, pool 12, pool blocking NeverBlock; "
-            + "EF retries 4, back-off capped at 00:00:10"));
+            + "EF retries 4, back-off capped at 00:00:10; request deadline 40 s"));
     }
 
     private static string RepoRoot()
@@ -228,6 +228,7 @@ public sealed class ConnectionDefaultsSqlServerTests
             .Which.Should().Be(
                 $"Database limits: connect timeout {expected.ConnectTimeout} s, "
                 + $"connect retries {expected.ConnectRetryCount}, pool {expected.MaxPoolSize}, "
-                + $"pool blocking {expected.PoolBlockingPeriod}; EF retries 0, back-off capped at 00:00:00");
+                + $"pool blocking {expected.PoolBlockingPeriod}; EF retries 0, back-off capped at 00:00:00; "
+                + "request deadline 40 s");
     }
 }

@@ -112,11 +112,13 @@ public class LogPlaceholderClassTests
         ["Delivered"] = Operational,
         ["Directory"] = Operational,
         ["Elapsed"] = Operational,
+        ["ElapsedMs"] = Operational, // how long a request ran before its outage 503 (ADR-0058)
         ["Endpoint"] = Operational,
         ["ErrorCode"] = Operational,
         ["ErrorCount"] = Operational,
         ["Event"] = Operational,
         ["ExceptionType"] = Operational,
+        ["ExceptionTypes"] = Operational, // the type names of an exception chain, "RetryLimitExceededException > SqlException"
         ["ExpiresAt"] = Operational,
         ["FailureType"] = Operational,
         ["Half"] = Operational, // which half of a graceful stop's drain overran or found its budget spent: "first" or "second", a constant of the code
@@ -144,8 +146,9 @@ public class LogPlaceholderClassTests
         ["PendingRows"] = Operational,
         ["PeriodSeconds"] = Operational,
         ["PoolBlockingPeriod"] = Operational,
-        ["Reason"] = Operational, // a code's name: why a grant was revoked (RefreshTokenRevokedReason), or which token-road check refused
+        ["Reason"] = Operational, // a code's name: why a grant was revoked (RefreshTokenRevokedReason), which token-road check refused, or why a request answered the outage 503
         ["Receipt"] = Operational,
+        ["RequestDeadlineSeconds"] = Operational, // a setting the API starts with (ADR-0058)
         ["RequestMethod"] = Operational,
         ["Revoked"] = Operational, // grants a graceful stop revoked: a count
         ["Resource"] = Operational, // one of five constants the BFF derives from the first path segment, never the segment itself
@@ -154,6 +157,7 @@ public class LogPlaceholderClassTests
         ["RunnerName"] = Operational,
         ["SecurityEvent"] = Operational,
         ["Site"] = Operational,
+        ["SqlErrorNumbers"] = Operational, // SQL Server's error numbers (4060, -2, ...): codes, never data
         ["Status"] = Operational,
         ["StatusCode"] = Operational,
         ["TimeoutSeconds"] = Operational,

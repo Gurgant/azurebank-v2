@@ -14,6 +14,14 @@ namespace AzureBank.Shared.Exceptions;
 /// </remarks>
 public class ServiceUnavailableException : AppException
 {
+    /// <summary>
+    /// The <c>Retry-After</c> of the outage 503 (ADR-0058): the database cannot be reached, or the
+    /// request ran past its deadline. EF's longest wait between two retries, so a client that comes
+    /// back after it meets a database EF would have tried again by then. For machines: a visitor is
+    /// told no time.
+    /// </summary>
+    public const int OutageRetryAfterSeconds = 10;
+
     public ServiceUnavailableException(string message, int retryAfterSeconds)
         : base(message, ErrorCodes.ServiceUnavailable, 503)
     {
