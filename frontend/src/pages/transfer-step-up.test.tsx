@@ -332,7 +332,7 @@ describe('a lost response, and the way back to the PIN', () => {
 
       Completed                -> 201 + Idempotency-Replayed: true    done, no PIN
       Executed, fresh          -> 409 IDEMPOTENCY_IN_FLIGHT           wait, no PIN
-      Executed, stale > 10 min -> 409 IDEMPOTENCY_RESULT_UNKNOWN      never re-execute
+      Executed, stale > 2 min  -> 409 IDEMPOTENCY_RESULT_UNKNOWN      never re-execute
       record absent / released -> 401 AUTHORIZATION_EXPIRED           nothing moved; NOW ask a PIN
 
     Only the last needs a PIN, and by then the server has said nothing happened.

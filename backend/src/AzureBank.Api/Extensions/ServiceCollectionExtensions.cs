@@ -115,6 +115,16 @@ public static class ServiceCollectionExtensions
                      && o.ProcessingStaleAfter > TimeSpan.Zero
                      && o.CleanupInterval > TimeSpan.Zero,
                 "Idempotency timespans must be positive")
+            // A claim is taken over as abandoned once it is ProcessingStaleAfter old, so that age must
+            // outlast the request that made it (ADR-0058). Past its deadline a request can still be
+            // committing (a commit that started runs to its end, bounded by the connect timeout, 10 s
+            // as shipped) and then releasing its claim (3 s): the minute covers both with room. A
+            // takeover sooner would not move money twice -- the claim's fence makes the older
+            // request's commit fail -- but it would fail a request that was about to succeed.
+            .Validate<IOptions<RequestDeadlineOptions>>(
+                (o, deadline) => o.ProcessingStaleAfter
+                                 >= TimeSpan.FromSeconds(deadline.Value.Seconds) + TimeSpan.FromMinutes(1),
+                "Idempotency:ProcessingStaleAfter must be at least one minute longer than RequestDeadline:Seconds")
             .ValidateOnStart();
 
         // Step-up authorisations (ADR-0042). BindingKey is a secret, for the same reason and with

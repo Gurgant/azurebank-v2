@@ -127,11 +127,23 @@ design — see Notes).
 |---|---|---|
 | Validation/business error (400/401/404/422), rollback | `Processing` | Fenced delete → **key stays reusable** (fixing the payload and retrying the same key works; errors are never replayed) |
 | Post-commit exception (e.g. response mapping crash) | `Executed` | Record kept → retries get 409 `IDEMPOTENCY_RESULT_UNKNOWN` |
-| Crash before commit | stale `Processing` | Provably nothing committed → **safe takeover** after `ProcessingStaleAfter` (10 min): fenced delete + fresh claim |
+| Crash before commit | stale `Processing` | Provably nothing committed → **safe takeover** after `ProcessingStaleAfter` (~~10 min~~ 2 min, see the note below): fenced delete + fresh claim |
 | Crash after commit, before response stored | `Executed` | 409: `IN_FLIGHT` while the claim is fresh (response may still land), `RESULT_UNKNOWN` once stale; swept at TTL with a Warning log (reconciliation signal) |
 | Commit ack lost, resilient strategy re-runs the commit | fence mismatch | The re-run updates `WHERE ClaimId = <old>` → 0 rows → aborts. **No in-request double execution** |
 | Stale claimant resumes after a takeover | fence mismatch | Its business commit carries the flip with the old `ClaimId` → aborts atomically |
 | Response persist fails after a 2xx | `Executed` | The 2xx is still sent (the operation DID succeed — client-first, deviation from review recommendation of 500); retries get `RESULT_UNKNOWN`, never a corrupt replay |
+
+*(Amended 2026-09-30, ADR-0058: `ProcessingStaleAfter` is **2 minutes**, down from 10. A request
+now gives up at its 40-second deadline, lets no commit start after it, and gives the release of its
+claim 3 s, so a claim still `Processing` two minutes on belongs to no request that is still running,
+unless its process was paused; the fence covers that one, since its commit carries the old
+`ClaimId` and aborts. The value matters because a release can fail exactly when the database does,
+and the key then answers 409 `IN_FLIGHT` until its claim is stale: a visitor's retry waits two
+minutes instead of ten. The same age ends `IN_FLIGHT` for an `Executed` record whose answer was
+not stored: its key answers 409 `RESULT_UNKNOWN` after two minutes instead of ten. That is no less
+true, since storing an answer starts as soon as its commit returns and is given 3 s: an answer still
+missing two minutes after the claim is not coming. At start the API refuses a value less than a
+minute longer than `RequestDeadline:Seconds`.)*
 
 ### Placement & limits
 
