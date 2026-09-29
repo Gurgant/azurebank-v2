@@ -80,9 +80,10 @@ only `ConcurrencyStamp`: without the new value that write puts the old stamp bac
 undoes itself. With it the write fails, and the stamp stays raised.
 
 The BFF reads every signed-in user's stamp every 15 s, so each of the user's sessions is refused at
-its first request after that read: within ~20 s of the commit. The revoke is the fallback: while the
-BFF cannot read the stamp, each session still ends at its next successful renewal, after up to half
-its access token's life (7.5 minutes) of continued use (ADR-0057 §5).
+its first request after that read: within ~20 s of the commit with up to 1,000 signed-in users (one
+read); each further 1,000 adds a read of up to 5 s. The revoke is the fallback: while the BFF cannot
+read the stamp, each session still ends at its next successful renewal, after up to half its access
+token's life (7.5 minutes) of continued use (ADR-0057 §5).
 
 The first statement reports how many grants it revoked, 0 when none was live. The second must
 report 1: a 0 there means the id matched no user, and nobody was signed out.

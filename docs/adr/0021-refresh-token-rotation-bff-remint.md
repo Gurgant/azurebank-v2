@@ -238,11 +238,11 @@ renewal's answer was lost.)*
   (ADR-0018) — left as a known behavior. *(Narrowed 2026-09-29, ADR-0057 §5.3: `/api/auth/logout`
   and the runbooks' SQL also raise the user's session stamp in the same transaction as the revoke,
   and the BFF refuses those sessions at their first request after its next read of the stamps,
-  within ~20 s, with no re-mint: `/bff/auth/me` and `/bff/auth/session-status` read the session
-  through the same check. What this bullet describes is left for a revoke that raises no stamp,
-  and for the time the BFF cannot read the stamps, when a session learns of the revoke at its next
-  renewal, after up to half its token's life, 7.5 minutes. The struck clause above gave those 7.5
-  minutes for both levers.)*
+  within ~20 s with up to 1,000 signed-in users (up to 5 s more for each further 1,000), with no
+  re-mint: `/bff/auth/me` and `/bff/auth/session-status` read the session through the same check.
+  What this bullet describes is left for a revoke that raises no stamp, and for the time the BFF
+  cannot read the stamps, when a session learns of the revoke at its next renewal, after up to half
+  its token's life, 7.5 minutes. The struck clause above gave those 7.5 minutes for both levers.)*
 - **Sender-constraining (DPoP / mTLS) — considered and deliberately rejected.** RFC 9700 §4.14
   makes it *optional* for a confidential client (the BFF authenticates to the AS and never exposes
   tokens to the browser, which is already the boundary DPoP would protect), and DPoP in a BFF is a
