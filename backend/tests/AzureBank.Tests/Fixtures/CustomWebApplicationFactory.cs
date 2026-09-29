@@ -13,7 +13,10 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using AzureBank.Api.Middleware;
 using AzureBank.Infrastructure.Data;
+using AzureBank.Infrastructure.Extensions;
 using AzureBank.Shared.Constants;
+using AzureBank.Shared.Options;
+using Microsoft.Extensions.Options;
 using Serilog.Core;
 using Serilog.Events;
 
@@ -385,18 +388,23 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 
             if (!string.IsNullOrEmpty(_connectionString))
             {
-                // Use the real SQL Server named by AZUREBANK_TEST_SQLSERVER
-                services.AddDbContext<AzureBankDbContext>(options =>
+                // Use the real SQL Server named by AZUREBANK_TEST_SQLSERVER, with the connection
+                // limits production applies (ADR-0058): 10 s to connect, no SqlClient retry, a
+                // pool of 12 and NeverBlock, each only where the string leaves it unset. So these
+                // tests run with the pool a deployment has, and a test that sets its own Connect
+                // Timeout or Max Pool Size keeps it. Read at every context build, like the string.
+                services.AddDbContext<AzureBankDbContext>((provider, options) =>
                 {
-                    options.UseSqlServer(_connectionString, sql =>
+                    var database = provider.GetRequiredService<IOptions<DatabaseOptions>>().Value;
+                    options.UseSqlServer(SqlConnectionDefaults.Apply(_connectionString, database), sql =>
                     {
                         if (_enableSqlRetryOnFailure)
                         {
                             // A retrying strategy, as production has: it re-runs the
                             // transfer delegate on a transient fault, which is exactly
                             // what the transient-retry proof needs to exercise. Not the
-                            // same budget -- a 5-second cap here, production's
-                            // Database:MaxRetryDelay is 30 s unless set. (Until
+                            // same budget -- 3 retries under a 5-second cap here;
+                            // production's is 4 under 10 s unless set (ADR-0058). (Until
                             // 2026-09-25 this said it mirrored production.)
                             sql.EnableRetryOnFailure(
                                 maxRetryCount: 3,

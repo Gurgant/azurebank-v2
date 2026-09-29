@@ -105,6 +105,8 @@ public class LogPlaceholderClassTests
         ["Bytes"] = Operational,
         ["Claimed"] = Operational,
         ["Codes"] = Operational,
+        ["ConnectRetryCount"] = Operational, // the database limits the API starts with (ADR-0058): settings, not data
+        ["ConnectTimeoutSeconds"] = Operational,
         ["Count"] = Operational,
         ["CurrentLevel"] = Operational,
         ["Delivered"] = Operational,
@@ -125,6 +127,9 @@ public class LogPlaceholderClassTests
         ["Left"] = Operational, // grants a graceful stop could not revoke: a count
         ["Max"] = Operational,
         ["MaxPasses"] = Operational,
+        ["MaxPoolSize"] = Operational,
+        ["MaxRetryCount"] = Operational,
+        ["MaxRetryDelay"] = Operational,
         // An exception's message: figure-free by rule (3769dc9), but NOT handle-free for a domain
         // refusal -- "Recipient with identifier 'janesmith' was not found." -- which is why
         // AppExceptionHandler stopped logging it on 2026-09-14. The three sites left log framework
@@ -138,6 +143,7 @@ public class LogPlaceholderClassTests
         ["Partition"] = Operational,
         ["PendingRows"] = Operational,
         ["PeriodSeconds"] = Operational,
+        ["PoolBlockingPeriod"] = Operational,
         ["Reason"] = Operational, // a code's name: why a grant was revoked (RefreshTokenRevokedReason), or which token-road check refused
         ["Receipt"] = Operational,
         ["RequestMethod"] = Operational,

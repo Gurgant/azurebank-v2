@@ -258,6 +258,11 @@ try
     app.Lifetime.ApplicationStarted.Register(() =>
         Log.Information("AzureBank API started successfully"));
 
+    // The database limits this host runs with (ADR-0058), also from ApplicationStarted and for the
+    // same reason: only a host that started runs with any. Read back from what the host built, so
+    // an operator reads the values a request gets, not the ones configuration meant.
+    app.LogDatabaseLimitsOnceStarted();
+
     app.Run();
 }
 // HostAbortedException is how host-building tooling stops the app on purpose — it is not a
