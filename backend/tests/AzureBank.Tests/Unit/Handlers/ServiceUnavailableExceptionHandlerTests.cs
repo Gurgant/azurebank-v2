@@ -1,9 +1,11 @@
 using System.Reflection;
 using System.Text.Json;
+using AzureBank.Api.Attributes;
 using AzureBank.Api.Handlers;
 using AzureBank.Api.Middleware;
 using AzureBank.Shared.Constants;
 using FluentAssertions;
+using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
@@ -135,6 +137,43 @@ public class ServiceUnavailableExceptionHandlerTests
     }
 
     [Fact]
+    public async Task AMoneyRequest_ThatOwnsItsClaim_AndStartedNoCommit_SaysNothingWasApplied()
+    {
+        var context = NewContext();
+        using var deadline = Deadline(context, moneyEndpoint: true, ownsClaim: true, commitStarted: false);
+
+        (await Handler().TryHandleAsync(context, Sql(4060, 11), CancellationToken.None)).Should().BeTrue();
+
+        var body = Body(context);
+        body.GetProperty("applied").GetBoolean().Should().BeFalse("nothing moved, and this request knows it");
+        body.GetProperty("detail").GetString().Should().Be(ServiceUnavailableExceptionHandler.NothingAppliedDetail);
+        body.GetProperty("retryAfterSeconds").GetInt32().Should().Be(10);
+    }
+
+    [Theory]
+    [InlineData(false, true, false, true)] // not a money endpoint: the contract declares applied on the four only
+    [InlineData(true, false, false, true)] // no claim of its own: the key's first request may have moved the money
+    [InlineData(true, true, true, true)] // a commit started: it may have landed, even though it failed
+    [InlineData(true, true, false, false)] // no deadline: nothing records whether a commit started
+    public async Task AnyOtherOutage_SaysNothingAboutWhatWasApplied(
+        bool moneyEndpoint, bool ownsClaim, bool commitStarted, bool withDeadline)
+    {
+        var context = NewContext();
+        using var deadline = withDeadline ? Deadline(context, moneyEndpoint, ownsClaim, commitStarted) : null;
+        if (!withDeadline)
+        {
+            MarkRequest(context, moneyEndpoint, ownsClaim);
+        }
+
+        (await Handler().TryHandleAsync(context, Sql(4060, 11), CancellationToken.None)).Should().BeTrue();
+
+        var body = Body(context);
+        body.TryGetProperty("applied", out _).Should().BeFalse(
+            "only a money request that owns its claim and started no commit knows what was applied");
+        body.GetProperty("detail").GetString().Should().Be(ServiceUnavailableExceptionHandler.Detail);
+    }
+
+    [Fact]
     public async Task ADefect_IsLeftToTheGlobalHandler()
     {
         var context = NewContext();
@@ -192,6 +231,44 @@ public class ServiceUnavailableExceptionHandlerTests
         context.Request.Path = "/api/accounts";
         context.Response.Body = new MemoryStream();
         return context;
+    }
+
+    /// <summary>
+    /// A request as the exception handler hands it over: its endpoint only in the feature the handler
+    /// leaves behind, its deadline armed, and, when asked, a commit that started and failed.
+    /// </summary>
+    private static RequestDeadline Deadline(HttpContext context, bool moneyEndpoint, bool ownsClaim, bool commitStarted)
+    {
+        MarkRequest(context, moneyEndpoint, ownsClaim);
+        var deadline = new RequestDeadline(
+            new FakeTimeProvider(), TimeSpan.FromSeconds(40), CancellationToken.None, NullLogger.Instance);
+        if (commitStarted)
+        {
+            deadline.TryEnterCommit().Should().BeTrue();
+            deadline.CommitFailed();
+        }
+
+        context.Features.Set<IRequestDeadline>(deadline);
+        return deadline;
+    }
+
+    private static void MarkRequest(HttpContext context, bool moneyEndpoint, bool ownsClaim)
+    {
+        var endpoint = new Endpoint(
+            _ => Task.CompletedTask,
+            moneyEndpoint ? new EndpointMetadataCollection(new RequireIdempotencyAttribute()) : EndpointMetadataCollection.Empty,
+            "test");
+        context.Features.Set<IExceptionHandlerFeature>(new ExceptionHandlerFeature
+        {
+            Error = new TimeoutException(),
+            Path = context.Request.Path,
+            Endpoint = endpoint,
+        });
+
+        if (ownsClaim)
+        {
+            context.Features.Set(OwnedIdempotencyClaim.Instance);
+        }
     }
 
     private static JsonElement Body(HttpContext context)

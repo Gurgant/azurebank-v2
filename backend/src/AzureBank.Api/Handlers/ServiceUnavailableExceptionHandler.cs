@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using AzureBank.Api.Attributes;
 using AzureBank.Api.Middleware;
 using AzureBank.Api.Observability;
 using AzureBank.Shared.Constants;
@@ -86,6 +87,18 @@ public sealed class ClientAbortedExceptionHandler : IExceptionHandler
 /// timeout is a raised error, 50000, and stays 500.
 /// </para>
 /// <para>
+/// <c>applied: false</c> ONLY WHEN THIS ANSWER KNOWS IT, and then the detail says so too: on the four
+/// money endpoints (<see cref="RequireIdempotencyAttribute"/>), for a request that owns the
+/// idempotency claim it made (<see cref="OwnedIdempotencyClaim"/>) and has let no commit start
+/// (<see cref="IRequestDeadline.CommitEntered"/>). A money request moves money only inside one
+/// transaction of its own context, and every such commit passes the commit gate
+/// (<c>RequestDeadlineSqlServerTests</c> counts one per success), so no commit started means no money
+/// moved. Anywhere else the key is left out, never set to true or to a guess: a commit that started
+/// may have landed even if it failed, and a request that failed before owning its claim cannot know
+/// what an earlier request with the same key did. A client that keeps its key on a 503 is safe
+/// either way; one told "nothing was applied" when something was would pay again under a new key.
+/// </para>
+/// <para>
 /// Registered after the validation and domain handlers and before the global one, so a domain
 /// refusal keeps its own status and only what would have been a 500 is examined here.
 /// </para>
@@ -112,6 +125,10 @@ public sealed class ServiceUnavailableExceptionHandler : IExceptionHandler
 
     /// <summary>The answer's detail: no time, no cause, nothing the visitor can act on but a retry.</summary>
     internal const string Detail = "The service is temporarily unavailable. Try again shortly.";
+
+    /// <summary>The detail of an answer that knows nothing was applied (<c>applied: false</c>).</summary>
+    internal const string NothingAppliedDetail =
+        "The service is temporarily unavailable, and nothing was changed. Try again shortly.";
 
     /// <summary>SQL errors that mean the database cannot be reached, beyond EF's transient list.</summary>
     private static readonly HashSet<int> UnreachableNumbers = [35, 11001, 18401, 17197, 17142];
@@ -158,19 +175,41 @@ public sealed class ServiceUnavailableExceptionHandler : IExceptionHandler
         // handled, so the instrumentation would otherwise leave the span without it.
         Activity.Current?.AddException(exception);
 
+        var details = new Dictionary<string, object>
+        {
+            ["retryAfterSeconds"] = ServiceUnavailableException.OutageRetryAfterSeconds,
+        };
+        var nothingApplied = NothingApplied(httpContext, deadline);
+        if (nothingApplied)
+        {
+            details["applied"] = false;
+        }
+
         await AppExceptionHandler.WriteProblemAsync(
             httpContext,
             StatusCodes.Status503ServiceUnavailable,
             ErrorCodes.ServiceUnavailable,
-            Detail,
-            new Dictionary<string, object>
-            {
-                ["retryAfterSeconds"] = ServiceUnavailableException.OutageRetryAfterSeconds,
-            },
+            nothingApplied ? NothingAppliedDetail : Detail,
+            details,
             cancellationToken);
 
         return true;
     }
+
+    /// <summary>
+    /// True when the answer may say <c>applied: false</c>: a money endpoint, whose request owns the
+    /// idempotency claim it made and has let no commit start (see the remarks on the class).
+    /// </summary>
+    /// <remarks>
+    /// The endpoint is read from the feature the exception handler leaves behind, since it nulls the
+    /// request's own before it runs its handlers. No deadline, no answer: without one the request
+    /// cannot tell whether a commit started (no money endpoint is exempt from it).
+    /// </remarks>
+    internal static bool NothingApplied(HttpContext httpContext, IRequestDeadline? deadline) =>
+        (httpContext.GetEndpoint() ?? httpContext.Features.Get<IExceptionHandlerFeature>()?.Endpoint)?
+            .Metadata.GetMetadata<RequireIdempotencyAttribute>() is not null
+        && httpContext.Features.Get<OwnedIdempotencyClaim>() is not null
+        && deadline is { CommitEntered: false };
 
     /// <summary>
     /// Why <paramref name="exception"/> is the outage 503, or null when it is not one.
