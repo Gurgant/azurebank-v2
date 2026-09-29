@@ -117,7 +117,7 @@ public class LogPlaceholderClassTests
         ["ExceptionType"] = Operational,
         ["ExpiresAt"] = Operational,
         ["FailureType"] = Operational,
-        ["Half"] = Operational, // which half of a graceful stop's drain overran: "first" or "second", a constant of the code
+        ["Half"] = Operational, // which half of a graceful stop's drain overran or found its budget spent: "first" or "second", a constant of the code
         ["Held"] = Operational,
         ["Interval"] = Operational,
         ["IntervalSeconds"] = Operational,

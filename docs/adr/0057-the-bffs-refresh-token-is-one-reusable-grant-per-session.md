@@ -311,11 +311,19 @@ a profile this system meets.
   go to the API at once in one `/api/auth/revoke` call (split into calls of 1000 beyond that); a grant
   whose session had a renewal in flight goes in a second call once the renewal settles, 5 s at most.
   After the services have stopped, what is left goes in one more call: a session a request still in
-  flight stored or ended after the first pass, and the revoker's queue. Each half runs on a budget of
-  its own, not on the host's shutdown token, and the log says how many grants were revoked and how
-  many were left.
+  flight stored or ended after the first pass, and the revoker's queue. The log says how many grants
+  were revoked and how many were left.
   - This matters because the replica scales to zero about 5 minutes after its last request (the
     platform's 300 s scale-down wait), before the 15-minute idle expiry would end those sessions.
+  - **One budget for the whole drain, 7 s,** started when the host begins to stop, not the host's
+    shutdown token. The renewal wait and both halves draw from it: the second half gets only what
+    the first left, and sends nothing once it is spent. A call whose handler ignores the cancel is
+    waited for 1 s more, so the drain is over 8 s after the stop began, answered or not.
+  - Why 8 s: compose sets no `stop_grace_period` for the BFF, so Docker kills it 10 s after its stop
+    signal, and the other 2 s are left to the rest of the stop. It was a budget per half before,
+    15 s and 1 s more each, one after the other: up to 32 s. Azure Container Apps gives a replica a
+    termination grace of 30 s by default; what the BFF gets there is to be measured at the first
+    deployment (§11).
   - A kill (SIGKILL) leaves those grants alive, with no holder, until their cap. That is a residual.
   - **The drain needs an API that is still up, and that is not in its hands.** On compose the API
     lives in the BFF's network namespace, so it depends on the BFF.
@@ -715,7 +723,10 @@ The evidence recorded for this record is O0 on main, the CI tests on the branch,
   and a new sign-in carrying an old cookie (F13) mark the old grant `SessionEnded`; idle expiry
   revokes the grant within one 5-minute sweep; an "Esci" during a paused SQL is revoked after SQL
   returns; a graceful stop with 2 sessions revokes both grants and logs "left 0" (F7), and sends
-  them before any of the BFF's services is asked to stop (`SessionEndingTests`). **Ran** in-process:
+  them before any of the BFF's services is asked to stop; a stop whose API answers neither half
+  ends within the drain's 8 s, and one whose first half never ends sends nothing past the budget
+  (`SessionEndingTests`). **Measured 2026-09-29:** with a budget per half put back, the first stop
+  took 10.0 s against its 9 s bound, and the second sent its second half's grant. **Ran** in-process:
   `BffOverApiSessionTests.SigningOutOneSession_LeavesTheUsersOtherSessionRenewing_AndRecordsNoReuse`,
   `AuthEndpointTests.Revoke_EndsOnlyThePresentedGrant_AndTheUsersOtherSessionStillRenews`,
   `ReauthenticateTests.ItRevokesOnlyTheOldGrant_AndNeverCallsTheApiLogout`, `SessionEndingTests`
@@ -787,6 +798,9 @@ The evidence recorded for this record is O0 on main, the CI tests on the branch,
   containers of the replica at once and the drain races the sidecar's own stop. The drain's "left"
   count at the first deployment will show it. On compose it does when the BFF stops alone
   (measured) and does not when the whole project stops (read in the code, §4.6).
+- The drain's 8 s against the grace the BFF actually gets. Timed in-process only
+  (`SessionEndingTests`); Docker's 10 s is its default, not timed on compose; and Azure Container
+  Apps' termination grace, 30 s by default, is to be measured at the first deployment.
 - The 15 s watcher period, the detector's limit of 3 and its 10 000 grants, and the revoker's 4 in
   parallel and 1000 in the queue are choices.
 - The watcher's period is exercised on a fake clock in the tests; a 15 s poll against the real stack

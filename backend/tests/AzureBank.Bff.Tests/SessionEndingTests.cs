@@ -289,9 +289,29 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
         }
     }
 
+    /// <summary>
+    /// The "BackendApi" handler of an API that takes every revoke call and never answers it, letting
+    /// go only when the call is cancelled, as a socket does; every other call
+    /// <paramref name="upstream"/> answers.
+    /// </summary>
+    private sealed class RevokesUnanswered(Upstream upstream) : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var response = upstream.Respond(request);
+            if (request.RequestUri!.AbsolutePath == "/api/auth/revoke")
+            {
+                await Task.Delay(Timeout.Infinite, cancellationToken);
+            }
+            return response;
+        }
+    }
+
     private (WebApplicationFactory<Program> Host, Upstream Upstream) NewHost(
         ConcurrentQueue<LogEvent>? log = null, bool disposeWithTheClass = true,
-        StoppedBeforeTheRevoker? stopper = null, RevokeHold? hold = null, bool firstRevokeUnanswered = false)
+        StoppedBeforeTheRevoker? stopper = null, RevokeHold? hold = null, bool firstRevokeUnanswered = false,
+        bool revokesUnanswered = false)
     {
         var upstream = new Upstream();
         var revokes = new StrongBox<int>();
@@ -301,6 +321,7 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
             {
                 services.AddHttpClient("BackendApi").ConfigurePrimaryHttpMessageHandler(() =>
                     firstRevokeUnanswered ? new FirstRevokeUnanswered(upstream, revokes)
+                    : revokesUnanswered ? new RevokesUnanswered(upstream)
                     : hold is null ? new FakeBackendApiHandler(upstream.Respond)
                     : new HeldRevokes(upstream, hold));
                 if (stopper is not null)
@@ -562,7 +583,7 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
         /*
           ADR-0057 §4.6 and F2, at the stop. A revoke that overtook a renewal sent before it would
           make that renewal the tripwire at the API, so the grant of a session renewing when the
-          host stops waits for its renewal: 5 s at most, the drain's share of the grace period.
+          host stops waits for its renewal: 5 s at most, out of the drain's one budget of 7.
           Nothing else waits for it. The renewal here is one the API sits on past the stop, so the
           5 s run out.
         */
@@ -625,15 +646,16 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
     }
 
     [Fact]
-    public async Task AGracefulStop_GivesUpOnAFirstHalfTheApiNeverAnswers_AtItsBudget_AndStillSendsTheSecond()
+    public async Task AGracefulStop_GivesUpOnAFirstHalfTheApiNeverAnswers_AtTheDrainsBudget_AndSendsNothingPastIt()
     {
         /*
-          Each drain half's budget cancels its calls, but a call ends only when the handler under it
+          The drain's budget cancels its calls, but a call ends only when the handler under it
           honours that. The API here takes the first half's call and never answers, not even once
           the call is cancelled. Until the stop bounded its wait, it waited for that half as long as
           the handler held it, past the host's shutdown grace. Now it waits one second past the
-          half's budget, says so, and still sends the second half: a session a sign-in stored after
-          the first half had gone. The budget is 1 s here instead of 15, so the bound is 2 s.
+          drain's budget and says so. The second half, a session a sign-in stored after the first
+          half had gone, gets only what the first left, which is nothing: it sends no call, says so,
+          and its grant counts as left. The budget is 1 s here instead of 7, so the bound is 2 s.
         */
         var log = new ConcurrentQueue<LogEvent>();
         var stopper = new StoppedBeforeTheRevoker((_, services) => NewSession(services, "rt-late"));
@@ -649,22 +671,67 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
         clock.Stop();
 
         var overran = Named(log, "Graceful stop: the {Half} drain half overran").ToList();
+        var spent = Named(log, "Graceful stop: the {Half} drain half found the drain's budget spent").ToList();
         var summary = Named(log, "Graceful stop:").Where(e => e.Properties.ContainsKey("Revoked")).ToList();
         using (new AssertionScope())
         {
             stopped.Should().BeTrue("the stop must not wait on a call the handler never ends");
-            clock.Elapsed.Should().BeGreaterThan(budget, "the stop waited for the half's budget first")
+            clock.Elapsed.Should().BeGreaterThan(budget, "the stop waited for the drain's budget first")
                 .And.BeLessThan(budget + TimeSpan.FromSeconds(1) + TimeSpan.FromSeconds(3),
                     "it waits one second past the budget at most, and 3 s are room for a slow machine");
             overran.Should().ContainSingle();
             overran.Should().OnlyContain(e => e.Level == LogEventLevel.Warning
                 && ((ScalarValue)e.Properties["Half"]).Value as string == "first");
+            spent.Should().ContainSingle();
+            spent.Should().OnlyContain(e => e.Level == LogEventLevel.Warning
+                && ((ScalarValue)e.Properties["Half"]).Value as string == "second");
+            upstream.RevokeCallLog.Select(c => c.Grants).Should().BeEquivalentTo(
+                [new[] { "rt-held" }], "no call starts once the drain's budget is spent");
+            summary.Should().ContainSingle();
+            summary.Should().OnlyContain(e => e.Properties["Revoked"].ToString() == "0"
+                && e.Properties["Left"].ToString() == "2", "the unanswered grant and the unsent one count as left");
+        }
+    }
+
+    [Fact]
+    public async Task AGracefulStop_WhoseCallsTheApiNeverAnswersInEitherHalf_EndsWithinTheDrainsOneBudget()
+    {
+        /*
+          CodeRabbit on #217. Each half had a budget of its own, 15 s and 1 s more, and the second
+          began only when the first had ended, so a stop whose API answered neither could take 32 s:
+          past the 10 s Docker gives the BFF before it kills it. Both halves now draw from one budget,
+          started when the host began to stop. The API here takes every revoke and never answers,
+          letting go only when the call is cancelled, as a socket does. The first half's call ends at
+          its own 5 s timeout; the second half, a session a sign-in stored meanwhile, is sent with the
+          2 s the first left, and cut when they run out. The budget is the shipped one.
+        */
+        var log = new ConcurrentQueue<LogEvent>();
+        var stopper = new StoppedBeforeTheRevoker((_, services) => NewSession(services, "rt-late"));
+        var (host, upstream) = NewHost(log, disposeWithTheClass: false, stopper, revokesUnanswered: true);
+        NewSession(host, "rt-held");
+        var drain = host.Services.GetRequiredService<GrantRevoker>().DrainBudget + TimeSpan.FromSeconds(1);
+        host.CreateClient();
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var stop = host.DisposeAsync().AsTask();
+        // Past the two halves' 10 s that a budget per half would take, so that case is measured too.
+        var stopped = await Task.WhenAny(stop, Task.Delay(TimeSpan.FromSeconds(30))) == stop;
+        clock.Stop();
+
+        var summary = Named(log, "Graceful stop:").Where(e => e.Properties.ContainsKey("Revoked")).ToList();
+        using (new AssertionScope())
+        {
+            stopped.Should().BeTrue();
+            drain.Should().Be(TimeSpan.FromSeconds(8), "the budget and its one second of overrun, inside Docker's 10 s");
+            clock.Elapsed.Should().BeGreaterThan(TimeSpan.FromSeconds(5), "the first half's call waited out its 5 s")
+                .And.BeLessThan(drain + TimeSpan.FromSeconds(1),
+                    "the whole stop ends within the drain's one budget, and 1 s is room for a slow machine");
             upstream.RevokeCallLog.Select(c => c.Grants).Should().BeEquivalentTo(
                 [new[] { "rt-held" }, ["rt-late"]], o => o.WithStrictOrdering(),
-                "the second half is sent all the same");
+                "the second half is sent with what the first left");
             summary.Should().ContainSingle();
-            summary.Should().OnlyContain(e => e.Properties["Revoked"].ToString() == "1"
-                && e.Properties["Left"].ToString() == "1", "the unanswered grant counts as left");
+            summary.Should().OnlyContain(e => e.Properties["Revoked"].ToString() == "0"
+                && e.Properties["Left"].ToString() == "2", "neither call was answered");
         }
     }
 
