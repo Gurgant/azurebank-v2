@@ -93,6 +93,11 @@ index, so the split is observed rather than assumed:
 | `SELECT` | succeeds |
 | `INSERT` / `UPDATE` / `DELETE` | all fail, Msg 1934 |
 
+*(2026-09-28: `RefreshTokens` too, which carries a filtered index of its own. Measured against
+LocalDB, inside transactions that were rolled back: without `-I` the UPDATEs that the PIN runbook
+and the refresh-token reuse runbook run by hand, on `AspNetUsers` and on `RefreshTokens`, fail with
+Msg 1934; with it they run.)*
+
 **`DangerousAcceptAnyServerCertificate` belongs only in `appsettings.Development.json`.** It must
 never appear in the base file. Be aware that stale `bin/Release` artifacts can still carry it and be
 mistaken for evidence that it was configured in the base file — check the source, not the output.
@@ -584,20 +589,25 @@ placed, check what actually performs the save — `UserManager.UpdateAsync`, `Si
 repository and `ExecuteUpdate` are all saves that a reader scanning for `_context.SaveChangesAsync`
 will miss (`ExecuteUpdate` is worse: it commits without flushing tracked entities at all).
 
-## A rotated-then-replayed refresh token is a benign retry, not reuse
+## Only a grant whose session ended trips the tripwire
 
-Cost two rewrites of a test that looked obviously right.
+Since PR-1 (ADR-0057) the grant does not rotate, and `RefreshTokenReuse` is raised in one case
+only: a grant revoked with the reason `SessionEnded`, presented in a request the API received after
+that revoke. A grant revoked through `/api/auth/logout` (`SignOutEverywhere`), by the migration
+(`Deployment`) or by a runbook's SQL, presented again, is refused with a plain log line and no
+event, and so is one whose revoke committed while its renewal was waiting to read. So a test that
+wants the tripwire revokes through `/api/auth/revoke`, as the BFF does when a session ends, and
+presents the grant afterwards; `AuditChainSqlServerTests` does, and its comment says why.
 
-`RefreshTokenService` treats a token that HAS a successor and was revoked inside
-`RotationGraceWindow` (10 s) as a lost-response retry: rejected, but with no security event at all.
-So "rotate, then replay the old token" never reaches the reuse branch, and a fault injected there
-never fires. Genuine reuse needs a token revoked WITHOUT a successor — log out, which calls
-`RevokeAllForUserAsync`.
+The second trap still holds: a test whose setup already satisfies its postcondition proves nothing.
+"The user's other session is still active" is worth asserting only when there is another session —
+sign in twice first — and only once breaking the code on purpose has turned the assertion red. The
+test will not tell you which kind it is.
 
-Then the second trap: logging out revokes *everything*, so an assertion that the family ends up with
-zero active tokens holds whether or not containment ran. Log back in first, so the mitigation has a
-victim — and confirm by breaking the code on purpose and watching the test go red. A test whose
-setup already satisfies its postcondition proves nothing, and it will not tell you so.
+*(Until 2026-09-28 this entry was about rotation's 10 s `RotationGraceWindow`: a rotated token
+replayed inside it was a benign retry with no event, so genuine reuse needed a token revoked without
+a successor, by logging out, and logging out revoked everything, so "the family ends with zero
+active tokens" held whether or not containment ran. Rotation and the containment are gone.)*
 
 ## Three binding kinds, two parsers — and a `Guid` does not mean the same thing in each
 

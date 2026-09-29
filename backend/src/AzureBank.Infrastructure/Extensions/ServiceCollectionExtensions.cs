@@ -62,9 +62,12 @@ public static class ServiceCollectionExtensions
                     //
                     // Left that way deliberately. A timeout means the work was blocked, so retrying
                     // it holds a connection for another CommandTimeout without making it likelier
-                    // to succeed; ADR-0034 works through where that matters (the refresh-reuse
-                    // path, which an attacker can trigger on demand). Add -2 to errorNumbersToAdd
-                    // only with that argument answered.
+                    // to succeed. ADR-0034 keeps the measured list above. The refresh-reuse path
+                    // it weighed this against is gone since ADR-0057: a renewal only reads, the
+                    // tripwire writes one audit row and revokes nothing, only code inside the
+                    // replica can reach either, and /api/auth/revoke answers 503 so the BFF
+                    // retries it. Add -2 to errorNumbersToAdd only after weighing the paths that
+                    // remain.
                     if (retryOnTransientFailures)
                     {
                         sqlOptions.EnableRetryOnFailure(

@@ -1,0 +1,50 @@
+meta {
+  name: Revoke
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/auth/revoke
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-AzureBank-Token-Road: bff
+}
+
+body:json {
+  {
+    "refreshTokens": ["{{refreshToken}}"]
+  }
+}
+
+docs {
+  WHAT THIS IS. The call the BFF makes when one session ends: a sign-out, idle expiry, the cap, a
+  new sign-in over an old cookie, or a graceful stop. It ends the grant login published and no
+  other: the one register issued stays live until logout, the next request.
+
+  No bearer token, because the grant is the credential. The service key, the token-road marker
+  and a loopback caller still apply, as on the other four token endpoints.
+
+  A grant already revoked, or one never issued, gets the same 200 (RFC 7009), so this proves the
+  call is accepted, not that the grant ended. Presenting the grant to refresh afterwards would
+  prove that, and would also trip the reuse tripwire on purpose, writing a security event and an
+  audit row. The backend suite proves it instead, in AuthEndpointTests.
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("Status is 200 OK", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("The revocation is acknowledged", function() {
+    expect(res.body.message).to.equal('Revoked');
+  });
+}

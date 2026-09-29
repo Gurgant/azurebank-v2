@@ -57,6 +57,17 @@ What that does NOT buy is a rotation across the two hosts: `ServiceCredentialMid
 copy once, in its constructor, so a rotation is a deployment event on both sides. While one is half
 applied the answer is the API's 401 — loud and closed, rather than quiet and open.
 
+*(Extended 2026-09-28, [ADR-0057](0057-the-bffs-refresh-token-is-one-reusable-grant-per-session.md)
+§4.2 and §4.7. On the five token endpoints — login, register, refresh, revoke and logout — and on
+the session-stamp feed the BFF polls, `POST /api/auth/session-stamps` (ADR-0057 §5.3), the key is
+not enough: the API answers them 404 unless the request comes over loopback and carries exactly one
+`X-AzureBank-Token-Road` header whose value is the BFF's marker, compared exactly. The BFF's own
+client adds that marker, and the YARP transform strips any copy a browser sends, next to where it
+strips the key, because the proxy also reaches the API over loopback and adds the key to every
+browser request. And a half-applied rotation no longer reaches the browser as the API's 401: the
+API marks that refusal with `X-AzureBank-Refusal: service-credential`, and the BFF turns it into a
+503 with `Retry-After`, so the SPA stays signed in. At the API the answer is still the 401.)*
+
 **D5 — The key travels over TLS, or to this machine, and nothing is forwarded anywhere else.** It
 is a bearer secret, so `http://api.internal` would put it on the network in clear. The BFF refuses
 to start when `BackendApi:BaseUrl` or any YARP destination is neither `https` nor `http` on
@@ -96,17 +107,25 @@ says nothing about a customer. In Development only, `/openapi` and `/scalar`, wh
 opens in a browser; the operations they describe are not exempt, so Scalar's "Try it" needs the
 header like any other caller.
 
-**D7 — In production the API also has no public address.** A private network, with the
+**D7 — In production the API also has no public address.** ~~A private network, with the
 platform's identity between the two hosts (managed identity on Azure) or mutual TLS from a service
 mesh. That is a hosting decision and this repository has no hosting configuration, so it is
-written here and not in code. The key stays as the second line behind it.
+written here and not in code.~~ The key stays as the second line behind it. *(Struck 2026-09-28,
+ADR-0057: the hosting is decided, and it is not two hosts. The API runs as a sidecar of the BFF and
+listens on loopback only: in `compose.yaml` it shares the BFF's network namespace
+(`network_mode: "service:bff"`) and binds `127.0.0.1:5068`, and the Azure plan runs the two as one
+app. So there is no network between them for a private network or an identity to protect. ADR-0057
+depends on this: its token endpoints refuse every address that is not loopback, and a reusable grant
+is safe only because nothing outside the replica can open that socket.)*
 
 ## Rejected
 
 - **Mutual TLS in the repository.** Stronger, and it costs a certificate authority, two
   certificates to issue and rotate, and Kestrel configured to require them in development, in
   `WebApplicationFactory` and in the three CI jobs that start the stack — for two processes on one
-  machine. It belongs to D7, where the platform supplies it.
+  machine. It belongs to D7, where the platform supplies it. *(2026-09-28, ADR-0057: D7 has no
+  network between two hosts any more for the platform to protect. Mutual TLS, or DPoP, comes first
+  on the day the API is reached over a network; see "What would change this".)*
 - **Leaving it to the network alone.** Correct in production and invisible in the repository: a
   reader who runs `curl` against the API gets a token, and the BFF looks like decoration.
 - **A PIN check inside the API on `/full-number`.** That read is the one sensitive operation
@@ -116,7 +135,9 @@ written here and not in code. The key stays as the second line behind it.
   contract and a changed frontend flow, for a read that moves no money. It is worth reopening on
   the day "What would change this" below comes true, and not before.
 - **An allow-list of caller addresses.** The BFF and the API share a host in development and CI,
-  so the list would be `127.0.0.1`, which is every caller.
+  so the list would be `127.0.0.1`, which is every caller. *(2026-09-28, ADR-0057 §4.2: the token
+  endpoints do now refuse every address that is not loopback, beside the key and not instead of it,
+  and with the BFF's own marker, because loopback alone is every caller, exactly as this says.)*
 
 ## Consequences
 
@@ -134,3 +155,7 @@ written here and not in code. The key stays as the second line behind it.
 A second legitimate client of the API (a mobile app with its own token flow, a partner
 integration). One shared key does not distinguish callers; that is the point at which the API
 needs per-client credentials and this ADR is superseded.
+
+**The API reached over a network** *(added 2026-09-28, ADR-0057)*: its own app with internal
+ingress, or anything else that is not the loopback sidecar of D7. Then stop. ADR-0057's reusable
+grant rests on the loopback road, and DPoP (RFC 9449) or mutual TLS (RFC 8705) comes first.

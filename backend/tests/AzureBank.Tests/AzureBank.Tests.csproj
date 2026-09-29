@@ -53,6 +53,11 @@
          Aliased because the seeder is an Exe with its own top-level Program, which would
          otherwise collide with the API's in CustomWebApplicationFactory. -->
     <ProjectReference Include="..\..\tools\AzureBank.Seeder\AzureBank.Seeder.csproj" Aliases="seeder" />
+    <!-- The BFF, hosted in the same process as the API, so a test can drive the real BFF and read
+         what the real API answered and wrote (ADR-0057 §10 O0-2 items 3 and 6: neither half can be
+         seen from one host alone; see Fixtures/BffOverApiFactory.cs). Aliased for the seeder's
+         reason: its top-level Program would collide with the API's. -->
+    <ProjectReference Include="..\..\src\AzureBank.Bff\AzureBank.Bff.csproj" Aliases="bff" />
   </ItemGroup>
 
 </Project>

@@ -2,6 +2,11 @@
 
 **Status:** Accepted · **Date:** 2026-08-08 · **Supersedes nothing.** Closes the residual left open
 by the [ADR-0021](0021-refresh-token-rotation-bff-remint.md) amendment of 2026-08-04.
+*(2026-09-28: the decision below is superseded by
+[ADR-0057](0057-the-bffs-refresh-token-is-one-reusable-grant-per-session.md), F3. The tripwire that
+replaced reuse detection revokes nothing, so no family revoke is left to fail and there is nothing
+to recover. The measured record of which SQL errors EF retries, under "What was measured first",
+stays: the infrastructure registration cites it for that list and for leaving −2 unretried.)*
 
 ## Context
 
@@ -53,7 +58,10 @@ Two things follow, and neither was obvious from reading:
 
 ## Decision
 
-**Accept the residual, with detection. Add neither an inline retry nor a durable work item.**
+~~**Accept the residual, with detection. Add neither an inline retry nor a durable work item.**~~
+*(Superseded 2026-09-28 by ADR-0057: the residual is gone with the family revoke it belonged to. A
+grant presented after its session ended is recorded and revokes nothing, and containment is the
+operator's, through ADR-0057's levers. The reasoning below is kept as the record of the decision.)*
 
 ### Why not retry inline
 
@@ -100,11 +108,20 @@ a single test. Two tests now pin it:
   caller who hung up is not a security event, and burying it in the same counter would poison the
   signal this decision depends on.
 
+*(2026-09-28, ADR-0057: the first of these, and the third test below, were deleted with the branch
+they pinned. The second was rewritten the other way round: a caller that hangs up can no longer
+stop the tripwire's audit row (`RenewAsync_TheTripwiresRow_IsWrittenEvenWhenTheCallerHangsUp`).
+`RefreshTokenReuseRevokeFailed` is no longer raised; the name stays for the rows already written.)*
+
 A third test makes the residual itself falsifiable rather than prose: after a failed revoke the
 family is asserted to be **still active**. If a future change makes the revoke converge anyway, that
 test fails and this ADR is what needs revisiting.
 
 ## Revisit when
+
+*(Moot since 2026-09-28, ADR-0057: the event the first trigger watches is no longer raised. The
+second trigger's lifetime did get shorter than 7 days, to 60 minutes, and ADR-0057 decided a
+per-user stamp of its own, checked by the BFF rather than on the API's validation (its §5.3).)*
 
 This decision is a function of "never observed". It flips the moment that stops being true:
 
@@ -123,8 +140,13 @@ This decision is a function of "never observed". It flips the moment that stops 
 
 ## Consequences
 
-- The attacker-first window is unchanged: bounded by logout or the 7-day expiry. Stated, not fixed.
+- ~~The attacker-first window is unchanged: bounded by logout or the 7-day expiry. Stated, not
+  fixed.~~ *(Struck 2026-09-28, ADR-0057: there is no attacker-first window of this kind left. A
+  copy of a live grant works until its session ends, at most 60 minutes, and ADR-0057 §3 states that
+  trade.)*
 - No new table, no migration, no scheduled work, no added latency on the reuse path.
-- The claim the decision rests on is now enforced by tests rather than by comments.
+- ~~The claim the decision rests on is now enforced by tests rather than by comments.~~ *(Struck
+  2026-09-28, ADR-0057: two of those three tests were deleted with the branch they pinned, and the
+  other was rewritten for the tripwire's audit row; see "What 'with detection' has to mean".)*
 - One inaccurate comment about retry coverage is corrected, which was itself a small instance of the
   rule this repo keeps relearning: the behaviour of a dependency is measured, not remembered.

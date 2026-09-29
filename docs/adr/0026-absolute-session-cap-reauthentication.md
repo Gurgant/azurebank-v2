@@ -44,18 +44,25 @@ that a future reviewer will otherwise read as a bug.
    accepted an identity would let whoever is at the keyboard put their own session behind another
    person's screen.
 
-4. **The old session is revoked LOCALLY and the API is never told — the old refresh token is
+4. ~~**The old session is revoked LOCALLY and the API is never told — the old refresh token is
    deliberately left to expire.** The API exposes only `RevokeAllForUserAsync`; there is no
-   single-token revoke, and `/api/auth/logout` calls it. That leaves no third option:
-   - authenticate → mint → call the API's logout would revoke **every** token this user holds,
+   single-token revoke, and `/api/auth/logout` calls it. That leaves no third option:~~
+   - ~~authenticate → mint → call the API's logout would revoke **every** token this user holds,
      including the pair minted moments earlier, so the replacement session would die silently at its
-     first re-mint;
-   - call it first, then authenticate, means a **mistyped password ends the session** it was meant
-     to save.
+     first re-mint;~~
+   - ~~call it first, then authenticate, means a **mistyped password ends the session** it was meant
+     to save.~~
 
-   So the residue is accepted. Its only copy lived in the session record that is deleted in the same
-   request, and it was never in the browser, so after the swap no party can present it.
-   **Order is load-bearing: authenticate, mint, revoke locally.**
+   ~~So the residue is accepted. Its only copy lived in the session record that is deleted in the
+   same request, and it was never in the browser, so after the swap no party can present it.~~
+   **Order is load-bearing: authenticate, mint, ~~revoke locally~~ set the new cookie, end the old
+   session, queue its grant.** *(Superseded 2026-09-28 by
+   [ADR-0057](0057-the-bffs-refresh-token-is-one-reusable-grant-per-session.md) §4.6: the API now
+   revokes one grant, through `POST /api/auth/revoke`, so the old session's grant is revoked at the
+   API and nothing else is. The old session ends through the same path as "Esci", and
+   `GrantRevoker` revokes its grant after any renewal it had in flight. A mistyped password still
+   ends nothing, because nothing ends before authentication succeeds; the replacement session keeps
+   its own grant, which nothing here touches.)*
 
 5. **The request is validated for length, NOT with `[Password]`.** That attribute enforces the
    complexity *pattern*, which is right when a password is chosen and wrong when one is verified: a

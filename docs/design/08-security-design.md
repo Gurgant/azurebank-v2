@@ -170,7 +170,7 @@ AzureBank/
   "Session": {
     "CookieName": ".AzureBank.Session",
     "AccessTokenMinutes": 15,
-    "InactivityTimeoutMinutes": 30,
+    "InactivityTimeoutMinutes": 15,
     "AbsoluteTimeoutMinutes": 60
   }
 }
@@ -194,7 +194,7 @@ services.AddSession(options =>
     options.Cookie.HttpOnly = true;           // Not accessible via JavaScript
     options.Cookie.SecurePolicy = CookieSecurePolicy.Always;  // HTTPS only
     options.Cookie.SameSite = SameSiteMode.Strict;  // CSRF protection
-    options.IdleTimeout = TimeSpan.FromMinutes(30);
+    options.IdleTimeout = TimeSpan.FromMinutes(15);
     options.Cookie.IsEssential = true;
 });
 ```
@@ -204,12 +204,21 @@ services.AddSession(options =>
 | Timeout Type | Production | Development | Description |
 |--------------|------------|-------------|-------------|
 | **Access Token** | 15 min | 5 min | JWT validity period |
-| **Inactivity** | 30 min | 10 min | Session expires after idle |
+| **Inactivity** | 15 min | 10 min | Session expires after idle |
 | **Absolute** | 60 min | 20 min | Maximum session lifetime |
 
-> The 15-min access token no longer bounds the session: the BFF silently re-mints it via
-> refresh-token rotation (ADR-0021), so an active session slides within the inactivity/absolute
-> budgets above. A refresh-token reuse/revocation (or logout) ends the session immediately.
+> The 15-min access token no longer bounds the session: the BFF silently renews it with the
+> session's refresh token (ADR-0021), which does not rotate and lives 60 minutes from sign-in
+> (ADR-0057), so an active session slides within the inactivity/absolute budgets above. "Esci" ends
+> the session at once. A sign-out of every session of the user, through `/api/auth/logout` or a
+> runbook's SQL, also raises the user's session stamp, and the BFF ends the session within ~20 s
+> with up to 1,000 signed-in users (up to 5 s more for each further 1,000), at its first request
+> after the next read of the stamps (ADR-0057 §5.3); while the BFF cannot read them, at its next
+> renewal. A grant revoked any other way ends it at its next renewal.
+> *(Until 2026-09-29 this said every revoke but "Esci" ended the session at its next renewal.)*
+> *(Until 2026-09-28 this said the token was re-minted via refresh-token rotation and that a reuse,
+> a revocation or a logout ended the session immediately, and the sample below called the refresh
+> token "Rotated".)*
 
 ### 3.4 Session Data Structure
 
@@ -219,7 +228,7 @@ public class UserSession
     public string UserId { get; set; }
     public string AccessToken { get; set; }
     public DateTime TokenExpiry { get; set; }
-    public string? RefreshToken { get; set; }  // Rotated; drives silent re-mint (ADR-0021)
+    public string? RefreshToken { get; set; }  // The grant: never rotated (ADR-0057)
     public DateTime SessionCreated { get; set; }
     public DateTime LastActivity { get; set; }
     public int AuthLevel { get; set; }  // Current authentication level

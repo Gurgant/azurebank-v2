@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text;
@@ -65,17 +66,30 @@ public class ReauthenticateTests : IClassFixture<WebApplicationFactory<Program>>
     /// Records every upstream path the BFF called and answers login with success or 401 depending on
     /// the password it is handed. Recording is what makes the "never calls /api/auth/logout" test
     /// possible: that call's absence is the property, and absence cannot be observed from a response.
+    /// A queue, because the grant revoker calls from its own thread.
     /// </summary>
     private sealed class Upstream
     {
-        public List<string> Paths { get; } = [];
+        public ConcurrentQueue<string> Paths { get; } = new();
         public List<string> LoginBodies { get; } = [];
         public int LoginCount { get; set; }
+
+        /// <summary>Every grant named in a POST /api/auth/revoke, in arrival order.</summary>
+        public ConcurrentQueue<string> RevokedGrants { get; } = new();
 
         public HttpResponseMessage Respond(HttpRequestMessage request)
         {
             var path = request.RequestUri!.AbsolutePath;
-            Paths.Add(path);
+            Paths.Enqueue(path);
+
+            if (path == "/api/auth/revoke")
+            {
+                using var revoke = JsonDocument.Parse(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+                foreach (var grant in revoke.RootElement.GetProperty("refreshTokens").EnumerateArray())
+                {
+                    RevokedGrants.Enqueue(grant.GetString()!);
+                }
+            }
 
             if (path == "/api/auth/login")
             {
@@ -213,12 +227,14 @@ public class ReauthenticateTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
-    public async Task ItNeverCallsTheApiLogout_WhichWouldRevokeTheTokensItJustMinted()
+    public async Task ItRevokesOnlyTheOldGrant_AndNeverCallsTheApiLogout()
     {
-        // The API's /api/auth/logout runs RevokeAllForUserAsync — EVERY refresh token this user
-        // holds, including the pair minted moments earlier. "Re-auth = logout + login" therefore
-        // produces a session that dies silently at its first re-mint. The negative control below is
-        // what makes this assertion falsifiable rather than vacuous.
+        // The API's /api/auth/logout runs RevokeAllForUserAsync — EVERY grant this user holds,
+        // including the one minted moments earlier. "Re-auth = logout + login" would therefore
+        // produce a session that dies silently at its first renewal. Since PR-1 the old session
+        // ends through the same path as "Esci" (ADR-0057 §4.6, ADR-0026's order): its grant, and
+        // only its grant, is revoked with /api/auth/revoke. Until then the old grant was left to
+        // expire.
         var (host, upstream) = NewHost();
         var client = host.CreateClient();
 
@@ -226,15 +242,34 @@ public class ReauthenticateTests : IClassFixture<WebApplicationFactory<Program>>
         var response = await Reauthenticate(client, oldId, new { password = GoodPassword });
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
+        (await Eventually(() => upstream.RevokedGrants.Contains("fake-refresh-jwt-1"))).Should().BeTrue(
+            "the retired session's grant is revoked at the API");
+        await Task.Delay(200);
+        upstream.RevokedGrants.Should().Equal(["fake-refresh-jwt-1"], "the new session's grant is not touched");
         upstream.Paths.Should().NotContain("/api/auth/logout");
-        upstream.Paths.Should().Equal("/api/auth/login", "/api/auth/login");
+        upstream.Paths.Where(p => p != "/api/auth/revoke").Should().Equal("/api/auth/login", "/api/auth/login");
 
-        // Negative control: a real logout DOES call it. Without this, the assertion above would
-        // still pass against a BFF that had lost the ability to reach that path at all.
+        // Negative control: the new grant CAN be revoked, and is, once its own session ends. Without
+        // this the "not touched" above would pass against a harness that never recorded it at all.
         using var logout = new HttpRequestMessage(HttpMethod.Post, "/bff/auth/logout");
         logout.Headers.Add("Cookie", $"{CookieName}={SessionIdFrom(response)}");
         (await client.SendAsync(logout)).StatusCode.Should().Be(HttpStatusCode.OK);
-        upstream.Paths.Should().Contain("/api/auth/logout");
+        (await Eventually(() => upstream.RevokedGrants.Contains("fake-refresh-jwt-2"))).Should().BeTrue();
+        upstream.Paths.Should().NotContain("/api/auth/logout", "\"Esci\" ends one session, not every session of the user");
+    }
+
+    private static async Task<bool> Eventually(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (!condition())
+        {
+            if (DateTime.UtcNow >= deadline)
+            {
+                return false;
+            }
+            await Task.Delay(25);
+        }
+        return true;
     }
 
     [Fact]

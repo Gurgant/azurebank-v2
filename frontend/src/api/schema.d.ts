@@ -895,7 +895,9 @@ export interface paths {
         put?: never;
         /**
          * Refresh access token
-         * @description Exchange a refresh token for a fresh access + refresh token pair (rotation).
+         * @description Present the session's grant for a fresh access token, which expires no later than the grant.
+         *     The grant is not consumed: the same one renews again until its session ends or it expires,
+         *     and the answer carries no refresh token.
          */
         post: {
             parameters: {
@@ -904,7 +906,7 @@ export interface paths {
                 path?: never;
                 cookie?: never;
             };
-            /** @description The current refresh token */
+            /** @description The session's grant */
             requestBody: {
                 content: {
                     "application/json": components["schemas"]["RefreshRequest"];
@@ -933,6 +935,147 @@ export interface paths {
                 };
                 /** @description Unauthorized */
                 401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                415: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revoke grants
+         * @description Revoke the grants of sessions that have ended: one, or several when the BFF drains its
+         *     sessions on a graceful stop. Revoked and unknown grants get the same 200 (RFC 7009 §2.2), and
+         *     repeating the call changes nothing. A 503 means the revocation was not recorded; send it again.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            /** @description The grants to revoke */
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RevokeRequest"];
+                    "text/json": components["schemas"]["RevokeRequest"];
+                    "application/*+json": components["schemas"]["RevokeRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                415: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/session-stamps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read session stamps
+         * @description The current session stamp of each listed user. Signing a user out of every session raises
+         *     theirs, and a session given a lower one at sign-in has been signed out since. An unknown user
+         *     has no entry in the answer.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            /** @description The users to read */
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SessionStampsRequest"];
+                    "text/json": components["schemas"]["SessionStampsRequest"];
+                    "application/*+json": components["schemas"]["SessionStampsRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiResponseOfSessionStampsResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -1024,8 +1167,9 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Logout
-         * @description Logout and invalidate session.
+         * Logout from every session
+         * @description Sign the user out of every session on every device: every grant of the user is revoked and
+         *     the user's session stamp is raised, together. One session ends through revoke instead.
          */
         post: {
             parameters: {
@@ -2856,6 +3000,10 @@ export interface components {
             data?: null | components["schemas"]["RegisterResponse"];
             message?: null | string;
         };
+        ApiResponseOfSessionStampsResponse: {
+            data?: null | components["schemas"]["SessionStampsResponse"];
+            message?: null | string;
+        };
         ApiResponseOfStepUpAuthorizationResponse: {
             data?: null | components["schemas"]["StepUpAuthorizationResponse"];
             message?: null | string;
@@ -3080,24 +3228,25 @@ export interface components {
             exists: boolean;
         };
         /**
-         * @description Request body for POST /api/auth/refresh: exchanges a valid refresh token for a fresh
-         *     access + refresh token pair (rotation). The refresh token is the SOLE credential — no
-         *     bearer access token is required (the access token being refreshed may already be expired).
+         * @description Request body for POST /api/auth/refresh: presents the session's grant for a fresh access token.
+         *     The grant is the SOLE credential — no bearer access token is required (the access token being
+         *     renewed may already be expired) — and it is not consumed: the same grant renews again until its
+         *     session ends or it expires.
          */
         RefreshRequest: {
             refreshToken: string;
         };
         /**
-         * @description Result of a successful refresh-token rotation: a new short-lived access token AND a NEW
-         *     refresh token. The presented refresh token is now revoked — the caller MUST replace its
-         *     stored value with this one. Replaying the old token is rejected and, because it is now a
-         *     revoked token, trips reuse-detection (revoking the whole active token set for the user).
+         * @description Result of a successful renewal: a new short-lived access token and its expiry, and nothing else.
+         *     The grant that was presented stays valid and unchanged: a renewal writes nothing, so it
+         *     hands back no refresh token, and the caller keeps the one it holds.
          */
         RefreshResponse: {
-            /** @description Fresh JWT access token (short-lived, per JwtOptions.ExpirationMinutes). */
+            /**
+             * @description Fresh JWT access token: `Jwt:ExpirationMinutes` long, or shorter when the grant expires
+             *     sooner, since no access token outlives the grant it came from.
+             */
             accessToken: string;
-            /** @description The NEW refresh token (plaintext, shown once). Store it; discard the old one. */
-            refreshToken: string;
             /**
              * Format: date-time
              * @description Absolute expiry of the new access token (from its own exp claim).
@@ -3125,6 +3274,32 @@ export interface components {
             account: components["schemas"]["AccountResponse"];
             /** @description Authentication token for immediate login */
             token: components["schemas"]["TokenResponse"];
+        };
+        /**
+         * @description Request body for POST /api/auth/revoke: the grants of sessions the BFF has ended. One
+         *     for "Esci", idle expiry or a new sign-in; several when the BFF drains every session it holds on a
+         *     graceful stop.
+         */
+        RevokeRequest: {
+            /**
+             * @description The grants to revoke. An unknown one, or one already revoked, is not an error: the answer is
+             *     the same 200 either way (RFC 7009 §2.2). A null one names no grant, and the request is refused
+             *     with 400.
+             */
+            refreshTokens: string[];
+        };
+        /** @description Request body for POST /api/auth/session-stamps: the users who hold a session in the BFF. */
+        SessionStampsRequest: {
+            /**
+             * @description The users whose session stamps to read. An unknown user is not an error: the answer simply
+             *     has no entry for it.
+             */
+            userIds: string[];
+        };
+        /** @description What POST /api/auth/session-stamps answers: one entry per known user asked about. */
+        SessionStampsResponse: {
+            /** @description The stamps, in no particular order. An unknown user has no entry. */
+            stamps: components["schemas"]["UserSessionStamp"][];
         };
         SetPinRequest: {
             /** @description PIN must be exactly 6 digits. */
@@ -3158,8 +3333,8 @@ export interface components {
             /** @description JWT access token */
             accessToken: string;
             /**
-             * @description Refresh token (plaintext, shown once) for rotating the access token via
-             *     POST /api/auth/refresh. In the BFF deployment it is captured server-side. Deliberately
+             * @description The session's grant (plaintext, shown once), presented to POST /api/auth/refresh for each new
+             *     access token; it does not rotate. In the BFF deployment it is captured server-side. Deliberately
              *     NOT `required`: registration issues it BEST-EFFORT — the user + account are already
              *     committed, so a post-registration token-write failure must not fail the request. It is
              *     therefore genuinely optional here (null when that write failed); the user obtains a
@@ -3167,6 +3342,19 @@ export interface components {
              *     fails the login, so on that path the nullability is only a boundary-robustness allowance.
              */
             refreshToken?: null | string;
+            /**
+             * Format: date-time
+             * @description When the grant stops working: its issue plus `Jwt:RefreshTokenLifetimeMinutes`, fixed
+             *     then and never extended. The BFF caps the session at it. Null exactly when the grant
+             *     is, after a registration whose best-effort grant failed.
+             */
+            refreshTokenExpiresAt?: null | string;
+            /**
+             * Format: int32
+             * @description The user's session stamp when this sign-in was answered. Every sign-out of all the user's
+             *     sessions raises it, and the BFF ends a session whose stamp is below the latest it has read.
+             */
+            sessionStamp: number;
             /**
              * Format: int32
              * @description Token expiration time in seconds
@@ -3319,6 +3507,20 @@ export interface components {
             email: string;
             firstName: string;
             lastName: string;
+        };
+        /** @description One user's session stamp. */
+        UserSessionStamp: {
+            /**
+             * Format: uuid
+             * @description The user.
+             */
+            userId: string;
+            /**
+             * Format: int32
+             * @description The user's current session stamp. A session that was given a lower one at sign-in has been
+             *     signed out since.
+             */
+            sessionStamp: number;
         };
         VerifyPinRequest: {
             /** @description PIN must be exactly 6 digits. */

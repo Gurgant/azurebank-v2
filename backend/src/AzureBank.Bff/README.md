@@ -84,10 +84,11 @@ sequenceDiagram
     API-->>BFF: {accounts}
     BFF-->>B: {accounts}
 
-    Note over B,API: Logout Flow
+    Note over B,API: Logout Flow ("Esci" ends this session only)
     B->>BFF: POST /bff/auth/logout
-    BFF->>Store: Remove(sessionId)
+    BFF->>Store: End(sessionId)
     BFF-->>B: Clear-Cookie
+    BFF->>API: POST /api/auth/revoke {this session's grant} (queued, after any renewal in flight)
 ```
 
 ### Step-Up Authentication
@@ -125,12 +126,15 @@ AzureBank.Bff/
 ├── 📁 Services/
 │   ├── 📁 Interfaces/
 │   │   ├── ISessionService.cs          # Session operations
-│   │   ├── ITokenRefresher.cs          # Silent access-token re-mint (ADR-0021)
+│   │   ├── ITokenRefresher.cs          # Access-token renewal (ADR-0021, ADR-0057 §4.5)
 │   │   └── ITokenStoreService.cs       # Token storage
 │   ├── 📁 Implementations/
 │   │   ├── SessionService.cs           # Session management logic
-│   │   ├── TokenRefresher.cs           # Refresh-token rotation, single-flight per session
-│   │   └── InMemoryTokenStore.cs       # In-memory token storage
+│   │   ├── TokenRefresher.cs           # Renewal with a non-rotating grant, single flight per session
+│   │   └── InMemoryTokenStore.cs       # In-memory token storage; every session ending goes through it
+│   ├── GrantRevoker.cs                 # Revokes ended sessions' grants; drains them on a graceful stop
+│   ├── SessionStamps.cs                # Latest session stamp known per signed-in user (ADR-0057 §5.3)
+│   ├── SessionStampWatcher.cs          # Reads those stamps every 15 s while anyone is signed in
 │   └── SessionCleanupService.cs        # Background cleanup (every 5 min)
 │
 ├── 📁 Middleware/
@@ -192,7 +196,7 @@ AzureBank.Bff/
 
 | BFF Route | Backend Route | What the BFF requires |
 |-----------|---------------|-----------------------|
-| `/api/auth/login`, `/api/auth/register`, `/api/auth/refresh` | — never proxied | answered `404` whatever the session |
+| `/api/auth/login`, `/api/auth/register`, `/api/auth/refresh`, `/api/auth/revoke`, `/api/auth/logout`, `/api/auth/session-stamps` | — never proxied | answered `404` whatever the session |
 | `/api/accounts` | `/api/accounts` | session (level 1) |
 | `/api/transactions` | `/api/transactions` | session (level 1) |
 | `/api/transfers` | `/api/transfers` | session (level 1) — **PIN NOT checked here** |
@@ -209,7 +213,7 @@ move that still sends its PIN in the body. The BFF no longer gates a transfer at
 double-gating would leave the weaker of the two checks in the path and keep the five-minute session
 window alive for money movement. `/full-number` is the only route behind the level-2 gate. The
 no-session refusal is not transfer-specific either: since `d74603c` (2026-08-20) every `/api/*`
-request that is not one of the three 404'd auth paths above, any method, is refused at the BFF with
+request that is not one of the six 404'd auth paths above, any method, is refused at the BFF with
 the API's own 401 shape unless a live session resolves.
 
 ---
@@ -249,13 +253,18 @@ Three refusals, in this order, all decided in the BFF before the request reaches
 tests pin the forwarded-path list empty for each (`AuthLevelMiddlewareTests`):
 
 ```csharp
-// The two proxied auth entry points are answered 404 — as if the routes did not exist — before the
-// session is read, so they answer 404 even to a valid session. The SPA signs in through the BFF's
-// own /bff/auth/* controller; a raw proxied login had no legitimate caller and handed out the very
-// JWT the BFF exists to withhold (measured 2026-08-19, ADR-0041 amendment). /api/auth/refresh is
-// answered 404 by the branch just above this one (ADR-0021).
+// These five auth paths are answered 404 — as if the routes did not exist — before the session is
+// read, so they answer 404 even to a valid session. The SPA signs in through the BFF's own
+// /bff/auth/* controller; a raw proxied login had no legitimate caller and handed out the very JWT
+// the BFF exists to withhold (measured 2026-08-19, ADR-0041 amendment). Revoke, logout and the
+// session-stamp feed are token endpoints the API answers only to the BFF's own client
+// (ADR-0057 §4.2, §5.3). /api/auth/refresh is answered 404 by the branch just above this one.
 private static readonly HashSet<string> BlockedProxiedAuthPaths =
-    new(StringComparer.OrdinalIgnoreCase) { "/api/auth/login", "/api/auth/register" };
+    new(StringComparer.OrdinalIgnoreCase)
+    {
+        "/api/auth/login", "/api/auth/register", "/api/auth/revoke", "/api/auth/logout",
+        "/api/auth/session-stamps"
+    };
 
 // EVERY proxied request — any method — needs a live session, decided HERE rather than delegated to
 // the API. There is no exception list: the set that used to hold one is deleted, not emptied.
@@ -276,7 +285,7 @@ DELETE verbs of row 2 on 2026-08-20 (`d74603c`):
 
 | Request | Session cookie | Answer |
 |---|---|---|
-| `/api/auth/login`, `/api/auth/register`, `/api/auth/refresh` | any, even a live one | `404` |
+| `/api/auth/login`, `/api/auth/register`, `/api/auth/refresh`, `/api/auth/revoke`, `/api/auth/logout`, `/api/auth/session-stamps` | any, even a live one | `404` |
 | any other `/api/*` route, any method | none, never issued, or replayed after logout | `401` — the API's own `AUTH_TOKEN_MISSING` body, no `X-Auth-Level-*` header |
 | `GET /api/accounts/{id}/full-number` | live, level 1 | `403 STEP_UP_REQUIRED`, `X-Auth-Level-Required: 2`, `X-Auth-Level-Current: 1` |
 | `POST /api/transfers` | live, level 1 | proxied — `400` model-state from the API on `{}`; its proof is the one-shot authorisation in the `Step-Up-Authorization` header, which the API binds and spends (ADR-0042) |
@@ -299,7 +308,9 @@ public class UserSession
     public required Guid UserId { get; init; }
     public required string AccessToken { get; set; }
     public required DateTime TokenExpiry { get; set; }
-    public string? RefreshToken { get; set; }   // rotated on every re-mint; browser never sees it
+    public string? RefreshToken { get; init; }  // the grant: never rotated, never in the browser
+    public DateTime? GrantExpiresAt { get; init; }
+    public required DateTime AbsoluteExpiresAt { get; init; } // min(created + cap, grant expiry)
     public required DateTime SessionCreated { get; init; }
     public DateTime LastActivity { get; set; }
     public int AuthLevel { get; set; } = 1;  // 1=Session, 2=PIN Verified
@@ -314,10 +325,20 @@ public class UserSession
 2. **Storage**: Store JWT + session data in memory (swappable to Redis)
 3. **Cookie**: Return HTTP-only, Secure, SameSite=Strict cookie
 4. **Activity**: Update `LastActivity` on each request
-5. **Timeout**: Inactivity (30 min; 10 in Development) or absolute (60 min; 20 in Development)
-   expiration — `Session` section of `appsettings.json` / `appsettings.Development.json`
-6. **Cleanup**: Background service removes expired sessions every 5 min
-7. **Logout**: Immediately remove session and clear cookie
+5. **Timeout**: Inactivity (15 min; 10 in Development) or absolute (60 min; 20 in Development)
+   expiration — `Session` section of `appsettings.json` / `appsettings.Development.json`. The
+   absolute limit is also never later than the grant's own expiry (ADR-0057 §4.1)
+6. **Cleanup**: Background service ends expired sessions every 5 min
+7. **Logout**: Immediately end this session and clear the cookie; the user's other sessions are
+   untouched. Every ending — logout, expiry, re-authentication, a new sign-in over an old cookie, a
+   raised session stamp, a graceful stop — queues the session's grant on `GrantRevoker`, which
+   revokes it with `POST /api/auth/revoke`
+8. **Sign-out everywhere**: each session keeps the user's session stamp from sign-in. When a user is
+   signed out of every session at the API (`POST /api/auth/logout`, or a runbook's SQL), the stamp
+   goes up; `SessionStampWatcher` reads the stamps of the signed-in users every 15 s through
+   `POST /api/auth/session-stamps` (and makes no call when nobody is signed in), and a session whose
+   stamp is below the one read is refused at its next request. A failed read keeps the last values
+   (ADR-0057 §5.3)
 
 ### Session Security
 
@@ -363,7 +384,10 @@ public class UserSession
 ### Bearer Token Transform
 
 The `BearerTokenTransformProvider` first clears any inbound `Authorization` header, then injects the
-session's JWT (re-minted through `ITokenRefresher` when it is near expiry):
+session's JWT (renewed through `ITokenRefresher` when it runs short). A renewal that cannot be had while
+the token has 5 s or less left is answered here with a 503 and `Retry-After`, never forwarded; the
+source also strips the token-road marker and turns the API's refusal of the service key into a 503
+(ADR-0057 §4.2, §4.7). Abridged:
 
 ```csharp
 public void Apply(TransformBuilderContext context)
@@ -382,15 +406,14 @@ public void Apply(TransformBuilderContext context)
         if (httpContext.Request.Cookies.TryGetValue(cookieName, out var sessionId)
             && !string.IsNullOrEmpty(sessionId))
         {
-            // Silent re-mint inside the refresh skew window (ADR-0021); null = inject nothing, the
-            // API 401s and the SPA's session-expired path fires.
+            // Renewed first when it runs short (ADR-0057 §4.5). SessionEnded = inject nothing, the
+            // API 401s and the SPA's session-expired path fires; Unavailable = answer 503 here.
             var refresher = httpContext.RequestServices.GetRequiredService<ITokenRefresher>();
-            var token = await refresher.GetFreshAccessTokenAsync(
-                sessionId, httpContext.RequestAborted);
-            if (!string.IsNullOrEmpty(token))
+            var result = await refresher.GetAccessTokenAsync(sessionId, httpContext.RequestAborted);
+            if (result.Outcome == AccessTokenOutcome.Token)
             {
                 transformContext.ProxyRequest.Headers.Authorization =
-                    new AuthenticationHeaderValue("Bearer", token);
+                    new AuthenticationHeaderValue("Bearer", result.AccessToken);
             }
         }
     });
@@ -448,7 +471,7 @@ Nothing queues — a request over the limit is refused immediately.
 {
   "Session": {
     "CookieName": ".AzureBank.Session",
-    "InactivityTimeoutMinutes": 30,
+    "InactivityTimeoutMinutes": 15,
     "AbsoluteTimeoutMinutes": 60
   },
   "Security": {
@@ -464,7 +487,8 @@ Nothing queues — a request over the limit is refused immediately.
     "LookupWindowSeconds": 60
   },
   "BackendApi": {
-    "BaseUrl": "https://localhost:7215"
+    "BaseUrl": "https://localhost:7215",
+    "TimeoutSeconds": 100
   },
   "ReverseProxy": {
     "Routes": {
@@ -506,7 +530,7 @@ Nothing queues — a request over the limit is refused immediately.
 public class BffSessionOptions
 {
     public string CookieName { get; set; } = ".AzureBank.Session";
-    public int InactivityTimeoutMinutes { get; set; } = 30;
+    public int InactivityTimeoutMinutes { get; set; } = 15;
     public int AbsoluteTimeoutMinutes { get; set; } = 60;
 }
 ```

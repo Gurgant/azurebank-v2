@@ -169,6 +169,9 @@ namespace AzureBank.Infrastructure.Migrations
                     b.Property<string>("SecurityStamp")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<int>("SessionStamp")
+                        .HasColumnType("int");
+
                     b.Property<bool>("TwoFactorEnabled")
                         .HasColumnType("bit");
 
@@ -432,6 +435,10 @@ namespace AzureBank.Infrastructure.Migrations
                     b.Property<DateTime?>("RevokedAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<string>("RevokedReason")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
                     b.Property<byte[]>("RowVersion")
                         .IsConcurrencyToken()
                         .IsRequired()
@@ -467,7 +474,10 @@ namespace AzureBank.Infrastructure.Migrations
                     b.HasIndex("UserId", "RevokedAt", "ExpiresAt")
                         .HasDatabaseName("IX_RefreshTokens_UserId_Active");
 
-                    b.ToTable("RefreshTokens", (string)null);
+                    b.ToTable("RefreshTokens", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_RefreshTokens_RevokedReason", "[RevokedReason] IS NULL OR [RevokedReason] IN ('SessionEnded', 'SignOutEverywhere', 'ReuseContainment', 'Incident', 'Deployment')");
+                        });
                 });
 
             modelBuilder.Entity("AzureBank.Shared.Entities.StepUpAuthorization", b =>

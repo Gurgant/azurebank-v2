@@ -140,8 +140,14 @@ try
     // MIDDLEWARE PIPELINE
     // ═══════════════════════════════════════════════════════════════════════════
 
-    // Correlation ID for request tracing. Outermost, so that the request line below -- written
-    // inside this scope, when the response completes -- carries the id like every other line.
+    // The instant each request ARRIVED, first of all (ADR-0057 §4.3): a revoke writes it as
+    // RevokedAt and a renewal carries it, and the tripwire compares the two. Taken before anything
+    // else here can delay it, on a clock a wall-clock step cannot reorder (ReceivedAtClock).
+    app.UseReceivedAtStamp();
+
+    // Correlation ID for request tracing. Outermost but for the stamp above, so that the request
+    // line below -- written inside this scope, when the response completes -- carries the id like
+    // every other line.
     app.UseCorrelationId();
 
     // Serilog request logging (replaces default ASP.NET Core logging). The ROUTE PATTERN, never the
@@ -169,7 +175,7 @@ try
         options.Logger = app.Services.GetRequiredService<Serilog.ILogger>();
     });
 
-    // Exception handling: catches everything below it (the two middlewares above respond for
+    // Exception handling: catches everything below it (the three middlewares above respond for
     // themselves and do not throw).
     app.UseExceptionHandler();
 
@@ -197,6 +203,11 @@ try
     // nothing about its token; after the handlers above, so its refusal is logged with a
     // correlation id like any other request. Health probes pass without the credential.
     app.UseServiceCredential();
+
+    // The token endpoints answer only the BFF's own client over loopback (ADR-0057 §4.2): 404
+    // otherwise. After the key, so a caller without it still gets that refusal; before
+    // authentication, so an access token proves nothing off the road either.
+    app.UseTokenRoad();
 
     // Authentication & Authorization (order matters!)
     app.UseAuthentication();

@@ -87,6 +87,7 @@ public class AppExceptionHandler : IExceptionHandler
         413 => "Payload Too Large",
         422 => "Unprocessable Entity",
         429 => "Too Many Requests",
+        503 => "Service Unavailable",
         _ => "Error"
     };
 }

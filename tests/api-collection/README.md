@@ -59,6 +59,18 @@ would rather not turn verification off.
 `BrunoEnvironmentSecretTests` fails the build if that value stops being empty in `local.bru`, or if
 this file starts telling you to write it there.
 
+The five token endpoints — login, register, refresh, revoke and logout — and the BFF's
+session-stamp feed, which no request here calls, take one thing more. They answer 404 unless the
+request carries exactly one `X-AzureBank-Token-Road`, the marker the BFF's own client sends, and
+comes from the machine the API listens on (loopback). So the requests that call them — register,
+login, revoke, logout and the transfers folder's register-recipient — send
+`X-AzureBank-Token-Road: bff` themselves. It is not a secret: the API checks that exactly one
+arrived and that it says `bff`, compared exactly *(until 2026-09-29 this said the API checked only
+that it was not empty: two copies sent over a real socket arrive as one value, `bff, bff`, which
+that check let through)*. Measured on 2026-09-28 against the API as
+`Contract tests` starts it: this collection before the marker, 28 of 28 requests failed, register,
+login and logout on 404; with it, all green (below).
+
 **Measured on 2026-09-19 and again on 2026-09-20** with Bruno CLI 4.1.0 against the running API,
 because the wiring above had been written and not run: with the command above, `register` answered
 **201**; with `local.bru`'s empty `serviceKey`, every request answered **401**.
@@ -96,7 +108,8 @@ api-collection/
     │   ├── get-me.bru
     │   ├── set-pin.bru
     │   ├── verify-pin.bru
-    │   └── logout.bru
+    │   ├── revoke.bru                # ends the grant login published, as the BFF does for one session
+    │   └── logout.bru                # ends every grant of the user
     ├── accounts/                     # 2
     │   ├── folder.bru
     │   ├── list-accounts.bru
@@ -172,6 +185,12 @@ Measured by the `Contract tests` workflow under `--env ci` on 2026-09-23 (run 35
 CLI 4.1.0): the whole collection is **28 requests, 79 tests, 62 assertions, all green**. It was 78
 tests (run 35873554844) until login gained the test that its token is the object register answers.
 
+Measured again on 2026-09-28, by hand, with that workflow's command line and Bruno CLI 4.1.0,
+against the API started as it starts it (SQL Server in a container, the database reset and
+seeded): **29 requests, 82 tests, 63 assertions, all green**, and 145 test cases in the JUnit
+report. Revoke added a request, two tests and an assertion, and login a test that no access token
+outlives the grant it came from.
+
 ~~Measured with these exact lines on 2026-09-21 against the running API: the whole collection is
 27 requests, 76 tests, 59 assertions, all green.~~ True under `--env local` - and `--env ci`, the
 environment the workflow runs, had never been run at all. Its first dispatch (run 35872727972,
@@ -198,6 +217,7 @@ The collection uses these variables (set automatically by tests):
 |----------|--------|-------------|
 | `serviceKey` | the environment file, by hand | The API's service credential (ADR-0055), sent by `collection.bru` as `X-AzureBank-Service-Key` on every request. Empty in `local.bru` by design — a committed key would be both a wrong value and a bad habit |
 | `authToken` | Register/Login | JWT authentication token |
+| `refreshToken` | Login | The session's grant, which Revoke ends |
 | `accountId` | Register/List Accounts | Primary account ID |
 | `transactionId` | Deposit/Withdraw | Transaction ID |
 

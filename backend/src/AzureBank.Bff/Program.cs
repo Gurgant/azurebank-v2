@@ -20,6 +20,7 @@ using AzureBank.Shared.Constants;
 using AzureBank.Shared.Observability;
 using AzureBank.Shared.Options;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Serilog;
 using Serilog.Formatting.Compact;
@@ -113,6 +114,15 @@ try
             "http on loopback. Check BackendApi:BaseUrl and ReverseProxy:Clusters:*:Destinations:*:Address")
         .ValidateOnStart();
 
+    // The BFF's own client to the API: how long a call may take (ADR-0057 §8). 100 s, HttpClient's
+    // own default, so naming it changed no behaviour; PR-2 sets its value.
+    builder.Services.AddOptions<BackendApiOptions>()
+        .Bind(builder.Configuration.GetSection(BackendApiOptions.SectionName))
+        .Validate(
+            o => o.TimeoutSeconds is >= 1 and <= BackendApiOptions.MaxTimeoutSeconds,
+            $"BackendApi:TimeoutSeconds must be between 1 and {BackendApiOptions.MaxTimeoutSeconds}.")
+        .ValidateOnStart();
+
     // Where the built SPA lives, when this host serves it (ADR-0054). Unset in the dev loop.
     builder.Services.AddOptions<SpaOptions>()
         .Bind(builder.Configuration.GetSection(SpaOptions.SectionName))
@@ -197,12 +207,21 @@ try
     // Session services (singleton - shared across requests)
     builder.Services.AddSingleton<ITokenStoreService, InMemoryTokenStore>();
     builder.Services.AddSingleton<ISessionService, SessionService>();
-    // Silent access-token re-mint (ADR-0021 PR-2). Singleton: it owns the process-wide
-    // per-session single-flight gate map and only depends on singleton-safe services.
+    // Access-token renewal (ADR-0021, ADR-0057 §4.5). Singleton, and stateless between calls: the
+    // single flight lives on each session, under the session's own lock.
     builder.Services.AddSingleton<ITokenRefresher, TokenRefresher>();
 
     // Background services
     builder.Services.AddHostedService<SessionCleanupService>();
+    // Revokes the grants of ended sessions at the API, and drains them on a graceful stop
+    // (ADR-0057 §4.6). One instance: the store queues into it, and the host starts and stops it.
+    builder.Services.AddSingleton<GrantRevoker>();
+    builder.Services.AddHostedService(services => services.GetRequiredService<GrantRevoker>());
+    // The latest session stamp known per signed-in user, which the store's validity check reads, and
+    // the watcher that reads the stamps every 15 s while anyone holds a session (ADR-0057 §5.3).
+    builder.Services.AddSingleton<SessionStamps>();
+    builder.Services.TryAddSingleton(TimeProvider.System);
+    builder.Services.AddHostedService<SessionStampWatcher>();
 
     // HTTP client for backend API
     builder.Services.AddTransient<ServiceCredentialHandler>();
@@ -210,6 +229,8 @@ try
     {
         client.BaseAddress = new Uri(builder.Configuration["BackendApi:BaseUrl"]!);
         client.DefaultRequestHeaders.Add("Accept", "application/json");
+        client.Timeout = TimeSpan.FromSeconds(
+            services.GetRequiredService<IOptions<BackendApiOptions>>().Value.TimeoutSeconds);
 
         // The service credential is NOT a default header here: ServiceCredentialHandler attaches
         // it per request, because this BaseAddress is read live and can change under a pooled

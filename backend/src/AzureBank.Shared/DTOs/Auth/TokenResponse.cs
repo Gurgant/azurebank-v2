@@ -11,8 +11,8 @@ public class TokenResponse
     public required string AccessToken { get; set; }
 
     /// <summary>
-    /// Refresh token (plaintext, shown once) for rotating the access token via
-    /// POST /api/auth/refresh. In the BFF deployment it is captured server-side. Deliberately
+    /// The session's grant (plaintext, shown once), presented to POST /api/auth/refresh for each new
+    /// access token; it does not rotate. In the BFF deployment it is captured server-side. Deliberately
     /// NOT `required`: registration issues it BEST-EFFORT — the user + account are already
     /// committed, so a post-registration token-write failure must not fail the request. It is
     /// therefore genuinely optional here (null when that write failed); the user obtains a
@@ -20,6 +20,19 @@ public class TokenResponse
     /// fails the login, so on that path the nullability is only a boundary-robustness allowance.
     /// </summary>
     public string? RefreshToken { get; set; }
+
+    /// <summary>
+    /// When the grant stops working: its issue plus <c>Jwt:RefreshTokenLifetimeMinutes</c>, fixed
+    /// then and never extended. The BFF caps the session at it. Null exactly when the grant
+    /// is, after a registration whose best-effort grant failed.
+    /// </summary>
+    public DateTime? RefreshTokenExpiresAt { get; set; }
+
+    /// <summary>
+    /// The user's session stamp when this sign-in was answered. Every sign-out of all the user's
+    /// sessions raises it, and the BFF ends a session whose stamp is below the latest it has read.
+    /// </summary>
+    public int SessionStamp { get; set; }
 
     /// <summary>
     /// Token expiration time in seconds

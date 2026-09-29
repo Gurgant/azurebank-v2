@@ -342,6 +342,11 @@ POST https://localhost:7215/api/auth/refresh
 # Expected: 401 Unauthorized
 ```
 
+*(2026-09-28, [ADR-0057](../adr/0057-the-bffs-refresh-token-is-one-reusable-grant-per-session.md):
+steps 2 and 3 no longer hold. A renewal answers a new access token and no refresh token; the one
+presented is not consumed, and presenting it again answers 200. These endpoints also answer 404
+unless called over loopback with the service key and exactly one `X-AzureBank-Token-Road` header.)*
+
 #### Step 1.4.2: Verify Backward Compatibility
 ```bash
 # Direct API still works with just access token
@@ -444,6 +449,8 @@ public class TokenRefreshService : ITokenRefreshService
                 result.Data.AccessTokenExpiresAt);
 
             // Also update refresh token (rotation)
+            // (2026-09-28, ADR-0057: never. The grant does not rotate, the answer carries no
+            // refresh token, and the session keeps the grant it was created with.)
             session.RefreshToken = result.Data.RefreshToken;
             session.RefreshTokenExpiry = result.Data.RefreshTokenExpiresAt;
 
@@ -693,6 +700,10 @@ public class GarnetTokenStore : ITokenStoreService
     public async Task UpdateSessionAsync(UserSession session)
     {
         await StoreSessionAsync(session); // Garnet handles TTL refresh
+        // (2026-09-28, ADR-0057 §4.6, F2: a write-back must never bring back a session removed
+        // meanwhile, or "Esci" during a request is undone by that request. The in-memory store
+        // replaces only an entry still there; this unconditional set would re-add it, so a
+        // shared store needs a write that replaces an existing key and creates none.)
     }
 
     public async Task RemoveSessionAsync(string sessionId)

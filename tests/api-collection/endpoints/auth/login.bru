@@ -12,6 +12,7 @@ post {
 
 headers {
   Content-Type: application/json
+  X-AzureBank-Token-Road: bff
 }
 
 body:json {
@@ -28,6 +29,8 @@ script:post-response {
   // was assumed and a 401 overwrote the token, turning one broken request into fifteen.
   if (res.getStatus() === 200) {
     bru.setVar('authToken', res.body.data.token.accessToken);
+    // The session's grant, for revoke to end.
+    bru.setVar('refreshToken', res.body.data.token.refreshToken);
   }
 }
 
@@ -56,10 +59,21 @@ tests {
   test("Token is the same object register answers", function() {
     // Login used to answer a bare string with expiresAt and refreshToken beside it, while
     // register nested all three in token (measured 2026-09-23). One shape now, and only one.
+    // refreshTokenExpiresAt joined it when the grant stopped rotating: the BFF caps its session there.
+    // sessionStamp joined it with ADR-0057, section 5.3: the BFF keeps it on the session it creates.
     expect(res.body.data.token).to.have.all.keys(
-      'accessToken', 'refreshToken', 'expiresIn', 'tokenType', 'expiresAt');
+      'accessToken', 'refreshToken', 'refreshTokenExpiresAt', 'sessionStamp', 'expiresIn', 'tokenType',
+      'expiresAt');
+    expect(res.body.data.token.sessionStamp).to.be.a('number');
     expect(res.body.data.token.tokenType).to.equal('Bearer');
     expect(res.body.data).to.not.have.any.keys('expiresAt', 'refreshToken');
+  });
+
+  test("No access token outlives the grant it came from", function() {
+    // The grant's expiry is fixed at sign-in, and every access token minted from it is capped there.
+    const grantExpires = Date.parse(res.body.data.token.refreshTokenExpiresAt);
+    expect(Number.isNaN(grantExpires)).to.equal(false);
+    expect(grantExpires).to.be.at.least(Date.parse(res.body.data.token.expiresAt));
   });
 
   test("Response contains user info", function() {

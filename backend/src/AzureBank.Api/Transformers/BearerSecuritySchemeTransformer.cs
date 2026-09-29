@@ -32,7 +32,12 @@ public sealed class BearerSecuritySchemeTransformer(IAuthenticationSchemeProvide
                 Type = SecuritySchemeType.Http,
                 Scheme = "bearer",
                 BearerFormat = "JWT",
-                Description = "Enter your JWT token. Get a token by calling POST /api/auth/login"
+                // Scalar shows this beside "Try it". Login answers only the BFF's road (ADR-0055 and
+                // TokenRoadMiddleware): a call without the key gets 401, one without the marker or
+                // off loopback gets 404, so the text names both headers.
+                Description = "Enter your JWT token. Get one from POST /api/auth/login, called from the "
+                    + "API's own machine (loopback) with the X-AzureBank-Service-Key header and exactly "
+                    + "one X-AzureBank-Token-Road header."
             };
 
             // Apply security requirement globally using OpenApiSecuritySchemeReference

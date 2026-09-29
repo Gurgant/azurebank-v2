@@ -1,9 +1,11 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using AzureBank.Api.Services;
 using AzureBank.Api.Services.Implementations;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Options;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -210,6 +212,35 @@ public class JwtServiceTests
         var jwt = new JwtSecurityTokenHandler().ReadJwtToken(result.AccessToken);
 
         result.ExpiresAt.Should().Be(jwt.ValidTo);
+    }
+
+    [Fact]
+    public void GenerateToken_WithANotAfterSoonerThanItsLifetime_ExpiresNoLaterThanIt()
+    {
+        // ADR-0057 §4.1: a renewal passes its grant's expiry, and no access token outlives the
+        // grant. The exp claim is whole seconds, truncated, so it may end up to a second BEFORE the
+        // cap, never after it.
+        var user = CreateTestUser();
+        var grantExpiresAt = DateTime.UtcNow.AddMinutes(4).AddMilliseconds(700);
+
+        var result = _sut.GenerateToken(user, grantExpiresAt);
+        var jwt = new JwtSecurityTokenHandler().ReadJwtToken(result.AccessToken);
+
+        jwt.ValidTo.Should().BeOnOrBefore(grantExpiresAt);
+        jwt.ValidTo.Should().BeAfter(grantExpiresAt.AddSeconds(-1));
+        result.ExpiresAt.Should().Be(jwt.ValidTo, "the returned expiry stays the token's own exp");
+    }
+
+    [Fact]
+    public void GenerateToken_WithANotAfterLaterThanItsLifetime_KeepsItsLifetime()
+    {
+        var user = CreateTestUser();
+        var before = DateTime.UtcNow;
+
+        var result = _sut.GenerateToken(user, before.AddHours(1));
+
+        result.ExpiresAt.Should().BeCloseTo(before.AddMinutes(_options.ExpirationMinutes), TimeSpan.FromSeconds(5),
+            "a cap later than the normal lifetime changes nothing");
     }
 
     [Fact]
@@ -459,4 +490,55 @@ public class JwtServiceTests
     }
 
     #endregion
+}
+
+/// <summary>
+/// The JwtService proof that depends on the process's local time zone, run in a zone it sets itself
+/// (<see cref="LocalTimeZone"/>), so it can fail on CI's UTC runners as well as on a machine east or
+/// west of UTC.
+/// </summary>
+[Collection(LocalTimeZoneCollection.Name)]
+public class JwtServiceLocalTimeZoneTests
+{
+    [Fact]
+    public void GenerateToken_WithANotAfterReadBackFromSqlServer_TreatsItAsUtc_WhateverTheLocalZone()
+    {
+        /*
+          SQL Server hands a datetime2 back as DateTimeKind.Unspecified, and the token library
+          converts an Unspecified value AS LOCAL TIME. West of UTC that makes the token outlive its
+          grant by hours, the one thing ADR-0057 §4.1 forbids; east of UTC it ends hours early. In
+          UTC the conversion changes nothing, so this test used to be green there with the guard
+          deleted: it now puts the process seven hours west of UTC itself.
+        */
+        var sut = new JwtService(
+            Options.Create(new JwtOptions
+            {
+                Secret = "ThisIsAVeryLongSecretKeyForTestingPurposesAtLeast32Chars!",
+                Issuer = "AzureBank.Tests",
+                Audience = "AzureBank.Api.Tests",
+                ExpirationMinutes = 15
+            }),
+            new Mock<ILogger<JwtService>>().Object);
+        var user = new ApplicationUser
+        {
+            Id = Guid.NewGuid(),
+            Email = "test@example.com",
+            AzureTag = "test.user",
+            FirstName = "Test",
+            LastName = "User"
+        };
+        var utc = DateTime.UtcNow.AddMinutes(5);
+        var unspecified = DateTime.SpecifyKind(utc, DateTimeKind.Unspecified);
+
+        TokenResult result;
+        using (LocalTimeZone.Use(LocalTimeZone.SevenHoursWestOfUtc))
+        {
+            TimeZoneInfo.Local.GetUtcOffset(utc).Should().Be(TimeSpan.FromHours(-7),
+                "the zone must have reached the process, or the proof runs in the machine's zone");
+            result = sut.GenerateToken(user, unspecified);
+        }
+
+        result.ExpiresAt.Should().BeCloseTo(utc, TimeSpan.FromSeconds(1));
+        result.ExpiresAt.Should().BeOnOrBefore(utc, "no access token outlives the grant it came from");
+    }
 }

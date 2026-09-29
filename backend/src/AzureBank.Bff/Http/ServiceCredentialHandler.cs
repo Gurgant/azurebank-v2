@@ -24,6 +24,15 @@ namespace AzureBank.Bff.Http;
 /// request goes on carrying the session's own is not a boundary. Nothing is sent to an address
 /// that is neither <c>https</c> nor loopback.
 /// </para>
+/// <para>
+/// <b>It also marks the call as the BFF's own</b>, with <see cref="ServiceCredentialOptions.TokenRoadHeaderName"/>
+/// (ADR-0057 §4.2). The API's token endpoints — login, register, refresh, revoke, logout — and the
+/// session-stamp feed <see cref="Services.SessionStampWatcher"/> reads (ADR-0057 §5.3) answer 404
+/// without exactly one, because the key cannot tell this road from the proxy's: both carry it, and
+/// both reach the API over loopback. The proxy strips the marker from every browser request, so
+/// only code in this process can send it. On every call, not only the token endpoints', as the key
+/// is: the API ignores it elsewhere, and a per-path rule here would be one more list to keep right.
+/// </para>
 /// </remarks>
 internal sealed class ServiceCredentialHandler : DelegatingHandler
 {
@@ -52,6 +61,11 @@ internal sealed class ServiceCredentialHandler : DelegatingHandler
         request.Headers.Remove(ServiceCredentialOptions.HeaderName);
         request.Headers.TryAddWithoutValidation(
             ServiceCredentialOptions.HeaderName, _options.CurrentValue.BffKey);
+
+        // Exactly one, as the API requires: whatever was set before is replaced, never added to.
+        request.Headers.Remove(ServiceCredentialOptions.TokenRoadHeaderName);
+        request.Headers.TryAddWithoutValidation(
+            ServiceCredentialOptions.TokenRoadHeaderName, ServiceCredentialOptions.TokenRoadMarker);
 
         return base.SendAsync(request, cancellationToken);
     }

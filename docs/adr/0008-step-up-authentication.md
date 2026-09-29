@@ -233,8 +233,10 @@ public enum AuthLevel
 > plain `UseMiddleware` with no `UseWhen`), and does two
 > unrelated jobs (~~two~~ three since 2026-08-19; struck 2026-09-04, correction below). First, on
 > **every** request, it short-circuits a raw proxied
-> `/api/auth/refresh` to 404 — nothing to do with PINs; only the BFF may rotate refresh tokens
-> (ADR-0021). Second, it gates ~~**three** paths behind level 2: `POST /api/transfers`,
+> `/api/auth/refresh` to 404 — nothing to do with PINs; only the BFF may ~~rotate refresh tokens~~
+> renew with a grant (ADR-0021; struck 2026-09-28, ADR-0057: the grant no longer rotates, and
+> `/api/auth/revoke` and `/api/auth/logout` are short-circuited the same way). Second, it gates
+> ~~**three** paths behind level 2: `POST /api/transfers`,
 > `POST /api/transfers/internal`, and any `*/full-number` under `/api/accounts/`~~ one path behind
 > level 2, any `*/full-number` under `/api/accounts/` (struck 2026-09-04; the correction of that
 > date under Protected Operations, ADR-0041). It answers **401**

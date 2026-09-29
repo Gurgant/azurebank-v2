@@ -44,21 +44,67 @@ public static class SecurityEvents
     /// </remarks>
     public const string RefreshTokenUnknown = "RefreshTokenUnknown";
 
-    /// <summary>A revoked refresh token was presented again — the theft signal (ADR-0021).</summary>
-    /// <remarks>OWASP: <c>authn_token_reuse[:userid,tokenid]</c>. An exact match.</remarks>
+    /// <summary>
+    /// The tripwire (ADR-0057 §4.3): a grant whose session had ENDED was presented again, in a
+    /// request the API received after the revoke. The BFF held that grant nowhere else, so nothing
+    /// legitimate sends it.
+    /// </summary>
+    /// <remarks>
+    /// <para>OWASP: <c>authn_token_reuse[:userid,tokenid]</c>. An exact match.</para>
+    /// <para>
+    /// It records; it revokes NOTHING, since PR-1 (ADR-0057 F3). Until then it also revoked every
+    /// token of the user, and a sign-out on one device was enough to raise it falsely at the user's
+    /// next renewal elsewhere. Only code inside the replica can present a grant now, and revoking
+    /// one user's tokens does not contain that; the incident runbook does. A grant revoked for any
+    /// other reason, or while the renewal was in flight, is refused without this event.
+    /// </para>
+    /// </remarks>
     public const string RefreshTokenReuse = "RefreshTokenReuse";
 
     /// <summary>
     /// Reuse was detected but revoking the token family FAILED — the mitigation did not happen.
     /// </summary>
     /// <remarks>
-    /// No OWASP counterpart: the vocabulary names events, not failures to respond to them. This is
-    /// deliberately its own name and logged at Error, because it is the one case where a detected
-    /// compromise was left un-contained and a human has to act.
+    /// No OWASP counterpart: the vocabulary names events, not failures to respond to them.
+    /// <para>
+    /// NO LONGER RAISED, since PR-1: the tripwire that replaced reuse detection revokes nothing, so
+    /// there is no mitigation left to fail (ADR-0057 F3). Kept because audit rows carrying this
+    /// name exist and the table is never purged; a reader of an old row still needs the name to
+    /// mean something.
+    /// </para>
     /// </remarks>
     public const string RefreshTokenReuseRevokeFailed = "RefreshTokenReuseRevokeFailed";
 
-    /// <summary>The BFF's refresh of a proxied session was rejected; the session was revoked.</summary>
+    /// <summary>
+    /// One grant was renewed more than three times within one access-token lifetime (ADR-0057 §6,
+    /// anomaly 2). ADR-0057 reasons, and nothing has measured, that the legitimate BFF renews at
+    /// most twice in that time, so this is how a second holder of a LIVE grant shows up, if it
+    /// renews often. The renewal was answered: nothing is refused, revoked or written.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// No OWASP counterpart. <c>authn_token_reuse</c>, which <see cref="RefreshTokenReuse"/> maps
+    /// to, is the near miss: this grant is live and every renewal of it is valid, so a reuse alert
+    /// firing here would describe a presentation that did not happen. <c>excess_rate_limit_exceeded</c>
+    /// is the other, and <see cref="RateLimitExceeded"/> holds it for requests a limiter refused;
+    /// nothing is refused here.
+    /// </para>
+    /// <para>
+    /// LOG-ONLY BY DESIGN, and the design is ADR-0057's: a renewal writes nothing since PR-1, and an
+    /// audit row would be a write. The count lives only in the API's memory
+    /// (<c>RefreshRenewalRateDetector</c>), so a restart forgets it, and on Azure, where application
+    /// logs are off, nobody sees the line. Raised at most once per grant per token lifetime. It
+    /// catches a copy that renews often, not a patient one.
+    /// </para>
+    /// </remarks>
+    public const string RefreshRenewalRateHigh = "RefreshRenewalRateHigh";
+
+    /// <summary>
+    /// The API refused the BFF's renewal of a session with 401 <c>REFRESH_TOKEN_INVALID</c>: the grant
+    /// is dead, so the session was ended and its grant queued for revoke (ADR-0057 §4.5). Since
+    /// PR-1 no other answer raises it: a refused key, any other 401, a 5xx or a timeout keeps the
+    /// session.
+    /// </summary>
     /// <remarks>OWASP: <c>session_expired:[userid,reason]</c> — the outcome is the session ending.</remarks>
     public const string RefreshRejected = "RefreshRejected";
 
@@ -94,7 +140,10 @@ public static class SecurityEvents
     /// A caller reached the proxied <c>/api/auth/login</c> or <c>/api/auth/register</c> directly.
     /// The SPA never does: it signs in through the BFF's own <c>/bff/auth/*</c> controller, which
     /// keeps the API token server-side. Reaching the proxied pair means asking the BFF for the
-    /// credential the BFF exists to withhold.
+    /// credential the BFF exists to withhold. Since PR-1 the same event names a proxied
+    /// <c>/api/auth/revoke</c>, <c>/api/auth/logout</c> or <c>/api/auth/session-stamps</c>: token
+    /// endpoints and the stamp feed, which answer only the BFF's own client (ADR-0057 §4.2, §5.3),
+    /// and which no browser has a reason to reach.
     /// </summary>
     /// <remarks>OWASP: <c>malicious_direct_reference:[userid|IP, useragent]</c>.</remarks>
     public const string RawAuthEntryBlocked = "RawAuthEntryBlocked";

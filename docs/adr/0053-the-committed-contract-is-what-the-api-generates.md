@@ -131,8 +131,10 @@ _Moved 2026-09-15, as the bullet under "What would change this" said it would. S
 gate: the `conformance` job in `ci.yml` runs its four response-conformance checks — status code,
 media type, headers, body schema — against the running API on every PR, with its own SQL Server, a
 bearer token from the real login, the version pinned at 4.27.1, no `|| true`, and a floor of
-~~27~~ 28 operations in the JUnit report so a run that tested nothing cannot pass *(raised
-2026-09-21 with the withdrawal mint, ADR-0056)*. Claim 3 has its guard.
+~~27~~ ~~28~~ ~~29~~ 30 operations in the JUnit report so a run that tested nothing cannot pass
+*(raised 2026-09-21 with the withdrawal mint, ADR-0056, and twice on 2026-09-28, with
+`POST /api/auth/revoke` and `POST /api/auth/session-stamps`, ADR-0057)*.
+Claim 3 has its guard.
 What its first run found, against a document every gate here had passed: `415` on all fifteen
 operations that take a body (the framework's refusal of a non-JSON body, never declared), a second
 `404` on the eight operations of the six GUID-constrained routes (a segment that is not a GUID

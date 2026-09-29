@@ -16,6 +16,17 @@ pip install 'schemathesis==4.27.1'
 docker pull schemathesis/schemathesis:stable
 ```
 
+Whichever you use, run it on the machine the API listens on. The five token endpoints — login,
+register, refresh, revoke and logout — and the session-stamp feed answer 404 to a caller whose
+address is not loopback, and to one that does not send exactly one `X-AzureBank-Token-Road`
+(`TokenRoadMiddleware`). The document declares no 404 on any of the six, so such a run fails rather
+than skipping them. Measured on 2026-09-28 from loopback with the hooks as they were before the
+marker, which the API refuses with the same 404: run on the four anonymous operations, login,
+register, refresh and revoke each failed `Undocumented HTTP status code` (`4 failures`); run on an
+operation that needs a token, with none handed over, it stopped at the throwaway user's registration
+(*Troubleshooting*, below). From a container, whether the API sees loopback depends on how the
+container reaches it; not measured.
+
 ## Quick Start
 
 ### 1. Start the API
@@ -42,8 +53,10 @@ schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapi
 
 What the two files add to that line:
 
-- **`hooks.py`** sends `X-AzureBank-Service-Key` on every request (ADR-0055), and a bearer token
-  on every operation the contract does not declare anonymous — register, login and refresh go
+- **`hooks.py`** sends `X-AzureBank-Service-Key` on every request (ADR-0055), and with it exactly
+  one `X-AzureBank-Token-Road`, the marker the BFF's own client sends: the five token endpoints and
+  the session-stamp feed answer 404 without it. It also sends a bearer token on every operation the
+  contract does not declare anonymous — register, login, refresh, revoke and session-stamps go
   without — for a throwaway user it registers itself, unless `AZUREBANK_CONTRACT_TOKEN` hands over
   the token of a user who already exists. CI hands over the seeded demo user's.
 - **`schemathesis.toml`** sets the base URL and the shape of the run (one worker, 100 examples
@@ -82,6 +95,16 @@ All 28 operations tested with every check, exit 0. The warning is about what Sch
 generated, not about a response: the API rejected most of its inputs for login, refresh and
 register. It is not stable — runs on 2026-09-23 and 2026-09-24 named two operations as often as
 three.
+
+**Measured again on 2026-09-28**, after `POST /api/auth/revoke` joined the contract, the way CI's
+conformance job runs it: SQL Server in a container, the database reset and seeded, the API started
+with `dotnet run`, the demo user's token handed over. Three runs, each `Selected: 29/29`,
+`Tested: 29`, the same warning on the same three operations, exit 0. The case counts are NOT
+stable across runs, seed or no seed: two runs that started with no `.hypothesis` directory in the
+checkout each reported `8544 generated, 8544 passed, 2879 skipped`, and one run after a failed run
+in the same checkout reported `8184 generated, 8184 passed, 2586 skipped`. That failed run was the
+first of the day, on revoke: `{"refreshTokens": [null]}` answered 200, and the API now refuses a
+null grant with 400.
 
 ⚠️ **A run writes to the database it runs against.** One run on 2026-09-23 added 1 user, 97
 accounts and 137 audit events. Point it at a database you can throw away. Run as the seeded demo
@@ -134,7 +157,8 @@ schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapi
   --include-path-regex "/api/auth/.*"
 ```
 
-7 operations tested, exit 0.
+7 operations tested, exit 0. Not run again since revoke and session-stamps joined the contract,
+which puts 9 operations under `/api/auth/` in the document.
 
 ### Generate Report
 
@@ -156,7 +180,9 @@ schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapi
 ```
 
 A fixed name instead of the timestamped one, which `.gitignore` also covers. The report held one
-test case per operation, 28, and one more for the stateful phase.
+test case per operation, 28, and one more for the stateful phase. On 2026-09-28, after revoke
+joined the contract, the conformance job's command line reported 29 and one more: `29 operations
+tested, 30 test cases in the report`.
 
 ### Without the configuration file
 
@@ -168,9 +194,10 @@ schemathesis run docs/api/openapiv1.json \
 ```
 
 The hooks load from an environment variable here — 4.27.1 has no `--hooks` flag — and `--url` is
-required whenever the schema is given as a file. 28 operations tested, exit 0. Leave `--checks`
-out and every check runs: exit 1 on 2026-09-24, with three failures, the three the configuration
-file declares for the operations concerned (*What every check found*, above).
+required whenever the schema is given as a file. 28 operations tested (2026-09-24, before revoke
+joined the contract), exit 0. Leave `--checks` out and every check runs: exit 1 on 2026-09-24,
+with three failures, the three the configuration file declares for the operations concerned
+(*What every check found*, above).
 
 ## What Gets Tested
 
@@ -188,7 +215,7 @@ Schemathesis automatically:
 | File | Purpose | State under the pinned 4.27.1 |
 |------|---------|---|
 | `schemathesis.toml` | The Quick Start's configuration, and CI's: base URL, the shape of the run, the hooks, every check | ✅ loads — the runs above |
-| `hooks.py` | The service key on every request, and a bearer token on every operation that is not anonymous: a throwaway user's, or the one `AZUREBANK_CONTRACT_TOKEN` hands over | ✅ imports — the runs above |
+| `hooks.py` | The service key and the token-road marker on every request, and a bearer token on every operation that is not anonymous: a throwaway user's, or the one `AZUREBANK_CONTRACT_TOKEN` hands over | ✅ imports — the runs above |
 | `README.md` | This documentation | — |
 
 Both were v3-era until 2026-09-23, and 4.27.1 refused them (backlog rows 38 and 39). Measured
@@ -225,10 +252,12 @@ run rather than an illustration:
 
 The operation count comes from the committed document, so it moves when the contract does; the
 step after the run fails the job if it drops below the floor. **It has moved since that run**: the
-withdrawal mint took the document to 28 operations on 2026-09-21 (ADR-0056) and the floor was
-raised with it, so the 27 above is what THAT run tested and not what a run tests today. The
-transcript is left as it was recorded rather than edited to match, because a quoted run that is
-quietly updated stops being evidence.
+withdrawal mint took the document to 28 operations on 2026-09-21 (ADR-0056), revoke took it
+to 29 on 2026-09-28, and `POST /api/auth/session-stamps` to 30 the same day (ADR-0057 §5.3); the
+floor was raised with each, so the 27 above is what THAT run tested and not what a run tests today.
+No full run has been measured since session-stamps joined. The transcript is left as it was
+recorded rather than edited to match, because a quoted run that is quietly updated stops being
+evidence.
 
 *(What stood here until 2026-09-21 was an invented transcript: it announced `Collected API
 operations: 20` against a document that declares 27, listed `GET /api/users/search` — a route
@@ -248,6 +277,16 @@ The key is set but is not the one the API holds, so register answered 401
 a token errored with this message, then the library stopped asking
 (`Token fetch failed 3 times in a row; retrying in 30s`), the anonymous operations failed on the
 401 itself, and the file's `max-failures = 10` ended the run — exit 1, after about 20 seconds.
+
+### `Registering the throwaway user answered 404`
+
+Register refused the caller the way it refuses any caller off the BFF's road: the request did not
+come over loopback, or did not carry exactly one `X-AzureBank-Token-Road` (`TokenRoadMiddleware`).
+The hooks send the marker, so a 404 here means the run is not on the API's machine, or runs hooks
+from before 2026-09-28. Measured that day with those older hooks and no token handed over, on
+`^/api/accounts$`: both operations errored with
+`Error in 'ThrowawayUser.get()': Registering the throwaway user answered 404`, the summary read
+`Authentication failed: 2 operations returned authentication errors`, exit 1.
 
 ### `No module named 'tests'`
 

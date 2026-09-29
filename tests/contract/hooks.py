@@ -7,9 +7,13 @@ They make a LOCAL run test the operations instead of the front door:
 - Every request carries X-AzureBank-Service-Key (ADR-0055). Without it the API answers
   401 SERVICE_CREDENTIAL_REQUIRED to everything; measured 2026-09-23, a run without it reported
   all 28 operations as "returned only 401/403 responses".
+- Every request also carries exactly one X-AzureBank-Token-Road, the marker the BFF's own client
+  sends. The five token endpoints -- login, register, refresh, revoke and logout -- and the
+  session-stamp feed answer 404 without it, and to any caller that is not on the API's loopback
+  interface: so a run reaches them only from the machine the API listens on, as CI's does.
 - Every operation the contract does not declare anonymous -- `security: [{}]`, which today is
-  register, login and refresh -- carries a bearer token: a throwaway user's, registered here, or
-  the one AZUREBANK_CONTRACT_TOKEN hands over.
+  register, login, refresh, revoke and session-stamps -- carries a bearer token: a throwaway
+  user's, registered here, or the one AZUREBANK_CONTRACT_TOKEN hands over.
 
 The key is read from the environment, AZUREBANK_SERVICE_KEY: never a command-line argument, and
 never this file. Run from the repository ROOT, where `tests.contract.hooks` resolves:
@@ -39,6 +43,10 @@ import schemathesis
 
 SERVICE_KEY_ENV = "AZUREBANK_SERVICE_KEY"
 SERVICE_KEY_HEADER = "X-AzureBank-Service-Key"
+# The BFF's own marker (ServiceCredentialOptions.TokenRoadHeaderName and TokenRoadMarker). Not a
+# secret, but the API compares the value exactly: one header, and that value, or 404.
+TOKEN_ROAD_HEADER = "X-AzureBank-Token-Road"
+TOKEN_ROAD_MARKER = "bff"
 # Optional: the bearer token of a user who already exists, used instead of registering one.
 TOKEN_ENV = "AZUREBANK_CONTRACT_TOKEN"
 
@@ -60,8 +68,13 @@ _SERVICE_KEY = _service_key()
 
 @schemathesis.hook
 def before_call(context, case, kwargs):
-    """The service key on EVERY request -- the anonymous operations included."""
+    """The service key and the marker on EVERY request -- the anonymous operations included.
+
+    On every one, as the BFF's own client sends them, rather than a list of the token endpoints to
+    keep right: the API ignores the marker elsewhere. Assigned, never added, so each goes out once.
+    """
     case.headers[SERVICE_KEY_HEADER] = _SERVICE_KEY
+    case.headers[TOKEN_ROAD_HEADER] = TOKEN_ROAD_MARKER
 
 
 def _is_anonymous(ctx) -> bool:
@@ -103,7 +116,8 @@ class ThrowawayUser:
                 "firstName": "Schemathesis",
                 "lastName": "Contract",
             },
-            headers={SERVICE_KEY_HEADER: _SERVICE_KEY},
+            # Register is a token endpoint: without the marker it answers 404.
+            headers={SERVICE_KEY_HEADER: _SERVICE_KEY, TOKEN_ROAD_HEADER: TOKEN_ROAD_MARKER},
             timeout=config.request_timeout_for(operation=context.operation),
             verify=config.tls_verify_for(operation=context.operation),
         )

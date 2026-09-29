@@ -3,69 +3,39 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 namespace AzureBank.Tests.Fixtures;
 
 /// <summary>
-/// Fails every SaveChanges, to stand in for a transient database failure on a write that the
-/// caller does not control.
+/// Fails every SaveChanges, to stand in for a database that cannot take a write.
 ///
 /// <para>
-/// <b>Why a SaveChanges interceptor reaches the family revoke at all.</b> A reviewer read
-/// <c>RevokeAllForUserAsync</c>, saw <c>ExecuteUpdateAsync</c> — which a
-/// <see cref="SaveChangesInterceptor"/> cannot intercept — and concluded the injected fault never
-/// fires, leaving the tests green while the revoke succeeded. Reasonable from the source, and wrong
-/// here: that method branches on <c>IsRelational()</c>, and these tests run on EF InMemory, which
-/// takes the OTHER branch (load, mutate, <c>SaveChangesAsync</c>). This interceptor sits exactly
-/// there.
+/// Two uses in <c>RefreshTokenServiceTests</c>, one in each direction. A renewal run on a context
+/// carrying this must still succeed, which is the unit-level proof that renewal writes nothing
+/// (ADR-0057 §4.3): had it tried, it would have thrown. A revoke run on one must answer 503, which
+/// pins ADR-0057 §4.4's "the database failed, so retry".
 /// </para>
 /// <para>
-/// Verified rather than argued: neutering this class to a no-op turns three of the four
-/// fault-injection tests red. The fourth was the one that genuinely could pass without the fault —
-/// the reuse branch throws the same <c>AuthenticationException</c> either way — so it now asserts
-/// the error log, which only happens inside the catch.
+/// <b>Why a SaveChanges interceptor reaches a revoke at all.</b> The revokes use
+/// <c>ExecuteUpdateAsync</c>, which a <see cref="SaveChangesInterceptor"/> cannot intercept — on a
+/// relational provider. These tests run on EF InMemory, where the service takes its OTHER branch
+/// (load, mutate, <c>SaveChangesAsync</c>), and this interceptor sits exactly there. The relational
+/// branch is faulted on SQL Server by <c>RefreshTokenRotationSqlServerTests</c>, through a command
+/// interceptor.
 /// </para>
 /// <para>
-/// <b>What this does NOT cover.</b> Production is relational, so it takes the
-/// <c>ExecuteUpdateAsync</c> branch, and no test injects a fault there. That gap is accepted
-/// deliberately: the guard is a single <c>catch (Exception ex) when (ex is not
-/// OperationCanceledException)</c> wrapping the whole call, so it is agnostic to which branch threw
-/// and to the exception's type. Closing the gap would mean a command interceptor matching on SQL
-/// text behind a full WebApplicationFactory, to re-prove a branch-agnostic try/catch — cost without
-/// assurance. If the guard ever grows a branch-specific case, that trade changes and this needs a
-/// relational fixture.
+/// <i>Until PR-1 this pinned the reuse branch's guarded family revoke (ADR-0034), which the
+/// tripwire replaced (ADR-0057 F3); the caller-chosen-exception constructor went with it.</i>
 /// </para>
-///
-/// Used to pin the refresh-token reuse contract: the family revoke is a MITIGATION and the 401 is
-/// the CONTRACT, so a revoke that throws must not change the answer the caller gets. The real-world
-/// trigger is a deadlock victim or a command timeout on the set-based revoke while concurrent
-/// rotations write the same index — timing this repo could observe in CI but not reproduce on
-/// demand, which is exactly why the invariant is pinned by injection rather than by racing.
 /// </summary>
 public sealed class ThrowingSaveChangesInterceptor : SaveChangesInterceptor
 {
-    private readonly Func<Exception> _fault;
-
-    /// <summary>Fails with the default stand-in for a transient database failure.</summary>
-    public ThrowingSaveChangesInterceptor()
-        : this(Fault) { }
-
-    /// <summary>
-    /// Fails with a caller-chosen exception.
-    ///
-    /// The reuse branch treats one exception type differently from every other — cancellation
-    /// propagates, because a caller who hung up is not a failed mitigation — and a fixture that can
-    /// only throw one type cannot tell the two apart. ADR-0034 rests on that carve-out, so it needs
-    /// to be pinned rather than assumed.
-    /// </summary>
-    public ThrowingSaveChangesInterceptor(Func<Exception> fault) => _fault = fault;
-
-    /// <summary>The default exception the intercepted context will throw.</summary>
+    /// <summary>The exception the intercepted context throws.</summary>
     public static InvalidOperationException Fault() =>
         new("Injected transient database failure (stands in for a deadlock victim).");
 
     public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
         DbContextEventData eventData,
         InterceptionResult<int> result,
-        CancellationToken cancellationToken = default) => throw _fault();
+        CancellationToken cancellationToken = default) => throw Fault();
 
     public override InterceptionResult<int> SavingChanges(
         DbContextEventData eventData,
-        InterceptionResult<int> result) => throw _fault();
+        InterceptionResult<int> result) => throw Fault();
 }

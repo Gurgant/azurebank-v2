@@ -40,11 +40,20 @@ public sealed class ServiceCredentialTests : IClassFixture<WebApplicationFactory
         /// credential is not the only secret a wrong destination would be handed.</summary>
         public List<string?> Authorization { get; } = [];
 
+        /// <summary>
+        /// The token-road marker (ADR-0057 §4.2), every value that arrived, per request.
+        /// </summary>
+        public List<string[]> Markers { get; } = [];
+
         public HttpResponseMessage Respond(HttpRequestMessage request)
         {
             Credentials.Add(
                 request.Headers.TryGetValues(ServiceCredentialOptions.HeaderName, out var values)
                     ? [.. values]
+                    : []);
+            Markers.Add(
+                request.Headers.TryGetValues(ServiceCredentialOptions.TokenRoadHeaderName, out var markers)
+                    ? [.. markers]
                     : []);
             Authorization.Add(request.Headers.Authorization?.ToString());
             return new HttpResponseMessage(HttpStatusCode.OK)
@@ -78,6 +87,7 @@ public sealed class ServiceCredentialTests : IClassFixture<WebApplicationFactory
             "fake-jwt",
             DateTime.UtcNow.AddHours(1),
             "fake-refresh",
+            DateTime.UtcNow.AddMinutes(60),
             new UserLoginInfo
             {
                 Id = Guid.NewGuid(),
@@ -136,6 +146,40 @@ public sealed class ServiceCredentialTests : IClassFixture<WebApplicationFactory
 
         api.Credentials.Should().NotBeEmpty();
         api.Credentials.Should().AllSatisfy(sent => sent.Should().Equal(TestServiceCredential.Key));
+    }
+
+    [Fact]
+    public async Task TheBffsOwnClient_MarksEveryCallAsItsOwn_WithExactlyOneMarker()
+    {
+        // ADR-0057 §4.2: the API's token endpoints answer 404 without exactly one marker. The key
+        // alone cannot tell this road from the proxy's, which carries it too and reaches the API
+        // over the same loopback interface.
+        var (host, api) = NewHost();
+        using var client = host.CreateClient();
+
+        await client.PostAsJsonAsync(
+            "/bff/auth/login", new { email = "someone@example.com", password = "Password123!" });
+
+        api.Markers.Should().NotBeEmpty();
+        api.Markers.Should().AllSatisfy(sent => sent.Should().Equal(ServiceCredentialOptions.TokenRoadMarker));
+    }
+
+    [Fact]
+    public async Task TheProxy_DropsAMarkerTheBrowserSent_AndSendsNone()
+    {
+        // The other half of ADR-0057 §4.2 (O2d): a browser's copy of the marker never reaches the
+        // API, so a request passing through the proxy can never pass for the BFF's own.
+        var (host, api) = NewHost();
+        using var client = host.CreateClient();
+        using var request = ProxiedRead(host);
+        request.Headers.Add(ServiceCredentialOptions.TokenRoadHeaderName, ServiceCredentialOptions.TokenRoadMarker);
+
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK, "the request has to reach the API to say anything");
+        api.Credentials.Should().ContainSingle("the control: this is the proxied request, and it arrived");
+        api.Markers.Should().ContainSingle().Which.Should().BeEmpty(
+            "the proxy never sends the marker, and strips the browser's");
     }
 
     [Theory]

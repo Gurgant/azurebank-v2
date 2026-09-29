@@ -7,7 +7,9 @@ Art. 72 evidence pack). Supersedes nothing.
 
 ## Context
 
-Seventeen security events are logged, and that is all that happens to them. A log is a stream: it
+Seventeen security events are logged *(sixteen since 2026-09-28: PR-1 stopped raising
+`RefreshTokenReuseRevokeFailed`, see the note under D1; and seventeen again from the same PR, which
+added the log-only `RefreshRenewalRateHigh`, see "What is wired")*, and that is all that happens to them. A log is a stream: it
 rotates, it is writable by whoever can reach the host, and nothing about it is evidence. PCI DSS v4
 10.3.2 asks that audit logs be protected from modification; NIST SP 800-53 AU-9 asks the same;
 PSD2 Art. 72 requires an institution to be able to reconstruct what happened. None of that is
@@ -42,16 +44,28 @@ Measured, not assumed —
 row too long for its column is refused by SQL Server, and the account rename that shared the save is
 gone when re-read from a fresh connection.
 
-**D1 HAS EXACTLY ONE EXCEPTION, and it is the refresh-token reuse path.** Everywhere else "no
+~~**D1 HAS EXACTLY ONE EXCEPTION, and it is the refresh-token reuse path.** Everywhere else "no
 evidence, no action" is the right trade. There, the action is CONTAINMENT of a token already proven
 stolen, and refusing to contain it because the logging failed hands the attacker the family. The
 first wiring awaited the refusal write *before* the try that guards `RevokeAllForUserAsync`, so an
 unwritable audit table meant the revoke never ran, no `MitigationFailed` row was written either, and
 the caller got the 500 that the comment inside that very catch calls out as inviting a retry of the
 stolen token. Containment now runs first and the row is written after it. The row can still fail
-loudly — the 5xx just no longer buys the attacker anything, because the family is already dead.
-Pinned by `WhenTheReuseAuditRowCannotBeWritten_TheStolenFamilyIsStillRevoked`, which was verified to
-go red when the order is put back.
+loudly — the 5xx just no longer buys the attacker anything, because the family is already dead.~~
+*(Struck 2026-09-28: D1 has no exception left. The note below says why.)*
+~~Pinned by WhenTheReuseAuditRowCannotBeWritten_TheStolenFamilyIsStillRevoked, which was verified to
+go red when the order is put back.~~
+
+*(Closed 2026-09-28 by PR-1, whose design
+[ADR-0057](0057-the-bffs-refresh-token-is-one-reusable-grant-per-session.md) records. The grant
+no longer rotates, and presenting an ENDED session's grant again is a tripwire that records, and
+revokes NOTHING: only code inside the replica can present a grant, and revoking one user's tokens
+does not contain that code — the incident runbook in ADR-0057 §5.4 does. With no containment there
+is nothing to put ahead of the record, so D1 has no exception left on this path: if the tripwire's
+audit write fails, the exception surfaces and the caller gets a 500, as the unknown-grant refusal
+always did, and nothing is revoked or issued either way. `RefreshTokenReuseRevokeFailed` and
+`MitigationFailed` are no longer raised; both names stay for the rows already written. Pinned by
+`WhenTheTripwiresAuditRowCannotBeWritten_TheAnswerIs500_AndTheOtherSessionStaysActive`.)*
 
 ### D1 re-examined against industry practice, 2026-08-20 — and kept
 
@@ -918,13 +932,27 @@ about the command line. The ring-refusal test now asks all ~~four~~ five verbs *
 
 ## What is wired, and what is not
 
-**~~Fourteen~~ Fifteen events write a row today** *(struck 2026-09-06: `AccountDeletionRefused`
-joined, below)*. Eight are administrative: `AccountDeleted`,
-`AccountNumberRevealed`, `AzureTagRenamed`, `PinChanged`, `PinEnrolled`, `RefreshTokenUnknown`,
-`RefreshTokenReuse` and `RefreshTokenReuseRevokeFailed`. For those the log line is kept alongside the
-row — two destinations, two jobs. `PinChanged` is the exception to that pairing and was **added
-2026-09-04** (ADR-0047): it writes a row and NO log line, following the money precedent below,
-because a PIN change is evidence to keep rather than an alert to raise.
+**~~Fourteen~~ ~~Fifteen~~ Fourteen events write a row today** *(struck 2026-09-06: `AccountDeletionRefused`
+joined, below; and struck again 2026-09-28: PR-1 stopped raising `RefreshTokenReuseRevokeFailed`,
+so it leaves the administrative list below, struck in place)*. ~~Eight~~ Seven are administrative:
+`AccountDeleted`, `AccountNumberRevealed`, `AzureTagRenamed`, `PinChanged`, `PinEnrolled`,
+`RefreshTokenUnknown` and `RefreshTokenReuse` ~~and `RefreshTokenReuseRevokeFailed`~~. For those
+the log line is kept alongside the row — two destinations, two jobs. `PinChanged` is the exception
+to that pairing and was **added 2026-09-04** (ADR-0047): it writes a row and NO log line, following
+the money precedent below, because a PIN change is evidence to keep rather than an alert to raise.
+
+*(Moved 2026-09-28, [ADR-0057](0057-the-bffs-refresh-token-is-one-reusable-grant-per-session.md):
+**`RefreshTokenReuse` means something new from that date.** Until then it was rotation's reuse
+detection, and the request that raised it also revoked every token of the user. Since then it is the
+tripwire: a grant revoked because its session ended (`RevokedReason` `SessionEnded`), presented in a
+request the API received after that revoke. It revokes nothing, so a row written after PR-1 was
+deployed is evidence and not a record of containment, and the operator who reads one follows
+ADR-0057's runbook (§5.4). The other refusals of a revoked grant write no row and raise no security
+event: revoked while its renewal was in flight, or revoked for any other reason
+(`SignOutEverywhere`, `ReuseContainment`, `Incident`, `Deployment`, or a legacy row with none),
+because a live session can meet either one innocently. They are plain log lines, like the BFF's
+`GrantRevokeAbandoned` and `GrantRevokeDropped`; none of them is a `SecurityEvents` constant, so
+none moves a count this section keeps.)*
 
 **Four are money movements, added by B1** (2026-08-20): `MoneyDeposited`, `MoneyWithdrawn`,
 `MoneyTransferred` and `MoneyTransferredInternally`. Until then this table recorded a renamed handle
@@ -991,6 +1019,13 @@ withdrawal's own locked-PIN and wrong-PIN sites left with the PIN itself, and th
 absent-authorisation site came in — two out, one in. Measured on the branch:
 `grep -c "_audit.RecordRefusalAsync(" backend/src` = 8.)*
 
+*(Moved 2026-09-28, PR-1: `RefreshTokenService` holds **TWO** token-path sites, not three — the
+unknown grant and the tripwire. The third wrote `RefreshTokenReuseRevokeFailed` when the family
+revoke failed, and the tripwire revokes nothing (ADR-0057). So the source holds **SEVEN**
+`RecordRefusalAsync` calls. Measured on the branch, per file, `grep -rc "_audit.RecordRefusalAsync("
+backend/src`: `TransferService` 2, `RefreshTokenService` 2, `AccountService` 1,
+`StepUpAuthorizationService` 1, `TransactionService` 1.)*
+
 ⚠️ **The `Detail` rule INVERTS on these ~~two~~ three, and D5 is why it inverts rather than
 lapsing.** *(struck 2026-09-06: `AccountDeletionRefused` carries `AUTHORIZATION_REQUIRED` the same
 way, and for the same reason — a refused closure commits no row for a pointer to reach.)* The four
@@ -1014,9 +1049,10 @@ already in the system, so naming it adds no new personal data and keeps the row 
 Three things about the four movements are decisions rather than details.
 
 **They emit NO `SecurityEvent` log line, and that is the first event class to do so.** The
-administrative events that pair with a log line — ~~seven~~ seven of the eight, `PinChanged`
-excepted (struck 2026-09-04: ADR-0047 made the set eight and its newest member is the second class
-to write a row with no log line) — are worth waking an operator for; a deposit is not, and the money
+administrative events that pair with a log line — ~~seven~~ ~~seven of the eight~~ six of the seven,
+`PinChanged` excepted (struck 2026-09-04: ADR-0047 made the set eight and its newest member is the
+second class to write a row with no log line; struck again 2026-09-28: `RefreshTokenReuseRevokeFailed`
+left the set, ADR-0057) — are worth waking an operator for; a deposit is not, and the money
 paths already carry their own operational log lines. So a movement gets durable evidence without
 flooding the
 alert stream. It also means the two inventories — logged sites, and rows written — moved
@@ -1107,8 +1143,9 @@ taking the tail lock that every real movement queues behind.
 `ATransferRefusedForDailyLimit_WritesNoRow_AndThatIsTheDecision` asserts the absence, at both
 sites, so nobody re-reading the inventory thinks it was forgotten._
 
-The remaining ten logged events are deliberately log-only, with reasons that were measured rather
-than assumed:
+The remaining ~~ten~~ eleven logged events *(eleven since 2026-09-28: PR-1 added
+`RefreshRenewalRateHigh`, the last item below)* are deliberately log-only, with reasons that were
+measured rather than assumed:
 
 - **Registration refusals** (`DuplicateRegistration`, `RegistrationRejected`) — `/api/auth/register`
   is unauthenticated, and the API carries **no rate limiter of its own** (checked: zero
@@ -1128,6 +1165,17 @@ than assumed:
   signals about a random-id generator, not acts by a principal, and they are raised inside a `catch`
   that `continue`s a retry loop. An enlisted row would die with the attempt that failed; a
   self-committing one would write one row per attempt. Both wrong, and the log is right.
+- **A grant renewed more often than the BFF renews one** (`RefreshRenewalRateHigh`, *added
+  2026-09-28 by PR-1*, [ADR-0057](0057-the-bffs-refresh-token-is-one-reusable-grant-per-session.md)
+  §6, anomaly 2) — more than three renewals of one grant within one access-token lifetime, which is
+  how a second holder of a live grant shows up if it renews often. Log-only because a row would be
+  a write on the renewal path, and that ADR's fix is that a renewal writes nothing: a renewal that
+  writes can lose its answer, be retried by EF as if it had rolled back, or wait on a hung
+  database. The count lives in the API's memory, at most one line per grant per token lifetime, and
+  nothing is refused. Its outcome is `Succeeded`, since the renewal was answered, so it is the one
+  `Succeeded` site with no row.
+  `FourRenewalsThatRaiseTheRateEvent_SendNoWriteCommand_AndWriteNoAuditRow` shows it on SQL Server:
+  the four renewals send no command that is not a `SELECT`, and the table gains no row.
 
 **The first half of the next sentence stopped being true on 2026-08-23** and is left standing
 because an ADR is a record: `tools/AzureBank.AuditVerifier` reads this table, and `VerifyAsync` is
@@ -1225,7 +1273,8 @@ to `ConcurrencyRetry.IsAzureTagCollision`, matching by INDEX NAME like its three
 
 **The reuse path was made fail-open by its own audit row** — see D1's exception above. Found by
 fanning out over the audit write path with instructions to classify every call site and then refute
-each finding, rather than by re-reading the diff.
+each finding, rather than by re-reading the diff. *(That path is gone since 2026-09-28; see the note
+under D1.)*
 
 ## References
 

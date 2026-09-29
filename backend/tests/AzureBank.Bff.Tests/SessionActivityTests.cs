@@ -1,11 +1,14 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using AzureBank.Bff.Options;
 using AzureBank.Bff.Services.Interfaces;
 using AzureBank.Shared.DTOs.Auth;
 using FluentAssertions;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
@@ -18,11 +21,30 @@ namespace AzureBank.Bff.Tests;
 /// while /bff/auth/me is the deliberate "Stay signed in" refresher and MUST.
 /// Sessions are created directly against the in-process session service.
 /// </summary>
-public class SessionActivityTests : IClassFixture<WebApplicationFactory<Program>>
+public class SessionActivityTests : IClassFixture<SessionActivityTests.ApiStubbedFactory>
 {
     private readonly WebApplicationFactory<Program> _factory;
 
-    public SessionActivityTests(WebApplicationFactory<Program> factory) => _factory = factory;
+    public SessionActivityTests(ApiStubbedFactory factory) => _factory = factory;
+
+    /// <summary>
+    /// The BFF with its OWN client to the API stubbed. The sessions here hold grants, and since PR-1
+    /// a host that stops revokes the grants it held (GrantRevoker's drain, ADR-0057 §4.6): on the
+    /// plain factory that drain sent /api/auth/revoke to the configured API address, a live call on
+    /// a machine where the API runs. Measured before: "0 grants revoked, 5 left" at this class's
+    /// teardown. /me's read-through meets the stub too, whose body carries no user, so /me serves its
+    /// cached copy exactly as it did with no API to reach.
+    /// </summary>
+    public sealed class ApiStubbedFactory : WebApplicationFactory<Program>
+    {
+        protected override void ConfigureWebHost(IWebHostBuilder builder) =>
+            builder.ConfigureTestServices(services =>
+                services.AddHttpClient("BackendApi").ConfigurePrimaryHttpMessageHandler(() =>
+                    new FakeBackendApiHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent("""{"message":"ok"}""", Encoding.UTF8, "application/json"),
+                    })));
+    }
 
     private (string SessionId, string CookieName, ISessionService Sessions) CreateSession()
     {
@@ -33,6 +55,7 @@ public class SessionActivityTests : IClassFixture<WebApplicationFactory<Program>
             "fake-jwt",
             DateTime.UtcNow.AddHours(1),
             "fake-refresh",
+            DateTime.UtcNow.AddMinutes(60),
             new UserLoginInfo
             {
                 Id = Guid.NewGuid(),

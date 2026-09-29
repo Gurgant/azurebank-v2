@@ -995,9 +995,9 @@
           "Auth"
         ],
         "summary": "Refresh access token",
-        "description": "Exchange a refresh token for a fresh access + refresh token pair (rotation).",
+        "description": "Present the session's grant for a fresh access token, which expires no later than the grant.\r\nThe grant is not consumed: the same one renews again until its session ends or it expires,\r\nand the answer carries no refresh token.",
         "requestBody": {
-          "description": "The current refresh token",
+          "description": "The session's grant",
           "content": {
             "application/json": {
               "schema": {
@@ -1040,6 +1040,146 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          { }
+        ]
+      }
+    },
+    "/api/auth/revoke": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Revoke grants",
+        "description": "Revoke the grants of sessions that have ended: one, or several when the BFF drains its\r\nsessions on a graceful stop. Revoked and unknown grants get the same 200 (RFC 7009 §2.2), and\r\nrepeating the call changes nothing. A 503 means the revocation was not recorded; send it again.",
+        "requestBody": {
+          "description": "The grants to revoke",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          { }
+        ]
+      }
+    },
+    "/api/auth/session-stamps": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Read session stamps",
+        "description": "The current session stamp of each listed user. Signing a user out of every session raises\r\ntheirs, and a session given a lower one at sign-in has been signed out since. An unknown user\r\nhas no entry in the answer.",
+        "requestBody": {
+          "description": "The users to read",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionStampsRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionStampsRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionStampsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseOfSessionStampsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
             "content": {
               "application/json": {
                 "schema": {
@@ -1110,8 +1250,8 @@
         "tags": [
           "Auth"
         ],
-        "summary": "Logout",
-        "description": "Logout and invalidate session.",
+        "summary": "Logout from every session",
+        "description": "Sign the user out of every session on every device: every grant of the user is revoked and\r\nthe user's session stamp is raised, together. One session ends through revoke instead.",
         "responses": {
           "200": {
             "description": "Success message",
@@ -3559,6 +3699,27 @@
           }
         }
       },
+      "ApiResponseOfSessionStampsResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SessionStampsResponse"
+              }
+            ]
+          },
+          "message": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
       "ApiResponseOfStepUpAuthorizationResponse": {
         "type": "object",
         "properties": {
@@ -4102,23 +4263,18 @@
             "type": "string"
           }
         },
-        "description": "Request body for POST /api/auth/refresh: exchanges a valid refresh token for a fresh\r\naccess + refresh token pair (rotation). The refresh token is the SOLE credential — no\r\nbearer access token is required (the access token being refreshed may already be expired)."
+        "description": "Request body for POST /api/auth/refresh: presents the session's grant for a fresh access token.\r\nThe grant is the SOLE credential — no bearer access token is required (the access token being\r\nrenewed may already be expired) — and it is not consumed: the same grant renews again until its\r\nsession ends or it expires."
       },
       "RefreshResponse": {
         "required": [
           "accessToken",
-          "refreshToken",
           "expiresAt"
         ],
         "type": "object",
         "properties": {
           "accessToken": {
             "type": "string",
-            "description": "Fresh JWT access token (short-lived, per JwtOptions.ExpirationMinutes)."
-          },
-          "refreshToken": {
-            "type": "string",
-            "description": "The NEW refresh token (plaintext, shown once). Store it; discard the old one."
+            "description": "Fresh JWT access token: `Jwt:ExpirationMinutes` long, or shorter when the grant expires\r\nsooner, since no access token outlives the grant it came from."
           },
           "expiresAt": {
             "type": "string",
@@ -4126,7 +4282,7 @@
             "format": "date-time"
           }
         },
-        "description": "Result of a successful refresh-token rotation: a new short-lived access token AND a NEW\r\nrefresh token. The presented refresh token is now revoked — the caller MUST replace its\r\nstored value with this one. Replaying the old token is rejected and, because it is now a\r\nrevoked token, trips reuse-detection (revoking the whole active token set for the user)."
+        "description": "Result of a successful renewal: a new short-lived access token and its expiry, and nothing else.\r\nThe grant that was presented stays valid and unchanged: a renewal writes nothing, so it\r\nhands back no refresh token, and the caller keeps the one it holds."
       },
       "RegisterRequest": {
         "required": [
@@ -4195,6 +4351,59 @@
         },
         "description": "Response returned after successful user registration.\r\nIncludes user info, initial account, and authentication token."
       },
+      "RevokeRequest": {
+        "required": [
+          "refreshTokens"
+        ],
+        "type": "object",
+        "properties": {
+          "refreshTokens": {
+            "maxItems": 1000,
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The grants to revoke. An unknown one, or one already revoked, is not an error: the answer is\r\nthe same 200 either way (RFC 7009 §2.2). A null one names no grant, and the request is refused\r\nwith 400."
+          }
+        },
+        "description": "Request body for POST /api/auth/revoke: the grants of sessions the BFF has ended. One\r\nfor \"Esci\", idle expiry or a new sign-in; several when the BFF drains every session it holds on a\r\ngraceful stop."
+      },
+      "SessionStampsRequest": {
+        "required": [
+          "userIds"
+        ],
+        "type": "object",
+        "properties": {
+          "userIds": {
+            "maxItems": 1000,
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The users whose session stamps to read. An unknown user is not an error: the answer simply\r\nhas no entry for it."
+          }
+        },
+        "description": "Request body for POST /api/auth/session-stamps: the users who hold a session in the BFF."
+      },
+      "SessionStampsResponse": {
+        "required": [
+          "stamps"
+        ],
+        "type": "object",
+        "properties": {
+          "stamps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UserSessionStamp"
+            },
+            "description": "The stamps, in no particular order. An unknown user has no entry."
+          }
+        },
+        "description": "What POST /api/auth/session-stamps answers: one entry per known user asked about."
+      },
       "SetPinRequest": {
         "required": [
           "pin"
@@ -4250,6 +4459,7 @@
       "TokenResponse": {
         "required": [
           "accessToken",
+          "sessionStamp",
           "expiresIn",
           "expiresAt"
         ],
@@ -4264,7 +4474,20 @@
               "null",
               "string"
             ],
-            "description": "Refresh token (plaintext, shown once) for rotating the access token via\r\nPOST /api/auth/refresh. In the BFF deployment it is captured server-side. Deliberately\r\nNOT `required`: registration issues it BEST-EFFORT — the user + account are already\r\ncommitted, so a post-registration token-write failure must not fail the request. It is\r\ntherefore genuinely optional here (null when that write failed); the user obtains a\r\nrefresh token on their next login. Login itself always carries one: an issuance failure\r\nfails the login, so on that path the nullability is only a boundary-robustness allowance."
+            "description": "The session's grant (plaintext, shown once), presented to POST /api/auth/refresh for each new\r\naccess token; it does not rotate. In the BFF deployment it is captured server-side. Deliberately\r\nNOT `required`: registration issues it BEST-EFFORT — the user + account are already\r\ncommitted, so a post-registration token-write failure must not fail the request. It is\r\ntherefore genuinely optional here (null when that write failed); the user obtains a\r\nrefresh token on their next login. Login itself always carries one: an issuance failure\r\nfails the login, so on that path the nullability is only a boundary-robustness allowance."
+          },
+          "refreshTokenExpiresAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "When the grant stops working: its issue plus `Jwt:RefreshTokenLifetimeMinutes`, fixed\r\nthen and never extended. The BFF caps the session at it. Null exactly when the grant\r\nis, after a registration whose best-effort grant failed.",
+            "format": "date-time"
+          },
+          "sessionStamp": {
+            "type": "integer",
+            "description": "The user's session stamp when this sign-in was answered. Every sign-out of all the user's\r\nsessions raises it, and the BFF ends a session whose stamp is below the latest it has read.",
+            "format": "int32"
           },
           "expiresIn": {
             "type": "integer",
@@ -4617,6 +4840,26 @@
           }
         }
       },
+      "UserSessionStamp": {
+        "required": [
+          "userId",
+          "sessionStamp"
+        ],
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string",
+            "description": "The user.",
+            "format": "uuid"
+          },
+          "sessionStamp": {
+            "type": "integer",
+            "description": "The user's current session stamp. A session that was given a lower one at sign-in has been\r\nsigned out since.",
+            "format": "int32"
+          }
+        },
+        "description": "One user's session stamp."
+      },
       "VerifyPinRequest": {
         "required": [
           "pin"
@@ -4715,7 +4958,7 @@
     "securitySchemes": {
       "Bearer": {
         "type": "http",
-        "description": "Enter your JWT token. Get a token by calling POST /api/auth/login",
+        "description": "Enter your JWT token. Get one from POST /api/auth/login, called from the API's own machine (loopback) with the X-AzureBank-Service-Key header and exactly one X-AzureBank-Token-Road header.",
         "scheme": "bearer",
         "bearerFormat": "JWT"
       }

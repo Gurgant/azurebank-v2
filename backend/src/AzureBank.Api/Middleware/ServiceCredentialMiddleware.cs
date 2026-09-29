@@ -34,9 +34,19 @@ namespace AzureBank.Api.Middleware;
 /// <see cref="CryptographicOperations.FixedTimeEquals"/> needs to compare at all.
 /// </para>
 /// <para>
-/// This is the application-level half. In production the API also has no public address (a
-/// private network, with the platform's managed identity or mutual TLS between the two hosts);
-/// the key stays as the second line behind it.
+/// This is the application-level half. The other is where the API listens: it is the BFF's sidecar
+/// in one replica and binds loopback only (ADR-0057 §3), so nothing outside the replica reaches it
+/// at all, and its token endpoints refuse even the key from any other address
+/// (<see cref="TokenRoadMiddleware"/>). <i>(Until 2026-09-28 this said a private network with
+/// managed identity or mutual TLS between two hosts. That was a plan, not the deployment, and
+/// ADR-0057 made the API reached over a network a stop condition: DPoP or mutual TLS would have to
+/// come first.)</i>
+/// </para>
+/// <para>
+/// <b>The refusal names itself</b> in <see cref="ServiceCredentialOptions.RefusalHeaderName"/>, so the
+/// BFF can tell a key the API does not hold — a half-applied rotation — from a session that ended,
+/// and keep its users signed in through the first (ADR-0057 §4.7). It says nothing a caller did not
+/// know: the body already carries <c>SERVICE_CREDENTIAL_REQUIRED</c>.
 /// </para>
 /// </remarks>
 public sealed class ServiceCredentialMiddleware
@@ -87,6 +97,8 @@ public sealed class ServiceCredentialMiddleware
             Activity.Current?.TraceId.ToString() ?? context.TraceIdentifier;
 
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        context.Response.Headers[ServiceCredentialOptions.RefusalHeaderName] =
+            ServiceCredentialOptions.ServiceCredentialRefusal;
         await context.Response.WriteAsJsonAsync(
             problemDetails, options: null, contentType: "application/problem+json");
     }

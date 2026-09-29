@@ -158,10 +158,18 @@ AzureBank.Api/
 |----------|--------|-------------|---------------|
 | `/api/auth/login` | POST | Authenticate user, receive JWT | No |
 | `/api/auth/register` | POST | Register new user with account | No |
+| `/api/auth/refresh` | POST | Renew the access token with the session's grant; the grant is not rotated | No (the grant is the credential) |
+| `/api/auth/revoke` | POST | Revoke the grants of ended sessions; 200 for unknown grants too | No (the grant is the credential) |
 | `/api/auth/me` | GET | Get current user info | Yes |
-| `/api/auth/logout` | POST | Invalidate session | Yes |
+| `/api/auth/logout` | POST | Revoke every grant of the user (every session) and raise the user's session stamp | Yes |
+| `/api/auth/session-stamps` | POST | Read the session stamps of the listed users (the BFF's watcher) | No (the BFF's own client) |
 | `/api/auth/pin` | POST | Set or update PIN | Yes |
 | `/api/auth/pin/verify` | POST | Verify PIN for step-up auth | Yes |
+
+The five token endpoints (login, register, refresh, revoke and logout) and the stamp feed,
+session-stamps, answer only the BFF's own client: a request from loopback carrying exactly one
+`X-AzureBank-Token-Road` header, besides the service key. Anything else gets 404, as an unknown path
+would.
 
 ### Accounts (`/api/accounts`)
 
@@ -317,7 +325,7 @@ public class LoginRequestValidator : AbstractValidator<LoginRequest>
     "Issuer": "AzureBank.Api",
     "Audience": "AzureBank.Bff",
     "ExpirationMinutes": 15,
-    "RefreshTokenExpirationDays": 7
+    "RefreshTokenLifetimeMinutes": 60
   },
   "Serilog": {
     "MinimumLevel": {

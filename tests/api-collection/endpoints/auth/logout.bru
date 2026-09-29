@@ -1,7 +1,7 @@
 meta {
   name: Logout
   type: http
-  seq: 6
+  seq: 7
 }
 
 post {
@@ -14,6 +14,22 @@ auth:bearer {
   token: {{authToken}}
 }
 
+headers {
+  X-AzureBank-Token-Road: bff
+}
+
+docs {
+  WHAT THIS ENDS. Every session of the user: every grant still live is revoked, here the one
+  register issued, since revoke just ended the login one, and in the same transaction the user's
+  session stamp goes up by 1, which ends the user's BFF sessions within ~20 s with up to 1,000
+  signed-in users, up to 5 s more for each further 1,000 (ADR-0057, section 5.3). One session
+  ends through revoke instead, which is what the BFF sends for a sign-out; nothing calls this one
+  yet.
+
+  It ends grants, not access tokens. The authToken published by login stays valid until it
+  expires, which is why the folders after this one still sign their requests with it.
+}
+
 assert {
   res.status: eq 200
 }
@@ -24,6 +40,6 @@ tests {
   });
 
   test("Logout successful", function() {
-    expect(res.body.message).to.be.a('string');
+    expect(res.body.message).to.equal('Logged out successfully');
   });
 }

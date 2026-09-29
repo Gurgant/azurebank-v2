@@ -22,6 +22,8 @@
 
   <ItemGroup Label="Testing Utilities">
     <PackageReference Include="FluentAssertions" />
+    <!-- FakeTimeProvider: drives the session-stamp watcher's 15 s period without waiting it out -->
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
   </ItemGroup>
 
   <ItemGroup Label="Integration Testing">

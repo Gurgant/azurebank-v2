@@ -1,4 +1,5 @@
 using AzureBank.Bff.Models;
+using AzureBank.Bff.Services;
 
 namespace AzureBank.Bff.Services.Interfaces;
 
@@ -21,14 +22,31 @@ public interface ITokenStoreService
     Task<UserSession?> GetSessionAsync(string sessionId);
 
     /// <summary>
-    /// Updates an existing session (e.g., LastActivity, AuthLevel).
+    /// Writes back a session that is still stored (e.g., LastActivity, AuthLevel). A session that was
+    /// removed meanwhile stays removed: a write-back never brings an ended session back
+    /// (ADR-0057 §4.6, F2).
     /// </summary>
     Task UpdateSessionAsync(UserSession session);
 
     /// <summary>
-    /// Removes a session from storage.
+    /// Ends a session: under its lock, marks it ended, captures the renewal in flight and removes it,
+    /// then queues its grant for revocation at the API (ADR-0057 §4.6). The one path every ending
+    /// takes. True when this call ended it; false for an unknown id or a session that had already
+    /// ended.
     /// </summary>
-    Task RemoveSessionAsync(string sessionId);
+    Task<bool> EndSessionAsync(string sessionId);
+
+    /// <summary>
+    /// Ends every stored session for a graceful stop, and hands back their grants for the drain to
+    /// revoke together instead of queueing each (ADR-0057 §4.6, F7).
+    /// </summary>
+    IReadOnlyList<GrantRevocation> EndAllSessions();
+
+    /// <summary>
+    /// The users who hold at least one stored session: whose session stamps the watcher reads
+    /// (ADR-0057 §5.3). Empty when nobody is signed in.
+    /// </summary>
+    IReadOnlySet<Guid> SignedInUserIds();
 
     /// <summary>
     /// Cleans up expired sessions (called periodically by background service).
