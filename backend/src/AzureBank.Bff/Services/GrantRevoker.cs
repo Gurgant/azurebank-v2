@@ -74,7 +74,8 @@ public sealed class GrantRevocation(string sessionId, string grant, DateTime ret
 /// stopped, what is left goes in one more call: a session a request still in flight stored or ended
 /// after the first half, and what was queued or being retried. The log says how many were revoked
 /// and how many were left. Each half runs on a budget of its own, never on the host's shutdown
-/// token, which is already cancelled when a request held Kestrel's stop past its timeout. A grant
+/// token, which is already cancelled when a request held Kestrel's stop past its timeout, and is
+/// waited for one second past that budget at most, whether or not its calls have ended. A grant
 /// the API did not get — a kill, or an API that stopped first, as it does under compose — is live
 /// until its cap, with nobody holding it.
 /// </para>
@@ -117,7 +118,19 @@ public sealed class GrantRevoker : BackgroundService
     /// that holds Kestrel's graceful stop to its timeout cancels that token before the drain has
     /// sent anything.
     /// </summary>
-    private static readonly TimeSpan DrainBudget = TimeSpan.FromSeconds(15);
+    /// <remarks>
+    /// Settable only so a test can make a half overrun without waiting 15 s for it; nothing else
+    /// sets it.
+    /// </remarks>
+    internal TimeSpan DrainBudget { get; set; } = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// How long past <see cref="DrainBudget"/> a drain half is waited for. The budget cancels the
+    /// half's calls, but a call ends only when the handler under it honours that: HttpClient waits
+    /// for its handler however long it takes. Without this bound one such handler would hold the
+    /// stop, and every stop waiting on the drain, past the host's shutdown grace.
+    /// </summary>
+    private static readonly TimeSpan DrainOverrun = TimeSpan.FromSeconds(1);
 
     private readonly Channel<GrantRevocation> _queue = Channel.CreateBounded<GrantRevocation>(
         new BoundedChannelOptions(Capacity) { FullMode = BoundedChannelFullMode.Wait });
@@ -211,7 +224,7 @@ public sealed class GrantRevoker : BackgroundService
 
             // Task.Run: this runs on the thread that is stopping the host, which must not wait for
             // the API.
-            _drainAtStopping = Task.Run(() => DrainAsync(ended));
+            _drainAtStopping = Task.Run(() => DrainAsync(ended, "first"));
         }
     }
 
@@ -239,7 +252,9 @@ public sealed class GrantRevoker : BackgroundService
         try
         {
             // The first half, started when the host began to stop, on its own budget. None when
-            // nothing signalled the stop first: the half below then takes every grant.
+            // nothing signalled the stop first: the half below then takes every grant. Awaited
+            // bare because DrainAsync bounds itself, from the half's own start: by the time the
+            // host gets here the budget may be long spent, and waiting it again would add to it.
             Task? first;
             lock (_drainGate)
             {
@@ -264,7 +279,7 @@ public sealed class GrantRevoker : BackgroundService
             // From here a late ending is logged as dropped rather than queued for nobody.
             _queue.Writer.TryComplete();
 
-            await DrainAsync(rest);
+            await DrainAsync(rest, "second");
 
             // Said even when there was nothing to send, so "the drain ran and found no grant" reads
             // differently from "the drain never ran" (ADR-0057 F7, §11 rely on this count).
@@ -297,8 +312,12 @@ public sealed class GrantRevoker : BackgroundService
     /// session had no renewal in flight in one call at once, the others in one call once their
     /// renewals settle, <see cref="DrainRenewalWait"/> at most (ADR-0057 §4.6, F7). Not retried:
     /// the host is going away, and a grant this misses dies at its cap with nobody holding it.
+    /// Returns within <see cref="DrainBudget"/> plus <see cref="DrainOverrun"/>, answered or not,
+    /// and never throws.
     /// </summary>
-    private async Task DrainAsync(IReadOnlyList<GrantRevocation> grants)
+    /// <param name="grants">The grants this half takes.</param>
+    /// <param name="half">"first" or "second", for the log.</param>
+    private async Task DrainAsync(IReadOnlyList<GrantRevocation> grants, string half)
     {
         if (grants.Count == 0)
         {
@@ -322,9 +341,23 @@ public sealed class GrantRevoker : BackgroundService
             }
         }
 
-        await Task.WhenAll(
-            SendAtStopAsync(now, budget.Token),
-            SendAfterRenewalsAsync(afterRenewal, budget.Token));
+        try
+        {
+            // Timed from this half's start, like the budget: a call that has not ended one second
+            // after the budget cancelled it is sitting on a handler that ignores cancellation.
+            await Task.WhenAll(
+                    SendAtStopAsync(now, budget.Token),
+                    SendAfterRenewalsAsync(afterRenewal, budget.Token))
+                .WaitAsync(DrainBudget + DrainOverrun);
+        }
+        catch (TimeoutException)
+        {
+            // Left to finish on its own. What it revokes still counts if it lands before the stop's
+            // summary; otherwise its grants are reported as left, which they may well be.
+            _logger.LogWarning(
+                "Graceful stop: the {Half} drain half overran its budget; the stop goes on without "
+                + "the calls still unanswered, and counts their grants as left", half);
+        }
     }
 
     /// <summary>

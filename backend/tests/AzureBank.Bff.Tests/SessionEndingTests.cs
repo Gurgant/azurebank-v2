@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using AzureBank.Bff.Options;
@@ -264,17 +265,43 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
         }
     }
 
+    /// <summary>
+    /// The "BackendApi" handler of an API that takes the first revoke call and never answers it, not
+    /// even once the call is cancelled; every other call <paramref name="upstream"/> answers.
+    /// <paramref name="revokes"/> is shared by every handler the client factory builds, so the first
+    /// is the host's first.
+    /// </summary>
+    private sealed class FirstRevokeUnanswered(Upstream upstream, StrongBox<int> revokes) : HttpMessageHandler
+    {
+        private static readonly Task Never = new TaskCompletionSource().Task;
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var response = upstream.Respond(request);
+            if (request.RequestUri!.AbsolutePath == "/api/auth/revoke"
+                && Interlocked.Increment(ref revokes.Value) == 1)
+            {
+                // Without the call's token on purpose: this is a handler that ignores cancellation.
+                await Never;
+            }
+            return response;
+        }
+    }
+
     private (WebApplicationFactory<Program> Host, Upstream Upstream) NewHost(
         ConcurrentQueue<LogEvent>? log = null, bool disposeWithTheClass = true,
-        StoppedBeforeTheRevoker? stopper = null, RevokeHold? hold = null)
+        StoppedBeforeTheRevoker? stopper = null, RevokeHold? hold = null, bool firstRevokeUnanswered = false)
     {
         var upstream = new Upstream();
+        var revokes = new StrongBox<int>();
         var host = _factory.WithWebHostBuilder(builder =>
         {
             builder.ConfigureTestServices(services =>
             {
-                services.AddHttpClient("BackendApi").ConfigurePrimaryHttpMessageHandler(() => hold is null
-                    ? new FakeBackendApiHandler(upstream.Respond)
+                services.AddHttpClient("BackendApi").ConfigurePrimaryHttpMessageHandler(() =>
+                    firstRevokeUnanswered ? new FirstRevokeUnanswered(upstream, revokes)
+                    : hold is null ? new FakeBackendApiHandler(upstream.Respond)
                     : new HeldRevokes(upstream, hold));
                 if (stopper is not null)
                 {
@@ -594,6 +621,50 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
             summary.Should().ContainSingle();
             summary.Single().Properties["Revoked"].ToString().Should().Be("2");
             summary.Single().Properties["Left"].ToString().Should().Be("0");
+        }
+    }
+
+    [Fact]
+    public async Task AGracefulStop_GivesUpOnAFirstHalfTheApiNeverAnswers_AtItsBudget_AndStillSendsTheSecond()
+    {
+        /*
+          Each drain half's budget cancels its calls, but a call ends only when the handler under it
+          honours that. The API here takes the first half's call and never answers, not even once
+          the call is cancelled. Until the stop bounded its wait, it waited for that half as long as
+          the handler held it, past the host's shutdown grace. Now it waits one second past the
+          half's budget, says so, and still sends the second half: a session a sign-in stored after
+          the first half had gone. The budget is 1 s here instead of 15, so the bound is 2 s.
+        */
+        var log = new ConcurrentQueue<LogEvent>();
+        var stopper = new StoppedBeforeTheRevoker((_, services) => NewSession(services, "rt-late"));
+        var (host, upstream) = NewHost(log, disposeWithTheClass: false, stopper, firstRevokeUnanswered: true);
+        NewSession(host, "rt-held");
+        var budget = TimeSpan.FromSeconds(1);
+        host.Services.GetRequiredService<GrantRevoker>().DrainBudget = budget;
+        host.CreateClient();
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var stop = host.DisposeAsync().AsTask();
+        var stopped = await Task.WhenAny(stop, Task.Delay(TimeSpan.FromSeconds(10))) == stop;
+        clock.Stop();
+
+        var overran = Named(log, "Graceful stop: the {Half} drain half overran").ToList();
+        var summary = Named(log, "Graceful stop:").Where(e => e.Properties.ContainsKey("Revoked")).ToList();
+        using (new AssertionScope())
+        {
+            stopped.Should().BeTrue("the stop must not wait on a call the handler never ends");
+            clock.Elapsed.Should().BeGreaterThan(budget, "the stop waited for the half's budget first")
+                .And.BeLessThan(budget + TimeSpan.FromSeconds(1) + TimeSpan.FromSeconds(3),
+                    "it waits one second past the budget at most, and 3 s are room for a slow machine");
+            overran.Should().ContainSingle();
+            overran.Should().OnlyContain(e => e.Level == LogEventLevel.Warning
+                && ((ScalarValue)e.Properties["Half"]).Value as string == "first");
+            upstream.RevokeCallLog.Select(c => c.Grants).Should().BeEquivalentTo(
+                [new[] { "rt-held" }, ["rt-late"]], o => o.WithStrictOrdering(),
+                "the second half is sent all the same");
+            summary.Should().ContainSingle();
+            summary.Should().OnlyContain(e => e.Properties["Revoked"].ToString() == "1"
+                && e.Properties["Left"].ToString() == "1", "the unanswered grant counts as left");
         }
     }
 
