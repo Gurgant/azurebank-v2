@@ -362,7 +362,7 @@ The BFF's inactivity timeout is 15 minutes (it was 30). The absolute limit stays
 | Lever | How it works | Effect on a signed-in browser | Code |
 |---|---|---|---|
 | **One session now: "Esci"** | Under the session lock, the BFF marks the session `Ended`, removes it, deletes the cookie and answers 200. `GrantRevoker` then revokes that grant (`SessionEnded`), after any renewal in flight | Signed out at once: the next request with that cookie, from any tab, gets 401. Its access token lived only in that session and goes with it | The core of PR-1 (§4.6) |
-| **One user everywhere now** | `POST /api/auth/logout` (no button yet), or the runbook's SQL for one user (§5.4). In one transaction, all the user's grants are revoked (`SignOutEverywhere`, or `ReuseContainment` when it answers a tripwire) and the user's stamp goes up by 1 | Signed out at the first request after the BFF's next read of the stamps: within 15 s (§5.3). While the BFF cannot read them, at each session's next successful renewal, after up to half the token's life (7.5 minutes) of continued use | The stamp, its own commit of PR-1 (§5.3): the revoke and the raise in `RevokeAllForUserAsync`, `POST /api/auth/session-stamps`, `SessionStampWatcher` and the store's check |
+| **One user everywhere now** | `POST /api/auth/logout` (no button yet), or the runbook's SQL for one user (§5.4). In one transaction, all the user's grants are revoked (`SignOutEverywhere`, or `ReuseContainment` when it answers a tripwire) and the user's stamp goes up by 1 | Signed out at the first request after the BFF's next successful read of the stamps (§5.3). The BFF reads them every 15 s and a read may take up to its 5 s timeout, so this is about 20 s at worst with up to 1,000 signed-in users (one read); each further 1,000 adds a sequential read. While the BFF cannot read them, at each session's next successful renewal, after up to half the token's life (7.5 minutes) of continued use | The stamp, its own commit of PR-1 (§5.3): the revoke and the raise in `RevokeAllForUserAsync`, `POST /api/auth/session-stamps`, `SessionStampWatcher` and the store's check |
 | **Everyone now** | Restart the revision: the portal's Restart, or `az containerapp revision restart` (<https://learn.microsoft.com/en-us/cli/azure/containerapp/revision#az-containerapp-revision-restart>). Stopping and starting the app also works, with downtime | Signed out at the next request, after a cold start, because no session exists any more (§5.2). The access tokens die with the process memory | None. On a graceful stop the drain of §4.6 also revokes the grants if the API still answers: on compose, yes when the BFF stops alone (measured) and no when the whole project stops; on Azure, not yet measured |
 | **Nuclear** | One revision rotates `Jwt:Secret` and `ServiceCredential:BffKey` together (a key rotation is already "a deployment event on both sides", ADR-0055 D4). Then SQL sets `Incident` on every live grant created before that revision | Signed out at the next request, since a new revision is a restart. Every access token ever minted fails its signature check. Every grant is useless without the new key, and is revoked | None: the runbook in §5.4 |
 
@@ -455,8 +455,9 @@ nobody checks. What that runbook rests on is decided here.
   them apart, and nothing automatic acts on it (F3). The operator picks a lever.
 - **The user's sessions:** in one transaction, revoke every live grant of that user with the reason
   `ReuseContainment` and raise the user's stamp. Each session is then refused at its first request
-  after the BFF's next read, within 15 s (§5.3); while the BFF cannot read the stamp, at its next
-  successful renewal, after up to 7.5 minutes of continued use (§5).
+  after the BFF's next successful read of the stamps, about 20 s at worst (§5.3); while the BFF
+  cannot read the stamp, at its next successful renewal, after up to 7.5 minutes of continued use
+  (§5).
 - **Everyone's sessions:** restart the revision (§5, "Everyone now").
 - **The nuclear lever, when code inside the replica is suspected** (§7: no token scheme can see
   it): rotate `Jwt:Secret` and `ServiceCredential:BffKey` together in one revision, which is a
@@ -807,7 +808,7 @@ The evidence recorded for this record is O0 on main, the CI tests on the branch,
   `Jwt:RefreshTokenLifetimeMinutes`, 60 minutes by default.
 - The token endpoints are reachable only by the BFF's own client over loopback, not by whoever holds
   the service key.
-- One user can be signed out of every session within 15 s, without signing anyone else out
+- One user can be signed out of every session within about 20 s, without signing anyone else out
   (§5.3).
 
 **Negative**

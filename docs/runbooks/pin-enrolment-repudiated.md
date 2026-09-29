@@ -222,7 +222,7 @@ without it the change would put the old stamp back — and the one calling set-p
 attacker. With it that write fails, and the stamp stays raised.
 
 The BFF reads every signed-in user's stamp every 15 s, so each of the user's BFF sessions is refused
-at its first request after that read, within 15 s of the commit (ADR-0057 §5.3). While the BFF
+at its first request after that read, within ~20 s of the commit (ADR-0057 §5.3). While the BFF
 cannot read the stamp, each session still ends at its next successful renewal, after up to half its
 access token's life (7.5 minutes) of continued use. Access tokens already issued live until they
 expire — 15 minutes (`Jwt:ExpirationMinutes`) — but once a session has ended only code inside the
@@ -254,7 +254,7 @@ How long that is depends on what the attacker holds. An access token lives its f
 the API, but only code inside the API's own replica can present one there (ADR-0057 §5.1): the API
 listens on loopback only and refuses any request without the BFF's service key (ADR-0055). So a
 direct caller — who the change path is reachable by, since the client turns away anyone who
-already has a PIN — holds a BFF session, and a BFF session ends sooner: within 15 s of step 3 the
+already has a PIN — holds a BFF session, and a BFF session ends sooner: within ~20 s of step 3 the
 BFF reads the stamp it raised and refuses the session at its next request. If the BFF cannot read
 the stamp, the session ends later: once half its token's life is gone (7.5 of its 15 minutes), the
 BFF renews it at the next request, the API refuses the grant step 3 revoked, and the BFF ends the

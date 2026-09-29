@@ -79,7 +79,7 @@ implementation had already settled all five:
   *Note: the built frontend still expects lowercase/snake and no envelope — reconciling the
   SPA to this contract is the tracked next milestone (frontend wiring).*
 
-## Known gaps (tracked, not contradictions)
+## Known gaps (as of 2026-07-12; four of the five have shipped since, see the 2026-09-24 correction above)
 
 Idempotency keys (planned next), refresh-token rotation (designed in
 `../architecture/future-implementations/`), persistent BFF session store (Redis/Garnet),

@@ -211,7 +211,7 @@ services.AddSession(options =>
 > session's refresh token (ADR-0021), which does not rotate and lives 60 minutes from sign-in
 > (ADR-0057), so an active session slides within the inactivity/absolute budgets above. "Esci" ends
 > the session at once. A sign-out of every session of the user, through `/api/auth/logout` or a
-> runbook's SQL, also raises the user's session stamp, and the BFF ends the session within 15 s,
+> runbook's SQL, also raises the user's session stamp, and the BFF ends the session within ~20 s,
 > at its first request after the next read of the stamps (ADR-0057 §5.3); while the BFF cannot read
 > them, at its next renewal. A grant revoked any other way ends it at its next renewal.
 > *(Until 2026-09-29 this said every revoke but "Esci" ended the session at its next renewal.)*

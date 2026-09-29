@@ -884,7 +884,7 @@ public class AuthEndpointTests : IntegrationTestBase
     public async Task Revoke_EndsOneSession_AndDoesNotRaiseTheStamp()
     {
         // "Esci" ends ONE session through /revoke (ADR-0057 §4.6). Raising the stamp there would
-        // end every other session of the user within 15 s: the sign-out-everywhere PR-1 removed
+        // end every other session of the user within ~20 s: the sign-out-everywhere PR-1 removed
         // from "Esci".
         var unique = Guid.NewGuid().ToString("N")[..8];
         var (_, grant) = await RegisterAndGetTokensAsync($"rv{unique}@example.com");

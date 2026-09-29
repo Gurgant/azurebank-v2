@@ -238,7 +238,7 @@ renewal's answer was lost.)*
   (ADR-0018) — left as a known behavior. *(Narrowed 2026-09-29, ADR-0057 §5.3: `/api/auth/logout`
   and the runbooks' SQL also raise the user's session stamp in the same transaction as the revoke,
   and the BFF refuses those sessions at their first request after its next read of the stamps,
-  within 15 s, with no re-mint: `/bff/auth/me` and `/bff/auth/session-status` read the session
+  within ~20 s, with no re-mint: `/bff/auth/me` and `/bff/auth/session-status` read the session
   through the same check. What this bullet describes is left for a revoke that raises no stamp,
   and for the time the BFF cannot read the stamps, when a session learns of the revoke at its next
   renewal, after up to half its token's life, 7.5 minutes. The struck clause above gave those 7.5
