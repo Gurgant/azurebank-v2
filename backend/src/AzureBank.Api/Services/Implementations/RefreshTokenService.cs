@@ -179,10 +179,16 @@ public class RefreshTokenService : IRefreshTokenService
                   innocent path got here — a lost answer, a stall, "Esci" on another device.
 
                   CancellationToken.None: the row is the evidence, and a caller that hangs up must
-                  not be able to take it back. If the write FAILS, the exception surfaces and the
-                  exception handler answers 500, as the unknown-grant refusal above does (ADR-0044's
-                  loud failure). Nothing is revoked or issued either way, and the grant is already
-                  revoked, so a retry can only try the audit write again.
+                  not be able to take it back. If the write FAILS, the exception surfaces, as the
+                  unknown-grant refusal's does (ADR-0044's loud failure), and the exception handlers
+                  answer it: when the database could not be reached or did not answer in time (EF's
+                  retries spent, a connection-level error, a command timeout), with the outage 503
+                  SERVICE_UNAVAILABLE and Retry-After (ServiceUnavailableExceptionHandler,
+                  ADR-0058); when the database refused the write, with the 500. The BFF keeps the
+                  session on either (ADR-0057 §4.5). Nothing is revoked or issued either way, and
+                  the grant is already revoked, so a retry can only try the audit write again.
+                  (Until 2026-10-01 this said every failed write answers 500; ADR-0058 had already
+                  made one that cannot reach the database a 503.)
                 */
                 await _audit.RecordRefusalAsync(
                     SecurityEvents.RefreshTokenReuse, AuditOutcome.Refused,
