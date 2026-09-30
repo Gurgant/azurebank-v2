@@ -74,7 +74,11 @@ public static class ServiceCollectionExtensions
             options.SignIn.RequireConfirmedAccount = false;
         })
         .AddEntityFrameworkStores<AzureBankDbContext>()
-        .AddDefaultTokenProviders();
+        .AddDefaultTokenProviders()
+        // Every call Identity makes takes the request deadline's token (ADR-0058). AddIdentity
+        // registers the base UserManager, whose token is always None; this one reads the deadline
+        // from the request's scope. RequestDeadlineUserManager says why.
+        .AddUserManager<RequestDeadlineUserManager>();
 
         return services;
     }
@@ -115,6 +119,16 @@ public static class ServiceCollectionExtensions
                      && o.ProcessingStaleAfter > TimeSpan.Zero
                      && o.CleanupInterval > TimeSpan.Zero,
                 "Idempotency timespans must be positive")
+            // A claim is taken over as abandoned once it is ProcessingStaleAfter old, so that age must
+            // outlast the request that made it (ADR-0058). Past its deadline a request can still be
+            // committing (a commit that started runs to its end, bounded by the connect timeout, 10 s
+            // as shipped) and then releasing its claim (3 s): the minute covers both with room. A
+            // takeover sooner would not move money twice -- the claim's fence makes the older
+            // request's commit fail -- but it would fail a request that was about to succeed.
+            .Validate<IOptions<RequestDeadlineOptions>>(
+                (o, deadline) => o.ProcessingStaleAfter
+                                 >= TimeSpan.FromSeconds(deadline.Value.Seconds) + TimeSpan.FromMinutes(1),
+                "Idempotency:ProcessingStaleAfter must be at least one minute longer than RequestDeadline:Seconds")
             .ValidateOnStart();
 
         // Step-up authorisations (ADR-0042). BindingKey is a secret, for the same reason and with
@@ -145,6 +159,7 @@ public static class ServiceCollectionExtensions
             .ValidateOnStart();
 
         services.AddDailyLimit(configuration);
+        services.AddRequestDeadline(configuration);
 
         // Audit trail chain key (ADR-0044). A secret, with the same fail-fast treatment as
         // StepUp:BindingKey and Idempotency:HashKey, and SEPARATE from both: one leaked key must not
@@ -619,10 +634,42 @@ public static class ServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddExceptionHandlers(this IServiceCollection services)
     {
+        // A client that hung up first, so nothing below writes to it or logs its request as an
+        // error; the outage 503 after the domain handlers, so a refusal keeps its own status, and
+        // before the global 500 (ADR-0058).
+        services.AddExceptionHandler<ClientAbortedExceptionHandler>();
         services.AddExceptionHandler<ValidationExceptionHandler>();
         services.AddExceptionHandler<AppExceptionHandler>();
+        services.AddExceptionHandler<ServiceUnavailableExceptionHandler>();
         services.AddExceptionHandler<GlobalExceptionHandler>();
         services.AddProblemDetails();
+
+        return services;
+    }
+
+    /// <summary>
+    /// The request deadline and the commit gate (ADR-0058): <c>RequestDeadline:Seconds</c>, checked
+    /// at startup, the scoped holder the gate finds a request's deadline through, and the gate
+    /// itself, which <c>AddInfrastructure</c> puts on every context it builds (it adds each
+    /// <see cref="Microsoft.EntityFrameworkCore.Diagnostics.IInterceptor"/> registered here).
+    /// </summary>
+    /// <remarks>
+    /// Its own method, as <see cref="AddDailyLimit"/> is, so a test drives the option's rule through
+    /// <c>IStartupValidator</c> without building the whole host.
+    /// </remarks>
+    public static IServiceCollection AddRequestDeadline(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        services.AddOptions<RequestDeadlineOptions>()
+            .Bind(configuration.GetSection(RequestDeadlineOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        services.AddScoped<RequestDeadlineScope>();
+        services.AddSingleton<Data.CommitGateInterceptor>();
+        services.AddSingleton<Microsoft.EntityFrameworkCore.Diagnostics.IInterceptor>(
+            sp => sp.GetRequiredService<Data.CommitGateInterceptor>());
 
         return services;
     }
@@ -669,6 +716,10 @@ public static class ServiceCollectionExtensions
             // 415 on every operation with a body: the framework's refusal of a non-JSON body,
             // undocumented until the Schemathesis gate's first run (2026-09-15).
             options.AddOperationTransformer<UnsupportedMediaTypeResponseTransformer>();
+
+            // 503 on every operation: the database cannot be reached, or the request ran past its
+            // deadline (ADR-0058). The four money operations' body adds applied, and only theirs.
+            options.AddOperationTransformer<ServiceUnavailableResponseTransformer>();
 
             // Operation transformer: Mark [AllowAnonymous] endpoints as not requiring auth
             // This fixes Schemathesis "Missing header not rejected" false positives
@@ -736,6 +787,10 @@ public static class ServiceCollectionExtensions
                 // refused like an invalid one, not read as absent.
                 options.ModelBinderProviders.Insert(
                     0, new ModelBinding.EmptyQueryValueRejectingBinderProvider(options.ModelBinderProviders));
+
+                // The request deadline is turned off before any result is written, so a result that
+                // exists is sent whole (ADR-0058, DeadlineResultFilter).
+                options.Filters.Add<DeadlineResultFilter>();
             })
             .AddJsonOptions(options =>
             {

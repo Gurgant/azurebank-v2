@@ -13,7 +13,10 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using AzureBank.Api.Middleware;
 using AzureBank.Infrastructure.Data;
+using AzureBank.Infrastructure.Extensions;
 using AzureBank.Shared.Constants;
+using AzureBank.Shared.Options;
+using Microsoft.Extensions.Options;
 using Serilog.Core;
 using Serilog.Events;
 
@@ -181,6 +184,23 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         _dailyLimitLockTimeoutSeconds = seconds;
     }
 
+    private int? _requestDeadlineSeconds;
+
+    /// <summary>
+    /// Overrides <c>RequestDeadline:Seconds</c> — how long a request may run before the API gives
+    /// up on it and answers 503 (ADR-0058). Call before <c>CreateClient()</c>.
+    /// </summary>
+    /// <remarks>
+    /// The same reason <c>SetAuditTailTimeoutSeconds</c> exists: a proof that the deadline FIRES
+    /// has to hit it in a second or two, not the forty the production default allows. Through
+    /// <c>UseSetting</c>, so the value is bound and validated at start like a real one. Every request
+    /// this host serves runs under it, so a test does its setup through a second host without it.
+    /// </remarks>
+    public void SetRequestDeadlineSeconds(int seconds)
+    {
+        _requestDeadlineSeconds = seconds;
+    }
+
     private FakeTimeProvider? _clock;
 
     /// <summary>
@@ -344,6 +364,11 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
                 lockTimeout.ToString(CultureInfo.InvariantCulture));
         }
 
+        if (_requestDeadlineSeconds is { } deadline)
+        {
+            builder.UseSetting("RequestDeadline:Seconds", deadline.ToString(CultureInfo.InvariantCulture));
+        }
+
         // After the application's own registrations, so the swap replaces the TimeProvider.System
         // singleton the host carries (registered by the framework's AddAuthentication and echoed by
         // AddDailyLimit's TryAdd) rather than being replaced by it.
@@ -385,18 +410,23 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 
             if (!string.IsNullOrEmpty(_connectionString))
             {
-                // Use the real SQL Server named by AZUREBANK_TEST_SQLSERVER
-                services.AddDbContext<AzureBankDbContext>(options =>
+                // Use the real SQL Server named by AZUREBANK_TEST_SQLSERVER, with the connection
+                // limits production applies (ADR-0058): 10 s to connect, no SqlClient retry, a
+                // pool of 12 and NeverBlock, each only where the string leaves it unset. So these
+                // tests run with the pool a deployment has, and a test that sets its own Connect
+                // Timeout or Max Pool Size keeps it. Read at every context build, like the string.
+                services.AddDbContext<AzureBankDbContext>((provider, options) =>
                 {
-                    options.UseSqlServer(_connectionString, sql =>
+                    var database = provider.GetRequiredService<IOptions<DatabaseOptions>>().Value;
+                    options.UseSqlServer(SqlConnectionDefaults.Apply(_connectionString, database), sql =>
                     {
                         if (_enableSqlRetryOnFailure)
                         {
                             // A retrying strategy, as production has: it re-runs the
                             // transfer delegate on a transient fault, which is exactly
                             // what the transient-retry proof needs to exercise. Not the
-                            // same budget -- a 5-second cap here, production's
-                            // Database:MaxRetryDelay is 30 s unless set. (Until
+                            // same budget -- 3 retries under a 5-second cap here;
+                            // production's is 4 under 10 s unless set (ADR-0058). (Until
                             // 2026-09-25 this said it mirrored production.)
                             sql.EnableRetryOnFailure(
                                 maxRetryCount: 3,
@@ -405,6 +435,10 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
                         }
                     });
 
+                    // The API's own interceptors first, as AddInfrastructure adds them: the commit
+                    // gate (ADR-0058), so a SQL test's commits are gated by the request deadline
+                    // as a deployment's are. Then a test's own.
+                    options.AddInterceptors(provider.GetServices<IInterceptor>());
                     if (_interceptors.Count > 0)
                     {
                         options.AddInterceptors(_interceptors);

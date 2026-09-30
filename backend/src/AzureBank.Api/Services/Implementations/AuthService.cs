@@ -70,7 +70,7 @@ public class AuthService : IAuthService
     }
 
     /// <inheritdoc />
-    public async Task<LoginResponse> LoginAsync(LoginRequest request)
+    public async Task<LoginResponse> LoginAsync(LoginRequest request, CancellationToken cancellationToken = default)
     {
         var user = await _userManager.FindByEmailAsync(request.Email);
         if (user is null)
@@ -111,14 +111,14 @@ public class AuthService : IAuthService
             // Success: clear any accumulated failures / expired lock.
             if (user.AccessFailedCount != 0 || user.LockoutEnd is not null)
             {
-                await ResetLoginLockoutAsync(user);
+                await ResetLoginLockoutAsync(user, cancellationToken);
             }
 
             // The access token BEFORE the grant, so the grant cannot cap it; the start-up rule that a
             // grant lives at least as long as an access token (JwtOptions) is what keeps it inside
             // the grant's lifetime anyway (ADR-0057 F11).
             var tokenResult = _jwtService.GenerateToken(user);
-            var grant = await _refreshTokenService.IssueAsync(user);
+            var grant = await _refreshTokenService.IssueAsync(user, cancellationToken);
             _logger.LogInformation("User {UserId} logged in successfully", user.Id);
             ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("azurebank.outcome", "succeeded"));
             return new LoginResponse
@@ -141,7 +141,7 @@ public class AuthService : IAuthService
         // 401 as an unknown user — the lock state is never leaked to a password guesser.
         if (lockedUntil is null)
         {
-            await IncrementAndMaybeLockLoginAsync(user, now);
+            await IncrementAndMaybeLockLoginAsync(user, now, cancellationToken);
         }
         // Wrong password on a KNOWN account: log the stable user id, not the raw email (PII).
         _logger.LogWarning("Failed login attempt for account {UserId}", user.Id);
@@ -163,7 +163,8 @@ public class AuthService : IAuthService
     /// all against the row's CURRENT value in a single statement. An EXPIRED lock is cleared;
     /// a FUTURE lock is never cleared, so the threshold cannot be bypassed by parallel bursts.
     /// </summary>
-    private async Task IncrementAndMaybeLockLoginAsync(ApplicationUser user, DateTimeOffset now)
+    private async Task IncrementAndMaybeLockLoginAsync(
+        ApplicationUser user, DateTimeOffset now, CancellationToken cancellationToken)
     {
         // An account exempt from lockout (LockoutEnabled=false) never accrues lock state,
         // preserving the invariant "LockoutEnd non-null => the account was lockout-eligible"
@@ -188,7 +189,7 @@ public class AuthService : IAuthService
                         u => u.AccessFailedCount + 1 >= max ? 0 : u.AccessFailedCount + 1)
                     .SetProperty(u => u.LockoutEnd,
                         u => u.AccessFailedCount + 1 >= max ? (DateTimeOffset?)until : null)
-                    .SetProperty(u => u.UpdatedAt, (DateTime?)DateTime.UtcNow));
+                    .SetProperty(u => u.UpdatedAt, (DateTime?)DateTime.UtcNow), cancellationToken);
             // Detach so the tracked (now-stale) user can't be written back by a later save.
             _context.Entry(user).State = EntityState.Detached;
             return;
@@ -208,7 +209,7 @@ public class AuthService : IAuthService
             }
         }
         user.UpdatedAt = DateTime.UtcNow;   // parity with the relational writer's audit bump
-        await _context.SaveChangesAsync();
+        await _context.SaveChangesAsync(cancellationToken);
     }
 
     // On the relational path ExecuteUpdate bypasses the change tracker, so the tracked
@@ -216,7 +217,7 @@ public class AuthService : IAuthService
     // SaveChanges in the same request (e.g. a future unit-of-work or audit interceptor)
     // can't write those stale values back and silently revert the reset. Subsequent reads
     // (JWT generation, identity mapping) work fine on the detached entity.
-    private async Task ResetLoginLockoutAsync(ApplicationUser user)
+    private async Task ResetLoginLockoutAsync(ApplicationUser user, CancellationToken cancellationToken)
     {
         if (_context.Database.IsRelational())
         {
@@ -224,7 +225,7 @@ public class AuthService : IAuthService
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(u => u.AccessFailedCount, 0)
                     .SetProperty(u => u.LockoutEnd, (DateTimeOffset?)null)
-                    .SetProperty(u => u.UpdatedAt, (DateTime?)DateTime.UtcNow));
+                    .SetProperty(u => u.UpdatedAt, (DateTime?)DateTime.UtcNow), cancellationToken);
             _context.Entry(user).State = EntityState.Detached;
             return;
         }
@@ -232,11 +233,11 @@ public class AuthService : IAuthService
         user.AccessFailedCount = 0;
         user.LockoutEnd = null;
         user.UpdatedAt = DateTime.UtcNow;   // parity with the relational writer's audit bump
-        await _context.SaveChangesAsync();
+        await _context.SaveChangesAsync(cancellationToken);
     }
 
     /// <inheritdoc />
-    public async Task<RegisterResponse> RegisterAsync(RegisterRequest request)
+    public async Task<RegisterResponse> RegisterAsync(RegisterRequest request, CancellationToken cancellationToken = default)
     {
         // Reject duplicates with a single enumeration-NEUTRAL response so an anonymous
         // caller can't read which field (email or handle) collided — the specific reason
@@ -254,7 +255,7 @@ public class AuthService : IAuthService
                 SecurityEvents.DuplicateRegistration, _piiRedactor.Redact(request.Email));
             throw new ConflictException("Registration could not be completed.", ErrorCodes.RegistrationFailed);
         }
-        if (await _context.Users.AnyAsync(u => u.AzureTag == normalizedAzureTag))
+        if (await _context.Users.AnyAsync(u => u.AzureTag == normalizedAzureTag, cancellationToken))
         {
             /*
               NO HANDLE IN THE LINE, since 2026-09-11. A handle is a direct identifier, and ADR-0017's
@@ -298,7 +299,7 @@ public class AuthService : IAuthService
         Account account = null!;
 
         var strategy = _context.Database.CreateExecutionStrategy();
-        await strategy.ExecuteInTransactionAsync(async () =>
+        await strategy.ExecuteInTransactionAsync(async ct =>
         {
             _context.ChangeTracker.Clear();
 
@@ -430,7 +431,7 @@ public class AuthService : IAuthService
               can legitimately lose the AzureTag or NormalizedEmail race, and THAT must stay the
               enumeration-neutral 409 (ADR-0013) rather than become a retry loop.
             */
-            await ConcurrencyRetry.SaveNewAccountAsync(_context, account, _logger, user.Id);
+            await ConcurrencyRetry.SaveNewAccountAsync(_context, account, _logger, user.Id, ct);
         },
         /*
           THE AMBIGUOUS COMMIT. EF owns the transaction now, and this asks whether it landed rather
@@ -453,8 +454,18 @@ public class AuthService : IAuthService
           those could be satisfied by a row a CONCURRENT registration won, which would hand this
           caller a 201 and a JWT for somebody else's user. The user row alone suffices because the
           entire point of the transaction is that the account cannot exist without it.
+
+          ITS COMMIT GOES THROUGH THE COMMIT GATE (ADR-0058), which EF's own transaction here raises:
+          refused if the request deadline has already fired, and while the commit runs nothing
+          cancels the request. A commit that FAILS turns the deadline back on at its original
+          instant, and this question then runs under that token: past the instant it is refused or
+          cut short, so a registration that landed answers 503, and the same details sent again
+          get the neutral 409. Unlike an audited save, it is not asked a second time (ADR-0058,
+          residual risk 7). The grant below is issued only for a registration that happened, and
+          after a failed commit the same deadline can cut its write.
         */
-        async () => user is not null && await _context.Users.AnyAsync(u => u.Id == user.Id));
+        async ct => user is not null && await _context.Users.AnyAsync(u => u.Id == user.Id, ct),
+        cancellationToken);
 
 
         var tokenResult = _jwtService.GenerateToken(user);
@@ -472,7 +483,7 @@ public class AuthService : IAuthService
         IssuedGrant? grant = null;
         try
         {
-            grant = await _refreshTokenService.IssueAsync(user);
+            grant = await _refreshTokenService.IssueAsync(user, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -513,7 +524,7 @@ public class AuthService : IAuthService
     };
 
     /// <inheritdoc />
-    public async Task<UserResponse> GetCurrentUserAsync(Guid userId)
+    public async Task<UserResponse> GetCurrentUserAsync(Guid userId, CancellationToken cancellationToken = default)
     {
         var user = await _userManager.FindByIdAsync(userId.ToString());
 
@@ -575,13 +586,13 @@ public class AuthService : IAuthService
     }
 
     /// <inheritdoc />
-    public Task<bool> VerifyPinAsync(Guid userId, string pin) =>
+    public Task<bool> VerifyPinAsync(Guid userId, string pin, CancellationToken cancellationToken = default) =>
         // Delegated to PinService (attempt-limiting + lockout persisted in its own
         // DbContext scope, so it never rides the caller's transaction/idempotency).
-        _pinVerifier.VerifyPinAsync(userId, pin);
+        _pinVerifier.VerifyPinAsync(userId, pin, cancellationToken);
 
     /// <inheritdoc />
-    public async Task SetPinAsync(Guid userId, SetPinRequest request)
+    public async Task SetPinAsync(Guid userId, SetPinRequest request, CancellationToken cancellationToken = default)
     {
         var user = await _userManager.FindByIdAsync(userId.ToString());
 
@@ -645,7 +656,7 @@ public class AuthService : IAuthService
                     "Your password is required to set a PIN.", ErrorCodes.PasswordRequired);
             }
 
-            await VerifyAccountPasswordAsync(user, request.Password);
+            await VerifyAccountPasswordAsync(user, request.Password, cancellationToken);
         }
         else
         {
@@ -658,7 +669,7 @@ public class AuthService : IAuthService
             }
 
             // Throws PinLockedException (429) if locked; false on a wrong PIN under the threshold.
-            if (!await _pinVerifier.VerifyPinAsync(userId, request.CurrentPin))
+            if (!await _pinVerifier.VerifyPinAsync(userId, request.CurrentPin, cancellationToken))
             {
                 // Same shape withdraw returns for a bad PIN (TransactionService.WithdrawAsync).
                 throw new AuthenticationException("Invalid PIN.", ErrorCodes.InvalidPin);
@@ -844,7 +855,8 @@ public class AuthService : IAuthService
     /// message would only leave the user guessing which field was wrong.
     /// </para>
     /// </remarks>
-    private async Task VerifyAccountPasswordAsync(ApplicationUser user, string password)
+    private async Task VerifyAccountPasswordAsync(
+        ApplicationUser user, string password, CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
         var passwordOk = await _userManager.CheckPasswordAsync(user, password);
@@ -864,7 +876,7 @@ public class AuthService : IAuthService
 
             if (user.AccessFailedCount != 0 || user.LockoutEnd is not null)
             {
-                await ResetLoginLockoutAsync(user);
+                await ResetLoginLockoutAsync(user, cancellationToken);
                 /*
                   MIRROR the reset onto the TRACKED entity — the same aliasing trap the CurrentPin
                   branch documents. ResetLoginLockoutAsync writes through its own path; `user` here
@@ -883,7 +895,7 @@ public class AuthService : IAuthService
         // extend the window by hammering this endpoint instead of the login one.
         if (lockedUntil is null)
         {
-            await IncrementAndMaybeLockLoginAsync(user, now);
+            await IncrementAndMaybeLockLoginAsync(user, now, cancellationToken);
         }
 
         _logger.LogWarning("PIN enrolment refused: wrong password for account {UserId}", user.Id);

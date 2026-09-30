@@ -313,6 +313,25 @@ export const LoginRequest = z.object({
     .regex(new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[^a-zA-Z0-9])[\\x20-\\x7E]{8,128}$')),
 });
 
+export type ProblemDetails = z.infer<typeof ProblemDetails>;
+export const ProblemDetails = z
+  .object({
+    type: z.string().nullable(),
+    title: z.string().nullable(),
+    status: z.number().int(),
+    detail: z.string().nullable(),
+    instance: z.string().nullable(),
+    errorCode: z.string(),
+    traceId: z.string(),
+    retryAfterSeconds: z.number().int(),
+  })
+  .partial();
+
+export type MoneyServiceUnavailable = z.infer<typeof MoneyServiceUnavailable>;
+export const MoneyServiceUnavailable = ProblemDetails.and(
+  z.object({ applied: z.literal(false) }).partial(),
+);
+
 export type PaginationMetadata = z.infer<typeof PaginationMetadata>;
 export const PaginationMetadata = z.object({
   page: z.number().int(),
@@ -328,19 +347,6 @@ export type PaginatedResponseOfTransactionResponse = z.infer<
 >;
 export const PaginatedResponseOfTransactionResponse = z
   .object({ data: z.array(TransactionResponse), pagination: PaginationMetadata })
-  .partial();
-
-export type ProblemDetails = z.infer<typeof ProblemDetails>;
-export const ProblemDetails = z
-  .object({
-    type: z.string().nullable(),
-    title: z.string().nullable(),
-    status: z.number().int(),
-    detail: z.string().nullable(),
-    instance: z.string().nullable(),
-    errorCode: z.string(),
-    traceId: z.string(),
-  })
   .partial();
 
 export type RefreshRequest = z.infer<typeof RefreshRequest>;

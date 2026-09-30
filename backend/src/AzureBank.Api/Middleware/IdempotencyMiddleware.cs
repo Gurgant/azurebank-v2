@@ -52,6 +52,21 @@ public class IdempotencyMiddleware
     // the replay buffer. Real monetary responses are a few hundred bytes.
     private const int MaxStoredResponseBytes = 64 * 1024;
 
+    // How long storing an answer for replay, and releasing a claim on the error path, may each take
+    // (ADR-0058). Both write one row on a key; when that takes longer the database is failing, and
+    // waiting on it helps no one. Unbounded, each could run on EF's whole retry budget, and the 201
+    // or the 503 it held back could reach the visitor after the BFF had given up: with the store
+    // held on the server for 20 s the 201 waited the whole 20 s, and with the budget it comes after
+    // 3 s (RequestDeadlineSqlServerTests). The release's 3 s is also a term of the timeout chain
+    // RequestDeadlineOptions sums: 40 + 5 + 3 + 5 = 53, under the BFF's 55. Neither running out
+    // loses anything: a claim not released stays Processing, and its key answers 409 IN_FLIGHT until
+    // ProcessingStaleAfter, then executes; an answer not stored leaves the record Executed, and the
+    // 2xx is still sent.
+    private static readonly TimeSpan CompleteBudget = TimeSpan.FromSeconds(3);
+
+    /// <summary>The release's budget. Internal so <c>TimeoutChainTests</c> sums this value, not a copy.</summary>
+    internal static readonly TimeSpan ReleaseBudget = TimeSpan.FromSeconds(3);
+
     public IdempotencyMiddleware(
         RequestDelegate next, ILogger<IdempotencyMiddleware> logger, TimeProvider timeProvider)
     {
@@ -107,8 +122,13 @@ public class IdempotencyMiddleware
         string requestHash;
         try
         {
+            // Under the client's token, not the deadline's (ADR-0058): a read cancelled by its token
+            // leaves Kestrel's body reader mid-read, and Kestrel's own drain of the rest then fails on
+            // it and logs an error (the trap DrainInTimeAsync documents, measured there). A body still
+            // arriving at the deadline is the client's to finish or abandon; the claim below is not
+            // made until it has, and the deadline cancels that as it cancels everything after.
             requestHash = await idempotency.ComputeRequestHashAsync(
-                context.Request.Body, context.RequestAborted);
+                context.Request.Body, ClientAbortedOf(context));
         }
         catch (BadHttpRequestException ex) when (ex.StatusCode == StatusCodes.Status413PayloadTooLarge)
         {
@@ -128,6 +148,13 @@ public class IdempotencyMiddleware
         }
 
         var record = acquisition.Record;
+
+        // From here this request holds a claim it made itself, so until a commit starts it knows
+        // that nothing was applied, and its outage 503 may say so (ADR-0058). Not before: a request
+        // that fails reading the key, claiming it or writing a replay cannot know what an earlier
+        // request with the same key did.
+        context.Features.Set(OwnedIdempotencyClaim.Instance);
+
         // Fencing token as of claim time: MarkExecutedPending rotates the
         // in-memory value, but releases must be conditional on the value the
         // database actually holds while the record is still Processing.
@@ -154,7 +181,21 @@ public class IdempotencyMiddleware
 
         if (context.Response.StatusCode is >= 200 and < 300)
         {
-            if (capture.Length > MaxStoredResponseBytes)
+            if (capture.Length == 0)
+            {
+                // Never stored (ADR-0058): no monetary success is empty, so an empty one is an
+                // answer that was lost while it was written. MVC's JSON formatter swallows a
+                // cancelled RequestAborted and writes nothing under a status that already says
+                // success; stored, that nothing was replayed to every retry of the key as the
+                // answer (RequestDeadlineSqlServerTests measured it before DeadlineResultFilter
+                // existed: Completed with body '', and an empty 201 on the retry). Not stored, the
+                // record stays Executed, so a retry gets IN_FLIGHT, then RESULT_UNKNOWN: honest,
+                // and never a second execution.
+                _logger.LogWarning(
+                    "Idempotency response for {Endpoint}/{Key} is an empty success; not storing it for replay, so the record stays Executed",
+                    endpointName, key);
+            }
+            else if (capture.Length > MaxStoredResponseBytes)
             {
                 // An unexpectedly large 2xx: do not buffer it into the record.
                 // The business op committed (record is Executed), so a retry
@@ -171,7 +212,10 @@ public class IdempotencyMiddleware
                 // succeeded: log and send the 2xx anyway — the record stays
                 // Executed, so retries get 409 IDEMPOTENCY_RESULT_UNKNOWN
                 // (never a corrupt replay, never a second execution).
+                // Its own budget, not the request's token: the answer is stored even for a client
+                // that has gone, so its retry is replayed the whole answer.
                 var body = capture.ToArray();
+                using var budget = new CancellationTokenSource(CompleteBudget, _timeProvider);
                 try
                 {
                     await idempotency.CompleteAsync(
@@ -179,7 +223,7 @@ public class IdempotencyMiddleware
                         context.Response.StatusCode,
                         context.Response.ContentType,
                         System.Text.Encoding.UTF8.GetString(body),
-                        CancellationToken.None);
+                        budget.Token);
                 }
                 catch (Exception ex)
                 {
@@ -198,8 +242,17 @@ public class IdempotencyMiddleware
 
         context.Response.ContentLength = capture.Length;
         capture.Position = 0;
-        await capture.CopyToAsync(originalBody, context.RequestAborted);
+        await capture.CopyToAsync(originalBody, ClientAbortedOf(context));
     }
+
+    /// <summary>
+    /// The client's own token, which the request deadline keeps (ADR-0058): an answer that exists,
+    /// a replay or a stored 2xx, is sent unless the client has gone. The request's token would let
+    /// the deadline cut a replay whose key was read just in time, and stays uncancellable once a
+    /// commit has started, which would write a stored answer to a client that is not there.
+    /// </summary>
+    private static CancellationToken ClientAbortedOf(HttpContext context) =>
+        context.Features.Get<IRequestDeadline>()?.ClientAborted ?? context.RequestAborted;
 
     /// <summary>
     /// Makes the early 413 safe for the connection it is answered on. Refused without being read,
@@ -231,7 +284,9 @@ public class IdempotencyMiddleware
                 limit.MaxRequestBodySize = DrainCapBytes;
             }
 
-            if (await DrainInTimeAsync(context.Request.BodyReader, context.RequestAborted))
+            // The client's token, for the reason the body's hash is read under it: a read cancelled
+            // by its token leaves the reader mid-read. The five seconds below bound it instead.
+            if (await DrainInTimeAsync(context.Request.BodyReader, ClientAbortedOf(context)))
             {
                 return;
             }
@@ -333,15 +388,18 @@ public class IdempotencyMiddleware
 
         var body = System.Text.Encoding.UTF8.GetBytes(record.ResponseBody ?? string.Empty);
         context.Response.ContentLength = body.Length;
-        await context.Response.Body.WriteAsync(body, context.RequestAborted);
+        await context.Response.Body.WriteAsync(body, ClientAbortedOf(context));
     }
 
     private async Task ReleaseQuietlyAsync(
         IIdempotencyService idempotency, Guid userId, string endpointName, Guid key, Guid claimTimeClaimId)
     {
+        // Its own budget: on this path the request's token may already be cancelled, and the
+        // release must still be tried.
+        using var budget = new CancellationTokenSource(ReleaseBudget, _timeProvider);
         try
         {
-            await idempotency.ReleaseIfNotExecutedAsync(userId, endpointName, key, claimTimeClaimId);
+            await idempotency.ReleaseIfNotExecutedAsync(userId, endpointName, key, claimTimeClaimId, budget.Token);
         }
         catch (Exception ex)
         {
@@ -352,6 +410,27 @@ public class IdempotencyMiddleware
                 "Failed to release idempotency claim for {Endpoint}/{Key}", endpointName, key);
         }
     }
+}
+
+/// <summary>
+/// A request feature, present once the request holds an idempotency claim it made itself: set by
+/// <see cref="IdempotencyMiddleware"/> after a claim that is not a replay (ADR-0009), and read by the
+/// outage 503, which may say <c>applied: false</c> only for such a request (ADR-0058).
+/// </summary>
+/// <remarks>
+/// Only the claim's own maker knows that nothing was applied under the key before it: the key's
+/// first request may have moved the money and lost its answer, and a retry of it that fails while
+/// reading the key, claiming it or writing its replay must not say otherwise. Told "nothing was
+/// applied", the visitor would send the payment again under a new key, and pay twice.
+/// </remarks>
+public sealed class OwnedIdempotencyClaim
+{
+    private OwnedIdempotencyClaim()
+    {
+    }
+
+    /// <summary>The one instance: the feature carries nothing but its presence.</summary>
+    public static OwnedIdempotencyClaim Instance { get; } = new();
 }
 
 /// <summary>

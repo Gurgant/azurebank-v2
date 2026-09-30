@@ -105,16 +105,20 @@ public class LogPlaceholderClassTests
         ["Bytes"] = Operational,
         ["Claimed"] = Operational,
         ["Codes"] = Operational,
+        ["ConnectRetryCount"] = Operational, // the database limits the API starts with (ADR-0058): settings, not data
+        ["ConnectTimeoutSeconds"] = Operational,
         ["Count"] = Operational,
         ["CurrentLevel"] = Operational,
         ["Delivered"] = Operational,
         ["Directory"] = Operational,
         ["Elapsed"] = Operational,
+        ["ElapsedMs"] = Operational, // how long a request ran before its outage 503, or before a failure its gone client never saw (ADR-0058)
         ["Endpoint"] = Operational,
         ["ErrorCode"] = Operational,
         ["ErrorCount"] = Operational,
         ["Event"] = Operational,
         ["ExceptionType"] = Operational,
+        ["ExceptionTypes"] = Operational, // the type names of an exception chain, "RetryLimitExceededException > SqlException"
         ["ExpiresAt"] = Operational,
         ["FailureType"] = Operational,
         ["Half"] = Operational, // which half of a graceful stop's drain overran or found its budget spent: "first" or "second", a constant of the code
@@ -125,6 +129,9 @@ public class LogPlaceholderClassTests
         ["Left"] = Operational, // grants a graceful stop could not revoke: a count
         ["Max"] = Operational,
         ["MaxPasses"] = Operational,
+        ["MaxPoolSize"] = Operational,
+        ["MaxRetryCount"] = Operational,
+        ["MaxRetryDelay"] = Operational,
         // An exception's message: figure-free by rule (3769dc9), but NOT handle-free for a domain
         // refusal -- "Recipient with identifier 'janesmith' was not found." -- which is why
         // AppExceptionHandler stopped logging it on 2026-09-14. The three sites left log framework
@@ -138,8 +145,10 @@ public class LogPlaceholderClassTests
         ["Partition"] = Operational,
         ["PendingRows"] = Operational,
         ["PeriodSeconds"] = Operational,
-        ["Reason"] = Operational, // a code's name: why a grant was revoked (RefreshTokenRevokedReason), or which token-road check refused
+        ["PoolBlockingPeriod"] = Operational,
+        ["Reason"] = Operational, // a code's name: why a grant was revoked (RefreshTokenRevokedReason), which token-road check refused, or why a request answered the outage 503
         ["Receipt"] = Operational,
+        ["RequestDeadlineSeconds"] = Operational, // a setting the API starts with (ADR-0058)
         ["RequestMethod"] = Operational,
         ["Revoked"] = Operational, // grants a graceful stop revoked: a count
         ["Resource"] = Operational, // one of five constants the BFF derives from the first path segment, never the segment itself
@@ -148,6 +157,7 @@ public class LogPlaceholderClassTests
         ["RunnerName"] = Operational,
         ["SecurityEvent"] = Operational,
         ["Site"] = Operational,
+        ["SqlErrorNumbers"] = Operational, // SQL Server's error numbers (4060, -2, ...): codes, never data
         ["Status"] = Operational,
         ["StatusCode"] = Operational,
         ["TimeoutSeconds"] = Operational,

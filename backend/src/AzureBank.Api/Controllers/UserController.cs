@@ -19,6 +19,14 @@ namespace AzureBank.Api.Controllers;
 [Produces("application/json")]
 public class UserController : ControllerBase
 {
+    /*
+      EVERY ACTION'S cancellationToken <param> COMES FIRST in its doc block (ADR-0058). The OpenAPI
+      generator writes a <param> it cannot match to an operation parameter onto the request body,
+      the last one winning, and a CancellationToken is never an operation parameter: placed after
+      the body's own <param>, its sentence replaced the body's description in the published
+      document. CommittedOpenApiDocumentTests catches it.
+    */
+
     private readonly IUserService _userService;
 
     public UserController(IUserService userService)
@@ -36,16 +44,17 @@ public class UserController : ControllerBase
     /// directory search, which would let an authenticated user harvest the customer list
     /// (ADR-0014; the Zelle/Cash App model).
     /// </remarks>
+    /// <param name="cancellationToken">The request's token: cancelled by its deadline or by the caller hanging up (ADR-0058).</param>
     /// <param name="azureTag">Full AzureTag to look up (3-20 chars, AzureTag charset).</param>
     [HttpGet("{azureTag}")]
     [AlwaysFound] // An unknown handle is 200 with exists:false, never 404 (ADR-0014).
     [ProducesResponseType(typeof(ApiResponse<RecipientLookupResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<ApiResponse<RecipientLookupResponse>>> GetUserByAzureTag(
-        [Required][AzureTagQuery] string azureTag)
+        [Required][AzureTagQuery] string azureTag, CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
-        var result = await _userService.GetUserByAzureTagAsync(azureTag, userId);
+        var result = await _userService.GetUserByAzureTagAsync(azureTag, userId, cancellationToken);
         return Ok(ApiResponse<RecipientLookupResponse>.Success(result));
     }
 
@@ -63,9 +72,9 @@ public class UserController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<ActionResult<ApiResponse<UpdateAzureTagResponse>>> RenameAzureTag(
-        [FromBody] UpdateAzureTagRequest request)
+        [FromBody] UpdateAzureTagRequest request, CancellationToken cancellationToken)
     {
-        var newTag = await _userService.RenameAzureTagAsync(GetCurrentUserId(), request.AzureTag);
+        var newTag = await _userService.RenameAzureTagAsync(GetCurrentUserId(), request.AzureTag, cancellationToken);
         return Ok(ApiResponse<UpdateAzureTagResponse>.Success(new UpdateAzureTagResponse { AzureTag = newTag }));
     }
 

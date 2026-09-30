@@ -13,7 +13,8 @@ public interface ITransactionService
     /// Deposits money into an account.
     /// Returns the created transaction and updated balance.
     /// </summary>
-    Task<DepositResponse> DepositAsync(Guid userId, DepositRequest request);
+    Task<DepositResponse> DepositAsync(
+        Guid userId, DepositRequest request, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Proves the PIN for one withdrawal and returns the authorisation to present on the
@@ -27,7 +28,8 @@ public interface ITransactionService
     /// than the account holds therefore mints a 201 and is refused with 422 at the withdrawal.
     /// </remarks>
     Task<StepUpAuthorizationResponse> AuthoriseWithdrawalAsync(
-        Guid userId, WithdrawalAuthorizationRequest request);
+        Guid userId, WithdrawalAuthorizationRequest request,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Withdraws money from an account, spending the authorisation minted for exactly this account
@@ -42,23 +44,28 @@ public interface ITransactionService
     /// <c>Step-Up-Authorization</c> header. Null when the header is absent or empty — both are one
     /// refusal, never a model-state 400.
     /// </param>
+    /// <param name="cancellationToken">Cancels the work: the request's token, which its deadline or the caller hanging up cancels (ADR-0058).</param>
     Task<WithdrawResponse> WithdrawAsync(
-        Guid userId, WithdrawRequest request, Guid? stepUpAuthorizationId);
+        Guid userId, WithdrawRequest request, Guid? stepUpAuthorizationId,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gets paginated transaction history with filtering.
     /// </summary>
-    Task<PaginatedResponse<TransactionResponse>> GetTransactionsAsync(Guid userId, TransactionFilter filter);
+    Task<PaginatedResponse<TransactionResponse>> GetTransactionsAsync(
+        Guid userId, TransactionFilter filter, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gets a specific transaction by ID with ownership verification.
     /// </summary>
-    Task<TransactionResponse> GetTransactionByIdAsync(Guid transactionId, Guid userId);
+    Task<TransactionResponse> GetTransactionByIdAsync(
+        Guid transactionId, Guid userId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Aggregates the user's transactions over a date window (defaults to the current
     /// UTC calendar month): income/expenses/net from Completed transactions plus a
     /// Pending count. Computed in SQL, scoped to the caller's accounts.
     /// </summary>
-    Task<TransactionSummaryResponse> GetSummaryAsync(Guid userId, TransactionSummaryFilter filter);
+    Task<TransactionSummaryResponse> GetSummaryAsync(
+        Guid userId, TransactionSummaryFilter filter, CancellationToken cancellationToken = default);
 }

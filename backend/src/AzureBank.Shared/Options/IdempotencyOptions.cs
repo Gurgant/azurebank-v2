@@ -30,10 +30,15 @@ public class IdempotencyOptions
     /// <summary>
     /// Age after which a Processing record is considered abandoned (crashed
     /// before committing anything — provably safe to take over, because a
-    /// committed operation would have flipped the record to Executed).
-    /// Must comfortably exceed any request timeout. Default: 10 minutes.
+    /// committed operation would have flipped the record to Executed). The
+    /// same age ends 409 IN_FLIGHT for an Executed record whose answer was
+    /// never stored: after it, its key answers 409 RESULT_UNKNOWN.
+    /// Must comfortably exceed any request timeout: at least a minute longer
+    /// than <c>RequestDeadline:Seconds</c>, checked at startup. Default: 2
+    /// minutes (ADR-0058; it was 10), because a claim whose release failed
+    /// while the database was down holds its key (409 IN_FLIGHT) this long.
     /// </summary>
-    public TimeSpan ProcessingStaleAfter { get; set; } = TimeSpan.FromMinutes(10);
+    public TimeSpan ProcessingStaleAfter { get; set; } = TimeSpan.FromMinutes(2);
 
     /// <summary>
     /// Interval between background cleanup sweeps of expired records.

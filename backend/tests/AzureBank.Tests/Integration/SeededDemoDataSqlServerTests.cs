@@ -3,6 +3,7 @@ extern alias seeder;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
+using AzureBank.Shared.Options;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Microsoft.Data.SqlClient;
@@ -329,10 +330,12 @@ public sealed class SeededDemoDataSqlServerTests : IDisposable
         // the seeder runs inside CreateExecutionStrategy(), and without a retrying strategy
         // configured here the retry path this fixture exists to exercise simply does not exist.
         // The first run of the transient test proved it — EF answered "consider enabling transient
-        // error resiliency by adding 'EnableRetryOnFailure'". The same count as AddInfrastructure's
-        // default, Database:MaxRetryCount (3 unless set; until 2026-09-25 a constant there too).
+        // error resiliency by adding 'EnableRetryOnFailure'". The budget is AddInfrastructure's
+        // default, read from DatabaseOptions so the two cannot drift apart (4 retries, back-off capped
+        // at 10 s, since ADR-0058; this said "3" as a literal until then).
+        var budget = new DatabaseOptions();
         var options = new DbContextOptionsBuilder<AzureBankDbContext>()
-            .UseSqlServer(cs, sql => sql.EnableRetryOnFailure(maxRetryCount: 3));
+            .UseSqlServer(cs, sql => sql.EnableRetryOnFailure(budget.MaxRetryCount, budget.MaxRetryDelay, null));
         if (interceptor is not null)
         {
             options.AddInterceptors(interceptor);

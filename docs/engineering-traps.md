@@ -566,6 +566,11 @@ configuration is exercised by nothing at all.
 More generally: the factory removes `DbContextOptions` and `IDbContextOptionsConfiguration` and
 rebuilds them, so **anything attached to the production registration is absent under test** — which
 is also why the audit chain lives in the `DbContext` class rather than in a `SaveChangesInterceptor`.
+Since ADR-0058 the SQL Server branch attaches two of them again by hand, because a test without them
+would run a different pool and no commit gate: the connection defaults (`SqlConnectionDefaults`) and
+the host's interceptors, the commit gate among them. What it still leaves out includes the warning
+level of an EF retry (`RetryBudgetTests` checks it by building `AddInfrastructure` itself) and
+production's retry budget: the factory keeps 3 retries under 5 s when a test opts in.
 
 ## "The writer was called" is not evidence that a row exists
 
@@ -787,3 +792,41 @@ Two more traps on the way, both measured on 2026-09-24:
   handler copies the whole request body before sending any of it, so a test body that stalls on
   purpose never leaves the client, and the app never sees the request. Create that client with
   `AllowAutoRedirect = false`.
+
+## A token appended to `ExecuteSqlRawAsync(sql, a, b)` becomes a SQL parameter
+
+`ExecuteSqlRawAsync(string, params object[])` takes every argument after the SQL as a parameter
+value, and a `CancellationToken` is an `object`. So `ExecuteSqlRawAsync(sql, resource, timeout, ct)`
+compiles, forwards no token, and hands the token to EF as a third parameter, which fails at run
+time — measured on LocalDB, `InvalidOperationException`: "The current provider doesn't have a store
+type mapping for properties of type 'CancellationToken'." — and only on SQL Server: the in-memory
+provider never runs raw SQL, and both callers skip it on that provider. `FindAsync(id, ct)` has
+the same shape, with the token taken as a second key value. The token goes after a collection:
+`ExecuteSqlRawAsync(sql, new object[] { resource, timeout }, ct)` and `FindAsync([id], ct)`.
+`CancellationFlowTests` refuses the other shape (ADR-0058).
+
+## MVC's JSON formatter swallows a cancelled `RequestAborted` and sends an empty success
+
+`SystemTextJsonOutputFormatter` catches the `OperationCanceledException` of its write whenever
+`RequestAborted` is cancelled, and returns. The status, already set to 200 or 201, goes out with an
+empty or cut body, and nothing above it sees an exception. Behind `IdempotencyMiddleware` that
+empty body was stored as the answer: measured on SQL Server with a client that hung up after a
+deposit committed, the record was `Completed` with an empty body and every retry of the key was
+replayed an empty 201 (`RequestDeadlineSqlServerTests`). Two things now stand in the way
+(ADR-0058): `DeadlineResultFilter` gives the write a token that cannot be cancelled once a commit has
+started, and an empty 2xx is never stored for replay. Anything else that makes `RequestAborted`
+cancellable by something other than the client meets the same formatter.
+
+## A local outage can outlive the database: the pool's blocking period
+
+As documented, after a failed open SqlClient's pool hands the cached error to every caller for 5 s,
+doubling up to a minute, without trying the server again. `Pool Blocking Period=Auto`, the default,
+does that for every server except Azure SQL. Measured on 2026-09-29 on the compose stack: SQL
+Server was answering again at 16:32:04.3 UTC, and every open still failed within about a
+millisecond with 11001 until 16:32:27.0; the first 200 came 26.1 s after the database. That
+matches the blocking period, and a second run showed it: on 2026-09-30, with only `NeverBlock`
+added to the same commit, the same two outages logged no error once the database answered again
+(ADR-0058, Validation). So a local outage run with blocking on says little about how the retry
+budget behaves on Azure: most of its failed opens are the cached error handed out again, with no
+attempt on the server of their own. Since ADR-0058 every host opens with `NeverBlock` unless its
+connection string says otherwise, which is what `Auto` already gives Azure.

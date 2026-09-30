@@ -109,14 +109,23 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
             return base.SaveChanges(acceptAllChangesOnSuccess);
         }
 
-        return Database.CreateExecutionStrategy().Execute(() =>
+        // The same unit of work as the asynchronous funnel below, and the comment after it says why
+        // the changes are accepted only once the strategy has returned.
+        var written = Database.CreateExecutionStrategy().ExecuteInTransaction(
+            OwnedAuditIds(),
+            _ =>
+            {
+                chain.Apply(this);
+                return base.SaveChanges(acceptAllChangesOnSuccess: false);
+            },
+            owned => AuditEvents.AsNoTracking().Any(e => owned.Contains(e.Id)));
+
+        if (acceptAllChangesOnSuccess)
         {
-            using var owned = Database.BeginTransaction();
-            chain.Apply(this);
-            var written = base.SaveChanges(acceptAllChangesOnSuccess);
-            owned.Commit();
-            return written;
-        });
+            ChangeTracker.AcceptAllChanges();
+        }
+
+        return written;
     }
 
     public override async Task<int> SaveChangesAsync(
@@ -132,14 +141,42 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
             return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
         }
 
-        return await Database.CreateExecutionStrategy().ExecuteAsync(async ct =>
+        var owned = OwnedAuditIds();
+        var saved = 0;
+        var commitAttempted = false;
+        int written;
+        try
         {
-            await using var owned = await Database.BeginTransactionAsync(ct);
-            await chain.ApplyAsync(this, ct);
-            var written = await base.SaveChangesAsync(acceptAllChangesOnSuccess, ct);
-            await owned.CommitAsync(ct);
-            return written;
-        }, cancellationToken);
+            written = await Database.CreateExecutionStrategy().ExecuteInTransactionAsync(
+                owned,
+                async (_, ct) =>
+                {
+                    commitAttempted = false;
+                    await chain.ApplyAsync(this, ct);
+                    saved = await base.SaveChangesAsync(acceptAllChangesOnSuccess: false, ct);
+                    commitAttempted = true;
+                    return saved;
+                },
+                (ids, ct) => AuditEvents.AsNoTracking().AnyAsync(e => ids.Contains(e.Id), ct),
+                cancellationToken);
+        }
+        catch (Exception) when (commitAttempted && cancellationToken.IsCancellationRequested)
+        {
+            // The strategy's question, refused or cancelled by the token (see the comment below).
+            if (!await CommitLandedAsync(owned))
+            {
+                throw;
+            }
+
+            written = saved;
+        }
+
+        if (acceptAllChangesOnSuccess)
+        {
+            ChangeTracker.AcceptAllChanges();
+        }
+
+        return written;
     }
 
     /*
@@ -163,6 +200,38 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
       AuthService.RegisterAsync already had to solve exactly this; the idiom here is deliberately
       the same one. AuditChainRetryingStrategySqlServerTests is what stops it coming back.
 
+      AND A COMMIT THAT FAILS IS ASKED ABOUT, NEVER RE-RUN BLIND, which is a THIRD correction. The
+      save used to accept its changes before the commit, as base.SaveChanges(true) does. A transient
+      fault at the commit then rolled the work back on the server, and the strategy's re-run found
+      every entry already Unchanged: no audit row left to chain, nothing to insert, an empty
+      transaction committed and a success returned. Measured on SQL Server with a fault as a
+      deposit's commit started: 201 "Deposit successful", no ledger row, a balance of 0 and the
+      idempotency record still Processing. The deposit, the rename, the full-number reveal and the
+      PIN set all save through here.
+
+      So the changes stay pending until the strategy returns: base.SaveChanges(false) inside it,
+      AcceptAllChanges() after it. A re-run sends the same rows again, and chains them again onto a
+      tail it reads again. A fault raised BY the commit is different, because the commit may have
+      landed, and then sending the rows again refuses work that happened: measured with a deposit's
+      commit acknowledgement lost, a blind re-run answered 500 (a DbUpdateConcurrencyException)
+      over a ledger row that was there. So ExecuteInTransaction asks the database whether this
+      save's audit rows are there before the retrying strategy decides, and if they are, the save
+      succeeded. The audit ids are minted by the client (UUIDv7, in AuditService), so the question
+      has an exact answer that only this save can satisfy, and one row answers for all of them
+      because they commit together or not at all. It is registration's idiom again
+      (AuthService.RegisterAsync keys it on the user it minted). DepositCommitFaultSqlServerTests
+      pins both faults: a commit that never started, and a commit whose acknowledgement was lost.
+
+      AND THE QUESTION IS ASKED AGAIN WHEN THE TOKEN STOPPED IT, a FOURTH correction. The strategy
+      asks under the save's token, which in the API is the request deadline's, and a commit that
+      fails turns the deadline back on at its original instant (ADR-0058 D4): past it, the deadline
+      fires at once, and the strategy's question is refused before it is sent or cancelled while it
+      runs. Measured on SQL Server with a PIN change's acknowledgement lost after the deadline: 503,
+      with the new PIN in place. So when the token is cancelled after a commit was attempted, the
+      save asks once more, under a budget of its own (LandedCheckBudget), and a row found is a
+      success. A question that fails as well leaves the save's own failure to be answered, as
+      before. DepositCommitFaultSqlServerTests pins it on the PIN change.
+
       No transaction is opened at all — and the ordinary write path is untouched — when:
         - the save carries no audit row;
         - a caller already has an explicit transaction: it is the one holding the lock, and
@@ -175,6 +244,37 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
         Database.CurrentTransaction is null
         && Database.IsRelational()
         && ChangeTracker.Entries<AuditEvent>().Any(e => e.State == EntityState.Added);
+
+    /// <summary>The ids of the audit rows this save adds: what a failed commit is checked against.</summary>
+    private Guid[] OwnedAuditIds() =>
+        ChangeTracker.Entries<AuditEvent>()
+            .Where(e => e.State == EntityState.Added)
+            .Select(e => e.Entity.Id)
+            .ToArray();
+
+    /// <summary>
+    /// How long the second question may take: one read by key, and longer means the database is
+    /// failing. The same 3 s the idempotency bookkeeping has (ADR-0058 D8).
+    /// </summary>
+    private static readonly TimeSpan LandedCheckBudget = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// Whether this save's audit rows are there, asked under <see cref="LandedCheckBudget"/> rather
+    /// than the save's token, which is already cancelled. False when the question fails too: the
+    /// outcome stays unknown.
+    /// </summary>
+    private async Task<bool> CommitLandedAsync(Guid[] owned)
+    {
+        using var budget = new CancellationTokenSource(LandedCheckBudget);
+        try
+        {
+            return await AuditEvents.AsNoTracking().AnyAsync(e => owned.Contains(e.Id), budget.Token);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
 
     /*
       The chain runs HERE, in the same funnel as the immutability guard and the timestamps, and for

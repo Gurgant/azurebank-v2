@@ -15,13 +15,14 @@ public interface ITransferService
     /// attempt and a locked one answers 429, both here rather than on the transfer itself.
     /// </summary>
     Task<StepUpAuthorizationResponse> AuthoriseTransferAsync(
-        Guid userId, TransferAuthorizationRequest request);
+        Guid userId, TransferAuthorizationRequest request, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// The same, for a transfer between the caller's own accounts.
     /// </summary>
     Task<StepUpAuthorizationResponse> AuthoriseInternalTransferAsync(
-        Guid userId, InternalTransferAuthorizationRequest request);
+        Guid userId, InternalTransferAuthorizationRequest request,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Transfers money to another user's primary account.
@@ -42,8 +43,10 @@ public interface ITransferService
     /// alone, so an authorisation in the body would make every retry that carries a different one a
     /// 422 instead of reaching the endpoint.
     /// </param>
+    /// <param name="cancellationToken">Cancels the work: the request's token, which its deadline or the caller hanging up cancels (ADR-0058).</param>
     Task<TransferResponse> TransferAsync(
-        Guid userId, TransferRequest request, Guid? stepUpAuthorizationId);
+        Guid userId, TransferRequest request, Guid? stepUpAuthorizationId,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Transfers money between own accounts.
@@ -56,6 +59,8 @@ public interface ITransferService
     /// <param name="stepUpAuthorizationId">See <see cref="TransferAsync"/>. Internal transfers mint
     /// and spend one too: they already ask for the PIN, so binding it costs the user nothing and
     /// spares the codebase an exception to explain later.</param>
+    /// <param name="cancellationToken">Cancels the work: the request's token, which its deadline or the caller hanging up cancels (ADR-0058).</param>
     Task<InternalTransferResponse> InternalTransferAsync(
-        Guid userId, InternalTransferRequest request, Guid? stepUpAuthorizationId);
+        Guid userId, InternalTransferRequest request, Guid? stepUpAuthorizationId,
+        CancellationToken cancellationToken = default);
 }

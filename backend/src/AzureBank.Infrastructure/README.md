@@ -345,17 +345,25 @@ The DbContext is configured with:
 services.AddDbContext<AzureBankDbContext>((serviceProvider, options) =>
 {
     var database = serviceProvider.GetRequiredService<IOptions<DatabaseOptions>>().Value;
-    options.UseSqlServer(connectionString, sqlOptions =>
+
+    // Connect Timeout 10, ConnectRetryCount 0, Max Pool Size 12 and Pool Blocking
+    // Period=NeverBlock, each only where the connection string leaves it unset (ADR-0058).
+    options.UseSqlServer(SqlConnectionDefaults.Apply(connectionString, database), sqlOptions =>
     {
         sqlOptions.EnableRetryOnFailure(
-            maxRetryCount: database.MaxRetryCount,  // Database:MaxRetryCount, 3 unless set
-            maxRetryDelay: database.MaxRetryDelay,  // Database:MaxRetryDelay, 30 s unless set
+            maxRetryCount: database.MaxRetryCount,  // Database:MaxRetryCount, 4 unless set
+            maxRetryDelay: database.MaxRetryDelay,  // Database:MaxRetryDelay, 10 s unless set
             errorNumbersToAdd: null);
 
         sqlOptions.CommandTimeout(30);
 
         sqlOptions.MigrationsAssembly(typeof(AzureBankDbContext).Assembly.FullName);
     });
+
+    // A retry is logged at Warning, not EF's Information, and every IInterceptor the host
+    // registers is added: the API's is the commit gate (ADR-0058).
+    options.ConfigureWarnings(w => w.Log((CoreEventId.ExecutionStrategyRetrying, LogLevel.Warning)));
+    options.AddInterceptors(serviceProvider.GetServices<IInterceptor>());
 
     if (environment.IsDevelopment())
     {
@@ -365,7 +373,12 @@ services.AddDbContext<AzureBankDbContext>((serviceProvider, options) =>
 });
 ```
 
-*(Until 2026-09-25 the sample, like the code, fixed the retry budget at 3 and 30 s.)*
+*(Until 2026-09-25 the sample, like the code, fixed the retry budget at 3 and 30 s. Until
+2026-09-30 it said 3 and 30 s unless set, which the code's defaults were until ADR-0058 made them 4
+and 10 s, and it showed the raw connection string going to `UseSqlServer`.)*
+
+`DesignTimeDbContextFactory` below builds its own options and applies none of this: a `dotnet ef`
+run opens with SqlClient's defaults (ADR-0058's second precondition).
 
 ---
 

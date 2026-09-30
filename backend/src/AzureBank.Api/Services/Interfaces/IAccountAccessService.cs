@@ -20,7 +20,9 @@ public interface IAccountAccessService
     /// <exception cref="AzureBank.Shared.Exceptions.AuthorizationException">
     /// Thrown when the account doesn't belong to the specified user.
     /// </exception>
-    Task<Account> GetAccountWithOwnershipCheckAsync(Guid accountId, Guid userId);
+    /// <param name="cancellationToken">Cancels the work: the request's token, which its deadline or the caller hanging up cancels (ADR-0058).</param>
+    Task<Account> GetAccountWithOwnershipCheckAsync(
+        Guid accountId, Guid userId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Checks if an account exists and belongs to the specified user.
@@ -29,5 +31,6 @@ public interface IAccountAccessService
     /// <param name="accountId">The account ID to check.</param>
     /// <param name="userId">The user ID who must own the account.</param>
     /// <returns>True if account exists and belongs to user, false otherwise.</returns>
-    Task<bool> ValidateAccountOwnershipAsync(Guid accountId, Guid userId);
+    /// <param name="cancellationToken">Cancels the work: the request's token, which its deadline or the caller hanging up cancels (ADR-0058).</param>
+    Task<bool> ValidateAccountOwnershipAsync(Guid accountId, Guid userId, CancellationToken cancellationToken = default);
 }

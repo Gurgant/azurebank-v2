@@ -20,10 +20,11 @@ public class AccountAccessService : IAccountAccessService
     }
 
     /// <inheritdoc />
-    public async Task<Account> GetAccountWithOwnershipCheckAsync(Guid accountId, Guid userId)
+    public async Task<Account> GetAccountWithOwnershipCheckAsync(
+        Guid accountId, Guid userId, CancellationToken cancellationToken = default)
     {
         var account = await _context.Accounts
-            .FirstOrDefaultAsync(a => a.Id == accountId && !a.IsDeleted);
+            .FirstOrDefaultAsync(a => a.Id == accountId && !a.IsDeleted, cancellationToken);
 
         if (account == null)
         {
@@ -39,9 +40,10 @@ public class AccountAccessService : IAccountAccessService
     }
 
     /// <inheritdoc />
-    public async Task<bool> ValidateAccountOwnershipAsync(Guid accountId, Guid userId)
+    public async Task<bool> ValidateAccountOwnershipAsync(
+        Guid accountId, Guid userId, CancellationToken cancellationToken = default)
     {
         return await _context.Accounts
-            .AnyAsync(a => a.Id == accountId && a.UserId == userId && !a.IsDeleted);
+            .AnyAsync(a => a.Id == accountId && a.UserId == userId && !a.IsDeleted, cancellationToken);
     }
 }

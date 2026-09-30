@@ -490,6 +490,11 @@ az network private-endpoint dns-zone-group create \
 ```
 
 ### Step 3.4.6: Configure API App Settings
+*(2026-09-30, [ADR-0058](../adr/0058-the-api-gives-up-cleanly-when-the-database-is-down.md): the
+string below needs no `Connect Timeout`, `ConnectRetryCount`, `Max Pool Size` or `Pool Blocking
+Period`, because the API writes each one it leaves unset from code (10 s, 0, 12, `NeverBlock`),
+and a value the string or the secret sets wins.)*
+
 ```bash
 # Get connection strings
 SQL_CONN="Server=tcp:$SQL_SERVER.database.windows.net,1433;Database=AzureBank;User ID=$SQL_ADMIN;Password=$SQL_PASSWORD;Encrypt=True;TrustServerCertificate=False;"

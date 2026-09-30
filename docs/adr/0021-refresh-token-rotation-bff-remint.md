@@ -328,7 +328,8 @@ Until then the failure is at least observable: `SecurityEvent RefreshTokenReuseR
 
 > **Decided in [ADR-0034](0034-failed-family-revoke-recovery.md) (2026-08-08): neither.** Measuring
 > the shipped EF detector changed the question — a deadlock on this write is already retried three
-> times by `EnableRetryOnFailure` *(three by default, `Database:MaxRetryCount` since 2026-09-25)*,
+> times by `EnableRetryOnFailure` *(~~three~~ by default, `Database:MaxRetryCount` since 2026-09-25;
+> four by default since 2026-09-30, [ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md))*,
 > while a command timeout is not retried at all, and retrying *that*
 > inline would hold a connection for another `CommandTimeout` on a path an attacker triggers at will.
 > A durable work item was rejected because its own write shares this write's failure mode. The

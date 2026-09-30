@@ -125,7 +125,10 @@ public static class ObservabilityServiceCollectionExtensions
           15s connect timeout, then a retry after ConnectRetryInterval, then 15s again. Anything asking
           gave up long before; Kubernetes' default probe timeout is ONE second. A probe that does not
           answer is strictly worse than one that answers "unhealthy", because the first tells an
-          orchestrator nothing while still consuming a connection.
+          orchestrator nothing while still consuming a connection. Those were SqlClient's defaults.
+          Since ADR-0058 the context opens with a 10 s connect timeout and no SqlClient retry
+          (SqlConnectionDefaults), so one open is bounded by 10 s, not 37; that figure has not been
+          measured again. The bound below, 5 s as shipped, is still the shorter one.
 
           THE FRAMEWORK DOES ENFORCE THIS VALUE, which was worth measuring rather than assuming — the
           finding that prompted this cited a source claiming DefaultHealthCheckService ignores it. It

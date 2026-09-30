@@ -97,7 +97,7 @@ public class StepUpAuthorizationService : IStepUpAuthorizationService
         bool pinOk;
         try
         {
-            pinOk = await _pinVerifier.VerifyPinAsync(userId, pin);
+            pinOk = await _pinVerifier.VerifyPinAsync(userId, pin, cancellationToken);
         }
         catch (PinLockedException)
         {
@@ -164,7 +164,10 @@ public class StepUpAuthorizationService : IStepUpAuthorizationService
             actorUserId: userId,
             subjectType: "Account",
             subjectId: binding.FromAccountId,
-            detail: errorCode);
+            detail: errorCode,
+            // Never the request's token: the refusal's row must land even when the refused request
+            // is cancelled (ADR-0044 D1, ADR-0058).
+            cancellationToken: CancellationToken.None);
 
     /*
       A SWITCH, WHERE THIS WAS A TWO-ARMED TERNARY OVER A THREE-MEMBER ENUM (ADR-0056).

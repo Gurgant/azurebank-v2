@@ -37,44 +37,75 @@ public class AppExceptionHandler : IExceptionHandler
             appException.ErrorCode,
             exception.GetType().Name);
 
+        await WriteProblemAsync(
+            httpContext, appException.StatusCode, appException.ErrorCode, appException.Message,
+            appException.Details, cancellationToken);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Writes a refusal as ProblemDetails with an <c>errorCode</c>: the one writer for every answer
+    /// that names a reason, shared with <see cref="ServiceUnavailableExceptionHandler"/> so the
+    /// outage 503 and a domain refusal cannot drift apart in shape.
+    /// </summary>
+    /// <remarks>
+    /// A <c>retryAfterSeconds</c> detail is also written as the <c>Retry-After</c> header, and a 503
+    /// is never cached (its <c>Cache-Control</c> includes <c>no-store</c>): it describes a moment, and
+    /// a cache that kept it would answer "unavailable" after the service is back.
+    /// </remarks>
+    internal static Task WriteProblemAsync(
+        HttpContext httpContext,
+        int statusCode,
+        string errorCode,
+        string detail,
+        IReadOnlyDictionary<string, object>? details,
+        CancellationToken cancellationToken)
+    {
         var problemDetails = new ProblemDetails
         {
-            Status = appException.StatusCode,
-            Title = GetTitleForStatusCode(appException.StatusCode),
-            Detail = appException.Message,
-            Type = $"https://httpstatuses.com/{appException.StatusCode}",
+            Status = statusCode,
+            Title = GetTitleForStatusCode(statusCode),
+            Detail = detail,
+            Type = $"https://httpstatuses.com/{statusCode}",
             Instance = httpContext.Request.Path
         };
 
         // Add error code extension
-        problemDetails.Extensions["errorCode"] = appException.ErrorCode;
+        problemDetails.Extensions["errorCode"] = errorCode;
 
         // Correlation id: bare 32-hex trace id (not the full W3C "00-…-01") so it pastes
         // straight into Tempo/Grafana search.
         problemDetails.Extensions["traceId"] = Activity.Current?.TraceId.ToString() ?? httpContext.TraceIdentifier;
 
         // Add details if present (e.g., InsufficientFundsException details)
-        if (appException.Details is { Count: > 0 })
+        if (details is { Count: > 0 })
         {
-            foreach (var detail in appException.Details)
+            foreach (var entry in details)
             {
-                problemDetails.Extensions[detail.Key] = detail.Value;
+                problemDetails.Extensions[entry.Key] = entry.Value;
             }
         }
 
         // Emit a standard Retry-After header when the exception advertises a
         // back-off (e.g. PIN lockout, HTTP 429) so generic clients and proxies
         // honor it (RFC 9110 §10.2.3), in addition to the ProblemDetails fields.
-        if (appException.Details is not null
-            && appException.Details.TryGetValue("retryAfterSeconds", out var retryAfter))
+        if (details is not null && details.TryGetValue("retryAfterSeconds", out var retryAfter))
         {
             httpContext.Response.Headers.RetryAfter = Convert.ToInt32(retryAfter).ToString();
         }
 
-        httpContext.Response.StatusCode = appException.StatusCode;
-        await httpContext.Response.WriteAsJsonAsync(problemDetails, cancellationToken);
+        if (statusCode == StatusCodes.Status503ServiceUnavailable)
+        {
+            // Not what reaches the wire: every caller runs inside ExceptionHandlerMiddleware, which sets
+            // its own cache headers as the response starts. Measured on the compose stack (ADR-0058
+            // D6): Cache-Control "no-cache,no-store", Pragma "no-cache" and Expires "-1". Both include
+            // no-store, which is the point; this line keeps the 503 uncached without that middleware.
+            httpContext.Response.Headers.CacheControl = "no-store";
+        }
 
-        return true;
+        httpContext.Response.StatusCode = statusCode;
+        return httpContext.Response.WriteAsJsonAsync(problemDetails, cancellationToken);
     }
 
     private static string GetTitleForStatusCode(int statusCode) => statusCode switch

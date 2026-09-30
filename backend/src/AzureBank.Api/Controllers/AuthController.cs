@@ -25,6 +25,14 @@ namespace AzureBank.Api.Controllers;
 [Produces("application/json")]
 public class AuthController : ControllerBase
 {
+    /*
+      EVERY ACTION'S cancellationToken <param> COMES FIRST in its doc block (ADR-0058). The OpenAPI
+      generator writes a <param> it cannot match to an operation parameter onto the request body,
+      the last one winning, and a CancellationToken is never an operation parameter: placed after
+      the body's own <param>, its sentence replaced the body's description in the published
+      document. CommittedOpenApiDocumentTests catches it.
+    */
+
     private readonly IAuthService _authService;
     private readonly IValidator<LoginRequest> _loginValidator;
     private readonly IValidator<RegisterRequest> _registerValidator;
@@ -51,6 +59,7 @@ public class AuthController : ControllerBase
     /// <remarks>
     /// Authenticate user and receive JWT token.
     /// </remarks>
+    /// <param name="cancellationToken">The request's token: cancelled by its deadline or by the caller hanging up (ADR-0058).</param>
     /// <param name="request">Login credentials</param>
     /// <returns>JWT token and user information</returns>
     [HttpPost("login")]
@@ -60,11 +69,12 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)] // ACCOUNT_LOCKED (ADR-0012)
-    public async Task<ActionResult<ApiResponse<LoginResponse>>> Login([FromBody] LoginRequest request)
+    public async Task<ActionResult<ApiResponse<LoginResponse>>> Login(
+        [FromBody] LoginRequest request, CancellationToken cancellationToken)
     {
-        await _loginValidator.ValidateAndThrowAsync(request);
+        await _loginValidator.ValidateAndThrowAsync(request, cancellationToken);
 
-        var result = await _authService.LoginAsync(request);
+        var result = await _authService.LoginAsync(request, cancellationToken);
         return Ok(ApiResponse<LoginResponse>.Success(result, "Login successful"));
     }
 
@@ -74,6 +84,7 @@ public class AuthController : ControllerBase
     /// <remarks>
     /// Register a new user account with initial bank account.
     /// </remarks>
+    /// <param name="cancellationToken">The request's token: cancelled by its deadline or by the caller hanging up (ADR-0058).</param>
     /// <param name="request">Registration details</param>
     /// <returns>User, account, and token information</returns>
     [HttpPost("register")]
@@ -82,11 +93,12 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<RegisterResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
-    public async Task<ActionResult<ApiResponse<RegisterResponse>>> Register([FromBody] RegisterRequest request)
+    public async Task<ActionResult<ApiResponse<RegisterResponse>>> Register(
+        [FromBody] RegisterRequest request, CancellationToken cancellationToken)
     {
-        await _registerValidator.ValidateAndThrowAsync(request);
+        await _registerValidator.ValidateAndThrowAsync(request, cancellationToken);
 
-        var result = await _authService.RegisterAsync(request);
+        var result = await _authService.RegisterAsync(request, cancellationToken);
         return StatusCode(StatusCodes.Status201Created,
             ApiResponse<RegisterResponse>.Success(result, "Registration successful"));
     }
@@ -104,6 +116,7 @@ public class AuthController : ControllerBase
     [HttpPost("refresh")]
     [AllowAnonymous] // the grant IS the credential; the access token may be expired
     [TokenEndpoint]
+    [NoRequestDeadline] // runs to completion once started (ADR-0057 §4.3, ADR-0058)
     [ProducesResponseType(typeof(ApiResponse<RefreshResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)] // unknown/revoked/expired
@@ -111,7 +124,8 @@ public class AuthController : ControllerBase
     {
         // No cancellation: a renewal of an active grant only reads, and the audit rows two refusals
         // write — the unknown grant's and the tripwire's — must not be taken back by a caller that
-        // hangs up (ADR-0057 §4.3).
+        // hangs up (ADR-0057 §4.3). So no token here, and the request deadline does not apply
+        // either ([NoRequestDeadline]): the renewal and its refusals run to their end.
         var result = await _authService.RefreshAsync(request, HttpContext.ReceivedAt());
         return Ok(ApiResponse<RefreshResponse>.Success(result, "Token refreshed"));
     }
@@ -129,6 +143,7 @@ public class AuthController : ControllerBase
     [HttpPost("revoke")]
     [AllowAnonymous] // the grant IS the credential; the service key, the marker and loopback still apply
     [TokenEndpoint]
+    [NoRequestDeadline] // runs to completion once started (ADR-0057 §4.3, ADR-0058)
     [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status503ServiceUnavailable)]
@@ -148,6 +163,7 @@ public class AuthController : ControllerBase
     /// theirs, and a session given a lower one at sign-in has been signed out since. An unknown user
     /// has no entry in the answer.
     /// </remarks>
+    /// <param name="cancellationToken">The request's token: cancelled by its deadline or by the caller hanging up (ADR-0058).</param>
     /// <param name="request">The users to read</param>
     /// <returns>Each known user's session stamp</returns>
     [HttpPost("session-stamps")]
@@ -156,9 +172,9 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<SessionStampsResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<ApiResponse<SessionStampsResponse>>> SessionStamps(
-        [FromBody] SessionStampsRequest request)
+        [FromBody] SessionStampsRequest request, CancellationToken cancellationToken)
     {
-        var stamps = await _authService.GetSessionStampsAsync(request.UserIds, HttpContext.RequestAborted);
+        var stamps = await _authService.GetSessionStampsAsync(request.UserIds, cancellationToken);
         return Ok(ApiResponse<SessionStampsResponse>.Success(new SessionStampsResponse { Stamps = stamps }));
     }
 
@@ -173,10 +189,10 @@ public class AuthController : ControllerBase
     [Authorize]
     [ProducesResponseType(typeof(ApiResponse<UserResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
-    public async Task<ActionResult<ApiResponse<UserResponse>>> GetCurrentUser()
+    public async Task<ActionResult<ApiResponse<UserResponse>>> GetCurrentUser(CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
-        var result = await _authService.GetCurrentUserAsync(userId);
+        var result = await _authService.GetCurrentUserAsync(userId, cancellationToken);
         return Ok(ApiResponse<UserResponse>.Success(result));
     }
 
@@ -191,6 +207,7 @@ public class AuthController : ControllerBase
     [HttpPost("logout")]
     [Authorize]
     [TokenEndpoint]
+    [NoRequestDeadline] // runs to completion once started, as revoke does (ADR-0058)
     [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status200OK)]
     public async Task<ActionResult<ApiResponse>> Logout()
     {
@@ -209,6 +226,7 @@ public class AuthController : ControllerBase
     /// toward the lockout and a locked PIN cannot be replaced even by supplying the correct one.
     /// See ADR-0040.
     /// </remarks>
+    /// <param name="cancellationToken">The request's token: cancelled by its deadline or by the caller hanging up (ADR-0058).</param>
     /// <param name="request">PIN to set</param>
     /// <returns>Success message</returns>
     [HttpPost("pin")]
@@ -221,12 +239,13 @@ public class AuthController : ControllerBase
     // entry and published the bare "Unprocessable Entity", where the entry names both codes.
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
-    public async Task<ActionResult<ApiResponse>> SetPin([FromBody] SetPinRequest request)
+    public async Task<ActionResult<ApiResponse>> SetPin(
+        [FromBody] SetPinRequest request, CancellationToken cancellationToken)
     {
-        await _setPinValidator.ValidateAndThrowAsync(request);
+        await _setPinValidator.ValidateAndThrowAsync(request, cancellationToken);
 
         var userId = GetCurrentUserId();
-        await _authService.SetPinAsync(userId, request);
+        await _authService.SetPinAsync(userId, request, cancellationToken);
         return Ok(ApiResponse.Success("PIN set successfully"));
     }
 
@@ -236,6 +255,7 @@ public class AuthController : ControllerBase
     /// <remarks>
     /// Verify user's PIN for step-up authentication.
     /// </remarks>
+    /// <param name="cancellationToken">The request's token: cancelled by its deadline or by the caller hanging up (ADR-0058).</param>
     /// <param name="request">PIN to verify</param>
     /// <returns>Verification result</returns>
     [HttpPost("pin/verify")]
@@ -243,12 +263,13 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)] // PIN_LOCKED (ADR-0010)
-    public async Task<ActionResult<ApiResponse<object>>> VerifyPin([FromBody] VerifyPinRequest request)
+    public async Task<ActionResult<ApiResponse<object>>> VerifyPin(
+        [FromBody] VerifyPinRequest request, CancellationToken cancellationToken)
     {
-        await _verifyPinValidator.ValidateAndThrowAsync(request);
+        await _verifyPinValidator.ValidateAndThrowAsync(request, cancellationToken);
 
         var userId = GetCurrentUserId();
-        var isValid = await _authService.VerifyPinAsync(userId, request.Pin);
+        var isValid = await _authService.VerifyPinAsync(userId, request.Pin, cancellationToken);
 
         if (!isValid)
         {

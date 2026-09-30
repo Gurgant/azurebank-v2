@@ -106,6 +106,129 @@ public class PublishedErrorContractTests
             + "a contract wider than the code, which is the defect this file exists to prevent");
     }
 
+    /// <summary>
+    /// The four keyed money operations: the only ones whose 503 can say <c>applied: false</c>,
+    /// because only they hold an idempotency claim whose fate the API knows (ADR-0058).
+    /// </summary>
+    private static readonly string[] MoneyOperations =
+    [
+        "POST /api/transactions/deposit",
+        "POST /api/transactions/withdraw",
+        "POST /api/transfers",
+        "POST /api/transfers/internal",
+    ];
+
+    private static IEnumerable<(string Operation, JsonElement Value)> Operations(JsonElement document)
+    {
+        foreach (var path in document.GetProperty("paths").EnumerateObject())
+        {
+            foreach (var operation in path.Value.EnumerateObject())
+            {
+                if (HttpMethods.Contains(operation.Name))
+                {
+                    yield return ($"{operation.Name.ToUpperInvariant()} {path.Name}", operation.Value);
+                }
+            }
+        }
+    }
+
+    /// <summary>The schema a 503 declares, or null when the operation declares no 503 with a body.</summary>
+    private static JsonElement? OutageSchema(JsonElement operation)
+    {
+        if (!operation.TryGetProperty("responses", out var responses)
+            || !responses.TryGetProperty("503", out var outage)
+            || !outage.TryGetProperty("content", out var content))
+        {
+            return null;
+        }
+
+        foreach (var mediaType in content.EnumerateObject())
+        {
+            if (mediaType.Value.TryGetProperty("schema", out var schema))
+            {
+                return schema;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Every property a schema declares, through <c>$ref</c> and <c>allOf</c>.</summary>
+    private static HashSet<string> PropertiesOf(JsonElement document, JsonElement schema)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        if (schema.TryGetProperty("$ref", out var reference))
+        {
+            var component = reference.GetString()!.Split('/')[^1];
+            schema = document.GetProperty("components").GetProperty("schemas").GetProperty(component);
+        }
+
+        if (schema.TryGetProperty("properties", out var properties))
+        {
+            names.UnionWith(properties.EnumerateObject().Select(p => p.Name));
+        }
+
+        if (schema.TryGetProperty("allOf", out var parts))
+        {
+            foreach (var part in parts.EnumerateArray())
+            {
+                names.UnionWith(PropertiesOf(document, part));
+            }
+        }
+
+        return names;
+    }
+
+    [Fact]
+    public void Every_operation_declares_the_outage_503()
+    {
+        // ADR-0058: any request can meet the database being down or the request deadline, and the
+        // answer is a 503 with errorCode SERVICE_UNAVAILABLE. Before, one operation declared it
+        // (revoke, whose 503 predates this), so a generated client had no type for the other 29.
+        var document = Document();
+        var operations = Operations(document).ToList();
+        operations.Should().HaveCount(30, "the API's 30 operations; fewer means the scan broke");
+
+        var missing = operations.Where(o => OutageSchema(o.Value) is null).Select(o => o.Operation).ToList();
+
+        missing.Should().BeEmpty(
+            "every operation can answer the outage 503; {0} of {1} declare none: {2}",
+            missing.Count, operations.Count, string.Join(", ", missing));
+    }
+
+    [Fact]
+    public void ProblemDetails_declares_retryAfterSeconds_as_an_optional_integer()
+    {
+        var schema = Document().GetProperty("components").GetProperty("schemas").GetProperty("ProblemDetails");
+
+        schema.GetProperty("properties").TryGetProperty("retryAfterSeconds", out var retryAfter).Should().BeTrue(
+            "the SPA reads when to retry from the body: the Retry-After header does not always reach it");
+        retryAfter.GetProperty("type").ToString().Should().Contain("integer");
+
+        var required = schema.TryGetProperty("required", out var r)
+            ? r.EnumerateArray().Select(e => e.GetString()).ToArray()
+            : [];
+        required.Should().NotContain("retryAfterSeconds", "most refusals carry none");
+    }
+
+    [Fact]
+    public void Applied_is_declared_on_the_four_money_503s_and_nowhere_else()
+    {
+        var document = Document();
+
+        PropertiesOf(document, document.GetProperty("components").GetProperty("schemas").GetProperty("ProblemDetails"))
+            .Should().NotContain("applied", "the shared component would claim it for 26 operations that never send it");
+
+        var declaring = Operations(document)
+            .Where(o => OutageSchema(o.Value) is { } schema && PropertiesOf(document, schema).Contains("applied"))
+            .Select(o => o.Operation)
+            .ToList();
+
+        declaring.Should().BeEquivalentTo(
+            MoneyOperations,
+            "only a keyed money operation knows whether its claim was its own and no commit started");
+    }
+
     [Fact]
     public void No_refusal_is_published_with_an_empty_body()
     {

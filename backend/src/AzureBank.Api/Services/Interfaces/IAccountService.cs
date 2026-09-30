@@ -11,27 +11,29 @@ public interface IAccountService
     /// <summary>
     /// Gets all accounts for a user, ordered by primary status then creation date.
     /// </summary>
-    Task<List<AccountResponse>> GetUserAccountsAsync(Guid userId);
+    Task<List<AccountResponse>> GetUserAccountsAsync(Guid userId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gets a specific account by ID with ownership verification.
     /// </summary>
-    Task<AccountResponse> GetAccountByIdAsync(Guid accountId, Guid userId);
+    Task<AccountResponse> GetAccountByIdAsync(Guid accountId, Guid userId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Creates a new account for a user.
     /// </summary>
-    Task<AccountResponse> CreateAccountAsync(Guid userId, CreateAccountRequest request);
+    Task<AccountResponse> CreateAccountAsync(
+        Guid userId, CreateAccountRequest request, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Updates an existing account (name only).
     /// </summary>
-    Task<AccountResponse> UpdateAccountAsync(Guid accountId, Guid userId, UpdateAccountRequest request);
+    Task<AccountResponse> UpdateAccountAsync(
+        Guid accountId, Guid userId, UpdateAccountRequest request, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Sets an account as the primary account for the user.
     /// </summary>
-    Task SetPrimaryAccountAsync(Guid userId, Guid accountId);
+    Task SetPrimaryAccountAsync(Guid userId, Guid accountId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Proves the PIN and mints the one-shot authorisation a closure of
@@ -41,7 +43,8 @@ public interface IAccountService
     /// mint's own:
     /// 422 <c>PIN_REQUIRED</c>, 401 <c>INVALID_PIN</c>, 429 <c>PIN_LOCKED</c>.
     /// </summary>
-    Task<StepUpAuthorizationResponse> AuthoriseDeletionAsync(Guid userId, Guid accountId, string pin);
+    Task<StepUpAuthorizationResponse> AuthoriseDeletionAsync(
+        Guid userId, Guid accountId, string pin, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Soft deletes an account (balance must be zero, cannot be primary) under an authorisation
@@ -52,7 +55,8 @@ public interface IAccountService
     /// <c>AUTHORIZATION_EXPIRED</c>. The soft delete, its <c>AccountDeleted</c> row and the spend
     /// of the authorisation commit together or not at all.
     /// </summary>
-    Task DeleteAccountAsync(Guid accountId, Guid userId, Guid? stepUpAuthorizationId);
+    Task DeleteAccountAsync(
+        Guid accountId, Guid userId, Guid? stepUpAuthorizationId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gets the current or historical balance for an account.
@@ -60,11 +64,14 @@ public interface IAccountService
     /// <param name="accountId">Account identifier</param>
     /// <param name="userId">User identifier for ownership verification</param>
     /// <param name="atTime">Optional: Get balance at specific point in time (null = current)</param>
-    Task<BalanceResponse> GetBalanceAsync(Guid accountId, Guid userId, DateTime? atTime = null);
+    /// <param name="cancellationToken">Cancels the work: the request's token, which its deadline or the caller hanging up cancels (ADR-0058).</param>
+    Task<BalanceResponse> GetBalanceAsync(
+        Guid accountId, Guid userId, DateTime? atTime = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Reveals the FULL (unmasked) account number of an owned account — the one read
     /// that bypasses the mapper's masking. Audited (SecurityEvent AccountNumberRevealed).
     /// </summary>
-    Task<AccountNumberResponse> GetFullAccountNumberAsync(Guid accountId, Guid userId);
+    Task<AccountNumberResponse> GetFullAccountNumberAsync(
+        Guid accountId, Guid userId, CancellationToken cancellationToken = default);
 }

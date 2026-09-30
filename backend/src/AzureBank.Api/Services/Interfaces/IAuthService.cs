@@ -11,12 +11,12 @@ public interface IAuthService
     /// <summary>
     /// Authenticates a user and returns login response with token.
     /// </summary>
-    Task<LoginResponse> LoginAsync(LoginRequest request);
+    Task<LoginResponse> LoginAsync(LoginRequest request, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Registers a new user with initial account and returns registration response.
     /// </summary>
-    Task<RegisterResponse> RegisterAsync(RegisterRequest request);
+    Task<RegisterResponse> RegisterAsync(RegisterRequest request, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Presents a grant for a fresh access token, capped at the grant's expiry. The grant is read,
@@ -49,15 +49,15 @@ public interface IAuthService
     /// <summary>
     /// Gets the current authenticated user's information.
     /// </summary>
-    Task<UserResponse> GetCurrentUserAsync(Guid userId);
+    Task<UserResponse> GetCurrentUserAsync(Guid userId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Verifies a user's PIN for step-up authentication.
     /// </summary>
-    Task<bool> VerifyPinAsync(Guid userId, string pin);
+    Task<bool> VerifyPinAsync(Guid userId, string pin, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Sets or updates a user's PIN.
     /// </summary>
-    Task SetPinAsync(Guid userId, SetPinRequest request);
+    Task SetPinAsync(Guid userId, SetPinRequest request, CancellationToken cancellationToken = default);
 }

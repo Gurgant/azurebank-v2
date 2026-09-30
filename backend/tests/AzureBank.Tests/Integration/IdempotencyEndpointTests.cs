@@ -241,11 +241,13 @@ public class IdempotencyEndpointTests : IntegrationTestBase
         var key = Guid.NewGuid();
         var rawBody = RawJson(NewDeposit(accountId, 75m));
 
-        // A Processing row older than ProcessingStaleAfter (10min) means the
+        // A Processing row older than ProcessingStaleAfter (2 min) means the
         // claimant died before committing anything (a commit would have
-        // flipped it to Executed) -> takeover is safe.
+        // flipped it to Executed) -> takeover is safe. Three minutes old: a
+        // key whose release failed during an outage is sendable again by
+        // then, where it stayed IN_FLIGHT for ten minutes before ADR-0058.
         SeedRecord(userId, "POST api/transactions/deposit", key, HashOf(rawBody),
-            IdempotencyStatus.Processing, ageMinutes: 11);
+            IdempotencyStatus.Processing, ageMinutes: 3);
 
         var response = await PostRawAsync("/api/transactions/deposit", rawBody, key);
 

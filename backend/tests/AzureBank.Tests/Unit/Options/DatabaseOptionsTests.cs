@@ -119,7 +119,32 @@ public class DatabaseOptionsTests
     }
 
     [Theory]
-    [InlineData(null, null, 3, 30_000)] // nothing configured: the values the code always had
+    [InlineData("Database:ConnectTimeoutSeconds", "0", "Database:ConnectTimeoutSeconds must be between 1 and 60.")]
+    [InlineData("Database:ConnectTimeoutSeconds", "61", "Database:ConnectTimeoutSeconds must be between 1 and 60.")]
+    [InlineData("Database:ConnectRetryCount", "-1", "Database:ConnectRetryCount must be between 0 and 255.")]
+    [InlineData("Database:ConnectRetryCount", "256", "Database:ConnectRetryCount must be between 0 and 255.")]
+    [InlineData("Database:MaxPoolSize", "0", "Database:MaxPoolSize must be between 1 and 200.")]
+    [InlineData("Database:MaxPoolSize", "201", "Database:MaxPoolSize must be between 1 and 200.")]
+    public void AConnectionLimitOutOfRange_StopsTheHostAtStart(string key, string value, string message)
+    {
+        // The limits AddInfrastructure writes into the connection string (ADR-0058). A timeout of
+        // 0 is "wait forever" to SqlClient and a pool of 0 cannot open anything, so either must stop
+        // the host rather than the first request.
+        var services = new ServiceCollection();
+        services.AddDatabaseOptions(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:DefaultConnection"] = CustomWebApplicationFactory.PlaceholderConnectionString,
+            [key] = value,
+        }).Build());
+        using var root = services.BuildServiceProvider();
+
+        var act = () => root.GetRequiredService<IStartupValidator>().Validate();
+
+        act.Should().Throw<OptionsValidationException>().Which.Message.Should().Contain(message);
+    }
+
+    [Theory]
+    [InlineData(null, null, 4, 10_000)] // nothing configured: 4 retries, back-off capped at 10 s (ADR-0058)
     [InlineData("0", "00:00:00.001", 0, 1)]
     [InlineData("20", "00:01:00", 20, 60_000)]
     public void ARetryBudgetInRange_StartsAndBinds(string? count, string? delay, int retries, int delayMs)

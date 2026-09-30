@@ -68,6 +68,14 @@ design — see Notes).
 - Same key after the operation committed but its response was provably
   lost (record stuck `Executed` past the staleness window) → **409
   `IDEMPOTENCY_RESULT_UNKNOWN`** ("verify via GET /api/transactions").
+- *(Added 2026-09-30, [ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md).)*
+  The database cannot be reached, or the request ran past its deadline → **503
+  `SERVICE_UNAVAILABLE`** with `retryAfterSeconds` and `Retry-After`. It carries **`applied:
+  false`** only when the request holds the claim it made itself (not a replay) and no commit has
+  started, and then nothing was changed; on every other 503 `applied` is absent, because a request
+  that failed reading the key, claiming it or writing a replay cannot know what an earlier one with
+  the same key did. A client keeps the key on it either way: `applied: false` changes what the
+  visitor is told, never which key the retry sends.
 - Request body larger than 32 KB → **413 `IDEMPOTENCY_PAYLOAD_TOO_LARGE`**,
   rejected before any buffering/hashing/claim (see Placement & limits).
 - **Key scope**: per user, per logical endpoint. Cross-user and
@@ -120,6 +128,16 @@ design — see Notes).
    operation committed.
 3. **Complete**: after a 2xx, the buffered response is persisted
    (`Completed`) **before the first byte reaches the client**.
+   *(Amended 2026-09-30, [ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md):
+   with 3 s of its own, where it had no bound (`CancellationToken.None`), and not the request's
+   token, so a client that has gone does not stop it; one not stored in time leaves the record
+   `Executed` while the 2xx is still sent. That the answer it stores is whole, for a client that
+   hung up after the commit, is `DeadlineResultFilter`'s doing (ADR-0058 D5). An **empty** 2xx is
+   never stored: no monetary success is empty, so an empty one is an answer lost while it was
+   written, and stored it was replayed to every retry of the key as the answer (measured before the change: the record `Completed` with an empty body, and an empty 201
+   on the retry, `RequestDeadlineSqlServerTests`). Not stored, the record stays `Executed` and a
+   retry gets `IN_FLIGHT`, then `RESULT_UNKNOWN`. The fenced delete that releases a claim on the
+   error path gets 3 s too; one that runs out leaves the claim `Processing` until it is stale.)*
 
 ### Failure semantics (all derived from the DB truth, not exception types)
 
@@ -127,11 +145,23 @@ design — see Notes).
 |---|---|---|
 | Validation/business error (400/401/404/422), rollback | `Processing` | Fenced delete → **key stays reusable** (fixing the payload and retrying the same key works; errors are never replayed) |
 | Post-commit exception (e.g. response mapping crash) | `Executed` | Record kept → retries get 409 `IDEMPOTENCY_RESULT_UNKNOWN` |
-| Crash before commit | stale `Processing` | Provably nothing committed → **safe takeover** after `ProcessingStaleAfter` (10 min): fenced delete + fresh claim |
+| Crash before commit | stale `Processing` | Provably nothing committed → **safe takeover** after `ProcessingStaleAfter` (~~10 min~~ 2 min, see the note below): fenced delete + fresh claim |
 | Crash after commit, before response stored | `Executed` | 409: `IN_FLIGHT` while the claim is fresh (response may still land), `RESULT_UNKNOWN` once stale; swept at TTL with a Warning log (reconciliation signal) |
 | Commit ack lost, resilient strategy re-runs the commit | fence mismatch | The re-run updates `WHERE ClaimId = <old>` → 0 rows → aborts. **No in-request double execution** |
 | Stale claimant resumes after a takeover | fence mismatch | Its business commit carries the flip with the old `ClaimId` → aborts atomically |
 | Response persist fails after a 2xx | `Executed` | The 2xx is still sent (the operation DID succeed — client-first, deviation from review recommendation of 500); retries get `RESULT_UNKNOWN`, never a corrupt replay |
+
+*(Amended 2026-09-30, ADR-0058: `ProcessingStaleAfter` is **2 minutes**, down from 10. A request
+now gives up at its 40-second deadline, lets no commit start after it, and gives the release of its
+claim 3 s, so a claim still `Processing` two minutes on belongs to no request that is still running,
+unless its process was paused; the fence covers that one, since its commit carries the old
+`ClaimId` and aborts. The value matters because a release can fail exactly when the database does,
+and the key then answers 409 `IN_FLIGHT` until its claim is stale: a visitor's retry waits two
+minutes instead of ten. The same age ends `IN_FLIGHT` for an `Executed` record whose answer was
+not stored: its key answers 409 `RESULT_UNKNOWN` after two minutes instead of ten. That is no less
+true, since storing an answer starts as soon as its commit returns and is given 3 s: an answer still
+missing two minutes after the claim is not coming. At start the API refuses a value less than a
+minute longer than `RequestDeadline:Seconds`.)*
 
 ### Placement & limits
 

@@ -243,6 +243,21 @@ public class BackendApiTimeoutPipelineTests : IClassFixture<WebApplicationFactor
     }
 
     [Fact]
+    public void TheBffWaits55Seconds_ByDefaultAndAsShipped()
+    {
+        // Above the API's 40-second request deadline plus its cancellation and its release, so every
+        // answer the API gives before a commit reaches the visitor (ADR-0058, TimeoutChainTests); and
+        // it drives YARP's activity timeout as well as this client's.
+        new BackendApiOptions().TimeoutSeconds.Should().Be(55, "the code default");
+
+        var shipped = _factory.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<BackendApiOptions>>().Value;
+        shipped.TimeoutSeconds.Should().Be(55, "the value appsettings.json ships");
+
+        _factory.Services.GetRequiredService<IHttpClientFactory>().CreateClient("BackendApi")
+            .Timeout.Should().Be(TimeSpan.FromSeconds(55));
+    }
+
+    [Fact]
     public void TheLongestTimeoutHttpClientTakes_Starts_AndTheClientIsBuilt()
     {
         // The control for the row above: one second less is accepted, and the client is built with it.

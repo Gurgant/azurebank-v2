@@ -1,3 +1,4 @@
+using System.Globalization;
 using AzureBank.Api.Extensions;
 using AzureBank.Api.Middleware;
 using AzureBank.Api.Observability;
@@ -7,6 +8,14 @@ using Scalar.AspNetCore;
 using Serilog;
 using Serilog.Formatting.Compact;
 using Serilog.Sinks.OpenTelemetry;
+
+// Library messages in English on every host, first of all. SqlClient ships its messages translated
+// (satellite assemblies such as it\Microsoft.Data.SqlClient.resources.dll beside the API), and its
+// pool-wait timeout is an InvalidOperationException that ServiceUnavailableExceptionHandler can
+// tell from a bug only by its English text. With the process's UI culture Italian, that timeout
+// answered 500 instead of the outage 503 before this line (DatabaseUnavailableSqlServerTests). Only
+// the UI culture, the language of messages: formatting keeps the host's culture.
+CultureInfo.DefaultThreadCurrentUICulture = CultureInfo.InvariantCulture;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BOOTSTRAP LOGGER (captures startup errors before config is loaded)
@@ -187,6 +196,13 @@ try
     // Must be early in pipeline, before routing processes the request
     app.UseInvalidRequestHandling();
 
+    // The request deadline (ADR-0058): a request still running after RequestDeadline:Seconds is
+    // cancelled and answers 503. Inside the exception handler, which writes that answer; before the
+    // service credential, authentication and the idempotency claim, so everything they and the
+    // endpoint do runs under its token. UserManager takes the same token from the request's scope
+    // (RequestDeadlineUserManager, registered in AddIdentityServices).
+    app.UseRequestDeadline();
+
     // No app.UseHttpsRedirection() (removed 2026-09-25). The API's one client is the BFF, which
     // follows no redirect (ADR-0055), so a redirect here can only turn its call into a failure.
     // Measured on the two containers with an https port made discoverable (ASPNETCORE_HTTPS_PORT=443
@@ -257,6 +273,11 @@ try
     // "Hosting failed to start" (measured on the container).
     app.Lifetime.ApplicationStarted.Register(() =>
         Log.Information("AzureBank API started successfully"));
+
+    // The database limits this host runs with (ADR-0058), also from ApplicationStarted and for the
+    // same reason: only a host that started runs with any. Read back from what the host built, so
+    // an operator reads the values a request gets, not the ones configuration meant.
+    app.LogDatabaseLimitsOnceStarted();
 
     app.Run();
 }

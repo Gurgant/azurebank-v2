@@ -1,9 +1,11 @@
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Options;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace AzureBank.Infrastructure.Extensions;
@@ -37,9 +39,10 @@ public static class ServiceCollectionExtensions
         IHostEnvironment environment,
         bool retryOnTransientFailures = true)
     {
-        // The retry budget below reads Database:MaxRetryCount and Database:MaxRetryDelay, whose
-        // defaults are the constants this used to hard-code (3 and 30 s). Bound here for every host
-        // that calls this; only the API validates them at start (AddDatabaseOptions).
+        // The retry budget and the connection limits below read the Database section: 4 retries
+        // with EF's back-off capped at 10 s, 10 s to connect, no SqlClient retry, a pool of 12 unless
+        // set (ADR-0058; the budget was 3 and 30 s before). Bound here for every host that calls
+        // this; only the API validates them at start (AddDatabaseOptions).
         services.AddOptions<DatabaseOptions>()
             .Bind(configuration.GetSection(DatabaseOptions.SectionName));
 
@@ -48,7 +51,7 @@ public static class ServiceCollectionExtensions
         {
             var database = serviceProvider.GetRequiredService<IOptions<DatabaseOptions>>().Value;
             options.UseSqlServer(
-                configuration.GetConnectionString("DefaultConnection"),
+                SqlConnectionDefaults.Apply(configuration.GetConnectionString("DefaultConnection"), database),
                 sqlOptions =>
                 {
                     // Retry transient failures: connection loss, resource limits, and DEADLOCKS
@@ -86,8 +89,20 @@ public static class ServiceCollectionExtensions
             // Transaction.Account is required, but Account has a query filter for soft-delete.
             // Transactions are immutable and never access soft-deleted Accounts via navigation.
             // See: project-docs/21-ef-core-warnings-resolution.md
-            options.ConfigureWarnings(warnings =>
-                warnings.Ignore(CoreEventId.PossibleIncorrectRequiredNavigationWithQueryFilterInteractionWarning));
+            //
+            // And a retry is logged at Warning (ADR-0058). EF raises ExecutionStrategyRetrying at
+            // Information, while the hosts hold Microsoft.EntityFrameworkCore at Warning, so every
+            // retry of an outage was dropped: a request could spend its whole budget retrying and
+            // leave no line saying so. A retry is the first sign of an outage.
+            options.ConfigureWarnings(warnings => warnings
+                .Ignore(CoreEventId.PossibleIncorrectRequiredNavigationWithQueryFilterInteractionWarning)
+                .Log((CoreEventId.ExecutionStrategyRetrying, LogLevel.Warning)));
+
+            // Every interceptor the host registers. The API registers its commit gate (ADR-0058),
+            // which lets a request's commit start only before the request deadline fires; the other
+            // hosts register none. Read from the provider this context's options are built from,
+            // which for the API's requests is the request's scope.
+            options.AddInterceptors(serviceProvider.GetServices<IInterceptor>());
 
             // Development: Enable detailed logging
             if (environment.IsDevelopment())
@@ -98,5 +113,85 @@ public static class ServiceCollectionExtensions
         });
 
         return services;
+    }
+}
+
+/// <summary>
+/// The connection limits every host opens the database with (ADR-0058), written into a connection
+/// string only where the string leaves them unset: <c>Connect Timeout</c>,
+/// <c>ConnectRetryCount</c> and <c>Max Pool Size</c> from <see cref="DatabaseOptions"/>, and
+/// <c>Pool Blocking Period=NeverBlock</c>.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Before, the raw string went to <c>UseSqlServer</c> and SqlClient's own defaults applied: 15 s to
+/// connect, one connect retry under each of EF's attempts, a pool of 100, and pool blocking on.
+/// </para>
+/// <para>
+/// WHY NEVERBLOCK. After a failed open, a blocking pool hands the cached error to every caller for
+/// 5 s, doubling up to 60 s, without trying the server. SqlClient turns that off for
+/// <c>*.database.windows.net</c> (<c>Auto</c> blocks only off Azure), so on Azure an outage ends when
+/// the database is back, and locally or in CI it went on failing afterwards, while EF's retries
+/// during it were replays that never reached the server. NeverBlock is what Azure already gets, now
+/// everywhere, so a local outage behaves like one on Azure.
+/// </para>
+/// <para>
+/// A DEFAULT, NEVER AN OVERRIDE. A keyword counts as set under any of its names ("Connection
+/// Timeout" is "Connect Timeout"), and a value the string sets wins, so a deployment can still tune
+/// one limit in its own string. An empty or unparseable string is returned unchanged: the API
+/// refuses it at startup with its own message (<c>AddDatabaseOptions</c>), which the parser's
+/// exception must not replace here.
+/// </para>
+/// </remarks>
+public static class SqlConnectionDefaults
+{
+    /// <summary>
+    /// <paramref name="connectionString"/> with each limit it leaves unset filled in from
+    /// <paramref name="options"/>.
+    /// </summary>
+    public static string? Apply(string? connectionString, DatabaseOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            return connectionString;
+        }
+
+        SqlConnectionStringBuilder builder;
+        try
+        {
+            builder = new SqlConnectionStringBuilder(connectionString);
+        }
+        catch (Exception e) when (e is ArgumentException or FormatException or OverflowException)
+        {
+            return connectionString;
+        }
+
+        // ShouldSerialize resolves a synonym to its keyword, so each check below sees a limit the
+        // string sets under any of its names.
+        if (!builder.ShouldSerialize("Connect Timeout"))
+        {
+            builder.ConnectTimeout = options.ConnectTimeoutSeconds;
+        }
+
+        if (!builder.ShouldSerialize("Connect Retry Count"))
+        {
+            builder.ConnectRetryCount = options.ConnectRetryCount;
+        }
+
+        // Never below the string's own Min Pool Size: SqlClient refuses a minimum above the maximum
+        // when a connection is created, so a string that kept 20 warm under SqlClient's pool of 100
+        // would otherwise stop opening at all.
+        if (!builder.ShouldSerialize("Max Pool Size"))
+        {
+            builder.MaxPoolSize = Math.Max(options.MaxPoolSize, builder.MinPoolSize);
+        }
+
+        if (!builder.ShouldSerialize("Pool Blocking Period"))
+        {
+            builder.PoolBlockingPeriod = PoolBlockingPeriod.NeverBlock;
+        }
+
+        return builder.ConnectionString;
     }
 }

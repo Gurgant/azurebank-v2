@@ -165,13 +165,14 @@ internal static class ConcurrencyRetry
     /// </para>
     /// </summary>
     public static async Task SaveNewAccountAsync(
-        AzureBankDbContext context, Account account, ILogger logger, Guid userId)
+        AzureBankDbContext context, Account account, ILogger logger, Guid userId,
+        CancellationToken cancellationToken)
     {
         for (var attempt = 1; ; attempt++)
         {
             try
             {
-                await context.SaveChangesAsync();
+                await context.SaveChangesAsync(cancellationToken);
                 return;
             }
             catch (DbUpdateException ex) when (IsAccountNumberCollision(ex, attempt))
@@ -226,10 +227,10 @@ internal static class ConcurrencyRetry
     /// conflict again.
     /// </summary>
     public static async Task PrepareNextAttemptAsync(
-        AzureBankDbContext context, params Account[] accounts)
+        AzureBankDbContext context, Account[] accounts, CancellationToken cancellationToken)
     {
-        await ResetToStoreAsync(context, accounts);
-        await Task.Delay(Random.Shared.Next(5, 30));
+        await ResetToStoreAsync(context, accounts, cancellationToken);
+        await Task.Delay(Random.Shared.Next(5, 30), cancellationToken);
     }
 
     /// <summary>
@@ -265,7 +266,7 @@ internal static class ConcurrencyRetry
     /// place.
     /// </summary>
     public static async Task ResetToStoreAsync(
-        AzureBankDbContext context, params Account[] accounts)
+        AzureBankDbContext context, Account[] accounts, CancellationToken cancellationToken)
     {
         foreach (var entry in context.ChangeTracker.Entries<Transaction>().ToList())
         {
@@ -289,7 +290,7 @@ internal static class ConcurrencyRetry
 
         foreach (var account in accounts)
         {
-            await context.Entry(account).ReloadAsync();
+            await context.Entry(account).ReloadAsync(cancellationToken);
         }
     }
 
@@ -319,9 +320,9 @@ internal static class ConcurrencyRetry
     /// operation must not be executed again. The middleware surfaces it as 409 RESULT_UNKNOWN.
     /// </exception>
     public static async Task PrepareIdempotentAttemptAsync(
-        AzureBankDbContext context, params Account[] accounts)
+        AzureBankDbContext context, Account[] accounts, CancellationToken cancellationToken)
     {
-        await ResetToStoreAsync(context, accounts);
+        await ResetToStoreAsync(context, accounts, cancellationToken);
 
         var entry = context.ChangeTracker.Entries<IdempotencyRecord>().FirstOrDefault();
         if (entry is null)
@@ -332,7 +333,7 @@ internal static class ConcurrencyRetry
         // Fresh database truth for this claim. ReloadAsync also refreshes the tracked ORIGINAL
         // values, so the flip re-applied below emits a fenced UPDATE (WHERE ClaimId = <db value>)
         // that rides this attempt's commit.
-        await entry.ReloadAsync();
+        await entry.ReloadAsync(cancellationToken);
 
         if (entry.State == EntityState.Detached
             || entry.Entity.Status is IdempotencyStatus.Executed or IdempotencyStatus.Completed)

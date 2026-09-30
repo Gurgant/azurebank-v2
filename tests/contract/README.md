@@ -335,7 +335,10 @@ whoever answers. The Quick Start's `http://localhost:5068` involves no TLS at al
 
 ### Rate limiting, timeouts
 
-`schemathesis.toml` already sets `workers = 1` and `request-timeout = 30`. On the command line,
-without the file or over it, they are `--workers=1` and `--request-timeout=30` — appended to the
-Quick Start line, measured, exit 0. The timeout is in SECONDS: this page said 30000 until
-2026-09-21, which is eight hours and twenty minutes per request, not a generous timeout.
+`schemathesis.toml` already sets `workers = 1` and `request-timeout = 60`. On the command line,
+without the file or over it, they are `--workers=1` and `--request-timeout=60` — appended to the
+Quick Start line (measured with 30, exit 0). The timeout is in SECONDS: this page said 30000 until
+2026-09-21, which is eight hours and twenty minutes per request, not a generous timeout. It was 30
+until ADR-0058 gave every request except refresh, revoke and logout a 40 s deadline: a request
+stalled before its commit now answers its documented 503 within 53 s, and the client has to outwait
+it to see that answer.

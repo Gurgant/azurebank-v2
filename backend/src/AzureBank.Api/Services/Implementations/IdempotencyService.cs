@@ -232,14 +232,16 @@ public class IdempotencyService : IIdempotencyService
 
     /// <inheritdoc />
     public async Task ReleaseIfNotExecutedAsync(
-        Guid userId, string endpoint, Guid key, Guid claimTimeClaimId)
+        Guid userId, string endpoint, Guid key, Guid claimTimeClaimId,
+        CancellationToken cancellationToken = default)
     {
         // Deliberately a FRESH scope/context:
         // 1. The request-scoped context may hold failed business changes
         //    (Added transactions, modified balances) that a SaveChanges here
         //    must never re-flush.
         // 2. This runs on error paths where the request may already be
-        //    aborted, hence CancellationToken.None.
+        //    aborted or past its deadline, so it runs under the caller's own
+        //    token, never the request's.
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
 
@@ -247,7 +249,7 @@ public class IdempotencyService : IIdempotencyService
             .AsNoTracking()
             .FirstOrDefaultAsync(
                 r => r.UserId == userId && r.Endpoint == endpoint && r.Key == key,
-                CancellationToken.None);
+                cancellationToken);
 
         if (truth is null)
         {
@@ -276,7 +278,7 @@ public class IdempotencyService : IIdempotencyService
         db.IdempotencyRecords.Remove(truth);
         try
         {
-            await db.SaveChangesAsync(CancellationToken.None);
+            await db.SaveChangesAsync(cancellationToken);
         }
         catch (DbUpdateConcurrencyException)
         {
