@@ -30,8 +30,11 @@ import { colors, shadows, gradients, transitions } from '../theme/tokens';
 import { PageHeader } from '../components/layout/PageHeader';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import type { AccountType } from '../api/enums';
+import { useAppDispatch } from '../app/hooks';
 import type { AccountResponse } from '../features/api/apiSlice';
 import { useGetAccountsQuery, useSetPrimaryAccountMutation } from '../features/api/apiSlice';
+import { abortRunning, useWaitLanding } from '../hooks/useWaitLanding';
+import { readWait } from '../hooks/useWaitPhase';
 import { formatCurrency, maskAccountNumber } from '../utils/format';
 import { AccountNumberField } from '../components/AccountNumberField';
 import {
@@ -41,7 +44,7 @@ import {
   RenameAccountDialog,
   WithdrawDialog,
 } from '../components';
-import { useProblemToast } from '../components/feedback';
+import { useProblemToast, WaitHint } from '../components/feedback';
 
 // The legacy money dialogs (mock flow until their own PRs) take this minimal shape.
 interface LegacyDialogAccount {
@@ -268,9 +271,12 @@ const useStyles = makeStyles({
     color: colors.brand[60],
   },
 
+  // A column, so that a slow load's words sit under the spinner rather than beside it.
   stateContainer: {
     display: 'flex',
-    justifyContent: 'center',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '12px',
     padding: '48px 0',
   },
 
@@ -380,9 +386,30 @@ export function AccountsPage() {
 
   // A1 — the first page on REAL data. Loading/error/empty are first-class states
   // (D22); the list refreshes through D7 tag invalidation, never hand-patching.
-  const { data: accounts = [], isLoading, error, refetch } = useGetAccountsQuery();
-  const problem = error as ApiProblem | undefined;
+  const {
+    data: accounts = [],
+    isLoading,
+    isFetching,
+    error,
+    refetch,
+    requestId,
+  } = useGetAccountsQuery();
+  // The spinner and the bar follow the wait, not `isLoading` and `error`: a Retry keeps the old
+  // error while it runs, so the bar goes away for the new wait and comes back, announced, only if
+  // that wait fails too.
+  const { waiting, failed } = readWait({ isLoading, isFetching, error });
+  const problem = failed ? (error as ApiProblem) : undefined;
   const showProblem = useProblemToast();
+
+  const dispatch = useAppDispatch();
+  const { landingRef, arm } = useWaitLanding<HTMLButtonElement>(waiting, requestId);
+  const stopWaiting = () => {
+    if (abortRunning(dispatch, [{ endpoint: 'getAccounts', arg: undefined }])) arm();
+  };
+  const retry = () => {
+    arm();
+    void refetch();
+  };
 
   const [setPrimaryAccount] = useSetPrimaryAccountMutation();
 
@@ -396,7 +423,7 @@ export function AccountsPage() {
   const totalBalance = accounts.reduce((sum, account) => sum + account.balance, 0);
   // Honest headers: never assert "€0.00" while loading, nor a stale total beside the
   // error bar (RTK Query keeps the last data when a refetch fails).
-  const totalDisplay = isLoading || problem ? '—' : formatCurrency(totalBalance);
+  const totalDisplay = waiting || problem ? '—' : formatCurrency(totalBalance);
 
   // Adapter for the legacy money dialogs (their real flows arrive in their own PRs):
   // they only need id/name/number/balance — and they get the MASKED number.
@@ -494,20 +521,23 @@ export function AccountsPage() {
         </div>
 
         {/* Loading / error are first-class states (D22) */}
-        {isLoading && (
+        {waiting && (
           <div className={styles.stateContainer}>
             <Spinner size="large" aria-label="Loading accounts" />
+            <WaitHint active kind="read" onStopWaiting={stopWaiting} />
           </div>
         )}
 
+        {/* Keyed by the request that failed, so that a Retry which fails again before its wait is
+            ever drawn still puts a new alert on the page, and it is announced again. */}
         {problem && (
-          <MessageBar intent="error">
+          <MessageBar key={requestId} intent="error" role="alert">
             <MessageBarBody>
               {problem.detail || 'Could not load your accounts.'}
               {problem.traceId ? ` Support code: ${problem.traceId}` : ''}
             </MessageBarBody>
             <MessageBarActions>
-              <Button appearance="transparent" onClick={() => void refetch()}>
+              <Button ref={landingRef} appearance="transparent" onClick={retry}>
                 Retry
               </Button>
             </MessageBarActions>
@@ -516,7 +546,7 @@ export function AccountsPage() {
 
         {/* Accounts Grid — cards are intentionally non-clickable: no /accounts/:id route
             exists yet (it previously bounced off the catch-all); management flows come later. */}
-        {!isLoading && !problem && (
+        {!waiting && !problem && (
           <div className={styles.accountsGrid}>
             {accounts.map((account) => (
               <div key={account.id} className={styles.accountCard}>

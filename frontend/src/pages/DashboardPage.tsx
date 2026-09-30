@@ -22,13 +22,18 @@ import {
 import { format, startOfMonth } from 'date-fns';
 import { atMedia } from '../theme/breakpoints';
 import { colors, shadows, surfaces } from '../theme/tokens';
-import type { ApiProblem } from '../api/problemBaseQuery';
+import { isServiceOutage, type ApiProblem } from '../api/problemBaseQuery';
+import { SERVICE_UNAVAILABLE } from '../api/problemMessages';
+import { useAppDispatch } from '../app/hooks';
 import type { AccountResponse, TransactionResponse } from '../features/api/apiSlice';
 import {
   useGetAccountsQuery,
   useGetTransactionsQuery,
   useGetTransactionSummaryQuery,
 } from '../features/api/apiSlice';
+import { abortRunning, useWaitLanding } from '../hooks/useWaitLanding';
+import { readWait } from '../hooks/useWaitPhase';
+import { WaitHint } from '../components/feedback';
 import { resolveScopedAccountId, type Scope } from './dashboardScope';
 import { formatCurrency, maskAccountNumber } from '../utils/format';
 import { QuickActionButton } from '../components/shared/QuickActionButton';
@@ -460,36 +465,94 @@ export function DashboardPage() {
   const [depositOpen, setDepositOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
 
-  const {
-    data: accounts = [],
-    isLoading: accountsLoading,
-    error: accountsError,
-    refetch: refetchAccounts,
-  } = useGetAccountsQuery();
-  const accountsProblem = accountsError as ApiProblem | undefined;
+  const accountsQuery = useGetAccountsQuery();
+  const { data: accounts = [], refetch: refetchAccounts } = accountsQuery;
+  // Each read's spinner and bar follow its wait, not `isLoading` and `error`: a Retry keeps the old
+  // error while it runs, so the bar goes away for the new wait and comes back, announced, only if
+  // that wait fails too.
+  const { waiting: accountsWaiting, failed: accountsFailed } = readWait(accountsQuery);
+  const accountsProblem = accountsFailed ? (accountsQuery.error as ApiProblem) : undefined;
 
   // THE SPINE: the scope is a query argument, not a display filter. Selecting an account refetches
   // the feed with `AccountId`, which is what makes the running balance below a real ledger rather
   // than five rows borrowed from two accounts.
   const scopedAccountId = resolveScopedAccountId(scope, accounts);
-  const {
-    data: recent,
-    isLoading: recentLoading,
-    error: recentError,
-    refetch: refetchRecent,
-  } = useGetTransactionsQuery({
-    page: 1,
-    pageSize: RECENT_PAGE_SIZE,
-    accountId: scopedAccountId,
-  });
+  const recentArg = { page: 1, pageSize: RECENT_PAGE_SIZE, accountId: scopedAccountId };
+  const recentQuery = useGetTransactionsQuery(recentArg);
+  const { data: recent, refetch: refetchRecent } = recentQuery;
+  const { waiting: recentWaiting, failed: recentFailed } = readWait(recentQuery);
 
   const [monthWindow] = useState(() => ({ fromDate: startOfMonth(new Date()).toISOString() }));
-  const {
-    data: summary,
-    isLoading: summaryLoading,
-    error: summaryError,
-    refetch: refetchSummary,
-  } = useGetTransactionSummaryQuery({ ...monthWindow, accountId: scopedAccountId });
+  const summaryArg = { ...monthWindow, accountId: scopedAccountId };
+  const summaryQuery = useGetTransactionSummaryQuery(summaryArg);
+  const { data: summary, refetch: refetchSummary } = summaryQuery;
+  const { waiting: summaryWaiting, failed: summaryFailed } = readWait(summaryQuery);
+
+  /*
+    One wait for the page, one hint, one "Stop waiting" for all three reads. It is the wait the page
+    SHOWS: while the accounts bar stands in for the whole page, a section still loading behind it
+    is not on screen, so it neither speaks nor holds back the landing.
+
+    When that wait ends, focus goes back to a bar's Retry, because the button that was pressed has
+    just gone: to the bar of the read the visitor retried, if it failed again; otherwise to the
+    first failed bar in reading order — the accounts bar (which replaces the page), else "this
+    month", else "recent activity". A Stop lands on that first failed bar.
+  */
+  const waiting = accountsWaiting || (!accountsFailed && (recentWaiting || summaryWaiting));
+  const dispatch = useAppDispatch();
+  const { landingRef, arm } = useWaitLanding<HTMLButtonElement>(waiting, [
+    accountsQuery.requestId,
+    recentQuery.requestId,
+    summaryQuery.requestId,
+  ]);
+  /*
+    Which read the visitor last retried. Setting it has a second job: it renders the page in the
+    press itself, and that render already sees the Retry's request on its way, so the bar goes at
+    once. Without it the page would learn of the request a frame later (RTK's batching), and a
+    failure inside that frame would leave the same bar standing — never announced again.
+  */
+  const [retried, setRetried] = useState<'accounts' | 'summary' | 'recent' | null>(null);
+  const landsOn = accountsFailed
+    ? 'accounts'
+    : retried === 'recent' && recentFailed
+      ? 'recent'
+      : summaryFailed
+        ? 'summary'
+        : recentFailed
+          ? 'recent'
+          : null;
+  const stopWaiting = () => {
+    const stopped = abortRunning(dispatch, [
+      { endpoint: 'getAccounts', arg: undefined },
+      { endpoint: 'getTransactions', arg: recentArg },
+      { endpoint: 'getTransactionSummary', arg: summaryArg },
+    ]);
+    if (!stopped) return;
+    setRetried(null);
+    arm();
+  };
+  // The accounts bar is the whole page, so its Retry reloads every read that failed behind it:
+  // otherwise the page would come back with the sections' own bars still up.
+  const retryAccounts = () => {
+    setRetried('accounts');
+    arm();
+    void refetchAccounts();
+    if (summaryFailed) void refetchSummary();
+    if (recentFailed) void refetchRecent();
+  };
+  const retrySummary = () => {
+    setRetried('summary');
+    arm();
+    void refetchSummary();
+  };
+  const retryRecent = () => {
+    setRetried('recent');
+    arm();
+    void refetchRecent();
+  };
+  // A section bar keeps its own sentence, which names the section, and adds the outage's.
+  const outageNote = (error: unknown) =>
+    error !== undefined && isServiceOutage(error as ApiProblem) ? ` ${SERVICE_UNAVAILABLE}` : '';
 
   // A lone account is implicitly the scope. With one account "all accounts" IS that account, its
   // ledger is the only ledger, and the running balance therefore reconciles — so withholding the
@@ -517,13 +580,13 @@ export function DashboardPage() {
   if (accountsProblem) {
     return (
       <div className={styles.page}>
-        <MessageBar intent="error">
+        <MessageBar intent="error" role="alert">
           <MessageBarBody>
             {accountsProblem.detail || 'Could not load your accounts.'}
             {accountsProblem.traceId ? ` Support code: ${accountsProblem.traceId}` : ''}
           </MessageBarBody>
           <MessageBarActions>
-            <Button appearance="transparent" onClick={() => void refetchAccounts()}>
+            <Button ref={landingRef} appearance="transparent" onClick={retryAccounts}>
               Retry
             </Button>
           </MessageBarActions>
@@ -532,7 +595,8 @@ export function DashboardPage() {
     );
   }
 
-  if (!accountsLoading && accounts.length === 0) {
+  // Never "Welcome" while the accounts are on their way, a Retry's wait included.
+  if (!accountsWaiting && accounts.length === 0) {
     return (
       <div className={styles.page}>
         <div className={styles.card}>
@@ -554,13 +618,17 @@ export function DashboardPage() {
 
   return (
     <div className={styles.page}>
+      {/* Above the grid rather than in one of its sections, because it speaks for all three
+          reads. While it is mounted the grid sits one gap lower: the price of one hint for the
+          page, accepted. */}
+      <WaitHint active={waiting} kind="read" onStopWaiting={stopWaiting} />
       <div className={mergeClasses(styles.page, styles.pageGrid)} style={{ padding: 0 }}>
         {/* ===== Zone 1 — balance + the scope control ===== */}
         <section className={mergeClasses(styles.card, styles.areaHero)}>
           <div className={styles.heroTop}>
             <div>
               <Text className={styles.heroLabel}>Available balance</Text>
-              {accountsLoading ? (
+              {accountsWaiting ? (
                 <div className={styles.skeletonBar} style={{ width: 220, height: '2.6rem' }} />
               ) : (
                 <Text as="h1" className={styles.heroAmount}>
@@ -617,16 +685,22 @@ export function DashboardPage() {
         {/* ===== Month summary — scoped like everything else on this page ===== */}
         <section className={mergeClasses(styles.card, styles.areaSummary)}>
           <Text className={styles.sectionTitle}>{monthLabel} so far</Text>
-          {summaryError ? (
-            <MessageBar intent="error">
-              <MessageBarBody>Could not load this month.</MessageBarBody>
+          {summaryFailed ? (
+            <MessageBar intent="error" role="alert">
+              <MessageBarBody>
+                Could not load this month.{outageNote(summaryQuery.error)}
+              </MessageBarBody>
               <MessageBarActions>
-                <Button appearance="transparent" onClick={() => void refetchSummary()}>
+                <Button
+                  ref={landsOn === 'summary' ? landingRef : undefined}
+                  appearance="transparent"
+                  onClick={retrySummary}
+                >
                   Retry
                 </Button>
               </MessageBarActions>
             </MessageBar>
-          ) : summaryLoading ? (
+          ) : summaryWaiting ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 12 }}>
               <div className={styles.skeletonBar} />
               <div className={styles.skeletonBar} />
@@ -732,11 +806,17 @@ export function DashboardPage() {
             </Button>
           </div>
 
-          {recentError ? (
-            <MessageBar intent="error">
-              <MessageBarBody>Could not load recent activity.</MessageBarBody>
+          {recentFailed ? (
+            <MessageBar intent="error" role="alert">
+              <MessageBarBody>
+                Could not load recent activity.{outageNote(recentQuery.error)}
+              </MessageBarBody>
               <MessageBarActions>
-                <Button appearance="transparent" onClick={() => void refetchRecent()}>
+                <Button
+                  ref={landsOn === 'recent' ? landingRef : undefined}
+                  appearance="transparent"
+                  onClick={retryRecent}
+                >
                   Retry
                 </Button>
               </MessageBarActions>
@@ -745,7 +825,7 @@ export function DashboardPage() {
             <TransactionTable>
               <TransactionHead showBalance={!!selected} />
               <tbody>
-                {recentLoading
+                {recentWaiting
                   ? Array.from({ length: RECENT_PAGE_SIZE }, (_, i) => (
                       <TransactionRowSkeleton key={`sk-${i}`} showBalance={!!selected} />
                     ))
@@ -758,13 +838,13 @@ export function DashboardPage() {
                         onOpen={(id) => navigate(`/transactions/${id}`)}
                       />
                     ))}
-                {!recentLoading && entries.length === 0 && (
+                {!recentWaiting && entries.length === 0 && (
                   <TransactionEmptyRow columns={selected ? 5 : 4}>
                     No transactions yet for {scopeLabel}.
                   </TransactionEmptyRow>
                 )}
               </tbody>
-              {!recentLoading && !summaryLoading && !summaryError && entries.length > 0 && (
+              {!recentWaiting && !summaryWaiting && !summaryFailed && entries.length > 0 && (
                 <tfoot>
                   <tr>
                     <td className={styles.tfootCell} colSpan={2}>

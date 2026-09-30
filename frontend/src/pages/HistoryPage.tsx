@@ -22,8 +22,12 @@ import {
   TransactionTable,
 } from '../components/shared/TransactionRow';
 import type { TransactionType } from '../api/enums';
+import { useAppDispatch } from '../app/hooks';
+import { WaitHint } from '../components/feedback';
 import type { TransactionResponse } from '../features/api/apiSlice';
 import { useGetTransactionHistoryInfiniteQuery } from '../features/api/apiSlice';
+import { abortRunning, useWaitLanding } from '../hooks/useWaitLanding';
+import { readWait } from '../hooks/useWaitPhase';
 import { formatCurrency, formatDateHeading, isIncomeType } from '../utils/format';
 
 // ============================================
@@ -136,11 +140,14 @@ const useStyles = makeStyles({
   },
 
   // ========== STATES (D22) ==========
+  // A column, so that a slow load's words sit under the spinner rather than beside it.
   stateContainer: {
     flex: 1,
     display: 'flex',
+    flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: '12px',
     padding: '48px 0',
   },
 
@@ -148,11 +155,19 @@ const useStyles = makeStyles({
     padding: '16px',
   },
 
+  // The buttons in a row, and a slow page's words under them.
   loadMoreContainer: {
     display: 'flex',
-    justifyContent: 'center',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '8px',
     padding: '16px',
     backgroundColor: tokens.colorNeutralBackground1,
+  },
+
+  loadMoreButtons: {
+    display: 'flex',
+    justifyContent: 'center',
   },
 
   // ========== EMPTY STATE ==========
@@ -227,9 +242,36 @@ export function HistoryPage() {
 
   // T1 — the infinite feed. Pages accumulate; every money mutation invalidates
   // {Transaction,'LIST'} and refetches all loaded pages (accepted D7 cost).
-  const { data, isLoading, error, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
-    useGetTransactionHistoryInfiniteQuery({});
-  const problem = error as ApiProblem | undefined;
+  const {
+    data,
+    isLoading,
+    isFetching,
+    error,
+    refetch,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    requestId,
+  } = useGetTransactionHistoryInfiniteQuery({});
+  // The spinner and the bar follow the first page's wait, not `isLoading` and `error`: a Retry
+  // keeps the old error while it runs, so the bar goes away for the new wait and comes back,
+  // announced, only if that wait fails too. "Load more" is not that wait: the rows stay on screen.
+  const { waiting, failed } = readWait({
+    isLoading,
+    isFetching: isFetching && !isFetchingNextPage,
+    error,
+  });
+  const problem = failed ? (error as ApiProblem) : undefined;
+
+  const dispatch = useAppDispatch();
+  const { landingRef, arm } = useWaitLanding<HTMLButtonElement>(waiting, requestId);
+  const stopWaiting = () => {
+    if (abortRunning(dispatch, [{ endpoint: 'getTransactionHistory', arg: {} }])) arm();
+  };
+  const retry = () => {
+    arm();
+    void refetch();
+  };
 
   /**
    * How many of the loaded pages are SHOWN. Pages are never dropped from the cache — hiding them
@@ -294,21 +336,24 @@ export function HistoryPage() {
 
       {/* Content */}
       <div className={styles.content}>
-        {isLoading && (
+        {waiting && (
           <div className={styles.stateContainer}>
             <Spinner size="large" aria-label="Loading transactions" />
+            <WaitHint active kind="read" onStopWaiting={stopWaiting} />
           </div>
         )}
 
+        {/* Keyed by the request that failed, so that a Retry which fails again before its wait is
+            ever drawn still puts a new alert on the page, and it is announced again. */}
         {problem && (
           <div className={styles.errorContainer}>
-            <MessageBar intent="error">
+            <MessageBar key={requestId} intent="error" role="alert">
               <MessageBarBody>
                 {problem.detail || 'Could not load your transactions.'}
                 {problem.traceId ? ` Support code: ${problem.traceId}` : ''}
               </MessageBarBody>
               <MessageBarActions>
-                <Button appearance="transparent" onClick={() => void refetch()}>
+                <Button ref={landingRef} appearance="transparent" onClick={retry}>
                   Retry
                 </Button>
               </MessageBarActions>
@@ -316,7 +361,7 @@ export function HistoryPage() {
           </div>
         )}
 
-        {!isLoading && !problem && (
+        {!waiting && !problem && (
           <>
             <SegmentedFilter
               label="Filter transactions by type"
@@ -374,20 +419,25 @@ export function HistoryPage() {
                     back. "Show less" hides pages rather than dropping them — the cache keeps them,
                     so re-expanding costs nothing and no request is repeated. */}
                 <div className={styles.loadMoreContainer}>
-                  {(hasNextPage || visiblePages < loadedPages) && (
-                    <Button
-                      appearance="secondary"
-                      disabled={isFetchingNextPage}
-                      onClick={() => void showMore()}
-                    >
-                      {isFetchingNextPage ? <Spinner size="tiny" /> : 'Load more'}
-                    </Button>
-                  )}
-                  {visiblePages > 1 && (
-                    <Button appearance="transparent" onClick={() => setVisiblePages(1)}>
-                      Show less
-                    </Button>
-                  )}
+                  <div className={styles.loadMoreButtons}>
+                    {(hasNextPage || visiblePages < loadedPages) && (
+                      <Button
+                        appearance="secondary"
+                        disabled={isFetchingNextPage}
+                        onClick={() => void showMore()}
+                      >
+                        {isFetchingNextPage ? <Spinner size="tiny" /> : 'Load more'}
+                      </Button>
+                    )}
+                    {visiblePages > 1 && (
+                      <Button appearance="transparent" onClick={() => setVisiblePages(1)}>
+                        Show less
+                      </Button>
+                    )}
+                  </div>
+                  {/* No "Stop waiting" here: the rows already loaded stay readable while the next
+                      page is on its way, and stopping it would put an error bar in their place. */}
+                  <WaitHint active={isFetchingNextPage} kind="read" />
                 </div>
               </div>
             ) : (

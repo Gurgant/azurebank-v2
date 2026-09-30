@@ -1,5 +1,6 @@
 import { Route, Routes } from 'react-router-dom';
 import { cleanup, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { http } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { server } from '../mocks/server';
@@ -32,7 +33,10 @@ import { TransactionDetailPage } from './TransactionDetailPage';
  *    screen through the retry would say nothing the second time.
  *
  * Thresholds: a "not yet" is measured from before the page rendered, a "by now" from the moment
- * the request reached the server — so neither can pass by the test being slow.
+ * the wait was certainly on screen — so neither can pass by the test being slow. For a first load
+ * that is when the request reached the server: the page draws its first wait before it sends
+ * anything. A Retry's wait is drawn later than its request leaves: RTK hands the page a refetch's
+ * start on the next animation frame. So a Retry's "by now" is measured from its spinner.
  */
 
 afterEach(() => {
@@ -129,13 +133,11 @@ describe('a slow read says so', () => {
     let holdNext = false;
     let release: () => void = () => {};
     let calls = 0;
-    let heldAt = 0;
     server.use(
       http.get('*/api/accounts', async ({ request }) => {
         calls += 1;
         if (holdNext) {
           holdNext = false;
-          heldAt = Date.now();
           await new Promise<void>((resolve) => (release = resolve));
         }
         return outage({ request });
@@ -158,14 +160,15 @@ describe('a slow read says so', () => {
       // the Retry — nothing left over from the first wait may speak early.
       expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
       expect(screen.getByLabelText('Loading accounts')).toBeInTheDocument();
+      const shownAt = Date.now();
       await advanceUntil(retriedAt, 4_900);
       expect(screen.queryByText(COPY.slow)).not.toBeInTheDocument();
-      await advanceUntil(heldAt, 5_000);
+      await advanceUntil(shownAt, 5_000);
       hintRegion(COPY.slow);
       await advanceUntil(retriedAt, 19_900);
       hintRegion(COPY.slow);
       expect(screen.queryByRole('button', { name: COPY.stopWaiting })).not.toBeInTheDocument();
-      await advanceUntil(heldAt, 20_000);
+      await advanceUntil(shownAt, 20_000);
       hintRegion(COPY.stillTrying);
       expect(screen.getByRole('button', { name: COPY.stopWaiting })).toBeInTheDocument();
 
@@ -254,6 +257,27 @@ describe('a slow read says so', () => {
 
     expect(seen[0].signal.aborted).toBe(true);
     const words = await screen.findByText('Could not load your transactions.', { exact: false });
+    expect(words.closest('[role="alert"]')).not.toBeNull();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Retry' })),
+    );
+  });
+
+  it('Transaction detail: "Stop waiting" aborts the read and lands on its announced bar', async () => {
+    const seen = holdAll('get', '*/api/transactions/:id');
+    installFakeClock();
+    const user = fakeClockUser();
+    renderDetail();
+    await waitFor(() => expect(seen).toHaveLength(1));
+
+    await advanceUntil(seen[0].at, 5_000);
+    hintRegion(COPY.slow);
+    await advanceUntil(seen[0].at, 20_000);
+    hintRegion(COPY.stillTrying);
+    await user.click(screen.getByRole('button', { name: COPY.stopWaiting }));
+
+    expect(seen[0].signal.aborted).toBe(true);
+    const words = await screen.findByText('Could not load the transaction.', { exact: false });
     expect(words.closest('[role="alert"]')).not.toBeNull();
     await waitFor(() =>
       expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Retry' })),
@@ -353,6 +377,214 @@ describe('a failed read is announced', () => {
     await screen.findByRole('heading', { level: 1 });
     const words = await screen.findByText(/Could not load recent activity\./);
     expect(words.closest('[role="alert"]')).not.toBeNull();
+  });
+});
+
+describe('a Retry shows its wait, and nothing the page has not loaded', () => {
+  const broken = () =>
+    problem({ status: 500, errorCode: 'INTERNAL_ERROR', detail: 'Something broke.' });
+
+  /*
+    A refetch after a failure keeps the old error and leaves `isLoading` false. A page that gated
+    on those would keep its bar through the Retry, or show what an empty answer looks like: no
+    accounts, no transactions, "Welcome to AzureBank", €0.00.
+  */
+  const pages = [
+    {
+      page: 'Accounts',
+      path: '*/api/accounts',
+      render: () => renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] }),
+      spinner: 'Loading accounts',
+      never: ['Add New Account', '€0.00'],
+    },
+    {
+      page: 'History',
+      path: '*/api/transactions',
+      render: () => renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] }),
+      spinner: 'Loading transactions',
+      never: ['No Transactions'],
+    },
+    {
+      page: 'Transaction detail',
+      path: '*/api/transactions/:id',
+      render: () => renderDetail(),
+      spinner: 'Loading transaction',
+      never: ['Transaction not found'],
+    },
+    {
+      // The dashboard's `h1` is the balance, or the welcome: neither may stand in for the wait.
+      page: 'Dashboard',
+      path: '*/api/accounts',
+      render: renderDashboard,
+      spinner: undefined,
+      never: ['Welcome to AzureBank', '€0.00'],
+      noHeading: true,
+    },
+  ];
+
+  for (const { page, path, render, spinner, never: absent, noHeading } of pages) {
+    it(`${page}: while a Retry waits, the bar is gone and only the wait is on screen`, async () => {
+      let hold = false;
+      const seen: number[] = [];
+      server.use(
+        http.get(path, () => {
+          seen.push(Date.now());
+          return hold ? never() : broken();
+        }),
+      );
+      installFakeClock();
+      const user = fakeClockUser();
+      render();
+      const bar = (await screen.findByText(/Something broke\./)).closest<HTMLElement>(
+        '[role="alert"]',
+      );
+      expect(bar).not.toBeNull();
+
+      hold = true;
+      await user.click(within(bar as HTMLElement).getByRole('button', { name: 'Retry' }));
+      await waitFor(() => expect(seen).toHaveLength(2));
+      await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+
+      expect(document.querySelector('[data-wait-hint]')).not.toBeNull();
+      if (spinner) expect(screen.getByLabelText(spinner)).toBeInTheDocument();
+      for (const words of absent) expect(screen.queryByText(words)).not.toBeInTheDocument();
+      if (noHeading) expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument();
+      const shownAt = Date.now();
+      await advanceUntil(shownAt, 5_000);
+      hintRegion(COPY.slow);
+    });
+  }
+});
+
+describe('a Retry that fails again before its wait is drawn is announced again', () => {
+  /*
+    A 500 is not retried and the mock answers it at once, so the Retry's start and its failure
+    can reach the page in the same frame: the page goes from one failure to the next without ever
+    drawing the wait, and a bar that stayed the same element would say nothing the second time.
+    Retry is pressed twice, because a press that also changes the page's own state draws the
+    wait at once, and the second press of the same Retry may change nothing.
+  */
+  const broken = () =>
+    problem({ status: 500, errorCode: 'INTERNAL_ERROR', detail: 'Something broke.' });
+
+  const bars = [
+    {
+      page: 'Accounts',
+      path: '*/api/accounts',
+      render: () => renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] }),
+      words: /Something broke\./,
+    },
+    {
+      page: 'History',
+      path: '*/api/transactions',
+      render: () => renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] }),
+      words: /Something broke\./,
+    },
+    {
+      page: 'Transaction detail',
+      path: '*/api/transactions/:id',
+      render: () => renderDetail(),
+      words: /Something broke\./,
+    },
+    {
+      page: 'Dashboard, the accounts',
+      path: '*/api/accounts',
+      render: renderDashboard,
+      words: /Something broke\./,
+    },
+    {
+      page: 'Dashboard, this month',
+      path: '*/api/transactions/summary',
+      render: renderDashboard,
+      words: /Could not load this month\./,
+    },
+    {
+      page: 'Dashboard, recent activity',
+      path: '*/api/transactions',
+      render: renderDashboard,
+      words: /Could not load recent activity\./,
+    },
+  ];
+
+  for (const { page, path, render, words } of bars) {
+    it(`${page}: every new failure is a new alert, with focus on its Retry`, async () => {
+      let calls = 0;
+      server.use(
+        http.get(path, () => {
+          calls += 1;
+          return broken();
+        }),
+      );
+      const user = userEvent.setup();
+      render();
+      const alertOf = () => screen.getByText(words).closest<HTMLElement>('[role="alert"]');
+      await screen.findByText(words);
+
+      for (let press = 1; press <= 2; press += 1) {
+        const shown = alertOf();
+        expect(shown).not.toBeNull();
+        const before = calls;
+        await user.click(within(shown as HTMLElement).getByRole('button', { name: 'Retry' }));
+        await waitFor(() => expect(calls).toBe(before + 1));
+
+        await waitFor(() => {
+          expect(alertOf()).not.toBeNull();
+          expect(alertOf()).not.toBe(shown);
+        });
+        const again = alertOf() as HTMLElement;
+        await waitFor(() =>
+          expect(document.activeElement).toBe(within(again).getByRole('button', { name: 'Retry' })),
+        );
+      }
+    });
+  }
+
+  it('Dashboard: a section still loading behind the accounts bar does not hold back its landing', async () => {
+    let calls = 0;
+    server.use(
+      http.get('*/api/accounts', () => {
+        calls += 1;
+        return broken();
+      }),
+      http.get('*/api/transactions/summary', never),
+    );
+    const user = userEvent.setup();
+    renderDashboard();
+    const alertOf = () =>
+      screen.getByText(/Something broke\./).closest<HTMLElement>('[role="alert"]');
+    await screen.findByText(/Something broke\./);
+    const first = alertOf();
+
+    await user.click(within(first as HTMLElement).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(calls).toBe(2));
+
+    await waitFor(() => expect(alertOf()).not.toBe(first));
+    const again = alertOf() as HTMLElement;
+    await waitFor(() =>
+      expect(document.activeElement).toBe(within(again).getByRole('button', { name: 'Retry' })),
+    );
+  });
+
+  it("Dashboard: a section's Retry that fails again lands on that section, though the one above it failed too", async () => {
+    server.use(
+      http.get('*/api/transactions/summary', broken),
+      http.get('*/api/transactions', broken),
+    );
+    const user = userEvent.setup();
+    renderDashboard();
+    const recentBar = () =>
+      screen.getByText(/Could not load recent activity\./).closest<HTMLElement>('[role="alert"]');
+    await screen.findByText(/Could not load this month\./);
+    const first = recentBar();
+    expect(first).not.toBeNull();
+
+    await user.click(within(first as HTMLElement).getByRole('button', { name: 'Retry' }));
+
+    await waitFor(() => expect(recentBar()).not.toBe(first));
+    const again = recentBar() as HTMLElement;
+    await waitFor(() =>
+      expect(document.activeElement).toBe(within(again).getByRole('button', { name: 'Retry' })),
+    );
   });
 });
 
