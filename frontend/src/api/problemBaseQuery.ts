@@ -312,11 +312,12 @@ function withTimeout(args: string | FetchArgs, timeout: number): FetchArgs {
 
 /**
  * Retry policy (ADR-0059): QUERIES only, and only when the service could not answer — a transport
- * failure that is not the SPA's own timeout, or a 502, 503 or 504, whatever its body.
- * ONE retry, after the answer's `retryAfterSeconds` (1 s when it names none), and only if it
- * still fits the read's `READ_BUDGET_MS`, counted from the first attempt; the retry's own abort is
- * cut to what is left of it. A read the visitor stops (an abort of its signal) sends nothing more,
- * even from the wait before the retry.
+ * failure that is not the SPA's own timeout, a 503 whatever its body (`toApiProblem` makes an
+ * unreadable one the outage), or a 502 or 504 whose body is JSON or empty (an unreadable one is
+ * PARSE, an answer). ONE retry, after the answer's `retryAfterSeconds` (1 s when it names none),
+ * and only if it still fits the read's `READ_BUDGET_MS`, counted from the first attempt; the
+ * retry's own abort is cut to what is left of it. A read the visitor stops (an abort of its
+ * signal) sends nothing more, even from the wait before the retry.
  *
  * Mutations are NEVER auto-retried — a retry of a monetary POST is a user decision that must reuse
  * the same Idempotency-Key (useIdempotentMutation owns that), and a 429 is never retried

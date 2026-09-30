@@ -50,8 +50,11 @@ function shouldKeepKey(problem: ApiProblem): boolean {
 /**
  * Client half of the idempotency protocol, one instance per money-intent. The key is
  * lazy (`crypto.randomUUID()` on first submit), in-memory only, and re-keyed on
- * `errorCode` — never on HTTP status. Any body-affecting form edit must call
- * `resetIntent` (an edited body with the old key is a byte-fingerprint mismatch → 422).
+ * `errorCode` — never on HTTP status. A body-affecting form edit calls `resetIntent`
+ * only while no key is held (an edited body with the old key is a byte-fingerprint
+ * mismatch → 422); while one is retained the flow calls `requireVerify` instead (below),
+ * or keeps its form disabled, as the transfer pages do. (Until 2026-10-01 this said every
+ * such edit must call `resetIntent`, which withdraw's edits had stopped doing on 2026-09-23.)
  *
  * `IDEMPOTENCY_RESULT_UNKNOWN` drops the key and latches `verifyRequired`: submit
  * refuses to mint a new key until the owning flow's explicit "it didn't go through —

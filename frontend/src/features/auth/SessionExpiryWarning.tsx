@@ -114,9 +114,9 @@ function reauthMessage(problem: ApiProblem): string {
 /**
  * What to say when "Sign out now" could not sign the visitor out.
  *
- * The connection sentence when no usable answer came back (a failed fetch, a body that could not
- * be read); the outage sentence otherwise — the service is down, gave no answer in 65 s, or turned
- * the request away for a reason the visitor can do nothing about but try again later.
+ * The connection sentence for a failed connection or a body that could not be read; the outage
+ * sentence otherwise — the service is down, gave no answer in 65 s, or turned the request away for
+ * a reason the visitor can do nothing about but try again later.
  */
 function signOutMessage(problem: ApiProblem | undefined): string {
   if (

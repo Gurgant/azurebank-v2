@@ -264,6 +264,7 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
   it.each([
     ['a request that never reached a server', () => HttpResponse.error()],
     ['a 502', () => problem({ status: 502 })],
+    ['a 502 with no body', () => new HttpResponse(null, { status: 502 })],
     ['a 504', () => problem({ status: 504 })],
     ['a 503 that names no wait', () => problem({ status: 503 })],
   ])('2e — %s is retried once, one second later, for a read', async (_name, answer) => {
