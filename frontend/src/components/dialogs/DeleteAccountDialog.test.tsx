@@ -9,6 +9,8 @@ import { mockState } from '../../mocks/state';
 import { apiSlice } from '../../features/api/apiSlice';
 import { makeTestStore, renderWithProviders, type TestStore } from '../../test/renderWithProviders';
 import { enterPin, TEST_PIN } from '../../test/pinFlow';
+import { COPY, advanceUntil, fakeClockUser, installFakeClock, never } from '../../test/outage';
+import { CONNECTION_FAILED } from '../../api/problemMessages';
 import { DeleteAccountDialog } from './DeleteAccountDialog';
 
 /*
@@ -494,6 +496,37 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
     expect(await screen.findByText(/Couldn't reach the server/)).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue(''));
     expect(screen.getByLabelText('Digit 1 of 6')).not.toHaveAttribute('aria-invalid');
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('a DELETE with no answer ends at 65 s saying the service is unavailable, not "check your connection", and clears the boxes', async () => {
+    /*
+      A request the SPA stops waiting for is `status: 'NETWORK'` too, so the outage has to be
+      recognised before the transport branch. The plain outage sentence, not "we can't tell whether
+      it was saved": a DELETE that did land makes the next attempt answer ACCOUNT_NOT_FOUND, which
+      closes the dialog as done.
+    */
+    seedTempFund();
+    let sentAt = 0;
+    server.use(
+      http.delete(ACCOUNT_URL, () => {
+        sentAt = Date.now();
+        return never();
+      }),
+    );
+    const { onClose } = renderDialog();
+    await reachPinStep();
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByLabelText('Digit 1 of 6'));
+    await user.paste(TEST_PIN);
+    await waitFor(() => expect(sentAt).toBeGreaterThan(0));
+
+    await advanceUntil(sentAt, 65_100);
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.unavailable));
+    expect(screen.queryByText(CONNECTION_FAILED)).not.toBeInTheDocument();
+    expect(pinBoxes().map((box) => (box as HTMLInputElement).value)).toEqual(Array(6).fill(''));
     expect(onClose).not.toHaveBeenCalled();
   });
 

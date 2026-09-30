@@ -14,11 +14,11 @@ import {
 } from '@fluentui/react-components';
 import { LockClosed24Regular, CheckmarkCircle24Filled } from '@fluentui/react-icons';
 import { colors, surfaces, transitions } from '../theme/tokens';
-import type { ApiProblem } from '../api/problemBaseQuery';
+import { isServiceOutage, type ApiProblem } from '../api/problemBaseQuery';
 import { useSetPinMutation } from '../features/api/apiSlice';
 import { selectCurrentUser } from '../features/auth/authSlice';
 import { PinInput } from '../components/PinInput';
-import { CONNECTION_FAILED } from '../api/problemMessages';
+import { CONNECTION_FAILED, SAVE_OUTCOME_UNKNOWN } from '../api/problemMessages';
 
 // ============================================
 // STYLES
@@ -177,6 +177,11 @@ export function PinSetupPage() {
         // Wrong passwords here count toward the SAME login lockout — say so, rather than leaving
         // the user to discover it at the login screen.
         setError('Too many incorrect passwords. Your account is locked; try again later.');
+      } else if (isServiceOutage(problem)) {
+        // Before the transport branch: a request with no answer in 65 s is `status: 'NETWORK'`
+        // too, and the connection was not the problem. The PIN may have been saved, and the
+        // request carries no key, so this cannot say it failed.
+        setError(SAVE_OUTCOME_UNKNOWN);
       } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
         setError(CONNECTION_FAILED);
       } else {

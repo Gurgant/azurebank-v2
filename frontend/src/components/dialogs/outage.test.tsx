@@ -21,6 +21,7 @@ import { ChangePinDialog } from './ChangePinDialog';
 import { CreateAccountDialog } from './CreateAccountDialog';
 import { DepositDialog } from './DepositDialog';
 import { RenameAccountDialog } from './RenameAccountDialog';
+import { RenameAzureTagDialog } from './RenameAzureTagDialog';
 import { WithdrawDialog } from './WithdrawDialog';
 
 /**
@@ -547,6 +548,21 @@ describe('a change with no key, during an outage', () => {
     );
     fireEvent.change(screen.getByRole('textbox', { name: 'Account name' }), {
       target: { value: 'Renamed' },
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await alertSays(COPY.saveUnknown);
+  });
+
+  it('renaming the handle when the answer is 503 says the change may be saved', async () => {
+    server.use(
+      http.patch('*/bff/auth/azuretag', () =>
+        serviceUnavailable({ via: 'bff', instance: '/bff/auth/azuretag' }),
+      ),
+    );
+    renderWithProviders(<RenameAzureTagDialog currentTag="demo_user" onClose={vi.fn()} />);
+    fireEvent.change(screen.getByRole('textbox', { name: /public handle/i }), {
+      target: { value: 'new_handle' },
     });
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 

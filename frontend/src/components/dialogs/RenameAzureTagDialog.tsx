@@ -15,7 +15,8 @@ import {
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import type { ApiProblem } from '../../api/problemBaseQuery';
+import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
+import { SAVE_OUTCOME_UNKNOWN } from '../../api/problemMessages';
 import { useRenameAzureTagMutation } from '../../features/api/apiSlice';
 
 // Mirrors the backend AzureTag rules (ValidationRules.AzureTagPattern): 3-20 chars, must start
@@ -98,7 +99,11 @@ export function RenameAzureTagDialog({ currentTag, onClose }: RenameAzureTagDial
                 // role="alert", as RenameAccountDialog's bar: a MessageBar alone is announced by nothing.
                 <MessageBar intent="error" role="alert">
                   <MessageBarBody>
-                    {problem.detail || 'Could not change your handle. Please try again.'}
+                    {/* An outage (a 503, or no answer in 65 s) may have saved the new handle
+                        anyway: say that it cannot tell, not that the change failed. */}
+                    {isServiceOutage(problem)
+                      ? SAVE_OUTCOME_UNKNOWN
+                      : problem.detail || 'Could not change your handle. Please try again.'}
                   </MessageBarBody>
                 </MessageBar>
               )}

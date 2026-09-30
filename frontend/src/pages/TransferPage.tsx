@@ -13,7 +13,7 @@ import { CheckmarkCircle24Filled, ArrowSwap24Regular } from '@fluentui/react-ico
 import { Controller, useForm, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { colors } from '../theme/tokens';
-import type { ApiProblem } from '../api/problemBaseQuery';
+import { isServiceOutage, type ApiProblem } from '../api/problemBaseQuery';
 import type { MoneyPhase } from '../api/moneyProblem';
 import { useTransferWizardStyles } from './transferWizardStyles';
 import { ConfirmDialog } from '../components/shared/ConfirmDialog';
@@ -41,7 +41,12 @@ import { AmountField } from '../components/form/AmountField';
 import { availableBalanceOf } from '../utils/availableBalance';
 import { useFundsGate } from '../hooks/useFundsGate';
 import { PinInput } from '../components/PinInput';
-import { CONNECTION_FAILED, NO_DOUBLE_CHARGE, TRY_AGAIN } from '../api/problemMessages';
+import {
+  CONNECTION_FAILED,
+  NO_DOUBLE_CHARGE,
+  SERVICE_UNAVAILABLE,
+  TRY_AGAIN,
+} from '../api/problemMessages';
 
 // ============================================
 // CONSTANTS
@@ -348,6 +353,10 @@ export function TransferPage() {
             ? `Too many lookups. Try again in ${formatLockHorizon(problem.retryAfterSeconds)}.`
             : 'Too many lookups. Please wait a moment and try again.',
         );
+      } else if (isServiceOutage(problem)) {
+        // Before the transport branch: a check with no answer in 65 s is `status: 'NETWORK'` too,
+        // and "check your connection" would send the visitor after the wrong problem.
+        setRecipientError(SERVICE_UNAVAILABLE);
       } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
         setRecipientError(CONNECTION_FAILED);
       } else {

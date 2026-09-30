@@ -16,7 +16,8 @@ import {
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import type { ApiProblem } from '../../api/problemBaseQuery';
+import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
+import { ACCOUNT_OUTCOME_UNKNOWN } from '../../api/problemMessages';
 import type { AccountType } from '../../api/enums';
 import { toFieldName } from '../../api/validationErrors';
 import { useCreateAccountMutation } from '../../features/api/apiSlice';
@@ -119,7 +120,12 @@ export function CreateAccountDialog({ open, onClose }: CreateAccountDialogProps)
                 // role="alert", as RenameAccountDialog's bar: a MessageBar alone is announced by nothing.
                 <MessageBar intent="error" role="alert">
                   <MessageBarBody>
-                    {problem.detail || 'Could not create the account. Please try again.'}
+                    {/* An outage (a 503, or no answer in 65 s) may have opened the account
+                        anyway, and with no key a second Create opens a second one: say so, and
+                        send the visitor to look before trying again. */}
+                    {isServiceOutage(problem)
+                      ? ACCOUNT_OUTCOME_UNKNOWN
+                      : problem.detail || 'Could not create the account. Please try again.'}
                   </MessageBarBody>
                 </MessageBar>
               )}

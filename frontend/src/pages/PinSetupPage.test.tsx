@@ -1,10 +1,15 @@
 import { Route, Routes } from 'react-router-dom';
-import { screen } from '@testing-library/react';
+import { cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { http } from 'msw';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { makeTestStore, renderWithProviders, type TestStore } from '../test/renderWithProviders';
 import { PinSetupPage } from './PinSetupPage';
 import { MOCK_PASSWORD, MOCK_USER, seedMockSession } from '../mocks/state';
+import { server } from '../mocks/server';
+import { serviceUnavailable } from '../mocks/problem';
+import { COPY, advanceUntil, fakeClockUser, installFakeClock, never } from '../test/outage';
+import { CONNECTION_FAILED } from '../api/problemMessages';
 
 /**
  * PR-10 — the PIN onboarding wizard (enter → confirm → done). Pins: the confirm-must-match
@@ -153,5 +158,58 @@ describe('PIN setup wizard (PR-10)', () => {
     renderPinSetup();
     await userEvent.click(screen.getByRole('button', { name: 'Skip for now' }));
     expect(await screen.findByText('ACCOUNTS PAGE')).toBeInTheDocument();
+  });
+});
+
+describe('PIN setup during an outage', () => {
+  // Unmount first, then restore the clock: a render still mounted on a fake clock leaks into the
+  // next test.
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
+  /** The confirm step with the password in hand: the next six digits send. */
+  async function toTheConfirmation() {
+    renderPinSetup();
+    await pasteDigits('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByText('Confirm your PIN');
+    await userEvent.click(screen.getByLabelText('Account password'));
+    await userEvent.paste(MOCK_PASSWORD);
+  }
+
+  it('a 503 says the PIN may have been saved', async () => {
+    server.use(
+      http.post('*/bff/auth/set-pin', () =>
+        serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' }),
+      ),
+    );
+    await toTheConfirmation();
+    await pasteDigits('123456');
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
+    expect(screen.queryByText('PIN Setup Complete!')).not.toBeInTheDocument();
+  });
+
+  it('no answer in 65 s says the same, not "check your connection"', async () => {
+    let sentAt = 0;
+    server.use(
+      http.post('*/bff/auth/set-pin', () => {
+        sentAt = Date.now();
+        return never();
+      }),
+    );
+    await toTheConfirmation();
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByLabelText('Digit 1 of 6'));
+    await user.paste('123456');
+    await waitFor(() => expect(sentAt).toBeGreaterThan(0));
+
+    await advanceUntil(sentAt, 65_100);
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
+    expect(screen.queryByText(CONNECTION_FAILED)).not.toBeInTheDocument();
   });
 });
