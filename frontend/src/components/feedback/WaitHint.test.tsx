@@ -223,8 +223,10 @@ describe('WaitHint', () => {
 describe('useWaitLanding', () => {
   /**
    * A host at one instant: whether its read is waiting, which request its read is on (a read gets
-   * a new id each time it sends one), and which control, if any, the wait would land on. "Arm"
-   * stands for the Stop or Retry press; "Elsewhere" for anywhere else the visitor may be.
+   * a new id each time it sends one), and which control, if any, the wait would land on. As on the
+   * pages, the controls that arm it go away once pressed: "Stop" is there only while the wait is,
+   * and the landing is the bar's Retry, gone while its read runs again, so focus falls to the page.
+   * "Elsewhere" is anywhere else the visitor may go, such as a field in a dialog.
    */
   function Landing({
     waiting,
@@ -238,14 +240,17 @@ describe('useWaitLanding', () => {
     const { landingRef, arm } = useWaitLanding(waiting, request);
     return (
       <>
-        <button type="button" onClick={arm}>
-          Arm
-        </button>
+        {waiting && (
+          <button type="button" onClick={arm}>
+            Stop
+          </button>
+        )}
         <button type="button">Elsewhere</button>
         {landing && (
           <button
             key={landing}
             type="button"
+            onClick={arm}
             ref={(el) => {
               landingRef.current = el;
             }}
@@ -257,41 +262,40 @@ describe('useWaitLanding', () => {
     );
   }
 
-  const elsewhere = () => screen.getByRole('button', { name: 'Elsewhere' });
+  const button = (name: string) => screen.getByRole('button', { name });
+  const elsewhere = () => button('Elsewhere');
 
   it('moves focus to the landing when a stopped wait ends in one', async () => {
     const { rerender } = renderWithProviders(<Landing waiting request="r1" />);
-    await userEvent.click(screen.getByRole('button', { name: 'Arm' }));
+    await userEvent.click(button('Stop'));
 
-    // The stopped request is rejected: same request, now at rest, with its bar.
+    // The stopped request is rejected: same request, now at rest, with its bar. Stop is gone.
     rerender(<Landing waiting={false} request="r1" landing="Retry" />);
 
-    await waitFor(() =>
-      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Retry' })),
-    );
+    await waitFor(() => expect(document.activeElement).toBe(button('Retry')));
   });
 
-  it('leaves focus alone when the wait was not armed', async () => {
+  it('leaves focus alone when the wait was not armed', () => {
     const { rerender } = renderWithProviders(<Landing waiting request="r1" />);
-    elsewhere().focus();
+    expect(document.activeElement).toBe(document.body);
 
     rerender(<Landing waiting={false} request="r1" landing="Retry" />);
 
-    expect(document.activeElement).toBe(elsewhere());
+    expect(document.activeElement).toBe(document.body);
   });
 
   it('disarms when an armed wait ends without a landing, so a later one takes nothing', async () => {
     const { rerender } = renderWithProviders(<Landing waiting request="r1" />);
-    await userEvent.click(screen.getByRole('button', { name: 'Arm' }));
+    await userEvent.click(button('Stop'));
 
-    // Ends in success: nothing to land on.
+    // Ends in success: nothing to land on. Stop is gone, and focus with it.
     rerender(<Landing waiting={false} request="r1" />);
-    elsewhere().focus();
+    expect(document.activeElement).toBe(document.body);
     // A later wait, never armed, ends in a failure.
     rerender(<Landing waiting request="r2" />);
     rerender(<Landing waiting={false} request="r2" landing="Retry" />);
 
-    expect(document.activeElement).toBe(elsewhere());
+    expect(document.activeElement).toBe(document.body);
   });
 
   it('a Retry pressed while its bar is on screen stays armed until its wait ends, then lands', async () => {
@@ -299,85 +303,116 @@ describe('useWaitLanding', () => {
     const { rerender } = renderWithProviders(<Landing waiting request={undefined} />);
     rerender(<Landing waiting request="r1" />);
     rerender(<Landing waiting={false} request="r1" landing="Retry" />);
-    await userEvent.click(screen.getByRole('button', { name: 'Arm' }));
+    await userEvent.click(button('Retry'));
 
     // A render before the read's new request reaches the page: the old bar is still there.
     rerender(<Landing waiting={false} request="r1" landing="Retry" />);
-    elsewhere().focus();
-    // The wait: the bar hides while the read runs again.
+    // The wait: the bar hides while the read runs again, and focus falls to the page.
     rerender(<Landing waiting request="r2" />);
+    expect(document.activeElement).toBe(document.body);
     // It fails again: a new bar.
     rerender(<Landing waiting={false} request="r2" landing="Retry" />);
 
-    await waitFor(() =>
-      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Retry' })),
-    );
+    await waitFor(() => expect(document.activeElement).toBe(button('Retry')));
   });
 
   it('a Retry whose read answers before its wait is ever shown takes nothing later', async () => {
     const { rerender } = renderWithProviders(
       <Landing waiting={false} request="r1" landing="Retry" />,
     );
-    await userEvent.click(screen.getByRole('button', { name: 'Arm' }));
+    await userEvent.click(button('Retry'));
 
     // The read succeeded inside one render: the bar is gone, and no wait was ever on screen.
     rerender(<Landing waiting={false} request="r2" />);
-    elsewhere().focus();
+    expect(document.activeElement).toBe(document.body);
     // Later, a wait the visitor did not start fails.
     rerender(<Landing waiting request="r3" />);
     rerender(<Landing waiting={false} request="r3" landing="Retry" />);
 
-    expect(document.activeElement).toBe(elsewhere());
+    expect(document.activeElement).toBe(document.body);
   });
 
   it('a Retry that fails again before its wait is ever shown takes nothing later', async () => {
     const { rerender } = renderWithProviders(
       <Landing waiting={false} request="r1" landing="Retry" />,
     );
-    await userEvent.click(screen.getByRole('button', { name: 'Arm' }));
+    await userEvent.click(button('Retry'));
 
     // The read failed again inside one render: a bar, as before, and no wait was ever on screen.
     rerender(<Landing waiting={false} request="r2" landing="Retry" />);
-    elsewhere().focus();
-    // Later, a refetch the visitor did not start (a change elsewhere reloads the read) fails.
+    // Later, a refetch the visitor did not start (a change elsewhere reloads the read) hides the
+    // bar, so focus falls to the page, and then fails.
     rerender(<Landing waiting request="r3" />);
+    expect(document.activeElement).toBe(document.body);
     rerender(<Landing waiting={false} request="r3" landing="Retry" />);
 
-    expect(document.activeElement).toBe(elsewhere());
+    expect(document.activeElement).toBe(document.body);
   });
 
   it('on a page of several reads, a Retry whose read answers at once takes nothing later, though another bar is still up', async () => {
     const { rerender } = renderWithProviders(
       <Landing waiting={false} request={['a1', 'm1', 'r1']} landing="Retry this month" />,
     );
-    await userEvent.click(screen.getByRole('button', { name: 'Arm' }));
+    await userEvent.click(button('Retry this month'));
 
-    // "This month" loaded inside one render; "recent activity" is now the first failed bar.
+    // "This month" loaded inside one render; "recent activity" is now the first failed bar, and
+    // the focus lost with the pressed bar goes to it.
     rerender(
       <Landing waiting={false} request={['a1', 'm2', 'r1']} landing="Retry recent activity" />,
     );
-    elsewhere().focus();
+    await waitFor(() => expect(document.activeElement).toBe(button('Retry recent activity')));
     // Later, a deposit reloads "recent activity", and it fails again after a wait.
     rerender(<Landing waiting request={['a1', 'm2', 'r2']} />);
+    expect(document.activeElement).toBe(document.body);
     rerender(
       <Landing waiting={false} request={['a1', 'm2', 'r2']} landing="Retry recent activity" />,
     );
 
-    expect(document.activeElement).toBe(elsewhere());
+    expect(document.activeElement).toBe(document.body);
   });
 
   it('a Retry that ends before its wait is ever shown lands as one that ended on screen does', async () => {
     const { rerender } = renderWithProviders(
       <Landing waiting={false} request="r1" landing="Retry" />,
     );
-    await userEvent.click(screen.getByRole('button', { name: 'Arm' }));
+    await userEvent.click(button('Retry'));
 
     // It failed again inside one render, and the page drew a new bar for the new failure.
     rerender(<Landing waiting={false} request="r2" landing="Retry again" />);
 
-    await waitFor(() =>
-      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Retry again' })),
+    await waitFor(() => expect(document.activeElement).toBe(button('Retry again')));
+  });
+
+  it('takes nothing from a visitor who went elsewhere while the wait ran, such as into a dialog', async () => {
+    const { rerender } = renderWithProviders(
+      <Landing waiting={false} request="r1" landing="Retry" />,
     );
+    await userEvent.click(button('Retry'));
+    // The bar hides while the read runs again, and the visitor goes on, into a dialog.
+    rerender(<Landing waiting request="r2" />);
+    elsewhere().focus();
+
+    // The read fails again: a new bar, but focus was never lost, so it stays where the visitor is.
+    rerender(<Landing waiting={false} request="r2" landing="Retry" />);
+
+    expect(document.activeElement).toBe(elsewhere());
+  });
+
+  it('spends the arm even when it did not land, so focus lost later is not taken by another wait', async () => {
+    const { rerender } = renderWithProviders(
+      <Landing waiting={false} request="r1" landing="Retry" />,
+    );
+    await userEvent.click(button('Retry'));
+    rerender(<Landing waiting request="r2" />);
+    elsewhere().focus();
+    rerender(<Landing waiting={false} request="r2" landing="Retry" />);
+
+    // Later focus falls to the page, and a refetch the visitor did not start fails.
+    elsewhere().blur();
+    rerender(<Landing waiting request="r3" />);
+    rerender(<Landing waiting={false} request="r3" landing="Retry" />);
+
+    expect(document.activeElement).toBe(document.body);
   });
 });
 

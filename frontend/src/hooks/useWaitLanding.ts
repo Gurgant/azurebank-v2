@@ -66,6 +66,11 @@ export function abortRunning(dispatch: AppDispatch, targets: readonly WaitTarget
   return aborted;
 }
 
+/** Whether nothing holds focus: a focused element that leaves the page hands focus to `body`. */
+function focusIsLost(): boolean {
+  return document.activeElement === document.body;
+}
+
 /**
  * Puts focus back where the visitor can act, when a wait they ended or restarted is over.
  *
@@ -92,6 +97,11 @@ export function abortRunning(dispatch: AppDispatch, targets: readonly WaitTarget
  * keeps the arm: a Retry was pressed and its request has not reached the page yet. Once spent, a
  * later wait the visitor did not start — a refetch after a change elsewhere, say — can never pull
  * focus, out of a dialog or anywhere else.
+ *
+ * Nor does the wait they did start, once they have moved on. The landing only gives back focus
+ * that was lost: it moves focus only while nothing holds it, because the control that had it has
+ * gone and focus fell to the page. A visitor who went on during the wait — into a dialog the page
+ * still offers, typing — keeps their place; the new bar is an alert, so the failure is still said.
  */
 export function useWaitLanding<T extends HTMLElement = HTMLElement>(
   waiting: boolean,
@@ -115,7 +125,7 @@ export function useWaitLanding<T extends HTMLElement = HTMLElement>(
     if (!ended && armed.requestKey === requestKey) return;
 
     armedFor.current = null;
-    landingRef.current?.focus();
+    if (focusIsLost()) landingRef.current?.focus();
   });
 
   const arm = useCallback(() => {

@@ -1,5 +1,5 @@
 import { Route, Routes } from 'react-router-dom';
-import { cleanup, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -585,6 +585,92 @@ describe('a Retry that fails again before its wait is drawn is announced again',
     await waitFor(() =>
       expect(document.activeElement).toBe(within(again).getByRole('button', { name: 'Retry' })),
     );
+  });
+});
+
+describe('a Retry that fails after the visitor has moved on leaves them where they are', () => {
+  /*
+    Focus goes back to Retry because the button that was pressed has gone and focus fell to the
+    page. A visitor who went on during the wait, into a dialog the page still offers, keeps their
+    place: the new bar is an alert and says what happened, but it takes nothing from under their
+    typing.
+  */
+  const broken = () =>
+    problem({ status: 500, errorCode: 'INTERNAL_ERROR', detail: 'Something broke.' });
+
+  /** Answers every request with a failure at once, except the second, held until released. */
+  function holdTheRetry(path: string) {
+    const held = { calls: 0, release: () => {} };
+    server.use(
+      http.get(path, async () => {
+        held.calls += 1;
+        if (held.calls === 2) await new Promise<void>((resolve) => (held.release = resolve));
+        return broken();
+      }),
+    );
+    return held;
+  }
+
+  /** Long enough for the page to have done whatever it does with the failure. */
+  const settle = () => act(() => new Promise<void>((resolve) => setTimeout(resolve, 50)));
+
+  it('Accounts: typing in "Add account" while a Retry waits goes on where it was when it fails', async () => {
+    const held = holdTheRetry('*/api/accounts');
+    const user = userEvent.setup();
+    try {
+      renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+      await user.click(await screen.findByRole('button', { name: 'Retry' }));
+      await waitFor(() => expect(held.calls).toBe(2));
+      await screen.findByLabelText('Loading accounts');
+
+      await user.click(screen.getByRole('button', { name: 'Add account' }));
+      const dialog = await screen.findByRole('dialog');
+      const name = within(dialog).getByRole('textbox', { name: 'Account name' });
+      await user.type(name, 'Hol');
+      expect(document.activeElement).toBe(name);
+
+      held.release();
+      const words = await screen.findByText(/Something broke\./);
+      expect(words.closest('[role="alert"]')).not.toBeNull();
+      await settle();
+
+      expect(document.activeElement).toBe(name);
+      await user.keyboard('iday');
+      expect(name).toHaveValue('Holiday');
+      expect(dialog).toBeInTheDocument();
+    } finally {
+      held.release();
+    }
+  });
+
+  it("Dashboard: a dialog opened while a section's Retry waits keeps focus when that Retry fails", async () => {
+    const held = holdTheRetry('*/api/transactions/summary');
+    const user = userEvent.setup();
+    try {
+      renderDashboard();
+      const bar = (await screen.findByText(/Could not load this month\./)).closest<HTMLElement>(
+        '[role="alert"]',
+      );
+      await user.click(within(bar as HTMLElement).getByRole('button', { name: 'Retry' }));
+      await waitFor(() => expect(held.calls).toBe(2));
+      await waitFor(() =>
+        expect(screen.queryByText(/Could not load this month\./)).not.toBeInTheDocument(),
+      );
+
+      await user.click(screen.getByRole('button', { name: /Deposit/ }));
+      const dialog = await screen.findByRole('dialog');
+      const inDialog = document.activeElement as HTMLElement;
+      expect(dialog).toContainElement(inDialog);
+
+      held.release();
+      const words = await screen.findByText(/Could not load this month\./);
+      expect(words.closest('[role="alert"]')).not.toBeNull();
+      await settle();
+
+      expect(document.activeElement).toBe(inDialog);
+    } finally {
+      held.release();
+    }
   });
 });
 
