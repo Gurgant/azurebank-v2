@@ -4,6 +4,7 @@ using AzureBank.Api.Middleware;
 using AzureBank.Api.Observability;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.Exceptions;
+using FluentValidation;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -33,9 +34,10 @@ namespace AzureBank.Api.Handlers;
 /// cancels a request, so a database that fails then fails whether or not the client is still there.
 /// Nothing is written either way, but only a failure the hang-up caused is logged at Debug: the
 /// deadline says the client cancelled the request before any commit started, or the chain holds
-/// the cancellation itself.
-/// Anything else is logged at Warning with the SQL error numbers and the chain the outage 503 would
-/// have named, so an outage nobody was answered is not lost.
+/// the cancellation itself. A refusal (a validation failure, or a domain exception below 500) is
+/// logged at Debug too, by its type only: it is not a failure. Anything else is logged at Warning
+/// with the SQL error numbers and the chain the outage 503 would have named, so an outage nobody
+/// was answered is not lost.
 /// </para>
 /// </remarks>
 public sealed class ClientAbortedExceptionHandler : IExceptionHandler
@@ -57,7 +59,7 @@ public sealed class ClientAbortedExceptionHandler : IExceptionHandler
             return ValueTask.FromResult(false);
         }
 
-        if (CausedByHangUp(httpContext.Features.Get<IRequestDeadline>(), exception))
+        if (CausedByHangUp(httpContext.Features.Get<IRequestDeadline>(), exception) || IsRefusal(exception))
         {
             _logger.LogDebug(
                 "The client closed the request on {RoutePattern} ({ExceptionType}); nothing was written",
@@ -114,6 +116,14 @@ public sealed class ClientAbortedExceptionHandler : IExceptionHandler
 
         return false;
     }
+
+    /// <summary>
+    /// True for an answer the API gives on purpose rather than a failure: a validation failure, or
+    /// a domain exception answered below 500. Logged by its type only, as
+    /// <see cref="AppExceptionHandler"/> does, since its message names what it refused.
+    /// </summary>
+    internal static bool IsRefusal(Exception exception) =>
+        exception is ValidationException or AppException { StatusCode: < 500 };
 }
 
 /// <summary>

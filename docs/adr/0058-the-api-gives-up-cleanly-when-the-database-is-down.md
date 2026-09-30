@@ -158,7 +158,8 @@ client that was gone. It logs at Debug only when the hang-up caused the failure 
 records the client as what cancelled the request before any commit started, or the chain holds the
 cancellation); anything else, such as an exempt endpoint's failure, whose calls never see that
 token, or a commit that failed after the client left, is a Warning with the SQL error numbers and
-the chain the 503 would have named.
+the chain the 503 would have named. A refusal (a validation failure, or a domain exception below
+500) is not a failure: it is logged at Debug by its type, never its message.
 
 **D7 — `applied: false` only when the answer knows it.** On the four money endpoints, and only for
 a request that owns the idempotency claim it made (`OwnedIdempotencyClaim`, set after a claim that

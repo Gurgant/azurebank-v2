@@ -4,8 +4,10 @@ using AzureBank.Api.Attributes;
 using AzureBank.Api.Handlers;
 using AzureBank.Api.Middleware;
 using AzureBank.Shared.Constants;
+using AzureBank.Shared.Exceptions;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
+using FluentValidation;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Data.SqlClient;
@@ -292,6 +294,43 @@ public class ServiceUnavailableExceptionHandlerTests
         log.Lines.Should().ContainSingle(l => l.Level == LogLevel.Warning).Which.Message.Should().Contain("3930");
         log.Lines.Should().NotContain(l => l.Level == LogLevel.Debug);
         context.Response.StatusCode.Should().Be(StatusCodes.Status499ClientClosedRequest);
+    }
+
+    [Fact]
+    public async Task ARefusalToAClientThatHasGone_IsLoggedAtDebug_ByItsTypeOnly()
+    {
+        // A refresh refused after the client had gone, on an exempt endpoint (no deadline): a
+        // refusal is not a failure, and its message names what it refused. A domain exception the
+        // API answers with a 5xx is not a refusal, and stays a Warning.
+        using var hungUp = new CancellationTokenSource();
+        hungUp.Cancel();
+        var log = new RecordingLoggerProvider();
+        Exception[] refusals =
+        [
+            new AuthenticationException("Invalid refresh token.", ErrorCodes.RefreshTokenInvalid),
+            new ValidationException("Pin must be 6 digits."),
+        ];
+
+        foreach (var refusal in refusals)
+        {
+            var context = NewContext();
+            context.RequestAborted = hungUp.Token;
+            (await ClientAborted(log).TryHandleAsync(context, refusal, CancellationToken.None)).Should().BeTrue();
+            context.Response.StatusCode.Should().Be(StatusCodes.Status499ClientClosedRequest);
+        }
+
+        var outage = NewContext();
+        outage.RequestAborted = hungUp.Token;
+        (await ClientAborted(log).TryHandleAsync(
+                outage, new ServiceUnavailableException("Revocation is unavailable.", 10), CancellationToken.None))
+            .Should().BeTrue();
+
+        log.Lines.Should().HaveCount(3);
+        log.Lines.Take(2).Should().OnlyContain(l => l.Level == LogLevel.Debug
+            && !l.Message.Contains("Invalid refresh token.") && !l.Message.Contains("Pin must be 6 digits."));
+        log.Lines[0].Message.Should().Contain(nameof(AuthenticationException));
+        log.Lines[1].Message.Should().Contain(nameof(ValidationException));
+        log.Lines[2].Level.Should().Be(LogLevel.Warning);
     }
 
     [Fact]
