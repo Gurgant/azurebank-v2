@@ -146,6 +146,16 @@ public class CancellationFlowTests
     /// </summary>
     private static readonly HashSet<string> UncancellableCalls = ["RollbackAsync", "RecordRefusalAsync"];
 
+    /// <summary>
+    /// The one file where <c>RequestAborted</c> may be set to <c>CancellationToken.None</c>: the result
+    /// filter writes the answer of a request whose commit started, after its deadline fired, under no
+    /// token, so the answer stored for replay is whole (ADR-0058 D5). Anywhere else that assignment
+    /// would take the deadline off everything after it.
+    /// </summary>
+    private const string UncancellableWriteFile = "RequestDeadlineMiddleware.cs";
+
+    private static readonly Regex RequestAbortedAssignment = new(@"\bRequestAborted\s*=[^=]", RegexOptions.CultureInvariant);
+
     private static readonly Regex TokenArgument = new(
         @"^(?:cancellationToken\s*:\s*)?(?<token>cancellationToken|ct|token|stoppingToken|\w*[cC]ancellation\w*|[\w.]+\.Token|[\w.]*RequestAborted|CancellationToken\.None|default|default\(CancellationToken\))$",
         RegexOptions.CultureInvariant);
@@ -240,6 +250,13 @@ public class CancellationFlowTests
                         .Select(c => c.Name)
                         .FirstOrDefault();
 
+                    if (owner is null
+                        && Path.GetFileName(file) == UncancellableWriteFile
+                        && RequestAbortedAssignment.IsMatch(StatementAt(code, none.Index)))
+                    {
+                        continue;
+                    }
+
                     if (owner is null || !(UncancellableCalls.Contains(owner) || EfCalls.Contains(owner)))
                     {
                         offenders.Add($"{relative}:{LineOf(code, none.Index)} {none.Value} passed to "
@@ -264,6 +281,14 @@ public class CancellationFlowTests
     }
 
     private static int LineOf(string code, int index) => code.AsSpan(0, index).Count('\n') + 1;
+
+    /// <summary>The statement around <paramref name="index"/>: from the last ';', '{' or '}' before it to the next ';'.</summary>
+    private static string StatementAt(string code, int index)
+    {
+        var start = code.LastIndexOfAny([';', '{', '}'], index) + 1;
+        var end = code.IndexOf(';', index);
+        return code[start..(end < 0 ? code.Length : end)];
+    }
 
     private static int ClosingParenthesis(string code, int open)
     {

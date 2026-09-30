@@ -427,10 +427,19 @@ public sealed class RequestDeadlineMiddleware
 /// otherwise write an empty or cut body under a status that says success.
 /// </summary>
 /// <remarks>
+/// <para>
 /// <c>RequestAborted</c> becomes the client's token again, so a client that hangs up stops the
 /// write. Except once a commit has started: then it stays the deadline's token, which nothing can
 /// cancel any more, and the response is written whole into the idempotency capture even when the
 /// client has gone, so the answer stored for replay is the whole answer.
+/// </para>
+/// <para>
+/// ONE STATE LEAVES A STARTED COMMIT WITH A CANCELLED TOKEN: a commit that failed turned the
+/// deadline back on, the deadline then fired, and the execution strategy found the commit had
+/// landed after all (its check that the save's row is there), so no "committed" followed and the
+/// action returned its result. That answer is written under no token at all: the request's is
+/// cancelled, and the client's could cut the answer stored for replay.
+/// </para>
 /// </remarks>
 public sealed class DeadlineResultFilter : IAsyncAlwaysRunResultFilter
 {
@@ -438,7 +447,9 @@ public sealed class DeadlineResultFilter : IAsyncAlwaysRunResultFilter
     {
         if (context.HttpContext.Features.Get<IRequestDeadline>() is { } deadline && !deadline.Disarm())
         {
-            context.HttpContext.RequestAborted = deadline.ClientAborted;
+            // Not disarmed: no commit started, or the deadline fired after one did (see the remarks).
+            context.HttpContext.RequestAborted =
+                deadline.CommitEntered ? CancellationToken.None : deadline.ClientAborted;
         }
 
         return next();

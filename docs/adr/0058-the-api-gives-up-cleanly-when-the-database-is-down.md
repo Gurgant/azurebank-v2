@@ -130,7 +130,9 @@ writes nothing under a status that already says success
 (<https://github.com/dotnet/aspnetcore/blob/release/10.0/src/Mvc/Mvc.Core/src/Formatters/SystemTextJsonOutputFormatter.cs>).
 `RequestAborted` becomes the client's token again for the write, except once a commit has started:
 then it stays the request's, which nothing can cancel any more, so a keyed answer is captured
-whole even for a client that has gone, and its retry is replayed the whole answer.
+whole even for a client that has gone, and its retry is replayed the whole answer. A commit that
+failed turns the deadline back on (D4), and when the execution strategy then finds that commit
+landed after all, the deadline may already have fired: that answer is written under no token.
 
 **D6 — An outage is one 503, and a client that hung up gets nothing.**
 `ServiceUnavailableExceptionHandler` answers **503** `SERVICE_UNAVAILABLE` with

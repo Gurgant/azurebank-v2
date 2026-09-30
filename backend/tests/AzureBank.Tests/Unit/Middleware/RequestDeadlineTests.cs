@@ -208,6 +208,30 @@ public class RequestDeadlineTests
     }
 
     [Fact]
+    public async Task TheResultFilter_WritesUnderNoToken_WhenTheDeadlineFiredAfterACommitStarted()
+    {
+        // A commit that failed as it ran, and that the execution strategy then found had landed: the
+        // failure turned the deadline back on, past its instant it fired at once, and no "committed"
+        // followed. The result is true and a commit started, so the answer must be written whole for
+        // the replay store: the request's token is cancelled, and the client's could cut it.
+        using var client = new CancellationTokenSource();
+        using var deadline = Deadline(client.Token);
+        deadline.TryEnterCommit().Should().BeTrue();
+        _time.Advance(Budget + TimeSpan.FromSeconds(1));
+        deadline.CommitFailed();
+        _time.Advance(TimeSpan.Zero);
+        deadline.Token.IsCancellationRequested.Should().BeTrue("the proof is void unless the deadline fired");
+        var http = new DefaultHttpContext { RequestAborted = deadline.Token };
+        http.Features.Set<IRequestDeadline>(deadline);
+
+        await RunResultFilterAsync(http);
+        client.Cancel();
+
+        http.RequestAborted.CanBeCanceled.Should().BeFalse(
+            "a commit started: its answer is written whole even to a client that has gone");
+    }
+
+    [Fact]
     public void TheResultFilter_IsRegistered_ForEveryAction()
     {
         // The two tests above prove what the filter does; this proves the host runs it. Nothing else
