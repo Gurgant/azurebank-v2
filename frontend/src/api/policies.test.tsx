@@ -13,6 +13,7 @@ import { apiSlice, useDepositMutation, useWithdrawMutation } from '../features/a
 import { useIdempotentMutation, type IdempotentTrigger } from '../hooks/useIdempotentMutation';
 import type { BaseQueryApi } from '@reduxjs/toolkit/query';
 import { problemBaseQuery, type ApiProblem } from './problemBaseQuery';
+import { classifyMoneyProblem } from './moneyProblem';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -773,5 +774,20 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
     const second = await act(() => settle(result.current.submit({ amount: 5 })));
     expect(second.ok).toBe(false);
     expect(unwrap).toHaveBeenCalledTimes(1);
+  });
+
+  it('8b — the money classifier words a send with no HTTP status as a check, a mint with none as a failure', () => {
+    // The same rejection the hook latches on: no status at all.
+    const noStatus = { name: 'Error', message: 'API success envelope carried no data.' };
+    const opts = { messages: {}, fallback: 'Transfer failed. Please try again.' };
+
+    // A send may have moved the money: the verify view, never "failed, try again".
+    expect(
+      classifyMoneyProblem(noStatus as unknown as ApiProblem, { ...opts, phase: 'send' }),
+    ).toEqual({ kind: 'verify' });
+    // A mint moved nothing, and keeps the flow's own sentence.
+    expect(
+      classifyMoneyProblem(noStatus as unknown as ApiProblem, { ...opts, phase: 'mint' }),
+    ).toEqual({ kind: 'message', text: 'Transfer failed. Please try again.', scope: 'attempt' });
   });
 });

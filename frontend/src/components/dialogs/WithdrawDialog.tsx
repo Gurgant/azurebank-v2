@@ -18,7 +18,8 @@ import {
 import { Controller, useForm, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { colors } from '../../theme/tokens';
-import type { ApiProblem } from '../../api/problemBaseQuery';
+import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
+import type { MoneyPhase } from '../../api/moneyProblem';
 import { useAuthoriseWithdrawalMutation, useWithdrawMutation } from '../../features/api/apiSlice';
 import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
 import { selectCurrentUser } from '../../features/auth/authSlice';
@@ -38,7 +39,13 @@ import { useFundsGate } from '../../hooks/useFundsGate';
 import { AmountField } from '../form/AmountField';
 import { DescriptionField } from '../form/DescriptionField';
 import { PinInput } from '../PinInput';
-import { CONNECTION_FAILED } from '../../api/problemMessages';
+import {
+  CONNECTION_FAILED,
+  NO_DOUBLE_CHARGE,
+  SERVICE_UNAVAILABLE_NOTHING_CHANGED,
+  SERVICE_UNAVAILABLE_NO_MONEY_MOVED,
+  WITHDRAWAL_OUTCOME_UNKNOWN,
+} from '../../api/problemMessages';
 
 // ============================================
 // TYPES
@@ -397,7 +404,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
         lastAuthorization.current = authorizationId;
       } catch (caught) {
         setIsSubmitting(false);
-        handleRefusal(caught as ApiProblem);
+        handleRefusal(caught as ApiProblem, 'mint');
         return;
       }
     }
@@ -426,7 +433,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
       });
       onSuccess?.();
     } catch (caught) {
-      handleRefusal(caught as ApiProblem);
+      handleRefusal(caught as ApiProblem, 'send');
     } finally {
       setIsSubmitting(false);
     }
@@ -437,9 +444,16 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
     PIN_LOCKED and PIN_REQUIRED come from the mint now, INSUFFICIENT_FUNDS and the idempotency
     family from the send — and a second copy would be free to drift from this one, which is the
     drift ADR-0056's own corrections spent two rounds undoing elsewhere.
+
+    `phase` is which call failed, and it matters only where the two differ: a SEND with no HTTP
+    status has latched verify-first in the hook (the withdrawal may have landed), a MINT with none
+    moved nothing and keeps the fallback sentence; and an outage during the mint moved no money.
   */
-  const handleRefusal = (problem: ApiProblem) => {
-    if (problem.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN') {
+  const handleRefusal = (problem: ApiProblem, phase: MoneyPhase) => {
+    if (
+      problem.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN' ||
+      (phase === 'send' && (problem as Partial<ApiProblem>).status === undefined)
+    ) {
       // hook latched verifyRequired; the verify view renders below.
     } else if (problem.errorCode === 'IDEMPOTENCY_IN_FLIGHT') {
       setInFlight(true);
@@ -506,6 +520,22 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
       problem.errorCode === 'IDEMPOTENCY_KEY_INVALID'
     ) {
       setError('Something went wrong. Please try again.');
+    } else if (isServiceOutage(problem)) {
+      /*
+        A 503 or no answer in 65 s, before the NETWORK branch that the abort would otherwise take.
+        The MINT moved no money. A SEND changed nothing only if the API said so (`applied: false`);
+        otherwise it may have landed. After a send the key is kept, so pressing Withdraw again
+        re-sends it — which is what makes "won't charge you twice" true beside these two.
+      */
+      if (phase === 'mint') {
+        setError(SERVICE_UNAVAILABLE_NO_MONEY_MOVED);
+      } else {
+        const outcome =
+          problem.applied === false
+            ? SERVICE_UNAVAILABLE_NOTHING_CHANGED
+            : WITHDRAWAL_OUTCOME_UNKNOWN;
+        setError(`${outcome} ${NO_DOUBLE_CHARGE}`);
+      }
     } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
       setError(CONNECTION_FAILED);
     } else {
@@ -790,7 +820,9 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
         )}
         {inFlight && (
           <MessageBar intent="info" role="status" className={styles.errorMessage}>
-            <MessageBarBody>Still processing — tap Withdraw again to check.</MessageBarBody>
+            <MessageBarBody>
+              {`Still processing — tap Withdraw again to check. ${NO_DOUBLE_CHARGE}`}
+            </MessageBarBody>
           </MessageBar>
         )}
 

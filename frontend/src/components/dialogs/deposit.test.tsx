@@ -12,7 +12,7 @@ import { DepositDialog } from './DepositDialog';
 /**
  * T3 (PR-9) — the first production idempotent mutation. Pins the useIdempotentMutation
  * contract end-to-end: replay note (D4), KEEP-on-IN_FLIGHT with the SAME key on retry,
- * key ROTATION on body edit (the D21 seam), RESULT_UNKNOWN verify-first flow, and the
+ * verify-first on a body edit while a key is held, RESULT_UNKNOWN verify-first flow, and the
  * generic (never-raw) message for a client-protocol KEY_REUSE bug (§2.3 / D17).
  */
 
@@ -116,12 +116,12 @@ describe('deposit (T3 — idempotent mutation)', () => {
     expect(keys[0]).toBe(keys[1]);
   });
 
-  it('ROTATES the key when the amount is edited between attempts (D21 seam)', async () => {
+  it('asks for a check, and sends no second key, when the amount is edited while a key is held', async () => {
     const keys: (string | null)[] = [];
     server.use(
       http.post('*/api/transactions/deposit', ({ request }) => {
         keys.push(request.headers.get('Idempotency-Key'));
-        // First attempt KEEPs the key; a body edit must still rotate it.
+        // The first attempt KEEPS its key: that deposit may still land.
         return keys.length === 1
           ? problem({
               status: 409,
@@ -137,12 +137,20 @@ describe('deposit (T3 — idempotent mutation)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
     await screen.findByText(/Still processing/);
 
-    // Edit the amount — the old key + new body would be a 422 KEY_REUSE, so it must rotate.
+    // A new key for the edited amount would be a second deposit beside one that may still land.
     await userEvent.click(screen.getByRole('button', { name: '€200' }));
+    expect(await screen.findByText("We couldn't confirm your deposit")).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Deposit/ })).not.toBeInTheDocument();
+    // "Tap Deposit again" goes with the button it pointed at.
+    expect(screen.queryByText(/Still processing/)).not.toBeInTheDocument();
+    expect(keys).toHaveLength(1);
+
+    // Only the explicit "it didn't go through" starts a new intent, and so a new key.
+    await userEvent.click(screen.getByRole('button', { name: /didn't go through/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Deposit €200.00' }));
     expect(await screen.findByText('Deposit Successful!')).toBeInTheDocument();
     expect(keys).toHaveLength(2);
-    expect(keys[0]).not.toBe(keys[1]);
+    expect(keys[1]).not.toBe(keys[0]);
   });
 
   it('RESULT_UNKNOWN latches a verify-first flow, not a blind retry (§2.3)', async () => {

@@ -14,6 +14,7 @@ import { Controller, useForm, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { colors } from '../theme/tokens';
 import type { ApiProblem } from '../api/problemBaseQuery';
+import type { MoneyPhase } from '../api/moneyProblem';
 import { useTransferWizardStyles } from './transferWizardStyles';
 import { ConfirmDialog } from '../components/shared/ConfirmDialog';
 import { ResultUnknownView } from '../components/shared/ResultUnknownView';
@@ -40,7 +41,7 @@ import { AmountField } from '../components/form/AmountField';
 import { availableBalanceOf } from '../utils/availableBalance';
 import { useFundsGate } from '../hooks/useFundsGate';
 import { PinInput } from '../components/PinInput';
-import { CONNECTION_FAILED } from '../api/problemMessages';
+import { CONNECTION_FAILED, NO_DOUBLE_CHARGE, TRY_AGAIN } from '../api/problemMessages';
 
 // ============================================
 // CONSTANTS
@@ -162,8 +163,17 @@ export function TransferPage() {
   });
   // Destructured under the names the markup already used, so this change is confined to the
   // machine: not one element below moves.
-  const { step, isSubmitting, inFlight, error, verifyRequired, keyLive, onBodyEdit, requestLeave } =
-    wizard;
+  const {
+    step,
+    isSubmitting,
+    inFlight,
+    nothingChanged,
+    error,
+    verifyRequired,
+    keyLive,
+    onBodyEdit,
+    requestLeave,
+  } = wizard;
 
   // ===== PIN step (ADR-0041) =====
   const [authoriseTransfer, { isLoading: isMinting }] = useAuthoriseTransferMutation();
@@ -442,8 +452,8 @@ export function TransferPage() {
         setAuthorizationHeld(true);
       } catch (caught) {
         // Not a `run` failure, so the wizard has not classified it — hand it the same classifier.
-        wizard.failFrom(caught as ApiProblem);
-        handleRefusal(caught as ApiProblem);
+        wizard.failFrom(caught as ApiProblem, { phase: 'mint' });
+        handleRefusal(caught as ApiProblem, 'mint');
         return;
       }
     }
@@ -470,7 +480,7 @@ export function TransferPage() {
         idempotency hook has already dropped the key — so the corrected-PIN retry mints a fresh one
         rather than replaying the refused body.
       */
-      handleRefusal(wizard.lastProblem.current);
+      handleRefusal(wizard.lastProblem.current, 'send');
       return;
     }
 
@@ -491,9 +501,10 @@ export function TransferPage() {
 
   /**
    * What the PIN step does about a refusal, shared by the mint and the send so the two cannot drift.
-   * The banner itself is the wizard's; this owns only the PIN box and the lock.
+   * The banner itself is the wizard's; this owns only the PIN box and the lock. `phase` is which of
+   * the two failed: the last arm is the mint's alone.
    */
-  function handleRefusal(refusal: ApiProblem | null) {
+  function handleRefusal(refusal: ApiProblem | null, phase: MoneyPhase) {
     if (refusal?.errorCode === 'INVALID_PIN') {
       setPin('');
       enteredPin.current = '';
@@ -574,6 +585,30 @@ export function TransferPage() {
       // its own, and the wizard refuses any exit while an idempotency key is live. A 422 is
       // a key-DROP class, so this one goes through.
       requestLeave('/pin-setup?returnTo=/transfer');
+    } else if (
+      phase === 'mint' &&
+      refusal !== null &&
+      (refusal.status === 'NETWORK' ||
+        refusal.status === 'PARSE' ||
+        (typeof refusal.status === 'number' && refusal.status >= 500))
+    ) {
+      /*
+        The MINT got no usable answer: an outage (a 503, or no answer in 65 s, which is NETWORK), a
+        broken connection, an unreadable answer, a 5xx. The PIN step then has no control at all —
+        the sixth digit is the send, and it cannot fire again on boxes that stay full — so empty
+        them and put the caret back in box 1: six digits are the retry.
+
+        Only the mint. After a SEND failure the boxes stay as they are: the resend bar's control
+        runs `onValid`, which returns early without six digits, so emptying them would leave that
+        bar with a button that does nothing. And `lastAuthorization` is not touched: a failed mint
+        never produced one to drop.
+
+        No `setPinError`: nothing says the PIN was wrong. Focus is on `body` when this lands — every
+        control on the step is disabled during the mint — so the refocus takes nothing from anyone.
+      */
+      setPin('');
+      enteredPin.current = '';
+      setPinNonce((n) => n + 1);
     }
   }
 
@@ -709,16 +744,25 @@ export function TransferPage() {
             that reaches this state used to click Send.
 
             This re-sends the SAME key, the SAME body and the SAME authorisation. It is a check, not
-            a second payment, which is why it is worded as one — and the wording splits, because the
-            two ways to get here are not equally knowable. A 409 IN_FLIGHT means the server told us
-            it is working on it. A lost response means we do not know whether anything happened, and
-            saying "still processing" there would assert something nobody has been told.
+            a second payment, which is why it is worded as one — and the wording splits three ways,
+            because the ways to get here are not equally knowable. A 409 IN_FLIGHT means the server
+            told us it is working on it. A 503 with `applied: false` (`nothingChanged`) means the
+            API told us nothing happened, so the control is a plain "Try again", and the bar never
+            says "may or may not" under an alert saying nothing was changed. Anything else — a lost
+            response, a 5xx — means we do not know whether anything happened, and saying "still
+            processing" there would assert something nobody has been told.
+
+            Each form ends with the promise that retrying is safe, and this is the one place it is
+            true: the only control that re-sends the same key. During the wait nothing on the page
+            can, and a reload would send a new key, so the promise is never made there.
           */
           <MessageBar intent="info" role="status">
             <MessageBarBody>
               {inFlight
-                ? 'Still processing — check again to see whether it went through.'
-                : "We couldn't reach the bank. Your transfer may or may not have gone through — check again."}
+                ? `Still processing — check again to see whether it went through. ${NO_DOUBLE_CHARGE}`
+                : nothingChanged
+                  ? NO_DOUBLE_CHARGE
+                  : `We couldn't reach the bank. Your transfer may or may not have gone through — check again. ${NO_DOUBLE_CHARGE}`}
             </MessageBarBody>
             <MessageBarActions>
               <Button
@@ -734,7 +778,7 @@ export function TransferPage() {
                 disabled={isMinting || isSubmitting}
                 onClick={() => void handleSubmit(onValid, onInvalid)()}
               >
-                Check again
+                {!inFlight && nothingChanged ? TRY_AGAIN : 'Check again'}
               </Button>
             </MessageBarActions>
           </MessageBar>

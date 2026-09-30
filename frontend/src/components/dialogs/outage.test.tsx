@@ -1,7 +1,7 @@
 import { Route, Routes } from 'react-router-dom';
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { http } from 'msw';
+import { HttpResponse, http } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { server } from '../../mocks/server';
 import { problem, serviceUnavailable } from '../../mocks/problem';
@@ -31,7 +31,8 @@ import { WithdrawDialog } from './WithdrawDialog';
  * re-sends the same key. "Retrying won't charge you twice" rides along only where that press is
  * the retry (withdraw), never on deposit, where "charge" is the wrong word for money arriving.
  * A change with no key (a new account, a new name, a new PIN) cannot be asked again safely, so it
- * says the change may already be saved.
+ * says the change may already be saved. And an answer that arrives but cannot be read is no
+ * answer at all: the money may have moved, so the dialog asks for a check, never "failed".
  */
 
 afterEach(() => {
@@ -59,13 +60,10 @@ function renderWithdraw() {
   );
 }
 
-function renderDeposit() {
+function renderDeposit(accounts = [moneyAccount()]) {
   return renderWithProviders(
     <Routes>
-      <Route
-        path="/"
-        element={<DepositDialog isOpen onClose={() => {}} accounts={[moneyAccount()]} />}
-      />
+      <Route path="/" element={<DepositDialog isOpen onClose={() => {}} accounts={accounts} />} />
       <Route path="/history" element={<div>HISTORY PAGE</div>} />
     </Routes>,
     { routerEntries: ['/'] },
@@ -198,6 +196,26 @@ describe('deposit during an outage', () => {
     expect(screen.queryByText(/charge/)).not.toBeInTheDocument();
   });
 
+  it('a send with no answer ends at 65 s with the same words', async () => {
+    let sentAt = 0;
+    server.use(
+      http.post('*/api/transactions/deposit', () => {
+        sentAt = Date.now();
+        return never();
+      }),
+    );
+    renderDeposit();
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    await waitFor(() => expect(sentAt).toBeGreaterThan(0));
+
+    await advanceUntil(sentAt, 65_100);
+
+    await alertSays(COPY.depositUnknown);
+  });
+
   it('after an unknown outcome, editing the amount asks for a check and never sends a second key', async () => {
     let sends = 0;
     server.use(
@@ -216,6 +234,121 @@ describe('deposit during an outage', () => {
     expect(await screen.findByText("We couldn't confirm your deposit")).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Deposit/ })).not.toBeInTheDocument();
     expect(sends).toBe(1);
+  });
+
+  it.each([
+    ['typing in the description', () => userEvent.type(screen.getByLabelText('Description'), 'R')],
+    [
+      'choosing the other account',
+      () => userEvent.click(screen.getByRole('button', { name: /Rainy Day/ })),
+    ],
+  ])(
+    'after an unknown outcome, %s is an edit: it asks for a check and never sends a second key',
+    async (_edit, edit) => {
+      let sends = 0;
+      server.use(
+        http.post('*/api/transactions/deposit', () => {
+          sends += 1;
+          return serviceUnavailable({ via: 'api', instance: '/api/transactions/deposit' });
+        }),
+      );
+      const other = mockState.accounts[1];
+      renderDeposit([
+        moneyAccount(),
+        { id: other.id, name: 'Rainy Day', accountNumber: 'AB-••••-••••-91', balance: 500 },
+      ]);
+      await depositHundred();
+      await alertSays(COPY.depositUnknown);
+
+      await edit();
+
+      expect(await screen.findByText("We couldn't confirm your deposit")).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^Deposit/ })).not.toBeInTheDocument();
+      expect(sends).toBe(1);
+    },
+  );
+
+  it.each([
+    [
+      'tapping the amount already chosen',
+      () => userEvent.click(screen.getByRole('button', { name: '€100' })),
+    ],
+    [
+      'choosing the account already selected',
+      () => userEvent.click(screen.getByRole('button', { name: /Main Account/ })),
+    ],
+    [
+      'typing a character the amount field drops',
+      () => userEvent.type(screen.getByLabelText('Deposit amount'), ','),
+    ],
+  ])(
+    'after an unknown outcome, %s is no edit: Deposit again re-sends the same key',
+    async (_gesture, gesture) => {
+      const keys: (string | null)[] = [];
+      server.use(
+        http.post('*/api/transactions/deposit', ({ request }) => {
+          keys.push(request.headers.get('Idempotency-Key'));
+          return serviceUnavailable({ via: 'api', instance: '/api/transactions/deposit' });
+        }),
+      );
+      renderDeposit();
+      await depositHundred();
+      await alertSays(COPY.depositUnknown);
+
+      await gesture();
+
+      // The deposit is the one already sent, so the words and the button they point at stay.
+      expect(screen.queryByText("We couldn't confirm your deposit")).not.toBeInTheDocument();
+      await alertSays(COPY.depositUnknown);
+      await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+      await waitFor(() => expect(keys).toHaveLength(2));
+      expect(keys[1]).toBe(keys[0]);
+    },
+  );
+});
+
+describe('a money send whose answer arrives but cannot be read', () => {
+  /*
+    A 2xx whose body fails its schema rejects with no HTTP status. The server acted, so the key's
+    hook latches verify-first, and the dialog must say only that: its "…failed. Please try again."
+    beneath the verify view would tell the visitor the money did not move.
+  */
+  const unreadable = () => HttpResponse.json({ data: null, message: 'Done.' }, { status: 201 });
+
+  /**
+   * RTK logs a response transform that throws, once, on console.error — which this suite treats as
+   * a failure. Here that error is the scenario, so it is stubbed, and asserted to be that one.
+   */
+  function expectTheUnreadableAnswerLogged() {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    return () => {
+      expect(logged).toHaveBeenCalledTimes(1);
+      expect(String(logged.mock.calls[0][0])).toMatch(/An unhandled error occurred processing/);
+    };
+  }
+
+  it('deposit: asks for a check, and says nothing failed', async () => {
+    const expectLogged = expectTheUnreadableAnswerLogged();
+    server.use(http.post('*/api/transactions/deposit', unreadable));
+    renderDeposit();
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+
+    expect(await screen.findByText("We couldn't confirm your deposit")).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expectLogged();
+  });
+
+  it('withdraw: asks for a check, and says nothing failed', async () => {
+    const expectLogged = expectTheUnreadableAnswerLogged();
+    server.use(http.post('*/api/transactions/withdraw', unreadable));
+    renderWithdraw();
+    await withdrawToPin();
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+
+    expect(await screen.findByText("We couldn't confirm your withdrawal")).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expectLogged();
   });
 });
 

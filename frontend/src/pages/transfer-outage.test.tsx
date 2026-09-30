@@ -1,7 +1,7 @@
 import { Route, Routes } from 'react-router-dom';
 import { act, cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { http } from 'msw';
+import { HttpResponse, http } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { server } from '../mocks/server';
 import { problem, serviceUnavailable } from '../mocks/problem';
@@ -33,7 +33,9 @@ import { InternalTransferPage } from './InternalTransferPage';
  *  - that sentence sits beside the controls that DO re-send the same key — the resend bar, in
  *    all three of its forms (in flight, outcome unknown, nothing applied);
  *  - "nothing was changed" only when the server said so (`applied: false`); a failed MINT moved
- *    no money whatever the answer, and asks for the PIN again with the boxes emptied;
+ *    no money whatever the answer, and asks for the PIN again with the boxes emptied — after a
+ *    lost connection or a 500 as well as an outage;
+ *  - a send with no answer in 65 s is the outage, not a connection problem;
  *  - the recipient check can be stopped, and a check with no answer ends as an outage.
  *
  * Sends are recorded by header rather than inferred from the screen: the same key and the same
@@ -324,6 +326,30 @@ describe.each([
     expect(sent[1].auth).toBe(sent[0].auth);
   });
 
+  it('a send with no answer ends at 65 s as an outage, and the same-key check is offered', async () => {
+    let sentAt = 0;
+    server.use(
+      http.post(flow.sendPath, () => {
+        sentAt = Date.now();
+        return never();
+      }),
+    );
+    flow.render();
+    await flow.toPin();
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByLabelText('Digit 1 of 6'));
+    await user.paste(TEST_PIN);
+    await waitFor(() => expect(sentAt).toBeGreaterThan(0));
+
+    await advanceUntil(sentAt, 65_100);
+
+    await alertSays(COPY.unavailable);
+    expect(screen.queryByText(CONNECTION_FAILED)).not.toBeInTheDocument();
+    const check = screen.getByRole('button', { name: 'Check again' });
+    expect(check.closest('[role="status"]')).toHaveTextContent(`${UNKNOWN_BAR} ${flow.safeRetry}`);
+  });
+
   it('a mint answered 503 moved no money: the PIN is asked for again, and no key is ever sent', async () => {
     let sends = 0;
     server.use(
@@ -346,6 +372,42 @@ describe.each([
     expect(screen.queryByRole('button', { name: COPY.tryAgain })).not.toBeInTheDocument();
     expect(sends).toBe(0);
   });
+
+  it.each([
+    ['a lost connection', () => HttpResponse.error(), CONNECTION_FAILED],
+    [
+      'a 500',
+      () =>
+        problem({
+          status: 500,
+          errorCode: 'INTERNAL_ERROR',
+          detail: 'An unexpected error occurred. Please try again later.',
+        }),
+      'An unexpected error occurred. Please try again later.',
+    ],
+  ])(
+    'a mint lost to %s asks for the PIN again too, in its own words',
+    async (_cause, answer, words) => {
+      let sends = 0;
+      server.use(
+        http.post(flow.mintPath, answer),
+        http.post(flow.sendPath, () => {
+          sends += 1;
+          return undefined;
+        }),
+      );
+      flow.render();
+      await flow.toPin();
+      await enterPin();
+
+      await alertSays(words);
+      await waitFor(() => expect(pinBoxValues()).toEqual(['', '', '', '', '', '']));
+      await waitFor(() =>
+        expect(document.activeElement).toBe(screen.getByLabelText('Digit 1 of 6')),
+      );
+      expect(sends).toBe(0);
+    },
+  );
 
   it('the in-flight bar adds that checking again is safe', async () => {
     recordSends(flow.sendPath, [stillProcessing]);

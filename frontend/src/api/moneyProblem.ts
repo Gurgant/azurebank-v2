@@ -1,5 +1,10 @@
-import type { ApiProblem } from './problemBaseQuery';
-import { CONNECTION_FAILED } from './problemMessages';
+import { isServiceOutage, type ApiProblem } from './problemBaseQuery';
+import {
+  CONNECTION_FAILED,
+  SERVICE_UNAVAILABLE,
+  SERVICE_UNAVAILABLE_NOTHING_CHANGED,
+  SERVICE_UNAVAILABLE_NO_MONEY_MOVED,
+} from './problemMessages';
 import { formatCurrency, formatDateTime } from '../utils/format';
 
 /**
@@ -61,6 +66,14 @@ export type DomainMessages = Record<string, string | { text: string; scope: Mess
  */
 export type MessageScope = 'input' | 'attempt';
 
+/**
+ * Which request of a money action failed: the MINT of its step-up authorisation (ADR-0042), which
+ * carries no idempotency key and moves no money, or the keyed SEND. The same answer means
+ * different things for the two — an outage during the mint moved nothing, one during the send may
+ * have moved the money.
+ */
+export type MoneyPhase = 'mint' | 'send';
+
 /** What the caller should do. Deliberately not "an error string": two outcomes are not errors. */
 export type MoneyFailure =
   /** RESULT_UNKNOWN. The hook has latched `verifyRequired`; the flow shows the verify view and sets NO error. */
@@ -80,10 +93,19 @@ export type MoneyFailure =
  */
 export function classifyMoneyProblem(
   problem: ApiProblem,
-  opts: { messages: DomainMessages; fallback: string },
+  opts: { messages: DomainMessages; fallback: string; phase: MoneyPhase },
 ): MoneyFailure {
   // 1-4: the protocol, in the order both pages had it.
   if (problem.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN') {
+    return { kind: 'verify' };
+  }
+  /*
+    A SEND rejected with no HTTP status: the idempotency hook has latched `verifyRequired` for it,
+    as for RESULT_UNKNOWN (a 2xx whose body failed its schema, or an abort — the money may have
+    moved), so this says the same thing and never "failed, try again". A MINT with no status moved
+    nothing and keeps the flow's fallback sentence, further down.
+  */
+  if (opts.phase === 'send' && (problem as Partial<ApiProblem>).status === undefined) {
     return { kind: 'verify' };
   }
   if (problem.errorCode === 'STEP_UP_CANCELLED') {
@@ -223,6 +245,26 @@ export function classifyMoneyProblem(
     problem.errorCode === 'IDEMPOTENCY_KEY_INVALID'
   ) {
     return { kind: 'message', text: 'Something went wrong. Please try again.', scope: 'attempt' };
+  }
+  /*
+    The outage: a 503, or no answer within the SPA's 65 s. BEFORE the NETWORK branch, because that
+    abort is `status: 'NETWORK'` too, and "check your connection" is the wrong thing to say about a
+    service that is down.
+
+    What the visitor needs is whether the money moved. A failed MINT moved none — no send had
+    started — though it may have counted a PIN attempt, so it says "no money was moved" rather
+    than "nothing was changed". A SEND says "nothing was changed" only when the API said so
+    (`applied: false`, ADR-0058); any other outage may have landed, so it says only that the
+    service is unavailable, and the page's resend bar offers the same-key check.
+  */
+  if (isServiceOutage(problem)) {
+    const text =
+      opts.phase === 'mint'
+        ? SERVICE_UNAVAILABLE_NO_MONEY_MOVED
+        : problem.applied === false
+          ? SERVICE_UNAVAILABLE_NOTHING_CHANGED
+          : SERVICE_UNAVAILABLE;
+    return { kind: 'message', text, scope: 'attempt' };
   }
   if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
     return {

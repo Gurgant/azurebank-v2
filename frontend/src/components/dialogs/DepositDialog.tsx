@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Text, Button, Spinner, MessageBar, MessageBarBody } from '@fluentui/react-components';
 import {
@@ -8,7 +8,7 @@ import {
 } from '@fluentui/react-icons';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import type { ApiProblem } from '../../api/problemBaseQuery';
+import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
 import { useDepositMutation } from '../../features/api/apiSlice';
 import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
 import { formatCurrency } from '../../utils/format';
@@ -22,7 +22,11 @@ import {
 } from '../../forms/moneySchemas';
 import { AmountField } from '../form/AmountField';
 import { DescriptionField } from '../form/DescriptionField';
-import { CONNECTION_FAILED } from '../../api/problemMessages';
+import {
+  CONNECTION_FAILED,
+  DEPOSIT_OUTCOME_UNKNOWN,
+  SERVICE_UNAVAILABLE_NOTHING_CHANGED,
+} from '../../api/problemMessages';
 
 // ============================================
 // TYPES
@@ -69,8 +73,9 @@ const QUICK_AMOUNTS = [50, 100, 200, 500];
  * rewrite): the form state (account/amount/description) lives in react-hook-form with
  * `depositFormSchema` as the resolver — the SAME #33 bounds, exact legacy copy — while the
  * idempotency spine is untouched: useIdempotentMutation keeps the key across KEEP outcomes
- * (IN_FLIGHT / network / 5xx) so Retry re-sends the SAME key + body, and every body edit
- * rotates it (an edited body with the old key is a 422 KEY_REUSE). A replayed 2xx surfaces
+ * (IN_FLIGHT / network / 5xx) so Retry re-sends the SAME key + body, and a body edit rotates it
+ * while NO key is held (an edited body with the old key is a 422 KEY_REUSE); with one RETAINED,
+ * the edit latches verify-first instead, as WithdrawDialog's does. A replayed 2xx surfaces
  * a polite note (D4); RESULT_UNKNOWN latches a verify-first flow (§2.3). No step-up —
  * deposit is auth level 1. The shell is a Fluent Dialog now: focus trap, Escape and
  * aria-modal come from the platform, and BOTH dismissal paths (Esc/backdrop and the X)
@@ -81,11 +86,11 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
   const navigate = useNavigate();
 
   const [depositTrigger] = useDepositMutation();
-  const { submit, resetIntent, verifyRequired, keyRetained } =
+  const { submit, resetIntent, verifyRequired, keyRetained, requireVerify } =
     useIdempotentMutation(depositTrigger);
 
   const schema = useMemo(() => depositFormSchema(), []);
-  const { control, handleSubmit, setValue, watch, formState } = useForm<
+  const { control, handleSubmit, setValue, getValues, watch, formState } = useForm<
     DepositFormValues,
     unknown,
     DepositFormOutput
@@ -103,18 +108,55 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
   const [inFlight, setInFlight] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<SuccessData | null>(null);
+  // The form as it stood at the last send: what a retained key was sent with.
+  const sentValues = useRef<DepositFormValues | null>(null);
 
   const accountId = watch('accountId');
   const amountNumber = parseAmountInput(watch('amount'));
   const selectedAccount = accounts.find((account) => account.id === accountId) ?? null;
 
-  // Any body-affecting edit rotates the key: the old key + a new body is a raw-byte
-  // fingerprint mismatch → 422 KEY_REUSE. Also clears transient in-flight/error state.
+  /*
+    A tap or keystroke that leaves the form as it was sent is no edit: the amount already chosen
+    tapped again, the selected account chosen again, a character the amount field drops. With a key
+    retained, re-sending that key is still the way to find out what happened, and the words on
+    screen say so; treating the tap as an edit would latch the check view and take both away.
+  */
+  const unchangedSinceSend = () => {
+    const sent = sentValues.current;
+    const now = getValues();
+    return (
+      sent !== null &&
+      now.accountId === sent.accountId &&
+      now.amount === sent.amount &&
+      now.description === sent.description
+    );
+  };
+
+  // A body-affecting edit rotates the key when NO key is held: the old key + a new body is a
+  // raw-byte fingerprint mismatch → 422 KEY_REUSE. Also clears transient in-flight/error state.
   // Blocked while a request is in flight: rotating/nulling the key out from under a pending
   // submit would defeat the retained-key guard (a subsequent NETWORK/5xx/IN_FLIGHT could
   // then close/resubmit into a NEW intent while the original still settles).
   const onBodyEdit = () => {
     if (isSubmitting) return;
+    /*
+      A RETAINED key is answered by verify-first, not released — WithdrawDialog's rule, for its
+      reason. Outside a submit a key is held only after IN_FLIGHT, a lost answer or a 5xx, when
+      the first deposit may still land; rotating then made the edited amount a second deposit.
+      The SPA's own 65 s abort keeps the key too, so without this every slow deposit would open
+      that path. Latching drops the key (the dialog can close again) and shows the view that says
+      to check the transactions first.
+
+      The words the failed attempt left — "tap Deposit again", the in-flight note — go with it:
+      the verify view has no Deposit button to tap.
+    */
+    if (keyRetained) {
+      if (unchangedSinceSend()) return;
+      requireVerify();
+      setInFlight(false);
+      setError(null);
+      return;
+    }
     resetIntent();
     setInFlight(false);
     setError(null);
@@ -131,6 +173,12 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
   const onValid = async (data: DepositFormOutput) => {
     const account = accounts.find((a) => a.id === data.accountId);
     if (!account) return;
+    const sent = getValues();
+    sentValues.current = {
+      accountId: sent.accountId,
+      amount: sent.amount,
+      description: sent.description,
+    };
     setError(null);
     setInFlight(false);
     setIsSubmitting(true);
@@ -151,8 +199,13 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
     } catch (caught) {
       const problem = caught as ApiProblem;
       // D17 / §2.3: route on errorCode, never a blanket toast. RESULT_UNKNOWN is
-      // handled by the hook (latches verifyRequired) — we just render that view.
-      if (problem.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN') {
+      // handled by the hook (latches verifyRequired) — we just render that view. So is a
+      // rejection with no HTTP status (an answer whose body failed its schema): the deposit may
+      // have landed, and "Deposit failed" under the verify view would say it had not.
+      if (
+        problem.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN' ||
+        (problem as Partial<ApiProblem>).status === undefined
+      ) {
         // hook set verifyRequired; the verify view renders below.
       } else if (problem.errorCode === 'IDEMPOTENCY_IN_FLIGHT') {
         setInFlight(true);
@@ -167,6 +220,14 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
       ) {
         // Client protocol bug — never surface the raw code (D17).
         setError('Something went wrong. Please try again.');
+      } else if (isServiceOutage(problem)) {
+        // A 503 or no answer in 65 s — before the NETWORK branch, which the abort would otherwise
+        // take. "Nothing was changed" only when the API said so (`applied: false`); otherwise the
+        // deposit may have landed, and Deposit again re-sends the same key to find out. Never
+        // "won't charge you twice": nothing is charged for money arriving.
+        setError(
+          problem.applied === false ? SERVICE_UNAVAILABLE_NOTHING_CHANGED : DEPOSIT_OUTCOME_UNKNOWN,
+        );
       } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
         // Transport failure — a raw "TypeError: Failed to fetch" would leak (D17). The
         // key is KEPT (shouldKeepKey) so tapping Deposit again is a safe same-key retry.

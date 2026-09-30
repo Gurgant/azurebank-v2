@@ -56,6 +56,7 @@ function shouldKeepKey(problem: ApiProblem): boolean {
  * `IDEMPOTENCY_RESULT_UNKNOWN` drops the key and latches `verifyRequired`: submit
  * refuses to mint a new key until the owning flow's explicit "it didn't go through —
  * try again" action calls `resetIntent` (after the verify-transactions dialog, ADR-0022).
+ * A rejection with no HTTP status latches the same way (see the catch below).
  */
 export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger<TBody, TResult>) {
   const keyRef = useRef<string | null>(null);
@@ -101,7 +102,15 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
         return result;
       } catch (error) {
         const problem = error as ApiProblem;
-        if (problem.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN') {
+        /*
+          A rejection with NO HTTP status is not a refusal: `problemBaseQuery` gives every answer
+          and every transport failure a status, so what is left is a 2xx whose body failed its
+          schema — the server acted — or an abort. Either way the request may have landed, which
+          is exactly what RESULT_UNKNOWN says, so it gets the same latch. Dropping the key quietly
+          instead let the flow say "failed, try again", and the next press sent a second key.
+        */
+        const noStatus = (problem as Partial<ApiProblem> | undefined)?.status === undefined;
+        if (noStatus || problem.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN') {
           keyRef.current = null;
           verifyRequiredRef.current = true;
           setVerifyRequired(true);

@@ -11,6 +11,8 @@ import { CheckmarkCircle24Filled, ArrowSwap24Regular } from '@fluentui/react-ico
 import { useForm, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import type { ApiProblem } from '../api/problemBaseQuery';
+import type { MoneyPhase } from '../api/moneyProblem';
+import { NO_DOUBLE_MOVE, TRY_AGAIN } from '../api/problemMessages';
 import { useTransferWizardStyles } from './transferWizardStyles';
 import { ConfirmDialog } from '../components/shared/ConfirmDialog';
 import { ResultUnknownView } from '../components/shared/ResultUnknownView';
@@ -83,8 +85,17 @@ export function InternalTransferPage() {
     fallback: 'Transfer failed. Please try again.',
   });
   // Destructured under the names the markup already used, so this change is confined to the machine.
-  const { step, isSubmitting, inFlight, error, verifyRequired, keyLive, onBodyEdit, requestLeave } =
-    wizard;
+  const {
+    step,
+    isSubmitting,
+    inFlight,
+    nothingChanged,
+    error,
+    verifyRequired,
+    keyLive,
+    onBodyEdit,
+    requestLeave,
+  } = wizard;
 
   // ===== PIN step (ADR-0041) — same shape as TransferPage and WithdrawDialog. =====
   const [authoriseInternalTransfer, { isLoading: isMinting }] =
@@ -321,8 +332,8 @@ export function InternalTransferPage() {
         lastAuthorization.current = authorizationId;
         setAuthorizationHeld(true);
       } catch (caught) {
-        wizard.failFrom(caught as ApiProblem);
-        handleRefusal(caught as ApiProblem);
+        wizard.failFrom(caught as ApiProblem, { phase: 'mint' });
+        handleRefusal(caught as ApiProblem, 'mint');
         return;
       }
     }
@@ -339,7 +350,7 @@ export function InternalTransferPage() {
     // undefined means it failed and the wizard has already set the banner, the in-flight note or
     // the verify view. Under `strict` this early return is not optional.
     if (!result) {
-      handleRefusal(wizard.lastProblem.current);
+      handleRefusal(wizard.lastProblem.current, 'send');
       return;
     }
 
@@ -362,7 +373,7 @@ export function InternalTransferPage() {
    * What the PIN step does about a refusal, shared by the mint and the send. Mirrors TransferPage,
    * where the reasoning for each branch is written out in full.
    */
-  function handleRefusal(refusal: ApiProblem | null) {
+  function handleRefusal(refusal: ApiProblem | null, phase: MoneyPhase) {
     if (refusal?.errorCode === 'INVALID_PIN') {
       setPin('');
       enteredPin.current = '';
@@ -403,6 +414,18 @@ export function InternalTransferPage() {
       // its own, and the wizard refuses any exit while an idempotency key is live. A 422 is
       // a key-DROP class, so this one goes through.
       requestLeave('/pin-setup?returnTo=/transfer/internal');
+    } else if (
+      phase === 'mint' &&
+      refusal !== null &&
+      (refusal.status === 'NETWORK' ||
+        refusal.status === 'PARSE' ||
+        (typeof refusal.status === 'number' && refusal.status >= 500))
+    ) {
+      // The mint got no usable answer (an outage included): with full boxes the PIN step has no
+      // control, so empty them and refocus box 1. The mint's alone; see TransferPage.
+      setPin('');
+      enteredPin.current = '';
+      setPinNonce((n) => n + 1);
     }
   }
 
@@ -538,16 +561,19 @@ export function InternalTransferPage() {
             that reaches this state used to click Send.
 
             This re-sends the SAME key, the SAME body and the SAME authorisation. It is a check, not
-            a second payment, which is why it is worded as one — and the wording splits, because the
-            two ways to get here are not equally knowable. A 409 IN_FLIGHT means the server told us
-            it is working on it. A lost response means we do not know whether anything happened, and
-            saying "still processing" there would assert something nobody has been told.
+            a second payment, which is why it is worded as one — and the wording splits three ways,
+            as on TransferPage: IN_FLIGHT, `applied: false` (`nothingChanged`, a plain "Try again"),
+            and anything else, which nobody can call "still processing". Each ends with the promise
+            that retrying is safe — worded for money that moves between the visitor's own accounts,
+            where nothing is charged.
           */
           <MessageBar intent="info" role="status">
             <MessageBarBody>
               {inFlight
-                ? 'Still processing — check again to see whether it went through.'
-                : "We couldn't reach the bank. Your transfer may or may not have gone through — check again."}
+                ? `Still processing — check again to see whether it went through. ${NO_DOUBLE_MOVE}`
+                : nothingChanged
+                  ? NO_DOUBLE_MOVE
+                  : `We couldn't reach the bank. Your transfer may or may not have gone through — check again. ${NO_DOUBLE_MOVE}`}
             </MessageBarBody>
             <MessageBarActions>
               <Button
@@ -563,7 +589,7 @@ export function InternalTransferPage() {
                 disabled={isMinting || isSubmitting}
                 onClick={() => void handleSubmit(onValid, onInvalid)()}
               >
-                Check again
+                {!inFlight && nothingChanged ? TRY_AGAIN : 'Check again'}
               </Button>
             </MessageBarActions>
           </MessageBar>
