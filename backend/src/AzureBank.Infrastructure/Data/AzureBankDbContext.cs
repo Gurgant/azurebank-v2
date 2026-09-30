@@ -141,15 +141,35 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
             return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
         }
 
-        var written = await Database.CreateExecutionStrategy().ExecuteInTransactionAsync(
-            OwnedAuditIds(),
-            async (_, ct) =>
+        var owned = OwnedAuditIds();
+        var saved = 0;
+        var commitAttempted = false;
+        int written;
+        try
+        {
+            written = await Database.CreateExecutionStrategy().ExecuteInTransactionAsync(
+                owned,
+                async (_, ct) =>
+                {
+                    commitAttempted = false;
+                    await chain.ApplyAsync(this, ct);
+                    saved = await base.SaveChangesAsync(acceptAllChangesOnSuccess: false, ct);
+                    commitAttempted = true;
+                    return saved;
+                },
+                (ids, ct) => AuditEvents.AsNoTracking().AnyAsync(e => ids.Contains(e.Id), ct),
+                cancellationToken);
+        }
+        catch (Exception) when (commitAttempted && cancellationToken.IsCancellationRequested)
+        {
+            // The strategy's question, refused or cancelled by the token (see the comment below).
+            if (!await CommitLandedAsync(owned))
             {
-                await chain.ApplyAsync(this, ct);
-                return await base.SaveChangesAsync(acceptAllChangesOnSuccess: false, ct);
-            },
-            (owned, ct) => AuditEvents.AsNoTracking().AnyAsync(e => owned.Contains(e.Id), ct),
-            cancellationToken);
+                throw;
+            }
+
+            written = saved;
+        }
 
         if (acceptAllChangesOnSuccess)
         {
@@ -202,6 +222,16 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
       (AuthService.RegisterAsync keys it on the user it minted). DepositCommitFaultSqlServerTests
       pins both faults: a commit that never started, and a commit whose acknowledgement was lost.
 
+      AND THE QUESTION IS ASKED AGAIN WHEN THE TOKEN STOPPED IT, a FOURTH correction. The strategy
+      asks under the save's token, which in the API is the request deadline's, and a commit that
+      fails turns the deadline back on at its original instant (ADR-0058 D4): past it, the deadline
+      fires at once, and the strategy's question is refused before it is sent or cancelled while it
+      runs. Measured on SQL Server with a PIN change's acknowledgement lost after the deadline: 503,
+      with the new PIN in place. So when the token is cancelled after a commit was attempted, the
+      save asks once more, under a budget of its own (LandedCheckBudget), and a row found is a
+      success. A question that fails as well leaves the save's own failure to be answered, as
+      before. DepositCommitFaultSqlServerTests pins it on the PIN change.
+
       No transaction is opened at all — and the ordinary write path is untouched — when:
         - the save carries no audit row;
         - a caller already has an explicit transaction: it is the one holding the lock, and
@@ -221,6 +251,30 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
             .Where(e => e.State == EntityState.Added)
             .Select(e => e.Entity.Id)
             .ToArray();
+
+    /// <summary>
+    /// How long the second question may take: one read by key, and longer means the database is
+    /// failing. The same 3 s the idempotency bookkeeping has (ADR-0058 D8).
+    /// </summary>
+    private static readonly TimeSpan LandedCheckBudget = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// Whether this save's audit rows are there, asked under <see cref="LandedCheckBudget"/> rather
+    /// than the save's token, which is already cancelled. False when the question fails too: the
+    /// outcome stays unknown.
+    /// </summary>
+    private async Task<bool> CommitLandedAsync(Guid[] owned)
+    {
+        using var budget = new CancellationTokenSource(LandedCheckBudget);
+        try
+        {
+            return await AuditEvents.AsNoTracking().AnyAsync(e => owned.Contains(e.Id), budget.Token);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
 
     /*
       The chain runs HERE, in the same funnel as the immutability guard and the timestamps, and for

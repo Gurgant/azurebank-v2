@@ -131,8 +131,8 @@ writes nothing under a status that already says success
 `RequestAborted` becomes the client's token again for the write, except once a commit has started:
 then it stays the request's, which nothing can cancel any more, so a keyed answer is captured
 whole even for a client that has gone, and its retry is replayed the whole answer. A commit that
-failed turns the deadline back on (D4), and when the execution strategy then finds that commit
-landed after all, the deadline may already have fired: that answer is written under no token.
+failed turns the deadline back on (D4), and when the save then finds that commit landed after all
+(D10), the deadline may already have fired: that answer is written under no token.
 
 **D6 — An outage is one 503, and a client that hung up gets nothing.**
 `ServiceUnavailableExceptionHandler` answers **503** `SERVICE_UNAVAILABLE` with
@@ -192,8 +192,13 @@ changes before the commit, so a transient fault as the commit started rolled the
 execution strategy's re-run found nothing to save, committed an empty transaction and returned
 success: the deposit's 201 with no ledger row above. The save now keeps its changes pending until
 the strategy returns and runs through `ExecuteInTransaction`, which asks the database whether the
-save's own audit row, a client-side id, is there before it decides (ADR-0044's note). It does not
-depend on the deadline; it is here because the deadline's commit gate sits on the same commit.
+save's own audit row, a client-side id, is there before it decides (ADR-0044's note). The strategy
+asks under the save's token, which the deadline cancels: a commit that fails turns the deadline
+back on (D4), and past its instant the deadline fires at once, so the question is refused or cut
+short. So when that token is cancelled after a commit was attempted, the save asks once more under
+3 s of its own, as the bookkeeping does (D8), and a row found is a success. Measured with a PIN
+change's acknowledgement lost after a 3 s deadline: 503 before, with the new PIN in place, and 200
+now (`DepositCommitFaultSqlServerTests`).
 
 **D11 — The BFF waits 55 s, on both roads, and answers the same 503 when it gives up.**
 `BackendApi:TimeoutSeconds` is its own client's `HttpClient.Timeout` and, through
@@ -255,7 +260,7 @@ that measure it are in the pull request:
 |---|---|---|---|
 | Azure refusal or failover (fails fast) | 503 once EF's retries are spent, 13 to 37 s, or at the 40 s deadline | within 40 s and a fast release | the commit fails fast and the deadline is back on: about 43 s |
 | A hung database, new login | −2 in about 10 s (the login's connect timeout) | about 10 s and the release | n/a |
-| A hung database, pooled connection | −2 at about 35 s, or cut at 40 + 5 | **53 s at most** | up to 40 + 10 (the commit, bounded by the connect timeout) + 5 (its attention, not measured) + 3 + 5 (the release and its attention) = 63 s: the BFF's own 503 comes first, at 55 s, and says the same thing, "unknown" |
+| A hung database, pooled connection | −2 at about 35 s, or cut at 40 + 5 | **53 s at most** | up to 40 + 10 (the commit, bounded by the connect timeout) + 5 (its attention, not measured) + 3 + 5 (the save's second question, D10, and its attention) + 3 + 5 (the release and its attention) = 71 s: the BFF's own 503 comes first, at 55 s, and says the same thing, "unknown" |
 
 ## What the deadline does to writes
 

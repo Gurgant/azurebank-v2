@@ -435,9 +435,10 @@ public sealed class RequestDeadlineMiddleware
 /// </para>
 /// <para>
 /// ONE STATE LEAVES A STARTED COMMIT WITH A CANCELLED TOKEN: a commit that failed turned the
-/// deadline back on, the deadline then fired, and the execution strategy found the commit had
-/// landed after all (its check that the save's row is there), so no "committed" followed and the
-/// action returned its result. That answer is written under no token at all: the request's is
+/// deadline back on, the deadline then fired, and the save found the commit had landed after all
+/// (its check that its audit row is there, asked again under its own budget once the deadline's
+/// token stopped the execution strategy's), so no "committed" followed and the action returned
+/// its result. That answer is written under no token at all: the request's is
 /// cancelled, and the client's could cut the answer stored for replay.
 /// </para>
 /// </remarks>
