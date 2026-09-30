@@ -1,12 +1,12 @@
 import { Route, Routes } from 'react-router-dom';
-import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { server } from '../../mocks/server';
 import { bffProblem, problem, serviceUnavailable } from '../../mocks/problem';
-import { MOCK_PASSWORD, mockState, seedMockSession } from '../../mocks/state';
+import { MOCK_PASSWORD, MOCK_USER, mockState, seedMockSession } from '../../mocks/state';
 import { makeTestStore, renderWithProviders, type TestStore } from '../../test/renderWithProviders';
-import { enterPin } from '../../test/pinFlow';
+import { TEST_PIN, enterPin } from '../../test/pinFlow';
 import {
   COPY,
   advance,
@@ -86,6 +86,34 @@ const warning = () => screen.queryByRole('alertdialog');
 /** Into the warning's last two minutes. */
 async function reachTheWarning() {
   await advance(61_000);
+  await waitFor(() => expect(warning()).toBeInTheDocument());
+}
+
+/** The connection sentence, typed out for the same reason as `COPY`. */
+const CONNECTION = "Couldn't reach the server — check your connection and try again.";
+
+/** What the warning's own alert says, once it says it. */
+async function warningSays(text: string) {
+  await waitFor(() =>
+    expect(within(screen.getByRole('alertdialog')).getByRole('alert')).toHaveTextContent(text),
+  );
+}
+
+/**
+ * Signed in with a 150 s absolute cap: the warning that asks for the password comes 30 s in, and
+ * `reachTheCapWarning` goes 35 s in.
+ */
+async function bootAtTheCap(): Promise<TestStore> {
+  seedMockSession();
+  mockState.sessionInactivityWindowMs = 30 * 60_000;
+  mockState.sessionAbsoluteWindowMs = 150_000;
+  const store = makeTestStore();
+  await store.dispatch(apiSlice.endpoints.getMe.initiate()).unwrap();
+  return store;
+}
+
+async function reachTheCapWarning() {
+  await advance(35_000);
   await waitFor(() => expect(warning()).toBeInTheDocument());
 }
 
@@ -175,6 +203,222 @@ describe('"Sign out now" during an outage', () => {
 
     await waitFor(() => expect(store.getState().auth.status).toBe('anonymous'));
   });
+
+  it.each([
+    ['a lost connection', () => HttpResponse.error(), CONNECTION],
+    [
+      // A gateway's own error page: an answer came back, but not one the app can read.
+      'an answer that cannot be read',
+      () =>
+        new HttpResponse('<html>Bad Gateway</html>', {
+          status: 502,
+          headers: { 'Content-Type': 'text/html' },
+        }),
+      CONNECTION,
+    ],
+    [
+      'a 500',
+      () =>
+        problem({
+          status: 500,
+          errorCode: 'INTERNAL_ERROR',
+          detail: 'An unexpected error occurred. Please try again later.',
+        }),
+      COPY.unavailable,
+    ],
+    [
+      'a 429 from the rate limiter',
+      () =>
+        problem({
+          status: 429,
+          errorCode: 'RATE_LIMITED',
+          detail: 'Too many requests.',
+          headers: { 'Retry-After': '10' },
+        }),
+      COPY.unavailable,
+    ],
+  ])(
+    '%s keeps the dialog, the session and what was fetched under it, and says why',
+    async (_what, answer, words) => {
+      const store = await boot();
+      server.use(
+        http.post('*/bff/auth/logout', answer),
+        // A cleared cache would ask /me again, and this answer would lose what it held.
+        http.get('*/bff/auth/me', () =>
+          serviceUnavailable({ via: 'bff', instance: '/bff/auth/me' }),
+        ),
+      );
+      installFakeClock();
+      renderApp(store);
+      await reachTheWarning();
+
+      await fakeClockUser().click(screen.getByRole('button', { name: /sign out now/i }));
+      await warningSays(words);
+
+      // Still there a while later, also where the BFF answered the failure itself (the 500, the
+      // 429): that answer moved its clock, and the deadline with it, past the warning's two minutes.
+      await advance(5_000);
+      expect(within(screen.getByRole('alertdialog')).getByRole('alert')).toHaveTextContent(words);
+      expect(screen.getByRole('button', { name: /sign out now/i })).toBeEnabled();
+      expect(store.getState().auth.status).toBe('authenticated');
+      expect(apiSlice.endpoints.getMe.select()(store.getState()).data?.user.email).toBe(
+        MOCK_USER.email,
+      );
+    },
+  );
+
+  it('pressed again after a failure, it keeps the dialog while it waits, without the old words', async () => {
+    const store = await boot();
+    let attempts = 0;
+    let secondAt = 0;
+    server.use(
+      http.post('*/bff/auth/logout', () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return problem({
+            status: 429,
+            errorCode: 'RATE_LIMITED',
+            detail: 'Too many requests.',
+            headers: { 'Retry-After': '10' },
+          });
+        }
+        secondAt = Date.now();
+        return never();
+      }),
+    );
+    installFakeClock();
+    renderApp(store);
+    await reachTheWarning();
+    const user = fakeClockUser();
+    await user.click(screen.getByRole('button', { name: /sign out now/i }));
+    await warningSays(COPY.unavailable);
+
+    await user.click(screen.getByRole('button', { name: /sign out now/i }));
+    await waitFor(() => expect(secondAt).toBeGreaterThan(0));
+    await advanceUntil(secondAt, 5_000);
+
+    const dialog = screen.getByRole('alertdialog');
+    hintRegion(COPY.slow, dialog);
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('no answer in 65 s says the service is unavailable, not the connection', async () => {
+    const store = await boot();
+    let sentAt = 0;
+    server.use(
+      http.post('*/bff/auth/logout', () => {
+        sentAt = Date.now();
+        return never();
+      }),
+    );
+    installFakeClock();
+    renderApp(store);
+    await reachTheWarning();
+
+    await fakeClockUser().click(screen.getByRole('button', { name: /sign out now/i }));
+    await waitFor(() => expect(sentAt).toBeGreaterThan(0));
+    await advanceUntil(sentAt, 65_100);
+
+    await warningSays(COPY.unavailable);
+    expect(screen.queryByText(CONNECTION)).not.toBeInTheDocument();
+    expect(store.getState().auth.status).toBe('authenticated');
+  });
+
+  it('after a failed sign-out, "Stay signed in" keeps the session and the dialog closes', async () => {
+    const store = await boot();
+    server.use(http.post('*/bff/auth/logout', () => HttpResponse.error()));
+    installFakeClock();
+    renderApp(store);
+    await reachTheWarning();
+    const user = fakeClockUser();
+    await user.click(screen.getByRole('button', { name: /sign out now/i }));
+    await warningSays(CONNECTION);
+
+    await user.click(screen.getByRole('button', { name: /stay signed in/i }));
+
+    await waitFor(() => expect(warning()).not.toBeInTheDocument());
+    expect(store.getState().auth.status).toBe('authenticated');
+  });
+
+  it('after a failed sign-out, signing in again at the cap starts the new session and the dialog closes', async () => {
+    const store = await bootAtTheCap();
+    server.use(http.post('*/bff/auth/logout', () => HttpResponse.error()));
+    installFakeClock();
+    renderApp(store);
+    await reachTheCapWarning();
+    const user = fakeClockUser();
+    await user.click(screen.getByRole('button', { name: /sign out now/i }));
+    await warningSays(CONNECTION);
+
+    fireEvent.change(screen.getByLabelText(/enter your password/i), {
+      target: { value: MOCK_PASSWORD },
+    });
+    await user.click(screen.getByRole('button', { name: /sign in again/i }));
+
+    await waitFor(() => expect(warning()).not.toBeInTheDocument());
+    expect(store.getState().auth.status).toBe('authenticated');
+  });
+
+  it('at the cap, a failed sign-out replaces the words of a failed sign-in instead of adding to them', async () => {
+    const store = await bootAtTheCap();
+    server.use(
+      http.post('*/bff/auth/reauthenticate', () =>
+        serviceUnavailable({ via: 'bff', instance: '/bff/auth/reauthenticate' }),
+      ),
+      http.post('*/bff/auth/logout', () => HttpResponse.error()),
+    );
+    installFakeClock();
+    renderApp(store);
+    await reachTheCapWarning();
+    const user = fakeClockUser();
+    fireEvent.change(screen.getByLabelText(/enter your password/i), {
+      target: { value: MOCK_PASSWORD },
+    });
+    await user.click(screen.getByRole('button', { name: /sign in again/i }));
+    await warningSays(COPY.unavailable);
+
+    await user.click(screen.getByRole('button', { name: /sign out now/i }));
+
+    const alertTexts = () =>
+      within(screen.getByRole('alertdialog'))
+        .getAllByRole('alert')
+        .map((alert) => alert.textContent);
+    await waitFor(() => expect(alertTexts()).toContain(CONNECTION));
+    expect(alertTexts()).toEqual([CONNECTION]);
+  });
+
+  it('the words of a failed sign-out do not follow the visitor into their next session', async () => {
+    const store = await boot();
+    server.use(
+      http.post('*/bff/auth/logout', () => HttpResponse.error()),
+      http.get('*/api/accounts', () => problem({ status: 401, title: 'Unauthorized' })),
+    );
+    installFakeClock();
+    renderApp(store);
+    await reachTheWarning();
+    await fakeClockUser().click(screen.getByRole('button', { name: /sign out now/i }));
+    await warningSays(CONNECTION);
+
+    // The session ends another way (a 401 on a read), and the bootstrap probe finds a new one.
+    const seen: string[] = [];
+    const unsubscribe = store.subscribe(() => {
+      const next = store.getState().auth.status;
+      if (seen[seen.length - 1] !== next) seen.push(next);
+    });
+    await act(async () => {
+      await store
+        .dispatch(apiSlice.endpoints.getAccounts.initiate(undefined, { subscribe: false }))
+        .unwrap()
+        .catch(() => undefined);
+    });
+    await waitFor(() => expect(seen).toEqual(['expired', 'authenticated']));
+    unsubscribe();
+
+    // Its deadline is minutes away: no warning, and no words from the session before.
+    await advance(2_000);
+    expect(warning()).not.toBeInTheDocument();
+    expect(screen.queryByText(CONNECTION)).not.toBeInTheDocument();
+  });
 });
 
 describe('the boot probe during an outage', () => {
@@ -206,9 +450,11 @@ describe('the boot probe during an outage', () => {
       expect(document.activeElement).toBe(screen.getByRole('button', { name: COPY.tryAgain })),
     );
 
-    // Back up: Try again lets the visitor in.
+    // Back up: Try again lets the visitor in. A plain click, so that the answer lands while the
+    // test is waiting for it: the session it starts sets its countdown in an effect, and after a
+    // `user.click` that render can fall between the click and the wait, outside both.
     down = false;
-    await user.click(screen.getByRole('button', { name: COPY.tryAgain }));
+    fireEvent.click(screen.getByRole('button', { name: COPY.tryAgain }));
     expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
   });
 
@@ -270,6 +516,54 @@ describe('the boot probe during an outage', () => {
 
     expect(await screen.findByText('LOGIN PAGE')).toBeInTheDocument();
     expect((router.state.location.state as { reason?: string } | null)?.reason).toBeUndefined();
+  });
+
+  it.each([
+    ['a lost connection', () => HttpResponse.error()],
+    [
+      'a 500',
+      () =>
+        problem({
+          status: 500,
+          errorCode: 'INTERNAL_ERROR',
+          detail: 'An unexpected error occurred. Please try again later.',
+        }),
+    ],
+    [
+      'an answer that cannot be read',
+      () => new HttpResponse('<html></html>', { headers: { 'Content-Type': 'text/html' } }),
+    ],
+  ])('%s at boot is not a sign-out either', async (_what, answer) => {
+    server.use(http.get('*/bff/auth/me', answer));
+    installFakeClock();
+    const { router } = renderApp(makeTestStore());
+    await advance(15_000);
+
+    const main = await screen.findByRole('main');
+    expect(
+      within(main).getByRole('heading', { level: 1, name: COPY.unavailableTitle }),
+    ).toBeInTheDocument();
+    expect(within(main).getByRole('alert')).toHaveTextContent(COPY.unavailable);
+    expect(within(main).getByRole('button', { name: COPY.tryAgain })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/dashboard');
+  });
+
+  it('a body that fails its schema at boot is not a sign-out either', async () => {
+    // RTK reports an answer its schema refused on console.error in development. That refusal is
+    // this case, so the report is expected and checked here instead of failing the test.
+    const report = vi.spyOn(console, 'error').mockImplementation(() => {});
+    server.use(http.get('*/bff/auth/me', () => HttpResponse.json({ data: { nothing: true } })));
+    installFakeClock();
+    const { router } = renderApp(makeTestStore());
+    await advance(15_000);
+
+    const main = await screen.findByRole('main');
+    expect(within(main).getByRole('alert')).toHaveTextContent(COPY.unavailable);
+    expect(router.state.location.pathname).toBe('/dashboard');
+    expect(
+      report.mock.calls.some(([first]) => String(first).includes('the endpoint "getMe"')),
+    ).toBe(true);
+    report.mockRestore();
   });
 });
 
@@ -409,6 +703,45 @@ describe('a signed-in session through an outage', () => {
 
     await waitFor(() => expect(store.getState().auth.status).toBe('expired'));
   });
+
+  it('at 0:00, activity that moves the deadline while the sign-out is on its way does not bring the dialog back', async () => {
+    const store = await boot();
+    let logoutAt = 0;
+    server.use(
+      http.get('*/bff/auth/session-status', () =>
+        serviceUnavailable({ via: 'bff', instance: '/bff/auth/session-status' }),
+      ),
+      http.post('*/bff/auth/logout', () => {
+        logoutAt = Date.now();
+        return never();
+      }),
+      // The BFF's own 503 counts as activity; a wait longer than the read's budget means no retry.
+      http.get('*/api/accounts', () =>
+        serviceUnavailable({ via: 'bff', instance: '/api/accounts', retryAfterSeconds: 500 }),
+      ),
+    );
+    installFakeClock();
+    renderApp(store);
+    await advance(INACTIVITY_WINDOW_MS + 2_000);
+    await advance(15_000);
+    await waitFor(() => expect(logoutAt).toBeGreaterThan(0));
+    expect(warning()).not.toBeInTheDocument();
+
+    const before = getLastServerActivity() ?? 0;
+    await act(async () => {
+      await store
+        .dispatch(apiSlice.endpoints.getAccounts.initiate(undefined, { subscribe: false }))
+        .unwrap()
+        .catch(() => undefined);
+    });
+    expect(getLastServerActivity()).toBeGreaterThan(before);
+    await advance(2_000);
+
+    // Outside the warning's two minutes, and nobody asked to sign out: no dialog.
+    expect(warning()).not.toBeInTheDocument();
+    await advanceUntil(logoutAt, 65_100);
+    await waitFor(() => expect(store.getState().auth.status).toBe('expired'));
+  });
 });
 
 describe('the words where a 503 meets a PIN or a password', () => {
@@ -457,5 +790,58 @@ describe('the words where a 503 meets a PIN or a password', () => {
     await user.click(screen.getByRole('button', { name: /sign in again/i }));
 
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.unavailable));
+  });
+
+  it('the step-up modal says it is slow, and with no answer in 65 s that the service is unavailable', async () => {
+    let sentAt = 0;
+    server.use(
+      http.post('*/bff/auth/verify-pin', () => {
+        sentAt = Date.now();
+        return never();
+      }),
+    );
+    installFakeClock();
+    const store = makeTestStore();
+    renderWithProviders(<StepUpModal />, { store });
+    void store.dispatch(apiSlice.endpoints.revealAccountNumber.initiate(mockState.accounts[0].id));
+    await screen.findByText("Verify it's you");
+    const user = fakeClockUser();
+    await user.click(screen.getByLabelText('Digit 1 of 6'));
+    await user.paste(TEST_PIN);
+    await waitFor(() => expect(sentAt).toBeGreaterThan(0));
+
+    await advanceUntil(sentAt, 5_000);
+    hintRegion(COPY.slow, screen.getByRole('alertdialog'));
+
+    await advanceUntil(sentAt, 65_100);
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.unavailable));
+    expect(screen.queryByText(/check your connection/i)).not.toBeInTheDocument();
+  });
+
+  it('signing in again says it is slow, and with no answer in 65 s that the service is unavailable', async () => {
+    const store = await bootAtTheCap();
+    let sentAt = 0;
+    server.use(
+      http.post('*/bff/auth/reauthenticate', () => {
+        sentAt = Date.now();
+        return never();
+      }),
+    );
+    installFakeClock();
+    renderApp(store);
+    await reachTheCapWarning();
+
+    fireEvent.change(screen.getByLabelText(/enter your password/i), {
+      target: { value: MOCK_PASSWORD },
+    });
+    await fakeClockUser().click(screen.getByRole('button', { name: /sign in again/i }));
+    await waitFor(() => expect(sentAt).toBeGreaterThan(0));
+
+    await advanceUntil(sentAt, 5_000);
+    hintRegion(COPY.slow, screen.getByRole('alertdialog'));
+
+    await advanceUntil(sentAt, 65_100);
+    await warningSays(COPY.unavailable);
+    expect(screen.queryByText(CONNECTION)).not.toBeInTheDocument();
   });
 });

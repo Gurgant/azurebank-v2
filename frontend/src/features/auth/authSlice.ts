@@ -1,13 +1,16 @@
 import { createSlice, type Action } from '@reduxjs/toolkit';
 import type { BffLoginResponse, BffMeResponse, UserSessionInfo } from '../../api/bffTypes';
+import type { ApiProblem } from '../../api/problemBaseQuery';
 
 /**
  * Client auth state (D3/D6). There is NO token here — the JWT never reaches the
  * browser (BFF pattern, ADR-0001): transport auth is the __Host- session cookie,
  * carried automatically by fetchBaseQuery's credentials: 'same-origin'.
  *
- *  - 'unknown'       boot: the B3 probe (GET /bff/auth/me) is in flight; guards hold.
- *  - 'anonymous'     no session — the probe 401'd at boot, or the user logged out.
+ *  - 'unknown'       boot: the probe (GET /bff/auth/me) is in flight; guards hold. It stays
+ *                    'unknown' when the probe fails without an answer about this visitor (no
+ *                    answer, a 5xx), and ProtectedRoute says the service is unavailable.
+ *  - 'anonymous'     no session — the probe answered 4xx at boot, or the user logged out.
  *                    Never shows an expiry banner (D6: reason 'expired' is only set by
  *                    401s arriving AFTER an authenticated boot).
  *  - 'authenticated' live session; `user` is populated.
@@ -17,7 +20,7 @@ import type { BffLoginResponse, BffMeResponse, UserSessionInfo } from '../../api
 export type AuthStatus = 'unknown' | 'anonymous' | 'authenticated' | 'expired';
 
 interface RtkQueryAction extends Action {
-  meta?: { arg?: { endpointName?: string }; requestStatus?: string };
+  meta?: { arg?: { endpointName?: string }; requestStatus?: string; condition?: boolean };
   payload?: unknown;
 }
 
@@ -31,13 +34,32 @@ function isAuthEndpointFulfilled(endpoints: string[]) {
 }
 
 function isAuthEndpointRejected(endpoint: string) {
-  return (action: Action): boolean => {
+  return (action: Action): action is RtkQueryAction => {
     const a = action as RtkQueryAction;
     return (
       (a.type === 'api/executeQuery/rejected' || a.type === 'api/executeMutation/rejected') &&
       a.meta?.arg?.endpointName === endpoint
     );
   };
+}
+
+/**
+ * Whether a failed boot probe says this visitor has no session, rather than saying nothing.
+ *
+ * A 4xx is the BFF answering about this visitor: a 401 has no session to find, and a 403 or a
+ * 429 is still the BFF turning them away, so the sign-in page is where they belong. Anything else
+ * is the service failing to answer — no answer (a failed fetch, or none within 65 s), an answer
+ * that could not be read, a 5xx, a rejection with no status (a body that failed its schema) — and
+ * says nothing about the session, which may well be alive: sending the visitor to sign in would
+ * read as being signed out.
+ *
+ * A rejection with `meta.condition` set is not a probe at all: RTK refused to start a forced
+ * `getMe` because one was already running, and that one will decide.
+ */
+function probeSaysSignedOut(action: RtkQueryAction): boolean {
+  if (action.meta?.condition) return false;
+  const status = (action.payload as Partial<ApiProblem> | undefined)?.status;
+  return typeof status === 'number' && status >= 400 && status < 500;
 }
 
 interface AuthState {
@@ -67,8 +89,10 @@ const authSlice = createSlice({
      * outcome they wanted, not a failure, and this is how it gets recorded.
      *
      * It is NOT a substitute for the mutation. Anything other than success-or-401 leaves the
-     * cookie's fate unknown, and the caller must use `sessionExpired` for that instead — the
-     * honest description of a session whose end could not be verified.
+     * cookie's fate unknown, so it never records a sign-out: a sign-out the visitor asked for
+     * leaves them signed in and says it could not be done, and one the deadline forced uses
+     * `sessionExpired` instead — the honest description of a session whose end could not be
+     * verified.
      */
     signedOut: (state) => {
       state.status = 'anonymous';
@@ -86,11 +110,12 @@ const authSlice = createSlice({
         state.status = 'authenticated';
         state.user = (action.payload as BffLoginResponse | BffMeResponse).user;
       })
-      .addMatcher(isAuthEndpointRejected('getMe'), (state) => {
+      .addMatcher(isAuthEndpointRejected('getMe'), (state, action) => {
         // Only the BOOT probe's failure resolves here (D3): unknown -> anonymous, no
         // banner. Post-boot 401s are sessionMiddleware's business ('expired' must not
         // be downgraded; 'authenticated' flips there so the cache reset rides along).
-        if (state.status === 'unknown') {
+        // A failure that is not an answer about the visitor leaves 'unknown' as it is.
+        if (state.status === 'unknown' && probeSaysSignedOut(action)) {
           state.status = 'anonymous';
         }
       })

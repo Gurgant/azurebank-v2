@@ -15,9 +15,10 @@ import {
 } from '@fluentui/react-components';
 import { ShieldKeyhole24Regular } from '@fluentui/react-icons';
 import { colors } from '../../theme/tokens';
-import type { ApiProblem } from '../../api/problemBaseQuery';
+import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
+import { SERVICE_UNAVAILABLE } from '../../api/problemMessages';
 import { useVerifyPinMutation } from '../api/apiSlice';
-import { RetryCountdown, retryDeadline } from '../../components/feedback';
+import { RetryCountdown, WaitHint, retryDeadline } from '../../components/feedback';
 import { PinInput } from '../../components/PinInput';
 import { getStepUpSnapshot, settleStepUp, subscribeStepUp } from './stepUpController';
 
@@ -117,6 +118,11 @@ function StepUpForm() {
       if (problem.errorCode === 'PIN_LOCKED') {
         setLockDeadline(retryDeadline(problem.retryAfterSeconds ?? DEFAULT_PIN_LOCK_SECONDS));
         setPin('');
+      } else if (isServiceOutage(problem)) {
+        // Before the transport branch: a check with no answer in 65 s is `NETWORK` too, and it is
+        // the service that did not answer, not the visitor's connection.
+        setError(SERVICE_UNAVAILABLE);
+        setPin('');
       } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
         // A transport blip must NOT silently abandon the transfer — keep the modal open so
         // the user can retry the PIN without re-driving the whole flow.
@@ -185,6 +191,8 @@ function StepUpForm() {
               <RetryCountdown deadline={lockDeadline} onElapsed={() => setLockDeadline(null)} />
             </div>
           )}
+          {/* Above the actions, outside the alert and the PIN's described-by target. */}
+          <WaitHint active={isLoading} kind="write" />
         </div>
       </DialogContent>
       <DialogActions>
