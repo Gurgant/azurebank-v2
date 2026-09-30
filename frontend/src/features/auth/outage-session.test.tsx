@@ -22,6 +22,7 @@ import { apiSlice } from '../api/apiSlice';
 import { authReducer } from './authSlice';
 import { AuthBootstrap } from './AuthBootstrap';
 import { SessionExpiryWarning } from './SessionExpiryWarning';
+import { getLastServerActivity } from './sessionActivity';
 import { StepUpModal } from './StepUpModal';
 
 /**
@@ -319,6 +320,51 @@ describe('a signed-in session through an outage', () => {
     await waitFor(() => expect(outcome.state).toBe('rejected'));
     expect(outcome.error).toMatchObject({ status: 503 });
     expect(store.getState().auth.status).toBe('authenticated');
+    query.unsubscribe();
+  });
+
+  it.each([
+    [
+      'not JSON (an ingress page)',
+      () => serviceUnavailable({ via: 'bff', contentType: 'text/plain' }),
+    ],
+    ['empty', () => new HttpResponse(null, { status: 503 })],
+  ])(
+    'a 503 that neither server wrote, %s, does not move the expiry clock: the server never saw it',
+    async (_what, answer) => {
+      const store = await boot(15 * 60_000);
+      server.use(http.get('*/api/accounts', answer));
+      installFakeClock();
+      await advance(30_000);
+      const before = getLastServerActivity();
+      const query = store.dispatch(apiSlice.endpoints.getAccounts.initiate());
+      const outcome = track(query.unwrap());
+      await advance(15_000);
+
+      await waitFor(() => expect(outcome.state).toBe('rejected'));
+      expect(outcome.error).toMatchObject({ status: 503, errorCode: 'HTTP_503' });
+      expect(getLastServerActivity()).toBe(before);
+      query.unsubscribe();
+    },
+  );
+
+  it("the BFF's own 503 still moves the expiry clock: the BFF saw the request", async () => {
+    const store = await boot(15 * 60_000);
+    server.use(
+      http.get('*/api/accounts', () =>
+        serviceUnavailable({ via: 'bff', instance: '/api/accounts' }),
+      ),
+    );
+    installFakeClock();
+    await advance(30_000);
+    const before = getLastServerActivity() ?? 0;
+    const query = store.dispatch(apiSlice.endpoints.getAccounts.initiate());
+    const outcome = track(query.unwrap());
+    await advance(15_000);
+
+    await waitFor(() => expect(outcome.state).toBe('rejected'));
+    expect(outcome.error).toMatchObject({ status: 503, errorCode: 'SERVICE_UNAVAILABLE' });
+    expect(getLastServerActivity()).toBeGreaterThan(before);
     query.unsubscribe();
   });
 
