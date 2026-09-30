@@ -1,8 +1,11 @@
+using System.Reflection;
 using AzureBank.Api.Middleware;
+using AzureBank.Shared.Entities;
 using AzureBank.Shared.Options;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Abstractions;
 using Microsoft.AspNetCore.Mvc.Filters;
@@ -219,6 +222,38 @@ public class RequestDeadlineTests
             f => f.ImplementationType == typeof(DeadlineResultFilter),
             "a global filter runs before every MVC result, which is where the deadline must be turned off");
     }
+
+    [Fact]
+    public async Task TheUserManager_TakesTheDeadlineItsScopeHolds_AndNoneWithoutOne()
+    {
+        // Identity's own UserManager runs every call with CancellationToken.None. The API's reads
+        // the deadline from its scope at each call; only the middleware sets it, on the request's
+        // scope, so a manager from any other scope runs with none.
+        using var factory = new CustomWebApplicationFactory();
+        using var deadline = Deadline();
+
+        using var request = factory.Services.CreateScope();
+        var inRequest = request.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        TokenOf(inRequest).Should().Be(CancellationToken.None, "the middleware has not set a deadline yet");
+
+        request.ServiceProvider.GetRequiredService<RequestDeadlineScope>().Deadline = deadline;
+        TokenOf(inRequest).Should().Be(deadline.Token, "read at each call, not when the manager was built");
+
+        using var fresh = factory.Services.CreateScope();
+        var elsewhere = fresh.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        TokenOf(elsewhere).Should().Be(CancellationToken.None, "a fresh scope holds no deadline");
+
+        _time.Advance(Budget);
+        await inRequest.Invoking(m => m.FindByEmailAsync("nobody@example.com"))
+            .Should().ThrowAsync<OperationCanceledException>("the deadline fired: the store is handed its token");
+        (await elsewhere.FindByEmailAsync("nobody@example.com")).Should().BeNull("and not handed to another scope's");
+    }
+
+    /// <summary>The token <paramref name="manager"/> hands its store, a protected property.</summary>
+    private static CancellationToken TokenOf(UserManager<ApplicationUser> manager) =>
+        (CancellationToken)typeof(UserManager<ApplicationUser>)
+            .GetProperty("CancellationToken", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(manager)!;
 
     private static Task RunResultFilterAsync(HttpContext http) =>
         new DeadlineResultFilter().OnResultExecutionAsync(

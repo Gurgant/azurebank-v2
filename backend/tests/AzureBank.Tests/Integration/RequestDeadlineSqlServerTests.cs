@@ -112,6 +112,39 @@ public sealed class RequestDeadlineSqlServerTests : IDisposable
     }
 
     [SqlServerFact]
+    public async Task ASignInHeldPastTheDeadline_Answers503_WithinTheDeadlineAndTheAttention()
+    {
+        // A sign-in reads the user through Identity's UserManager, not through a query of its own,
+        // so the deadline reaches that read only if UserManager is handed the request's token. The
+        // read is held on the server far past the deadline.
+        var setup = Host();
+        var user = await RegisterAsync(setup.CreateClient(), "dli", withPin: false);
+
+        const int deadline = 2;
+        var deadlined = Host(deadline);
+        var client = deadlined.CreateClient();
+        (await SignInAsync(client, user)).StatusCode.Should().Be(HttpStatusCode.OK); // warms the host
+
+        // UserManager.FindByEmailAsync: the user by its normalized email, the sign-in's first read.
+        var wait = new WaitForInterceptor(
+            text => text.Contains("FROM [AspNetUsers]", StringComparison.Ordinal)
+                    && text.Contains("[NormalizedEmail] = @", StringComparison.Ordinal),
+            Held);
+        deadlined.AddInterceptor(wait);
+
+        var clock = Stopwatch.StartNew();
+        var response = await SignInAsync(client, user);
+        clock.Stop();
+        Print("held sign-in", response, clock, deadlined);
+
+        wait.Fired.Should().BeTrue("the proof is void unless the sign-in's read was actually held on the server");
+        await DatabaseUnavailableSqlServerTests.AssertServiceUnavailableAsync(response, applied: null);
+        clock.Elapsed.Should().BeLessThan(
+            TimeSpan.FromSeconds(deadline) + Attention + TimeSpan.FromSeconds(2),
+            "the deadline cancels the read; only the attention may add to it");
+    }
+
+    [SqlServerFact]
     public async Task ATransferHeldBeforeItsCommit_Answers503AppliedFalse_AndTheSameKeyThenMovesTheMoneyOnce()
     {
         var setup = Host();
@@ -610,16 +643,18 @@ public sealed class RequestDeadlineSqlServerTests : IDisposable
 
     // ── Helpers ───────────────────────────────────────────────────────────────────────────────
 
-    private sealed record TestUser(string Token, Guid UserId, Guid AccountId, string AzureTag, string? RefreshToken);
+    private sealed record TestUser(
+        string Token, Guid UserId, Guid AccountId, string AzureTag, string? RefreshToken, string Email);
 
     private static async Task<TestUser> RegisterAsync(HttpClient client, string prefix, bool withPin)
     {
         var unique = Guid.NewGuid().ToString("N")[..8];
         var azureTag = $"{prefix}_{unique}";
+        var email = $"{prefix}{unique}@example.com";
         var response = await client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
         {
             AzureTag = azureTag,
-            Email = $"{prefix}{unique}@example.com",
+            Email = email,
             Password = Password,
             FirstName = "Dead",
             LastName = "Line",
@@ -628,7 +663,7 @@ public sealed class RequestDeadlineSqlServerTests : IDisposable
         var result = await response.Content.ReadFromJsonAsync<ApiResponse<RegisterResponse>>(Json);
         var user = new TestUser(
             result!.Data!.Token.AccessToken, result.Data.User.Id, result.Data.Account.Id, azureTag,
-            result.Data.Token.RefreshToken);
+            result.Data.Token.RefreshToken, email);
 
         if (withPin)
         {
@@ -654,6 +689,9 @@ public sealed class RequestDeadlineSqlServerTests : IDisposable
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<ApiResponse<AccountResponse>>(Json))!.Data!.Id;
     }
+
+    private static Task<HttpResponseMessage> SignInAsync(HttpClient client, TestUser user) =>
+        client.PostAsJsonAsync("/api/auth/login", new LoginRequest { Email = user.Email, Password = Password }, Json);
 
     private static Task<HttpResponseMessage> GetAsync(HttpClient client, TestUser user, string url)
     {

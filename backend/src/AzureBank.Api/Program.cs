@@ -190,8 +190,8 @@ try
     // The request deadline (ADR-0058): a request still running after RequestDeadline:Seconds is
     // cancelled and answers 503. Inside the exception handler, which writes that answer; before the
     // service credential, authentication and the idempotency claim, so everything they and the
-    // endpoint do runs under its token; before anything builds UserManager, which captures the
-    // request's token when it is built.
+    // endpoint do runs under its token. UserManager takes the same token from the request's scope
+    // (RequestDeadlineUserManager, registered in AddIdentityServices).
     app.UseRequestDeadline();
 
     // No app.UseHttpsRedirection() (removed 2026-09-25). The API's one client is the BFF, which

@@ -74,7 +74,11 @@ public static class ServiceCollectionExtensions
             options.SignIn.RequireConfirmedAccount = false;
         })
         .AddEntityFrameworkStores<AzureBankDbContext>()
-        .AddDefaultTokenProviders();
+        .AddDefaultTokenProviders()
+        // Every call Identity makes takes the request deadline's token (ADR-0058). AddIdentity
+        // registers the base UserManager, whose token is always None; this one reads the deadline
+        // from the request's scope. RequestDeadlineUserManager says why.
+        .AddUserManager<RequestDeadlineUserManager>();
 
         return services;
     }

@@ -7,10 +7,12 @@ using AzureBank.Shared.DTOs.Account;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Transaction;
 using AzureBank.Shared.DTOs.Transfer;
+using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
 using AzureBank.Tests.Fixtures;
 using AzureBank.Tests.Integration;
 using FluentAssertions;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -20,7 +22,8 @@ namespace AzureBank.Tests.Architecture;
 
 /// <summary>
 /// The request's cancellation token reaches the database: every controller action takes one, every
-/// method of the services they call takes one, and every EF call passes one (ADR-0058).
+/// method of the services they call takes one, every EF call passes one, and the UserManager the host
+/// registers hands Identity's store the deadline's (ADR-0058).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -100,6 +103,21 @@ public class CancellationFlowTests
         missing.Should().BeEmpty(
             "a service method without a token is where the request's cancellation stops; {0} of {1} take none: {2}",
             missing.Count, methods.Count, string.Join(", ", missing));
+    }
+
+    [Fact]
+    public void TheUserManagerTheHostRegisters_TakesTheDeadlinesToken()
+    {
+        // Identity's calls take no token from the service methods above: UserManager hands its store
+        // a token of its own. AddIdentity registers the base UserManager, whose token is always None,
+        // so a sign-in's lookup ran past the deadline until the API registered its own
+        // (RequestDeadlineTests shows what that one does).
+        using var factory = new CustomWebApplicationFactory();
+        using var scope = factory.Services.CreateScope();
+
+        scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>().Should().BeOfType<
+            AzureBank.Api.Middleware.RequestDeadlineUserManager>(
+            "every UserManager call must take the request deadline's token");
     }
 
     // ── The source scan ────────────────────────────────────────────────────────────────────────

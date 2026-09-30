@@ -96,12 +96,16 @@ one open of an unroutable address took 36.8 s (`AddObservability` records the me
 command timeout, −2, is still not retried, for ADR-0034's reasons.
 
 **D3 — Every request but three has a deadline, 40 s.** `RequestDeadlineMiddleware` runs inside
-`UseExceptionHandler`, before the service credential, authentication and the idempotency claim, and
-before anything resolves `UserManager`, which captures `RequestAborted` when it is built. It
+`UseExceptionHandler`, before the service credential, authentication and the idempotency claim. It
 replaces `RequestAborted` with one token that either the deadline or the client hanging up cancels,
 and every action, service method and EF call takes it: `CancellationFlowTests` holds the actions,
 the service interfaces and every EF call in the API and Infrastructure to it, and CA2016, "forward
-the token", is an error in both projects. `RequestDeadline:Seconds`, 1 to 600, validated at start.
+the token", is an error in both projects. Identity's calls take it too. `AddIdentity` registers the
+base `UserManager`, whose token is always `None`, so a sign-in's lookup, its password check and
+every create or update through Identity ran with none; the API registers
+`RequestDeadlineUserManager`, which reads the deadline from the request's scope at each call, where
+a fresh scope and the three exempt endpoints find none, and `CancellationFlowTests` holds that
+registration. `RequestDeadline:Seconds`, 1 to 600, validated at start.
 
 **D4 — Nothing cancels a commit that has started, and nothing lets one start after the deadline.**
 A token can stop a commit from starting and can never interrupt one: SqlClient has no asynchronous
@@ -372,10 +376,10 @@ sending it) observes a token. Three ways to put a deadline on that were weighed:
   client's hang-up after the gate cancelling nothing, a timer that fires after the request ended.
 - `DatabaseUnavailableSqlServerTests` and `RequestDeadlineSqlServerTests` run on SQL Server: a
   missing database, a refused connection, an exhausted pool, a key lookup that fails transiently (a
-  503 without `applied`), a read and a transfer held past the deadline (503 `applied: false`,
-  balances unchanged, then the same key moves the money once), one gate entry per money success, a
-  stuck response store, a client hanging up before and after the commit, and the exempt endpoints
-  committing past the deadline.
+  503 without `applied`), a read, a sign-in and a transfer held past the deadline (the transfer's
+  503 says `applied: false`, balances unchanged, then the same key moves the money once), one gate
+  entry per money success, a stuck response store, a client hanging up before and after the
+  commit, and the exempt endpoints committing past the deadline.
 - `ServiceUnavailableExceptionHandlerTests` pins the mapping, including 4060, 40613, 11001 and 1205
   to 503 and 2627 to 500; `CancellationFlowTests` the token flow; `DepositCommitFaultSqlServerTests`
   the audited save; `BackendTimeoutTests` the BFF; `TimeoutChainTests` the chain.

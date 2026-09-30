@@ -1,4 +1,6 @@
+using AzureBank.Shared.Entities;
 using AzureBank.Shared.Options;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.Extensions.Options;
 
@@ -299,6 +301,54 @@ public sealed class RequestDeadlineScope
 }
 
 /// <summary>
+/// Identity's <see cref="UserManager{TUser}"/> under the request deadline (ADR-0058): every store
+/// call it makes takes the deadline's token of the request whose scope built it.
+/// </summary>
+/// <remarks>
+/// <para>
+/// WHY A SUBCLASS. <c>AddIdentity</c> registers the base <c>UserManager</c>, whose token is
+/// <c>CancellationToken.None</c>; <c>AspNetUserManager</c>, which reads <c>RequestAborted</c>, is
+/// not registered. So every call a sign-in, a registration or a PIN set made through Identity (the
+/// user's lookup, its password check, its create and update) ran with no token: a sign-in whose
+/// lookup was held on the server answered after 20 s under a 2-second deadline, measured by
+/// <c>RequestDeadlineSqlServerTests</c> before this class.
+/// </para>
+/// <para>
+/// FROM THE SCOPE'S <see cref="RequestDeadlineScope"/>, read at each call, the holder the commit
+/// gate reads. Only the middleware sets it, and only on the request's own scope, so a manager built
+/// in a fresh scope, on an exempt endpoint (refresh, revoke, logout) or outside a request finds no
+/// deadline and runs with Identity's own token, which nothing cancels, as before (ADR-0058 D4, D12).
+/// Not <c>RequestAborted</c> through the HTTP context: a fresh scope opened inside a request would
+/// find the request's context there, and its token with it.
+/// </para>
+/// </remarks>
+public sealed class RequestDeadlineUserManager : UserManager<ApplicationUser>
+{
+    private readonly RequestDeadlineScope? _scope;
+
+    public RequestDeadlineUserManager(
+        IUserStore<ApplicationUser> store,
+        IOptions<IdentityOptions> optionsAccessor,
+        IPasswordHasher<ApplicationUser> passwordHasher,
+        IEnumerable<IUserValidator<ApplicationUser>> userValidators,
+        IEnumerable<IPasswordValidator<ApplicationUser>> passwordValidators,
+        ILookupNormalizer keyNormalizer,
+        IdentityErrorDescriber errors,
+        IServiceProvider services,
+        ILogger<UserManager<ApplicationUser>> logger)
+        : base(store, optionsAccessor, passwordHasher, userValidators, passwordValidators, keyNormalizer, errors,
+            services, logger)
+    {
+        // The scope that built this manager: a host without the deadline registers no holder.
+        _scope = services.GetService<RequestDeadlineScope>();
+    }
+
+    /// <summary>The deadline's token of this scope's request, or Identity's own when it has none.</summary>
+    protected override CancellationToken CancellationToken =>
+        _scope?.Deadline is { } deadline ? deadline.Token : base.CancellationToken;
+}
+
+/// <summary>
 /// The API's request deadline (ADR-0058): a request that is still running
 /// <c>RequestDeadline:Seconds</c> after it reached here is cancelled, and answers 503
 /// <c>SERVICE_UNAVAILABLE</c> through <c>ServiceUnavailableExceptionHandler</c>.
@@ -314,16 +364,17 @@ public sealed class RequestDeadlineScope
 /// </para>
 /// <para>
 /// ONE TOKEN FOR THE REQUEST. <c>HttpContext.RequestAborted</c> is replaced by the deadline's token,
-/// which the deadline or the client's hang-up cancels, so every service and EF call downstream (and
-/// <c>UserManager</c>, which captures <c>RequestAborted</c> when it is built) observes both. The
-/// client's own token is put back on the way out, and the feature stays, so the exception handlers
-/// above read the client's token and what the deadline recorded.
+/// which the deadline or the client's hang-up cancels, so every service and EF call downstream
+/// observes both. <c>UserManager</c> does not read <c>RequestAborted</c>: it takes the same token
+/// from <see cref="RequestDeadlineScope"/>, which this middleware sets (see
+/// <see cref="RequestDeadlineUserManager"/>). The client's own token is put back on the way out, and
+/// the feature stays, so the exception handlers above read the client's token and what the deadline
+/// recorded.
 /// </para>
 /// <para>
 /// PLACED INSIDE <c>UseExceptionHandler</c>, before the service credential, authentication and the
-/// idempotency claim, and before anything resolves <c>UserManager</c>. Routing has already run (no
-/// explicit <c>UseRouting</c>: the host puts it first), so the endpoint's
-/// <see cref="NoRequestDeadlineAttribute"/> can be read here.
+/// idempotency claim. Routing has already run (no explicit <c>UseRouting</c>: the host puts it
+/// first), so the endpoint's <see cref="NoRequestDeadlineAttribute"/> can be read here.
 /// </para>
 /// </remarks>
 public sealed class RequestDeadlineMiddleware
