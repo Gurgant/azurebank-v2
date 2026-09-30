@@ -76,6 +76,26 @@ describe('useWaitPhase', () => {
     expect(result.current).toBe('slow');
   });
 
+  it('is silent in the very render its wait ends, not one render later', async () => {
+    vi.useFakeTimers();
+    const renders: Array<{ active: boolean; phase: string }> = [];
+    const { rerender } = renderHook(
+      ({ active }) => {
+        const phase = useWaitPhase(active);
+        renders.push({ active, phase });
+        return phase;
+      },
+      { initialProps: { active: true } },
+    );
+    await advance(STILL_TRYING_AFTER_MS);
+    expect(renders.at(-1)).toEqual({ active: true, phase: 'stillTrying' });
+
+    rerender({ active: false });
+
+    expect(renders.filter(({ active }) => !active).length).toBeGreaterThan(0);
+    expect(renders.filter(({ active, phase }) => !active && phase !== 'none')).toEqual([]);
+  });
+
   it("a wait that ends early is timed afresh when the next one starts: the first wait's timers never fire into it", async () => {
     vi.useFakeTimers();
     const { result, rerender } = renderHook(({ active }) => useWaitPhase(active), {
@@ -201,60 +221,163 @@ describe('WaitHint', () => {
 });
 
 describe('useWaitLanding', () => {
-  function Landing({ waiting, showLanding }: { waiting: boolean; showLanding: boolean }) {
-    const { landingRef, arm } = useWaitLanding(waiting);
+  /**
+   * A host at one instant: whether its read is waiting, which request its read is on (a read gets
+   * a new id each time it sends one), and which control, if any, the wait would land on. "Arm"
+   * stands for the Stop or Retry press; "Elsewhere" for anywhere else the visitor may be.
+   */
+  function Landing({
+    waiting,
+    request,
+    landing,
+  }: {
+    waiting: boolean;
+    request: string | undefined | readonly string[];
+    landing?: string;
+  }) {
+    const { landingRef, arm } = useWaitLanding(waiting, request);
     return (
       <>
         <button type="button" onClick={arm}>
           Arm
         </button>
-        {showLanding && (
+        <button type="button">Elsewhere</button>
+        {landing && (
           <button
+            key={landing}
             type="button"
             ref={(el) => {
               landingRef.current = el;
             }}
           >
-            Landing
+            {landing}
           </button>
         )}
       </>
     );
   }
 
-  it('moves focus to the landing when an armed wait ends in one', async () => {
-    const { rerender } = renderWithProviders(<Landing waiting showLanding={false} />);
+  const elsewhere = () => screen.getByRole('button', { name: 'Elsewhere' });
+
+  it('moves focus to the landing when a stopped wait ends in one', async () => {
+    const { rerender } = renderWithProviders(<Landing waiting request="r1" />);
     await userEvent.click(screen.getByRole('button', { name: 'Arm' }));
 
-    rerender(<Landing waiting={false} showLanding />);
+    // The stopped request is rejected: same request, now at rest, with its bar.
+    rerender(<Landing waiting={false} request="r1" landing="Retry" />);
 
     await waitFor(() =>
-      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Landing' })),
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Retry' })),
     );
   });
 
   it('leaves focus alone when the wait was not armed', async () => {
-    const { rerender } = renderWithProviders(<Landing waiting showLanding={false} />);
-    const other = screen.getByRole('button', { name: 'Arm' });
-    other.focus();
+    const { rerender } = renderWithProviders(<Landing waiting request="r1" />);
+    elsewhere().focus();
 
-    rerender(<Landing waiting={false} showLanding />);
+    rerender(<Landing waiting={false} request="r1" landing="Retry" />);
 
-    expect(document.activeElement).toBe(other);
+    expect(document.activeElement).toBe(elsewhere());
   });
 
   it('disarms when an armed wait ends without a landing, so a later one takes nothing', async () => {
-    const { rerender } = renderWithProviders(<Landing waiting showLanding={false} />);
-    const arm = screen.getByRole('button', { name: 'Arm' });
-    await userEvent.click(arm);
+    const { rerender } = renderWithProviders(<Landing waiting request="r1" />);
+    await userEvent.click(screen.getByRole('button', { name: 'Arm' }));
 
     // Ends in success: nothing to land on.
-    rerender(<Landing waiting={false} showLanding={false} />);
+    rerender(<Landing waiting={false} request="r1" />);
+    elsewhere().focus();
     // A later wait, never armed, ends in a failure.
-    rerender(<Landing waiting showLanding={false} />);
-    rerender(<Landing waiting={false} showLanding />);
+    rerender(<Landing waiting request="r2" />);
+    rerender(<Landing waiting={false} request="r2" landing="Retry" />);
 
-    expect(document.activeElement).toBe(arm);
+    expect(document.activeElement).toBe(elsewhere());
+  });
+
+  it('a Retry pressed while its bar is on screen stays armed until its wait ends, then lands', async () => {
+    // The first load: no request on the very first render, then one, which fails.
+    const { rerender } = renderWithProviders(<Landing waiting request={undefined} />);
+    rerender(<Landing waiting request="r1" />);
+    rerender(<Landing waiting={false} request="r1" landing="Retry" />);
+    await userEvent.click(screen.getByRole('button', { name: 'Arm' }));
+
+    // A render before the read's new request reaches the page: the old bar is still there.
+    rerender(<Landing waiting={false} request="r1" landing="Retry" />);
+    elsewhere().focus();
+    // The wait: the bar hides while the read runs again.
+    rerender(<Landing waiting request="r2" />);
+    // It fails again: a new bar.
+    rerender(<Landing waiting={false} request="r2" landing="Retry" />);
+
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Retry' })),
+    );
+  });
+
+  it('a Retry whose read answers before its wait is ever shown takes nothing later', async () => {
+    const { rerender } = renderWithProviders(
+      <Landing waiting={false} request="r1" landing="Retry" />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Arm' }));
+
+    // The read succeeded inside one render: the bar is gone, and no wait was ever on screen.
+    rerender(<Landing waiting={false} request="r2" />);
+    elsewhere().focus();
+    // Later, a wait the visitor did not start fails.
+    rerender(<Landing waiting request="r3" />);
+    rerender(<Landing waiting={false} request="r3" landing="Retry" />);
+
+    expect(document.activeElement).toBe(elsewhere());
+  });
+
+  it('a Retry that fails again before its wait is ever shown takes nothing later', async () => {
+    const { rerender } = renderWithProviders(
+      <Landing waiting={false} request="r1" landing="Retry" />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Arm' }));
+
+    // The read failed again inside one render: a bar, as before, and no wait was ever on screen.
+    rerender(<Landing waiting={false} request="r2" landing="Retry" />);
+    elsewhere().focus();
+    // Later, a refetch the visitor did not start (a change elsewhere reloads the read) fails.
+    rerender(<Landing waiting request="r3" />);
+    rerender(<Landing waiting={false} request="r3" landing="Retry" />);
+
+    expect(document.activeElement).toBe(elsewhere());
+  });
+
+  it('on a page of several reads, a Retry whose read answers at once takes nothing later, though another bar is still up', async () => {
+    const { rerender } = renderWithProviders(
+      <Landing waiting={false} request={['a1', 'm1', 'r1']} landing="Retry this month" />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Arm' }));
+
+    // "This month" loaded inside one render; "recent activity" is now the first failed bar.
+    rerender(
+      <Landing waiting={false} request={['a1', 'm2', 'r1']} landing="Retry recent activity" />,
+    );
+    elsewhere().focus();
+    // Later, a deposit reloads "recent activity", and it fails again after a wait.
+    rerender(<Landing waiting request={['a1', 'm2', 'r2']} />);
+    rerender(
+      <Landing waiting={false} request={['a1', 'm2', 'r2']} landing="Retry recent activity" />,
+    );
+
+    expect(document.activeElement).toBe(elsewhere());
+  });
+
+  it('a Retry that ends before its wait is ever shown lands as one that ended on screen does', async () => {
+    const { rerender } = renderWithProviders(
+      <Landing waiting={false} request="r1" landing="Retry" />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Arm' }));
+
+    // It failed again inside one render, and the page drew a new bar for the new failure.
+    rerender(<Landing waiting={false} request="r2" landing="Retry again" />);
+
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Retry again' })),
+    );
   });
 });
 
@@ -276,5 +399,82 @@ describe('abortRunning', () => {
 
     expect(abortRunning(store.dispatch, [{ endpoint: 'getAccounts', arg: undefined }])).toBe(false);
     query.unsubscribe();
+  });
+
+  it('stops every read it is given, not only the first one running', async () => {
+    let calls = 0;
+    server.use(
+      http.get('*/api/accounts', () => {
+        calls += 1;
+        return never();
+      }),
+      http.get('*/api/transactions/:id', () => {
+        calls += 1;
+        return never();
+      }),
+    );
+    const store = makeTestStore();
+    const accounts = store.dispatch(apiSlice.endpoints.getAccounts.initiate());
+    const transaction = store.dispatch(apiSlice.endpoints.getTransaction.initiate('tx-1'));
+    await waitFor(() => expect(calls).toBe(2));
+
+    expect(
+      abortRunning(store.dispatch, [
+        { endpoint: 'getAccounts', arg: undefined },
+        { endpoint: 'getTransaction', arg: 'tx-1' },
+      ]),
+    ).toBe(true);
+    await expect(accounts.unwrap()).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(transaction.unwrap()).rejects.toMatchObject({ name: 'AbortError' });
+
+    accounts.unsubscribe();
+    transaction.unsubscribe();
+  });
+
+  it('stops a read the page kept, such as a lazy trigger result, and says whether it was running', async () => {
+    let calls = 0;
+    server.use(
+      http.get('*/api/users/:tag', () => {
+        calls += 1;
+        return never();
+      }),
+    );
+    const store = makeTestStore();
+    const kept = store.dispatch(apiSlice.endpoints.lookupRecipient.initiate('ana'));
+    await waitFor(() => expect(calls).toBe(1));
+
+    expect(abortRunning(store.dispatch, [kept])).toBe(true);
+    await expect(kept.unwrap()).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(abortRunning(store.dispatch, [kept])).toBe(false);
+    kept.unsubscribe();
+  });
+
+  it('a kept read that joined one already running stops the request that is actually running', async () => {
+    let calls = 0;
+    server.use(
+      http.get('*/api/users/:tag', () => {
+        calls += 1;
+        return never();
+      }),
+    );
+    const store = makeTestStore();
+    const first = store.dispatch(apiSlice.endpoints.lookupRecipient.initiate('ana'));
+    await waitFor(() => expect(calls).toBe(1));
+    // What a lazy trigger dispatches for the same handle while the first check still runs: it
+    // starts no request of its own.
+    const joined = store.dispatch(
+      apiSlice.endpoints.lookupRecipient.initiate('ana', { forceRefetch: true }),
+    );
+    const entry = () => store.getState().api.queries[joined.queryCacheKey];
+    expect(entry()?.requestId).toBe(first.requestId);
+    expect(joined.requestId).not.toBe(first.requestId);
+
+    expect(abortRunning(store.dispatch, [joined])).toBe(true);
+    await expect(first.unwrap()).rejects.toMatchObject({ name: 'AbortError' });
+    expect(calls).toBe(1);
+
+    first.unsubscribe();
+    joined.unsubscribe();
   });
 });
