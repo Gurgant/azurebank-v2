@@ -37,6 +37,7 @@ const DEFAULT_TITLES: Record<number, string> = {
   422: 'Unprocessable Entity',
   429: 'Too Many Requests',
   500: 'Internal Server Error',
+  503: 'Service Unavailable',
 };
 
 /** Deterministic fake trace id: bare 32-hex, like Activity.TraceId.ToString(). */
@@ -135,6 +136,83 @@ export function bffProblem(init: { status: number; title: string; detail: string
   return HttpResponse.json(
     { title: init.title, status: init.status, detail: init.detail },
     { status: init.status, headers: { 'Content-Type': 'application/problem+json' } },
+  );
+}
+
+/**
+ * The outage 503 (ADR-0058), shaped by whoever wrote it, because the SPA meets three.
+ *
+ *   via 'api'  The API's exception handler, directly or through the proxy: `application/json`,
+ *              `Retry-After`, `Cache-Control: no-store`, and the API's member order — the
+ *              ProblemDetails members, then `errorCode`, `traceId`, `retryAfterSeconds`. A money
+ *              send that had not started its commit adds `applied: false`, and its detail says
+ *              nothing was changed.
+ *   via 'bff'  The BFF's own answer (the API did not answer in time, or a session renewal could
+ *              not finish): `application/problem+json`, extensions in the order `errorCode`,
+ *              `retryAfterSeconds`, `traceId`, and never `applied` — the BFF cannot know.
+ *   contentType 'text/plain'
+ *              An ingress page in front of both, whichever `via` is named: a 503 with no JSON
+ *              and no Retry-After.
+ *
+ * `instance` is required on both JSON bodies: each server sets it to the request's path on every
+ * outage 503 (`AppExceptionHandler.WriteProblemAsync` and the BFF's `ServiceUnavailable.Problem`
+ * both assign `Instance = …Request.Path`), so a body without it is one neither server sends.
+ *
+ * The details are the server's own sentences. The SPA does not print them; a test that sees one
+ * on screen has found the leak.
+ */
+export type ServiceUnavailableInit =
+  | {
+      via: 'api';
+      instance: string;
+      applied?: false;
+      detail?: string;
+      retryAfterSeconds?: number;
+    }
+  | {
+      via: 'bff';
+      instance: string;
+      detail?: string;
+      retryAfterSeconds?: number;
+    }
+  | { via: 'api' | 'bff'; contentType: 'text/plain' };
+
+export function serviceUnavailable(init: ServiceUnavailableInit) {
+  if ('contentType' in init) {
+    return new HttpResponse('Service Unavailable', {
+      status: 503,
+      headers: { 'Content-Type': 'text/plain' },
+    });
+  }
+  const retryAfterSeconds = init.retryAfterSeconds ?? 10;
+  const applied = init.via === 'api' ? init.applied : undefined;
+  const head = {
+    type: 'https://httpstatuses.com/503',
+    title: DEFAULT_TITLES[503],
+    status: 503,
+    detail:
+      init.detail ??
+      (applied === false
+        ? 'The service is temporarily unavailable, and nothing was changed. Try again shortly.'
+        : 'The service is temporarily unavailable. Try again shortly.'),
+    instance: init.instance,
+  };
+  const headers = { 'Retry-After': String(retryAfterSeconds), 'Cache-Control': 'no-store' };
+  if (init.via === 'bff') {
+    return HttpResponse.json(
+      { ...head, errorCode: 'SERVICE_UNAVAILABLE', retryAfterSeconds, traceId: fakeTraceId() },
+      { status: 503, headers: { 'Content-Type': 'application/problem+json', ...headers } },
+    );
+  }
+  return HttpResponse.json(
+    {
+      ...head,
+      errorCode: 'SERVICE_UNAVAILABLE',
+      traceId: fakeTraceId(),
+      retryAfterSeconds,
+      ...(applied === false ? { applied } : {}),
+    },
+    { status: 503, headers: { 'Content-Type': 'application/json; charset=utf-8', ...headers } },
   );
 }
 

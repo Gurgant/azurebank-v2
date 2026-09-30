@@ -3,14 +3,19 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { getStepUpSnapshot, settleStepUp } from '../features/auth/stepUpController';
 import { http, HttpResponse } from 'msw';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { server } from '../mocks/server';
-import { problem } from '../mocks/problem';
+import { problem, serviceUnavailable } from '../mocks/problem';
 import { seedMockSession } from '../mocks/state';
 import { makeTestStore } from '../test/renderWithProviders';
+import { COPY, advance, advanceUntil, never, sleep, track, installFakeClock } from '../test/outage';
 import { apiSlice, useDepositMutation, useWithdrawMutation } from '../features/api/apiSlice';
-import { useIdempotentMutation } from '../hooks/useIdempotentMutation';
+import { useIdempotentMutation, type IdempotentTrigger } from '../hooks/useIdempotentMutation';
 import type { ApiProblem } from './problemBaseQuery';
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 /**
  * The six flagship policy tests (ADR-0022) — the data-layer contract as executable
@@ -113,39 +118,172 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
     expect(keys[3]).not.toBe(keys[2]);
   });
 
-  it(
-    '2 — auto-retries queries on 503 up to 3 total attempts; never mutations',
-    { timeout: 15000 },
-    async () => {
-      let getCalls = 0;
-      let postCalls = 0;
-      server.use(
-        http.get('*/api/accounts', () => {
-          getCalls += 1;
-          return problem({ status: 503 });
-        }),
-        http.post('*/api/transactions/deposit', () => {
-          postCalls += 1;
-          return problem({ status: 503 });
-        }),
-      );
+  it('1b — keeps the same Idempotency-Key when the 503 says nothing was applied', async () => {
+    // `applied: false` changes the words a visitor reads, never the key — ADR-0058: "A client never
+    // drops the key on `applied: false`". The same key is what lets the server answer the retry
+    // from the first attempt's record, if there is one.
+    const keys: string[] = [];
+    server.use(
+      http.post('*/api/transactions/deposit', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key') ?? '(missing)');
+        return keys.length === 1
+          ? serviceUnavailable({
+              via: 'api',
+              applied: false,
+              instance: '/api/transactions/deposit',
+            })
+          : depositOk();
+      }),
+    );
 
-      const { store } = hookWrapper();
+    const { Wrapper } = hookWrapper();
+    const { result } = renderHook(() => useDepositIntent(), { wrapper: Wrapper });
+    const body = { accountId: UUID, amount: 50 };
 
-      const query = store.dispatch(apiSlice.endpoints.getAccounts.initiate());
-      await expect(query.unwrap()).rejects.toMatchObject({ status: 503 });
-      expect(getCalls).toBe(3);
+    const first = await act(() => settle(result.current.submit(body)));
+    expect(first.ok).toBe(false);
+    expect(result.current.keyRetained).toBe(true);
 
-      const mutation = store.dispatch(
-        apiSlice.endpoints.deposit.initiate({
-          idempotencyKey: crypto.randomUUID(),
-          body: { accountId: UUID, amount: 5 },
-        }),
-      );
-      await expect(mutation.unwrap()).rejects.toMatchObject({ status: 503 });
-      expect(postCalls).toBe(1);
-    },
-  );
+    const second = await act(() => settle(result.current.submit(body)));
+    expect(second.ok).toBe(true);
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).toBe(keys[0]);
+  });
+
+  /** Records the fake instant of every call, answering each with `answer`. */
+  function recordReads(answer: () => Response | Promise<Response>) {
+    const times: number[] = [];
+    server.use(
+      http.get('*/api/accounts', () => {
+        times.push(Date.now());
+        return answer();
+      }),
+    );
+    return times;
+  }
+
+  it("2 — retries a read's 503 once, after the answer's retryAfterSeconds, then gives up", async () => {
+    const times = recordReads(() =>
+      serviceUnavailable({ via: 'api', retryAfterSeconds: 10, instance: '/api/accounts' }),
+    );
+    installFakeClock();
+    const { store } = hookWrapper();
+    const query = store.dispatch(apiSlice.endpoints.getAccounts.initiate());
+    const outcome = track(query.unwrap());
+    await waitFor(() => expect(times.length).toBeGreaterThan(0));
+    const [first] = times;
+
+    await advanceUntil(first, 9_900);
+    expect(times).toHaveLength(1);
+
+    await advanceUntil(first, 10_100);
+    await waitFor(() => expect(times).toHaveLength(2));
+
+    await advanceUntil(first, 60_000);
+    expect(times).toHaveLength(2);
+    expect(outcome.state).toBe('rejected');
+    expect(outcome.error).toMatchObject({ status: 503 });
+    query.unsubscribe();
+  });
+
+  it("2b — never retries a mutation's 503", async () => {
+    let postCalls = 0;
+    server.use(
+      http.post('*/api/transactions/deposit', () => {
+        postCalls += 1;
+        return serviceUnavailable({ via: 'api', instance: '/api/transactions/deposit' });
+      }),
+    );
+    installFakeClock();
+    const { store } = hookWrapper();
+
+    const mutation = store.dispatch(
+      apiSlice.endpoints.deposit.initiate({
+        idempotencyKey: crypto.randomUUID(),
+        body: { accountId: UUID, amount: 5 },
+      }),
+    );
+    const outcome = track(mutation.unwrap());
+    await advance(60_000);
+
+    await waitFor(() => expect(outcome.state).toBe('rejected'));
+    expect(outcome.error).toMatchObject({ status: 503 });
+    expect(postCalls).toBe(1);
+  });
+
+  it('2c — a read retry that would not fit the two-minute budget is not sent', async () => {
+    // Held 55 s, as the BFF answers when the API does not: 55 + 70 leaves no room for a retry.
+    const times = recordReads(async () => {
+      await sleep(55_000);
+      return serviceUnavailable({ via: 'bff', retryAfterSeconds: 70, instance: '/api/accounts' });
+    });
+    installFakeClock();
+    const { store } = hookWrapper();
+    const query = store.dispatch(apiSlice.endpoints.getAccounts.initiate());
+    const outcome = track(query.unwrap());
+    await waitFor(() => expect(times.length).toBeGreaterThan(0));
+    const [first] = times;
+
+    await advanceUntil(first, 180_000);
+    expect(times).toHaveLength(1);
+    expect(outcome.state).toBe('rejected');
+    expect(outcome.error).toMatchObject({ status: 503 });
+    expect((outcome.at ?? 0) - first).toBeGreaterThanOrEqual(55_000);
+    expect((outcome.at ?? 0) - first).toBeLessThan(55_500);
+    query.unsubscribe();
+  });
+
+  it('2d — a read retry that fits is sent, and is cut where the two-minute budget ends', async () => {
+    const times = recordReads(async () => {
+      await sleep(55_000);
+      return serviceUnavailable({ via: 'bff', retryAfterSeconds: 10, instance: '/api/accounts' });
+    });
+    installFakeClock();
+    const { store } = hookWrapper();
+    const start = Date.now();
+    const query = store.dispatch(apiSlice.endpoints.getAccounts.initiate());
+    const outcome = track(query.unwrap());
+    await waitFor(() => expect(times.length).toBeGreaterThan(0));
+    const [first] = times;
+
+    await advanceUntil(start, 119_900);
+    expect(times).toHaveLength(2);
+    expect(outcome.state).toBe('pending');
+
+    await advanceUntil(first, 120_100);
+    await waitFor(() => expect(outcome.state).toBe('rejected'));
+    expect(outcome.error).toMatchObject({ status: 'NETWORK', errorCode: 'TIMEOUT_ERROR' });
+    expect((outcome.at ?? 0) - start).toBeGreaterThanOrEqual(119_900);
+    expect((outcome.at ?? 0) - first).toBeLessThanOrEqual(120_100);
+    expect(times).toHaveLength(2);
+    query.unsubscribe();
+  });
+
+  it.each([
+    ['a request that never reached a server', () => HttpResponse.error()],
+    ['a 502', () => problem({ status: 502 })],
+    ['a 504', () => problem({ status: 504 })],
+    ['a 503 that names no wait', () => problem({ status: 503 })],
+  ])('2e — %s is retried once, one second later, for a read', async (_name, answer) => {
+    const times = recordReads(answer);
+    installFakeClock();
+    const { store } = hookWrapper();
+    const query = store.dispatch(apiSlice.endpoints.getAccounts.initiate());
+    const outcome = track(query.unwrap());
+    await waitFor(() => expect(times.length).toBeGreaterThan(0));
+    const [first] = times;
+
+    await advanceUntil(first, 900);
+    expect(times).toHaveLength(1);
+
+    await advanceUntil(first, 1_100);
+    await waitFor(() => expect(times).toHaveLength(2));
+
+    await advanceUntil(first, 10_000);
+    expect(times).toHaveLength(2);
+    expect(outcome.state).toBe('rejected');
+    query.unsubscribe();
+  });
 
   it('3 — normalizes ProblemDetails to ApiProblem (traceId through); synthesizes VALIDATION_ERROR on 400 + errors', async () => {
     server.use(
@@ -399,5 +537,68 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
     const fresh = await act(() => settle(result.current.submit(body)));
     expect(fresh.ok).toBe(true);
     expect(keys[3]).not.toBe(keys[2]);
+  });
+
+  it('7 — a money send with no answer ends at 65 s and keeps its key for the retry', async () => {
+    const keys: string[] = [];
+    let received = 0;
+    server.use(
+      http.post('*/api/transactions/deposit', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key') ?? '(missing)');
+        if (keys.length === 1) {
+          received = Date.now();
+          return never();
+        }
+        return depositOk();
+      }),
+    );
+    installFakeClock();
+    const { Wrapper } = hookWrapper();
+    const { result } = renderHook(() => useDepositIntent(), { wrapper: Wrapper });
+    const body = { accountId: UUID, amount: 50 };
+
+    let first!: ReturnType<typeof track<unknown>>;
+    act(() => {
+      first = track(result.current.submit(body));
+    });
+    await waitFor(() => expect(keys).toHaveLength(1));
+
+    await advanceUntil(received, 65_100);
+    await waitFor(() => expect(first.state).toBe('rejected'));
+    expect(first.error).toMatchObject({
+      status: 'NETWORK',
+      errorCode: 'TIMEOUT_ERROR',
+      detail: COPY.unavailable,
+    });
+    expect(result.current.keyRetained).toBe(true);
+
+    const second = await act(() => settle(result.current.submit(body)));
+    expect(second.ok).toBe(true);
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).toBe(keys[0]);
+  });
+
+  it('8 — a money send rejected with no HTTP status asks for a check before any new key', async () => {
+    /*
+      A rejection with no status is a 2xx whose body failed its schema, or an abort: either way the
+      request may have been acted on. Dropping the key quietly and letting the next press mint a
+      new one is a second payment over an unknown first — so it latches verify-first, exactly as
+      RESULT_UNKNOWN does.
+    */
+    const unwrap = vi.fn(() =>
+      Promise.reject({ name: 'SchemaError', message: 'The answer did not match its schema.' }),
+    );
+    const trigger: IdempotentTrigger<{ amount: number }, unknown> = () => ({ unwrap });
+    const { Wrapper } = hookWrapper();
+    const { result } = renderHook(() => useIdempotentMutation(trigger), { wrapper: Wrapper });
+
+    const first = await act(() => settle(result.current.submit({ amount: 5 })));
+    expect(first.ok).toBe(false);
+    expect(result.current.keyRetained).toBe(false);
+    expect(result.current.verifyRequired).toBe(true);
+
+    const second = await act(() => settle(result.current.submit({ amount: 5 })));
+    expect(second.ok).toBe(false);
+    expect(unwrap).toHaveBeenCalledTimes(1);
   });
 });
