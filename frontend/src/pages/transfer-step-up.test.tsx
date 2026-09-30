@@ -328,7 +328,7 @@ describe('the internal transfer speaks the same protocol', () => {
 describe('a lost response, and the way back to the PIN', () => {
   /*
     #211. The four rows the server can answer to the SAME key and the SAME body — measured on the
-    running API and written down in `A2-PR3-MEASURED-CONTRACT.md`:
+    running API; ADR-0009 records them:
 
       Completed                -> 201 + Idempotency-Replayed: true    done, no PIN
       Executed, fresh          -> 409 IDEMPOTENCY_IN_FLIGHT           wait, no PIN

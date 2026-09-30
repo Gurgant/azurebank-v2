@@ -277,8 +277,9 @@ sending it) observes a token. Three ways to put a deadline on that were weighed:
    minutes (D9).
 2. **A single statement outside a transaction can commit while a cancel races it:** a counted PIN
    or sign-in attempt, which fails closed; a claim, which is released or goes stale; an unused
-   step-up authorisation, which expires in its 2 minutes. Money never moves outside a gated commit
-   (D4).
+   step-up authorisation, which expires in its 2 minutes; a new account, whose request still
+   answers 503, so a visitor who tries again opens a second, empty one (opening an account carries
+   no idempotency key). Money never moves outside a gated commit (D4).
 3. **After a commit, the rest of the request is bounded only by EF's budget and the 3 s store.** If
    the database dies at that moment, the BFF's "unknown" arrives first (the last row of the table
    above).
@@ -290,6 +291,12 @@ sending it) observes a token. Three ways to put a deadline on that were weighed:
    outage into a storm of logins. This is meant to be that design, and the runs in the pull
    request measure it: on Azure, `Auto` already is NeverBlock, and the attempts are bounded by 4
    retries on a back-off, a pool of 12 and a 10 s connect timeout.
+6. **An audited save's check can miss a commit that has not landed yet.** If the connection that
+   sent the commit dropped and the commit is still being applied when the re-run asks for its audit
+   row, the check reads "not there" and the save runs again. For a deposit the claim's fence stops
+   the second commit: with the check forced to answer "not there" after a commit that landed,
+   `DepositCommitFaultSqlServerTests`' lost-acknowledgement case answered 500 with one ledger row,
+   never two.
 
 ## Rejected
 
