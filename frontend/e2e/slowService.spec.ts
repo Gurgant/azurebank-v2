@@ -66,6 +66,16 @@ async function stepUntil(page: Page, done: () => boolean | Promise<boolean>, max
   }
 }
 
+/**
+ * Before counting what was NOT sent: two minutes on the page's clock, past any retry it could still
+ * make, then half a second of real time for a request that jump set off to reach its route. A count
+ * read straight after the jump could run before that request, and would pass whatever the page did.
+ */
+async function runOut(page: Page) {
+  await page.clock.fastForward('02:00');
+  await page.waitForTimeout(500);
+}
+
 test.describe('a slow or unavailable service', () => {
   test('a slow read says so, can be stopped, and Retry waits again', async ({ page }) => {
     const parked: Route[] = [];
@@ -75,6 +85,12 @@ test.describe('a slow or unavailable service', () => {
     await expect.poll(() => parked.length).toBe(1);
     await expect(page.getByLabel('Loading accounts')).toBeVisible();
 
+    // The words' region is on the page, empty, from the start of the wait: a polite region has to
+    // be there before its words change, or a screen reader does not read them.
+    const region = page.locator('[data-wait-hint] [role="status"]');
+    await expect(region).toHaveCount(1);
+    await expect(region).toHaveText('');
+
     await page.clock.fastForward('00:05');
     await expect(page.getByRole('status').filter({ hasText: SLOW })).toHaveText(SLOW);
     await page.clock.fastForward('00:15');
@@ -82,15 +98,22 @@ test.describe('a slow or unavailable service', () => {
       STILL_TRYING,
     );
 
+    // Stop gives up the request in the browser itself, not only the page's interest in its answer.
+    const given = page.waitForEvent('requestfailed', (request) =>
+      request.url().includes('/api/accounts'),
+    );
     await page.getByRole('button', { name: 'Stop waiting' }).click();
+    expect((await given).failure()?.errorText).toBe('net::ERR_ABORTED');
     const alert = page.getByRole('alert').filter({ hasText: 'Could not load your accounts.' });
     await expect(alert).toBeVisible();
     const retry = alert.getByRole('button', { name: 'Retry' });
     await expect(retry).toBeFocused();
 
-    // Retry while the service is still silent: the wait, and its words, come back.
+    // Retry while the service is still silent: the bar goes away and the wait, and its words,
+    // come back, so a second failure would be a new alert.
     await retry.click();
     await expect.poll(() => parked.length).toBe(2);
+    await expect(alert).toHaveCount(0);
     await expect(page.getByLabel('Loading accounts')).toBeVisible();
     await page.clock.fastForward('00:05');
     await expect(page.getByRole('status').filter({ hasText: SLOW })).toHaveText(SLOW);
@@ -106,10 +129,12 @@ test.describe('a slow or unavailable service', () => {
   test('a 503 reads as unavailable, with its support code, and is retried once after Retry-After', async ({
     page,
   }) => {
-    let calls = 0;
+    // When each request left, on the page's own clock: real time runs on under the page's clock
+    // between the steps, so a count taken after nine steps is not a count at nine seconds.
+    const sentAt: number[] = [];
     await page.clock.install();
-    await page.route('**/api/accounts*', (route) => {
-      calls += 1;
+    await page.route('**/api/accounts*', async (route) => {
+      sentAt.push(await page.evaluate(() => Date.now()));
       return route.fulfill({
         status: 503,
         headers: { 'Retry-After': '10', 'Cache-Control': 'no-store' },
@@ -118,19 +143,20 @@ test.describe('a slow or unavailable service', () => {
       });
     });
     await page.goto('/accounts');
-    await expect.poll(() => calls).toBe(1);
-
-    // The retry waits the ten seconds the answer asked for.
-    await stepUntil(page, () => false, 9);
-    expect(calls).toBe(1);
+    await expect.poll(() => sentAt.length).toBe(1);
 
     const alert = page.getByRole('alert').filter({ hasText: UNAVAILABLE });
-    await stepUntil(page, () => alert.isVisible(), 6);
+    await stepUntil(page, () => alert.isVisible(), 20);
     await expect(alert).toContainText('Support code: 0af7651916cd43dd8448eb211c80319c');
     await expect(page.getByText(/shortly/i)).toHaveCount(0);
 
-    await page.clock.fastForward('01:00');
-    expect(calls).toBe(2);
+    // One retry, no earlier than the ten seconds the answer asked for, and not long after.
+    expect(sentAt).toHaveLength(2);
+    expect(sentAt[1] - sentAt[0]).toBeGreaterThanOrEqual(10_000);
+    expect(sentAt[1] - sentAt[0]).toBeLessThan(15_000);
+
+    await runOut(page);
+    expect(sentAt).toHaveLength(2);
     expect(new URL(page.url()).pathname).toBe('/accounts');
   });
 
@@ -145,11 +171,11 @@ test.describe('a slow or unavailable service', () => {
     await expect.poll(() => calls).toBe(1);
 
     const alert = page.getByRole('alert').filter({ hasText: UNAVAILABLE });
-    await stepUntil(page, () => alert.isVisible(), 5);
+    await stepUntil(page, () => alert.isVisible(), 10);
     await expect(alert).toBeVisible();
     await expect(page.getByText('Unparseable 503 response.')).toHaveCount(0);
 
-    await page.clock.fastForward('01:00');
+    await runOut(page);
     expect(calls).toBe(2);
   });
 
@@ -164,7 +190,7 @@ test.describe('a slow or unavailable service', () => {
     await page.clock.fastForward('01:05');
 
     await expect(page.getByRole('alert').filter({ hasText: UNAVAILABLE })).toBeVisible();
-    await page.clock.fastForward('01:00');
+    await runOut(page);
     expect(parked).toHaveLength(1);
   });
 
@@ -194,8 +220,7 @@ test.describe('a slow or unavailable service', () => {
     down = false;
     await tryAgain.click();
     await expect(page).toHaveURL(/\/dashboard$/);
-    await expect(page.getByRole('heading', { level: 1 }).first()).not.toHaveText(
-      'Temporarily unavailable',
-    );
+    await expect(page.getByText('Available balance')).toBeVisible();
+    await expect(heading).toHaveCount(0);
   });
 });
