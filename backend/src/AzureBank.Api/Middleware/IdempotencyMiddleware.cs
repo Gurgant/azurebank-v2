@@ -63,7 +63,9 @@ public class IdempotencyMiddleware
     // ProcessingStaleAfter, then executes; an answer not stored leaves the record Executed, and the
     // 2xx is still sent.
     private static readonly TimeSpan CompleteBudget = TimeSpan.FromSeconds(3);
-    private static readonly TimeSpan ReleaseBudget = TimeSpan.FromSeconds(3);
+
+    /// <summary>The release's budget. Internal so <c>TimeoutChainTests</c> sums this value, not a copy.</summary>
+    internal static readonly TimeSpan ReleaseBudget = TimeSpan.FromSeconds(3);
 
     public IdempotencyMiddleware(
         RequestDelegate next, ILogger<IdempotencyMiddleware> logger, TimeProvider timeProvider)

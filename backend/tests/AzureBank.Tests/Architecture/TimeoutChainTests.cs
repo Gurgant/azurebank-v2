@@ -35,8 +35,8 @@ public class TimeoutChainTests
     /// <summary>How long SQL Server may take to acknowledge a cancelled command.</summary>
     private const int AttentionSeconds = 5;
 
-    /// <summary>The budget of the idempotency claim's release on the error path.</summary>
-    private const int ReleaseSeconds = 3;
+    /// <summary>The budget of the idempotency claim's release on the error path, read from the middleware.</summary>
+    private static double ReleaseSeconds => AzureBank.Api.Middleware.IdempotencyMiddleware.ReleaseBudget.TotalSeconds;
 
     /// <summary>Azure Container Apps' ingress request timeout, which nothing here can change.</summary>
     private const int IngressSeconds = 240;
