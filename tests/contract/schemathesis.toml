@@ -29,8 +29,12 @@ workers = 1
 continue-on-failure = true
 wait-for-schema = 30
 
-# Seconds.
-request-timeout = 30
+# Seconds. Longer than the API takes to give up before a commit: a request stalled before its
+# commit answers the documented 503 within 53 s -- its 40 s deadline (RequestDeadline:Seconds), 5 s
+# for the cancelled command to stop, and a money request's 3 s claim release with 5 s more
+# (TimeoutChainTests, ADR-0058). At 30 the client would give up first, and the checks would judge a
+# timeout instead of that answer.
+request-timeout = 60
 # No tls-verify here, on purpose: certificate verification stays ON. The hooks send the service
 # key on every request, and a file that switched verification off would switch it off for any
 # --url given with it. For the local HTTPS profile's development certificate, see the README.

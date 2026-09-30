@@ -713,6 +713,10 @@ public static class ServiceCollectionExtensions
             // undocumented until the Schemathesis gate's first run (2026-09-15).
             options.AddOperationTransformer<UnsupportedMediaTypeResponseTransformer>();
 
+            // 503 on every operation: the database cannot be reached, or the request ran past its
+            // deadline (ADR-0058). The four money operations' body adds applied, and only theirs.
+            options.AddOperationTransformer<ServiceUnavailableResponseTransformer>();
+
             // Operation transformer: Mark [AllowAnonymous] endpoints as not requiring auth
             // This fixes Schemathesis "Missing header not rejected" false positives
             options.AddOperationTransformer<AnonymousEndpointTransformer>();

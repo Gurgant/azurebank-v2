@@ -6,7 +6,8 @@ namespace AzureBank.Api.Transformers;
 /// <summary>
 /// Adds <c>errorCode</c> and <c>traceId</c> to the shared <c>ProblemDetails</c> component, because
 /// the API puts <c>traceId</c> on every error and <c>errorCode</c> on every error that names a
-/// reason, and the published contract declared neither.
+/// reason, and the published contract declared neither. Also <c>retryAfterSeconds</c>, which the
+/// 503s and the lock-outs send (ADR-0058).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -77,6 +78,22 @@ public sealed class ProblemDetailsExtensionsTransformer : IOpenApiDocumentTransf
             Type = JsonSchemaType.String,
             Description =
                 "Correlates this response with the server-side log entry. Quote it in a bug report.",
+        };
+
+        /*
+          Optional, and on the shared component because three refusals that point at it send it:
+          every 503 (the outage answer of ADR-0058, and revoke's own) and the two lock-outs,
+          ACCOUNT_LOCKED and PIN_LOCKED (429). AppExceptionHandler writes the same value as the
+          Retry-After header; the body copy is for a client the header does not reach.
+        */
+        schema.Properties["retryAfterSeconds"] = new OpenApiSchema
+        {
+            Type = JsonSchemaType.Integer,
+            Format = "int32",
+            Description =
+                "Seconds to wait before sending the request again, also sent as the Retry-After "
+                + "header. Present on a 503 and on the ACCOUNT_LOCKED and PIN_LOCKED refusals; absent "
+                + "on every other error.",
         };
 
         return Task.CompletedTask;

@@ -51,6 +51,15 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
             };
         };
         put?: never;
@@ -112,6 +121,15 @@ export interface paths {
                 };
                 /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
                 415: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
+                503: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -185,6 +203,15 @@ export interface paths {
                     content: {
                         "application/json": components["schemas"]["ProblemDetails"];
                         "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
             };
@@ -279,6 +306,15 @@ export interface paths {
                         };
                     };
                 };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
             };
         };
         options?: never;
@@ -354,6 +390,15 @@ export interface paths {
                 };
                 /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
                 415: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
+                503: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -450,6 +495,15 @@ export interface paths {
                         "application/problem+json": components["schemas"]["ProblemDetails"];
                     };
                 };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
             };
         };
         put?: never;
@@ -520,6 +574,15 @@ export interface paths {
                     content: {
                         "application/json": components["schemas"]["ProblemDetails"];
                         "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
             };
@@ -596,6 +659,15 @@ export interface paths {
                     content: {
                         "application/json": components["schemas"]["ProblemDetails"];
                         "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
             };
@@ -721,6 +793,15 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -803,6 +884,15 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -869,6 +959,15 @@ export interface paths {
                 };
                 /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
                 415: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
+                503: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -951,6 +1050,15 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -1017,7 +1125,7 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Service Unavailable */
+                /** @description Service Unavailable - the database could not be reached or did not answer in time. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
                 503: {
                     headers: {
                         [name: string]: unknown;
@@ -1092,6 +1200,15 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -1140,6 +1257,15 @@ export interface paths {
                 };
                 /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
+                503: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -1200,6 +1326,15 @@ export interface paths {
                 };
                 /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
+                503: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -1324,6 +1459,15 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -1415,6 +1559,15 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -1491,6 +1644,15 @@ export interface paths {
                 };
                 /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
+                503: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -1592,6 +1754,15 @@ export interface paths {
                         };
                     };
                 };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
             };
         };
         put?: never;
@@ -1660,6 +1831,15 @@ export interface paths {
                     content: {
                         "application/json": components["schemas"]["ProblemDetails"];
                         "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
             };
@@ -1826,6 +2006,15 @@ export interface paths {
                         };
                     };
                 };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. applied: false means this request changed nothing; without applied the outcome is unknown. Keep the same Idempotency-Key either way: it is what lets the money move at most once. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MoneyServiceUnavailable"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -1943,6 +2132,15 @@ export interface paths {
                 };
                 /** @description Too Many Requests */
                 429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
+                503: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -2118,6 +2316,15 @@ export interface paths {
                         };
                     };
                 };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. applied: false means this request changed nothing; without applied the outcome is unknown. Keep the same Idempotency-Key either way: it is what lets the money move at most once. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MoneyServiceUnavailable"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -2250,6 +2457,15 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -2364,6 +2580,15 @@ export interface paths {
                 };
                 /** @description Too Many Requests */
                 429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
+                503: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -2548,6 +2773,15 @@ export interface paths {
                         };
                     };
                 };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. applied: false means this request changed nothing; without applied the outcome is unknown. Keep the same Idempotency-Key either way: it is what lets the money move at most once. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MoneyServiceUnavailable"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -2716,6 +2950,15 @@ export interface paths {
                         };
                     };
                 };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. applied: false means this request changed nothing; without applied the outcome is unknown. Keep the same Idempotency-Key either way: it is what lets the money move at most once. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MoneyServiceUnavailable"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -2780,6 +3023,15 @@ export interface paths {
                 };
                 /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
+                503: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -2901,6 +3153,15 @@ export interface paths {
                 };
                 /** @description Too Many Requests */
                 429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (Cache-Control: no-store). Send the request again after that many seconds. */
+                503: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -3187,6 +3448,14 @@ export interface components {
             token: components["schemas"]["TokenResponse"];
             user: components["schemas"]["UserLoginInfo"];
         };
+        /** @description The outage 503 of a keyed money operation: the shared ProblemDetails, plus applied. */
+        MoneyServiceUnavailable: components["schemas"]["ProblemDetails"] & {
+            /**
+             * @description Present, and false, only when this request held the idempotency claim it made and let no commit start: nothing was changed. Absent when the outcome is unknown: a commit started, or the request failed before it owned the key's claim.
+             * @enum {boolean}
+             */
+            applied?: false;
+        };
         PaginatedResponseOfTransactionResponse: {
             data?: components["schemas"]["TransactionResponse"][];
             pagination?: components["schemas"]["PaginationMetadata"];
@@ -3214,6 +3483,11 @@ export interface components {
             errorCode?: string;
             /** @description Correlates this response with the server-side log entry. Quote it in a bug report. */
             traceId?: string;
+            /**
+             * Format: int32
+             * @description Seconds to wait before sending the request again, also sent as the Retry-After header. Present on a 503 and on the ACCOUNT_LOCKED and PIN_LOCKED refusals; absent on every other error.
+             */
+            retryAfterSeconds?: number;
         };
         /**
          * @description Response for recipient lookup by AzureTag.
