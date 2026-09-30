@@ -145,6 +145,46 @@ describe('the answer reaches the caller whole', () => {
         .unwrap(),
     ).rejects.toMatchObject({ status: 503, errorCode: 'SERVICE_UNAVAILABLE', applied: false });
   });
+
+  it('an `applied` that is not true or false is not passed on', async () => {
+    // "false" as a string would read as "not false" at every consumer, but the caller would hold a
+    // value its type says cannot exist; the body is not trusted, as for any wrong-typed member.
+    server.use(
+      http.post('*/api/transfers', () =>
+        HttpResponse.json(
+          {
+            title: 'Service Unavailable',
+            status: 503,
+            detail: 'The service is temporarily unavailable, and nothing was changed.',
+            errorCode: 'SERVICE_UNAVAILABLE',
+            applied: 'false',
+          },
+          { status: 503 },
+        ),
+      ),
+    );
+    const store = makeTestStore();
+
+    const refused = await store
+      .dispatch(
+        apiSlice.endpoints.transfer.initiate({
+          idempotencyKey: crypto.randomUUID(),
+          body: {
+            fromAccountId: '11111111-2222-4333-8444-555555555555',
+            recipientAzureTag: 'friend',
+            amount: 5,
+          },
+          stepUpAuthorizationId: crypto.randomUUID(),
+        }),
+      )
+      .unwrap()
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    expect(refused).toMatchObject({ status: 503, detail: COPY.unavailable });
+    expect(refused).not.toHaveProperty('applied');
+  });
 });
 
 describe('no request waits for ever', () => {
