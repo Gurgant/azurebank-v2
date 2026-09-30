@@ -311,7 +311,9 @@ public sealed class RequestDeadlineScope
 /// not registered. So every call a sign-in, a registration or a PIN set made through Identity (the
 /// user's lookup, its password check, its create and update) ran with no token: a sign-in whose
 /// lookup was held on the server answered after 20 s under a 2-second deadline, measured by
-/// <c>RequestDeadlineSqlServerTests</c> before this class.
+/// <c>RequestDeadlineSqlServerTests</c> before this class. On the compose stack, with the database
+/// refused for 60 and 120 s, a sign-in went on through EF's whole retry budget and ended at 64.06
+/// and 82.74 s, after the BFF had answered its own 503 at 55.05 and 55.02 s (ADR-0058 D3).
 /// </para>
 /// <para>
 /// FROM THE SCOPE'S <see cref="RequestDeadlineScope"/>, read at each call, the holder the commit

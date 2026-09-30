@@ -364,7 +364,7 @@ has started (`Database limits: …`).
 |---------|---------|-----------------------|----------------|
 | `Database:MaxRetryCount` | 4 | yes | EF's retries of a transient failure (0 to 20; 0 turns retrying off). A command timeout, −2, is never retried |
 | `Database:MaxRetryDelay` | `00:00:10` | yes | The cap on EF's back-off between two retries (above zero, at most a minute) |
-| `Database:ConnectTimeoutSeconds` | 10 | no | Opening a connection, and every BEGIN, COMMIT and ROLLBACK (1 to 60) |
+| `Database:ConnectTimeoutSeconds` | 10 | no | Opening a connection, and every BEGIN, COMMIT and ROLLBACK (1 to 60). Not an open to a name that does not resolve: on the compose stack those took 11.81 to 23.75 s (ADR-0058) |
 | `Database:ConnectRetryCount` | 0 | no | SqlClient's own retries of an open (0 to 255): 0 leaves EF the only retry layer |
 | `Database:MaxPoolSize` | 12 | no | Connections one process keeps open (1 to 200) |
 | `RequestDeadline:Seconds` | 40 | yes | A request still running after it answers 503 `SERVICE_UNAVAILABLE` (1 to 600). Refresh, revoke and logout have none |
@@ -477,9 +477,10 @@ The API uses **Problem Details** (RFC 7807) for error responses.
 
 A database that cannot be reached, a command timeout, an exhausted pool, EF's retries spent, or a
 request past its deadline also answers **503** `SERVICE_UNAVAILABLE`, with `retryAfterSeconds` 10,
-`Retry-After` and `Cache-Control: no-store`, from `ServiceUnavailableExceptionHandler` (ADR-0058);
-on the four money endpoints it adds `applied: false` when the request is known to have changed
-nothing. A client that hung up gets no body at all. Anything else unexpected is the 500.
+`Retry-After` and a `Cache-Control` that includes `no-store` (on the wire `no-cache,no-store`, with
+`Pragma: no-cache` and `Expires: -1`), from `ServiceUnavailableExceptionHandler` (ADR-0058); on the
+four money endpoints it adds `applied: false` when the request is known to have changed nothing.
+A client that hung up gets no body at all. Anything else unexpected is the 500.
 
 ---
 

@@ -129,9 +129,12 @@ public sealed class ClientAbortedExceptionHandler : IExceptionHandler
 /// <summary>
 /// The outage answer (ADR-0058): when the database cannot be reached, or the request ran past its
 /// deadline, the API answers 503 <c>SERVICE_UNAVAILABLE</c> with <c>retryAfterSeconds</c>, a
-/// <c>Retry-After</c> header and <c>Cache-Control: no-store</c>, and logs a Warning that names every
-/// SQL error number in the exception chain. Before, each of these was a 500 through
-/// <see cref="GlobalExceptionHandler"/>, which reads as a bug, and the numbers were logged nowhere.
+/// <c>Retry-After</c> header and a <c>Cache-Control</c> that includes <c>no-store</c>, and logs a
+/// Warning that names every SQL error number in the exception chain. Before, each of these was a 500
+/// through <see cref="GlobalExceptionHandler"/>, which reads as a bug, and the numbers were logged
+/// nowhere. When the deadline cuts a request short while EF is still trying, the chain is only the
+/// cancellation and the Warning reads <c>SQL errors []</c>: the numbers are in EF's retry Warnings
+/// for the same request (ADR-0058 D6).
 /// </summary>
 /// <remarks>
 /// <para>

@@ -456,8 +456,13 @@ public class AuthService : IAuthService
           entire point of the transaction is that the account cannot exist without it.
 
           ITS COMMIT GOES THROUGH THE COMMIT GATE (ADR-0058), which EF's own transaction here raises:
-          refused if the request deadline has already fired, and once started nothing cancels the
-          request, so the grant below is issued for a registration that happened.
+          refused if the request deadline has already fired, and while the commit runs nothing
+          cancels the request. A commit that FAILS turns the deadline back on at its original
+          instant, and this question then runs under that token: past the instant it is refused or
+          cut short, so a registration that landed answers 503, and the same details sent again
+          get the neutral 409. Unlike an audited save, it is not asked a second time (ADR-0058,
+          residual risk 7). The grant below is issued only for a registration that happened, and
+          after a failed commit the same deadline can cut its write.
         */
         async ct => user is not null && await _context.Users.AnyAsync(u => u.Id == user.Id, ct),
         cancellationToken);

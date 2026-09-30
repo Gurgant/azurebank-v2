@@ -824,7 +824,9 @@ doubling up to a minute, without trying the server again. `Pool Blocking Period=
 does that for every server except Azure SQL. Measured on 2026-09-29 on the compose stack: SQL
 Server was answering again at 16:32:04.3 UTC, and every open still failed within about a
 millisecond with 11001 until 16:32:27.0; the first 200 came 26.1 s after the database. That
-matches the blocking period, and is inferred from it rather than proved: if it is the cause, EF's
-retries during the outage were the same replays and never reached the server, so a local outage
-run said nothing about how the retry budget behaves on Azure. Since ADR-0058 every host opens with
-`NeverBlock` unless its connection string says otherwise, which is what `Auto` already gives Azure.
+matches the blocking period, and a second run showed it: on 2026-09-30, with only `NeverBlock`
+added to the same commit, the same two outages logged no error once the database answered again
+(ADR-0058, Validation). So a local outage run with blocking on says little about how the retry
+budget behaves on Azure: most of its failed opens are the cached error handed out again, with no
+attempt on the server of their own. Since ADR-0058 every host opens with `NeverBlock` unless its
+connection string says otherwise, which is what `Auto` already gives Azure.

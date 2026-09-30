@@ -51,8 +51,8 @@ public class AppExceptionHandler : IExceptionHandler
     /// </summary>
     /// <remarks>
     /// A <c>retryAfterSeconds</c> detail is also written as the <c>Retry-After</c> header, and a 503
-    /// is never cached (<c>Cache-Control: no-store</c>): it describes a moment, and a cache that kept
-    /// it would answer "unavailable" after the service is back.
+    /// is never cached (its <c>Cache-Control</c> includes <c>no-store</c>): it describes a moment, and
+    /// a cache that kept it would answer "unavailable" after the service is back.
     /// </remarks>
     internal static Task WriteProblemAsync(
         HttpContext httpContext,
@@ -97,6 +97,10 @@ public class AppExceptionHandler : IExceptionHandler
 
         if (statusCode == StatusCodes.Status503ServiceUnavailable)
         {
+            // Not what reaches the wire: every caller runs inside ExceptionHandlerMiddleware, which sets
+            // its own cache headers as the response starts. Measured on the compose stack (ADR-0058
+            // D6): Cache-Control "no-cache,no-store", Pragma "no-cache" and Expires "-1". Both include
+            // no-store, which is the point; this line keeps the 503 uncached without that middleware.
             httpContext.Response.Headers.CacheControl = "no-store";
         }
 

@@ -38,7 +38,7 @@ public sealed class ServiceUnavailableResponseTransformer : IOpenApiOperationTra
 
     private const string Retry =
         " The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After "
-        + "header carries the same value, and the answer is never cached (Cache-Control: no-store). "
+        + "header carries the same value, and the answer is never cached (its Cache-Control includes no-store). "
         + "Send the request again after that many seconds.";
 
     public Task TransformAsync(
