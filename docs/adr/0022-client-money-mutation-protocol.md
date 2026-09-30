@@ -52,8 +52,14 @@ of ADR-0009, written into the repository so the pointers have somewhere real to 
    `RESULT_UNKNOWN`) demand opposite behaviour; status-based handling collapses them into one and
    picks the wrong one half the time.
 
-6. **Any body-affecting form edit calls `resetIntent`.** An edited body under the old key is a byte
-   fingerprint mismatch and comes back `422`. The edit is a new intent, so it gets a new key.
+6. **~~Any~~ A body-affecting form edit calls `resetIntent`** *(2026-10-01,
+   [ADR-0059](0059-the-spa-tells-the-visitor-when-the-service-is-slow-or-down.md): only while no
+   key is held. While one is retained, the last attempt's outcome unknown or its authorisation
+   refused, an edit latches `verifyRequired` instead (`requireVerify`), which drops the key as
+   well: a new key there is a new intent while the first may still land. Withdraw has done so since
+   2026-09-23 without this record saying it, deposit since ADR-0059, and the transfer pages disable
+   their form while a key is live)*. An edited body under the old key is a byte fingerprint mismatch
+   and comes back `422`. The edit is a new intent, so it gets a new key.
 
 7. **`keyRetained` blocks dismissal while any key is live** — not merely while a request is in
    flight. Abandoning a KEPT key and reopening the dialog mints a fresh key, which is a new intent

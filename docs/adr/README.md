@@ -21,9 +21,9 @@ alternative record is running the same experiment again.
 
 ## If you read four, read these
 
-Fifty-eight decisions is more than anyone reads cold. These four carry the architecture; the rest
-is detail hanging off them. *(It said fifty until 2026-09-24, fifty-six until 2026-09-28, and
-fifty-seven until 2026-09-29.)*
+Fifty-nine decisions is more than anyone reads cold. These four carry the architecture; the rest
+is detail hanging off them. *(It said fifty until 2026-09-24, fifty-six until 2026-09-28,
+fifty-seven until 2026-09-29, and fifty-eight until 2026-10-01.)*
 
 | | Why this one |
 |---|---|
@@ -56,10 +56,11 @@ fifty-seven until 2026-09-29.)*
 - [ADR-0046](0046-one-money-cap-for-every-move-and-the-client-promises-what-the-contract-publishes.md) one money cap for every move, and the client promises what the contract publishes
 - [ADR-0050](0050-a-utc-day-bounds-a-users-external-transfers-and-the-mint-says-so-before-the-pin.md) a UTC day bounds a user's external transfers, and the mint says so before the PIN
 
-**Interface** — what the user sees when the theme changes or a page fails.
+**Interface** — what the user sees when the theme changes, a page fails, or the service is slow or down.
 
 - [ADR-0027](0027-dark-mode-through-css-custom-properties.md) dark mode through CSS custom properties
 - [ADR-0033](0033-root-error-boundary.md) a root error boundary, so a render error is not a blank page
+- [ADR-0059](0059-the-spa-tells-the-visitor-when-the-service-is-slow-or-down.md) the SPA tells the visitor when the service is slow or down: every wait bounded, a read retried once after the wait its answer names, and words that say whether anything changed
 
 **Authentication and account safety** — passwords, sessions, the PIN, and the one-shot authorisation it buys.
 
@@ -131,7 +132,7 @@ built: its §5.3 session stamp and the renewal-rate detector of its §6. Both we
 day, each as its own commit of PR-1.)*
 
 <details>
-<summary>What changed in each decision after it was accepted — 44 records</summary>
+<summary>What changed in each decision after it was accepted — 45 records</summary>
 
 | ADR | Changed by | What moved |
 |---|---|---|
@@ -149,7 +150,7 @@ day, each as its own commit of PR-1.)*
 | [0019](0019-spa-bff-integration.md) | 2026-09-05 (no PR named; `e4973da` for the 2026-08-17 half) · *undated* — ADR-0023 | The 401 exempt list is `IN_FLOW_401_CODES` and holds ADR-0042's three authorisation codes; Decision 6's hand-written BFF types are `z.infer` of runtime schemas. |
 | [0020](0020-account-number-reveal.md) | 2026-08-13, review of PR #105 · *undated* — ADR-0038 | PSD2 art. 4(32) was overstated (it reaches PISP/AISP activity only); the dual-mode caveat's through-the-BFF bearer bypass was measured and closed. |
 | [0021](0021-refresh-token-rotation-bff-remint.md) | 2026-08-04 (amendment; no PR named) · 2026-08-08, ADR-0034 · 2026-09-25 (no ADR or PR named) · 2026-09-28, ADR-0057 · 2026-09-30, ADR-0058 | A failing family revoke can no longer turn the uniform 401 into a 500; what to do when it fails is decided — neither an inline retry nor a durable work item. The sweep interval and EF's retry count are settings, with the values they had. Superseded in part by ADR-0057: rotation, reuse detection's family revoke, the grace window, and the BFF's failure policy and logout propagation are struck, and the refresh token lives 60 minutes from sign-in, never extended. Duende's "reuses by default" corrected to a recommendation, the draft-26 citation to RFC 10017 §6.1.2.2, which says only that tying the lifetimes "makes sense" and allows renewing on an observed expiry; the `FamilyId` residual is closed. The global-401 handler has no reuse revocation left to cover, and logout, which calls no API now, is struck from the paths that discover a dead grant. EF's retry count is 4 unless set, not 3. |
-| [0022](0022-client-money-mutation-protocol.md) | 2026-08-12 (no PR named) · 2026-08-16 (ADR-0041, ADR-0042) · 2026-09-04, ADR-0041 · 2026-09-15, ADR-0041 | `stepup-interceptor.test.tsx` now asserts the body half of the replay; BODY mode's reason was stale (the transfer PIN moved into the body, then a header authorisation replaced it); the reveal is the only level-2 surface, not the third; the body-and-key half of the byte-identical replay is held by the test and exercised by no live caller. |
+| [0022](0022-client-money-mutation-protocol.md) | 2026-08-12 (no PR named) · 2026-08-16 (ADR-0041, ADR-0042) · 2026-09-04, ADR-0041 · 2026-09-15, ADR-0041 · 2026-10-01, ADR-0059 | `stepup-interceptor.test.tsx` now asserts the body half of the replay; BODY mode's reason was stale (the transfer PIN moved into the body, then a header authorisation replaced it); the reveal is the only level-2 surface, not the third; the body-and-key half of the byte-identical replay is held by the test and exercised by no live caller. Decision 6 holds only while no key is held: an edit with a key retained latches the check instead, in withdraw since 2026-09-23 and in deposit since ADR-0059. |
 | [0023](0023-runtime-response-validation.md) | 2026-09-10, ADR-0053 · 2026-09-15, ADR-0043 (a note under Decision 2) · 2026-09-17 (no ADR or PR named) | "Guarded by three layers" said more than two of them did; the document-versus-code half is now a backend test; the Zod was generated faithfully from a document wrong about errors, which ADR-0043 corrected; the 2026-09-10 correction's "Schemathesis runs only when started by hand" is struck, since it gates every pull request. |
 | [0026](0026-absolute-session-cap-reauthentication.md) | 2026-09-28, ADR-0057 | Item 4 reversed: the API revokes one grant now, so re-authentication revokes the old session's grant at the API, and nothing else; the order gains the steps after the new cookie. |
 | [0027](0027-dark-mode-through-css-custom-properties.md) | 2026-07-30 (same day; no PR named) | The brand ramp could not carry both of its jobs on a dark ground (white at 3.22:1); a `brandFill` role added. |
@@ -178,11 +179,12 @@ day, each as its own commit of PR-1.)*
 | [0053](0053-the-committed-contract-is-what-the-api-generates.md) | 2026-09-11, twice (no PR named) · 2026-09-14, twice (the XML-generator fix; no PR named) · 2026-09-15, twice (Schemathesis made a gate; no PR named) · 2026-09-21, ADR-0056 · 2026-09-28, ADR-0057 | The comma-decimal-locale defect withdrawn as false, measured through the real route; the "either defect fixed" trigger narrowed to the XML generator; the XML-generator defect fixed and "it is why D3's newlines are in the contract" struck, the trigger's prediction wrong: the newlines moved, so D3's normalisation stays; D6 moved: Schemathesis gates runtime conformance on every PR in `ci.yml`'s `conformance` job, and the "Gating Schemathesis" trigger struck as done. The conformance floor moved 27 → 28 with the withdrawal mint, 28 → 29 with ADR-0057's `POST /api/auth/revoke`, and 29 → 30 with its `POST /api/auth/session-stamps`; `CommittedOpenApiDocumentTests`' own floor stays at 20, deliberately below the real count so deleting an endpoint does not trip it. |
 | [0054](0054-the-bff-serves-the-built-spa-under-a-csp-measured-against-it.md) | 2026-09-25 (no ADR or PR named) | HSTS is no longer left to the edge: the BFF sends it in every environment but Development, over http too, because `UseHsts` skips any request that is not https. |
 | [0055](0055-the-api-serves-one-client-the-bff.md) | 2026-09-28, ADR-0057 | D4 extended: the token endpoints also want loopback and the BFF's marker, and a half-applied key rotation reaches the browser as a 503; D7's private network between two hosts struck, since the API is a loopback sidecar; the address allow-list rejection annotated, and the mutual-TLS rejection, whose pointer to D7 now lands on a struck clause; "the API reached over a network" added to what would change this. |
-| [0057](0057-the-bffs-refresh-token-is-one-reusable-grant-per-session.md) | 2026-09-30, ADR-0058 | §4.3: a tripwire's or an unknown grant's row that cannot reach the database answers 503, not 500, and refresh, revoke and logout run without the request deadline. §8: `BackendApi:TimeoutSeconds` is 55 s, not 100, and the proxy's activity timeout as well; the renewal's, the revoke's, `/me`'s, the stamp poll's and the health probe's shorter waits stay as they were. |
+| [0057](0057-the-bffs-refresh-token-is-one-reusable-grant-per-session.md) | 2026-09-30, ADR-0058 · 2026-10-01, ADR-0059 | §4.3: a tripwire's or an unknown grant's row that cannot reach the database answers 503, not 500, and refresh, revoke and logout run without the request deadline. §8: `BackendApi:TimeoutSeconds` is 55 s, not 100, and the proxy's activity timeout as well; the renewal's, the revoke's, `/me`'s, the stamp poll's and the health probe's shorter waits stay as they were. The SPA retries a read's 503 once, after the answer's `retryAfterSeconds` and within two minutes, not up to 3 attempts on RTK's own back-off. |
+| [0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md) | 2026-10-01, ADR-0059 | Consequences: the SPA retries a read's 503 once, after its `retryAfterSeconds`, not up to 3 attempts, and it reads `applied` and the retry wait. |
 
 </details>
 
-The next free number is **0059**.
+The next free number is **0060**.
 
 <details>
 <summary>Full list in numeric order</summary>
@@ -248,6 +250,7 @@ The next free number is **0059**.
 | [ADR-0056](0056-a-withdrawal-is-authorised-like-a-transfer.md) | A withdrawal is authorised like a transfer | Accepted | 2026-09-21 |
 | [ADR-0057](0057-the-bffs-refresh-token-is-one-reusable-grant-per-session.md) | The BFF's refresh token is one reusable grant per session | Accepted | 2026-09-28 |
 | [ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md) | The API gives up cleanly when the database is down | Accepted | 2026-09-29 |
+| [ADR-0059](0059-the-spa-tells-the-visitor-when-the-service-is-slow-or-down.md) | The SPA tells the visitor when the service is slow or down | Accepted | 2026-10-01 |
 
 </details>
 
