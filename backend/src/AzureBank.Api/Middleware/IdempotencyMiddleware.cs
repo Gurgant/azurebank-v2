@@ -120,8 +120,13 @@ public class IdempotencyMiddleware
         string requestHash;
         try
         {
+            // Under the client's token, not the deadline's (ADR-0058): a read cancelled by its token
+            // leaves Kestrel's body reader mid-read, and Kestrel's own drain of the rest then fails on
+            // it and logs an error (the trap DrainInTimeAsync documents, measured there). A body still
+            // arriving at the deadline is the client's to finish or abandon; the claim below is not
+            // made until it has, and the deadline cancels that as it cancels everything after.
             requestHash = await idempotency.ComputeRequestHashAsync(
-                context.Request.Body, context.RequestAborted);
+                context.Request.Body, ClientAbortedOf(context));
         }
         catch (BadHttpRequestException ex) when (ex.StatusCode == StatusCodes.Status413PayloadTooLarge)
         {
@@ -277,7 +282,9 @@ public class IdempotencyMiddleware
                 limit.MaxRequestBodySize = DrainCapBytes;
             }
 
-            if (await DrainInTimeAsync(context.Request.BodyReader, context.RequestAborted))
+            // The client's token, for the reason the body's hash is read under it: a read cancelled
+            // by its token leaves the reader mid-read. The five seconds below bound it instead.
+            if (await DrainInTimeAsync(context.Request.BodyReader, ClientAbortedOf(context)))
             {
                 return;
             }

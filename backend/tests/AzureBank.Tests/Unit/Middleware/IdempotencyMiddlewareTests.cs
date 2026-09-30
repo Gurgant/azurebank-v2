@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.IO.Pipelines;
 using System.Security.Claims;
 using System.Text;
 using AzureBank.Api.Attributes;
@@ -6,9 +8,11 @@ using AzureBank.Api.Services.Interfaces;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
+using AzureBank.Shared.Exceptions;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Routing.Patterns;
 using Microsoft.Extensions.Logging;
@@ -186,6 +190,76 @@ public class IdempotencyMiddlewareTests
             s => s.CompleteAsync(It.IsAny<IdempotencyRecord>(), StatusCodes.Status201Created, It.IsAny<string?>(), Answer, It.IsAny<CancellationToken>()),
             Times.Once(), "the retry of a client that hung up after the commit is replayed the whole answer");
         context.Response.Body.Length.Should().Be(0, "nothing is written to a client that is not there");
+    }
+
+    [Fact]
+    public async Task TheBody_IsReadUnderTheClientsToken_AndTheClaimUnderTheDeadlines()
+    {
+        // A read of the body that the deadline cancels leaves Kestrel's body reader mid-read, and its
+        // drain of the rest then fails on it and closes the connection. Only the client going away
+        // may stop the read; the deadline still cancels the claim that follows.
+        using var client = new CancellationTokenSource();
+        using var deadline = new RequestDeadline(_time, TimeSpan.FromSeconds(40), client.Token, NullLogger.Instance);
+        var context = Context(deadline);
+
+        await Middleware(Created).InvokeAsync(context, _store.Object);
+
+        _store.Verify(s => s.ComputeRequestHashAsync(It.IsAny<Stream>(), client.Token), Times.Once());
+        _store.Verify(
+            s => s.TryAcquireAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<string>(), deadline.Token),
+            Times.Once());
+    }
+
+    [Fact]
+    public async Task AnOversizedBody_IsDrainedUnderTheClientsToken()
+    {
+        using var client = new CancellationTokenSource();
+        using var deadline = new RequestDeadline(_time, TimeSpan.FromSeconds(40), client.Token, NullLogger.Instance);
+        var context = Context(deadline);
+        context.Request.ContentLength = 40_000;
+        var body = new RecordingBodyReader();
+        context.Features.Set<IRequestBodyPipeFeature>(body);
+
+        var refused = await Record.ExceptionAsync(() => Middleware(Created).InvokeAsync(context, _store.Object));
+
+        refused.Should().BeOfType<IdempotencyException>("an oversized body is refused with its 413");
+        body.ReadUnder.Should().Equal([client.Token], "the drain reads to the end unless the client goes away");
+    }
+
+    /// <summary>A request body that has already ended, and records the token each read was given.</summary>
+    private sealed class RecordingBodyReader : PipeReader, IRequestBodyPipeFeature
+    {
+        public List<CancellationToken> ReadUnder { get; } = [];
+
+        public PipeReader Reader => this;
+
+        public override ValueTask<ReadResult> ReadAsync(CancellationToken cancellationToken = default)
+        {
+            ReadUnder.Add(cancellationToken);
+            return ValueTask.FromResult(new ReadResult(ReadOnlySequence<byte>.Empty, isCanceled: false, isCompleted: true));
+        }
+
+        public override bool TryRead(out ReadResult result)
+        {
+            result = new ReadResult(ReadOnlySequence<byte>.Empty, isCanceled: false, isCompleted: true);
+            return true;
+        }
+
+        public override void AdvanceTo(SequencePosition consumed)
+        {
+        }
+
+        public override void AdvanceTo(SequencePosition consumed, SequencePosition examined)
+        {
+        }
+
+        public override void CancelPendingRead()
+        {
+        }
+
+        public override void Complete(Exception? exception = null)
+        {
+        }
     }
 
     private void Acquires(bool replay)
