@@ -5,7 +5,7 @@ import { http } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { server } from '../../mocks/server';
 import { makeTestStore, renderWithProviders } from '../../test/renderWithProviders';
-import { COPY, advance, never } from '../../test/outage';
+import { COPY, advance, expectSilentHintTakesNoRoom, never } from '../../test/outage';
 import { apiSlice } from '../../features/api/apiSlice';
 import {
   SLOW_AFTER_MS,
@@ -180,6 +180,22 @@ describe('WaitHint', () => {
 
     await advance(STILL_TRYING_AFTER_MS - SLOW_AFTER_MS);
     expect(region.textContent).toBe(COPY.stillTrying);
+  });
+
+  it('takes no room while it is silent, and makes room only once it has words', async () => {
+    vi.useFakeTimers();
+    renderHint({ active: true, kind: 'read', onStopWaiting: vi.fn() });
+
+    expectSilentHintTakesNoRoom();
+    const hint = document.querySelector('[data-wait-hint]') as HTMLElement;
+
+    await advance(SLOW_AFTER_MS);
+    expect(hint).toHaveTextContent(COPY.slow);
+    expect(getComputedStyle(hint).position).not.toBe('absolute');
+
+    await advance(STILL_TRYING_AFTER_MS - SLOW_AFTER_MS);
+    expect(screen.getByRole('button', { name: COPY.stopWaiting })).toBeInTheDocument();
+    expect(getComputedStyle(hint).position).not.toBe('absolute');
   });
 
   it('offers "Stop waiting" on a read at 20 s: after the words, outside them, medium-sized', async () => {

@@ -85,11 +85,13 @@ function initials(name: string): string {
 // ============================================
 
 /**
- * The six keys that belong to the recipient step — the part of this flow internal transfer does not
+ * The keys that belong to the recipient step — the part of this flow internal transfer does not
  * have. Everything else comes from `useTransferWizardStyles`, which both wizards share.
  */
 const useRecipientStyles = makeStyles({
   recipientRow: { display: 'flex', gap: '8px' },
+  // The recipient check's hint, once it has words. While it is silent it takes no room at all.
+  lookupHint: { marginTop: '8px' },
   input: {
     flex: 1,
     padding: '12px',
@@ -988,11 +990,12 @@ export function TransferPage() {
                   {recipientError}
                 </Text>
               )}
-              {lookupState.isFetching && (
-                <div style={{ marginTop: '8px' }}>
-                  <WaitHint active kind="read" onStopWaiting={stopWaitingForLookup} />
-                </div>
-              )}
+              <WaitHint
+                active={lookupState.isFetching}
+                kind="read"
+                onStopWaiting={stopWaitingForLookup}
+                className={styles.lookupHint}
+              />
             </div>
 
             {/* Amount */}

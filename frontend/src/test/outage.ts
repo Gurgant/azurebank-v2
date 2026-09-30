@@ -118,6 +118,22 @@ export async function hintShownAt(scope: HTMLElement = document.body): Promise<n
   return Date.now();
 }
 
+/**
+ * A hint with no words yet moves nothing on the page: the outermost box that is there only to hold
+ * it — the hint itself, or a wrapper around nothing else — is out of the page's flow. jsdom lays
+ * nothing out, so this reads the computed position rather than measuring a shift.
+ */
+export function expectSilentHintTakesNoRoom(scope: HTMLElement = document.body) {
+  const hint = scope.querySelector<HTMLElement>('[data-wait-hint]');
+  expect(hint, 'no wait hint on screen').not.toBeNull();
+  expect(hint?.textContent).toBe('');
+  let box = hint as HTMLElement;
+  while (box.parentElement && box.parentElement.childElementCount === 1) {
+    box = box.parentElement;
+  }
+  expect(getComputedStyle(box).position).toBe('absolute');
+}
+
 /** The six PIN boxes' values, in order. */
 export const pinBoxValues = () =>
   Array.from(

@@ -11,6 +11,7 @@ import {
   COPY,
   advance,
   advanceUntil,
+  expectSilentHintTakesNoRoom,
   fakeClockUser,
   hintRegion,
   hintShownAt,
@@ -771,6 +772,17 @@ describe('the recipient check', () => {
     await waitFor(() =>
       expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Verify' })),
     );
+  });
+
+  it('moves nothing on the page until its hint has words', async () => {
+    const lookups = holdLookups();
+    await verifyOnTheFakeClock();
+    await waitFor(() => expect(lookups).toHaveLength(1));
+
+    const shownAt = await hintShownAt();
+    expectSilentHintTakesNoRoom();
+    await advanceUntil(shownAt, 5_000);
+    hintRegion(COPY.slow);
   });
 
   it('a check with no answer ends at 65 s saying the service is unavailable', async () => {
