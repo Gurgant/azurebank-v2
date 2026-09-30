@@ -155,9 +155,10 @@ lock's own `THROW 50000`. That makes the audit tail's bounded read, a −2, a 50
 writes nothing, because with the token reaching every database call a hang-up also surfaces as a
 `SqlException`, a `DbUpdateException` or a retry limit, and those were answered 500 at Error to a
 client that was gone. It logs at Debug only when the hang-up caused the failure (the deadline
-records the client as what cancelled the request, or the chain holds the cancellation); anything
-else, such as an exempt endpoint's failure, whose calls never see that token, is a Warning with
-the SQL error numbers and the chain the 503 would have named.
+records the client as what cancelled the request before any commit started, or the chain holds the
+cancellation); anything else, such as an exempt endpoint's failure, whose calls never see that
+token, or a commit that failed after the client left, is a Warning with the SQL error numbers and
+the chain the 503 would have named.
 
 **D7 — `applied: false` only when the answer knows it.** On the four money endpoints, and only for
 a request that owns the idempotency claim it made (`OwnedIdempotencyClaim`, set after a claim that

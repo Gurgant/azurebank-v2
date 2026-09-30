@@ -32,7 +32,8 @@ namespace AzureBank.Api.Handlers;
 /// revoke, logout) never hand the client's token to a call, and after a commit has started nothing
 /// cancels a request, so a database that fails then fails whether or not the client is still there.
 /// Nothing is written either way, but only a failure the hang-up caused is logged at Debug: the
-/// deadline says the client cancelled the request, or the chain holds the cancellation itself.
+/// deadline says the client cancelled the request before any commit started, or the chain holds
+/// the cancellation itself.
 /// Anything else is logged at Warning with the SQL error numbers and the chain the outage 503 would
 /// have named, so an outage nobody was answered is not lost.
 /// </para>
@@ -89,11 +90,16 @@ public sealed class ClientAbortedExceptionHandler : IExceptionHandler
 
     /// <summary>
     /// True when the client hanging up caused <paramref name="exception"/>: the request deadline
-    /// recorded the client as what cancelled the request, or the chain holds a cancellation.
+    /// recorded the client as what cancelled the request before any commit started, or the chain
+    /// holds a cancellation.
     /// </summary>
+    /// <remarks>
+    /// Once a commit has started, a hang-up is recorded only after a commit failed
+    /// (<see cref="IRequestDeadline.CommitFailed"/>): the failure came first and is the database's.
+    /// </remarks>
     internal static bool CausedByHangUp(IRequestDeadline? deadline, Exception exception)
     {
-        if (deadline?.FiredByClient == true)
+        if (deadline is { FiredByClient: true, CommitEntered: false })
         {
             return true;
         }

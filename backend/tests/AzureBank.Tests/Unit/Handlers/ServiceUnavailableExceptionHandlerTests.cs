@@ -268,6 +268,33 @@ public class ServiceUnavailableExceptionHandlerTests
     }
 
     [Fact]
+    public async Task ACommitThatFailedAfterTheClientLeft_IsLoggedAtWarning()
+    {
+        // The client hung up while a commit ran, which cancels nothing; the commit then failed on
+        // its own, and only then did the hang-up cancel the request. The deadline records the
+        // client, but the failure is the database's.
+        using var hungUp = new CancellationTokenSource();
+        var context = NewContext();
+        using var deadline = new RequestDeadline(
+            new FakeTimeProvider(), TimeSpan.FromSeconds(40), hungUp.Token, NullLogger.Instance);
+        context.Features.Set<IRequestDeadline>(deadline);
+        deadline.TryEnterCommit().Should().BeTrue();
+        hungUp.Cancel();
+        deadline.FiredByClient.Should().BeFalse("a hang-up while a commit runs cancels nothing");
+        deadline.CommitFailed();
+        deadline.FiredByClient.Should().BeTrue("the proof is void unless the failed commit let the hang-up cancel");
+        context.RequestAborted = hungUp.Token;
+        var log = new RecordingLoggerProvider();
+
+        (await ClientAborted(log).TryHandleAsync(context, Sql(3930, 16), CancellationToken.None))
+            .Should().BeTrue();
+
+        log.Lines.Should().ContainSingle(l => l.Level == LogLevel.Warning).Which.Message.Should().Contain("3930");
+        log.Lines.Should().NotContain(l => l.Level == LogLevel.Debug);
+        context.Response.StatusCode.Should().Be(StatusCodes.Status499ClientClosedRequest);
+    }
+
+    [Fact]
     public async Task AClientStillThere_IsLeftToTheOtherHandlers()
     {
         var context = NewContext();
