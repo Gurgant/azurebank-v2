@@ -48,6 +48,18 @@ replaces; a background refetch keeps the stale data and shows a small inline ind
 region renders an inline retry rather than blanking. Mutations show pending state on the button that
 started them, never as a page-level overlay.
 
+**A wait the visitor can see gets a `WaitHint`, under the control or spinner that started it.** Each
+page or dialog renders its own rather than one for the app, because a Fluent modal hides everything
+outside it from assistive technology; never inside a `role="alert"` or an element an
+`aria-describedby` points at, or its words are read as part of those. It says nothing for 5 s, then
+"Taking longer than usual…", then "Still trying…". Only a read can be offered "Stop waiting", from
+20 s and only when its host passes `onStopWaiting`: a write the server may already be doing is never
+given up on. A read's spinner and error bar follow `readWait`, not `isLoading` and `error`, so **a
+read's error bar hides while its read refetches**: a Retry shows the wait again, and a second
+failure mounts a new `role="alert"` that is announced again. Stop and Retry arm `useWaitLanding`,
+which puts focus on the control the failed wait comes back with (the bar's Retry) unless the visitor
+has put it somewhere else meanwhile. ADR-0059 has the reasons.
+
 ## Money and formatting
 
 **Amounts are always positive; direction lives in `type`.** A negative amount in the UI layer means
@@ -68,7 +80,7 @@ nobody finds out until integration.
 
 ## Testing with Fluent and jsdom
 
-These four have each cost a debugging session, and none of them fails in a way that points at the
+These five have each cost a debugging session, and none of them fails in a way that points at the
 cause.
 
 **Never put `contentBefore` on an input inside a dialog.** Typing into it closes the modal. The test
@@ -87,6 +99,16 @@ reintroduces a whole class of flake. Two consequences follow: after any async tr
 `findBy*` or wrap in `waitFor`, because tabster lifts background `aria-hidden` asynchronously; and
 since jsdom never evaluates media queries, elements hidden behind a mobile-first breakpoint are
 present but hidden, so they need `{ hidden: true }` to be found.
+
+**A fake clock can stop jsdom's animation frames for the rest of the file.** jsdom runs
+`requestAnimationFrame` on an interval it starts at the first frame request; started under a fake
+clock, that interval dies when the clock is restored, and RTK hands a request's store changes to
+its subscribers on the next frame, so every later test in the file stops seeing its own cache. The
+symptom is a test that passes alone and fails after a fake-clock test in the same file. A test whose
+requests go through the store while the clock is fake installs it with `installFakeClock()` from
+`src/test/outage.ts`, which keeps the frames on the real clock. A bare `vi.useFakeTimers()` is safe
+only while nothing asks for a frame, such as a hook's or a component's own timers with no request
+starting or ending.
 
 ## `vitest run` does not run the whole suite — it excludes `contract/**` and `integration/**`
 
