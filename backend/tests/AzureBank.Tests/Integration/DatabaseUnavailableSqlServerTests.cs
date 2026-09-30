@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -127,8 +128,37 @@ public sealed class DatabaseUnavailableSqlServerTests : IDisposable
     [SqlServerFact]
     public async Task AnExhaustedPool_AnswersTheOutage503()
     {
-        // A pool of one, and a request holding it: the next request waits Connect Timeout for a
-        // connection and gets SqlClient's pool-timeout InvalidOperationException.
+        var response = await SignInOnAnExhaustedPoolAsync("exhausted pool");
+
+        await AssertServiceUnavailableAsync(response, applied: null);
+    }
+
+    [SqlServerFact]
+    public async Task AnExhaustedPool_AnswersTheOutage503_WhereTheLanguageIsNotEnglish()
+    {
+        // SqlClient ships its messages translated (an it\ satellite beside the API, among others),
+        // and the pool timeout is known only by its English text. The API pins its UI culture to the
+        // invariant one as it starts; this host starts in a process whose UI language is Italian.
+        var before = CultureInfo.DefaultThreadCurrentUICulture;
+        CultureInfo.DefaultThreadCurrentUICulture = CultureInfo.GetCultureInfo("it-IT");
+        try
+        {
+            var response = await SignInOnAnExhaustedPoolAsync("exhausted pool, Italian process");
+
+            await AssertServiceUnavailableAsync(response, applied: null);
+        }
+        finally
+        {
+            CultureInfo.DefaultThreadCurrentUICulture = before;
+        }
+    }
+
+    /// <summary>
+    /// A pool of one, and a sign-in holding it: the next sign-in waits Connect Timeout for a
+    /// connection and gets SqlClient's pool-timeout InvalidOperationException. Returns its answer.
+    /// </summary>
+    private async Task<HttpResponseMessage> SignInOnAnExhaustedPoolAsync(string what)
+    {
         var pooled = new SqlConnectionStringBuilder(SqlServerFactAttribute.ConnectionString!)
         {
             MaxPoolSize = 1,
@@ -155,8 +185,8 @@ public sealed class DatabaseUnavailableSqlServerTests : IDisposable
             await holding;
         }
 
-        Print("exhausted pool", response, clock, factory);
-        await AssertServiceUnavailableAsync(response, applied: null);
+        Print(what, response, clock, factory);
+        return response;
     }
 
     [SqlServerFact]

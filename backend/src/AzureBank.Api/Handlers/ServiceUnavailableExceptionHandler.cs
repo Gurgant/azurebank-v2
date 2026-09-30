@@ -191,6 +191,12 @@ public sealed class ServiceUnavailableExceptionHandler : IExceptionHandler
     /// (measured: "Timeout expired.  The timeout period elapsed prior to obtaining a connection from
     /// the pool. ...").
     /// </summary>
+    /// <remarks>
+    /// ENGLISH ONLY BECAUSE <c>Program.cs</c> PINS THE UI CULTURE. SqlClient translates the message
+    /// through satellite assemblies (the Italian one reads "Timeout scaduto. Il tempo disponibile è
+    /// scaduto prima di aver ottenuto la connessione dal pool."), so on a host with another UI
+    /// language this text would not match and the timeout would be a 500.
+    /// </remarks>
     private const string PoolTimeoutText = "prior to obtaining a connection from the pool";
 
     private readonly ILogger<ServiceUnavailableExceptionHandler> _logger;

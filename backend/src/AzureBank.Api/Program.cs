@@ -1,3 +1,4 @@
+using System.Globalization;
 using AzureBank.Api.Extensions;
 using AzureBank.Api.Middleware;
 using AzureBank.Api.Observability;
@@ -7,6 +8,14 @@ using Scalar.AspNetCore;
 using Serilog;
 using Serilog.Formatting.Compact;
 using Serilog.Sinks.OpenTelemetry;
+
+// Library messages in English on every host, first of all. SqlClient ships its messages translated
+// (satellite assemblies such as it\Microsoft.Data.SqlClient.resources.dll beside the API), and its
+// pool-wait timeout is an InvalidOperationException that ServiceUnavailableExceptionHandler can
+// tell from a bug only by its English text. With the process's UI culture Italian, that timeout
+// answered 500 instead of the outage 503 before this line (DatabaseUnavailableSqlServerTests). Only
+// the UI culture, the language of messages: formatting keeps the host's culture.
+CultureInfo.DefaultThreadCurrentUICulture = CultureInfo.InvariantCulture;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BOOTSTRAP LOGGER (captures startup errors before config is loaded)

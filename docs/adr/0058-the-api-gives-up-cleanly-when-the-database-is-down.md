@@ -146,7 +146,7 @@ what failed. A 503 for:
 | The request's deadline fired, whatever it threw | a cancelled command surfaces as whatever SqlClient and EF make of it |
 | EF's retries were spent (`RetryLimitExceededException`) | the database failed longer than the budget |
 | A `SqlException` EF's own detector calls transient, or numbered −2, 35, 11001, 18401, 17197 or 17142, or of class 20 or more | the database could not be reached or did not answer in time; EF's detector is asked directly, so the list cannot drift from what EF retries |
-| SqlClient's pool-wait timeout, matched by its message | its type, `InvalidOperationException`, is otherwise a bug |
+| SqlClient's pool-wait timeout, matched by its English message: SqlClient ships translations, so the API sets its UI culture to the invariant one as it starts | its type, `InvalidOperationException`, is otherwise a bug |
 | A bare `TimeoutException` | |
 
 Everything else stays the 500 it was: a unique violation, a concurrency conflict, the application
