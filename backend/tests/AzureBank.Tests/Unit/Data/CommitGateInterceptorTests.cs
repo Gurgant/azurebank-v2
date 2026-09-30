@@ -1,5 +1,6 @@
 using AzureBank.Api.Data;
 using AzureBank.Api.Middleware;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -25,7 +26,14 @@ namespace AzureBank.Tests.Unit.Data;
 /// The context is never opened: the gate reads only the scope EF was given when it built the
 /// context's options, which is how it finds the request's deadline.
 /// </para>
+/// <para>
+/// IN THE SQL SERVER PROOFS' COLLECTION, so never beside them. A commit that lands here adds to
+/// <c>ApiMetrics.CommitGateEntered</c>, a static counter, and <c>RequestDeadlineSqlServerTests</c>
+/// counts that instrument across the whole process while a money request runs: one landing here in
+/// parallel would read as a second commit of that request.
+/// </para>
 /// </remarks>
+[Collection(SqlServerProofsCollection.Name)]
 public sealed class CommitGateInterceptorTests : IDisposable
 {
     private static readonly TimeSpan Budget = TimeSpan.FromSeconds(40);
