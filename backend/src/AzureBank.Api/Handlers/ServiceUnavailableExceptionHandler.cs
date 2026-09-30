@@ -27,14 +27,25 @@ namespace AzureBank.Api.Handlers;
 /// The token read here is the client's own: the request deadline puts it back on its way out, so a
 /// request the DEADLINE cancelled is not mistaken for a hang-up.
 /// </para>
+/// <para>
+/// A CLIENT THAT HAS GONE DID NOT NECESSARILY CAUSE THE FAILURE. The exempt endpoints (refresh,
+/// revoke, logout) never hand the client's token to a call, and after a commit has started nothing
+/// cancels a request, so a database that fails then fails whether or not the client is still there.
+/// Nothing is written either way, but only a failure the hang-up caused is logged at Debug: the
+/// deadline says the client cancelled the request, or the chain holds the cancellation itself.
+/// Anything else is logged at Warning with the SQL error numbers and the chain the outage 503 would
+/// have named, so an outage nobody was answered is not lost.
+/// </para>
 /// </remarks>
 public sealed class ClientAbortedExceptionHandler : IExceptionHandler
 {
     private readonly ILogger<ClientAbortedExceptionHandler> _logger;
+    private readonly ReceivedAtClock _clock;
 
-    public ClientAbortedExceptionHandler(ILogger<ClientAbortedExceptionHandler> logger)
+    public ClientAbortedExceptionHandler(ILogger<ClientAbortedExceptionHandler> logger, ReceivedAtClock clock)
     {
         _logger = logger;
+        _clock = clock;
     }
 
     public ValueTask<bool> TryHandleAsync(
@@ -45,9 +56,28 @@ public sealed class ClientAbortedExceptionHandler : IExceptionHandler
             return ValueTask.FromResult(false);
         }
 
-        _logger.LogDebug(
-            "The client closed the request on {RoutePattern} ({ExceptionType}); nothing was written",
-            RequestLogRoute.Of(httpContext), exception.GetType().Name);
+        if (CausedByHangUp(httpContext.Features.Get<IRequestDeadline>(), exception))
+        {
+            _logger.LogDebug(
+                "The client closed the request on {RoutePattern} ({ExceptionType}); nothing was written",
+                RequestLogRoute.Of(httpContext), exception.GetType().Name);
+        }
+        else
+        {
+            var received = httpContext.Features.Get<ReceivedAtFeature>()?.Value;
+            _logger.LogWarning(
+                exception,
+                "The client closed the request on {RoutePattern}, which failed after {ElapsedMs} ms for "
+                + "another cause; nothing was written; SQL errors {SqlErrorNumbers}; chain {ExceptionTypes}",
+                RequestLogRoute.Of(httpContext),
+                received is { } at ? (long)(_clock.Now - at).TotalMilliseconds : -1,
+                ServiceUnavailableExceptionHandler.SqlErrorNumbers(exception),
+                ServiceUnavailableExceptionHandler.ExceptionTypes(exception));
+
+            // As the outage 503 does: this handler marks the exception handled, so the
+            // instrumentation would otherwise leave the span without it.
+            Activity.Current?.AddException(exception);
+        }
 
         if (!httpContext.Response.HasStarted)
         {
@@ -55,6 +85,28 @@ public sealed class ClientAbortedExceptionHandler : IExceptionHandler
         }
 
         return ValueTask.FromResult(true);
+    }
+
+    /// <summary>
+    /// True when the client hanging up caused <paramref name="exception"/>: the request deadline
+    /// recorded the client as what cancelled the request, or the chain holds a cancellation.
+    /// </summary>
+    internal static bool CausedByHangUp(IRequestDeadline? deadline, Exception exception)
+    {
+        if (deadline?.FiredByClient == true)
+        {
+            return true;
+        }
+
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is OperationCanceledException)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
 

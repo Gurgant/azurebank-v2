@@ -112,7 +112,7 @@ public class LogPlaceholderClassTests
         ["Delivered"] = Operational,
         ["Directory"] = Operational,
         ["Elapsed"] = Operational,
-        ["ElapsedMs"] = Operational, // how long a request ran before its outage 503 (ADR-0058)
+        ["ElapsedMs"] = Operational, // how long a request ran before its outage 503, or before a failure its gone client never saw (ADR-0058)
         ["Endpoint"] = Operational,
         ["ErrorCode"] = Operational,
         ["ErrorCount"] = Operational,

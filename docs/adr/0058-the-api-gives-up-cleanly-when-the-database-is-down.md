@@ -151,10 +151,13 @@ what failed. A 503 for:
 
 Everything else stays the 500 it was: a unique violation, a concurrency conflict, the application
 lock's own `THROW 50000`. That makes the audit tail's bounded read, a −2, a 503 (ADR-0044's note).
-`ClientAbortedExceptionHandler` runs first: if the client's own token is cancelled it sets 499,
-logs at Debug and writes nothing, because with the token reaching every database call a hang-up
-also surfaces as a `SqlException`, a `DbUpdateException` or a retry limit, and those were answered
-500 at Error to a client that was gone.
+`ClientAbortedExceptionHandler` runs first: if the client's own token is cancelled it sets 499 and
+writes nothing, because with the token reaching every database call a hang-up also surfaces as a
+`SqlException`, a `DbUpdateException` or a retry limit, and those were answered 500 at Error to a
+client that was gone. It logs at Debug only when the hang-up caused the failure (the deadline
+records the client as what cancelled the request, or the chain holds the cancellation); anything
+else, such as an exempt endpoint's failure, whose calls never see that token, is a Warning with
+the SQL error numbers and the chain the 503 would have named.
 
 **D7 — `applied: false` only when the answer knows it.** On the four money endpoints, and only for
 a request that owns the idempotency claim it made (`OwnedIdempotencyClaim`, set after a claim that

@@ -4,12 +4,14 @@ using AzureBank.Api.Attributes;
 using AzureBank.Api.Handlers;
 using AzureBank.Api.Middleware;
 using AzureBank.Shared.Constants;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
@@ -205,7 +207,7 @@ public class ServiceUnavailableExceptionHandlerTests
         var context = NewContext();
         context.RequestAborted = hungUp.Token;
 
-        var handled = await new ClientAbortedExceptionHandler(NullLogger<ClientAbortedExceptionHandler>.Instance)
+        var handled = await ClientAborted(new RecordingLoggerProvider())
             .TryHandleAsync(context, Sql(0, 11), CancellationToken.None);
 
         handled.Should().BeTrue("nothing below may write to a client that has gone, or log it as an error");
@@ -214,16 +216,71 @@ public class ServiceUnavailableExceptionHandlerTests
     }
 
     [Fact]
+    public async Task AFailureTheHangUpDidNotCause_GetsNothing_ButIsLoggedAtWarning()
+    {
+        // An exempt endpoint's calls never see the client's token, so a database failure there is
+        // not the hang-up's doing even when the client has gone. Still nothing is written to a
+        // client that is not there, but the failure is logged with what the 503 would have named.
+        using var hungUp = new CancellationTokenSource();
+        hungUp.Cancel();
+        var context = NewContext();
+        context.RequestAborted = hungUp.Token;
+        var log = new RecordingLoggerProvider();
+
+        var handled = await ClientAborted(log).TryHandleAsync(
+            context, new DbUpdateException("save", Sql(4060, 11)), CancellationToken.None);
+
+        handled.Should().BeTrue();
+        context.Response.StatusCode.Should().Be(StatusCodes.Status499ClientClosedRequest);
+        context.Response.Body.Length.Should().Be(0);
+        log.Lines.Should().ContainSingle(l => l.Level == LogLevel.Warning).Which.Message.Should()
+            .Contain("4060").And.Contain("DbUpdateException > SqlException");
+        log.Lines.Should().NotContain(l => l.Level == LogLevel.Debug);
+    }
+
+    [Fact]
+    public async Task AFailureTheHangUpCaused_IsLoggedAtDebugOnly()
+    {
+        // The hang-up cancelled the request, whatever SqlClient then threw; or, with no deadline to
+        // say so, the chain holds the cancellation itself.
+        using var hungUp = new CancellationTokenSource();
+        var context = NewContext();
+        using var deadline = new RequestDeadline(
+            new FakeTimeProvider(), TimeSpan.FromSeconds(40), hungUp.Token, NullLogger.Instance);
+        context.Features.Set<IRequestDeadline>(deadline);
+        hungUp.Cancel();
+        context.RequestAborted = hungUp.Token;
+        deadline.FiredByClient.Should().BeTrue("the proof is void unless the hang-up cancelled the request");
+        var log = new RecordingLoggerProvider();
+
+        (await ClientAborted(log).TryHandleAsync(context, new DbUpdateException("save", Sql(0, 11)), CancellationToken.None))
+            .Should().BeTrue();
+
+        var exempt = NewContext();
+        exempt.RequestAborted = hungUp.Token;
+        (await ClientAborted(log).TryHandleAsync(
+                exempt, new DbUpdateException("save", new OperationCanceledException()), CancellationToken.None))
+            .Should().BeTrue();
+
+        log.Lines.Should().HaveCount(2).And.OnlyContain(l => l.Level == LogLevel.Debug);
+        context.Response.StatusCode.Should().Be(StatusCodes.Status499ClientClosedRequest);
+        exempt.Response.StatusCode.Should().Be(StatusCodes.Status499ClientClosedRequest);
+    }
+
+    [Fact]
     public async Task AClientStillThere_IsLeftToTheOtherHandlers()
     {
         var context = NewContext();
 
-        (await new ClientAbortedExceptionHandler(NullLogger<ClientAbortedExceptionHandler>.Instance)
+        (await ClientAborted(new RecordingLoggerProvider())
             .TryHandleAsync(context, Sql(4060, 11), CancellationToken.None)).Should().BeFalse();
     }
 
     private static ServiceUnavailableExceptionHandler Handler() =>
         new(NullLogger<ServiceUnavailableExceptionHandler>.Instance, ReceivedAtClock.ForThisProcess);
+
+    private static ClientAbortedExceptionHandler ClientAborted(RecordingLoggerProvider log) =>
+        new(new LoggerFactory([log]).CreateLogger<ClientAbortedExceptionHandler>(), ReceivedAtClock.ForThisProcess);
 
     private static DefaultHttpContext NewContext()
     {
