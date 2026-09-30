@@ -274,7 +274,7 @@ column.
 | Outage | A read | A money write, before its commit | After its commit started |
 |---|---|---|---|
 | Azure refusal or failover (fails fast) | 503 once EF's retries are spent, 13 to 37 s, or at the 40 s deadline | within 40 s and a fast release | the commit fails fast and the deadline is back on: about 43 s |
-| Local refusal (compose: the database's name stops resolving) | 503 at the 40 s deadline, measured at 40.02 and 40.03 s: each open took 11.81 to 12.09 s or 21.44 to 23.75 s, so two fit in 40 s. A deadline that falls while an open is under way does not wait for it: set to 30 s, the 503 came at 30.05 s, 18.0 s into an open that had not ended | 503 at 40.03 s, measured on a transfer | not measured |
+| Local refusal (compose: the database's name stops resolving) | 503 at the 40 s deadline, measured at 40.02 and 40.03 s: an open made alone took 11.81 to 12.09 s or 21.44 to 23.75 s, so two fit in 40 s, and one queued behind another request's open waited longer. A deadline that falls while an open is under way does not wait for it: set to 30 s, the 503 came at 30.05 s, 18.0 s into an open that had not ended | 503 at 40.03 s, measured on a transfer; another, queued behind a session-stamp call's open, at the 10 s pool wait (10.02 s) | not measured |
 | A hung database, new login | −2 in about 10 s (the login's connect timeout) | about 10 s and the release | n/a |
 | A hung database, pooled connection | −2 at about 35 s, or cut at 40 + 5 | **53 s at most** | up to 40 + 10 (the commit, bounded by the connect timeout) + 5 (its attention, not measured) + 3 + 5 (the save's second question, D10, and its attention) + 3 + 5 (the release and its attention) = 71 s: the BFF's own 503 comes first, at 55 s, and says the same thing, "unknown" |
 
@@ -433,8 +433,8 @@ sending it) observes a token. Three ways to put a deadline on that were weighed:
   review corrections, and the sign-in rows were run again after them (below).
   - NeverBlock alone, added to the commit before this decision, sign-ins with the database refused
     60 and 120 s: no error once the database answered again, where with blocking on the same
-    outages failed until 11.6 and 18.6 s after it; the first new sign-in got 200 1.74 and 8.56 s after it
-    (the second started as the database answered and took 8.56 s, with no error logged).
+    outages failed until 11.6 and 18.6 s after it; the first new sign-in got 200 1.74 and 8.56 s
+    after it (the second started as the database answered and took 8.56 s, with no error logged).
   - Refused 10 s, a signed-in read, three runs: 200 in 14.84, 14.87 and 15.65 s.
   - Refused 60 and 120 s, a signed-in read: the API's 503 at 40.02 and 40.03 s. A transfer during a
     refused 60 s: the API's 503 at 40.03 s without `applied`, since the idempotency claim was the
@@ -448,14 +448,17 @@ sending it) observes a token. Three ways to put a deadline on that were weighed:
     database answered again (7 runs), and a renewal refused during one, 503 after 10.03 s, kept its
     session. No run of this change answered 500: the API's whole log over them, 384 lines, holds no
     500 and no failing error handler, and the 63 requests the BFF abandoned were answered 499.
-  - An open to a name that does not resolve took 11.81 to 12.09 s (15 of 20) or 21.44 to 23.75 s
-    (5 of 20), not the 10 s connect timeout. In the four 503s at the deadline, the deadline cut an
-    open that was under way and did not wait for it.
+  - An open to a name that does not resolve, made alone, took 11.81 to 12.09 s (15 of 20) or 21.44
+    to 23.75 s (5 of 20), not the 10 s connect timeout; opens queued behind others took longer. In
+    the four 503s at the deadline, the deadline cut an open that was under way and did not wait
+    for it.
   - Sign-ins run again after those corrections, with the database refused 60 and 120 s: the API's
     own 503 at 40.05 and 40.02 s, with `SERVICE_UNAVAILABLE` and `Retry-After: 10`, where before
     them the BFF answered its own 503 at 55.05 and 55.02 s and the API went on to 64.06 and 82.74 s.
     The deadline fired 0.06 s into the fourth open and 3.32 s into the third, and nothing of the
-    sign-in ran after the answer.
+    sign-in ran after the answer. A transfer run again with the database refused 60 s waited in the
+    pool behind a session-stamp call's open and got the 503 after 10.02 s, without `applied`; the
+    same key then got 201, and the money moved once.
   - Not measured: the Azure row and the after-commit column of the table under "The numbers", a
     hung new login, and the logins residual risk 5 is about.
 
