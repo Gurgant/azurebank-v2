@@ -8,7 +8,15 @@ import { PinSetupPage } from './PinSetupPage';
 import { MOCK_PASSWORD, MOCK_USER, seedMockSession } from '../mocks/state';
 import { server } from '../mocks/server';
 import { serviceUnavailable } from '../mocks/problem';
-import { COPY, advanceUntil, fakeClockUser, installFakeClock, never } from '../test/outage';
+import {
+  COPY,
+  advanceUntil,
+  fakeClockUser,
+  hintRegion,
+  hintShownAt,
+  installFakeClock,
+  never,
+} from '../test/outage';
 import { CONNECTION_FAILED } from '../api/problemMessages';
 
 /**
@@ -211,5 +219,34 @@ describe('PIN setup during an outage', () => {
 
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
     expect(screen.queryByText(CONNECTION_FAILED)).not.toBeInTheDocument();
+  });
+
+  it('says it is slow while the PIN is being saved, under the button, with no way to stop it', async () => {
+    let sentAt = 0;
+    server.use(
+      http.post('*/bff/auth/set-pin', () => {
+        sentAt = Date.now();
+        return never();
+      }),
+    );
+    await toTheConfirmation();
+    installFakeClock();
+    const user = fakeClockUser();
+    const enteredAt = Date.now();
+    await user.click(screen.getByLabelText('Digit 1 of 6'));
+    await user.paste('123456');
+    await waitFor(() => expect(sentAt).toBeGreaterThan(0));
+    const shownAt = await hintShownAt();
+
+    await advanceUntil(enteredAt, 4_900);
+    expect(screen.queryByText(COPY.slow)).not.toBeInTheDocument();
+    await advanceUntil(shownAt, 5_000);
+    hintRegion(COPY.slow);
+    await advanceUntil(shownAt, 20_000);
+    const region = hintRegion(COPY.stillTrying);
+
+    expect(screen.queryByRole('button', { name: COPY.stopWaiting })).not.toBeInTheDocument();
+    const boxes = screen.getByRole('group', { name: 'Confirm your PIN' });
+    expect(boxes.compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

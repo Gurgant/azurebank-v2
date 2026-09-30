@@ -18,6 +18,7 @@ import { isServiceOutage, type ApiProblem } from '../api/problemBaseQuery';
 import { useSetPinMutation } from '../features/api/apiSlice';
 import { selectCurrentUser } from '../features/auth/authSlice';
 import { PinInput } from '../components/PinInput';
+import { WaitHint } from '../components/feedback';
 import { CONNECTION_FAILED, SAVE_OUTCOME_UNKNOWN } from '../api/problemMessages';
 
 // ============================================
@@ -326,6 +327,8 @@ export function PinSetupPage() {
               {isLoading ? <Spinner size="tiny" /> : 'Set PIN'}
             </Button>
           )}
+          {/* Under the button, outside the alert above and the boxes' described-by target. */}
+          <WaitHint active={isLoading} kind="write" />
           <Button
             appearance="subtle"
             size="large"

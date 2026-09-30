@@ -18,7 +18,7 @@ import { z } from 'zod';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import { toFieldName } from '../api/validationErrors';
 import { AuthCrossLink, AuthDivider, AuthLayout } from '../components/layout/AuthLayout';
-import { RetryCountdown, retryDeadline } from '../components/feedback';
+import { RetryCountdown, WaitHint, retryDeadline } from '../components/feedback';
 import { useRegisterMutation } from '../features/api/apiSlice';
 
 // Validation schema — mirrors the backend contract (ValidationRules): AzureTag pattern
@@ -397,6 +397,7 @@ export function RegisterPage() {
         >
           {isLoading ? <Spinner size="tiny" /> : 'Create Account'}
         </Button>
+        <WaitHint active={isLoading} kind="write" />
       </form>
 
       <AuthDivider />

@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
 import { SAVE_OUTCOME_UNKNOWN } from '../../api/problemMessages';
 import { useRenameAzureTagMutation } from '../../features/api/apiSlice';
+import { WaitHint } from '../feedback';
 
 // Mirrors the backend AzureTag rules (ValidationRules.AzureTagPattern): 3-20 chars, must start
 // with a lowercase letter, then lowercase letters / digits / underscore.
@@ -118,6 +119,9 @@ export function RenameAzureTagDialog({ currentTag, onClose }: RenameAzureTagDial
                     the dialog mounts per open, so both always agree. */}
                 <Input defaultValue={currentTag} {...register('azureTag')} />
               </Field>
+              {/* Last, above the actions and outside the alert: the words of a wait are not part
+                  of a failure. */}
+              <WaitHint active={isLoading} kind="write" />
             </DialogContent>
             <DialogActions>
               <Button appearance="secondary" onClick={onClose} type="button">

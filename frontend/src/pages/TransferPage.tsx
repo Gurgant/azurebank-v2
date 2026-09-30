@@ -26,9 +26,12 @@ import {
   useTransferMutation,
   type AccountResponse,
 } from '../features/api/apiSlice';
+import { useAppDispatch } from '../app/hooks';
 import { useMoneyWizard } from '../hooks/useMoneyWizard';
+import { abortRunning, useWaitLanding, type StartedRead } from '../hooks/useWaitLanding';
+import { readWait } from '../hooks/useWaitPhase';
 import { formatCurrency, formatLockHorizon, maskAccountNumber } from '../utils/format';
-import { RetryCountdown, retryDeadline } from '../components/feedback';
+import { RetryCountdown, WaitHint, retryDeadline } from '../components/feedback';
 import {
   insufficientFundsMessage,
   normalizeAzureTag,
@@ -149,11 +152,63 @@ export function TransferPage() {
 
   const {
     data: accounts = [],
+    isLoading: accountsLoading,
+    isFetching: accountsFetching,
     error: accountsError,
     refetch: refetchAccounts,
+    requestId: accountsRequestId,
   } = useGetAccountsQuery();
-  const accountsProblem = accountsError as ApiProblem | undefined;
+  // The accounts bar follows the wait, as on the reading pages: a Retry keeps the old error while
+  // it runs, so the bar goes away for the new wait and comes back, announced, only if it fails too.
+  const accountsRead = readWait({
+    isLoading: accountsLoading,
+    isFetching: accountsFetching,
+    error: accountsError,
+  });
+  const accountsProblem = accountsRead.failed ? (accountsError as ApiProblem) : undefined;
+  /*
+    With no accounts there is nothing to send from, so while they load, fail or load again the
+    accounts ARE the page: the form waits for them. That also keeps their wait the only one on the
+    page — no recipient check can start beside it.
+
+    With accounts on the page, reading them again holds nobody up: the form stays usable, and the
+    reload is not a wait the page shows. The funds check on Continue is such a reload, of this same
+    entry, with a hint of its own; an accounts hint beside it would be a second hint, and its
+    "Stop waiting" would stop the check and move on with it skipped.
+  */
+  const accountsHoldThePage =
+    accounts.length === 0 && (accountsRead.waiting || accountsError !== undefined);
   const [lookup, lookupState] = useLazyLookupRecipientQuery();
+
+  const dispatch = useAppDispatch();
+  const accountsLanding = useWaitLanding<HTMLButtonElement>(
+    accountsRead.waiting,
+    accountsRequestId,
+  );
+  const stopWaitingForAccounts = () => {
+    if (abortRunning(dispatch, [{ endpoint: 'getAccounts', arg: undefined }])) {
+      accountsLanding.arm();
+    }
+  };
+  const retryAccounts = () => {
+    accountsLanding.arm();
+    void refetchAccounts();
+  };
+
+  /*
+    The recipient check the visitor is waiting on, kept so that "Stop waiting" can find it: a lazy
+    query has no argument on the page to name it by. Stopping it lands on Verify, which is where the
+    check starts again.
+  */
+  const runningLookup = useRef<StartedRead | null>(null);
+  const lookupLanding = useWaitLanding<HTMLButtonElement>(
+    lookupState.isFetching,
+    lookupState.requestId,
+  );
+  const stopWaitingForLookup = () => {
+    const running = runningLookup.current;
+    if (running && abortRunning(dispatch, [running])) lookupLanding.arm();
+  };
   const [transferTrigger] = useTransferMutation();
   const wizard = useMoneyWizard(transferTrigger, {
     // This flow's OWN codes. Everything protocol-shaped — step-up, in-flight, key reuse, network —
@@ -293,6 +348,15 @@ export function TransferPage() {
   const confirmFunds = useFundsGate();
   const [checkingFunds, setCheckingFunds] = useState(false);
 
+  /*
+    The confirm — the mint, then the send — as the visitor sees it: one wait from the sixth digit,
+    with one hint. Not `isMinting || isSubmitting`: if a render fell between the mint's answer and
+    the send's start, the hint would take it for a new wait and count again from zero. Set only
+    once nothing can return early before a request leaves, and cleared in a `finally`, so it never
+    outlives the confirm.
+  */
+  const [confirming, setConfirming] = useState(false);
+
   // Auto-select the legacy default (primary ?? first) into the form once accounts load,
   // and keep the schema's balance bound in lockstep with the selected account.
   useEffect(() => {
@@ -329,7 +393,9 @@ export function TransferPage() {
     setRecipientError(null);
     onBodyEdit();
     try {
-      const result = await lookup(tag).unwrap();
+      const request = lookup(tag);
+      runningLookup.current = request;
+      const result = await request.unwrap();
       if (result.exists) {
         setRecipient({ azureTag: result.azureTag, displayName: result.displayName });
       } else {
@@ -445,67 +511,72 @@ export function TransferPage() {
       unknown — IN_FLIGHT, a network failure, a 5xx. The only sanctioned forward action there is to
       re-send the SAME intent, so we re-present the SAME authorisation rather than minting a new one.
     */
-    let authorizationId: string;
-    if (keyLive && lastAuthorization.current) {
-      authorizationId = lastAuthorization.current;
-    } else {
-      try {
-        const minted = await authoriseTransfer({
+    setConfirming(true);
+    try {
+      let authorizationId: string;
+      if (keyLive && lastAuthorization.current) {
+        authorizationId = lastAuthorization.current;
+      } else {
+        try {
+          const minted = await authoriseTransfer({
+            fromAccountId: data.fromAccountId,
+            recipientAzureTag: confirmed.azureTag,
+            amount: data.amount,
+            pin: enteredPin.current,
+          }).unwrap();
+          authorizationId = minted.authorizationId;
+          lastAuthorization.current = authorizationId;
+          setAuthorizationHeld(true);
+        } catch (caught) {
+          // Not a `run` failure, so the wizard has not classified it — hand it the same classifier.
+          wizard.failFrom(caught as ApiProblem, { phase: 'mint' });
+          handleRefusal(caught as ApiProblem, 'mint');
+          return;
+        }
+      }
+
+      const result = await wizard.run(
+        {
           fromAccountId: data.fromAccountId,
           recipientAzureTag: confirmed.azureTag,
           amount: data.amount,
-          pin: enteredPin.current,
-        }).unwrap();
-        authorizationId = minted.authorizationId;
-        lastAuthorization.current = authorizationId;
-        setAuthorizationHeld(true);
-      } catch (caught) {
-        // Not a `run` failure, so the wizard has not classified it — hand it the same classifier.
-        wizard.failFrom(caught as ApiProblem, { phase: 'mint' });
-        handleRefusal(caught as ApiProblem, 'mint');
+        },
+        // A HEADER at the wire, never a body field: the server fingerprints the body alone.
+        { stepUpAuthorizationId: authorizationId },
+      );
+      // `run` resolves to undefined when it failed — and it has already set the banner, the
+      // in-flight note or the verify view. Under `strict` this early return is not optional:
+      // reading `result.newBalance` without it does not compile.
+      if (!result) {
+        /*
+          The PIN outcomes, keyed on the CODE rather than the rendered sentence (the wizard exposes
+          `lastProblem` as a REF precisely so this does not have to match on prose, and so the read
+          is not one render stale).
+
+          A wrong PIN is safe to retry in place: 401 is exempt from the global logout, and the
+          idempotency hook has already dropped the key — so the corrected-PIN retry mints a fresh
+          one rather than replaying the refused body.
+        */
+        handleRefusal(wizard.lastProblem.current, 'send');
         return;
       }
-    }
 
-    const result = await wizard.run(
-      {
-        fromAccountId: data.fromAccountId,
-        recipientAzureTag: confirmed.azureTag,
+      setPin('');
+      enteredPin.current = '';
+      lastAuthorization.current = null;
+      setAuthorizationHeld(false);
+
+      setSuccess({
         amount: data.amount,
-      },
-      // A HEADER at the wire, never a body field: the server fingerprints the body alone.
-      { stepUpAuthorizationId: authorizationId },
-    );
-    // `run` resolves to undefined when it failed — and it has already set the banner, the in-flight
-    // note or the verify view. Under `strict` this early return is not optional: reading
-    // `result.newBalance` without it does not compile.
-    if (!result) {
-      /*
-        The PIN outcomes, keyed on the CODE rather than the rendered sentence (the wizard exposes
-        `lastProblem` as a REF precisely so this does not have to match on prose, and so the read is not
-        one render stale).
-
-        A wrong PIN is safe to retry in place: 401 is exempt from the global logout, and the
-        idempotency hook has already dropped the key — so the corrected-PIN retry mints a fresh one
-        rather than replaying the refused body.
-      */
-      handleRefusal(wizard.lastProblem.current, 'send');
-      return;
+        recipientName: confirmed.displayName,
+        recipientAzureTag: confirmed.azureTag,
+        newBalance: result.newBalance,
+        transactionNumber: result.transactionNumber,
+        replayed: result.replayed,
+      });
+    } finally {
+      setConfirming(false);
     }
-
-    setPin('');
-    enteredPin.current = '';
-    lastAuthorization.current = null;
-    setAuthorizationHeld(false);
-
-    setSuccess({
-      amount: data.amount,
-      recipientName: confirmed.displayName,
-      recipientAzureTag: confirmed.azureTag,
-      newBalance: result.newBalance,
-      transactionNumber: result.transactionNumber,
-      replayed: result.replayed,
-    });
   };
 
   /**
@@ -724,14 +795,25 @@ export function TransferPage() {
             DashboardPage already follow and both transfer wizards did not. Without this a failed
             accounts load left the page standing with empty pickers and no explanation, so a
             transient network fault silently blocked transfers. */}
+        <WaitHint
+          active={accountsHoldThePage && accountsRead.waiting}
+          kind="read"
+          onStopWaiting={stopWaitingForAccounts}
+        />
+        {/* Keyed by the request that failed, so that a Retry which fails again before its wait is
+            ever drawn still puts a new alert on the page, and it is announced again. */}
         {accountsProblem && (
-          <MessageBar intent="error" role="alert">
+          <MessageBar key={accountsRequestId} intent="error" role="alert">
             <MessageBarBody>
               {accountsProblem.detail || 'Could not load your accounts.'}
               {accountsProblem.traceId ? ` Support code: ${accountsProblem.traceId}` : ''}
             </MessageBarBody>
             <MessageBarActions>
-              <Button appearance="transparent" onClick={() => void refetchAccounts()}>
+              <Button
+                ref={accountsLanding.landingRef}
+                appearance="transparent"
+                onClick={retryAccounts}
+              >
                 Retry
               </Button>
             </MessageBarActions>
@@ -800,8 +882,12 @@ export function TransferPage() {
 
             Scoped to `accounts.length === 0` rather than to the problem alone, because RTK Query
             keeps the last data when a REFETCH fails: in that case the picker still has real
-            accounts, and blanking a half-filled money form would be the worse bug. */}
-        {accountsProblem && accounts.length === 0 ? null : step === 'form' ? (
+            accounts, and blanking a half-filled money form would be the worse bug.
+
+            Nor while they first load, or while a Retry runs (when only the bar goes away): an
+            empty form under the accounts' wait would show an available balance of zero, and would
+            let a recipient check start beside it. */}
+        {accountsHoldThePage ? null : step === 'form' ? (
           <>
             {/* From account */}
             <div>
@@ -875,6 +961,7 @@ export function TransferPage() {
                   )}
                 />
                 <Button
+                  ref={lookupLanding.landingRef}
                   appearance="secondary"
                   onClick={() => void handleVerifyRecipient()}
                   disabled={!watchedTag.trim() || lookupState.isFetching}
@@ -900,6 +987,11 @@ export function TransferPage() {
                 >
                   {recipientError}
                 </Text>
+              )}
+              {lookupState.isFetching && (
+                <div style={{ marginTop: '8px' }}>
+                  <WaitHint active kind="read" onStopWaiting={stopWaitingForLookup} />
+                </div>
               )}
             </div>
 
@@ -1050,6 +1142,9 @@ export function TransferPage() {
                 <Spinner size="tiny" label={`Sending ${formatCurrency(amountNumber)}`} />
               </div>
             )}
+            {/* Under the boxes and the spinner, and outside the boxes' described-by targets. It
+                promises nothing: during the wait no control here can re-send the same key. */}
+            <WaitHint active={confirming} kind="write" />
             <div className={styles.actions}>
               <Button
                 appearance="secondary"
@@ -1108,6 +1203,9 @@ export function TransferPage() {
                 Back
               </Button>
             </div>
+            {/* The funds check is a read, but it offers no Stop: it fails open, so a stopped check
+                would only move on to the PIN step with the check skipped. */}
+            <WaitHint active={checkingFunds} kind="read" />
           </>
         )}
       </div>

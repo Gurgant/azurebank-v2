@@ -13,6 +13,7 @@ import {
   advanceUntil,
   fakeClockUser,
   hintRegion,
+  hintShownAt,
   never,
   installFakeClock,
 } from '../../test/outage';
@@ -596,4 +597,80 @@ describe('a change with no key, during an outage', () => {
 
     await alertSays(COPY.saveUnknown);
   });
+
+  it.each([
+    [
+      'creating an account',
+      http.post,
+      '*/api/accounts',
+      'Create Account',
+      async () => {
+        await createHolidayFund();
+      },
+    ],
+    [
+      'changing the PIN',
+      http.post,
+      '*/bff/auth/set-pin',
+      'Change PIN',
+      async () => {
+        await fillPins();
+      },
+    ],
+    [
+      'renaming an account',
+      http.patch,
+      '*/api/accounts/:id',
+      'Save',
+      async () => {
+        renderWithProviders(
+          <RenameAccountDialog account={{ id: MAIN.id, name: 'Main Account' }} onClose={vi.fn()} />,
+        );
+        fireEvent.change(screen.getByRole('textbox', { name: 'Account name' }), {
+          target: { value: 'Renamed' },
+        });
+      },
+    ],
+    [
+      'renaming the handle',
+      http.patch,
+      '*/bff/auth/azuretag',
+      'Save',
+      async () => {
+        renderWithProviders(<RenameAzureTagDialog currentTag="demo_user" onClose={vi.fn()} />);
+        fireEvent.change(screen.getByRole('textbox', { name: /public handle/i }), {
+          target: { value: 'new_handle' },
+        });
+      },
+    ],
+  ])(
+    '%s says it is slow while it waits, inside the dialog, with no way to stop it',
+    async (_change, method, path, button, open) => {
+      let sentAt = 0;
+      server.use(
+        method(path, () => {
+          sentAt = Date.now();
+          return never();
+        }),
+      );
+      await open();
+      const dialog = screen.getByRole('dialog');
+      installFakeClock();
+      const user = fakeClockUser();
+      const clickedAt = Date.now();
+      await user.click(within(dialog).getByRole('button', { name: button }));
+      await waitFor(() => expect(sentAt).toBeGreaterThan(0));
+      const shownAt = await hintShownAt(dialog);
+
+      await advanceUntil(clickedAt, 4_900);
+      expect(screen.queryByText(COPY.slow)).toBeNull();
+      await advanceUntil(shownAt, 5_000);
+      hintRegion(COPY.slow, dialog);
+      await advanceUntil(shownAt, 20_000);
+      hintRegion(COPY.stillTrying, dialog);
+
+      expect(within(dialog).queryByRole('button', { name: COPY.stopWaiting })).toBeNull();
+      expectNoNestedLiveRegions();
+    },
+  );
 });

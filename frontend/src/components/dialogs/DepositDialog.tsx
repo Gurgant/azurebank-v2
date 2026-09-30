@@ -12,6 +12,7 @@ import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
 import { useDepositMutation } from '../../features/api/apiSlice';
 import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
 import { formatCurrency } from '../../utils/format';
+import { WaitHint } from '../feedback';
 import { MoneyDialogShell } from './MoneyDialogShell';
 import { useMoneyDialogStyles } from './moneyDialogStyles';
 import {
@@ -474,6 +475,9 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
             )}
           </Button>
         )}
+        {/* Under the button that started the send, inside the dialog (a modal hides everything
+            outside it), and promising nothing: during the wait nothing here can re-send it. */}
+        <WaitHint active={isSubmitting} kind="write" />
       </div>
     </MoneyDialogShell>
   );

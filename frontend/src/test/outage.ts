@@ -1,4 +1,4 @@
-import { act, screen } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, vi } from 'vitest';
 
@@ -105,6 +105,17 @@ export function hintRegion(text: string, scope: HTMLElement = document.body): HT
   expect(region?.textContent).toBe(text);
   expect(region?.closest('[role="alert"]')).toBeNull();
   return region as HTMLElement;
+}
+
+/**
+ * Waits for a wait's hint to be on screen — still empty, as it is for its first 5 s — and returns
+ * that instant, a fake `Date.now()`. The hint's clock starts when it mounts, so a "by now" counted
+ * from here cannot be reached before the wait was drawn; a hint that restarted later would still
+ * be silent at this instant plus 5 s.
+ */
+export async function hintShownAt(scope: HTMLElement = document.body): Promise<number> {
+  await waitFor(() => expect(scope.querySelector('[data-wait-hint]')).not.toBeNull());
+  return Date.now();
 }
 
 /** The six PIN boxes' values, in order. */

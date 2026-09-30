@@ -1,5 +1,5 @@
 import { Route, Routes } from 'react-router-dom';
-import { act, cleanup, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -13,6 +13,7 @@ import {
   advanceUntil,
   fakeClockUser,
   hintRegion,
+  hintShownAt,
   never,
   pinBoxValues,
   sleep,
@@ -85,23 +86,32 @@ function renderInternal() {
   );
 }
 
-/** Form → review → the PIN step, stopping before the first digit. */
-async function externalToPin() {
+/** Form → the review step, stopping before Continue. */
+async function externalToReview() {
   await screen.findByText('Main Account');
   await userEvent.type(screen.getByLabelText('Recipient handle'), 'friend');
   await userEvent.click(screen.getByRole('button', { name: 'Verify' }));
   await screen.findByText('A. Friend');
   await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
   await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+}
+
+async function internalToReview() {
+  await screen.findByRole('button', { name: 'From Main Account' });
+  await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
+  await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+  await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+}
+
+/** Form → review → the PIN step, stopping before the first digit. */
+async function externalToPin() {
+  await externalToReview();
   await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
   await screen.findByLabelText('Digit 1 of 6');
 }
 
 async function internalToPin() {
-  await screen.findByRole('button', { name: 'From Main Account' });
-  await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
-  await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
-  await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+  await internalToReview();
   await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
   await screen.findByLabelText('Digit 1 of 6');
 }
@@ -164,15 +174,20 @@ describe('the confirm wait', () => {
     await user.click(screen.getByLabelText('Digit 1 of 6'));
     await user.paste(TEST_PIN);
     await waitFor(() => expect(mintAt).toBeGreaterThan(0));
+    // The mint leaves before the page has drawn the wait, so the wait's clock starts a moment
+    // later; under load, a count from the mint reached 5 s while the hint was still empty. Count
+    // from the drawn wait instead, which is on screen before the hand-off.
+    const shownAt = await hintShownAt();
+    expect(sends).toBe(0);
 
     // The hand-off: the mint answers at 3 s and the send starts.
     await advanceUntil(mintAt, 3_100);
     await waitFor(() => expect(sends).toBe(1));
 
     // Counted from the sixth digit, not restarted by the hand-off.
-    await advanceUntil(mintAt, 5_000);
+    await advanceUntil(shownAt, 5_000);
     hintRegion(COPY.slow);
-    await advanceUntil(mintAt, 20_000);
+    await advanceUntil(shownAt, 20_000);
     const region = hintRegion(COPY.stillTrying);
 
     expect(screen.queryByText(COPY.noDoubleCharge, { exact: false })).not.toBeInTheDocument();
@@ -409,6 +424,39 @@ describe.each([
     },
   );
 
+  it('a slow confirm says so under the PIN boxes, and nothing still says it is waiting once it has failed', async () => {
+    let mintAt = 0;
+    server.use(
+      http.post(flow.mintPath, async () => {
+        mintAt = Date.now();
+        await sleep(8_000);
+        return serviceUnavailable({ via: 'api', instance: flow.mintPath.slice(1) });
+      }),
+    );
+    flow.render();
+    await flow.toPin();
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByLabelText('Digit 1 of 6'));
+    await user.paste(TEST_PIN);
+    const shownAt = await hintShownAt();
+
+    await advanceUntil(shownAt, 5_000);
+    const region = hintRegion(COPY.slow);
+    const boxes = screen.getByRole('group', { name: 'Enter your PIN' });
+    expect(boxes.compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByText(COPY.noDoubleCharge, { exact: false })).not.toBeInTheDocument();
+    expect(screen.queryByText(COPY.noDoubleMove, { exact: false })).not.toBeInTheDocument();
+
+    await advanceUntil(mintAt, 8_100);
+    await alertSays(COPY.noMoneyMoved);
+
+    await advance(25_000);
+    expect(document.querySelector('[data-wait-hint]')).toBeNull();
+    expect(screen.queryByText(COPY.slow)).not.toBeInTheDocument();
+    expect(screen.queryByText(COPY.stillTrying)).not.toBeInTheDocument();
+  });
+
   it('the in-flight bar adds that checking again is safe', async () => {
     recordSends(flow.sendPath, [stillProcessing]);
     flow.render();
@@ -462,6 +510,229 @@ describe('after "Check again" on an in-flight send', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: 'Check again' }));
     expect(await screen.findByText("We couldn't confirm your transfer")).toBeInTheDocument();
+  });
+});
+
+describe.each([
+  { page: 'external', render: renderTransfer, toReview: externalToReview },
+  { page: 'internal', render: renderInternal, toReview: internalToReview },
+])('$page transfer: the reads the form waits on', (flow) => {
+  it('a slow load of the accounts says so, and "Stop waiting" lands on an announced bar with focus on Retry', async () => {
+    const seen: { at: number; signal: AbortSignal }[] = [];
+    server.use(
+      http.get('*/api/accounts', ({ request }) => {
+        seen.push({ at: Date.now(), signal: request.signal });
+        return never();
+      }),
+    );
+    installFakeClock();
+    const user = fakeClockUser();
+    const start = Date.now();
+    flow.render();
+    await waitFor(() => expect(seen).toHaveLength(1));
+
+    await advanceUntil(start, 4_900);
+    expect(screen.queryByText(COPY.slow)).not.toBeInTheDocument();
+    await advanceUntil(seen[0].at, 5_000);
+    hintRegion(COPY.slow);
+    await advanceUntil(seen[0].at, 20_000);
+    hintRegion(COPY.stillTrying);
+
+    await user.click(screen.getByRole('button', { name: COPY.stopWaiting }));
+
+    expect(seen[0].signal.aborted).toBe(true);
+    await alertSays('Could not load your accounts.');
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Retry' })),
+    );
+    await advance(30_000);
+    expect(seen).toHaveLength(1);
+  });
+
+  it('Retry on the accounts waits again with the form still hidden, and a second failure is announced again', async () => {
+    let holdNext = false;
+    let release: () => void = () => {};
+    let calls = 0;
+    server.use(
+      http.get('*/api/accounts', async () => {
+        calls += 1;
+        if (holdNext) {
+          holdNext = false;
+          await new Promise<void>((resolve) => (release = resolve));
+        }
+        return problem({
+          status: 500,
+          errorCode: 'INTERNAL_ERROR',
+          detail: 'An unexpected error occurred. Please try again later.',
+        });
+      }),
+    );
+    installFakeClock();
+    const user = fakeClockUser();
+    try {
+      flow.render();
+      const first = await screen.findByRole('alert');
+
+      holdNext = true;
+      const retriedAt = Date.now();
+      await user.click(within(first).getByRole('button', { name: 'Retry' }));
+      await waitFor(() => expect(calls).toBe(2));
+
+      // The bar goes while the accounts load again, and an empty form does not take its place.
+      const shownAt = await hintShownAt();
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Review Transfer' })).not.toBeInTheDocument();
+      await advanceUntil(retriedAt, 4_900);
+      expect(screen.queryByText(COPY.slow)).not.toBeInTheDocument();
+      await advanceUntil(shownAt, 5_000);
+      hintRegion(COPY.slow);
+      await advanceUntil(shownAt, 20_000);
+      hintRegion(COPY.stillTrying);
+      expect(screen.getByRole('button', { name: COPY.stopWaiting })).toBeInTheDocument();
+
+      release();
+      const second = await screen.findByRole('alert');
+      expect(second).not.toBe(first);
+      expect(second).toHaveTextContent('An unexpected error occurred. Please try again later.');
+      await waitFor(() =>
+        expect(document.activeElement).toBe(within(second).getByRole('button', { name: 'Retry' })),
+      );
+    } finally {
+      release();
+    }
+  });
+
+  it('every new failure of the accounts is a new alert, with focus on its Retry', async () => {
+    /*
+      A 500 is not retried and the mock answers it at once, so a Retry's start and its failure can
+      reach the page in the same frame, and the wait is never drawn. A bar that stayed the same
+      element would then say nothing the second time. Pressed twice, as on the reading pages.
+    */
+    let calls = 0;
+    server.use(
+      http.get('*/api/accounts', () => {
+        calls += 1;
+        return problem({ status: 500, errorCode: 'INTERNAL_ERROR', detail: 'Something broke.' });
+      }),
+    );
+    const user = userEvent.setup();
+    flow.render();
+    const alertOf = () =>
+      screen.getByText(/Something broke\./).closest<HTMLElement>('[role="alert"]');
+    await screen.findByText(/Something broke\./);
+
+    for (let press = 1; press <= 2; press += 1) {
+      const shown = alertOf();
+      expect(shown).not.toBeNull();
+      const before = calls;
+      await user.click(within(shown as HTMLElement).getByRole('button', { name: 'Retry' }));
+      await waitFor(() => expect(calls).toBe(before + 1));
+
+      await waitFor(() => {
+        expect(alertOf()).not.toBeNull();
+        expect(alertOf()).not.toBe(shown);
+      });
+      const again = alertOf() as HTMLElement;
+      await waitFor(() =>
+        expect(document.activeElement).toBe(within(again).getByRole('button', { name: 'Retry' })),
+      );
+    }
+  });
+
+  it('the funds check on Continue says it is slow, under the button, and offers no way to stop it', async () => {
+    flow.render();
+    await flow.toReview();
+    let checkedAt = 0;
+    server.use(
+      http.get('*/api/accounts', () => {
+        checkedAt = Date.now();
+        return never();
+      }),
+    );
+    installFakeClock();
+    const user = fakeClockUser();
+    const clickedAt = Date.now();
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await waitFor(() => expect(checkedAt).toBeGreaterThan(0));
+    const shownAt = await hintShownAt();
+
+    await advanceUntil(clickedAt, 4_900);
+    expect(screen.queryByText(COPY.slow)).not.toBeInTheDocument();
+    await advanceUntil(shownAt, 5_000);
+    hintRegion(COPY.slow);
+    await advanceUntil(shownAt, 20_000);
+    const region = hintRegion(COPY.stillTrying);
+
+    expect(screen.queryByRole('button', { name: COPY.stopWaiting })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('status')).toEqual([region]);
+    const note = screen.getByText("You'll confirm with your PIN on the next step.");
+    expect(note.compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('a funds check after one that failed is still one hint, and nothing can stop it', async () => {
+    /*
+      The check reloads the accounts. Once a check has failed — it fails open, on to the PIN step —
+      the accounts hold their data and that error together, and the next check is a reload after
+      an error: the accounts' own hint must not come back beside the check's, with a "Stop
+      waiting" that would stop the check and skip it.
+    */
+    flow.render();
+    await flow.toReview();
+    server.use(
+      http.get('*/api/accounts', () =>
+        problem({ status: 500, errorCode: 'INTERNAL_ERROR', detail: 'Something broke.' }),
+      ),
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByLabelText('Digit 1 of 6');
+    const backs = screen.getAllByRole('button', { name: 'Back' });
+    await userEvent.click(backs[backs.length - 1]);
+    await screen.findByRole('button', { name: 'Continue' });
+
+    const checks: AbortSignal[] = [];
+    server.use(
+      http.get('*/api/accounts', ({ request }) => {
+        checks.push(request.signal);
+        return never();
+      }),
+    );
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await waitFor(() => expect(checks).toHaveLength(1));
+    const shownAt = await hintShownAt();
+    await advanceUntil(shownAt, 20_500);
+
+    const region = hintRegion(COPY.stillTrying);
+    expect(document.querySelectorAll('[data-wait-hint]')).toHaveLength(1);
+    expect(screen.getAllByRole('status')).toEqual([region]);
+    expect(screen.queryByRole('button', { name: COPY.stopWaiting })).not.toBeInTheDocument();
+    expect(checks[0].aborted).toBe(false);
+    expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
+  });
+
+  it('while the accounts first load, the form waits for them: nothing else can start beside it', async () => {
+    let release: () => void = () => {};
+    server.use(
+      // Held, then handed on to the mock's own handler, which answers with the seeded accounts.
+      http.get('*/api/accounts', async () => {
+        await new Promise<void>((resolve) => (release = resolve));
+      }),
+    );
+    try {
+      flow.render();
+      await hintShownAt();
+
+      expect(screen.queryByLabelText('Transfer amount')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Recipient handle')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Review Transfer' })).not.toBeInTheDocument();
+
+      release();
+      expect(await screen.findByLabelText('Transfer amount')).toBeInTheDocument();
+      expect(document.querySelector('[data-wait-hint]')).toBeNull();
+    } finally {
+      release();
+    }
   });
 });
 

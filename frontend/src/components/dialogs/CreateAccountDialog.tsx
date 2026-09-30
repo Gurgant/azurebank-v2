@@ -22,6 +22,7 @@ import { ACCOUNT_OUTCOME_UNKNOWN } from '../../api/problemMessages';
 import type { AccountType } from '../../api/enums';
 import { toFieldName } from '../../api/validationErrors';
 import { apiSlice, useCreateAccountMutation } from '../../features/api/apiSlice';
+import { WaitHint } from '../feedback';
 
 // Mirrors the backend contract: name 2-100 chars; type is the shared PascalCase enum.
 const createAccountSchema = z.object({
@@ -160,6 +161,9 @@ export function CreateAccountDialog({ open, onClose }: CreateAccountDialogProps)
                   ))}
                 </Select>
               </Field>
+              {/* Last, above the actions and outside the alert: the words of a wait are not part
+                  of a failure. */}
+              <WaitHint active={isLoading} kind="write" />
             </DialogContent>
             <DialogActions>
               <Button appearance="secondary" onClick={close} type="button">

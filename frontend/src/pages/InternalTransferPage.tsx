@@ -23,9 +23,12 @@ import {
   useTransferInternalMutation,
   type AccountResponse,
 } from '../features/api/apiSlice';
+import { useAppDispatch } from '../app/hooks';
 import { useMoneyWizard } from '../hooks/useMoneyWizard';
+import { abortRunning, useWaitLanding } from '../hooks/useWaitLanding';
+import { readWait } from '../hooks/useWaitPhase';
 import { formatCurrency, maskAccountNumber } from '../utils/format';
-import { RetryCountdown, retryDeadline } from '../components/feedback';
+import { RetryCountdown, WaitHint, retryDeadline } from '../components/feedback';
 import {
   insufficientFundsMessage,
   internalTransferFormSchema,
@@ -67,10 +70,40 @@ export function InternalTransferPage() {
   const {
     data: accounts = [],
     isSuccess: accountsLoaded,
+    isLoading: accountsLoading,
+    isFetching: accountsFetching,
     error: accountsError,
     refetch: refetchAccounts,
+    requestId: accountsRequestId,
   } = useGetAccountsQuery();
-  const accountsProblem = accountsError as ApiProblem | undefined;
+  // The accounts bar follows the wait, as on TransferPage and the reading pages: a Retry keeps the
+  // old error while it runs, so the bar goes away and comes back, announced, only on a new failure.
+  const accountsRead = readWait({
+    isLoading: accountsLoading,
+    isFetching: accountsFetching,
+    error: accountsError,
+  });
+  const accountsProblem = accountsRead.failed ? (accountsError as ApiProblem) : undefined;
+  // With no accounts the accounts are the page, and their wait is its only one; with accounts on
+  // the page, reading them again holds nobody up, and the funds check's reload of this entry has a
+  // hint of its own, with no Stop — see TransferPage.
+  const accountsHoldThePage =
+    accounts.length === 0 && (accountsRead.waiting || accountsError !== undefined);
+
+  const dispatch = useAppDispatch();
+  const accountsLanding = useWaitLanding<HTMLButtonElement>(
+    accountsRead.waiting,
+    accountsRequestId,
+  );
+  const stopWaitingForAccounts = () => {
+    if (abortRunning(dispatch, [{ endpoint: 'getAccounts', arg: undefined }])) {
+      accountsLanding.arm();
+    }
+  };
+  const retryAccounts = () => {
+    accountsLanding.arm();
+    void refetchAccounts();
+  };
   const [transferTrigger] = useTransferInternalMutation();
   const wizard = useMoneyWizard(transferTrigger, {
     // This flow's OWN codes; the protocol's are the wizard's, and the table's type makes naming one
@@ -203,6 +236,10 @@ export function InternalTransferPage() {
   const confirmFunds = useFundsGate();
   const [checkingFunds, setCheckingFunds] = useState(false);
 
+  // The confirm (mint, then send) as one wait with one hint — see TransferPage for why it is not
+  // `isMinting || isSubmitting`.
+  const [confirming, setConfirming] = useState(false);
+
   // Auto-select the legacy default source (primary ?? first) once accounts load, and keep
   // the schema's balance bound in lockstep with the source account.
   useEffect(() => {
@@ -317,56 +354,61 @@ export function InternalTransferPage() {
       unknown — IN_FLIGHT, a network failure, a 5xx. The only sanctioned forward action there is to
       re-send the SAME intent, so we re-present the SAME authorisation rather than minting a new one.
     */
-    let authorizationId: string;
-    if (keyLive && lastAuthorization.current) {
-      authorizationId = lastAuthorization.current;
-    } else {
-      try {
-        const minted = await authoriseInternalTransfer({
+    setConfirming(true);
+    try {
+      let authorizationId: string;
+      if (keyLive && lastAuthorization.current) {
+        authorizationId = lastAuthorization.current;
+      } else {
+        try {
+          const minted = await authoriseInternalTransfer({
+            fromAccountId: data.fromAccountId,
+            toAccountId: data.toAccountId,
+            amount: data.amount,
+            pin: enteredPin.current,
+          }).unwrap();
+          authorizationId = minted.authorizationId;
+          lastAuthorization.current = authorizationId;
+          setAuthorizationHeld(true);
+        } catch (caught) {
+          wizard.failFrom(caught as ApiProblem, { phase: 'mint' });
+          handleRefusal(caught as ApiProblem, 'mint');
+          return;
+        }
+      }
+
+      const result = await wizard.run(
+        {
           fromAccountId: data.fromAccountId,
           toAccountId: data.toAccountId,
           amount: data.amount,
-          pin: enteredPin.current,
-        }).unwrap();
-        authorizationId = minted.authorizationId;
-        lastAuthorization.current = authorizationId;
-        setAuthorizationHeld(true);
-      } catch (caught) {
-        wizard.failFrom(caught as ApiProblem, { phase: 'mint' });
-        handleRefusal(caught as ApiProblem, 'mint');
+        },
+        // A HEADER at the wire: the server fingerprints the body alone.
+        { stepUpAuthorizationId: authorizationId },
+      );
+      // undefined means it failed and the wizard has already set the banner, the in-flight note or
+      // the verify view. Under `strict` this early return is not optional.
+      if (!result) {
+        handleRefusal(wizard.lastProblem.current, 'send');
         return;
       }
-    }
 
-    const result = await wizard.run(
-      {
-        fromAccountId: data.fromAccountId,
-        toAccountId: data.toAccountId,
+      setPin('');
+      enteredPin.current = '';
+      lastAuthorization.current = null;
+      setAuthorizationHeld(false);
+
+      setSuccess({
         amount: data.amount,
-      },
-      // A HEADER at the wire: the server fingerprints the body alone.
-      { stepUpAuthorizationId: authorizationId },
-    );
-    // undefined means it failed and the wizard has already set the banner, the in-flight note or
-    // the verify view. Under `strict` this early return is not optional.
-    if (!result) {
-      handleRefusal(wizard.lastProblem.current, 'send');
-      return;
+        fromName: from.name,
+        toName: to.name,
+        fromNewBalance: result.fromAccountNewBalance,
+        transactionNumber: result.transactionNumber,
+        replayed: result.replayed,
+      });
+    } finally {
+      setConfirming(false);
     }
-
-    setPin('');
-    enteredPin.current = '';
-    lastAuthorization.current = null;
-    setAuthorizationHeld(false);
-
-    setSuccess({
-      amount: data.amount,
-      fromName: from.name,
-      toName: to.name,
-      fromNewBalance: result.fromAccountNewBalance,
-      transactionNumber: result.transactionNumber,
-      replayed: result.replayed,
-    });
   };
 
   /**
@@ -532,14 +574,25 @@ export function InternalTransferPage() {
             DashboardPage already follow and both transfer wizards did not. Without this a failed
             accounts load left the page standing with empty pickers and no explanation, so a
             transient network fault silently blocked transfers. */}
+        <WaitHint
+          active={accountsHoldThePage && accountsRead.waiting}
+          kind="read"
+          onStopWaiting={stopWaitingForAccounts}
+        />
+        {/* Keyed by the request that failed, so that a Retry which fails again before its wait is
+            ever drawn still puts a new alert on the page, and it is announced again. */}
         {accountsProblem && (
-          <MessageBar intent="error" role="alert">
+          <MessageBar key={accountsRequestId} intent="error" role="alert">
             <MessageBarBody>
               {accountsProblem.detail || 'Could not load your accounts.'}
               {accountsProblem.traceId ? ` Support code: ${accountsProblem.traceId}` : ''}
             </MessageBarBody>
             <MessageBarActions>
-              <Button appearance="transparent" onClick={() => void refetchAccounts()}>
+              <Button
+                ref={accountsLanding.landingRef}
+                appearance="transparent"
+                onClick={retryAccounts}
+              >
                 Retry
               </Button>
             </MessageBarActions>
@@ -602,8 +655,11 @@ export function InternalTransferPage() {
 
             Scoped to `accounts.length === 0` rather than to the problem alone, because RTK Query
             keeps the last data when a REFETCH fails: in that case the picker still has real
-            accounts, and blanking a half-filled money form would be the worse bug. */}
-        {accountsProblem && accounts.length === 0 ? null : step === 'form' ? (
+            accounts, and blanking a half-filled money form would be the worse bug.
+
+            Nor while they first load, or while a Retry runs (when only the bar goes away): an
+            empty form under the accounts' wait would show an available balance of zero. */}
+        {accountsHoldThePage ? null : step === 'form' ? (
           <>
             <div>
               <Text className={styles.sectionLabel}>From</Text>
@@ -805,6 +861,9 @@ export function InternalTransferPage() {
                 <Spinner size="tiny" label={`Moving ${formatCurrency(amountNumber)}`} />
               </div>
             )}
+            {/* Under the boxes and the spinner, outside their described-by targets, and promising
+                nothing: during the wait no control here can re-send the same key. */}
+            <WaitHint active={confirming} kind="write" />
             <div className={styles.actions}>
               <Button
                 appearance="secondary"
@@ -860,6 +919,8 @@ export function InternalTransferPage() {
                 Back
               </Button>
             </div>
+            {/* A read with no Stop: the check fails open (see TransferPage). */}
+            <WaitHint active={checkingFunds} kind="read" />
           </>
         )}
       </div>

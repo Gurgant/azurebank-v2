@@ -18,7 +18,7 @@ import {
   useAuthoriseAccountDeletionMutation,
   useDeleteAccountMutation,
 } from '../../features/api/apiSlice';
-import { RetryCountdown, retryDeadline } from '../feedback';
+import { RetryCountdown, WaitHint, retryDeadline } from '../feedback';
 import { PinInput } from '../PinInput';
 import { MoneyDialogShell } from './MoneyDialogShell';
 import { useMoneyDialogStyles } from './moneyDialogStyles';
@@ -262,6 +262,9 @@ export function DeleteAccountDialog({ account, onClose }: DeleteAccountDialogPro
           {/* No button on this step — the sixth digit is the submit — so the pending state has
               nowhere else to live (TransferPage does the same). */}
           {busy && <Spinner size="tiny" label="Deleting account" />}
+          {/* Beside the spinner, outside the boxes' described-by target in the footer: one wait
+              across the mint and the delete, as `busy` is. */}
+          <WaitHint active={busy} kind="write" />
         </div>
       )}
 

@@ -24,7 +24,7 @@ import { useAuthoriseWithdrawalMutation, useWithdrawMutation } from '../../featu
 import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
 import { selectCurrentUser } from '../../features/auth/authSlice';
 import { formatCurrency } from '../../utils/format';
-import { RetryCountdown, retryDeadline } from '../feedback';
+import { RetryCountdown, WaitHint, retryDeadline } from '../feedback';
 import { MoneyDialogShell } from './MoneyDialogShell';
 import { useMoneyDialogStyles } from './moneyDialogStyles';
 import {
@@ -888,19 +888,24 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
             </Button>
           </>
         ) : step === 'form' ? (
-          <Button
-            appearance="primary"
-            size="large"
-            style={{ width: '100%', height: '48px' }}
-            onClick={() => void advanceToPin()}
-            disabled={!formState.isValid || checkingFunds}
-          >
-            {checkingFunds ? (
-              <Spinner size="tiny" />
-            ) : (
-              `Continue ${amountNumber > 0 && amountValid ? `· ${formatCurrency(amountNumber)}` : ''}`.trim()
-            )}
-          </Button>
+          <>
+            <Button
+              appearance="primary"
+              size="large"
+              style={{ width: '100%', height: '48px' }}
+              onClick={() => void advanceToPin()}
+              disabled={!formState.isValid || checkingFunds}
+            >
+              {checkingFunds ? (
+                <Spinner size="tiny" />
+              ) : (
+                `Continue ${amountNumber > 0 && amountValid ? `· ${formatCurrency(amountNumber)}` : ''}`.trim()
+              )}
+            </Button>
+            {/* The funds check is a read with no Stop: it fails open, so a stopped check would
+                only move on with the check skipped. Outside the described-by target above. */}
+            <WaitHint active={checkingFunds} kind="read" />
+          </>
         ) : (
           <>
             <Button
@@ -912,6 +917,10 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
             >
               {isSubmitting ? <Spinner size="tiny" /> : `Withdraw ${formatCurrency(amountNumber)}`}
             </Button>
+            {/* One wait across the mint and the send (`isSubmitting` holds through both), under
+                the button that started it, outside the described-by target above, and promising
+                nothing: during the wait nothing here can re-send the same key. */}
+            <WaitHint active={isSubmitting} kind="write" />
             <Button
               appearance="secondary"
               size="large"

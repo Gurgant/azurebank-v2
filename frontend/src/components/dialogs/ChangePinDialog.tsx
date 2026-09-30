@@ -17,7 +17,7 @@ import { colors } from '../../theme/tokens';
 import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
 import { CONNECTION_FAILED, SAVE_OUTCOME_UNKNOWN } from '../../api/problemMessages';
 import { useSetPinMutation } from '../../features/api/apiSlice';
-import { RetryCountdown, retryDeadline } from '../feedback';
+import { RetryCountdown, WaitHint, retryDeadline } from '../feedback';
 import { PinInput } from '../PinInput';
 
 const PIN_LENGTH = 6;
@@ -263,6 +263,9 @@ export function ChangePinDialog({ onClose }: ChangePinDialogProps) {
                     )}
                   </div>
                 )}
+                {/* Last, above the actions, and outside the alerts and the boxes' described-by
+                    target: the words of a wait are not part of a failure. */}
+                <WaitHint active={isLoading} kind="write" />
               </DialogContent>
               <DialogActions>
                 <Button
