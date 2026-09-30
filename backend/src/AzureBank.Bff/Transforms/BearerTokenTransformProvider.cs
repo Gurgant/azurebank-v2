@@ -1,8 +1,12 @@
 using AzureBank.Bff.Http;
+using AzureBank.Bff.Observability;
 using AzureBank.Bff.Options;
 using AzureBank.Bff.Services.Interfaces;
+using AzureBank.Shared.Exceptions;
 using AzureBank.Shared.Options;
 using Microsoft.Extensions.Options;
+using Yarp.ReverseProxy.Forwarder;
+using Yarp.ReverseProxy.Model;
 using Yarp.ReverseProxy.Transforms;
 using Yarp.ReverseProxy.Transforms.Builder;
 
@@ -171,7 +175,30 @@ public class BearerTokenTransformProvider : ITransformProvider
         */
         context.AddResponseTransform(async responseContext =>
         {
-            if (responseContext.ProxyResponse is not { } proxied || !ServiceKeyRefusal.Is(proxied))
+            /*
+              NO ANSWER FROM THE API IS THE OUTAGE 503, NOT YARP'S EMPTY 504 OR 502 (ADR-0058). YARP
+              calls the response transforms with no response when forwarding failed, having already
+              set its own status and nothing else. Three of its errors are the API's absence: it did
+              not answer within the cluster's activity timeout (RequestTimedOut, an empty 504, which
+              BackendTimeoutConfigFilter sets from BackendApi:TimeoutSeconds), it could not be reached
+              at all (Request, an empty 502, as while it restarts), or its connection failed while the
+              request's body was on its way to it (RequestBodyDestination, an empty 502, or 504 if the
+              timeout fired then). All three now get the body the BFF's own routes give, which the SPA
+              reads as "try again", with no "applied": whether a write landed is the API's to say, and
+              it said nothing.
+
+              Written with the client's token, which WriteAsync uses. The transform context's token is
+              the forwarding's own, cancelled when the timeout fires, and would write nothing. Every
+              other error keeps YARP's answer: RequestCreation is this host refusing to forward (the
+              unsafe destination above), and RequestCanceled is a client that has hung up.
+            */
+            if (responseContext.ProxyResponse is null)
+            {
+                await AnswerTheOutageAsync(responseContext.HttpContext);
+                return;
+            }
+
+            if (!ServiceKeyRefusal.Is(responseContext.ProxyResponse))
             {
                 return;
             }
@@ -184,9 +211,40 @@ public class BearerTokenTransformProvider : ITransformProvider
             responseContext.SuppressResponseBody = true;
             httpContext.Response.Headers.Remove(ServiceCredentialOptions.RefusalHeaderName);
             await ServiceUnavailable.WriteAsync(
-                httpContext,
-                "The service is temporarily unavailable. Try again shortly.",
-                ServiceUnavailable.KeyRefusalRetryAfterSeconds);
+                httpContext, ServiceUnavailable.OutageDetail, ServiceUnavailable.KeyRefusalRetryAfterSeconds);
         });
+    }
+
+    /// <summary>
+    /// Answers the outage 503 when forwarding failed because the API timed out or could not be
+    /// reached, and leaves every other failure, and a response already started, as YARP left it.
+    /// </summary>
+    private static Task AnswerTheOutageAsync(HttpContext httpContext)
+    {
+        var reason = httpContext.GetForwarderErrorFeature()?.Error switch
+        {
+            ForwarderError.RequestTimedOut => "Timeout",
+            ForwarderError.Request => "Unreachable",
+            // YARP's status is the only mark of which it was: 504 when the timeout had fired.
+            ForwarderError.RequestBodyDestination => httpContext.Response.StatusCode
+                == StatusCodes.Status504GatewayTimeout ? "Timeout" : "Unreachable",
+            _ => null,
+        };
+        if (reason is null || httpContext.Response.HasStarted)
+        {
+            return Task.CompletedTask;
+        }
+
+        var timeout = httpContext.Features.Get<IReverseProxyFeature>()?.Cluster.Config.HttpRequest?.ActivityTimeout;
+        httpContext.RequestServices
+            .GetRequiredService<ILogger<BearerTokenTransformProvider>>()
+            .LogWarning(
+                "The API gave no answer ({Reason}) on {RoutePattern}, waited on for at most {TimeoutSeconds} s; answering 503",
+                reason,
+                RequestLogRoute.Of(httpContext),
+                (int?)timeout?.TotalSeconds);
+
+        return ServiceUnavailable.WriteAsync(
+            httpContext, ServiceUnavailable.OutageDetail, ServiceUnavailableException.OutageRetryAfterSeconds);
     }
 }

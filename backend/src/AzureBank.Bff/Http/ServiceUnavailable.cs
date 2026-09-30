@@ -13,12 +13,27 @@ namespace AzureBank.Bff.Http;
 /// the SPA reads as a sign-out.
 /// </summary>
 /// <remarks>
+/// <para>
 /// The API's own shape for a 503 (<c>AppExceptionHandler</c> over <c>ServiceUnavailableException</c>):
 /// <c>SERVICE_UNAVAILABLE</c>, <c>retryAfterSeconds</c> and a <c>Retry-After</c> header, so the SPA
 /// meets nothing new.
+/// </para>
+/// <para>
+/// Also the outage answer (ADR-0058): the API did not answer within <c>BackendApi:TimeoutSeconds</c>,
+/// could not be reached, or answered a success the BFF could not read. On either road to the API it
+/// is the API's own outage 503, with <see cref="OutageDetail"/> and
+/// <c>ServiceUnavailableException.OutageRetryAfterSeconds</c>, and never <c>applied</c>: only the API
+/// can know whether a request changed anything, and here it did not say.
+/// </para>
 /// </remarks>
 public static class ServiceUnavailable
 {
+    /// <summary>
+    /// The detail of an outage 503, the API's own when it cannot say whether anything was applied,
+    /// and of a refused key's 503, which the visitor meets as the same outage.
+    /// </summary>
+    public const string OutageDetail = "The service is temporarily unavailable. Try again shortly.";
+
     /// <summary>
     /// The <c>Retry-After</c> for a refused key: long enough not to hammer, short enough that a retry
     /// sees the fix. The SPA retries a read's 503 on its own schedule whatever this says

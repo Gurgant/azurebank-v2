@@ -114,8 +114,8 @@ try
             "http on loopback. Check BackendApi:BaseUrl and ReverseProxy:Clusters:*:Destinations:*:Address")
         .ValidateOnStart();
 
-    // The BFF's own client to the API: how long a call may take (ADR-0057 §8). 100 s, HttpClient's
-    // own default, so naming it changed no behaviour; PR-2 sets its value.
+    // How long the BFF waits on the API (ADR-0057 §8, ADR-0058): 55 s, above the API's own request
+    // deadline, for its own client and, through BackendTimeoutConfigFilter, for the proxy.
     builder.Services.AddOptions<BackendApiOptions>()
         .Bind(builder.Configuration.GetSection(BackendApiOptions.SectionName))
         .Validate(
@@ -244,9 +244,12 @@ try
         return ServiceCredentialTransport.CreateHandler(builder.Environment.IsDevelopment());
     });
 
-    // YARP Reverse Proxy with Bearer token transform
+    // YARP Reverse Proxy with Bearer token transform. The config filter gives every cluster that sets
+    // no activity timeout of its own BackendApi:TimeoutSeconds, where YARP waited its own 100 s
+    // (ADR-0058).
     builder.Services.AddReverseProxy()
         .LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"))
+        .AddConfigFilter<BackendTimeoutConfigFilter>()
         .AddTransforms<BearerTokenTransformProvider>();
 
     // Observability (OpenTelemetry traces + metrics, health probes). Captures the YARP

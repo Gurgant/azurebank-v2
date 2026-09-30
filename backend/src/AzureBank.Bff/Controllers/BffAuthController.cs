@@ -3,11 +3,13 @@ using System.Text.Json.Serialization;
 using AzureBank.Bff.DTOs;
 using AzureBank.Bff.Http;
 using AzureBank.Bff.Models;
+using AzureBank.Bff.Observability;
 using AzureBank.Bff.Options;
 using AzureBank.Bff.Services.Interfaces;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.User;
+using AzureBank.Shared.Exceptions;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.WebUtilities;
@@ -90,10 +92,7 @@ public class BffAuthController : ControllerBase
                 return ForwardUpstreamError(response, content);
             }
 
-            var apiResponse = JsonSerializer.Deserialize<ApiResponse<LoginResponse>>(content,
-                JsonOptions);
-
-            var loginResponse = apiResponse!.Data!;
+            var loginResponse = ReadData<LoginResponse>(content);
 
             // Create server-side session with the JWT, its grant (for renewals), the grant's expiry
             // (the session's cap, ADR-0057 §4.1), user info and the user's session stamp
@@ -131,13 +130,9 @@ public class BffAuthController : ControllerBase
                 Message = "Login successful"
             });
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (OutageReason(ex) is { } reason)
         {
-            _logger.LogError(ex, "Failed to connect to backend API");
-            return Problem(
-                title: "Service Unavailable",
-                detail: "Service temporarily unavailable",
-                statusCode: 503);
+            return ApiOutage(ex, reason);
         }
     }
 
@@ -161,10 +156,7 @@ public class BffAuthController : ControllerBase
                 return ForwardUpstreamError(response, content);
             }
 
-            var apiResponse = JsonSerializer.Deserialize<ApiResponse<RegisterResponse>>(content,
-                JsonOptions);
-
-            var registerResponse = apiResponse!.Data!;
+            var registerResponse = ReadData<RegisterResponse>(content);
 
             // Create server-side session with the JWT, its grant (nullable — registration issues it
             // best-effort) and the grant's expiry, and user info.
@@ -201,13 +193,9 @@ public class BffAuthController : ControllerBase
                 Message = "Registration successful"
             });
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (OutageReason(ex) is { } reason)
         {
-            _logger.LogError(ex, "Failed to connect to backend API");
-            return Problem(
-                title: "Service Unavailable",
-                detail: "Service temporarily unavailable",
-                statusCode: 503);
+            return ApiOutage(ex, reason);
         }
     }
 
@@ -280,8 +268,7 @@ public class BffAuthController : ControllerBase
                 return ForwardUpstreamError(response, content);
             }
 
-            var loginResponse = JsonSerializer
-                .Deserialize<ApiResponse<LoginResponse>>(content, JsonOptions)!.Data!;
+            var loginResponse = ReadData<LoginResponse>(content);
 
             var newSessionId = _sessionService.CreateSession(
                 loginResponse.Token.AccessToken,
@@ -320,13 +307,11 @@ public class BffAuthController : ControllerBase
                 Message = "Re-authenticated successfully"
             });
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (OutageReason(ex) is { } reason)
         {
-            _logger.LogError(ex, "Failed to connect to backend API");
-            return Problem(
-                title: "Service Unavailable",
-                detail: "Service temporarily unavailable",
-                statusCode: 503);
+            // Nothing was minted and nothing ended: the visitor is still in the session they came
+            // with, free to try again, as after a wrong password.
+            return ApiOutage(ex, reason);
         }
     }
 
@@ -420,10 +405,11 @@ public class BffAuthController : ControllerBase
             /*
               BOUNDED, and the deadline is the difference between a degrade and an outage.
 
-              The "BackendApi" client sets only BaseAddress and an Accept header, so without this the
-              governing limit is HttpClient's 100-second default — and /me is what the SPA boots
-              against. A hung API would hold app boot open for a minute and a half instead of
-              falling back to the cached block, which is the whole point of having a fallback.
+              Without this the governing limit is the "BackendApi" client's own timeout,
+              BackendApi:TimeoutSeconds (55 s, ADR-0058; HttpClient's 100 s default when this was
+              written) — and /me is what the SPA boots against. A hung API would hold app boot open
+              for most of a minute instead of falling back to the cached block, which is the whole
+              point of having a fallback.
 
               A deadline is safe HERE precisely because this is a READ. The same trick is refused on
               the rename below: abandoning a committed mutation would leave the database moved and
@@ -434,10 +420,11 @@ public class BffAuthController : ControllerBase
               Five seconds, the renewal's foreground wait (ADR-0057 §4.5): the renewal itself runs
               detached on its own 30 s, so giving up here abandons only this read of it. (Until
               PR-1 this matched a 5 s renewal call.) NOT covered by a test, and it is worth saying why
-              rather than implying coverage: FakeBackendApiHandler builds its response synchronously
-              (Task.FromResult over a Func), so a responder that blocks parks the calling thread
-              before any awaitable exists and no token can interrupt it. The harness cannot express
-              a slow API, only a failing one.
+              rather than implying coverage: until FakeBackendApiHandler gained a responder that
+              receives the call's token (BackendTimeoutTests uses it for the BFF's own timeout), a
+              responder that blocked parked the calling thread before any awaitable existed, so the
+              harness could express a failing API but not a slow one. This bound has no test of its
+              own yet.
             */
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(
                 HttpContext.RequestAborted);
@@ -484,8 +471,9 @@ public class BffAuthController : ControllerBase
               object — InMemoryTokenStore hands back the stored reference — so a comparison against
               it reads whatever the rename has already written rather than a snapshot; making it a
               real CAS needs a snapshot plus an atomic swap the ISessionService interface cannot
-              express today. And no test here could tell the two apart: FakeBackendApiHandler is
-              synchronous, so the interleaving that distinguishes them cannot be staged.
+              express today. And no test here could tell the two apart when this was written:
+              FakeBackendApiHandler was synchronous, so the interleaving that distinguishes them
+              could not be staged.
 
               Not writing at all is simpler and correct by construction. What it costs is small and
               named: the fallback no longer learns about a rename made OUT of band, so if the API
@@ -658,10 +646,9 @@ public class BffAuthController : ControllerBase
                 return ForwardUpstreamError(response, content);
             }
 
-            var apiResponse = JsonSerializer.Deserialize<ApiResponse<PinVerifyResult>>(content,
-                JsonOptions);
-
-            var verified = apiResponse?.Data?.Verified ?? false;
+            // A success with no verdict in it is the outage answer, not "Invalid PIN": the BFF does
+            // not know the verdict, and "Invalid PIN" would tell the visitor their PIN was wrong.
+            var verified = ReadData<PinVerifyResult>(content).Verified;
 
             if (verified)
             {
@@ -693,13 +680,9 @@ public class BffAuthController : ControllerBase
                 Message = "Invalid PIN"
             });
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (OutageReason(ex) is { } reason)
         {
-            _logger.LogError(ex, "Failed to verify PIN with backend API");
-            return Problem(
-                title: "Service Unavailable",
-                detail: "Service temporarily unavailable",
-                statusCode: 503);
+            return ApiOutage(ex, reason);
         }
     }
 
@@ -754,13 +737,9 @@ public class BffAuthController : ControllerBase
 
             return Ok(ApiResponse.Success("PIN set successfully"));
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (OutageReason(ex) is { } reason)
         {
-            _logger.LogError(ex, "Failed to set PIN with backend API");
-            return Problem(
-                title: "Service Unavailable",
-                detail: "Service temporarily unavailable",
-                statusCode: 503);
+            return ApiOutage(ex, reason);
         }
     }
 
@@ -834,8 +813,10 @@ public class BffAuthController : ControllerBase
                 return ForwardUpstreamError(response, content);
             }
 
-            var renamed = JsonSerializer.Deserialize<ApiResponse<UpdateAzureTagResponse>>(
-                content, JsonOptions)?.Data?.AzureTag;
+            // A success with no data in it is the outage answer, although the rename may have
+            // landed: the BFF cannot say which handle the visitor now holds, and /me reads it from
+            // the API once the API answers again.
+            var renamed = ReadData<UpdateAzureTagResponse>(content).AzureTag;
 
             if (!string.IsNullOrEmpty(renamed))
             {
@@ -869,8 +850,8 @@ public class BffAuthController : ControllerBase
             }
             else
             {
-                // A 2xx whose body we could not read leaves the cache stale rather than wrong. Say
-                // so loudly: silently serving the old handle is the bug this endpoint exists to fix.
+                // A 2xx with no handle in it leaves the cache stale rather than wrong. Say so
+                // loudly: silently serving the old handle is the bug this endpoint exists to fix.
                 _logger.LogWarning(
                     "Rename succeeded upstream but the new handle could not be read from the response; "
                     + "the cached handle for {UserId} stays stale until re-login", session.UserId);
@@ -878,13 +859,9 @@ public class BffAuthController : ControllerBase
 
             return Content(content, "application/json");
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (OutageReason(ex) is { } reason)
         {
-            _logger.LogError(ex, "Failed to rename AzureTag with backend API");
-            return Problem(
-                title: "Service Unavailable",
-                detail: "Service temporarily unavailable",
-                statusCode: 503);
+            return ApiOutage(ex, reason);
         }
     }
 
@@ -930,6 +907,56 @@ public class BffAuthController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Why a call to the API gave nothing this controller can use, or null when the failure is not
+    /// the API's absence (ADR-0058): this client's own timeout (<c>HttpClient</c> reports it as a
+    /// cancellation around a <see cref="TimeoutException"/>), an API it could not reach, or a
+    /// success it could not read.
+    /// </summary>
+    /// <remarks>
+    /// A <see cref="JsonException"/> reaching an action's catch can only come from reading a
+    /// success: <see cref="ForwardUpstreamError"/> reads every error body under its own catch.
+    /// </remarks>
+    private static string? OutageReason(Exception exception) => exception switch
+    {
+        TaskCanceledException { InnerException: TimeoutException } => "Timeout",
+        HttpRequestException => "Unreachable",
+        JsonException => "UnreadableSuccess",
+        _ => null,
+    };
+
+    /// <summary>
+    /// The outage 503 for one of this controller's calls to the API: the API's own outage shape,
+    /// without <c>applied</c>, since only the API knows whether anything was, and the session kept.
+    /// </summary>
+    /// <remarks>
+    /// Before, a timeout escaped the action as an unhandled 500; an unreadable success was a
+    /// <c>JsonException</c> or a null reference 500, or, at verify-pin and rename, a 200 ("Invalid
+    /// PIN", or the unread body forwarded); and an unreachable API was a bare 503 with no
+    /// <c>errorCode</c> and no <c>Retry-After</c>. A Warning, not an Error: the API being away is an
+    /// outage to see in the log, not a fault in this code.
+    /// </remarks>
+    private ObjectResult ApiOutage(Exception exception, string reason)
+    {
+        _logger.LogWarning(
+            exception,
+            "The API gave no usable answer ({Reason}) on {RoutePattern}, waited on for at most {TimeoutSeconds} s; answering 503",
+            reason,
+            RequestLogRoute.Of(HttpContext),
+            (int)_httpClient.Timeout.TotalSeconds);
+
+        return ServiceUnavailableResult(
+            ServiceUnavailable.OutageDetail, ServiceUnavailableException.OutageRetryAfterSeconds);
+    }
+
+    /// <summary>
+    /// The <c>data</c> of a success the API answered, or a <see cref="JsonException"/> when there is
+    /// none to read: an empty body, a body that is not JSON, or <c>data</c> absent or null.
+    /// </summary>
+    private static T ReadData<T>(string content) where T : class =>
+        JsonSerializer.Deserialize<ApiResponse<T>>(content, JsonOptions)?.Data
+        ?? throw new JsonException($"The API answered a success with no {typeof(T).Name} in it.");
+
     /// <summary>A 503 in the API's own shape, with <c>Retry-After</c>: the session is kept.</summary>
     private ObjectResult ServiceUnavailableResult(string detail, int retryAfterSeconds) =>
         new(ServiceUnavailable.Problem(HttpContext, detail, retryAfterSeconds))
@@ -966,6 +993,11 @@ public class BffAuthController : ControllerBase
     /// verdict on the user, and forwarded as the 401 it is it would sign the user out of the SPA.
     /// Every call site gets it here: sign-in, registration, re-authentication, verify-pin, set-pin
     /// and rename.
+    /// <para>
+    /// The API's <c>Retry-After</c> and <c>Cache-Control</c> are forwarded with its error whenever its
+    /// status is: the outage 503's wait and <c>no-store</c> (ADR-0058), and a sign-in or PIN
+    /// lockout's wait. Only the status and the body used to be, and the headers stopped at the BFF.
+    /// </para>
     /// </remarks>
     private IActionResult ForwardUpstreamError(HttpResponseMessage response, string content)
     {
@@ -973,13 +1005,13 @@ public class BffAuthController : ControllerBase
         {
             _logger.LogWarning("The API refused this host's service key; answering 503");
             return ServiceUnavailableResult(
-                "The service is temporarily unavailable. Try again shortly.",
-                ServiceUnavailable.KeyRefusalRetryAfterSeconds);
+                ServiceUnavailable.OutageDetail, ServiceUnavailable.KeyRefusalRetryAfterSeconds);
         }
 
         try
         {
             using var document = JsonDocument.Parse(content);
+            KeepTheApisRetryHeaders(response);
             // Clone: the element must outlive the disposed document.
             return StatusCode((int)response.StatusCode, document.RootElement.Clone());
         }
@@ -997,16 +1029,37 @@ public class BffAuthController : ControllerBase
             var status = (int)response.StatusCode;
             if (status is >= 400 and < 500)
             {
+                KeepTheApisRetryHeaders(response);
                 return Problem(
                     title: ReasonPhrases.GetReasonPhrase(status),
                     detail: "Upstream service returned an empty or non-JSON response",
                     statusCode: status);
             }
 
+            // Not the API's answer any more, so none of its headers: a Retry-After meant for its
+            // status would say nothing true about this 502.
             return Problem(
                 title: "Bad Gateway",
                 detail: "Upstream service returned an invalid response",
                 statusCode: StatusCodes.Status502BadGateway);
+        }
+    }
+
+    /// <summary>
+    /// Copies the API's <c>Retry-After</c> and <c>Cache-Control</c> onto this response, for an error
+    /// forwarded with the API's own status: they belong to that status, and a copy without them
+    /// would have the outage 503 lose its <c>no-store</c> and its wait at the BFF.
+    /// </summary>
+    private void KeepTheApisRetryHeaders(HttpResponseMessage response)
+    {
+        if (response.Headers.RetryAfter is { } retryAfter)
+        {
+            Response.Headers.RetryAfter = retryAfter.ToString();
+        }
+
+        if (response.Headers.CacheControl is { } cacheControl)
+        {
+            Response.Headers.CacheControl = cacheControl.ToString();
         }
     }
 
