@@ -229,6 +229,14 @@ a profile this system meets.
     write fails. The `RefreshTokenReuse` log line comes before the audit write, so it is still
     written. Nothing is revoked or issued either way, and the grant is already revoked, so a retry
     only tries the audit write again.
+    *(Amended 2026-09-30, [ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md):
+    when the write fails because the database cannot be reached — EF's retries spent, a
+    connection-level error, a command timeout — the answer is the outage **503**
+    `SERVICE_UNAVAILABLE`, from `ServiceUnavailableExceptionHandler`, for the tripwire and the
+    unknown-grant refusal alike; a write the database refuses is still the 500. The BFF keeps the
+    session on either (§4.5). And refresh, revoke and logout run without ADR-0058's request
+    deadline (`[NoRequestDeadline]`): once started they run to the end, so a caller that hangs up
+    cannot take a refusal's row back.)*
 - **Where the event lands.** On Azure the plan sends application logs nowhere, so the event is in
   the audit trail, which a SQL query or the audit verifier reads. It is not a push notification.
   Pushing it (an alert on the audit table, or turning logs on) is a later cost decision.
@@ -577,8 +585,15 @@ nobody checks. What that runbook rests on is decided here.
 - **BFF:** `TokenRefresher` is rewritten as §4.5 says; `UserSession` gains the grant's expiry, the
   absolute expiry, `Ended`, `InFlightRenewal` and the lock; `InMemoryTokenStore` ends every session
   through one path; `GrantRevoker` is new; the proxy strips the marker and maps key refusals to 503.
-  A named BFF-to-API timeout option, `BackendApi:TimeoutSeconds`, defaults to 100 s,
-  `HttpClient`'s own default, so naming it changed nothing; PR-2 of the plan sets its value. The
+  A named BFF-to-API timeout option, `BackendApi:TimeoutSeconds`, ~~defaults to 100 s,
+  `HttpClient`'s own default, so naming it changed nothing; PR-2 of the plan sets its value~~
+  *(2026-09-30, [ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md): it is
+  55 s, and through `BackendTimeoutConfigFilter` it is also every proxy cluster's activity timeout,
+  where YARP had waited its own 100 s; an answer the BFF stops waiting for is the outage 503. The
+  renewal's 30 s, the revoke's 5 s, `/me`'s 5 s read-through, the stamp poll's 5 s and the health
+  probe's 3 s are the deliberate exceptions and stay as they are (§4.5, §4.6, §5.3; `/me`'s is
+  ADR-0039's, the probe's `BackendApiHealthCheck`'s): each is shorter, and none writes anything a
+  late answer could lose)*. The
   stamp's commit adds `UserSession.SessionStamp`, `SessionStamps`, `SessionStampWatcher` and the
   store's check.
 - **Contract:** the OpenAPI document, the frontend's generated types, the Bruno collection and the

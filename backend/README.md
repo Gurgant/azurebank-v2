@@ -580,6 +580,13 @@ reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
   "ConnectionStrings": {
     "DefaultConnection": "Server=localhost;Database=AzureBank;..."
   },
+  "Database": {
+    "MaxRetryCount": 4,
+    "MaxRetryDelay": "00:00:10"
+  },
+  "RequestDeadline": {
+    "Seconds": 40
+  },
   "Jwt": {
     "Issuer": "AzureBank.Api",
     "Audience": "AzureBank.Bff",
@@ -591,6 +598,16 @@ reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
   }
 }
 ```
+
+How long the backend waits on the database, and how often it tries again (ADR-0058): EF retries a
+transient failure 4 times with its back-off capped at 10 s, and a request still running after
+`RequestDeadline:Seconds` answers 503 `SERVICE_UNAVAILABLE`. The connection limits are code defaults
+and not in the file: `Database:ConnectTimeoutSeconds` (10), `Database:ConnectRetryCount` (0) and
+`Database:MaxPoolSize` (12; the seeder's `appsettings.json` sets 5), plus `Pool Blocking
+Period=NeverBlock`, each written into the connection string only where the string leaves it unset,
+so a value in the string wins. The API checks every one at start and logs the limits it opened
+with. The [API README](src/AzureBank.Api/README.md#database-limits-and-the-request-deadline) has
+the ranges.
 
 ### BFF Configuration (appsettings.json)
 
@@ -605,10 +622,15 @@ reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
     "PinValidityMinutes": 5
   },
   "BackendApi": {
-    "BaseUrl": "https://localhost:7215"
+    "BaseUrl": "https://localhost:7215",
+    "TimeoutSeconds": 55
   }
 }
 ```
+
+`BackendApi:TimeoutSeconds` is how long the BFF waits on the API, on its own client and on every
+proxied call, before it answers the same 503 itself: above the API's 40 s deadline and what the API
+may still need after it (ADR-0058).
 
 ### Environment Variables
 

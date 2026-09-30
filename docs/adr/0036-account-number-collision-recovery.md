@@ -92,7 +92,8 @@ group — no exception, no failing test. A format change would have to fix the m
 
 - **The retry fixes the rarest cause of stranding, not all of them.** Any failure at that INSERT
   strands the user the same way. ~~`EnableRetryOnFailure(maxRetryCount: 3)`~~ *(`Database:MaxRetryCount`
-  since 2026-09-25, 3 unless set)* already retries deadlocks
+  since 2026-09-25, ~~3~~ unless set; 4 since 2026-09-30,
+  [ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md))* already retries deadlocks
   (1205) and the throttling numbers, but ADR-0034 deliberately does **not** retry a command timeout
   (`SqlException` −2), so a timeout at that line still leaves an account-less user. Recorded rather
   than fixed here: making registration atomic across two units of work is a larger design change

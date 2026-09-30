@@ -29,7 +29,9 @@ assumed the failure reaches our `catch` at all — but the context is registered
 ~~`EnableRetryOnFailure(maxRetryCount: 3)`~~ (`ServiceCollectionExtensions.cs`), and EF runs every
 `ExecuteUpdateAsync` through that strategy. So the real question is which of those triggers EF
 already handles. *(2026-09-25: the count is `Database:MaxRetryCount` now and the cap
-`Database:MaxRetryDelay`, still 3 and 30 s unless a deployment sets them.)*
+`Database:MaxRetryDelay`, ~~still 3 and 30 s~~ unless a deployment sets them.)*
+*(2026-09-30, [ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md): 4 and 10 s
+unless set. The table below is what EF's detector retries, which the budget does not change.)*
 
 Probed against the shipped `Microsoft.EntityFrameworkCore.SqlServer` 10.0.1 assembly, asking its own
 `SqlServerTransientExceptionDetector` (2026-08-08):
@@ -49,7 +51,8 @@ Two things follow, and neither was obvious from reading:
 
 1. **A deadlock on the revoke is already retried three times** before the exception could ever reach
    the reuse branch. Any inline retry we add would be a _fourth_ layer for the case it is usually
-   written for. *(2026-09-25: three by default; `Database:MaxRetryCount` sets it.)*
+   written for. *(2026-09-25: ~~three~~ by default; `Database:MaxRetryCount` sets it.)*
+   *(2026-09-30, [ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md): four by default.)*
 2. **A command timeout is not retried at all.** EF treats a bare `TimeoutException` as transient,
    but SqlClient does not throw one for a command timeout — it throws `SqlException` with
    `Number == -2`, which is not in the list, and `errorNumbersToAdd` is `null`. The comment at that

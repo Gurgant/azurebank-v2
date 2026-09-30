@@ -387,7 +387,10 @@ The `BearerTokenTransformProvider` first clears any inbound `Authorization` head
 session's JWT (renewed through `ITokenRefresher` when it runs short). A renewal that cannot be had while
 the token has 5 s or less left is answered here with a 503 and `Retry-After`, never forwarded; the
 source also strips the token-road marker and turns the API's refusal of the service key into a 503
-(ADR-0057 §4.2, §4.7). Abridged:
+(ADR-0057 §4.2, §4.7). When the API does not answer within `BackendApi:TimeoutSeconds`, cannot be
+reached, or the connection breaks while a proxied body is sent, the response transform answers the
+API's own outage 503 (`SERVICE_UNAVAILABLE`, `Retry-After: 10`, `no-store`) in place of YARP's
+empty 504 or 502, and the BFF never sends the request again (ADR-0058). Abridged:
 
 ```csharp
 public void Apply(TransformBuilderContext context)
@@ -488,7 +491,7 @@ Nothing queues — a request over the limit is refused immediately.
   },
   "BackendApi": {
     "BaseUrl": "https://localhost:7215",
-    "TimeoutSeconds": 100
+    "TimeoutSeconds": 55
   },
   "ReverseProxy": {
     "Routes": {
@@ -522,6 +525,14 @@ Nothing queues — a request over the limit is refused immediately.
   }
 }
 ```
+
+`BackendApi:TimeoutSeconds` is how long the BFF waits on the API: its own client's
+`HttpClient.Timeout` and, through `BackendTimeoutConfigFilter`, every proxy cluster's activity
+timeout unless the cluster sets its own. 55 s, above the API's 40 s request deadline plus what the
+API may still need after it, so any answer the API gives before a commit arrives first (ADR-0058,
+`TimeoutChainTests`).
+*(Until 2026-09-30 this sample said 100, `HttpClient`'s default, and the proxy waited YARP's own
+100 s whatever it said.)*
 
 ### Configuration Classes
 

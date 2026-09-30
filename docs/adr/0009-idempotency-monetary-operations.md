@@ -68,6 +68,14 @@ design — see Notes).
 - Same key after the operation committed but its response was provably
   lost (record stuck `Executed` past the staleness window) → **409
   `IDEMPOTENCY_RESULT_UNKNOWN`** ("verify via GET /api/transactions").
+- *(Added 2026-09-30, [ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md).)*
+  The database cannot be reached, or the request ran past its deadline → **503
+  `SERVICE_UNAVAILABLE`** with `retryAfterSeconds` and `Retry-After`. It carries **`applied:
+  false`** only when the request holds the claim it made itself (not a replay) and no commit has
+  started, and then nothing was changed; on every other 503 `applied` is absent, because a request
+  that failed reading the key, claiming it or writing a replay cannot know what an earlier one with
+  the same key did. A client keeps the key on it either way: `applied: false` changes what the
+  visitor is told, never which key the retry sends.
 - Request body larger than 32 KB → **413 `IDEMPOTENCY_PAYLOAD_TOO_LARGE`**,
   rejected before any buffering/hashing/claim (see Placement & limits).
 - **Key scope**: per user, per logical endpoint. Cross-user and
@@ -120,6 +128,16 @@ design — see Notes).
    operation committed.
 3. **Complete**: after a 2xx, the buffered response is persisted
    (`Completed`) **before the first byte reaches the client**.
+   *(Amended 2026-09-30, [ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md):
+   with 3 s of its own, where it had no bound (`CancellationToken.None`), and not the request's
+   token, so a client that has gone does not stop it; one not stored in time leaves the record
+   `Executed` while the 2xx is still sent. That the answer it stores is whole, for a client that
+   hung up after the commit, is `DeadlineResultFilter`'s doing (ADR-0058 D5). An **empty** 2xx is
+   never stored: no monetary success is empty, so an empty one is an answer lost while it was
+   written, and stored it was replayed to every retry of the key as the answer (measured before the change: the record `Completed` with an empty body, and an empty 201
+   on the retry, `RequestDeadlineSqlServerTests`). Not stored, the record stays `Executed` and a
+   retry gets `IN_FLIGHT`, then `RESULT_UNKNOWN`. The fenced delete that releases a claim on the
+   error path gets 3 s too; one that runs out leaves the claim `Processing` until it is stale.)*
 
 ### Failure semantics (all derived from the DB truth, not exception types)
 

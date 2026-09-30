@@ -66,6 +66,12 @@ audit write fails, the exception surfaces and the caller gets a 500, as the unkn
 always did, and nothing is revoked or issued either way. `RefreshTokenReuseRevokeFailed` and
 `MitigationFailed` are no longer raised; both names stay for the rows already written. Pinned by
 `WhenTheTripwiresAuditRowCannotBeWritten_TheAnswerIs500_AndTheOtherSessionStaysActive`.)*
+*(Amended 2026-09-30, [ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md): a
+write that fails because the database cannot be reached — EF's retries spent, a connection-level
+error, a command timeout — is answered 503 `SERVICE_UNAVAILABLE` by
+`ServiceUnavailableExceptionHandler`, the tripwire's and the unknown-grant refusal's alike, since
+every such failure now is. A write the database refuses, like that test's truncation, is still the
+500. Either way nothing is revoked or issued, and the BFF keeps the session.)*
 
 ### D1 re-examined against industry practice, 2026-08-20 — and kept
 
@@ -1247,6 +1253,17 @@ System.InvalidOperationException: The configured execution strategy
 The fix is the idiom `AuthService.RegisterAsync` already uses,
 `Database.CreateExecutionStrategy()`; `AnAuditedSave_WorksUnderTheRetryingStrategyProductionActuallyUses`
 now opts in, so one test finally runs the production configuration.
+*(Amended 2026-09-30, [ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md): that
+idiom had a hole at the commit. The save accepted its changes before the COMMIT, so a transient
+fault as the commit started rolled the work back on the server while the strategy's re-run found
+every entry already saved: no row to chain, nothing to insert, an empty transaction committed and
+success returned. Measured on SQL Server with a fault as a deposit's commit started: 201, no ledger
+row, a balance of 0 and the idempotency record still `Processing`. The deposit, the rename, the
+full-number reveal and the PIN set all save through here. The save now keeps its changes pending
+until the strategy returns and runs through `ExecuteInTransaction`, which asks the database whether
+the save's own audit row is there before it retries: the audit ids are minted by the client, so the
+question has an exact answer only this save can satisfy. It is registration's idiom again.
+`DepositCommitFaultSqlServerTests` faults the commit as it starts and after it lands.)*
 
 Verified afterwards on the running API rather than only in tests: the same call answers **401**, and
 four rows sit in `AzureBankDev` — three `RefreshTokenUnknown` refusals written on their own

@@ -84,9 +84,13 @@ an open defect: it stops the next person from re-examining it.
   as a singleton *because* it owns that gate map. The mechanism was sixty lines away.
 
 The lock is still not taken, but for the real reason: it would hold a gate across an outbound call
-that has no `CancellationToken` and whose client sets no `Timeout`, so a hung API would serialise a
-session's renames behind `HttpClient`'s 100-second default — and bounding it would abandon a
-*committed* mutation, deterministically producing the very staleness this record removes.
+that has no `CancellationToken` and whose client ~~sets no `Timeout`, so a hung API would serialise
+a session's renames behind `HttpClient`'s 100-second default~~ *(2026-09-30,
+[ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md): waits
+`BackendApi:TimeoutSeconds`, set on the client since ADR-0057 at `HttpClient`'s 100 s and 55 s
+since ADR-0058; the reasoning stands, so a hung API would serialise a session's renames behind that
+wait)* — and bounding it would abandon a *committed* mutation, deterministically producing the very
+staleness this record removes.
 
 ## Alternatives considered
 

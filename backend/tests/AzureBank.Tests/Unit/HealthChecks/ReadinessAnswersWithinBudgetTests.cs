@@ -31,6 +31,13 @@ namespace AzureBank.Tests.Unit.HealthChecks;
 /// never answers reports nothing while still holding a connection, which is worse than one that
 /// answers "unhealthy".
 /// </para>
+/// <para>
+/// Those are SqlClient's defaults, and the unreachable-store test below still opens with them: it
+/// builds its context with its own <c>UseSqlServer</c>, not through <c>AddInfrastructure</c>, so
+/// the bound it proves is the readiness budget's alone. The API's own context has opened with a
+/// 10 s connect timeout and no SqlClient retry since ADR-0058, so one open there should take at
+/// most 10 s, not 37 (not measured again); the budget, 5 s as shipped, is still the shorter one.
+/// </para>
 /// </remarks>
 public class ReadinessAnswersWithinBudgetTests
 {
