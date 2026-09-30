@@ -274,7 +274,7 @@ column.
 | Outage | A read | A money write, before its commit | After its commit started |
 |---|---|---|---|
 | Azure refusal or failover (fails fast) | 503 once EF's retries are spent, 13 to 37 s, or at the 40 s deadline | within 40 s and a fast release | the commit fails fast and the deadline is back on: about 43 s |
-| Local refusal (compose: the database's name stops resolving) | 503 at the 40 s deadline, measured at 40.02 and 40.03 s: each open took 11.81 to 12.09 s or 21.44 to 23.75 s, so two fit in 40 s, and the deadline cut the third while it was under way, without waiting for it | 503 at 40.03 s, measured on a transfer | not measured |
+| Local refusal (compose: the database's name stops resolving) | 503 at the 40 s deadline, measured at 40.02 and 40.03 s: each open took 11.81 to 12.09 s or 21.44 to 23.75 s, so two fit in 40 s. A deadline that falls while an open is under way does not wait for it: set to 30 s, the 503 came at 30.05 s, 18.0 s into an open that had not ended | 503 at 40.03 s, measured on a transfer | not measured |
 | A hung database, new login | −2 in about 10 s (the login's connect timeout) | about 10 s and the release | n/a |
 | A hung database, pooled connection | −2 at about 35 s, or cut at 40 + 5 | **53 s at most** | up to 40 + 10 (the commit, bounded by the connect timeout) + 5 (its attention, not measured) + 3 + 5 (the save's second question, D10, and its attention) + 3 + 5 (the release and its attention) = 71 s: the BFF's own 503 comes first, at 55 s, and says the same thing, "unknown" |
 
@@ -451,7 +451,11 @@ sending it) observes a token. Three ways to put a deadline on that were weighed:
   - An open to a name that does not resolve took 11.81 to 12.09 s (15 of 20) or 21.44 to 23.75 s
     (5 of 20), not the 10 s connect timeout. In the four 503s at the deadline, the deadline cut an
     open that was under way and did not wait for it.
-  - SIGN-IN-RERUN
+  - Sign-ins run again after those corrections, with the database refused 60 and 120 s: the API's
+    own 503 at 40.05 and 40.02 s, with `SERVICE_UNAVAILABLE` and `Retry-After: 10`, where before
+    them the BFF answered its own 503 at 55.05 and 55.02 s and the API went on to 64.06 and 82.74 s.
+    The deadline fired 0.06 s into the fourth open and 3.32 s into the third, and nothing of the
+    sign-in ran after the answer.
   - Not measured: the Azure row and the after-commit column of the table under "The numbers", a
     hung new login, and the logins residual risk 5 is about.
 
