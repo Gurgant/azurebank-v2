@@ -17,6 +17,7 @@ import {
   installFakeClock,
 } from '../../test/outage';
 import { CONNECTION_FAILED } from '../../api/problemMessages';
+import { AccountsPage } from '../../pages/AccountsPage';
 import { ChangePinDialog } from './ChangePinDialog';
 import { CreateAccountDialog } from './CreateAccountDialog';
 import { DepositDialog } from './DepositDialog';
@@ -488,6 +489,33 @@ describe('a change with no key, during an outage', () => {
     await advanceUntil(sentAt, 65_100);
 
     await alertSays(COPY.accountUnknown);
+  });
+
+  it('an account opened by a create that answered 503 shows up in the list the dialog points to', async () => {
+    server.use(
+      http.post('*/api/accounts', () => {
+        // The database kept the account; only the answer was lost.
+        mockState.accounts.push({
+          ...MAIN,
+          id: '99999999-9999-4999-8999-999999999999',
+          name: 'Holiday Fund',
+          isPrimary: false,
+        });
+        return serviceUnavailable({ via: 'api', instance: '/api/accounts' });
+      }),
+    );
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Main Account');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Add New Account' }));
+    fireEvent.change(await screen.findByRole('textbox', { name: /account name/i }), {
+      target: { value: 'Holiday Fund' },
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Create Account' }));
+    await alertSays(COPY.accountUnknown);
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(await screen.findByText('Holiday Fund')).toBeInTheDocument();
   });
 
   async function fillPins() {

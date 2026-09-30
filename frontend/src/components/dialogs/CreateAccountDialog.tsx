@@ -13,6 +13,7 @@ import {
   Select,
   Spinner,
 } from '@fluentui/react-components';
+import { useDispatch } from 'react-redux';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -20,7 +21,7 @@ import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
 import { ACCOUNT_OUTCOME_UNKNOWN } from '../../api/problemMessages';
 import type { AccountType } from '../../api/enums';
 import { toFieldName } from '../../api/validationErrors';
-import { useCreateAccountMutation } from '../../features/api/apiSlice';
+import { apiSlice, useCreateAccountMutation } from '../../features/api/apiSlice';
 
 // Mirrors the backend contract: name 2-100 chars; type is the shared PascalCase enum.
 const createAccountSchema = z.object({
@@ -55,6 +56,7 @@ const isOurField = (key: string) => {
 };
 
 export function CreateAccountDialog({ open, onClose }: CreateAccountDialogProps) {
+  const dispatch = useDispatch();
   const [createAccount, { isLoading, error, reset: resetMutation }] = useCreateAccountMutation();
   const problem = error as ApiProblem | undefined;
 
@@ -91,6 +93,13 @@ export function CreateAccountDialog({ open, onClose }: CreateAccountDialogProps)
       close();
     } catch (caught) {
       const rejected = caught as ApiProblem;
+      if (isServiceOutage(rejected)) {
+        // The bar below tells the visitor to check their accounts, but the mutation refreshes the
+        // list only on success (apiSlice.ts), and the page behind this dialog keeps its list
+        // subscribed: an account that was opened anyway would stay off the list, inviting a
+        // second Create. Read the list again, as DeleteAccountDialog does for ACCOUNT_NOT_FOUND.
+        dispatch(apiSlice.util.invalidateTags([{ type: 'Account', id: 'LIST' }]));
+      }
       if (rejected.errorCode === 'VALIDATION_ERROR' && rejected.errors) {
         for (const [key, messages] of Object.entries(rejected.errors)) {
           if (isOurField(key) && messages.length > 0) {
