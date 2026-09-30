@@ -4,10 +4,12 @@ using AzureBank.Api.Middleware;
 using AzureBank.Api.Observability;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.Exceptions;
+using AzureBank.Shared.Options;
 using FluentValidation;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Options;
 
 namespace AzureBank.Api.Handlers;
 
@@ -160,11 +162,12 @@ public sealed class ClientAbortedExceptionHandler : IExceptionHandler
 /// <para>
 /// <c>applied: false</c> ONLY WHEN THIS ANSWER KNOWS IT, and then the detail says so too: on the four
 /// money endpoints (<see cref="RequireIdempotencyAttribute"/>), for a request that owns the
-/// idempotency claim it made (<see cref="OwnedIdempotencyClaim"/>) and has let no commit start
-/// (<see cref="IRequestDeadline.CommitEntered"/>). A money request moves money only inside one
-/// transaction of its own context, and every such commit passes the commit gate
-/// (<c>RequestDeadlineSqlServerTests</c> counts one per success), so no commit started means no money
-/// moved. Anywhere else the key is left out, never set to true or to a guess: a commit that started
+/// idempotency claim it made (<see cref="OwnedIdempotencyClaim"/>), has let no commit start
+/// (<see cref="IRequestDeadline.CommitEntered"/>), and is too young for another request with the
+/// same key to have taken that claim over (<see cref="NothingApplied"/>). A money request moves
+/// money only inside one transaction of its own context, and every such commit passes the commit
+/// gate (<c>RequestDeadlineSqlServerTests</c> counts one per success), so no commit started means no
+/// money moved. Anywhere else the key is left out, never set to true or to a guess: a commit that started
 /// may have landed even if it failed, and a request that failed before owning its claim cannot know
 /// what an earlier request with the same key did. A client that keeps its key on a 503 is safe
 /// either way; one told "nothing was applied" when something was would pay again under a new key.
@@ -218,14 +221,25 @@ public sealed class ServiceUnavailableExceptionHandler : IExceptionHandler
     /// </remarks>
     private const string PoolTimeoutText = "prior to obtaining a connection from the pool";
 
+    /// <summary>
+    /// How much younger than <see cref="IdempotencyOptions.ProcessingStaleAfter"/> a request must be
+    /// for its 503 to say <c>applied: false</c>: room for the clocks of two processes while a
+    /// revision replaces another.
+    /// </summary>
+    internal static readonly TimeSpan ClaimTakeoverMargin = TimeSpan.FromSeconds(10);
+
     private readonly ILogger<ServiceUnavailableExceptionHandler> _logger;
     private readonly ReceivedAtClock _clock;
+    private readonly TimeSpan _claimStaleAfter;
 
     public ServiceUnavailableExceptionHandler(
-        ILogger<ServiceUnavailableExceptionHandler> logger, ReceivedAtClock clock)
+        ILogger<ServiceUnavailableExceptionHandler> logger,
+        ReceivedAtClock clock,
+        IOptions<IdempotencyOptions> idempotencyOptions)
     {
         _logger = logger;
         _clock = clock;
+        _claimStaleAfter = idempotencyOptions.Value.ProcessingStaleAfter;
     }
 
     public async ValueTask<bool> TryHandleAsync(
@@ -237,14 +251,14 @@ public sealed class ServiceUnavailableExceptionHandler : IExceptionHandler
             return false;
         }
 
-        var received = httpContext.Features.Get<ReceivedAtFeature>()?.Value;
+        var age = httpContext.Features.Get<ReceivedAtFeature>()?.Value is { } at ? _clock.Now - at : (TimeSpan?)null;
         _logger.LogWarning(
             exception,
             "Service unavailable ({Reason}) on {RoutePattern} after {ElapsedMs} ms; "
             + "SQL errors {SqlErrorNumbers}; chain {ExceptionTypes}",
             reason,
             RequestLogRoute.Of(httpContext),
-            received is { } at ? (long)(_clock.Now - at).TotalMilliseconds : -1,
+            age is { } elapsed ? (long)elapsed.TotalMilliseconds : -1,
             SqlErrorNumbers(exception),
             ExceptionTypes(exception));
 
@@ -256,7 +270,7 @@ public sealed class ServiceUnavailableExceptionHandler : IExceptionHandler
         {
             ["retryAfterSeconds"] = ServiceUnavailableException.OutageRetryAfterSeconds,
         };
-        var nothingApplied = NothingApplied(httpContext, deadline);
+        var nothingApplied = NothingApplied(httpContext, deadline, age, _claimStaleAfter);
         if (nothingApplied)
         {
             details["applied"] = false;
@@ -275,18 +289,32 @@ public sealed class ServiceUnavailableExceptionHandler : IExceptionHandler
 
     /// <summary>
     /// True when the answer may say <c>applied: false</c>: a money endpoint, whose request owns the
-    /// idempotency claim it made and has let no commit start (see the remarks on the class).
+    /// idempotency claim it made, has let no commit start, and is still too young for its claim to
+    /// have been taken over (see the remarks on the class).
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The endpoint is read from the feature the exception handler leaves behind, since it nulls the
     /// request's own before it runs its handlers. No deadline, no answer: without one the request
     /// cannot tell whether a commit started (no money endpoint is exempt from it).
+    /// </para>
+    /// <para>
+    /// THE CLAIM MUST STILL BE ITS OWN. Another request with the same key takes a claim over once it
+    /// is <see cref="IdempotencyOptions.ProcessingStaleAfter"/> old, and may commit under it. A request
+    /// answers well inside that (its deadline, its release and their acknowledgements, ADR-0058), but
+    /// a process frozen past it cannot enforce its deadline, and on resuming it would still own a
+    /// claim that is no longer its own. So the request's age, from the instant it arrived (never later
+    /// than its claim), must be under the stale age less <see cref="ClaimTakeoverMargin"/>; with no
+    /// arrival stamp there is no answer.
+    /// </para>
     /// </remarks>
-    internal static bool NothingApplied(HttpContext httpContext, IRequestDeadline? deadline) =>
+    internal static bool NothingApplied(
+        HttpContext httpContext, IRequestDeadline? deadline, TimeSpan? age, TimeSpan claimStaleAfter) =>
         (httpContext.GetEndpoint() ?? httpContext.Features.Get<IExceptionHandlerFeature>()?.Endpoint)?
             .Metadata.GetMetadata<RequireIdempotencyAttribute>() is not null
         && httpContext.Features.Get<OwnedIdempotencyClaim>() is not null
-        && deadline is { CommitEntered: false };
+        && deadline is { CommitEntered: false }
+        && age is { } elapsed && elapsed < claimStaleAfter - ClaimTakeoverMargin;
 
     /// <summary>
     /// Why <paramref name="exception"/> is the outage 503, or null when it is not one.

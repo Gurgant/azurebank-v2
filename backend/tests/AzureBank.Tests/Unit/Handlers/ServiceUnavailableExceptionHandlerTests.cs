@@ -5,6 +5,7 @@ using AzureBank.Api.Handlers;
 using AzureBank.Api.Middleware;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.Exceptions;
+using AzureBank.Shared.Options;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using FluentValidation;
@@ -15,6 +16,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
@@ -152,6 +154,39 @@ public class ServiceUnavailableExceptionHandlerTests
         body.GetProperty("applied").GetBoolean().Should().BeFalse("nothing moved, and this request knows it");
         body.GetProperty("detail").GetString().Should().Be(ServiceUnavailableExceptionHandler.NothingAppliedDetail);
         body.GetProperty("retryAfterSeconds").GetInt32().Should().Be(10);
+    }
+
+    [Theory]
+    [InlineData(100, true)] // answers inside the stale age, less the margin: the claim is still its own
+    [InlineData(111, false)] // frozen near the stale age: another request may have taken the claim over
+    [InlineData(600, false)] // frozen past it
+    public async Task AMoneyRequest_SaysNothingWasApplied_OnlyWhileItsClaimCannotHaveBeenTakenOver(
+        int ageSeconds, bool saysNothingApplied)
+    {
+        var context = NewContext();
+        using var deadline = Deadline(context, moneyEndpoint: true, ownsClaim: true, commitStarted: false);
+        context.Features.Set(new ReceivedAtFeature(ReceivedAtClock.ForThisProcess.Now - TimeSpan.FromSeconds(ageSeconds)));
+
+        (await Handler().TryHandleAsync(context, Sql(4060, 11), CancellationToken.None)).Should().BeTrue();
+
+        var body = Body(context);
+        body.TryGetProperty("applied", out _).Should().Be(
+            saysNothingApplied,
+            "a claim 2 minutes old can be taken over by another request with the same key, which may commit under it");
+        body.GetProperty("detail").GetString().Should().Be(
+            saysNothingApplied ? ServiceUnavailableExceptionHandler.NothingAppliedDetail : ServiceUnavailableExceptionHandler.Detail);
+    }
+
+    [Fact]
+    public async Task AMoneyRequest_WithNoArrivalStamp_SaysNothingAboutWhatWasApplied()
+    {
+        var context = NewContext();
+        using var deadline = Deadline(context, moneyEndpoint: true, ownsClaim: true, commitStarted: false);
+        context.Features.Set<ReceivedAtFeature>(null);
+
+        (await Handler().TryHandleAsync(context, Sql(4060, 11), CancellationToken.None)).Should().BeTrue();
+
+        Body(context).TryGetProperty("applied", out _).Should().BeFalse("without its age it cannot rule out a takeover");
     }
 
     [Theory]
@@ -343,7 +378,10 @@ public class ServiceUnavailableExceptionHandlerTests
     }
 
     private static ServiceUnavailableExceptionHandler Handler() =>
-        new(NullLogger<ServiceUnavailableExceptionHandler>.Instance, ReceivedAtClock.ForThisProcess);
+        new(
+            NullLogger<ServiceUnavailableExceptionHandler>.Instance,
+            ReceivedAtClock.ForThisProcess,
+            Options.Create(new IdempotencyOptions()));
 
     private static ClientAbortedExceptionHandler ClientAborted(RecordingLoggerProvider log) =>
         new(new LoggerFactory([log]).CreateLogger<ClientAbortedExceptionHandler>(), ReceivedAtClock.ForThisProcess);
@@ -392,6 +430,8 @@ public class ServiceUnavailableExceptionHandlerTests
         {
             context.Features.Set(OwnedIdempotencyClaim.Instance);
         }
+
+        context.Features.Set(new ReceivedAtFeature(ReceivedAtClock.ForThisProcess.Now));
     }
 
     private static JsonElement Body(HttpContext context)

@@ -176,7 +176,11 @@ the chain the 503 would have named. A refusal (a validation failure, or a domain
 a request that owns the idempotency claim it made (`OwnedIdempotencyClaim`, set after a claim that
 was not a replay) and has let no commit start, the 503 adds `applied: false` and says "nothing was
 changed". A money request moves money only inside a gated commit (D4), so no commit started means
-no money moved. Anywhere else the key is left out, never set to a guess: a commit that started may
+no money moved. The claim must also still be its own: another request with the same key takes a
+claim over once it is `ProcessingStaleAfter` old (D9) and may commit under it, and a process frozen
+that long cannot enforce its deadline. So the request, timed from when it arrived, must be younger
+than that age less 10 s (room for two processes' clocks while a revision replaces another); an
+older one, or one with no arrival stamp, leaves `applied` out. Anywhere else the key is left out, never set to a guess: a commit that started may
 have landed even if it failed, and a request that failed reading its key, claiming it or writing a
 replay cannot know what an earlier request with the same key did. **A client never drops the key on
 `applied: false`**: the flag changes what the visitor is told, never which key the retry uses. A
