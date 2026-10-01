@@ -15,7 +15,8 @@ docker build -f backend/tools/AzureBank.Seeder/Dockerfile -t azurebank-tools .  
 ```
 
 `compose.yaml` builds it as `<project>-tools` (`azurebank-tools` by default). It carries the label
-`org.opencontainers.image.source`, runs as uid 1654, writes no file and listens on nothing.
+`org.opencontainers.image.source`, runs as uid 1654, cannot write to its own folder and listens on
+nothing.
 
 Its entrypoint is `dotnet azurebank-seeder.dll`, so **a container's arguments are the command**:
 `["migrate"]`, `["seed"]`. With compose, arguments after the service name replace the service's
@@ -75,6 +76,9 @@ waited for the server and then migrated an empty database):
   claims no count: two runs at once read the same pending list.
 - A refusal or a failure is one Error line that starts with the command's name: `migrate refused:
   …`, `seed failed: …`. EF may log Errors of its own before it.
+- `seed` and `reset` also print one Warning that is not theirs and not a failure: ASP.NET Core's
+  data protection, which Identity's token providers bring in, says where it would keep its keys
+  ("Storing keys in a directory … that may not be persisted outside of the container").
 
 ## Things to know
 
