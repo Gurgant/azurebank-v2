@@ -8,6 +8,8 @@
 !backend/Directory.Build.props
 !backend/Directory.Packages.props
 !backend/src/
+# The Seeder is what the tools image publishes; the other tool stays out.
+!backend/tools/AzureBank.Seeder/
 !frontend/
 
 # Inside what came back in: build output, local configuration and test artefacts stay out.

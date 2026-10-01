@@ -26,6 +26,7 @@ WORKDIR /app
 COPY --from=build /app ./
 COPY --from=spa /src/frontend/dist ./spa
 ENV Spa__RootPath=/app/spa
+LABEL org.opencontainers.image.source="https://github.com/Gurgant/azurebank-v2"
 USER $APP_UID
 EXPOSE 8080
 ENTRYPOINT ["dotnet", "AzureBank.Bff.dll"]
