@@ -1034,6 +1034,31 @@ describe('a sign-out that fails says the visitor is still signed in', () => {
       screen.queryByText((content) => content.includes(COPY.signOutFailed)),
     ).not.toBeInTheDocument();
   });
+
+  it("a 401 from Settings' Log out says nothing of the kind either", async () => {
+    const store = await boot(15 * 60_000);
+    let answered = false;
+    server.use(
+      http.post('*/bff/auth/logout', () => {
+        mockState.session = null;
+        answered = true;
+        return bffProblem({
+          status: 401,
+          title: 'Unauthorized',
+          detail: 'Session expired or invalid',
+        });
+      }),
+    );
+    renderShell(store, <SettingsPage />);
+    await screen.findByRole('heading', { level: 1, name: 'Settings' });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Log out' }));
+
+    await waitFor(() => expect(answered).toBe(true));
+    await waitFor(() => expect(store.getState().auth.status).not.toBe('authenticated'));
+    await act(async () => {});
+    expect(screen.queryAllByText((content) => content.includes(COPY.signOutFailed))).toEqual([]);
+  });
 });
 
 describe('the outage page at start-up', () => {
