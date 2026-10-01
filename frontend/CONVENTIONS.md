@@ -52,8 +52,8 @@ started them, never as a page-level overlay.
 page or dialog renders its own rather than one for the app, because a Fluent modal hides everything
 outside it from assistive technology; never inside a `role="alert"` or an element an
 `aria-describedby` points at, or its words are read as part of those. It says nothing for 5 s, then
-"Taking longer than usual…", then "Still trying…" — on a money send (`kind="moneySend"`) "Still
-trying… Keep this page open.". Only a read can be offered "Stop waiting", from 20 s and only when its
+"Taking longer than usual…", then "Still trying…" — on a money send that holds a key
+(`kind="moneySend"`; a PIN check before it is a `"write"`) "Still trying… Keep this page open.". Only a read can be offered "Stop waiting", from 20 s and only when its
 host passes `onStopWaiting`: a write the server may already be doing is never given up on. A read
 whose content takes the wait's place passes `failed`, and a wait of it that said something says
 "Loaded.", unseen, when it loads. A read's spinner and error bar follow `readWait`, not `isLoading`

@@ -21,9 +21,9 @@ repository. One run per row.
 
 | Outage, and what the visitor did | What the visitor got |
 |---|---|
-| Database stopped 60 s; the dashboard reloaded | 64.85 s of a spinner, then skeletons, and no word at any time. Each of the three reads got the API's 503 at 40.01 to 40.04 s, which asked for `Retry-After: 10`; the SPA retried each 0.36 to 0.63 s later, and those retries got 200 |
+| Database stopped 60 s; the dashboard reloaded | 64.85 s with no message at any time: a spinner for 5.07 s, then skeletons over the words "Across 0 accounts" for 59.78 s. Each of the three reads got the API's 503 at 40.01 to 40.04 s, which asked for `Retry-After: 10`; the SPA retried each 0.36 to 0.63 s later, and those retries got 200 |
 | Database paused 60 s; the dashboard reloaded | The accounts read spent its three attempts 4.8 s before the database answered again, and the whole page became "The service is temporarily unavailable. Try again shortly." with a Retry. It stayed after the database was back, until Retry was pressed, and nothing announced it |
-| API paused 120 s; the dashboard reloaded | 119.19 s of a spinner, then skeletons, and no word at any time |
+| API paused 120 s; the dashboard reloaded | 119.19 s with no message at any time: a spinner for 5.09 s, then skeletons over "Across 0 accounts" until the data came |
 | API paused 120 s; "Sign in" | An unlabelled spinner in the button for 55.03 s, then the same sentence |
 | Database stopped 60 s; the sixth digit of a transfer's PIN | 40.0 s of disabled PIN boxes, with no spinner and no text; then the same sentence, with the boxes still full and no button to try again |
 | Database stopped 60 s; a transfer's send | "Sending €7.31" for 45.03 s; then the same sentence above "We couldn't reach the bank. Your transfer may or may not have gone through — check again." and "Check again", which sent the same key: one debit |
@@ -132,7 +132,9 @@ not happened.
      withdrawal) the 20 s words are "Still trying… Keep this page open." While it is pending the
      one unsafe thing left to the visitor is a reload: the key lives only in the page (ADR-0022
      decision 1), and a reload sends the money again with a new one. The words ask; nothing stops
-     a reload (see the Consequences). Ratified on 2026-09-30.
+     a reload (see the Consequences). Ratified on 2026-09-30. They need a key to protect: while a
+     PIN step's authorisation runs before the send, and no key is held yet, the same wait says
+     "Still trying…", and its words change when the send starts.
    - A read that said something and then loads says "Loaded." (decision 5). Ratified on
      2026-09-30.
 
@@ -156,6 +158,7 @@ not happened.
      (`LOADED_KEPT_MS`, not measured against a screen reader). WCAG 4.1.3 names this case: a
      non-visible status message that the system is available. A load inside 5 s said nothing and
      says nothing at its end either, and a failure says nothing more, because its alert speaks.
+     A recipient check that finds nobody counts as a failure here: its line says so.
      The hosts that do it: the Dashboard, Accounts, History (its first page and "Load more"), a
      transaction's details, a transfer page's first load of the accounts and the recipient check.
      Not the funds check on Continue nor the session check at start-up: their success moves the
@@ -196,8 +199,8 @@ not happened.
      announced by most screen readers; MDN says it generally is not, since nothing in it changed;
      W3C's technique ARIA19 keeps the container in the page from the start. A slot that is
      always there satisfies all three. The read pages, both transfer pages' accounts bar and the
-     page of decision 10 at start-up have one; the bar inside has no role of its own, so no live
-     region is nested in another. The recipient check has its own under the handle, where its
+     page of decision 10 at start-up have one; the bar inside is Fluent's `MessageBar`, whose root
+     is a `group` and not a live region, so no live region is nested in another. The recipient check has its own under the handle, where its
      line has always been: it answers the visitor's Verify, and Verify empties it, so a second
      failure is a change again.
    - The Dashboard has one slot for its three bars, above its grid. An outage fails "this month"
@@ -239,8 +242,10 @@ not happened.
    - A change that carries no key (opening an account, both renames, changing or setting the PIN)
      may have landed, and a second attempt is a new request, not a check. The renames and the PIN
      say "we can't tell yet whether your change was saved". Opening an account says it cannot tell
-     yet whether the account was opened and to check the accounts before trying again, and marks
-     the account list stale, so that an account the database kept shows up. Closing an account and
+     yet whether the account was opened and to check the accounts before trying again, and has the
+     account list read again when the dialog closes, so that an account the database kept shows
+     up. Not while the dialog is open: behind a modal the page is hidden from assistive
+     technology, and a read that failed there would put its bar where nobody hears it. Closing an account and
      registering keep the plain sentence: a repeated close of a closed account answers
      `ACCOUNT_NOT_FOUND`, which the dialog treats as done, and the same registration sent again
      gets the neutral 409 (ADR-0058 residual risk 7).
@@ -288,7 +293,10 @@ not happened.
       the check fails again. The check and that page are one `main`, so the alert is there, empty,
       while the check runs. The page is titled "Temporarily unavailable", as the page for a route
       that failed is titled for itself, and the route's own title comes back when the service
-      answers. A check RTK skipped because another was running decides nothing.
+      answers. A Back or Forward to another guarded route keeps that page, its title, and says
+      "Temporarily unavailable page loaded": the route announcer writes the title and the
+      announcement, and the page puts its own title in place of the route's while it is shown. A
+      check RTK skipped because another was running decides nothing.
     - "Sign out now" in the expiry dialog that fails with anything but a 401 ends nothing and
       clears nothing: the dialog stays, says so and why (decision 11), focus goes back to the
       button, and the button works again. The BFF ends a session without the API, so a logout that
@@ -392,8 +400,9 @@ trying… Keep this page open." on a money send).
 - **The key dies with the page** (ADR-0022 decision 1). A visitor who reloads during a stuck send,
   or opens a new tab, sends a new key, and if the first request lands they pay twice: the outcome
   the FCA's 2022 Final Notice to TSB records (¶4.24(e)), payments made twice after error messages
-  that followed successful ones. The page asks before a reload, and from 20 s the wait asks to
-  keep the page open; nothing stops a reload. A warning at the review step about the same payment
+  that followed successful ones. Every money send asks the browser to ask before a reload or a
+  tab close while it holds a key (`useIdempotentMutation`), and from 20 s the wait asks to keep
+  the page open; nothing stops a reload. A warning at the review step about the same payment
   made a few minutes before, from the server's data, is not built.
 - **Nothing answers "did key X land?" without sending it again:** "Check again" re-sends the same
   key, which executes if nothing was recorded. A read-only status by key is not built.
