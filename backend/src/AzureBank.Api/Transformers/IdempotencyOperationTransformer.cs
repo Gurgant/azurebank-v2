@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using AzureBank.Api.Attributes;
 using AzureBank.Shared.Constants;
 using Microsoft.AspNetCore.OpenApi;
@@ -13,6 +14,8 @@ namespace AzureBank.Api.Transformers;
 ///   1:1 with live behavior and Schemathesis generates the header
 /// - Documents the idempotency 409 (in flight / result unknown) and 422
 ///   (business rule violation / key reuse) ProblemDetails responses
+/// - Declares <c>applied</c> on that 409, as true only: the member the result-unknown
+///   answer carries when the API read the key's record from the database as committed
 ///
 /// Note: runs BEFORE document transformers; the 422 added here (with the
 /// full ProblemDetails schema) also covers the business-rule 422 that
@@ -55,17 +58,27 @@ public sealed class IdempotencyOperationTransformer : IOpenApiOperationTransform
         });
 
         operation.Responses ??= new OpenApiResponses();
+
+        // Until 2026-10-01 the second half read "or it executed but its response was not recorded
+        // (IDEMPOTENCY_RESULT_UNKNOWN: verify via GET /api/transactions)". Two things in it were
+        // wrong for a client. The code is also answered when the key's record is gone and nothing
+        // is known to have executed; and "verify" was the only advice even when the API had read
+        // the record as committed, which left a second payment under a new key as the next step.
+        // The answer now says which of the two it is, through applied, and so does this text.
         operation.Responses["409"] = new OpenApiResponse
         {
             Description =
                 "Conflict - a request with this idempotency key is currently in flight " +
-                "(IDEMPOTENCY_IN_FLIGHT), or it executed but its response was not recorded " +
-                "(IDEMPOTENCY_RESULT_UNKNOWN: verify via GET /api/transactions).",
+                "(IDEMPOTENCY_IN_FLIGHT), or its result cannot be returned " +
+                "(IDEMPOTENCY_RESULT_UNKNOWN). On IDEMPOTENCY_RESULT_UNKNOWN, applied: true means " +
+                "the operation was committed: do not send it again with a new key, look for it " +
+                "with GET /api/transactions. Without applied the outcome is not known: verify via " +
+                "GET /api/transactions before sending it again with a new key.",
             Content = new Dictionary<string, OpenApiMediaType>
             {
                 ["application/json"] = new OpenApiMediaType
                 {
-                    Schema = CreateProblemDetailsSchema(statusCode: 409)
+                    Schema = CreateProblemDetailsSchema(statusCode: 409, withApplied: true)
                 }
             }
         };
@@ -137,9 +150,15 @@ public sealed class IdempotencyOperationTransformer : IOpenApiOperationTransform
     /// RFC 9457 ProblemDetails schema with the errorCode + traceId extensions
     /// (same shape as BusinessRulesDocumentTransformer documents).
     /// </summary>
-    private static OpenApiSchema CreateProblemDetailsSchema(int statusCode)
+    /// <param name="statusCode">The status the schema is declared for.</param>
+    /// <param name="withApplied">
+    /// Adds <c>applied</c>. Only the 409 passes it: of the answers these three statuses carry,
+    /// <c>IdempotencyException.ResultUnknownApplied</c> is the one that sends the member, and a
+    /// 422 or a 413 declaring it would publish a member they never send.
+    /// </param>
+    private static OpenApiSchema CreateProblemDetailsSchema(int statusCode, bool withApplied = false)
     {
-        return new OpenApiSchema
+        var schema = new OpenApiSchema
         {
             Type = JsonSchemaType.Object,
             Properties = new Dictionary<string, IOpenApiSchema>
@@ -176,5 +195,26 @@ public sealed class IdempotencyOperationTransformer : IOpenApiOperationTransform
                 }
             }
         };
+
+        if (withApplied)
+        {
+            schema.Properties["applied"] = new OpenApiSchema
+            {
+                // true is the only value a 409 carries, so it is the only one published: the
+                // member is absent, never false, when the commit is not proven. A plain boolean
+                // would let a generated client read a false here as "nothing moved", which no
+                // 409 says. The outage 503 is the mirror: its applied is published as false only
+                // (ServiceUnavailableResponseTransformer).
+                Type = JsonSchemaType.Boolean,
+                Enum = [JsonValue.Create(true)],
+                Description =
+                    "Present, and true, only on IDEMPOTENCY_RESULT_UNKNOWN and only when the API " +
+                    "read this key's record from the database as executed: the operation was " +
+                    "committed. Absent on IDEMPOTENCY_IN_FLIGHT, and whenever the outcome is not " +
+                    "known."
+            };
+        }
+
+        return schema;
     }
 }

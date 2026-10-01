@@ -1931,7 +1931,7 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or it executed but its response was not recorded (IDEMPOTENCY_RESULT_UNKNOWN: verify via GET /api/transactions). */
+                /** @description Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or its result cannot be returned (IDEMPOTENCY_RESULT_UNKNOWN). On IDEMPOTENCY_RESULT_UNKNOWN, applied: true means the operation was committed: do not send it again with a new key, look for it with GET /api/transactions. Without applied the outcome is not known: verify via GET /api/transactions before sending it again with a new key. */
                 409: {
                     headers: {
                         [name: string]: unknown;
@@ -1950,6 +1950,11 @@ export interface paths {
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
+                            /**
+                             * @description Present, and true, only on IDEMPOTENCY_RESULT_UNKNOWN and only when the API read this key's record from the database as executed: the operation was committed. Absent on IDEMPOTENCY_IN_FLIGHT, and whenever the outcome is not known.
+                             * @enum {boolean}
+                             */
+                            applied?: true;
                         };
                     };
                 };
@@ -2237,7 +2242,7 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or it executed but its response was not recorded (IDEMPOTENCY_RESULT_UNKNOWN: verify via GET /api/transactions). */
+                /** @description Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or its result cannot be returned (IDEMPOTENCY_RESULT_UNKNOWN). On IDEMPOTENCY_RESULT_UNKNOWN, applied: true means the operation was committed: do not send it again with a new key, look for it with GET /api/transactions. Without applied the outcome is not known: verify via GET /api/transactions before sending it again with a new key. */
                 409: {
                     headers: {
                         [name: string]: unknown;
@@ -2256,6 +2261,11 @@ export interface paths {
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
+                            /**
+                             * @description Present, and true, only on IDEMPOTENCY_RESULT_UNKNOWN and only when the API read this key's record from the database as executed: the operation was committed. Absent on IDEMPOTENCY_IN_FLIGHT, and whenever the outcome is not known.
+                             * @enum {boolean}
+                             */
+                            applied?: true;
                         };
                     };
                 };
@@ -2685,7 +2695,7 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or it executed but its response was not recorded (IDEMPOTENCY_RESULT_UNKNOWN: verify via GET /api/transactions). */
+                /** @description Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or its result cannot be returned (IDEMPOTENCY_RESULT_UNKNOWN). On IDEMPOTENCY_RESULT_UNKNOWN, applied: true means the operation was committed: do not send it again with a new key, look for it with GET /api/transactions. Without applied the outcome is not known: verify via GET /api/transactions before sending it again with a new key. */
                 409: {
                     headers: {
                         [name: string]: unknown;
@@ -2704,6 +2714,11 @@ export interface paths {
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
+                            /**
+                             * @description Present, and true, only on IDEMPOTENCY_RESULT_UNKNOWN and only when the API read this key's record from the database as executed: the operation was committed. Absent on IDEMPOTENCY_IN_FLIGHT, and whenever the outcome is not known.
+                             * @enum {boolean}
+                             */
+                            applied?: true;
                         };
                     };
                 };
@@ -2871,7 +2886,7 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or it executed but its response was not recorded (IDEMPOTENCY_RESULT_UNKNOWN: verify via GET /api/transactions). */
+                /** @description Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or its result cannot be returned (IDEMPOTENCY_RESULT_UNKNOWN). On IDEMPOTENCY_RESULT_UNKNOWN, applied: true means the operation was committed: do not send it again with a new key, look for it with GET /api/transactions. Without applied the outcome is not known: verify via GET /api/transactions before sending it again with a new key. */
                 409: {
                     headers: {
                         [name: string]: unknown;
@@ -2890,6 +2905,11 @@ export interface paths {
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
+                            /**
+                             * @description Present, and true, only on IDEMPOTENCY_RESULT_UNKNOWN and only when the API read this key's record from the database as executed: the operation was committed. Absent on IDEMPOTENCY_IN_FLIGHT, and whenever the outcome is not known.
+                             * @enum {boolean}
+                             */
+                            applied?: true;
                         };
                     };
                 };

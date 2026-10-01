@@ -2135,7 +2135,7 @@
             }
           },
           "409": {
-            "description": "Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or it executed but its response was not recorded (IDEMPOTENCY_RESULT_UNKNOWN: verify via GET /api/transactions).",
+            "description": "Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or its result cannot be returned (IDEMPOTENCY_RESULT_UNKNOWN). On IDEMPOTENCY_RESULT_UNKNOWN, applied: true means the operation was committed: do not send it again with a new key, look for it with GET /api/transactions. Without applied the outcome is not known: verify via GET /api/transactions before sending it again with a new key.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2164,6 +2164,13 @@
                     "traceId": {
                       "type": "string",
                       "description": "Request trace identifier for debugging"
+                    },
+                    "applied": {
+                      "enum": [
+                        true
+                      ],
+                      "type": "boolean",
+                      "description": "Present, and true, only on IDEMPOTENCY_RESULT_UNKNOWN and only when the API read this key's record from the database as executed: the operation was committed. Absent on IDEMPOTENCY_IN_FLIGHT, and whenever the outcome is not known."
                     }
                   }
                 }
@@ -2523,7 +2530,7 @@
             }
           },
           "409": {
-            "description": "Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or it executed but its response was not recorded (IDEMPOTENCY_RESULT_UNKNOWN: verify via GET /api/transactions).",
+            "description": "Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or its result cannot be returned (IDEMPOTENCY_RESULT_UNKNOWN). On IDEMPOTENCY_RESULT_UNKNOWN, applied: true means the operation was committed: do not send it again with a new key, look for it with GET /api/transactions. Without applied the outcome is not known: verify via GET /api/transactions before sending it again with a new key.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2552,6 +2559,13 @@
                     "traceId": {
                       "type": "string",
                       "description": "Request trace identifier for debugging"
+                    },
+                    "applied": {
+                      "enum": [
+                        true
+                      ],
+                      "type": "boolean",
+                      "description": "Present, and true, only on IDEMPOTENCY_RESULT_UNKNOWN and only when the API read this key's record from the database as executed: the operation was committed. Absent on IDEMPOTENCY_IN_FLIGHT, and whenever the outcome is not known."
                     }
                   }
                 }
@@ -3082,7 +3096,7 @@
             }
           },
           "409": {
-            "description": "Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or it executed but its response was not recorded (IDEMPOTENCY_RESULT_UNKNOWN: verify via GET /api/transactions).",
+            "description": "Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or its result cannot be returned (IDEMPOTENCY_RESULT_UNKNOWN). On IDEMPOTENCY_RESULT_UNKNOWN, applied: true means the operation was committed: do not send it again with a new key, look for it with GET /api/transactions. Without applied the outcome is not known: verify via GET /api/transactions before sending it again with a new key.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3111,6 +3125,13 @@
                     "traceId": {
                       "type": "string",
                       "description": "Request trace identifier for debugging"
+                    },
+                    "applied": {
+                      "enum": [
+                        true
+                      ],
+                      "type": "boolean",
+                      "description": "Present, and true, only on IDEMPOTENCY_RESULT_UNKNOWN and only when the API read this key's record from the database as executed: the operation was committed. Absent on IDEMPOTENCY_IN_FLIGHT, and whenever the outcome is not known."
                     }
                   }
                 }
@@ -3343,7 +3364,7 @@
             }
           },
           "409": {
-            "description": "Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or it executed but its response was not recorded (IDEMPOTENCY_RESULT_UNKNOWN: verify via GET /api/transactions).",
+            "description": "Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or its result cannot be returned (IDEMPOTENCY_RESULT_UNKNOWN). On IDEMPOTENCY_RESULT_UNKNOWN, applied: true means the operation was committed: do not send it again with a new key, look for it with GET /api/transactions. Without applied the outcome is not known: verify via GET /api/transactions before sending it again with a new key.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3372,6 +3393,13 @@
                     "traceId": {
                       "type": "string",
                       "description": "Request trace identifier for debugging"
+                    },
+                    "applied": {
+                      "enum": [
+                        true
+                      ],
+                      "type": "boolean",
+                      "description": "Present, and true, only on IDEMPOTENCY_RESULT_UNKNOWN and only when the API read this key's record from the database as executed: the operation was committed. Absent on IDEMPOTENCY_IN_FLIGHT, and whenever the outcome is not known."
                     }
                   }
                 }

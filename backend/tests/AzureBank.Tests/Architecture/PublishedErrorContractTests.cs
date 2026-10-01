@@ -360,6 +360,65 @@ public class PublishedErrorContractTests
         described.Should().Be(MoneyOperations.Length, "all four money operations were read");
     }
 
+    /// <summary>Every schema a response declares: one for each media type that carries one.</summary>
+    private static IEnumerable<JsonElement> SchemasOf(JsonElement response)
+    {
+        if (!response.TryGetProperty("content", out var content))
+        {
+            yield break;
+        }
+
+        foreach (var mediaType in content.EnumerateObject())
+        {
+            if (mediaType.Value.TryGetProperty("schema", out var schema))
+            {
+                yield return schema;
+            }
+        }
+    }
+
+    [Fact]
+    public void Applied_is_declared_on_no_response_but_the_409_and_the_503_of_the_four_money_operations()
+    {
+        // The two tests above read 409 and 503 schemas. A money operation's 422 and 413 are built
+        // by the same helper as its 409, one argument apart, and neither ever carries the member:
+        // declared there it would be published for answers that never send it, and nothing that
+        // reads only 409s and 503s would notice.
+        //
+        // Every media type of every response is read here. The readers above stop at the first
+        // one a response declares, and a response can declare two (eight 404s did on 2026-10-01):
+        // a member published under the second is published all the same. The declared values are
+        // read with it, so a second media type cannot say false on a 409 or true on a 503 either.
+        var document = Document();
+        var declaring = new HashSet<string>(StringComparer.Ordinal);
+        var scanned = 0;
+
+        foreach (var (operation, value) in Operations(document))
+        {
+            if (!value.TryGetProperty("responses", out var responses)) continue;
+
+            foreach (var response in responses.EnumerateObject())
+            {
+                scanned++;
+                foreach (var schema in SchemasOf(response.Value))
+                {
+                    if (PropertyOf(document, schema, "applied") is { } applied)
+                    {
+                        declaring.Add($"{operation} {response.Name} [{string.Join(", ", EnumOf(applied))}]");
+                    }
+                }
+            }
+        }
+
+        scanned.Should().BeGreaterThan(MinimumResponsesScanned, because:
+            "a scan that reads nothing would report that no other response declares it");
+
+        declaring.Should().BeEquivalentTo(
+            MoneyOperations.SelectMany(o => new[] { $"{o} 409 [true]", $"{o} 503 [false]" }),
+            "applied is sent as true on the 409 and as false on the 503 of a keyed money operation, "
+            + "and on nothing else, whichever media type declares the response");
+    }
+
     [Fact]
     public void No_refusal_is_published_with_an_empty_body()
     {
