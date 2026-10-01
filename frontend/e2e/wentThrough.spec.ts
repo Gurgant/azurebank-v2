@@ -117,14 +117,31 @@ function ringOverflow(element: Element) {
 }
 
 /**
+ * Opens one of the dashboard's two money dialogs once the accounts are on the page, and returns it
+ * with its account chosen.
+ *
+ * The wait is not a courtesy. "Deposit" and "Withdraw" can be pressed before the accounts have
+ * loaded, and a dialog picks its account when it opens: opened early it has none, and its send
+ * button stays disabled whatever is typed. Measured with the accounts read held back 1.5 s: no
+ * account selected, "Deposit €1.00" disabled. The balance, the page's level-1 heading, is drawn
+ * only once the accounts have arrived.
+ */
+async function openMoneyDialog(page: Page, opener: 'Deposit' | 'Withdraw', name: RegExp) {
+  await page.goto('/dashboard');
+  await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible();
+  await page.getByRole('button', { name: opener, exact: true }).click();
+  const form = page.getByRole('dialog', { name });
+  await expect(form.locator('[aria-pressed="true"]'), 'no account is selected').toHaveCount(1);
+  return form;
+}
+
+/**
  * A deposit of €1 from the dashboard, answered that it went through; returns the dialog. `send` is
  * how the Deposit button is pressed: the browser shows a focus ring after a key, not after a click.
  */
 async function depositThatWentThrough(page: Page, send: 'click' | 'Enter' = 'click') {
   const keys = await answerThatItWentThrough(page, '/api/transactions/deposit');
-  await page.goto('/dashboard');
-  await page.getByRole('button', { name: 'Deposit', exact: true }).click();
-  const form = page.getByRole('dialog', { name: /deposit money/i });
+  const form = await openMoneyDialog(page, 'Deposit', /deposit money/i);
   await form.getByRole('textbox', { name: 'Deposit amount' }).fill('1');
   const deposit = form.getByRole('button', { name: 'Deposit €1.00' });
   if (send === 'Enter') {
@@ -203,9 +220,7 @@ test.describe('a payment the server says went through', () => {
     page,
   }) => {
     const keys = await answerThatItWentThrough(page, '/api/transactions/withdraw');
-    await page.goto('/dashboard');
-    await page.getByRole('button', { name: 'Withdraw', exact: true }).click();
-    const form = page.getByRole('dialog', { name: /withdraw money/i });
+    const form = await openMoneyDialog(page, 'Withdraw', /withdraw money/i);
     await form.getByRole('textbox', { name: 'Withdraw amount' }).fill('1');
     await form.getByRole('button', { name: /^Continue/ }).click();
     await enterPin(form);
