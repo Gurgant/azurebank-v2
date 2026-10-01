@@ -9,7 +9,13 @@ namespace AzureBank.Shared.Enums;
 /// commit (the record update rides the same SaveChanges/transaction), so a
 /// crashed request is always distinguishable:
 /// - stale Processing  = the business operation provably never committed (safe to take over)
-/// - stale Executed    = committed but the response was lost (409 IDEMPOTENCY_RESULT_UNKNOWN)
+/// - stale Executed    = committed, and its response will never be stored
+///                       (409 IDEMPOTENCY_RESULT_UNKNOWN with applied: true)
+///
+/// Until 2026-10-01 the last line read "committed but the response was lost (409
+/// IDEMPOTENCY_RESULT_UNKNOWN)", and that answer did not tell a committed operation from one
+/// whose outcome is not known. It carries applied: true since then: Executed read from the
+/// database is the proof of the commit.
 /// </summary>
 public enum IdempotencyStatus
 {

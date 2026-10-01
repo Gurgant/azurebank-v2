@@ -335,13 +335,26 @@ internal static class ConcurrencyRetry
         // that rides this attempt's commit.
         await entry.ReloadAsync(cancellationToken);
 
-        if (entry.State == EntityState.Detached
-            || entry.Entity.Status is IdempotencyStatus.Executed or IdempotencyStatus.Completed)
+        // Either way below, refuse to execute again. What differs is what can be SAID, and the
+        // order of the two tests is the point: after a reload that finds no row, entry.Entity
+        // still holds this request's own pending flip to Executed, so a test of the status made
+        // first would answer "applied" for a row that is gone.
+        if (entry.State == EntityState.Detached)
         {
-            // Detached: the row was deleted under us (stale takeover/cleanup) -- we cannot prove
-            // nothing committed. Executed/Completed: a prior attempt already committed this
-            // operation. Either way, refuse to execute again.
+            // The row was deleted under us (stale takeover/cleanup): what entry.Entity says is
+            // this request's own pending flip, not the database. We cannot prove that nothing
+            // committed, and we cannot prove that something did.
             throw IdempotencyException.ResultUnknown();
+        }
+
+        if (entry.Entity.Status is IdempotencyStatus.Executed or IdempotencyStatus.Completed)
+        {
+            // Read from the database just now: a commit under this key landed. The record under
+            // the key is not always this request's claim. It is Executed after an earlier
+            // attempt of this request whose acknowledgement was lost, and it is Executed or
+            // Completed after another request with the same key and bytes took a stale claim
+            // over and committed (Completed once that request stored its answer).
+            throw IdempotencyException.ResultUnknownApplied();
         }
 
         // Processing: nothing committed yet. Re-arm the pending Executed flip so it travels
