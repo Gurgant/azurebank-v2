@@ -55,6 +55,26 @@ function staleBalanceTags(error: unknown, accountIds: (string | undefined)[]) {
     .map((id) => ({ type: 'Account' as const, id }));
 }
 
+/**
+ * The other failed money send that invalidates: 409 `IDEMPOTENCY_RESULT_UNKNOWN`, which
+ * invalidates everything the send's SUCCESS does.
+ *
+ * With `applied: true` the API says the payment was committed (ADR-0009), so the balance and the
+ * lists held here are from before it. Without the member they may be, and the visitor is being
+ * told to go and look. Either way the flow sends them to the history, and what they find there
+ * must have been read after the answer: RTK Query refetches an invalidated entry that has a
+ * reader and REMOVES one that has none, so a history cached a moment ago and read by nobody — no
+ * transfer page and no money dialog reads it — is fetched afresh on arrival instead of being
+ * shown without the movement. Measured on the running app before this: behind a deposit that had
+ * landed, the dashboard kept the old balance through the lost answer and the check view.
+ *
+ * Keyed on the code alone. The other two ways a send ends up unconfirmed, a rejection with no
+ * HTTP status and a 409 that named no code, refresh nothing here.
+ */
+function outcomeUnknown(error: unknown): boolean {
+  return (error as ApiProblem | undefined)?.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN';
+}
+
 export type LoginRequest = Schemas['LoginRequest'];
 export type RegisterRequest = Schemas['RegisterRequest'];
 export type VerifyPinRequest = Schemas['VerifyPinRequest'];
@@ -146,9 +166,13 @@ export const HISTORY_PAGE_SIZE = 20;
  *                transfer -> from only (recipient is another user); internal -> from+to;
  *                create -> LIST; rename -> id; delete -> [LIST,id];
  *                setPrimary -> blanket 'Account' (two accounts flip isPrimary).
- * Invalidation happens only on SUCCESS (`error ? [] : ...`): failed mutations changed
- * nothing server-side, and RESULT_UNKNOWN recovery invalidates explicitly in its flow — as does
- * the delete dialog's ACCOUNT_NOT_FOUND branch (the account is already gone; the LIST is stale).
+ * Invalidation happens on SUCCESS (`error ? [] : ...`): a failed mutation changed nothing
+ * server-side. Three failures are not that, and invalidate: a money send answered
+ * IDEMPOTENCY_RESULT_UNKNOWN, in the mutation itself, with its success tags (`outcomeUnknown`
+ * above); INSUFFICIENT_FUNDS, the account it names (`staleBalanceTags`); and the delete dialog's
+ * ACCOUNT_NOT_FOUND branch, by hand (the account is already gone; the LIST is stale).
+ * (Until 2026-10-01 this said "only on SUCCESS" and that "RESULT_UNKNOWN recovery invalidates
+ * explicitly in its flow". No flow did, and nothing was read again after that answer.)
  */
 export const apiSlice = createApi({
   reducerPath: 'api',
@@ -375,7 +399,7 @@ export const apiSlice = createApi({
       transformResponse: (response: Schemas['ApiResponseOfDepositResponse'], meta) =>
         withReplay(unwrap(response, depositResponseSchema), meta),
       invalidatesTags: (_result, error, { body }) =>
-        error
+        error && !outcomeUnknown(error)
           ? []
           : [
               { type: 'Account' as const, id: body.accountId },
@@ -408,7 +432,7 @@ export const apiSlice = createApi({
       transformResponse: (response: Schemas['ApiResponseOfWithdrawResponse'], meta) =>
         withReplay(unwrap(response, withdrawResponseSchema), meta),
       invalidatesTags: (_result, error, { body }) =>
-        error
+        error && !outcomeUnknown(error)
           ? staleBalanceTags(error, [body.accountId])
           : [
               { type: 'Account' as const, id: body.accountId },
@@ -529,7 +553,7 @@ export const apiSlice = createApi({
       transformResponse: (response: Schemas['ApiResponseOfTransferResponse'], meta) =>
         withReplay(unwrap(response, transferResponseSchema), meta),
       invalidatesTags: (_result, error, { body }) =>
-        error
+        error && !outcomeUnknown(error)
           ? staleBalanceTags(error, [body.fromAccountId])
           : [
               { type: 'Account' as const, id: body.fromAccountId },
@@ -652,7 +676,7 @@ export const apiSlice = createApi({
       transformResponse: (response: Schemas['ApiResponseOfInternalTransferResponse'], meta) =>
         withReplay(unwrap(response, internalTransferResponseSchema), meta),
       invalidatesTags: (_result, error, { body }) =>
-        error
+        error && !outcomeUnknown(error)
           ? staleBalanceTags(error, [body.fromAccountId, body.toAccountId])
           : [
               { type: 'Account' as const, id: body.fromAccountId },
