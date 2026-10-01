@@ -31,9 +31,10 @@ interface AlertSlotProps {
  * A screen reader reads a CHANGE to a live region. An alert added to the page with its words
  * already in it is announced by most screen readers, says the APG, and "generally" not, says MDN;
  * W3C's technique ARIA19 keeps the container in the page from the start and puts the message into
- * it. So the slot is always there, and the bar inside it — a `MessageBar` with no role of its own,
- * or the two would be nested live regions — comes and goes: in on a failure, out while the read
- * runs again, in again if that fails too. Each of those is a change of this one region.
+ * it. So the slot is always there, and the bar inside it — a `MessageBar`, whose root is a `group`
+ * and not a live region; given `role="alert"` it would be one nested in this one — comes and goes:
+ * in on a failure, out while the read runs again, in again if that fails too. Each of those is a
+ * change of this one region.
  *
  * Atomic, so the whole bar is read rather than the part that changed, and a page with two bars
  * puts both into one slot: two alerts raised in one render may be read as one, since a screen

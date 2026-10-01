@@ -292,7 +292,7 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
       'a 503 that is not JSON and names no wait',
       () => serviceUnavailable({ via: 'api', contentType: 'text/plain' }),
     ],
-  ])('2e — %s is retried once, five seconds later, for a read', async (_name, answer) => {
+  ])('2r — %s is retried once, five seconds later, for a read', async (_name, answer) => {
     // A gateway's answer that names no wait says the service behind it is down, not that a
     // connection blinked: a second later it is most likely still down.
     const times = recordReads(answer);
@@ -637,7 +637,7 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
     expect(plainOutage(date).retryAfterSeconds).toBe(30);
   });
 
-  it('2p — an RFC 850 date whose two-digit year would be more than 50 years ahead is in the past', () => {
+  it('2s — an RFC 850 date whose two-digit year would be more than 50 years ahead is in the past', () => {
     // RFC 9110 §5.6.7: "77" in 2026 is 1977, a date already past, so no wait. Read as 2077 it
     // would be a wait of 51 years.
     vi.useFakeTimers({ now: Date.UTC(2026, 9, 1, 12, 0, 0), toFake: ['Date'] });

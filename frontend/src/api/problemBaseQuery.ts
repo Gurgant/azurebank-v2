@@ -42,7 +42,10 @@ export interface ApiProblem {
   traceId?: string;
   /** Validation 400s: field -> messages (camelCased field names, as the API emits). */
   errors?: Record<string, string[]>;
-  /** 429s, locks and the outage 503: the body first; the Retry-After header is the fallback. */
+  /**
+   * 429s, locks and the outage 503: the body first; the Retry-After header is the fallback.
+   * (Until 2026-10-01 this said the BFF drops upstream Retry-After headers.)
+   */
   retryAfterSeconds?: number;
   /**
    * The money sends' 503 only (ADR-0058): `false` when the API knows it changed nothing; absent
@@ -164,7 +167,8 @@ function parseRetryAfterSeconds(
 ): number | undefined {
   // Body first (D13): ACCOUNT_LOCKED / PIN_LOCKED bodies carry retryAfterSeconds and the
   // outage 503 does too; the header is the fallback, for the BFF's own rate limiter, which
-  // sets it and has no body field.
+  // sets it and has no body field. (Until 2026-10-01 this said the BFF drops the upstream
+  // Retry-After header.)
   if (typeof body?.retryAfterSeconds === 'number') return body.retryAfterSeconds;
   const header = headers?.get('Retry-After')?.trim();
   if (!header) return undefined;

@@ -36,7 +36,7 @@ afterEach(() => {
 });
 
 describe('useWaitPhase', () => {
-  it('uses the thresholds the plan set: 5 s, then 20 s', () => {
+  it('waits 5 s for the first word, then 20 s for the second', () => {
     expect(SLOW_AFTER_MS).toBe(5_000);
     expect(STILL_TRYING_AFTER_MS).toBe(20_000);
   });
