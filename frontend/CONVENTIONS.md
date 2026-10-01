@@ -66,6 +66,25 @@ as the recipient check's does, keeps a slot of its own there. Stop and Retry arm
 which puts focus on the control the failed wait comes back with (the bar's Retry) unless the visitor
 has put it somewhere else meanwhile. ADR-0059 has the reasons.
 
+**A view that says how a money send ended lands lost focus on its sentence.** The control that sent
+is disabled during the send and the browser hands its focus to `body`, so the view appears with
+nothing focused, and a view that mounts with its words already in it is not announced. The sentence
+is a `<Text as="p">` with `tabIndex={-1}` and the ref of `useFocusWhenLost(active)`, which focuses
+it when the view appears and focus is on `body`: it is read because focus is on it, before the
+actions, and one Tab reaches the first of them. **Not a live region, an alert or a status as well,
+and no `aria-describedby` on a button:** beside the landing those would say the sentence a second
+time, and a description would say it again at the Tab. The went-through view of the four money
+flows is built this way: `WentThroughView` on the two transfer pages, and the same block in the
+deposit and withdrawal dialogs, where the action carries a `key` so that it is a new node, not the
+send button renamed under a focus that never left it. After a key press the browser draws the app's
+focus ring around the sentence; after a click it draws none. Three limits, known:
+
+- when another dialog holds focus as the answer arrives, or the visitor moved focus during the wait,
+  the landing does not run, and nothing brings the sentence to a screen reader;
+- the check view ("We couldn't confirm …") lands no focus: it still appears with focus on `body`;
+- a landing does not depend on the screen reader, but what each one says on a focused paragraph
+  does. ADR-0059's Validation says what was heard and what was not.
+
 ## Money and formatting
 
 **Amounts are always positive; direction lives in `type`.** A negative amount in the UI layer means
