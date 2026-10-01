@@ -1,7 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { Outlet, useLocation, useMatches } from 'react-router-dom';
 import { makeStyles } from '@fluentui/react-components';
-import { pageTitle, ROUTE_ANNOUNCE_DELAY_MS } from './pageTitle';
+import { pageTitle, ROUTE_ANNOUNCE_DELAY_MS, TitleOverride } from './pageTitle';
 
 /**
  * What a route change tells someone who cannot see it happen.
@@ -41,6 +41,10 @@ import { pageTitle, ROUTE_ANNOUNCE_DELAY_MS } from './pageTitle';
  *   router can stay open across a Back navigation for as long as the user leaves them, and text
  *   written into a hidden region is never announced, not even when the region is exposed later.
  *   Leaving the route, or unmounting, ends the wait.
+ * - A page that stands in for the route — the outage page at start-up — puts its own title in
+ *   place of the route's through `TitleOverride`, and a route change under it keeps that title
+ *   and announces it. The stand-in is read when the change is handled, not when it is rendered:
+ *   by then a guard that is leaving with the route has already given the title back.
  */
 
 const useStyles = makeStyles({
@@ -71,11 +75,23 @@ export function RouteAnnouncer() {
   const region = useRef<HTMLDivElement>(null);
   // The path last titled. Null until the first titled render, which is the load.
   const settled = useRef<string | null>(null);
+  // The route's own title, and the title of a page standing in for it, if any.
+  const routeTitle = useRef<string | undefined>(undefined);
+  const standIn = useRef<string | null>(null);
+
+  // A stand-in that comes or goes without a route change titles the page there and then.
+  const setStandIn = useCallback((next: string | null) => {
+    standIn.current = next;
+    const shown = next ?? routeTitle.current;
+    if (shown) document.title = pageTitle(shown);
+  }, []);
 
   useEffect(() => {
     // An untitled route is a redirect on its way somewhere titled (/profile, the * fallback).
     if (!title) return;
-    document.title = pageTitle(title);
+    routeTitle.current = title;
+    const shown = standIn.current ?? title;
+    document.title = pageTitle(shown);
 
     const isLoad = settled.current === null || settled.current === pathname;
     settled.current = pathname;
@@ -87,7 +103,7 @@ export function RouteAnnouncer() {
     const stopWaiting = whenExposed(el, () => {
       focusTheNewPage();
       announcement = window.setTimeout(() => {
-        el.textContent = `${title} page loaded`;
+        el.textContent = `${shown} page loaded`;
       }, ROUTE_ANNOUNCE_DELAY_MS);
     });
     return () => {
@@ -99,7 +115,9 @@ export function RouteAnnouncer() {
   return (
     <>
       <div ref={region} role="status" data-route-announcer="" className={styles.region} />
-      <Outlet />
+      <TitleOverride value={setStandIn}>
+        <Outlet />
+      </TitleOverride>
     </>
   );
 }

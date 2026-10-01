@@ -13,13 +13,17 @@ import {
   Select,
   Spinner,
 } from '@fluentui/react-components';
+import { useRef } from 'react';
+import { useDispatch } from 'react-redux';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import type { ApiProblem } from '../../api/problemBaseQuery';
+import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
+import { ACCOUNT_OUTCOME_UNKNOWN } from '../../api/problemMessages';
 import type { AccountType } from '../../api/enums';
 import { toFieldName } from '../../api/validationErrors';
-import { useCreateAccountMutation } from '../../features/api/apiSlice';
+import { apiSlice, useCreateAccountMutation } from '../../features/api/apiSlice';
+import { WaitHint } from '../feedback';
 
 // Mirrors the backend contract: name 2-100 chars; type is the shared PascalCase enum.
 const createAccountSchema = z.object({
@@ -54,6 +58,7 @@ const isOurField = (key: string) => {
 };
 
 export function CreateAccountDialog({ open, onClose }: CreateAccountDialogProps) {
+  const dispatch = useDispatch();
   const [createAccount, { isLoading, error, reset: resetMutation }] = useCreateAccountMutation();
   const problem = error as ApiProblem | undefined;
 
@@ -75,12 +80,27 @@ export function CreateAccountDialog({ open, onClose }: CreateAccountDialogProps)
     defaultValues: { name: '', type: 'Checking' },
   });
 
+  /*
+    Whether a create met an outage while this dialog was open. The bar tells the visitor to check
+    their accounts, but the mutation refreshes the list only on success (apiSlice.ts), and the page
+    behind this dialog keeps its list subscribed: an account that was opened anyway would stay off
+    the list, inviting a second Create. So the list is read again, as DeleteAccountDialog does for
+    ACCOUNT_NOT_FOUND — when the dialog closes, not while it is open: behind a modal the page is
+    hidden from assistive technology, and a list read that failed there would put its bar where
+    nobody hears it, in place of the card that focus returns to.
+  */
+  const metOutage = useRef(false);
+
   const close = () => {
     // Belt-and-braces: the page mounts this dialog per open (fresh state by
     // construction), but clearing the form and the mutation here keeps the
     // component correct even under a persistent parent.
     reset();
     resetMutation();
+    if (metOutage.current) {
+      metOutage.current = false;
+      dispatch(apiSlice.util.invalidateTags([{ type: 'Account', id: 'LIST' }]));
+    }
     onClose();
   };
 
@@ -90,6 +110,7 @@ export function CreateAccountDialog({ open, onClose }: CreateAccountDialogProps)
       close();
     } catch (caught) {
       const rejected = caught as ApiProblem;
+      if (isServiceOutage(rejected)) metOutage.current = true;
       if (rejected.errorCode === 'VALIDATION_ERROR' && rejected.errors) {
         for (const [key, messages] of Object.entries(rejected.errors)) {
           if (isOurField(key) && messages.length > 0) {
@@ -119,7 +140,12 @@ export function CreateAccountDialog({ open, onClose }: CreateAccountDialogProps)
                 // role="alert", as RenameAccountDialog's bar: a MessageBar alone is announced by nothing.
                 <MessageBar intent="error" role="alert">
                   <MessageBarBody>
-                    {problem.detail || 'Could not create the account. Please try again.'}
+                    {/* An outage (a 503, or no answer in 65 s) may have opened the account
+                        anyway, and with no key a second Create opens a second one: say so, and
+                        send the visitor to look before trying again. */}
+                    {isServiceOutage(problem)
+                      ? ACCOUNT_OUTCOME_UNKNOWN
+                      : problem.detail || 'Could not create the account. Please try again.'}
                   </MessageBarBody>
                 </MessageBar>
               )}
@@ -145,6 +171,9 @@ export function CreateAccountDialog({ open, onClose }: CreateAccountDialogProps)
                   ))}
                 </Select>
               </Field>
+              {/* Last, above the actions and outside the alert: the words of a wait are not part
+                  of a failure. */}
+              <WaitHint active={isLoading} kind="write" />
             </DialogContent>
             <DialogActions>
               <Button appearance="secondary" onClick={close} type="button">

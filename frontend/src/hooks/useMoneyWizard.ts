@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useBlocker, useNavigate } from 'react-router-dom';
 import type { ApiProblem } from '../api/problemBaseQuery';
-import { classifyMoneyProblem, type DomainMessages, type MessageScope } from '../api/moneyProblem';
+import {
+  classifyMoneyProblem,
+  type DomainMessages,
+  type MessageScope,
+  type MoneyPhase,
+} from '../api/moneyProblem';
 import { useIdempotentMutation, type IdempotentTrigger } from './useIdempotentMutation';
 
 /**
@@ -53,6 +58,12 @@ export interface MoneyWizard<TBody, TResult> {
   isSubmitting: boolean;
   /** The server is still processing THIS key. Pressing Send again is safe and reuses it. */
   inFlight: boolean;
+  /**
+   * The last send was answered 503 with `applied: false`: the API says it changed nothing, and the
+   * key is kept for the retry (ADR-0058). Read to choose the resend bar's words and control — a
+   * plain "Try again" instead of the "may or may not have gone through" check — never the key.
+   */
+  nothingChanged: boolean;
   error: string | null;
   /**
    * The most recent failure, as a REF rather than state — and the distinction is the whole point.
@@ -93,9 +104,10 @@ export interface MoneyWizard<TBody, TResult> {
   /**
    * Apply a failure this wizard did not produce. Minting an authorisation carries no idempotency
    * key, so it cannot go through `run` — but it fails with the same shapes, and this routes it
-   * through the same classification rather than letting a page grow its own copy.
+   * through the same classification rather than letting a page grow its own copy. `phase` says
+   * which request failed: an outage during the mint moved no money, and is worded so.
    */
-  failFrom: (problem: ApiProblem) => void;
+  failFrom: (problem: ApiProblem, context: { phase: MoneyPhase }) => void;
   /** Call after ANY edit that changes the request body. No-op while a key is live. */
   onBodyEdit: () => void;
   toReview: () => void;
@@ -134,6 +146,7 @@ export function useMoneyWizard<TBody, TResult>(
   const [step, setStep] = useState<MoneyWizardStep>('form');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [inFlight, setInFlight] = useState(false);
+  const [nothingChanged, setNothingChanged] = useState(false);
   // Held WITH its scope, but exposed as a bare string: the scope decides lifetime, and no caller
   // needs to know about it, so not one line of page markup moves.
   const [failure, setFailure] = useState<{ text: string; scope: MessageScope } | null>(null);
@@ -159,6 +172,7 @@ export function useMoneyWizard<TBody, TResult>(
   */
   const goToStep = (next: MoneyWizardStep, { keepInputErrors }: { keepInputErrors: boolean }) => {
     setInFlight(false);
+    setNothingChanged(false);
     setFailure((current) => (keepInputErrors && current?.scope === 'input' ? current : null));
     setStep(next);
   };
@@ -178,7 +192,8 @@ export function useMoneyWizard<TBody, TResult>(
     and `requestLeave` no-ops. Browser Back is the ONLY exit from that state short of closing the
     tab. A blocker with no `proceed()` would make closing the tab the app's error recovery.
 
-    So the contract is the one `beforeunload` already concedes below: warn, then defer to the user.
+    So the contract is the one `beforeunload` already concedes in `useIdempotentMutation`: warn,
+    then defer to the user.
     It does not close the double-spend window — an abandoned key is still lost until TTL — it makes
     the abandonment deliberate instead of silent.
 
@@ -203,23 +218,18 @@ export function useMoneyWizard<TBody, TResult>(
     if (blocker.state === 'blocked' && !keyLive) blocker.reset?.();
   }, [blocker, keyLive]);
 
-  // The other path no in-app control covers: a refresh or tab-close while a key is live. Kept
-  // ALONGSIDE the blocker, not replaced by it — `useBlocker`'s own JSDoc says it "does not handle
-  // hard-reloads or cross-origin navigations", which is exactly what this catches.
-  useEffect(() => {
-    if (!keyLive) return;
-    const warn = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = '';
-    };
-    window.addEventListener('beforeunload', warn);
-    return () => window.removeEventListener('beforeunload', warn);
-  }, [keyLive]);
+  // The other path no in-app control covers, a refresh or tab-close while a key is live, is
+  // `useIdempotentMutation`'s, for every money send. Kept ALONGSIDE the blocker, not replaced by
+  // it — `useBlocker`'s own JSDoc says it "does not handle hard-reloads or cross-origin
+  // navigations", which is exactly what that catches. (Until 2026-10-01 the listener was here,
+  // and the deposit and withdraw dialogs had none.)
 
   /** The one place a classified failure becomes state; see `failFrom`. */
-  const applyProblem = (caught: ApiProblem) => {
+  const applyProblem = (caught: ApiProblem, phase: MoneyPhase) => {
     lastProblem.current = caught ?? null;
-    const failure = classifyMoneyProblem(caught, options);
+    // The latest failure decides, so a later one without `applied: false` takes the words back.
+    setNothingChanged(phase === 'send' && caught?.applied === false);
+    const failure = classifyMoneyProblem(caught, { ...options, phase });
     if (failure.kind === 'inFlight') {
       setInFlight(true);
     } else if (failure.kind === 'message') {
@@ -235,6 +245,7 @@ export function useMoneyWizard<TBody, TResult>(
     step,
     isSubmitting,
     inFlight,
+    nothingChanged,
     error: failure?.text ?? null,
     lastProblem,
     verifyRequired,
@@ -244,11 +255,12 @@ export function useMoneyWizard<TBody, TResult>(
       setFailure(null);
       lastProblem.current = null;
       setInFlight(false);
+      setNothingChanged(false);
       setIsSubmitting(true);
       try {
         return await submit(body, extras);
       } catch (caught) {
-        applyProblem(caught as ApiProblem);
+        applyProblem(caught as ApiProblem, 'send');
         // 'verify' — the hook has latched verifyRequired and that view renders; setting an error
         // too would put a red banner under a screen whose whole job is to say "we don't know".
         // 'silent' — the user dismissed the PIN modal. Stay on review; Send re-triggers it.
@@ -266,8 +278,8 @@ export function useMoneyWizard<TBody, TResult>(
       send path already classifies, and a page that reimplemented them would be a second copy free
       to drift. `run` and this share one code path on purpose.
     */
-    failFrom(problem) {
-      applyProblem(problem);
+    failFrom(problem, { phase }) {
+      applyProblem(problem, phase);
     },
 
     onBodyEdit() {
@@ -278,6 +290,7 @@ export function useMoneyWizard<TBody, TResult>(
       if (keyLive) return;
       resetIntent();
       setInFlight(false);
+      setNothingChanged(false);
       setFailure(null);
       lastProblem.current = null;
     },

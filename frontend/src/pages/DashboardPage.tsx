@@ -22,13 +22,18 @@ import {
 import { format, startOfMonth } from 'date-fns';
 import { atMedia } from '../theme/breakpoints';
 import { colors, shadows, surfaces } from '../theme/tokens';
-import type { ApiProblem } from '../api/problemBaseQuery';
+import { isServiceOutage, type ApiProblem } from '../api/problemBaseQuery';
+import { SERVICE_UNAVAILABLE } from '../api/problemMessages';
+import { useAppDispatch } from '../app/hooks';
 import type { AccountResponse, TransactionResponse } from '../features/api/apiSlice';
 import {
   useGetAccountsQuery,
   useGetTransactionsQuery,
   useGetTransactionSummaryQuery,
 } from '../features/api/apiSlice';
+import { abortRunning, useWaitLanding } from '../hooks/useWaitLanding';
+import { readWait } from '../hooks/useWaitPhase';
+import { AlertSlot, WaitHint } from '../components/feedback';
 import { resolveScopedAccountId, type Scope } from './dashboardScope';
 import { formatCurrency, maskAccountNumber } from '../utils/format';
 import { QuickActionButton } from '../components/shared/QuickActionButton';
@@ -135,6 +140,13 @@ const useStyles = makeStyles({
     [atMedia.md]: {
       padding: '24px',
     },
+  },
+
+  // The page's one alert, when it holds more than one bar.
+  alerts: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
   },
 
   pageGrid: {
@@ -460,36 +472,94 @@ export function DashboardPage() {
   const [depositOpen, setDepositOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
 
-  const {
-    data: accounts = [],
-    isLoading: accountsLoading,
-    error: accountsError,
-    refetch: refetchAccounts,
-  } = useGetAccountsQuery();
-  const accountsProblem = accountsError as ApiProblem | undefined;
+  const accountsQuery = useGetAccountsQuery();
+  const { data: accounts = [], refetch: refetchAccounts } = accountsQuery;
+  // Each read's spinner and bar follow its wait, not `isLoading` and `error`: a Retry keeps the old
+  // error while it runs, so the bar goes away for the new wait and comes back, announced, only if
+  // that wait fails too.
+  const { waiting: accountsWaiting, failed: accountsFailed } = readWait(accountsQuery);
+  const accountsProblem = accountsFailed ? (accountsQuery.error as ApiProblem) : undefined;
 
   // THE SPINE: the scope is a query argument, not a display filter. Selecting an account refetches
   // the feed with `AccountId`, which is what makes the running balance below a real ledger rather
   // than five rows borrowed from two accounts.
   const scopedAccountId = resolveScopedAccountId(scope, accounts);
-  const {
-    data: recent,
-    isLoading: recentLoading,
-    error: recentError,
-    refetch: refetchRecent,
-  } = useGetTransactionsQuery({
-    page: 1,
-    pageSize: RECENT_PAGE_SIZE,
-    accountId: scopedAccountId,
-  });
+  const recentArg = { page: 1, pageSize: RECENT_PAGE_SIZE, accountId: scopedAccountId };
+  const recentQuery = useGetTransactionsQuery(recentArg);
+  const { data: recent, refetch: refetchRecent } = recentQuery;
+  const { waiting: recentWaiting, failed: recentFailed } = readWait(recentQuery);
 
   const [monthWindow] = useState(() => ({ fromDate: startOfMonth(new Date()).toISOString() }));
-  const {
-    data: summary,
-    isLoading: summaryLoading,
-    error: summaryError,
-    refetch: refetchSummary,
-  } = useGetTransactionSummaryQuery({ ...monthWindow, accountId: scopedAccountId });
+  const summaryArg = { ...monthWindow, accountId: scopedAccountId };
+  const summaryQuery = useGetTransactionSummaryQuery(summaryArg);
+  const { data: summary, refetch: refetchSummary } = summaryQuery;
+  const { waiting: summaryWaiting, failed: summaryFailed } = readWait(summaryQuery);
+
+  /*
+    One wait for the page, one hint, one "Stop waiting" for all three reads. It is the wait the page
+    SHOWS: while the accounts bar stands in for the whole page, a section still loading behind it
+    is not on screen, so it neither speaks nor holds back the landing.
+
+    When that wait ends, focus goes back to a bar's Retry, because the button that was pressed has
+    just gone: to the bar of the read the visitor retried, if it failed again; otherwise to the
+    first failed bar in reading order — the accounts bar (which replaces the page), else "this
+    month", else "recent activity". A Stop lands on that first failed bar.
+  */
+  const waiting = accountsWaiting || (!accountsFailed && (recentWaiting || summaryWaiting));
+  const dispatch = useAppDispatch();
+  const { landingRef, arm } = useWaitLanding<HTMLButtonElement>(waiting, [
+    accountsQuery.requestId,
+    recentQuery.requestId,
+    summaryQuery.requestId,
+  ]);
+  /*
+    Which read the visitor last retried. Setting it has a second job: it renders the page in the
+    press itself, and that render already sees the Retry's request on its way, so the bar goes at
+    once. Without it the page would learn of the request a frame later (RTK's batching), and a
+    failure inside that frame would leave the same bar standing — never announced again.
+  */
+  const [retried, setRetried] = useState<'accounts' | 'summary' | 'recent' | null>(null);
+  const landsOn = accountsFailed
+    ? 'accounts'
+    : retried === 'recent' && recentFailed
+      ? 'recent'
+      : summaryFailed
+        ? 'summary'
+        : recentFailed
+          ? 'recent'
+          : null;
+  const stopWaiting = () => {
+    const stopped = abortRunning(dispatch, [
+      { endpoint: 'getAccounts', arg: undefined },
+      { endpoint: 'getTransactions', arg: recentArg },
+      { endpoint: 'getTransactionSummary', arg: summaryArg },
+    ]);
+    if (!stopped) return;
+    setRetried(null);
+    arm();
+  };
+  // The accounts bar is the whole page, so its Retry reloads every read that failed behind it:
+  // otherwise the page would come back with the sections' own bars still up.
+  const retryAccounts = () => {
+    setRetried('accounts');
+    arm();
+    void refetchAccounts();
+    if (summaryFailed) void refetchSummary();
+    if (recentFailed) void refetchRecent();
+  };
+  const retrySummary = () => {
+    setRetried('summary');
+    arm();
+    void refetchSummary();
+  };
+  const retryRecent = () => {
+    setRetried('recent');
+    arm();
+    void refetchRecent();
+  };
+  // A section bar keeps its own sentence, which names the section, and adds the outage's.
+  const outageNote = (error: unknown) =>
+    error !== undefined && isServiceOutage(error as ApiProblem) ? ` ${SERVICE_UNAVAILABLE}` : '';
 
   // A lone account is implicitly the scope. With one account "all accounts" IS that account, its
   // ledger is the only ledger, and the running balance therefore reconciles — so withholding the
@@ -513,28 +583,82 @@ export function DashboardPage() {
 
   const money = (n: number) => (hidden ? '••••••' : formatCurrency(n));
 
-  // ---- Page-gating states (D22), unchanged from the current dashboard ----
-  if (accountsProblem) {
-    return (
-      <div className={styles.page}>
-        <MessageBar intent="error">
-          <MessageBarBody>
-            {accountsProblem.detail || 'Could not load your accounts.'}
-            {accountsProblem.traceId ? ` Support code: ${accountsProblem.traceId}` : ''}
-          </MessageBarBody>
-          <MessageBarActions>
-            <Button appearance="transparent" onClick={() => void refetchAccounts()}>
-              Retry
-            </Button>
-          </MessageBarActions>
-        </MessageBar>
-      </div>
-    );
-  }
+  // ---- Page-gating states (D22) ----
+  // The accounts bar stands in for the whole page. Never "Welcome" while the accounts are on
+  // their way, a Retry's wait included.
+  const welcome = !accountsProblem && !accountsWaiting && accounts.length === 0;
+  const sectionsShown = !accountsProblem && !welcome;
 
-  if (!accountsLoading && accounts.length === 0) {
-    return (
-      <div className={styles.page}>
+  const scopeLabel = selected ? selected.name : `all ${accounts.length} accounts`;
+
+  /*
+    One page, whatever it shows, so that the hint and the alert stay the same two elements from
+    the first render on: the hint keeps its region for its "Loaded.", and the alert is there,
+    empty, before anything fails, which is what makes a failure a change a screen reader reads.
+  */
+  return (
+    <div className={styles.page}>
+      {/* Above the grid rather than in one of its sections, because it speaks for all three
+          reads. While it has words the grid sits one gap lower: the price of one hint for the
+          page, accepted. Not in the welcome state, where the sections are not shown. */}
+      <WaitHint
+        active={waiting && !welcome}
+        kind="read"
+        failed={accountsFailed || (sectionsShown && (summaryFailed || recentFailed))}
+        onStopWaiting={stopWaiting}
+      />
+      {/* ONE alert for the page. The section bars sit here, above the grid, rather than in their
+          sections: two alerts raised by one outage could be read as one, and a single atomic
+          alert reads both, in this order. */}
+      <AlertSlot className={styles.alerts}>
+        {accountsProblem && (
+          <MessageBar intent="error">
+            <MessageBarBody>
+              {accountsProblem.detail || 'Could not load your accounts.'}
+              {accountsProblem.traceId ? ` Support code: ${accountsProblem.traceId}` : ''}
+            </MessageBarBody>
+            <MessageBarActions>
+              <Button ref={landingRef} appearance="transparent" onClick={retryAccounts}>
+                Retry
+              </Button>
+            </MessageBarActions>
+          </MessageBar>
+        )}
+        {sectionsShown && summaryFailed && (
+          <MessageBar intent="error">
+            <MessageBarBody>
+              Could not load this month.{outageNote(summaryQuery.error)}
+            </MessageBarBody>
+            <MessageBarActions>
+              <Button
+                ref={landsOn === 'summary' ? landingRef : undefined}
+                appearance="transparent"
+                onClick={retrySummary}
+              >
+                Retry
+              </Button>
+            </MessageBarActions>
+          </MessageBar>
+        )}
+        {sectionsShown && recentFailed && (
+          <MessageBar intent="error">
+            <MessageBarBody>
+              Could not load recent activity.{outageNote(recentQuery.error)}
+            </MessageBarBody>
+            <MessageBarActions>
+              <Button
+                ref={landsOn === 'recent' ? landingRef : undefined}
+                appearance="transparent"
+                onClick={retryRecent}
+              >
+                Retry
+              </Button>
+            </MessageBarActions>
+          </MessageBar>
+        )}
+      </AlertSlot>
+
+      {welcome && (
         <div className={styles.card}>
           <Text as="h1" className={styles.sectionTitle}>
             Welcome to AzureBank
@@ -546,271 +670,264 @@ export function DashboardPage() {
             </Button>
           </div>
         </div>
-      </div>
-    );
-  }
+      )}
 
-  const scopeLabel = selected ? selected.name : `all ${accounts.length} accounts`;
+      {sectionsShown && (
+        <>
+          <div className={mergeClasses(styles.page, styles.pageGrid)} style={{ padding: 0 }}>
+            {/* ===== Zone 1 — balance + the scope control ===== */}
+            <section className={mergeClasses(styles.card, styles.areaHero)}>
+              <div className={styles.heroTop}>
+                <div>
+                  <Text className={styles.heroLabel}>Available balance</Text>
+                  {accountsWaiting ? (
+                    <div className={styles.skeletonBar} style={{ width: 220, height: '2.6rem' }} />
+                  ) : (
+                    <Text as="h1" className={styles.heroAmount}>
+                      {money(shownBalance)}
+                    </Text>
+                  )}
+                  <Text className={styles.heroMeta}>
+                    {selected
+                      ? `${selected.name} · ${maskAccountNumber(selected.accountNumber)}`
+                      : `Across ${accounts.length} account${accounts.length === 1 ? '' : 's'}`}
+                  </Text>
+                </div>
+                <Button
+                  className={styles.eyeButton}
+                  appearance="transparent"
+                  icon={hidden ? <EyeOff20Regular /> : <Eye20Regular />}
+                  // The name says the state; aria-pressed as well read "Show balances, pressed".
+                  aria-label={hidden ? 'Show balances' : 'Hide balances'}
+                  onClick={() => setHidden((v) => !v)}
+                />
+              </div>
 
-  return (
-    <div className={styles.page}>
-      <div className={mergeClasses(styles.page, styles.pageGrid)} style={{ padding: 0 }}>
-        {/* ===== Zone 1 — balance + the scope control ===== */}
-        <section className={mergeClasses(styles.card, styles.areaHero)}>
-          <div className={styles.heroTop}>
-            <div>
-              <Text className={styles.heroLabel}>Available balance</Text>
-              {accountsLoading ? (
-                <div className={styles.skeletonBar} style={{ width: 220, height: '2.6rem' }} />
-              ) : (
-                <Text as="h1" className={styles.heroAmount}>
-                  {money(shownBalance)}
-                </Text>
+              {/* One account needs no selector: there is nothing to choose between. */}
+              {accounts.length > 1 && (
+                <div className={styles.scopeRow} role="group" aria-label="Account scope">
+                  <button
+                    type="button"
+                    className={mergeClasses(
+                      styles.scopeChip,
+                      scope === 'all' && styles.scopeChipOn,
+                    )}
+                    aria-pressed={scope === 'all'}
+                    onClick={() => setScope('all')}
+                  >
+                    <span className={styles.scopeChipName}>All accounts</span>
+                    <span className={styles.scopeChipAmount}>{money(total)}</span>
+                  </button>
+                  {accounts.map((a) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      className={mergeClasses(
+                        styles.scopeChip,
+                        scope === a.id && styles.scopeChipOn,
+                      )}
+                      aria-pressed={scope === a.id}
+                      onClick={() => setScope(a.id)}
+                    >
+                      <span className={styles.scopeChipName}>
+                        {a.name} {maskAccountNumber(a.accountNumber)}
+                        {a.isPrimary ? <span className={styles.primaryTag}> · PRIMARY</span> : null}
+                      </span>
+                      <span className={styles.scopeChipAmount}>{money(a.balance)}</span>
+                    </button>
+                  ))}
+                </div>
               )}
-              <Text className={styles.heroMeta}>
-                {selected
-                  ? `${selected.name} · ${maskAccountNumber(selected.accountNumber)}`
-                  : `Across ${accounts.length} account${accounts.length === 1 ? '' : 's'}`}
-              </Text>
-            </div>
-            <Button
-              className={styles.eyeButton}
-              appearance="transparent"
-              icon={hidden ? <EyeOff20Regular /> : <Eye20Regular />}
-              // The name says the state; aria-pressed as well read "Show balances, pressed".
-              aria-label={hidden ? 'Show balances' : 'Hide balances'}
-              onClick={() => setHidden((v) => !v)}
-            />
-          </div>
+            </section>
 
-          {/* One account needs no selector: there is nothing to choose between. */}
-          {accounts.length > 1 && (
-            <div className={styles.scopeRow} role="group" aria-label="Account scope">
-              <button
-                type="button"
-                className={mergeClasses(styles.scopeChip, scope === 'all' && styles.scopeChipOn)}
-                aria-pressed={scope === 'all'}
-                onClick={() => setScope('all')}
-              >
-                <span className={styles.scopeChipName}>All accounts</span>
-                <span className={styles.scopeChipAmount}>{money(total)}</span>
-              </button>
-              {accounts.map((a) => (
-                <button
-                  key={a.id}
-                  type="button"
-                  className={mergeClasses(styles.scopeChip, scope === a.id && styles.scopeChipOn)}
-                  aria-pressed={scope === a.id}
-                  onClick={() => setScope(a.id)}
-                >
-                  <span className={styles.scopeChipName}>
-                    {a.name} {maskAccountNumber(a.accountNumber)}
-                    {a.isPrimary ? <span className={styles.primaryTag}> · PRIMARY</span> : null}
-                  </span>
-                  <span className={styles.scopeChipAmount}>{money(a.balance)}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </section>
-
-        {/* ===== Month summary — scoped like everything else on this page ===== */}
-        <section className={mergeClasses(styles.card, styles.areaSummary)}>
-          <Text className={styles.sectionTitle}>{monthLabel} so far</Text>
-          {summaryError ? (
-            <MessageBar intent="error">
-              <MessageBarBody>Could not load this month.</MessageBarBody>
-              <MessageBarActions>
-                <Button appearance="transparent" onClick={() => void refetchSummary()}>
-                  Retry
-                </Button>
-              </MessageBarActions>
-            </MessageBar>
-          ) : summaryLoading ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 12 }}>
-              <div className={styles.skeletonBar} />
-              <div className={styles.skeletonBar} />
-              <div className={styles.skeletonBar} />
-            </div>
-          ) : (
-            <>
-              <div className={styles.railRow}>
-                <span className={styles.railLabel}>Money in</span>
-                <span className={mergeClasses(styles.railValue, styles.amountIn)}>
-                  +{money(summary?.totalIncome ?? 0)}
-                </span>
-              </div>
-              <div className={styles.railRow}>
-                <span className={styles.railLabel}>Money out</span>
-                <span className={styles.railValue}>-{money(summary?.totalExpenses ?? 0)}</span>
-              </div>
-              <div className={mergeClasses(styles.railRow, styles.railRule)}>
-                <span className={styles.railLabel}>Net change</span>
-                <span className={styles.railValue}>
-                  {(summary?.netChange ?? 0) >= 0 ? '+' : '-'}
-                  {money(Math.abs(summary?.netChange ?? 0))}
-                </span>
-              </div>
-              {/* Says what the figures COVER, where it used to say what they could not do. The
-                  line stays because the answer still changes with the scope and a bare total does
-                  not carry that; it is now a label rather than an apology. */}
-              <Text className={styles.muted}>
-                {selected ? `${selected.name} only` : `Across all ${accounts.length} accounts`}
-              </Text>
-            </>
-          )}
-        </section>
-
-        {/* ===== Zone 2 — actions ===== */}
-        <section className={styles.areaActions}>
-          <button
-            type="button"
-            className={styles.transferCard}
-            onClick={() => navigate('/transfer')}
-          >
-            <span>
-              <Text className={styles.transferTitle}>Transfer</Text>
-              <Text className={styles.transferSub}>
-                {recipients.length > 0
-                  ? `Recently sent to ${recipients.map((r) => `@${r}`).join(', ')}`
-                  : 'Send to any @handle, or between your own accounts'}
-              </Text>
-            </span>
-            <ArrowSwap24Regular />
-          </button>
-          <div className={styles.tileRow}>
-            <QuickActionButton
-              variant="deposit"
-              label="Deposit"
-              icon={<ArrowDownload24Regular />}
-              onClick={() => setDepositOpen(true)}
-            />
-            <QuickActionButton
-              variant="withdraw"
-              label="Withdraw"
-              icon={<ArrowUpload24Regular />}
-              onClick={() => setWithdrawOpen(true)}
-            />
-          </div>
-        </section>
-
-        {/* ===== Pending attention — a task, not a statistic. Absent when there is nothing. ===== */}
-        <section className={mergeClasses(styles.card, styles.areaAttention)}>
-          <Text className={styles.sectionTitle}>Needs attention</Text>
-          {pending.length === 0 ? (
-            // Rendered rather than hidden. In a bank "nothing is pending" IS information — it is
-            // reassurance — and a section that vanishes makes the page reshuffle itself between
-            // one day and the next.
-            <Text className={styles.muted}>Nothing needs your attention.</Text>
-          ) : (
-            pending.map((t) => (
-              <div key={t.id} className={styles.railRow}>
-                {/* A chevron and link colour, because an affordance that works but does not
-                    advertise itself is worth almost nothing — and on touch there is no hover to
-                    reveal it. */}
-                <button
-                  type="button"
-                  className={styles.attentionLink}
-                  onClick={() => navigate(`/transactions/${t.id}`)}
-                >
-                  {transactionLabel(t)} <ChevronRight16Regular />
-                </button>
-                <StatusPill status="Pending" />
-              </div>
-            ))
-          )}
-        </section>
-
-        {/* ===== Zone 3 — the ledger ===== */}
-        <section className={mergeClasses(styles.card, styles.areaLedger)}>
-          <div className={styles.sectionHead}>
-            <Text className={styles.sectionTitle}>
-              Recent activity{selected ? ` · ${selected.name}` : ''}
-            </Text>
-            <Button appearance="transparent" onClick={() => navigate('/history')}>
-              See all
-            </Button>
-          </div>
-
-          {recentError ? (
-            <MessageBar intent="error">
-              <MessageBarBody>Could not load recent activity.</MessageBarBody>
-              <MessageBarActions>
-                <Button appearance="transparent" onClick={() => void refetchRecent()}>
-                  Retry
-                </Button>
-              </MessageBarActions>
-            </MessageBar>
-          ) : (
-            <TransactionTable>
-              <TransactionHead showBalance={!!selected} />
-              <tbody>
-                {recentLoading
-                  ? Array.from({ length: RECENT_PAGE_SIZE }, (_, i) => (
-                      <TransactionRowSkeleton key={`sk-${i}`} showBalance={!!selected} />
-                    ))
-                  : entries.map((t) => (
-                      <TransactionRow
-                        key={t.id}
-                        transaction={t}
-                        showBalance={!!selected}
-                        hidden={hidden}
-                        onOpen={(id) => navigate(`/transactions/${id}`)}
-                      />
-                    ))}
-                {!recentLoading && entries.length === 0 && (
-                  <TransactionEmptyRow columns={selected ? 5 : 4}>
-                    No transactions yet for {scopeLabel}.
-                  </TransactionEmptyRow>
-                )}
-              </tbody>
-              {!recentLoading && !summaryLoading && !summaryError && entries.length > 0 && (
-                <tfoot>
-                  <tr>
-                    <td className={styles.tfootCell} colSpan={2}>
-                      {monthLabel} so far
-                      {pending.length > 0 ? ` · ${pending.length} pending` : ''}
-                    </td>
-                    <td className={mergeClasses(styles.tfootCell, cells.number)}>
+            {/* ===== Month summary — scoped like everything else on this page ===== */}
+            <section className={mergeClasses(styles.card, styles.areaSummary)}>
+              <Text className={styles.sectionTitle}>{monthLabel} so far</Text>
+              {/* A failure is said in the page's alert, above the grid: no figures here. */}
+              {summaryFailed ? null : summaryWaiting ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 12 }}>
+                  <div className={styles.skeletonBar} />
+                  <div className={styles.skeletonBar} />
+                  <div className={styles.skeletonBar} />
+                </div>
+              ) : (
+                <>
+                  <div className={styles.railRow}>
+                    <span className={styles.railLabel}>Money in</span>
+                    <span className={mergeClasses(styles.railValue, styles.amountIn)}>
+                      +{money(summary?.totalIncome ?? 0)}
+                    </span>
+                  </div>
+                  <div className={styles.railRow}>
+                    <span className={styles.railLabel}>Money out</span>
+                    <span className={styles.railValue}>-{money(summary?.totalExpenses ?? 0)}</span>
+                  </div>
+                  <div className={mergeClasses(styles.railRow, styles.railRule)}>
+                    <span className={styles.railLabel}>Net change</span>
+                    <span className={styles.railValue}>
                       {(summary?.netChange ?? 0) >= 0 ? '+' : '-'}
                       {money(Math.abs(summary?.netChange ?? 0))}
-                    </td>
-                    {selected && (
-                      <td className={mergeClasses(styles.tfootCell, cells.balanceOnly)} />
-                    )}
-                    <td className={styles.tfootCell} />
-                  </tr>
-                </tfoot>
+                    </span>
+                  </div>
+                  {/* Says what the figures COVER, where it used to say what they could not do. The
+                  line stays because the answer still changes with the scope and a bare total does
+                  not carry that; it is now a label rather than an apology. */}
+                  <Text className={styles.muted}>
+                    {selected ? `${selected.name} only` : `Across all ${accounts.length} accounts`}
+                  </Text>
+                </>
               )}
-            </TransactionTable>
-          )}
-        </section>
+            </section>
 
-        {/* ===== Support ===== */}
-        <section className={mergeClasses(styles.card, styles.areaSupport)}>
-          <div className={styles.supportRow}>
-            <span className={styles.supportIcon} aria-hidden>
-              <Headset24Regular />
-            </span>
-            <div>
-              <Text className={mergeClasses(styles.sectionTitle, styles.supportTitle)}>
-                Need help?
-              </Text>
-              {/* NOT "our support team is available 24/7". There is no team: this is a portfolio
+            {/* ===== Zone 2 — actions ===== */}
+            <section className={styles.areaActions}>
+              <button
+                type="button"
+                className={styles.transferCard}
+                onClick={() => navigate('/transfer')}
+              >
+                <span>
+                  <Text className={styles.transferTitle}>Transfer</Text>
+                  <Text className={styles.transferSub}>
+                    {recipients.length > 0
+                      ? `Recently sent to ${recipients.map((r) => `@${r}`).join(', ')}`
+                      : 'Send to any @handle, or between your own accounts'}
+                  </Text>
+                </span>
+                <ArrowSwap24Regular />
+              </button>
+              <div className={styles.tileRow}>
+                <QuickActionButton
+                  variant="deposit"
+                  label="Deposit"
+                  icon={<ArrowDownload24Regular />}
+                  onClick={() => setDepositOpen(true)}
+                />
+                <QuickActionButton
+                  variant="withdraw"
+                  label="Withdraw"
+                  icon={<ArrowUpload24Regular />}
+                  onClick={() => setWithdrawOpen(true)}
+                />
+              </div>
+            </section>
+
+            {/* ===== Pending attention — a task, not a statistic. Absent when there is nothing. ===== */}
+            <section className={mergeClasses(styles.card, styles.areaAttention)}>
+              <Text className={styles.sectionTitle}>Needs attention</Text>
+              {pending.length === 0 ? (
+                // Rendered rather than hidden. In a bank "nothing is pending" IS information — it is
+                // reassurance — and a section that vanishes makes the page reshuffle itself between
+                // one day and the next.
+                <Text className={styles.muted}>Nothing needs your attention.</Text>
+              ) : (
+                pending.map((t) => (
+                  <div key={t.id} className={styles.railRow}>
+                    {/* A chevron and link colour, because an affordance that works but does not
+                    advertise itself is worth almost nothing — and on touch there is no hover to
+                    reveal it. */}
+                    <button
+                      type="button"
+                      className={styles.attentionLink}
+                      onClick={() => navigate(`/transactions/${t.id}`)}
+                    >
+                      {transactionLabel(t)} <ChevronRight16Regular />
+                    </button>
+                    <StatusPill status="Pending" />
+                  </div>
+                ))
+              )}
+            </section>
+
+            {/* ===== Zone 3 — the ledger ===== */}
+            <section className={mergeClasses(styles.card, styles.areaLedger)}>
+              <div className={styles.sectionHead}>
+                <Text className={styles.sectionTitle}>
+                  Recent activity{selected ? ` · ${selected.name}` : ''}
+                </Text>
+                <Button appearance="transparent" onClick={() => navigate('/history')}>
+                  See all
+                </Button>
+              </div>
+
+              {/* A failure is said in the page's alert, above the grid: no rows here. */}
+              {recentFailed ? null : (
+                <TransactionTable>
+                  <TransactionHead showBalance={!!selected} />
+                  <tbody>
+                    {recentWaiting
+                      ? Array.from({ length: RECENT_PAGE_SIZE }, (_, i) => (
+                          <TransactionRowSkeleton key={`sk-${i}`} showBalance={!!selected} />
+                        ))
+                      : entries.map((t) => (
+                          <TransactionRow
+                            key={t.id}
+                            transaction={t}
+                            showBalance={!!selected}
+                            hidden={hidden}
+                            onOpen={(id) => navigate(`/transactions/${id}`)}
+                          />
+                        ))}
+                    {!recentWaiting && entries.length === 0 && (
+                      <TransactionEmptyRow columns={selected ? 5 : 4}>
+                        No transactions yet for {scopeLabel}.
+                      </TransactionEmptyRow>
+                    )}
+                  </tbody>
+                  {!recentWaiting && !summaryWaiting && !summaryFailed && entries.length > 0 && (
+                    <tfoot>
+                      <tr>
+                        <td className={styles.tfootCell} colSpan={2}>
+                          {monthLabel} so far
+                          {pending.length > 0 ? ` · ${pending.length} pending` : ''}
+                        </td>
+                        <td className={mergeClasses(styles.tfootCell, cells.number)}>
+                          {(summary?.netChange ?? 0) >= 0 ? '+' : '-'}
+                          {money(Math.abs(summary?.netChange ?? 0))}
+                        </td>
+                        {selected && (
+                          <td className={mergeClasses(styles.tfootCell, cells.balanceOnly)} />
+                        )}
+                        <td className={styles.tfootCell} />
+                      </tr>
+                    </tfoot>
+                  )}
+                </TransactionTable>
+              )}
+            </section>
+
+            {/* ===== Support ===== */}
+            <section className={mergeClasses(styles.card, styles.areaSupport)}>
+              <div className={styles.supportRow}>
+                <span className={styles.supportIcon} aria-hidden>
+                  <Headset24Regular />
+                </span>
+                <div>
+                  <Text className={mergeClasses(styles.sectionTitle, styles.supportTitle)}>
+                    Need help?
+                  </Text>
+                  {/* NOT "our support team is available 24/7". There is no team: this is a portfolio
                   project, and a line promising staffed support is the same defect as a button that
                   cannot extend a session. The link goes somewhere real and says what it is. */}
-              <Link to="/about" className={styles.supportLink}>
-                Get in touch <ChevronRight16Regular />
-              </Link>
-            </div>
+                  <Link to="/about" className={styles.supportLink}>
+                    Get in touch <ChevronRight16Regular />
+                  </Link>
+                </div>
+              </div>
+            </section>
           </div>
-        </section>
-      </div>
+        </>
+      )}
 
       {/* Mounted only while open, as the current dashboard does: these forms hold money state and
           a hidden mounted instance is a hidden mounted form. There is no `defaultAccountId` prop
           today, so the scope does NOT yet reach the dialogs — the one gap between this design and
-          "everything obeys the scope", recorded rather than glossed. */}
+          "everything obeys the scope", recorded rather than glossed.
+
+          Outside the sections, as on the accounts page: the withdraw dialog's funds check reads the
+          page's own accounts, and when that read fails the accounts bar takes the sections' place.
+          A dialog inside them went too, and with it the key of a send whose outcome was unknown, so
+          the next Withdraw was a new intent beside one that may have landed. */}
       {depositOpen && (
         <DepositDialog
           isOpen={depositOpen}

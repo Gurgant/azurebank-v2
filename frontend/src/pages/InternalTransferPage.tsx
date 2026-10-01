@@ -11,6 +11,8 @@ import { CheckmarkCircle24Filled, ArrowSwap24Regular } from '@fluentui/react-ico
 import { useForm, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import type { ApiProblem } from '../api/problemBaseQuery';
+import type { MoneyPhase } from '../api/moneyProblem';
+import { NO_DOUBLE_MOVE, TRY_AGAIN } from '../api/problemMessages';
 import { useTransferWizardStyles } from './transferWizardStyles';
 import { ConfirmDialog } from '../components/shared/ConfirmDialog';
 import { ResultUnknownView } from '../components/shared/ResultUnknownView';
@@ -21,9 +23,12 @@ import {
   useTransferInternalMutation,
   type AccountResponse,
 } from '../features/api/apiSlice';
+import { useAppDispatch } from '../app/hooks';
 import { useMoneyWizard } from '../hooks/useMoneyWizard';
+import { abortRunning, useWaitLanding } from '../hooks/useWaitLanding';
+import { readWait } from '../hooks/useWaitPhase';
 import { formatCurrency, maskAccountNumber } from '../utils/format';
-import { RetryCountdown, retryDeadline } from '../components/feedback';
+import { AlertSlot, RetryCountdown, WaitHint, retryDeadline } from '../components/feedback';
 import {
   insufficientFundsMessage,
   internalTransferFormSchema,
@@ -65,10 +70,40 @@ export function InternalTransferPage() {
   const {
     data: accounts = [],
     isSuccess: accountsLoaded,
+    isLoading: accountsLoading,
+    isFetching: accountsFetching,
     error: accountsError,
     refetch: refetchAccounts,
+    requestId: accountsRequestId,
   } = useGetAccountsQuery();
-  const accountsProblem = accountsError as ApiProblem | undefined;
+  // The accounts bar follows the wait, as on TransferPage and the reading pages: a Retry keeps the
+  // old error while it runs, so the bar goes away and comes back, announced, only on a new failure.
+  const accountsRead = readWait({
+    isLoading: accountsLoading,
+    isFetching: accountsFetching,
+    error: accountsError,
+  });
+  const accountsProblem = accountsRead.failed ? (accountsError as ApiProblem) : undefined;
+  // With no accounts the accounts are the page, and their wait is its only one; with accounts on
+  // the page, reading them again holds nobody up, and the funds check's reload of this entry has a
+  // hint of its own, with no Stop — see TransferPage.
+  const accountsHoldThePage =
+    accounts.length === 0 && (accountsRead.waiting || accountsError !== undefined);
+
+  const dispatch = useAppDispatch();
+  const accountsLanding = useWaitLanding<HTMLButtonElement>(
+    accountsRead.waiting,
+    accountsRequestId,
+  );
+  const stopWaitingForAccounts = () => {
+    if (abortRunning(dispatch, [{ endpoint: 'getAccounts', arg: undefined }])) {
+      accountsLanding.arm();
+    }
+  };
+  const retryAccounts = () => {
+    accountsLanding.arm();
+    void refetchAccounts();
+  };
   const [transferTrigger] = useTransferInternalMutation();
   const wizard = useMoneyWizard(transferTrigger, {
     // This flow's OWN codes; the protocol's are the wizard's, and the table's type makes naming one
@@ -83,8 +118,17 @@ export function InternalTransferPage() {
     fallback: 'Transfer failed. Please try again.',
   });
   // Destructured under the names the markup already used, so this change is confined to the machine.
-  const { step, isSubmitting, inFlight, error, verifyRequired, keyLive, onBodyEdit, requestLeave } =
-    wizard;
+  const {
+    step,
+    isSubmitting,
+    inFlight,
+    nothingChanged,
+    error,
+    verifyRequired,
+    keyLive,
+    onBodyEdit,
+    requestLeave,
+  } = wizard;
 
   // ===== PIN step (ADR-0041) — same shape as TransferPage and WithdrawDialog. =====
   const [authoriseInternalTransfer, { isLoading: isMinting }] =
@@ -191,6 +235,10 @@ export function InternalTransferPage() {
   // with a stale one costs a PIN attempt on a request that cannot succeed.
   const confirmFunds = useFundsGate();
   const [checkingFunds, setCheckingFunds] = useState(false);
+
+  // The confirm (mint, then send) as one wait with one hint — see TransferPage for why it is not
+  // `isMinting || isSubmitting`.
+  const [confirming, setConfirming] = useState(false);
 
   // Auto-select the legacy default source (primary ?? first) once accounts load, and keep
   // the schema's balance bound in lockstep with the source account.
@@ -306,63 +354,68 @@ export function InternalTransferPage() {
       unknown — IN_FLIGHT, a network failure, a 5xx. The only sanctioned forward action there is to
       re-send the SAME intent, so we re-present the SAME authorisation rather than minting a new one.
     */
-    let authorizationId: string;
-    if (keyLive && lastAuthorization.current) {
-      authorizationId = lastAuthorization.current;
-    } else {
-      try {
-        const minted = await authoriseInternalTransfer({
+    setConfirming(true);
+    try {
+      let authorizationId: string;
+      if (keyLive && lastAuthorization.current) {
+        authorizationId = lastAuthorization.current;
+      } else {
+        try {
+          const minted = await authoriseInternalTransfer({
+            fromAccountId: data.fromAccountId,
+            toAccountId: data.toAccountId,
+            amount: data.amount,
+            pin: enteredPin.current,
+          }).unwrap();
+          authorizationId = minted.authorizationId;
+          lastAuthorization.current = authorizationId;
+          setAuthorizationHeld(true);
+        } catch (caught) {
+          wizard.failFrom(caught as ApiProblem, { phase: 'mint' });
+          handleRefusal(caught as ApiProblem, 'mint');
+          return;
+        }
+      }
+
+      const result = await wizard.run(
+        {
           fromAccountId: data.fromAccountId,
           toAccountId: data.toAccountId,
           amount: data.amount,
-          pin: enteredPin.current,
-        }).unwrap();
-        authorizationId = minted.authorizationId;
-        lastAuthorization.current = authorizationId;
-        setAuthorizationHeld(true);
-      } catch (caught) {
-        wizard.failFrom(caught as ApiProblem);
-        handleRefusal(caught as ApiProblem);
+        },
+        // A HEADER at the wire: the server fingerprints the body alone.
+        { stepUpAuthorizationId: authorizationId },
+      );
+      // undefined means it failed and the wizard has already set the banner, the in-flight note or
+      // the verify view. Under `strict` this early return is not optional.
+      if (!result) {
+        handleRefusal(wizard.lastProblem.current, 'send');
         return;
       }
-    }
 
-    const result = await wizard.run(
-      {
-        fromAccountId: data.fromAccountId,
-        toAccountId: data.toAccountId,
+      setPin('');
+      enteredPin.current = '';
+      lastAuthorization.current = null;
+      setAuthorizationHeld(false);
+
+      setSuccess({
         amount: data.amount,
-      },
-      // A HEADER at the wire: the server fingerprints the body alone.
-      { stepUpAuthorizationId: authorizationId },
-    );
-    // undefined means it failed and the wizard has already set the banner, the in-flight note or
-    // the verify view. Under `strict` this early return is not optional.
-    if (!result) {
-      handleRefusal(wizard.lastProblem.current);
-      return;
+        fromName: from.name,
+        toName: to.name,
+        fromNewBalance: result.fromAccountNewBalance,
+        transactionNumber: result.transactionNumber,
+        replayed: result.replayed,
+      });
+    } finally {
+      setConfirming(false);
     }
-
-    setPin('');
-    enteredPin.current = '';
-    lastAuthorization.current = null;
-    setAuthorizationHeld(false);
-
-    setSuccess({
-      amount: data.amount,
-      fromName: from.name,
-      toName: to.name,
-      fromNewBalance: result.fromAccountNewBalance,
-      transactionNumber: result.transactionNumber,
-      replayed: result.replayed,
-    });
   };
 
   /**
    * What the PIN step does about a refusal, shared by the mint and the send. Mirrors TransferPage,
    * where the reasoning for each branch is written out in full.
    */
-  function handleRefusal(refusal: ApiProblem | null) {
+  function handleRefusal(refusal: ApiProblem | null, phase: MoneyPhase) {
     if (refusal?.errorCode === 'INVALID_PIN') {
       setPin('');
       enteredPin.current = '';
@@ -403,6 +456,18 @@ export function InternalTransferPage() {
       // its own, and the wizard refuses any exit while an idempotency key is live. A 422 is
       // a key-DROP class, so this one goes through.
       requestLeave('/pin-setup?returnTo=/transfer/internal');
+    } else if (
+      phase === 'mint' &&
+      refusal !== null &&
+      (refusal.status === 'NETWORK' ||
+        refusal.status === 'PARSE' ||
+        (typeof refusal.status === 'number' && refusal.status >= 500))
+    ) {
+      // The mint got no usable answer (an outage included): with full boxes the PIN step has no
+      // control, so empty them and refocus box 1. The mint's alone; see TransferPage.
+      setPin('');
+      enteredPin.current = '';
+      setPinNonce((n) => n + 1);
     }
   }
 
@@ -509,19 +574,33 @@ export function InternalTransferPage() {
             DashboardPage already follow and both transfer wizards did not. Without this a failed
             accounts load left the page standing with empty pickers and no explanation, so a
             transient network fault silently blocked transfers. */}
-        {accountsProblem && (
-          <MessageBar intent="error" role="alert">
-            <MessageBarBody>
-              {accountsProblem.detail || 'Could not load your accounts.'}
-              {accountsProblem.traceId ? ` Support code: ${accountsProblem.traceId}` : ''}
-            </MessageBarBody>
-            <MessageBarActions>
-              <Button appearance="transparent" onClick={() => void refetchAccounts()}>
-                Retry
-              </Button>
-            </MessageBarActions>
-          </MessageBar>
-        )}
+        <WaitHint
+          active={accountsHoldThePage && accountsRead.waiting}
+          kind="read"
+          failed={accountsRead.failed}
+          onStopWaiting={stopWaitingForAccounts}
+        />
+        {/* Keyed by the request that failed, so that a Retry which fails again before its wait is
+            ever drawn still puts a new bar into the alert, and it is announced again. */}
+        <AlertSlot>
+          {accountsProblem && (
+            <MessageBar key={accountsRequestId} intent="error">
+              <MessageBarBody>
+                {accountsProblem.detail || 'Could not load your accounts.'}
+                {accountsProblem.traceId ? ` Support code: ${accountsProblem.traceId}` : ''}
+              </MessageBarBody>
+              <MessageBarActions>
+                <Button
+                  ref={accountsLanding.landingRef}
+                  appearance="transparent"
+                  onClick={retryAccounts}
+                >
+                  Retry
+                </Button>
+              </MessageBarActions>
+            </MessageBar>
+          )}
+        </AlertSlot>
         {error && (
           <MessageBar id={pinErrorId} intent="error" role="alert">
             <MessageBarBody>{error}</MessageBarBody>
@@ -538,16 +617,19 @@ export function InternalTransferPage() {
             that reaches this state used to click Send.
 
             This re-sends the SAME key, the SAME body and the SAME authorisation. It is a check, not
-            a second payment, which is why it is worded as one — and the wording splits, because the
-            two ways to get here are not equally knowable. A 409 IN_FLIGHT means the server told us
-            it is working on it. A lost response means we do not know whether anything happened, and
-            saying "still processing" there would assert something nobody has been told.
+            a second payment, which is why it is worded as one — and the wording splits three ways,
+            as on TransferPage: IN_FLIGHT, `applied: false` (`nothingChanged`, a plain "Try again"),
+            and anything else, which nobody can call "still processing". Each ends with the promise
+            that retrying is safe — worded for money that moves between the visitor's own accounts,
+            where nothing is charged.
           */
           <MessageBar intent="info" role="status">
             <MessageBarBody>
               {inFlight
-                ? 'Still processing — check again to see whether it went through.'
-                : "We couldn't reach the bank. Your transfer may or may not have gone through — check again."}
+                ? `Still processing — check again to see whether it went through. ${NO_DOUBLE_MOVE}`
+                : nothingChanged
+                  ? NO_DOUBLE_MOVE
+                  : `We couldn't reach the bank. Your transfer may or may not have gone through — check again. ${NO_DOUBLE_MOVE}`}
             </MessageBarBody>
             <MessageBarActions>
               <Button
@@ -563,7 +645,7 @@ export function InternalTransferPage() {
                 disabled={isMinting || isSubmitting}
                 onClick={() => void handleSubmit(onValid, onInvalid)()}
               >
-                Check again
+                {!inFlight && nothingChanged ? TRY_AGAIN : 'Check again'}
               </Button>
             </MessageBarActions>
           </MessageBar>
@@ -576,8 +658,11 @@ export function InternalTransferPage() {
 
             Scoped to `accounts.length === 0` rather than to the problem alone, because RTK Query
             keeps the last data when a REFETCH fails: in that case the picker still has real
-            accounts, and blanking a half-filled money form would be the worse bug. */}
-        {accountsProblem && accounts.length === 0 ? null : step === 'form' ? (
+            accounts, and blanking a half-filled money form would be the worse bug.
+
+            Nor while they first load, or while a Retry runs (when only the bar goes away): an
+            empty form under the accounts' wait would show an available balance of zero. */}
+        {accountsHoldThePage ? null : step === 'form' ? (
           <>
             <div>
               <Text className={styles.sectionLabel}>From</Text>
@@ -779,6 +864,12 @@ export function InternalTransferPage() {
                 <Spinner size="tiny" label={`Moving ${formatCurrency(amountNumber)}`} />
               </div>
             )}
+            {/* Under the boxes and the spinner, outside their described-by targets, and promising
+                nothing: during the wait no control here can re-send the same key. From 20 s it
+                asks the visitor to keep the page open, since a reload would send the move again
+                with a new key — once there is a key: while the PIN alone is being checked none
+                exists yet, and it says only that it is still trying. */}
+            <WaitHint active={confirming} kind={isMinting && !keyLive ? 'write' : 'moneySend'} />
             <div className={styles.actions}>
               <Button
                 appearance="secondary"
@@ -834,6 +925,8 @@ export function InternalTransferPage() {
                 Back
               </Button>
             </div>
+            {/* A read with no Stop: the check fails open (see TransferPage). */}
+            <WaitHint active={checkingFunds} kind="read" />
           </>
         )}
       </div>

@@ -15,7 +15,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import type { ApiProblem } from '../api/problemBaseQuery';
-import { RetryCountdown, retryDeadline } from '../components/feedback';
+import { RetryCountdown, WaitHint, retryDeadline } from '../components/feedback';
 import { AuthCrossLink, AuthDivider, AuthLayout } from '../components/layout/AuthLayout';
 import { useLoginMutation } from '../features/api/apiSlice';
 
@@ -257,6 +257,8 @@ export function LoginPage() {
             {isLoading ? <Spinner size="tiny" /> : 'Sign in'}
           </Button>
         )}
+        {/* Under the button that started the sign-in, and outside every alert. */}
+        <WaitHint active={isLoading} kind="write" />
 
         {rateLimited && lockDeadline !== null && (
           <>

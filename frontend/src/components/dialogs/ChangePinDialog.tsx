@@ -14,10 +14,10 @@ import {
   Text,
 } from '@fluentui/react-components';
 import { colors } from '../../theme/tokens';
-import type { ApiProblem } from '../../api/problemBaseQuery';
-import { CONNECTION_FAILED } from '../../api/problemMessages';
+import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
+import { CONNECTION_FAILED, SAVE_OUTCOME_UNKNOWN } from '../../api/problemMessages';
 import { useSetPinMutation } from '../../features/api/apiSlice';
-import { RetryCountdown, retryDeadline } from '../feedback';
+import { RetryCountdown, WaitHint, retryDeadline } from '../feedback';
 import { PinInput } from '../PinInput';
 
 const PIN_LENGTH = 6;
@@ -135,6 +135,11 @@ export function ChangePinDialog({ onClose }: ChangePinDialogProps) {
       // server rule still reaches the user in the server's words.
       const firstFieldError = Object.values(problem.errors ?? {})[0]?.[0];
       setError(firstFieldError ?? 'That PIN is not allowed. Please choose another.');
+    } else if (isServiceOutage(problem)) {
+      // Before the transport branch: a request with no answer in 65 s is `status: 'NETWORK'` too,
+      // and the connection was not the problem. The new PIN may have been saved, and the request
+      // carries no key, so this cannot say it failed.
+      setError(SAVE_OUTCOME_UNKNOWN);
     } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
       setError(CONNECTION_FAILED);
     } else {
@@ -258,6 +263,9 @@ export function ChangePinDialog({ onClose }: ChangePinDialogProps) {
                     )}
                   </div>
                 )}
+                {/* Last, above the actions, and outside the alerts and the boxes' described-by
+                    target: the words of a wait are not part of a failure. */}
+                <WaitHint active={isLoading} kind="write" />
               </DialogContent>
               <DialogActions>
                 <Button

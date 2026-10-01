@@ -14,8 +14,10 @@ import {
   Spinner,
   makeStyles,
 } from '@fluentui/react-components';
-import type { ApiProblem } from '../../api/problemBaseQuery';
-import { CONNECTION_FAILED } from '../../api/problemMessages';
+import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
+import { CONNECTION_FAILED, SERVICE_UNAVAILABLE, SIGN_OUT_FAILED } from '../../api/problemMessages';
+import { WaitHint } from '../../components/feedback';
+import { useWaitLanding } from '../../hooks/useWaitLanding';
 import { formatLockHorizon } from '../../utils/format';
 import { useAppDispatch, useAppSelector } from '../../app/hooks';
 import { apiSlice, useReauthenticateMutation } from '../api/apiSlice';
@@ -74,6 +76,8 @@ const TICK_MS = 1_000;
 
 const useStyles = makeStyles({
   reauth: { display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px' },
+  signOutError: { marginTop: '16px' },
+  hint: { marginTop: '12px' },
 });
 
 /**
@@ -97,10 +101,33 @@ function reauthMessage(problem: ApiProblem): string {
     // The BFF's own auth rate limiter rather than the account lock: no unlock time to quote.
     return 'Too many attempts just now. Wait a moment and try again.';
   }
+  // Before the transport branch: a request with no answer in 65 s is `NETWORK` too, and it is the
+  // service that did not answer, not the visitor's connection.
+  if (isServiceOutage(problem)) {
+    return SERVICE_UNAVAILABLE;
+  }
   if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
     return CONNECTION_FAILED;
   }
   return "Couldn't sign you in right now. Please try again.";
+}
+
+/**
+ * What to say when "Sign out now" could not sign the visitor out: first that they are still signed
+ * in, then why.
+ *
+ * Why is the connection sentence for a failed connection or a body that could not be read; the
+ * outage sentence otherwise — the service is down, gave no answer in 65 s, or turned the request
+ * away for a reason the visitor can do nothing about but try again later.
+ */
+function signOutMessage(problem: ApiProblem | undefined): string {
+  const why =
+    problem !== undefined &&
+    !isServiceOutage(problem) &&
+    (problem.status === 'NETWORK' || problem.status === 'PARSE')
+      ? CONNECTION_FAILED
+      : SERVICE_UNAVAILABLE;
+  return `${SIGN_OUT_FAILED} ${why}`;
 }
 
 function formatRemaining(ms: number): string {
@@ -113,11 +140,26 @@ export function SessionExpiryWarning() {
   const dispatch = useAppDispatch();
   const styles = useStyles();
   const errorId = useId();
+  const descriptionId = useId();
   const [remainingMs, setRemainingMs] = useState<number | null>(null);
-  const [ending, setEnding] = useState(false);
+  // The sign-out on its way, if any: the one the visitor asked for, or the deadline's.
+  const [endingBy, setEndingBy] = useState<'visitor' | 'deadline' | null>(null);
+  const ending = endingBy !== null;
+  // "Sign out now" is disabled while it is pending, and a browser hands the focus of a control it
+  // disables to the page. When the sign-out fails the dialog stays, so focus goes back to it.
+  const signOutLanding = useWaitLanding<HTMLButtonElement>(endingBy === 'visitor', undefined);
   const [password, setPassword] = useState('');
   const [reauthError, setReauthError] = useState<string | null>(null);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
   const [reauthenticate, { isLoading: reauthPending }] = useReauthenticateMutation();
+
+  // A failed sign-out belongs to the session it failed in. Should that session end some other way
+  // (a 401 elsewhere), its words must not greet the visitor in the next one.
+  const [statusSeen, setStatusSeen] = useState(status);
+  if (statusSeen !== status) {
+    setStatusSeen(status);
+    setSignOutError(null);
+  }
 
   // The countdown. `null` means the deadline is not known yet — before the first /bff/auth/me
   // response, or against a BFF too old to declare its window — and it stays null rather than
@@ -170,29 +212,48 @@ export function SessionExpiryWarning() {
   }, [status, dispatch]);
 
   /**
-   * End the session locally, whatever the server says.
+   * End the session: at the deadline whatever the server says, and on "Sign out now" only when
+   * the server has.
    *
    * `ProtectedShell` navigates only on a successful logout, deliberately: a failed revocation must
    * never masquerade as a logout while the cookie is still alive. That reasoning is right *there*,
    * where the session is healthy — and wrong here, where it is already dying. A 401 from logout
    * means the session is gone, which is the outcome asked for, not a failure to report. Treating it
    * as one is what would trap someone in this dialog forever.
+   *
+   * Any other failure of "Sign out now" is ProtectedShell's case again. The BFF ends a session and
+   * answers at once, without the API, so a logout that failed otherwise most likely never ran and
+   * the cookie is alive: a sign-in page would say "signed out" and "expired" would say "timed
+   * out", and neither happened. So nothing is ended and nothing is cleared: the dialog stays, says
+   * that the visitor is still signed in and why, and "Sign out now", focused again, can be pressed
+   * again. The deadline still ends the session if nothing else does — at zero the end is not a
+   * request but a fact, and 'expired' is the honest word for it whatever the logout answers.
    */
   const endSession = useCallback(
     async (deliberate: boolean) => {
-      setEnding(true);
+      setEndingBy(deliberate ? 'visitor' : 'deadline');
+      // A new attempt replaces the words of the last failure, a failed sign-in's included: the
+      // dialog says one thing at a time.
+      setSignOutError(null);
+      if (deliberate) setReauthError(null);
+      let ended = true;
       try {
         await dispatch(apiSlice.endpoints.logout.initiate()).unwrap();
         dispatch(deliberate ? signedOut() : sessionExpired());
       } catch (caught) {
-        const failedStatus = (caught as { status?: number | string } | undefined)?.status;
-        // 401: already gone, so a deliberate sign-out still counts as one. Anything else leaves
-        // the cookie's fate unknown, and 'expired' is the honest word for that.
-        dispatch(deliberate && failedStatus === 401 ? signedOut() : sessionExpired());
+        const problem = caught as ApiProblem | undefined;
+        if (deliberate && problem?.status !== 401) {
+          ended = false;
+          setSignOutError(signOutMessage(problem));
+        } else {
+          // 401: already gone, so a deliberate sign-out still counts as one. At the deadline,
+          // anything else leaves the cookie's fate unknown, and 'expired' is the honest word.
+          dispatch(deliberate ? signedOut() : sessionExpired());
+        }
       } finally {
         // Financial data must not outlive the session it was fetched under.
-        dispatch(apiSlice.util.resetApiState());
-        setEnding(false);
+        if (ended) dispatch(apiSlice.util.resetApiState());
+        setEndingBy(null);
       }
     },
     [dispatch],
@@ -228,8 +289,10 @@ export function SessionExpiryWarning() {
   }, [expired, ending, dispatch, endSession]);
 
   // Fires the keep-alive and nothing else. The dialog closes when the deadline moves, which only
-  // happens if the request actually reached the BFF.
+  // happens if the request actually reached the BFF. A failed sign-out's words go: the visitor has
+  // chosen to stay.
   const staySignedIn = () => {
+    setSignOutError(null);
     void dispatch(apiSlice.endpoints.getMe.initiate(undefined, { forceRefetch: true }));
   };
 
@@ -239,6 +302,7 @@ export function SessionExpiryWarning() {
   const submitReauth = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setReauthError(null);
+    setSignOutError(null);
     try {
       await reauthenticate({ password }).unwrap();
       setPassword('');
@@ -250,14 +314,27 @@ export function SessionExpiryWarning() {
   };
 
   const absolute = isAbsoluteDeadline();
-  const warningDue = remainingMs !== null && remainingMs > 0 && remainingMs <= WARNING_LEAD_MS;
+  // A re-authentication or a sign-out on its way: the one wait this dialog shows words for.
+  const waiting = reauthPending || ending;
+  // "Sign out now" keeps the dialog up until the visitor has an answer: while it is on its way,
+  // and once it has failed, with the words, until they choose again. A failure the BFF answered
+  // itself (a 429, say) counted as activity there and moves the deadline here, so without this the
+  // dialog could close a second after the failure and leave the visitor signed in without a word.
+  // Only the sign-out they asked for: the deadline's has hidden the dialog at zero, and activity
+  // that moves the deadline while it is on its way must not bring the dialog back.
+  const signingOut = endingBy === 'visitor' || signOutError !== null;
+  const warningDue =
+    remainingMs !== null && remainingMs > 0 && (remainingMs <= WARNING_LEAD_MS || signingOut);
   if (status !== 'authenticated' || !warningDue) {
     return null;
   }
 
   return (
     <Dialog open modalType="alert">
-      <DialogSurface>
+      {/* Described by the sentence and the countdown only: the hint and a failure's alert, also in
+          the content, speak for themselves, and a description that held them would read them
+          again. */}
+      <DialogSurface aria-describedby={descriptionId}>
         {/* One render path for both branches: the form wraps the body either way and only the
             absolute branch gives it anything to submit. Two paths would be two places to forget
             the countdown. */}
@@ -265,12 +342,15 @@ export function SessionExpiryWarning() {
           <DialogBody>
             <DialogTitle>Session about to expire</DialogTitle>
             <DialogContent>
-              {absolute
-                ? 'This session has reached its maximum length. For your security it ends on a fixed schedule, whether or not you are using it.'
-                : 'You have been inactive for a while.'}{' '}
               {/* Not a live region: announcing a number every second would make a screen reader
-                  unusable. The alert dialog announces this body once on open, which is the point. */}
-              You will be signed out in <strong>{formatRemaining(remainingMs)}</strong>.
+                  unusable. It is the dialog's description, read with it once on open, which is
+                  the point. */}
+              <span id={descriptionId}>
+                {absolute
+                  ? 'This session has reached its maximum length. For your security it ends on a fixed schedule, whether or not you are using it.'
+                  : 'You have been inactive for a while.'}{' '}
+                You will be signed out in <strong>{formatRemaining(remainingMs)}</strong>.
+              </span>
               {absolute && (
                 <div className={styles.reauth}>
                   {/* The cap cannot be extended, so the way to keep working is to start a new
@@ -300,20 +380,43 @@ export function SessionExpiryWarning() {
                   )}
                 </div>
               )}
+              {signOutError && (
+                <MessageBar intent="error" role="alert" className={styles.signOutError}>
+                  <MessageBarBody>{signOutError}</MessageBarBody>
+                </MessageBar>
+              )}
+              {/* Last, and outside both alerts: the words of a wait are not part of a failure.
+                  Its margin is the hint's own, not a wrapper's: a wrapper stays in the flow while
+                  the hint has no words, and its margin grew the dialog when the wait began. */}
+              {waiting && <WaitHint active kind="write" className={styles.hint} />}
             </DialogContent>
             <DialogActions>
               {/* No X and no Escape, and that is deliberate — on a security prompt "close" cannot say
                   whether it meant stay or go. The answer to "the only action is the unsafe one" is a
                   second explicit action, not a dismissal. */}
+              {/* First, in the page and on screen alike, in the branch where it is offered: the
+                  dialog opens with focus on its first control, so Space or Enter, pressed by
+                  someone who meant to stay, keeps the session instead of ending it. Kept ONLY here:
+                  this is the branch where a keep-alive genuinely moves the deadline it claims to
+                  move. At the cap the password field comes first. */}
+              {!absolute && (
+                <Button appearance="primary" type="button" onClick={staySignedIn} disabled={ending}>
+                  Stay signed in
+                </Button>
+              )}
               <Button
+                ref={signOutLanding.landingRef}
                 appearance="secondary"
                 type="button"
-                onClick={() => void endSession(true)}
+                onClick={() => {
+                  signOutLanding.arm();
+                  void endSession(true);
+                }}
                 disabled={ending || reauthPending}
               >
                 Sign out now
               </Button>
-              {absolute ? (
+              {absolute && (
                 <Button
                   appearance="primary"
                   type="submit"
@@ -324,12 +427,6 @@ export function SessionExpiryWarning() {
                   disabled={password.length === 0 || reauthPending || ending}
                 >
                   {reauthPending ? <Spinner size="tiny" /> : 'Sign in again'}
-                </Button>
-              ) : (
-                // Kept ONLY here: this is the branch where a keep-alive genuinely moves the
-                // deadline it claims to move.
-                <Button appearance="primary" type="button" onClick={staySignedIn} disabled={ending}>
-                  Stay signed in
                 </Button>
               )}
             </DialogActions>

@@ -8,9 +8,10 @@ import { expect, test, type Page } from '@playwright/test';
  * axe-core runs over the five navigation places, the Transfer wizard and the internal-transfer
  * page it links to (not the transaction detail or PIN setup), the login and register pages without
  * a session (/about is public too, but is scanned here only inside the signed-in shell), the
- * deposit dialog and the Change PIN dialog: eleven scans, with the WCAG 2.0 A/AA, 2.1 AA and 2.2 AA
- * tags. The dialog scans are scoped to the dialog, so what the page behind it fails is not reported
- * as the dialog's. Each scan writes its findings to `test-results/axe/<scan>.json` (a CI artifact)
+ * deposit dialog, the Change PIN dialog, and /accounts while its read is slow (light, dark and
+ * 375 px wide): fourteen scans, with the WCAG 2.0 A/AA, 2.1 AA and 2.2 AA tags. The dialog scans
+ * are scoped to the dialog, so what the page behind it fails is not reported as the dialog's.
+ * Each scan writes its findings to `test-results/axe/<scan>.json` (a CI artifact)
  * and attaches them to the Playwright report, then FAILS on any serious or critical violation
  * outside `REPORT_ONLY_RULES`. Until 2026-09-17 nothing here failed on a violation: the sweep was
  * the first measurement, and a gate over findings nobody had read would have been a gate nobody
@@ -275,6 +276,64 @@ test.describe('accessibility, signed in', () => {
     await expect(main).toBeFocused();
     expect((await main.evaluate(focusRing)).style).toBe('none');
   });
+});
+
+/*
+  A LOADING STATE, SCANNED. Every scan above waits for a page's content, so nothing here had ever
+  looked at the page while it waits — the one state the "Taking longer than usual…" hint lives in.
+  The read is parked with `page.route` and the page's clock moved to 20 s, so the scan sees the
+  hint's last words and its "Stop waiting" button. Three variants, because the hint's grey is the
+  kind of colour that passes on white and fails on the dark canvas, and its row must wrap at phone
+  width. The second, narrower run looks only at the hint and only at contrast, and must have
+  checked at least one node of it — a hint axe never saw would pass that check too.
+*/
+const SLOW_READ_VARIANTS: { name: string; prepare: (page: Page) => Promise<void> }[] = [
+  { name: 'accounts-slow-read', prepare: async () => {} },
+  {
+    name: 'accounts-slow-read-dark',
+    prepare: (page) => page.emulateMedia({ colorScheme: 'dark' }),
+  },
+  {
+    name: 'accounts-slow-read-375',
+    prepare: (page) => page.setViewportSize({ width: 375, height: 812 }),
+  },
+];
+
+test.describe('accessibility while a read is slow', () => {
+  for (const { name, prepare } of SLOW_READ_VARIANTS) {
+    test(`/accounts while a read is slow (${name}) has no serious or critical finding`, async ({
+      page,
+    }) => {
+      await prepare(page);
+      let parked = 0;
+      await page.clock.install();
+      await page.route('**/api/accounts*', () => {
+        // Never answered: the page waits until the test ends.
+        parked += 1;
+      });
+      await page.goto('/accounts');
+      await expect.poll(() => parked).toBe(1);
+      await expect(page.getByLabel('Loading accounts')).toBeVisible();
+
+      await page.clock.fastForward('00:20');
+      await expect(page.getByRole('status').filter({ hasText: 'Still trying…' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Stop waiting' })).toBeVisible();
+      await expect(page).toHaveTitle('Accounts · AzureBank');
+
+      await scan(page, name, '/accounts');
+
+      const contrast = await new AxeBuilder({ page })
+        .include('[data-wait-hint]')
+        .withRules(['color-contrast'])
+        .analyze();
+      const checked = contrast.passes.find((rule) => rule.id === 'color-contrast')?.nodes ?? [];
+      expect(checked.length, `${name}: axe checked no node of the hint`).toBeGreaterThan(0);
+      expect(
+        contrast.violations.flatMap((rule) => rule.nodes.map((node) => node.target.join(' '))),
+        `${name}: the hint fails colour contrast`,
+      ).toEqual([]);
+    });
+  }
 });
 
 test.describe('accessibility, signed out', () => {

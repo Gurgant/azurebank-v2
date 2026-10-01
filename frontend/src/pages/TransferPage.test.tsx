@@ -305,8 +305,10 @@ describe('external transfer (PR-11)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
     await confirmWithPin();
 
-    const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Insufficient funds for this transfer.');
+    const words = await screen.findByText('Insufficient funds for this transfer.', {
+      exact: false,
+    });
+    expect(words.closest('[role="alert"]')).not.toBeNull();
   });
 
   it('disables Review when the amount exceeds the balance', async () => {

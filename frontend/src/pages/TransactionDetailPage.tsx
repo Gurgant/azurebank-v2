@@ -19,9 +19,13 @@ import {
 import { atMedia } from '../theme/breakpoints';
 import { colors, shadows } from '../theme/tokens';
 import type { ApiProblem } from '../api/problemBaseQuery';
+import { useAppDispatch } from '../app/hooks';
+import { AlertSlot, WaitHint } from '../components/feedback';
 import { PageHeader } from '../components/layout/PageHeader';
 import type { TransactionStatus, TransactionType } from '../api/enums';
 import { useGetTransactionQuery } from '../features/api/apiSlice';
+import { abortRunning, useWaitLanding } from '../hooks/useWaitLanding';
+import { readWait } from '../hooks/useWaitPhase';
 import { formatDateHeading, formatCurrency, formatTime, isIncomeType } from '../utils/format';
 
 // ============================================
@@ -231,6 +235,9 @@ const useStyles = makeStyles({
     padding: '48px 24px',
   },
 
+  // After the wait: no box, so that the hint left inside for its "Loaded." takes no room either.
+  afterWait: { display: 'contents' },
+
   stateIcon: {
     width: '80px',
     height: '80px',
@@ -288,9 +295,30 @@ export function TransactionDetailPage() {
   const { id } = useParams<{ id: string }>();
 
   // T2 — enveloped detail, tagged {Transaction,id}. The route guarantees `id`.
-  const { data: transaction, isLoading, error, refetch } = useGetTransactionQuery(id ?? '');
-  const problem = error as ApiProblem | undefined;
+  const {
+    data: transaction,
+    isLoading,
+    isFetching,
+    error,
+    refetch,
+    requestId,
+  } = useGetTransactionQuery(id ?? '');
+  // The spinner and the bar follow the wait, not `isLoading` and `error`: a Retry keeps the old
+  // error while it runs, so the bar goes away for the new wait and comes back, announced, only if
+  // that wait fails too.
+  const { waiting, failed } = readWait({ isLoading, isFetching, error });
+  const problem = failed ? (error as ApiProblem) : undefined;
   const isNotFound = problem?.status === 404;
+
+  const dispatch = useAppDispatch();
+  const { landingRef, arm } = useWaitLanding<HTMLButtonElement>(waiting, requestId);
+  const stopWaiting = () => {
+    if (abortRunning(dispatch, [{ endpoint: 'getTransaction', arg: id ?? '' }])) arm();
+  };
+  const retry = () => {
+    arm();
+    void refetch();
+  };
 
   // [badge background, dot fill, label text color] — the dot needs a FILL, the
   // label a color only; one shared class painted a block behind the text.
@@ -309,11 +337,12 @@ export function TransactionDetailPage() {
           contradicting each other on one screen. */}
       <PageHeader title="Transaction Details" onBack={() => navigate('/history')} />
 
-      {isLoading && (
-        <div className={styles.stateContainer}>
-          <Spinner size="large" aria-label="Loading transaction" />
-        </div>
-      )}
+      {/* The spinner's box while the read waits, and no box afterwards: the hint stays inside it
+          for its "Loaded.". */}
+      <div className={waiting ? styles.stateContainer : styles.afterWait}>
+        {waiting && <Spinner size="large" aria-label="Loading transaction" />}
+        <WaitHint active={waiting} kind="read" failed={failed} onStopWaiting={stopWaiting} />
+      </div>
 
       {/* A 404 is a first-class outcome, not an error bar: the link may be stale. */}
       {isNotFound && (
@@ -331,21 +360,23 @@ export function TransactionDetailPage() {
         </div>
       )}
 
-      {problem && !isNotFound && (
-        <div className={styles.content}>
-          <MessageBar intent="error">
+      {/* Keyed by the request that failed, so that a Retry which fails again before its wait is
+          ever drawn still puts a new bar into the alert, and it is announced again. */}
+      <AlertSlot className={styles.content}>
+        {problem && !isNotFound && (
+          <MessageBar key={requestId} intent="error">
             <MessageBarBody>
               {problem.detail || 'Could not load the transaction.'}
               {problem.traceId ? ` Support code: ${problem.traceId}` : ''}
             </MessageBarBody>
             <MessageBarActions>
-              <Button appearance="transparent" onClick={() => void refetch()}>
+              <Button ref={landingRef} appearance="transparent" onClick={retry}>
                 Retry
               </Button>
             </MessageBarActions>
           </MessageBar>
-        </div>
-      )}
+        )}
+      </AlertSlot>
 
       {transaction && (
         <div className={styles.content}>

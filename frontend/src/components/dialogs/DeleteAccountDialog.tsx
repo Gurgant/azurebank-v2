@@ -11,14 +11,14 @@ import {
 } from '@fluentui/react-components';
 import { Delete24Regular } from '@fluentui/react-icons';
 import { colors } from '../../theme/tokens';
-import type { ApiProblem } from '../../api/problemBaseQuery';
-import { CONNECTION_FAILED } from '../../api/problemMessages';
+import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
+import { CONNECTION_FAILED, SERVICE_UNAVAILABLE } from '../../api/problemMessages';
 import {
   apiSlice,
   useAuthoriseAccountDeletionMutation,
   useDeleteAccountMutation,
 } from '../../features/api/apiSlice';
-import { RetryCountdown, retryDeadline } from '../feedback';
+import { RetryCountdown, WaitHint, retryDeadline } from '../feedback';
 import { PinInput } from '../PinInput';
 import { MoneyDialogShell } from './MoneyDialogShell';
 import { useMoneyDialogStyles } from './moneyDialogStyles';
@@ -175,6 +175,17 @@ export function DeleteAccountDialog({ account, onClose }: DeleteAccountDialogPro
       */
       dispatch(apiSlice.util.invalidateTags([{ type: 'Account', id: 'LIST' }]));
       onClose();
+    } else if (isServiceOutage(problem)) {
+      /*
+        A 503, or no answer in 65 s — before the transport branch, because the second is
+        `status: 'NETWORK'` too and the connection was not the problem. The plain outage sentence,
+        not "we can't tell whether it was saved": trying again is safe here, because a DELETE that
+        did land makes the next attempt answer ACCOUNT_NOT_FOUND, which the branch above treats as
+        done. Boxes cleared and remounted, as every other branch.
+      */
+      setPin('');
+      setPinNonce((n) => n + 1);
+      setError(SERVICE_UNAVAILABLE);
     } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
       // A transport failure AFTER the mint leaves one Pending row server-side, and the next
       // completion mints again — harmless: D12/D16 show a Pending row that is never spent, or is
@@ -251,6 +262,9 @@ export function DeleteAccountDialog({ account, onClose }: DeleteAccountDialogPro
           {/* No button on this step — the sixth digit is the submit — so the pending state has
               nowhere else to live (TransferPage does the same). */}
           {busy && <Spinner size="tiny" label="Deleting account" />}
+          {/* Beside the spinner, outside the boxes' described-by target in the footer: one wait
+              across the mint and the delete, as `busy` is. */}
+          <WaitHint active={busy} kind="write" />
         </div>
       )}
 

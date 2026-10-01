@@ -70,6 +70,13 @@ function isGetMeAction(action: unknown): boolean {
  *    request never reached the BFF or came back unreadable, so the server's clock did not
  *    move. This used to mark activity on every `rejectedWithValue`, so an offline
  *    "Stay signed in" reset the countdown while doing nothing at all.
+ *  - Nor does a 503 that neither server wrote (`errorCode` `HTTP_503`: a body that is not JSON,
+ *    an empty one, or JSON with no code). The BFF and the API put `SERVICE_UNAVAILABLE` on every
+ *    503 they send, so this one came from something in front of the BFF — an ingress whose BFF
+ *    is down — and the BFF never saw the request. Counting it would slide the mirror on every
+ *    Retry while the server's clock stands still: the late direction. (The non-JSON one was
+ *    `'PARSE'`, and so uncounted, until it became a numeric 503 so that it reads and retries as
+ *    the outage.)
  *  - Every other rejection DOES count. A 400, a 409, a 429 all reached the server and slid
  *    its clock, so the mirror must slide with it.
  */
@@ -77,6 +84,9 @@ const NON_ACTIVITY_ENDPOINTS = new Set(['getSessionStatus']);
 
 /** Transport-level failures: the request never reached the BFF, so its clock did not move. */
 const TRANSPORT_FAILURES = new Set(['NETWORK', 'PARSE']);
+
+/** A 503 with no code of its own: not the BFF's answer, so not the BFF's clock. */
+const NOT_THE_BFFS_503 = 'HTTP_503';
 
 /**
  * 401s that belong to the surface that asked, not to the session. See the D3 note above.
@@ -104,8 +114,9 @@ function countsAsActivity(action: unknown): boolean {
   if (isFulfilled(action)) return true;
   if (!isRejectedWithValue(action)) return false;
 
-  const status = (action.payload as Partial<ApiProblem> | undefined)?.status;
-  return !(typeof status === 'string' && TRANSPORT_FAILURES.has(status));
+  const problem = action.payload as Partial<ApiProblem> | undefined;
+  if (typeof problem?.status === 'string' && TRANSPORT_FAILURES.has(problem.status)) return false;
+  return problem?.errorCode !== NOT_THE_BFFS_503;
 }
 
 export const sessionMiddleware: Middleware = (middlewareApi) => (next) => (action) => {

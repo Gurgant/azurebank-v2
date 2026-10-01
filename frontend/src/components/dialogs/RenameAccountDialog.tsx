@@ -15,8 +15,10 @@ import {
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import type { ApiProblem } from '../../api/problemBaseQuery';
+import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
+import { SAVE_OUTCOME_UNKNOWN } from '../../api/problemMessages';
 import { useRenameAccountMutation } from '../../features/api/apiSlice';
+import { WaitHint } from '../feedback';
 
 // Mirrors the backend contract: rename touches the name ONLY, 2-100 chars.
 const renameAccountSchema = z.object({
@@ -91,7 +93,11 @@ export function RenameAccountDialog({ account, onClose }: RenameAccountDialogPro
                    mounts no Fluent announcer, so without it the failure appeared in silence. */
                 <MessageBar intent="error" role="alert">
                   <MessageBarBody>
-                    {problem.detail || 'Could not rename the account. Please try again.'}
+                    {/* An outage (a 503, or no answer in 65 s) may have saved the new name
+                        anyway: say that it cannot tell, not that the rename failed. */}
+                    {isServiceOutage(problem)
+                      ? SAVE_OUTCOME_UNKNOWN
+                      : problem.detail || 'Could not rename the account. Please try again.'}
                   </MessageBarBody>
                 </MessageBar>
               )}
@@ -105,6 +111,9 @@ export function RenameAccountDialog({ account, onClose }: RenameAccountDialogPro
                     store — the dialog mounts per open, so both always agree. */}
                 <Input defaultValue={account.name} {...register('name')} />
               </Field>
+              {/* Last, above the actions and outside the alert: the words of a wait are not part
+                  of a failure. */}
+              <WaitHint active={isLoading} kind="write" />
             </DialogContent>
             <DialogActions>
               <Button appearance="secondary" onClick={onClose} type="button">

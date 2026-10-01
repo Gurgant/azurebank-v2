@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
@@ -9,6 +9,17 @@ import { mockState } from '../../mocks/state';
 import { apiSlice } from '../../features/api/apiSlice';
 import { makeTestStore, renderWithProviders, type TestStore } from '../../test/renderWithProviders';
 import { enterPin, TEST_PIN } from '../../test/pinFlow';
+import {
+  COPY,
+  advanceUntil,
+  fakeClockUser,
+  hintRegion,
+  hintShownAt,
+  installFakeClock,
+  never,
+  sleep,
+} from '../../test/outage';
+import { CONNECTION_FAILED } from '../../api/problemMessages';
 import { DeleteAccountDialog } from './DeleteAccountDialog';
 
 /*
@@ -497,6 +508,37 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it('a DELETE with no answer ends at 65 s saying the service is unavailable, not "check your connection", and clears the boxes', async () => {
+    /*
+      A request the SPA stops waiting for is `status: 'NETWORK'` too, so the outage has to be
+      recognised before the transport branch. The plain outage sentence, not "we can't tell whether
+      it was saved": a DELETE that did land makes the next attempt answer ACCOUNT_NOT_FOUND, which
+      closes the dialog as done.
+    */
+    seedTempFund();
+    let sentAt = 0;
+    server.use(
+      http.delete(ACCOUNT_URL, () => {
+        sentAt = Date.now();
+        return never();
+      }),
+    );
+    const { onClose } = renderDialog();
+    await reachPinStep();
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByLabelText('Digit 1 of 6'));
+    await user.paste(TEST_PIN);
+    await waitFor(() => expect(sentAt).toBeGreaterThan(0));
+
+    await advanceUntil(sentAt, 65_100);
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.unavailable));
+    expect(screen.queryByText(CONNECTION_FAILED)).not.toBeInTheDocument();
+    expect(pinBoxes().map((box) => (box as HTMLInputElement).value)).toEqual(Array(6).fill(''));
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it('an errorCode-less 401 on the mint IS a dead session — auth flips to expired', async () => {
     /*
       The BFF's own 401 shape (auth.test.tsx: ProblemDetails WITHOUT errorCode) -> HTTP_401 in
@@ -594,5 +636,42 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
       release();
     }
     await screen.findByText('released');
+  });
+
+  it('says it is slow from the sixth digit, through the mint and the delete as one wait, with no way to stop it', async () => {
+    seedTempFund();
+    let mintAt = 0;
+    let deletes = 0;
+    server.use(
+      http.post(MINT_URL, async () => {
+        mintAt = Date.now();
+        await sleep(3_000);
+        return undefined;
+      }),
+      http.delete(ACCOUNT_URL, () => {
+        deletes += 1;
+        return never();
+      }),
+    );
+    renderDialog();
+    const dialog = await reachPinStep();
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByLabelText('Digit 1 of 6'));
+    await user.paste(TEST_PIN);
+
+    // Drawn while the mint is still out, before the hand-off to the delete at 3 s.
+    const shownAt = await hintShownAt(dialog);
+    await waitFor(() => expect(mintAt).toBeGreaterThan(0));
+    expect(deletes).toBe(0);
+    await advanceUntil(mintAt, 3_100);
+    await waitFor(() => expect(deletes).toBe(1));
+
+    // Counted from the sixth digit, not restarted by the hand-off.
+    await advanceUntil(shownAt, 5_000);
+    hintRegion(COPY.slow, dialog);
+    await advanceUntil(shownAt, 20_000);
+    hintRegion(COPY.stillTrying, dialog);
+    expect(within(dialog).queryByRole('button', { name: COPY.stopWaiting })).toBeNull();
   });
 });

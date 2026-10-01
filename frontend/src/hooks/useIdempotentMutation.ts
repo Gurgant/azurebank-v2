@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import type { IdempotentArg } from '../features/api/apiSlice';
 
@@ -50,12 +50,16 @@ function shouldKeepKey(problem: ApiProblem): boolean {
 /**
  * Client half of the idempotency protocol, one instance per money-intent. The key is
  * lazy (`crypto.randomUUID()` on first submit), in-memory only, and re-keyed on
- * `errorCode` — never on HTTP status. Any body-affecting form edit must call
- * `resetIntent` (an edited body with the old key is a byte-fingerprint mismatch → 422).
+ * `errorCode` — never on HTTP status. A body-affecting form edit calls `resetIntent`
+ * only while no key is held (an edited body with the old key is a byte-fingerprint
+ * mismatch → 422); while one is retained the flow calls `requireVerify` instead (below),
+ * or keeps its form disabled, as the transfer pages do. (Until 2026-10-01 this said every
+ * such edit must call `resetIntent`, which withdraw's edits had stopped doing on 2026-09-23.)
  *
  * `IDEMPOTENCY_RESULT_UNKNOWN` drops the key and latches `verifyRequired`: submit
  * refuses to mint a new key until the owning flow's explicit "it didn't go through —
  * try again" action calls `resetIntent` (after the verify-transactions dialog, ADR-0022).
+ * A rejection with no HTTP status latches the same way (see the catch below).
  */
 export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger<TBody, TResult>) {
   const keyRef = useRef<string | null>(null);
@@ -66,6 +70,24 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
   // KEPT after an IN_FLIGHT / network / parse / 5xx failure too, and abandoning it then
   // reopening would mint a fresh key = a new intent = a double-spend.
   const [keyRetained, setKeyRetained] = useState(false);
+
+  /*
+    A reload or a tab close while a key is held. The key lives only in this page, so the next
+    attempt from a reloaded page carries a new one, and if the first request lands the visitor
+    pays twice. No in-app control covers that path, so the browser is asked to ask first. It warns
+    and defers to the visitor; it cannot stop a reload, and a key abandoned that way is still lost.
+    Here rather than in each flow, so that every money send — both transfer pages, deposit and
+    withdraw — has it for as long as it holds a key, and none can be left without it.
+  */
+  useEffect(() => {
+    if (!keyRetained) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [keyRetained]);
 
   const resetIntent = useCallback(() => {
     keyRef.current = null;
@@ -101,7 +123,15 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
         return result;
       } catch (error) {
         const problem = error as ApiProblem;
-        if (problem.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN') {
+        /*
+          A rejection with NO HTTP status is not a refusal: `problemBaseQuery` gives every answer
+          and every transport failure a status, so what is left is a 2xx whose body failed its
+          schema — the server acted — or an abort. Either way the request may have landed, which
+          is exactly what RESULT_UNKNOWN says, so it gets the same latch. Dropping the key quietly
+          instead let the flow say "failed, try again", and the next press sent a second key.
+        */
+        const noStatus = (problem as Partial<ApiProblem> | undefined)?.status === undefined;
+        if (noStatus || problem.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN') {
           keyRef.current = null;
           verifyRequiredRef.current = true;
           setVerifyRequired(true);

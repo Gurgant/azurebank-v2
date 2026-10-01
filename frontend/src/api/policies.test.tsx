@@ -3,14 +3,21 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { getStepUpSnapshot, settleStepUp } from '../features/auth/stepUpController';
 import { http, HttpResponse } from 'msw';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { server } from '../mocks/server';
-import { problem } from '../mocks/problem';
+import { problem, serviceUnavailable } from '../mocks/problem';
 import { seedMockSession } from '../mocks/state';
 import { makeTestStore } from '../test/renderWithProviders';
+import { COPY, advance, advanceUntil, never, sleep, track, installFakeClock } from '../test/outage';
 import { apiSlice, useDepositMutation, useWithdrawMutation } from '../features/api/apiSlice';
-import { useIdempotentMutation } from '../hooks/useIdempotentMutation';
-import type { ApiProblem } from './problemBaseQuery';
+import { useIdempotentMutation, type IdempotentTrigger } from '../hooks/useIdempotentMutation';
+import type { BaseQueryApi } from '@reduxjs/toolkit/query';
+import { problemBaseQuery, toApiProblem, type ApiProblem } from './problemBaseQuery';
+import { classifyMoneyProblem } from './moneyProblem';
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 /**
  * The six flagship policy tests (ADR-0022) — the data-layer contract as executable
@@ -113,37 +120,536 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
     expect(keys[3]).not.toBe(keys[2]);
   });
 
-  it(
-    '2 — auto-retries queries on 503 up to 3 total attempts; never mutations',
-    { timeout: 15000 },
-    async () => {
-      let getCalls = 0;
-      let postCalls = 0;
-      server.use(
-        http.get('*/api/accounts', () => {
-          getCalls += 1;
-          return problem({ status: 503 });
+  it('1b — keeps the same Idempotency-Key when the 503 says nothing was applied', async () => {
+    // `applied: false` changes the words a visitor reads, never the key — ADR-0058: "A client never
+    // drops the key on `applied: false`". The same key is what lets the server answer the retry
+    // from the first attempt's record, if there is one.
+    const keys: string[] = [];
+    server.use(
+      http.post('*/api/transactions/deposit', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key') ?? '(missing)');
+        return keys.length === 1
+          ? serviceUnavailable({
+              via: 'api',
+              applied: false,
+              instance: '/api/transactions/deposit',
+            })
+          : depositOk();
+      }),
+    );
+
+    const { Wrapper } = hookWrapper();
+    const { result } = renderHook(() => useDepositIntent(), { wrapper: Wrapper });
+    const body = { accountId: UUID, amount: 50 };
+
+    const first = await act(() => settle(result.current.submit(body)));
+    expect(first.ok).toBe(false);
+    expect(result.current.keyRetained).toBe(true);
+
+    const second = await act(() => settle(result.current.submit(body)));
+    expect(second.ok).toBe(true);
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).toBe(keys[0]);
+  });
+
+  /** Records the fake instant of every call, answering each with `answer`. */
+  function recordReads(answer: () => Response | Promise<Response>) {
+    const times: number[] = [];
+    server.use(
+      http.get('*/api/accounts', () => {
+        times.push(Date.now());
+        return answer();
+      }),
+    );
+    return times;
+  }
+
+  it("2 — retries a read's 503 once, after the answer's retryAfterSeconds, then gives up", async () => {
+    const times = recordReads(() =>
+      serviceUnavailable({ via: 'api', retryAfterSeconds: 10, instance: '/api/accounts' }),
+    );
+    installFakeClock();
+    const { store } = hookWrapper();
+    const query = store.dispatch(apiSlice.endpoints.getAccounts.initiate());
+    const outcome = track(query.unwrap());
+    await waitFor(() => expect(times.length).toBeGreaterThan(0));
+    const [first] = times;
+
+    // Never earlier than asked, and at most a fifth later: the spread is random here.
+    await advanceUntil(first, 9_900);
+    expect(times).toHaveLength(1);
+
+    await advanceUntil(first, 12_100);
+    await waitFor(() => expect(times).toHaveLength(2));
+
+    await advanceUntil(first, 60_000);
+    expect(times).toHaveLength(2);
+    expect(outcome.state).toBe('rejected');
+    expect(outcome.error).toMatchObject({ status: 503 });
+    query.unsubscribe();
+  });
+
+  it("2b — never retries a mutation's 503", async () => {
+    let postCalls = 0;
+    server.use(
+      http.post('*/api/transactions/deposit', () => {
+        postCalls += 1;
+        return serviceUnavailable({ via: 'api', instance: '/api/transactions/deposit' });
+      }),
+    );
+    installFakeClock();
+    const { store } = hookWrapper();
+
+    const mutation = store.dispatch(
+      apiSlice.endpoints.deposit.initiate({
+        idempotencyKey: crypto.randomUUID(),
+        body: { accountId: UUID, amount: 5 },
+      }),
+    );
+    const outcome = track(mutation.unwrap());
+    await advance(60_000);
+
+    await waitFor(() => expect(outcome.state).toBe('rejected'));
+    expect(outcome.error).toMatchObject({ status: 503 });
+    expect(postCalls).toBe(1);
+  });
+
+  it('2c — a read retry that would not fit the two-minute budget is not sent', async () => {
+    // Held 55 s, as the BFF answers when the API does not: 55 + 70 leaves no room for a retry.
+    const times = recordReads(async () => {
+      await sleep(55_000);
+      return serviceUnavailable({ via: 'bff', retryAfterSeconds: 70, instance: '/api/accounts' });
+    });
+    installFakeClock();
+    const { store } = hookWrapper();
+    const query = store.dispatch(apiSlice.endpoints.getAccounts.initiate());
+    const outcome = track(query.unwrap());
+    await waitFor(() => expect(times.length).toBeGreaterThan(0));
+    const [first] = times;
+
+    await advanceUntil(first, 180_000);
+    expect(times).toHaveLength(1);
+    expect(outcome.state).toBe('rejected');
+    expect(outcome.error).toMatchObject({ status: 503 });
+    expect((outcome.at ?? 0) - first).toBeGreaterThanOrEqual(55_000);
+    expect((outcome.at ?? 0) - first).toBeLessThan(55_500);
+    query.unsubscribe();
+  });
+
+  it('2d — a read retry that fits is sent, and is cut where the two-minute budget ends', async () => {
+    const times = recordReads(async () => {
+      await sleep(55_000);
+      return serviceUnavailable({ via: 'bff', retryAfterSeconds: 10, instance: '/api/accounts' });
+    });
+    installFakeClock();
+    const { store } = hookWrapper();
+    const start = Date.now();
+    const query = store.dispatch(apiSlice.endpoints.getAccounts.initiate());
+    const outcome = track(query.unwrap());
+    await waitFor(() => expect(times.length).toBeGreaterThan(0));
+    const [first] = times;
+
+    await advanceUntil(start, 119_900);
+    expect(times).toHaveLength(2);
+    expect(outcome.state).toBe('pending');
+
+    await advanceUntil(first, 120_100);
+    await waitFor(() => expect(outcome.state).toBe('rejected'));
+    expect(outcome.error).toMatchObject({ status: 'NETWORK', errorCode: 'TIMEOUT_ERROR' });
+    expect((outcome.at ?? 0) - start).toBeGreaterThanOrEqual(119_900);
+    expect((outcome.at ?? 0) - first).toBeLessThanOrEqual(120_100);
+    expect(times).toHaveLength(2);
+    query.unsubscribe();
+  });
+
+  it('2e — a request that never reached a server is retried once, a second later, for a read', async () => {
+    const times = recordReads(() => HttpResponse.error());
+    installFakeClock();
+    const { store } = hookWrapper();
+    const query = store.dispatch(apiSlice.endpoints.getAccounts.initiate());
+    const outcome = track(query.unwrap());
+    await waitFor(() => expect(times.length).toBeGreaterThan(0));
+    const [first] = times;
+
+    await advanceUntil(first, 900);
+    expect(times).toHaveLength(1);
+
+    await advanceUntil(first, 1_300);
+    await waitFor(() => expect(times).toHaveLength(2));
+
+    await advanceUntil(first, 10_000);
+    expect(times).toHaveLength(2);
+    expect(outcome.state).toBe('rejected');
+    query.unsubscribe();
+  });
+
+  it.each([
+    ['a 502', () => problem({ status: 502 })],
+    ['a 502 with no body', () => new HttpResponse(null, { status: 502 })],
+    ['a 504', () => problem({ status: 504 })],
+    ['a 503 that names no wait', () => problem({ status: 503 })],
+    [
+      'a 503 that is not JSON and names no wait',
+      () => serviceUnavailable({ via: 'api', contentType: 'text/plain' }),
+    ],
+  ])('2r — %s is retried once, five seconds later, for a read', async (_name, answer) => {
+    // A gateway's answer that names no wait says the service behind it is down, not that a
+    // connection blinked: a second later it is most likely still down.
+    const times = recordReads(answer);
+    installFakeClock();
+    const { store } = hookWrapper();
+    const query = store.dispatch(apiSlice.endpoints.getAccounts.initiate());
+    const outcome = track(query.unwrap());
+    await waitFor(() => expect(times.length).toBeGreaterThan(0));
+    const [first] = times;
+
+    await advanceUntil(first, 4_900);
+    expect(times).toHaveLength(1);
+
+    await advanceUntil(first, 6_100);
+    await waitFor(() => expect(times).toHaveLength(2));
+
+    await advanceUntil(first, 30_000);
+    expect(times).toHaveLength(2);
+    expect(outcome.state).toBe('rejected');
+    query.unsubscribe();
+  });
+
+  it('2f — a read retry that would have less than five seconds left is not sent', async () => {
+    // 55 + 62 leaves 3 s of the two minutes: too little for an answer, so the visitor is told now.
+    const times = recordReads(async () => {
+      await sleep(55_000);
+      return serviceUnavailable({ via: 'bff', retryAfterSeconds: 62, instance: '/api/accounts' });
+    });
+    installFakeClock();
+    const { store } = hookWrapper();
+    const query = store.dispatch(apiSlice.endpoints.getAccounts.initiate());
+    const outcome = track(query.unwrap());
+    await waitFor(() => expect(times.length).toBeGreaterThan(0));
+    const [first] = times;
+
+    await advanceUntil(first, 180_000);
+    expect(times).toHaveLength(1);
+    expect(outcome.state).toBe('rejected');
+    expect(outcome.error).toMatchObject({ status: 503 });
+    expect((outcome.at ?? 0) - first).toBeLessThan(55_500);
+    query.unsubscribe();
+  });
+
+  it('2g — a read stopped while it waits for its retry sends nothing more', async () => {
+    const times = recordReads(() =>
+      serviceUnavailable({ via: 'api', retryAfterSeconds: 10, instance: '/api/accounts' }),
+    );
+    installFakeClock();
+    const { store } = hookWrapper();
+    const query = store.dispatch(apiSlice.endpoints.getAccounts.initiate());
+    const outcome = track(query.unwrap());
+    await waitFor(() => expect(times.length).toBeGreaterThan(0));
+    const [first] = times;
+
+    await advanceUntil(first, 5_000);
+    query.abort();
+    await waitFor(() => expect(outcome.state).toBe('rejected'));
+    expect(outcome.error).toMatchObject({ name: 'AbortError' });
+
+    await advanceUntil(first, 30_000);
+    expect(times).toHaveLength(1);
+    query.unsubscribe();
+  });
+
+  it.each([
+    ['a 500', () => problem({ status: 500, errorCode: 'INTERNAL_ERROR' })],
+    [
+      'a 429 that names a wait',
+      () =>
+        problem({ status: 429, errorCode: 'RATE_LIMITED', extensions: { retryAfterSeconds: 1 } }),
+    ],
+    [
+      'a 502 that is not JSON',
+      () =>
+        new HttpResponse('Bad Gateway', {
+          status: 502,
+          headers: { 'Content-Type': 'text/plain' },
         }),
-        http.post('*/api/transactions/deposit', () => {
-          postCalls += 1;
-          return problem({ status: 503 });
+    ],
+  ])('2h — %s is an answer, and a read never sends it again', async (_name, answer) => {
+    const times = recordReads(answer);
+    installFakeClock();
+    const { store } = hookWrapper();
+    const query = store.dispatch(apiSlice.endpoints.getAccounts.initiate());
+    const outcome = track(query.unwrap());
+    await waitFor(() => expect(times.length).toBeGreaterThan(0));
+    const [first] = times;
+
+    await waitFor(() => expect(outcome.state).toBe('rejected'));
+    await advanceUntil(first, 10_000);
+    expect(times).toHaveLength(1);
+    query.unsubscribe();
+  });
+
+  it('2i — a wait before the retry that ends late, as when a phone suspends the page, still leaves the retry its own time', async () => {
+    // The answer names 10 s, and two seconds in the page is suspended for two minutes: by the wall
+    // clock the budget is spent when the wait ends. The retry was allowed when it was planned, so
+    // it goes out with a limit of its own and sees the service that came back meanwhile.
+    const times: number[] = [];
+    server.use(
+      http.get('*/api/accounts', async () => {
+        times.push(Date.now());
+        if (times.length === 1) {
+          return serviceUnavailable({
+            via: 'api',
+            retryAfterSeconds: 10,
+            instance: '/api/accounts',
+          });
+        }
+        // Back, and a second to answer: the mock's own accounts, from the handler behind this one.
+        await sleep(1_000);
+        return undefined;
+      }),
+    );
+    installFakeClock();
+    const { store } = hookWrapper();
+    const query = store.dispatch(apiSlice.endpoints.getAccounts.initiate());
+    const outcome = track(query.unwrap());
+    await waitFor(() => expect(times).toHaveLength(1));
+
+    await advanceUntil(times[0], 2_000);
+    // Suspended: the wall clock jumps, and no timer runs meanwhile.
+    vi.setSystemTime(Date.now() + 120_000);
+    await advance(10_000);
+    await waitFor(() => expect(times).toHaveLength(2));
+
+    await advance(2_000);
+    await waitFor(() => expect(outcome.state).not.toBe('pending'));
+    expect(outcome.error).toBeUndefined();
+    expect(outcome.state).toBe('fulfilled');
+    expect(times).toHaveLength(2);
+    query.unsubscribe();
+  });
+
+  it('2j — a read stopped while it waits for its retry gives up at once, not when the wait would have ended', async () => {
+    // Seen from the base query itself: the store rejects a stopped read at once whatever the base
+    // query goes on doing, so only here does a wait that ignores the stop differ from one that ends.
+    const times = recordReads(() =>
+      serviceUnavailable({ via: 'api', retryAfterSeconds: 10, instance: '/api/accounts' }),
+    );
+    installFakeClock();
+    const stop = new AbortController();
+    const api = {
+      signal: stop.signal,
+      abort: (reason?: string) => stop.abort(reason),
+      dispatch: () => undefined,
+      getState: () => ({}),
+      extra: undefined,
+      endpoint: 'getAccounts',
+      type: 'query',
+    } as unknown as BaseQueryApi;
+    const outcome = track(Promise.resolve(problemBaseQuery('/api/accounts', api, {})));
+    await waitFor(() => expect(times.length).toBeGreaterThan(0));
+    const [first] = times;
+
+    await advanceUntil(first, 2_000);
+    expect(outcome.state).toBe('pending');
+    stop.abort();
+
+    await waitFor(() => expect(outcome.state).toBe('fulfilled'));
+    expect(outcome.value).toMatchObject({ error: { status: 503 } });
+    expect((outcome.at ?? 0) - first).toBeLessThan(3_000);
+    expect(times).toHaveLength(1);
+  });
+
+  it('2k — a 503 that is not JSON waits what its Retry-After header asks before the retry', async () => {
+    const times = recordReads(
+      () =>
+        new HttpResponse('Service Unavailable', {
+          status: 503,
+          headers: { 'Content-Type': 'text/plain', 'Retry-After': '30' },
         }),
+    );
+    installFakeClock();
+    const { store } = hookWrapper();
+    const query = store.dispatch(apiSlice.endpoints.getAccounts.initiate());
+    const outcome = track(query.unwrap());
+    await waitFor(() => expect(times.length).toBeGreaterThan(0));
+    const [first] = times;
+
+    await advanceUntil(first, 29_900);
+    expect(times).toHaveLength(1);
+
+    await advanceUntil(first, 36_100);
+    await waitFor(() => expect(times).toHaveLength(2));
+    await waitFor(() => expect(outcome.state).toBe('rejected'));
+    expect(outcome.error).toMatchObject({
+      status: 503,
+      errorCode: 'HTTP_503',
+      retryAfterSeconds: 30,
+    });
+    query.unsubscribe();
+  });
+
+  it('2l — a Retry-After that is a date waits until that date, never less', async () => {
+    // RFC 9110 lets Retry-After be an HTTP-date. It has whole seconds, so the date 30 s ahead,
+    // written at the answer, is between 29 and 30 s ahead.
+    const times = recordReads(
+      () =>
+        new HttpResponse('Service Unavailable', {
+          status: 503,
+          headers: {
+            'Content-Type': 'text/plain',
+            'Retry-After': new Date(Date.now() + 30_000).toUTCString(),
+          },
+        }),
+    );
+    installFakeClock();
+    const { store } = hookWrapper();
+    const query = store.dispatch(apiSlice.endpoints.getAccounts.initiate());
+    const outcome = track(query.unwrap());
+    await waitFor(() => expect(times.length).toBeGreaterThan(0));
+    const [first] = times;
+
+    await advanceUntil(first, 28_900);
+    expect(times).toHaveLength(1);
+
+    await advanceUntil(first, 36_100);
+    await waitFor(() => expect(times).toHaveLength(2));
+    await waitFor(() => expect(outcome.state).toBe('rejected'));
+    const named = (outcome.error as ApiProblem).retryAfterSeconds ?? 0;
+    expect(named).toBeGreaterThanOrEqual(29);
+    expect(named).toBeLessThanOrEqual(30);
+    query.unsubscribe();
+  });
+
+  /** What RTK hands the base query for a read, with a stop of its own. */
+  function readApi() {
+    const stop = new AbortController();
+    return {
+      signal: stop.signal,
+      abort: (reason?: string) => stop.abort(reason),
+      dispatch: () => undefined,
+      getState: () => ({}),
+      extra: undefined,
+      endpoint: 'getAccounts',
+      type: 'query',
+    } as unknown as BaseQueryApi;
+  }
+
+  it.each([
+    [0, 10_000],
+    [0.5, 11_000],
+    [0.999, 11_998],
+  ])(
+    '2m — the wait before a retry is the one asked for plus up to a fifth: random %s waits %s ms',
+    async (random, waitMs) => {
+      // Every reader in one outage hears the same Retry-After; without a spread they all come
+      // back in the same second.
+      const times = recordReads(() =>
+        serviceUnavailable({ via: 'api', retryAfterSeconds: 10, instance: '/api/accounts' }),
       );
-
-      const { store } = hookWrapper();
-
-      const query = store.dispatch(apiSlice.endpoints.getAccounts.initiate());
-      await expect(query.unwrap()).rejects.toMatchObject({ status: 503 });
-      expect(getCalls).toBe(3);
-
-      const mutation = store.dispatch(
-        apiSlice.endpoints.deposit.initiate({
-          idempotencyKey: crypto.randomUUID(),
-          body: { accountId: UUID, amount: 5 },
-        }),
+      installFakeClock();
+      const outcome = track(
+        Promise.resolve(problemBaseQuery('/api/accounts', readApi(), { random: () => random })),
       );
-      await expect(mutation.unwrap()).rejects.toMatchObject({ status: 503 });
-      expect(postCalls).toBe(1);
+      await waitFor(() => expect(times.length).toBeGreaterThan(0));
+      const [first] = times;
+
+      await advanceUntil(first, waitMs - 100);
+      expect(times).toHaveLength(1);
+
+      await advanceUntil(first, waitMs + 100);
+      await waitFor(() => expect(times).toHaveLength(2));
+      await waitFor(() => expect(outcome.state).toBe('fulfilled'));
+    },
+  );
+
+  it('2n — the two-minute budget is checked against the wait with its spread', async () => {
+    // Held 55 s, then 55 s asked for: 110 s, which would leave the retry 10 s. With the spread the
+    // wait is 65.89 s, past the budget, so no retry is sent and the visitor is told at 55 s.
+    const times = recordReads(async () => {
+      await sleep(55_000);
+      return serviceUnavailable({ via: 'bff', retryAfterSeconds: 55, instance: '/api/accounts' });
+    });
+    installFakeClock();
+    const outcome = track(
+      Promise.resolve(problemBaseQuery('/api/accounts', readApi(), { random: () => 0.99 })),
+    );
+    await waitFor(() => expect(times.length).toBeGreaterThan(0));
+    const [first] = times;
+
+    await advanceUntil(first, 180_000);
+    expect(times).toHaveLength(1);
+    expect(outcome.state).toBe('fulfilled');
+    expect(outcome.value).toMatchObject({ error: { status: 503 } });
+    expect((outcome.at ?? 0) - first).toBeLessThan(55_500);
+  });
+
+  it('2o — a Retry-After date with part of a second to go is rounded up: the retry never goes before it', async () => {
+    // A date has whole seconds and the answer comes partway through one, so the wait to the date
+    // has a fraction. Rounded down, the retry would go up to a second before the date.
+    let named = 0;
+    const times = recordReads(() => {
+      // The first answer names the date; the retry is answered with the same one.
+      if (named === 0) named = (Math.floor(Date.now() / 1000) + 30) * 1000;
+      return new HttpResponse('Service Unavailable', {
+        status: 503,
+        headers: { 'Content-Type': 'text/plain', 'Retry-After': new Date(named).toUTCString() },
+      });
+    });
+    installFakeClock();
+    // Half a second into a second: the date is about 29.5 s ahead when the answer is read.
+    vi.setSystemTime(Math.floor(Date.now() / 1000) * 1000 + 500);
+    const outcome = track(
+      Promise.resolve(problemBaseQuery('/api/accounts', readApi(), { random: () => 0 })),
+    );
+    await waitFor(() => expect(times.length).toBeGreaterThan(0));
+
+    await advanceUntil(named, -50);
+    expect(times).toHaveLength(1);
+
+    await advanceUntil(named, 1_100);
+    await waitFor(() => expect(times).toHaveLength(2));
+    expect(times[1]).toBeGreaterThanOrEqual(named);
+    await waitFor(() => expect(outcome.state).toBe('fulfilled'));
+  });
+
+  /** A 503 whose body is not JSON, as an ingress answers, with `retryAfter` as its header. */
+  function plainOutage(retryAfter: string): ApiProblem {
+    return toApiProblem(
+      {
+        status: 'PARSING_ERROR',
+        originalStatus: 503,
+        data: 'Service Unavailable',
+        error: 'SyntaxError: Unexpected token',
+      },
+      new Response(null, { status: 503, headers: { 'Retry-After': retryAfter } }),
+    );
+  }
+
+  it.each([
+    ['IMF-fixdate', 'Thu, 01 Oct 2026 12:00:30 GMT'],
+    ['RFC 850', 'Thursday, 01-Oct-26 12:00:30 GMT'],
+    ['asctime', 'Thu Oct  1 12:00:30 2026'],
+  ])('2p — a Retry-After date in the %s form is read as GMT', (_form, date) => {
+    // RFC 9110 §5.6.7: a recipient accepts all three, and all three are GMT, the asctime one
+    // without saying so. Read in the local zone, it was hours off anywhere but UTC: early east of
+    // it, so the retry went at once, late west of it. In UTC both readings agree, so this can only
+    // fail in another zone (the suite's two zone runs).
+    vi.useFakeTimers({ now: Date.UTC(2026, 9, 1, 12, 0, 0), toFake: ['Date'] });
+    expect(plainOutage(date).retryAfterSeconds).toBe(30);
+  });
+
+  it('2s — an RFC 850 date whose two-digit year would be more than 50 years ahead is in the past', () => {
+    // RFC 9110 §5.6.7: "77" in 2026 is 1977, a date already past, so no wait. Read as 2077 it
+    // would be a wait of 51 years.
+    vi.useFakeTimers({ now: Date.UTC(2026, 9, 1, 12, 0, 0), toFake: ['Date'] });
+    expect(plainOutage('Saturday, 01-Oct-77 12:00:30 GMT').retryAfterSeconds).toBe(0);
+  });
+
+  it.each(['1.5', '-5', 'Thu, 01 Oct 2026 12:00:30', 'soon'])(
+    '2q — a Retry-After of "%s" is neither a number of seconds nor a date, and names no wait',
+    (value) => {
+      // Not a wait of 0: the default for the answer's kind applies (2e).
+      vi.useFakeTimers({ now: Date.UTC(2026, 9, 1, 12, 0, 0), toFake: ['Date'] });
+      expect(plainOutage(value).retryAfterSeconds).toBeUndefined();
     },
   );
 
@@ -399,5 +905,83 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
     const fresh = await act(() => settle(result.current.submit(body)));
     expect(fresh.ok).toBe(true);
     expect(keys[3]).not.toBe(keys[2]);
+  });
+
+  it('7 — a money send with no answer ends at 65 s and keeps its key for the retry', async () => {
+    const keys: string[] = [];
+    let received = 0;
+    server.use(
+      http.post('*/api/transactions/deposit', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key') ?? '(missing)');
+        if (keys.length === 1) {
+          received = Date.now();
+          return never();
+        }
+        return depositOk();
+      }),
+    );
+    installFakeClock();
+    const { Wrapper } = hookWrapper();
+    const { result } = renderHook(() => useDepositIntent(), { wrapper: Wrapper });
+    const body = { accountId: UUID, amount: 50 };
+
+    let first!: ReturnType<typeof track<unknown>>;
+    act(() => {
+      first = track(result.current.submit(body));
+    });
+    await waitFor(() => expect(keys).toHaveLength(1));
+
+    await advanceUntil(received, 65_100);
+    await waitFor(() => expect(first.state).toBe('rejected'));
+    expect(first.error).toMatchObject({
+      status: 'NETWORK',
+      errorCode: 'TIMEOUT_ERROR',
+      detail: COPY.unavailable,
+    });
+    expect(result.current.keyRetained).toBe(true);
+
+    const second = await act(() => settle(result.current.submit(body)));
+    expect(second.ok).toBe(true);
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).toBe(keys[0]);
+  });
+
+  it('8 — a money send rejected with no HTTP status asks for a check before any new key', async () => {
+    /*
+      A rejection with no status is a 2xx whose body failed its schema, or an abort: either way the
+      request may have been acted on. Dropping the key quietly and letting the next press mint a
+      new one is a second payment over an unknown first — so it latches verify-first, exactly as
+      RESULT_UNKNOWN does.
+    */
+    const unwrap = vi.fn(() =>
+      Promise.reject({ name: 'SchemaError', message: 'The answer did not match its schema.' }),
+    );
+    const trigger: IdempotentTrigger<{ amount: number }, unknown> = () => ({ unwrap });
+    const { Wrapper } = hookWrapper();
+    const { result } = renderHook(() => useIdempotentMutation(trigger), { wrapper: Wrapper });
+
+    const first = await act(() => settle(result.current.submit({ amount: 5 })));
+    expect(first.ok).toBe(false);
+    expect(result.current.keyRetained).toBe(false);
+    expect(result.current.verifyRequired).toBe(true);
+
+    const second = await act(() => settle(result.current.submit({ amount: 5 })));
+    expect(second.ok).toBe(false);
+    expect(unwrap).toHaveBeenCalledTimes(1);
+  });
+
+  it('8b — the money classifier words a send with no HTTP status as a check, a mint with none as a failure', () => {
+    // The same rejection the hook latches on: no status at all.
+    const noStatus = { name: 'Error', message: 'API success envelope carried no data.' };
+    const opts = { messages: {}, fallback: 'Transfer failed. Please try again.' };
+
+    // A send may have moved the money: the verify view, never "failed, try again".
+    expect(
+      classifyMoneyProblem(noStatus as unknown as ApiProblem, { ...opts, phase: 'send' }),
+    ).toEqual({ kind: 'verify' });
+    // A mint moved nothing, and keeps the flow's own sentence.
+    expect(
+      classifyMoneyProblem(noStatus as unknown as ApiProblem, { ...opts, phase: 'mint' }),
+    ).toEqual({ kind: 'message', text: 'Transfer failed. Please try again.', scope: 'attempt' });
   });
 });
