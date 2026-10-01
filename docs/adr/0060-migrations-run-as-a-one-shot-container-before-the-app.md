@@ -69,18 +69,29 @@ to 600), one open every 2 s, a Warning for every attempt that failed.
 | the server did not answer (class 20 or above, or number -2) | wait |
 | the login was refused (18456) | wait; the third time in a row ends the run |
 | the database cannot be opened (4060) | ask `master`: a database that is there and not online is waited for; one that is online and still cannot be opened ends the run the third time in a row; one that is not there is EF's to create, except on an Azure SQL name |
-| anything else | go on: EF's own strategy and message apply |
+| anything else, or a failure that is not SQL Server's | off Azure, go on: EF's own strategy and message apply. On an Azure SQL name, wait: there only an open that succeeded hands the database to EF |
+
+The last row is two rules because of what EF does with a 4060. With the wait told the name was
+Azure's and its first open answered 40613 or 40197 (class 17, scripted) in front of a LocalDB
+server without the database, "go on" was one open, and the run exited 0 with a new database, 16
+migrations applied. Those are also what Azure SQL answers while a database is not available right
+now: Microsoft's table of transient faults lists 40197 and 40613 at class 17 and 49918 at 16
+(read 2026-10-01; none was produced on Azure), so "class 20 or above" did not cover them.
 
 **4. Three exit codes.** 0: done, and a rerun changes nothing. 1: failed after the server was
 contacted, or the command line was wrong. 2: refused before any connection was opened. A missing
 pepper or connection string is a 2 with a sentence. A connection string SqlClient cannot parse is
-a 2 with a fixed sentence, never the parser's message, which quotes the string.
+a 2 with a fixed sentence, never the parser's message, which quotes the string. A connection
+string that names no database is a 2: the server would open the login's default database, and
+`migrate` would build the schema there. For `migrate`, so is a connect timeout of 0, which
+SqlClient reads as no limit: one open that never ends is a run that never ends, whatever the wait.
 
 **5. On an Azure SQL server name only `migrate` runs, and it never creates a database there.**
 `seed` and `reset` refuse the name with exit 2: `seed`'s four users have a password and a PIN that
 are in this repository, and `reset` drops the database. A missing database on Azure SQL ends
-`migrate` with exit 1; the infrastructure creates databases. The rule goes by the server's name,
-on the five suffixes SqlClient itself treats as Azure SQL.
+`migrate` with exit 1; the infrastructure creates databases. There the database goes to EF only
+after one open of it succeeded (decision 3). The rule goes by the server's name, on the five
+suffixes SqlClient itself treats as Azure SQL.
 
 **6. A database that holds a migration the build does not know is refused**, exit 1, checked before
 and after `MigrateAsync`. A newer build migrated it, and an older build must not move an app onto
@@ -98,7 +109,7 @@ factory has run, so such a run keeps the retry budget and opens with its own str
 
 **9. CI checks the model against the migrations**
 (`dotnet ef migrations has-pending-model-changes`, its success line asserted), in the job that
-builds, before any job creates a database.
+builds, which opens no database.
 
 **10. compose runs `sqlserver` (healthy) → `migrate` → `seed` → `api`.** `seed` is for local runs
 and CI. Both one-shots run again on every `up`, so `seed` has to exit 0 on a database people have
@@ -139,7 +150,8 @@ app neither changes an account's number nor removes its row; a user's handle it 
 - A deployment has a migration step with an exit code it can act on and a log that says what it
   waited for.
 - ADR-0058's second precondition is met for the deployment's road.
-- A model change with no migration fails the first CI job, not the fourth.
+- A model change with no migration fails in the job that builds, with a line that says so, not
+  in the jobs that create a database.
 
 **Negative**
 
@@ -150,11 +162,16 @@ app neither changes an account's number nor removes its row; a user's handle it 
   not completed by running it again: `reset` starts over.
 - The Azure SQL rule does not see an alias or an IP address.
 - `--connection` on `dotnet ef` still opens with SqlClient's own limits.
-- The `sqlserver` job in CI creates four more databases, one for each of the four tests below
+- The `backend-sql` job in CI creates four more databases, one for each of the four tests below
   that need a database of their own.
-- "Never creates a database on Azure SQL" is the wait's rule. A database that stopped answering
-  after the wait had passed would reach EF, which answers "cannot open" with `CREATE DATABASE`.
-  The login a deployment gives `migrate` must not be able to create one.
+- "Never creates a database on Azure SQL" is the wait's rule: there the database goes to EF only
+  after one open of it succeeded, and a missing one ends the run. A database that stopped
+  answering after that open would still reach EF, which answers "cannot open" with
+  `CREATE DATABASE`. The login a deployment gives `migrate` must not be able to create one.
+- On an Azure SQL name an answer that waiting cannot change takes the whole wait before the run
+  ends: 60 s by default, where off Azure it goes to EF at once.
+- The SQL Server proofs skip when their variable names an Azure SQL server: several of them
+  create and drop databases on the server it names.
 
 **Neutral**
 
@@ -167,11 +184,14 @@ app neither changes an account's number nor removes its row; a user's handle it 
 ## Validation
 
 **Tests** (`backend/tests/AzureBank.Tests`). Each guard below was removed again, one at a time, and
-the test that covers it failed: 27 removals, 27 failures.
+the test that covers it failed: 27 removals, 27 failures. The same for the guards added later the
+same day (the two rules of the wait's last row, a string with no database, a connect timeout of 0,
+the proofs' skip on an Azure SQL name): 8 removals, 8 failures.
 
-- `Unit/Tools/DatabaseGateTests`: the wait as a script of server answers on a fake clock.
-- `Unit/Tools/ConnectionTargetTests`: the Azure SQL name rule, and what counts as missing or
-  unreadable.
+- `Unit/Tools/DatabaseGateTests`: the wait as a script of server answers on a fake clock, off and
+  on an Azure SQL name.
+- `Unit/Tools/ConnectionTargetTests`: the Azure SQL name rule, what counts as missing, unreadable
+  or naming no database, and the proofs' own skip.
 - `Unit/Tools/SeederCommandTests`: every refusal on the tool's own composition root, with an
   interceptor that counts the opens EF starts, and one test in which it counts one; and a run
   cancelled as EF starts an open, which has to find that open's own token cancelled, for `seed`
@@ -214,13 +234,16 @@ built from this change. One run per row unless it says otherwise.
 | no arguments and no variables; `migrate` with no variables | Exit 1 and the usage; exit 2 naming the variable |
 | canary `appsettings.Development.json` and `.env.canary` in the Seeder's and the API's folders | In none of the three images. A control build without the three exclusion rules held the settings file |
 | `docker image inspect` of the three | User 1654 and the source label on each |
+| the wait told the name is Azure's, its first open answered 40613, then 40197 (class 17, scripted), a LocalDB server without the database behind it | Exit 1 both, "does not exist on this Azure SQL server" after two opens, and no database afterwards. Before decision 3's last row had its Azure half: exit 0 after one open, and the database was there |
+| `migrate --wait-seconds 3` against a listener on the host that accepts and never answers | Exit 1 after 11.3 s with the default connect timeout, one connection accepted. With a connect timeout of 0, in the string and then in `Database__ConnectTimeoutSeconds`: exit 2 after 1.2 s both, and the listener accepted none. Before the refusal: still running at 25 s both ways, the limits line its only output |
 
 The CI step, on a Release build of the solution: exit 0 and its success line in 3.3 s; with an
 `int` property added to `Account`, exit 1.
 
 **Not measured:** anything on Azure SQL (the name rule's refusals were measured with a name nobody
-can register, and the "missing database" verdict with a scripted answer); a database that stops
-answering between the wait and EF's own check (read in the code); a stop that arrives while a
+can register, the "missing database" verdict with a scripted answer, and the classes of Azure's
+own answers were read in Microsoft's table); a database that stops answering between the wait and
+EF's own check (read in the code); a stop that arrives while a
 command is writing, with the server up; the CI step on the runner; the time the four new databases
 add to the SQL job.
 
@@ -231,6 +254,8 @@ add to the SQL job.
 - A rollback that must pass over a newer schema: a flag, with its own record.
 - A server reached under a name that is not Azure's: the engine-edition check, measured there.
 - A wait that 60 s does not cover where it is deployed: the default moves, with the measurement.
+- An answer on Azure SQL that waiting cannot change and that should end the run sooner: a list of
+  such answers that end it the third time in a row, as a refused login does, measured there.
 
 ## Related
 

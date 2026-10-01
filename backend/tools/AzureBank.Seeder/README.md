@@ -33,7 +33,7 @@ string.
 
 | Command | Does | Needs | Runs |
 |---|---|---|---|
-| `migrate [--wait-seconds N]` | Waits up to N seconds (60; 0 to 600) for the database to accept a connection, then applies every pending migration; changes nothing when there is none. Off Azure it creates the database if the server has none by that name; on an Azure SQL server name it never creates one | The connection string, with a login that may change the schema. **No pepper, no other secret** | Everywhere, a deployment included |
+| `migrate [--wait-seconds N]` | Waits up to N seconds (60; 0 to 600) for the database to accept a connection, then applies every pending migration; changes nothing when there is none. Off Azure it creates the database if the server has none by that name. On an Azure SQL server name it never creates one, and it goes on only once an open has succeeded | The connection string, with a login that may change the schema. **No pepper, no other secret** | Everywhere, a deployment included |
 | `seed` | Adds the two roles, the four demo users with their public password and PIN, their five accounts and a 26-row ledger, to a database that has none of them. A database that was seeded is left as it is, exit 0, whatever its users did since | The connection string and the PIN pepper, which must be the API's | Local runs and CI. **Refuses an Azure SQL server name** |
 | `reset [--confirm]` | Drops the database, migrates, seeds | The same as `seed` | Development and CI. **Refuses an Azure SQL server name** |
 
@@ -41,9 +41,9 @@ string.
 
 | Variable | For | |
 |---|---|---|
-| `ConnectionStrings__DefaultConnection` | every command | Required; the name the API reads. A password that holds `;`, `=` or a quote has to be quoted, or the string cannot be read |
+| `ConnectionStrings__DefaultConnection` | every command | Required; the name the API reads. It has to name a server and a database. A password that holds `;`, `=` or a quote has to be quoted, or the string cannot be read |
 | `Security__PinPepper` | `seed`, `reset` | 32 characters or more, equal to the API's (ADR-0011) |
-| `Database__MaxRetryCount`, `Database__MaxRetryDelay`, `Database__ConnectTimeoutSeconds`, `Database__ConnectRetryCount`, `Database__MaxPoolSize` | every command | Optional. 4, `00:00:10`, 10, 0 and 5 (ADR-0058; the pool of 5 is this tool's own). A keyword in the connection string wins |
+| `Database__MaxRetryCount`, `Database__MaxRetryDelay`, `Database__ConnectTimeoutSeconds`, `Database__ConnectRetryCount`, `Database__MaxPoolSize` | every command | Optional. 4, `00:00:10`, 10, 0 and 5 (ADR-0058; the pool of 5 is this tool's own). A keyword in the connection string wins. `migrate` refuses a connect timeout of 0, which means no limit, from either place |
 
 In Development (`DOTNET_ENVIRONMENT=Development`) the two required values come from the project's
 user-secrets instead (`docs/engineering-practices.md`, "Local setup").
@@ -54,12 +54,13 @@ user-secrets instead (`docs/engineering-practices.md`, "Local setup").
 |---|---|
 | 0 | Done. Running it again is safe and changes nothing |
 | 1 | Failed after the server was contacted, or cancelled, or the command line was wrong. Running it again is safe. It helps when the cause passes: the database was not reachable in time, another run held the lock, the run was stopped. It does not help until something else changes for: a refused login; a database this login cannot open; a database that is ahead of the build; a missing database on Azure SQL; a model change with no migration; an incomplete seed (run `reset`) |
-| 2 | Refused before any connection was opened: a required variable is missing, too short or unreadable, or `seed` or `reset` was aimed at an Azure SQL server name |
+| 2 | Refused before any connection was opened: a required variable is missing, too short or unreadable, the connection string names no database, `migrate` was given a connect timeout of 0, or `seed` or `reset` was aimed at an Azure SQL server name |
 
 ## What a run prints
 
-Text, on standard output, one event per line. `migrate` prints lines like these (a run that
-waited for the server and then migrated an empty database):
+Text, on standard output. An event is one line, except an Error that reports an exception: the
+exception's stack follows it. `migrate` prints lines like these (a run that waited for the server
+and then migrated an empty database):
 
 ```text
 [18:35:05 INF] Database limits: connect timeout 10 s, connect retries 0, pool 5, pool blocking NeverBlock; EF retries 4, back-off capped at 00:00:10
@@ -71,11 +72,14 @@ waited for the server and then migrated an empty database):
 
 - `Waiting for the database` is a Warning, once for every attempt that failed, with SQL Server's
   error number and class and the first line of its message. That line can name the server, the
-  database and the login; SqlClient puts no password in it.
+  database and the login; SqlClient puts no password in it. A failure that is not SQL Server's,
+  which is waited for on an Azure SQL name only, is named by its type and nothing else.
 - `Applying migration` is EF's own line, once for each migration this run applied. `migrate` itself
   claims no count: two runs at once read the same pending list.
-- A refusal or a failure is one Error line that starts with the command's name: `migrate refused:
-  …`, `seed failed: …`. EF may log Errors of its own before it.
+- A refusal or a failure ends in one Error whose line starts with the command's name: `migrate
+  refused: …`, `seed failed: …`. A `failed:` line that reports an exception is followed by its
+  stack. Errors can come before it: EF's own, and from `seed` and `reset` a `Failed to execute …`
+  line that names the seeder. Whatever watches the log matches `failed:` and `refused:`.
 - `seed` and `reset` also print one Warning that is not theirs and not a failure: ASP.NET Core's
   data protection, which Identity's token providers bring in, says where it would keep its keys
   ("Storing keys in a directory … that may not be persisted outside of the container").
@@ -111,9 +115,12 @@ waited for the server and then migrated an empty database):
   `.database.fabric.microsoft.com`, the five SqlClient itself knows. An alias or an IP address in
   front of an Azure SQL server is not recognised.
 - **On Azure SQL, give `migrate` a login that cannot create a database.** "Never creates one
-  there" is the wait's rule: it stops the run when the server says the database is missing. A
-  database that stopped answering after the wait had passed would reach EF, which answers "cannot
-  open" with `CREATE DATABASE`. That window was read in the code, not produced; the login's rights
-  are what closes it.
+  there" is the wait's rule: the database goes to EF only after one open of it succeeded, and the
+  run stops when the server says the database is missing. A database that stopped answering after
+  that open would still reach EF, which answers "cannot open" with `CREATE DATABASE`. That window
+  was read in the code, not produced; the login's rights are what closes it.
+- **On an Azure SQL name every failed open is waited for**, also an answer that waiting cannot
+  change: the run then ends when the wait is over, with that answer in its last line. Off Azure an
+  answer the wait does not judge goes to EF at once.
 - **A declined `reset` prompt exits 0.** Nothing was done and nothing failed. In a container there
   is no terminal: pass `--confirm`.

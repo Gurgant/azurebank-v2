@@ -72,8 +72,8 @@ jobs:
             "$RUNNER_TEMP/pending-model-changes.log"
 
       # No DB or secrets needed: the test fixture runs on the EF InMemory
-      # provider and supplies its own test-only JWT secret. The 14 skipped
-      # tests are the explicit SQL-Server-only ones.
+      # provider and supplies its own test-only JWT secret. The skipped tests
+      # are the explicit SQL-Server-only ones.
       - name: Test
         working-directory: backend
         run: >

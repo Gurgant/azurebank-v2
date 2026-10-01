@@ -105,7 +105,7 @@ passed and CodeQL reports no error and no security alert rated high or critical.
 
 | Job | What it checks |
 |---|---|
-| Backend build + tests | Formatting, a Release build with warnings as errors, the API's and the BFF's test suites |
+| Backend build + tests | Formatting, a Release build with warnings as errors, that every model change has a migration, the API's and the BFF's test suites |
 | Backend concurrency proofs | Idempotency, balances and the audit chain under concurrent requests on a real SQL Server — and that the proofs ran rather than skipped |
 | Frontend build | Lint, formatting, the generated types and schemas against the committed contract, the unit tests, the contract suite against the mock, the build |
 | Frontend tests | The unit tests again under two time zones that disagree about "today" |

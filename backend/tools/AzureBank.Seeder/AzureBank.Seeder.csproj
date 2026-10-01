@@ -13,6 +13,7 @@
     * Testable: Easy to test seeders in isolation
 
     Usage:
+      dotnet run [project tools/AzureBank.Seeder] migrate
       dotnet run [project tools/AzureBank.Seeder] seed
       dotnet run [project tools/AzureBank.Seeder] reset [confirm]
   -->
