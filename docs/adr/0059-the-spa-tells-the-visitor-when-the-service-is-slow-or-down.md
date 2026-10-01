@@ -163,9 +163,10 @@ not happened.
      Dashboard's hint sits above its grid while the page loads.
    - A read whose content takes the wait's place, and whose wait said something, says "Loaded."
      in the same region when it loads, read and not shown, and the region goes 2 s later
-     (`LOADED_KEPT_MS`, not measured against a screen reader). WCAG 4.1.3 names this case: a
-     non-visible status message that the system is available. A load inside 5 s said nothing and
-     says nothing at its end either, and a failure says nothing more, because its alert speaks.
+     (`LOADED_KEPT_MS`; NVDA spoke it 0.06 s after it appeared, Validation). WCAG 4.1.3 names
+     this case: a non-visible status message that the system is available. A load inside 5 s said
+     nothing and says nothing at its end either, and a failure says nothing more, because its
+     alert speaks.
      A recipient check that finds nobody counts as a failure here: its line says so.
      The hosts that do it: the Dashboard, Accounts, History (its first page and "Load more"), a
      transaction's details, a transfer page's first load of the accounts and the recipient check.
@@ -349,7 +350,7 @@ not happened.
 | The least a retry may be left | 5 s | Less could only time out |
 | `SLOW_AFTER_MS`, `STILL_TRYING_AFTER_MS` (`useWaitPhase.ts`) | 5 s, 20 s | Not measured; one place to move them |
 | `SESSION_CHECK_SLOW_AFTER_MS` (`useWaitPhase.ts`) | 6 s | The BFF's 5 s ceiling on the session check, and 1 s so that its answer from the cache is not raced (decision 4) |
-| `LOADED_KEPT_MS` (`useWaitPhase.ts`) | 2 s | How long "Loaded." stays in the region before it goes; measured in the page at 2.008 to 2.012 s, not heard through a screen reader |
+| `LOADED_KEPT_MS` (`useWaitPhase.ts`) | 2 s | How long "Loaded." stays in the region before it goes; measured in the page at 2.008 to 2.012 s; NVDA spoke it 0.06 s after it appeared |
 
 What a visitor would meet, reasoned from ADR-0058's numbers before any browser run. Every wait
 says "Taking longer than usual…" at 5 s (the session check at start-up at 6 s) and "Still trying…"
@@ -580,11 +581,20 @@ Test files are under `frontend/src/`, browser specs under `frontend/e2e/`.
     the dashboard's one alert take two texts 5 ms apart, the recent-activity bar and then the
     accounts bar, when the 120 s ended its three reads together; this pass saw one. Nothing was
     changed for it.
-- Not heard: no screen reader listened to any of this; the runs above measured the precondition
-  only. Whether and how the hint's words, "Loaded.", the alerts, those put in the page already
-  filled among them, and the expiry dialog's description and focus are read is to be checked with
-  NVDA and Chrome on Windows; JAWS, Narrator, VoiceOver on macOS and iOS, and TalkBack are not
-  tested.
+- **Heard with a screen reader**, on 2026-10-01: NVDA 2026.2 with Chromium on Windows, its speech
+  logged and matched to the moment each text appeared, against the development build answered by
+  the repository's mock handlers, with the requests held or answered 503 by the browser. NVDA
+  spoke all 22 expected texts, each 0.01 to 0.18 s after it appeared: "Taking longer than
+  usual…", "Still trying…" and "Loaded." on a slow read; the outage sentence in a read's alert;
+  "Stop waiting", then "Could not load your accounts." and focus on its Retry; "Still trying…
+  Keep this page open." and the deposit's and the withdrawal's outage words, with "Retrying won't
+  charge you twice."; "We couldn't sign you out. You're still signed in." from the sidebar and
+  from the expiry dialog, whose title and countdown were read with focus on "Stay signed in", and
+  focus back on "Sign out now" after it failed. Two things heard that are not this record's to
+  change: a toast's title and body are spoken run together ("Service UnavailableWe couldn't…"),
+  and a read's support code is spoken digit by digit. Not heard: the transfer pages' outage bars,
+  `applied: false`, a failed PIN check, the start-up page, the PIN dialog and sign-in; JAWS,
+  Narrator, VoiceOver on macOS and iOS, and TalkBack.
 - Not measured in a browser: anything on Azure; any browser but Chromium; a database stopped for
   longer than a minute, and a write against a stuck BFF (the second row of "The numbers" and the
   last row's write); the start-up page of decision 10, since each session check got its 200; the
