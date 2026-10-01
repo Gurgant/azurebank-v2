@@ -392,6 +392,75 @@ public sealed class RequestDeadlineSqlServerTests : IDisposable
     }
 
     [SqlServerFact]
+    public async Task ACommittedDepositWhoseAnswerWasNeverStored_IsInFlightWhileYoung_ThenAnswersThatItWasApplied()
+    {
+        // The whole sequence a lost answer goes through, over a real commit: the deposit commits and
+        // answers 201, storing that answer is held past its 3 s, and the record stays Executed. The
+        // same key is IN_FLIGHT while the claim is young, with nothing said about the outcome, and
+        // once the claim is past the stale age it is RESULT_UNKNOWN, which now says what the record
+        // proves: the deposit was applied. The service reads the wall clock, so the claim is aged by
+        // writing its CreatedAt, not by waiting two minutes.
+        var host = Host();
+        var client = host.CreateClient();
+        var user = await RegisterAsync(client, "rsa", withPin: false);
+        (await DepositAsync(client, user, 100m, Guid.NewGuid())).StatusCode.Should().Be(HttpStatusCode.Created); // warm
+
+        var wait = new WaitForInterceptor(
+            text => text.Contains("UPDATE [IdempotencyRecords]", StringComparison.Ordinal)
+                    && text.Contains("[ResponseBody]", StringComparison.Ordinal),
+            Held);
+        host.AddInterceptor(wait);
+
+        var key = Guid.NewGuid();
+        var first = await DepositAsync(client, user, 50m, key);
+        wait.Fired.Should().BeTrue("the proof is void unless storing the answer was actually held");
+        first.StatusCode.Should().Be(HttpStatusCode.Created, "the deposit committed");
+
+        var record = await RecordAsync(host, user.UserId, "POST api/transactions/deposit", key);
+        record.Should().NotBeNull("the deposit committed with its key");
+        record!.Status.Should().Be(IdempotencyStatus.Executed, "the answer was not stored, and the commit happened");
+        record.ResponseBody.Should().BeNull();
+
+        var young = await DepositAsync(client, user, 50m, key);
+        var youngProblem = JsonSerializer.Deserialize<JsonElement>(await young.Content.ReadAsStringAsync());
+        young.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        youngProblem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.IdempotencyInFlight);
+        youngProblem.TryGetProperty("applied", out _).Should().BeFalse(
+            "while the stored answer may still come, the 409 says nothing about the outcome");
+
+        using (var scope = host.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+            var aged = await db.IdempotencyRecords
+                .Where(r => r.UserId == user.UserId && r.Endpoint == "POST api/transactions/deposit" && r.Key == key)
+                .ExecuteUpdateAsync(s => s.SetProperty(r => r.CreatedAt, DateTime.UtcNow.AddMinutes(-30)));
+            aged.Should().Be(1, "the key's record, and only it, is aged past the stale age");
+        }
+
+        var stale = await DepositAsync(client, user, 50m, key);
+        var staleText = await stale.Content.ReadAsStringAsync();
+        _output.WriteLine($"same key, past the stale age: {(int)stale.StatusCode} {staleText}");
+        var problem = JsonSerializer.Deserialize<JsonElement>(staleText);
+
+        stale.StatusCode.Should().Be(HttpStatusCode.Conflict, "never a second execution, never an empty replay");
+        problem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.IdempotencyResultUnknown);
+        (await BalanceAsync(host, user.AccountId)).Should().Be(150m, "the warm-up and the one deposit of 50");
+        using (var scope = host.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+            (await db.Transactions.AsNoTracking().CountAsync(t => t.AccountId == user.AccountId && t.Amount == 50m))
+                .Should().Be(1, "one ledger row for the key's deposit");
+        }
+
+        problem.TryGetProperty("applied", out var applied).Should().BeTrue(
+            "the record was read from the database as Executed, so the answer says the deposit was applied");
+        applied.ValueKind.Should().Be(JsonValueKind.True, "the boolean true, not a string and not false");
+        problem.GetProperty("detail").GetString().Should().Be(
+            "The operation sent with this idempotency key was applied, but this request cannot return "
+            + "its result. Do not send it again with a new key: look for it with GET /api/transactions.");
+    }
+
+    [SqlServerFact]
     public async Task AClientThatHangsUpAfterTheCommit_GetsTheWholeAnswerOnItsRetry()
     {
         // Once a commit has started nothing cancels the request: the client hanging up after it

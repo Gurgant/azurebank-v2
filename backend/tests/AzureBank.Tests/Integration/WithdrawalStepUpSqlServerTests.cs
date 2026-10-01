@@ -198,6 +198,12 @@ public sealed class WithdrawalStepUpSqlServerTests : IDisposable
     /// connection on the withdrawal's own <c>UPDATE [Accounts]</c> -- the balance decrement, issued
     /// after <c>ValidateAsync</c> passed and before <c>ConsumeAsync</c> runs. The same seam the
     /// closure uses, and the withdrawal emits that statement for its own reason.
+    /// <para>
+    /// That batch also carries the idempotency record's flip to <c>Executed</c>, so this is a
+    /// refusal AFTER the flip was written. The key's record is read afterwards: were the rollback
+    /// not to take the flip back, the record would say <c>Executed</c> over a withdrawal that never
+    /// happened, and the next request with the key would be told it was applied.
+    /// </para>
     /// </remarks>
     [SqlServerFact]
     public async Task WhenTheConsumeMatchesZeroRows_TheWithdrawalIsRolledBackToo()
@@ -226,11 +232,16 @@ public sealed class WithdrawalStepUpSqlServerTests : IDisposable
 
         var race = new OutOfBandStepUpConsumeInterceptor(
             SqlServerFactAttribute.ConnectionString!, authorizationId);
+        var sent = new CommandRecordingInterceptor();
         _factory!.AddInterceptor(race);
+        _factory.AddInterceptor(sent);
         race.Arm();
+        sent.Start();
 
+        var key = Guid.NewGuid();
         var response = await WithdrawAsync(
-            client, token, accountId, Amount, authorizationId, Guid.NewGuid());
+            client, token, accountId, Amount, authorizationId, key);
+        sent.Stop();
 
         race.Fired.Should().BeTrue(
             "the out-of-band consume must actually have run, else the test proves nothing");
@@ -263,9 +274,28 @@ public sealed class WithdrawalStepUpSqlServerTests : IDisposable
         verification.IsIntact.Should().BeTrue(because: verification.Reason);
         verification.Verified.Should().BeGreaterThan(0, "an empty read also reports intact");
 
+        var record = await db.IdempotencyRecords.AsNoTracking().SingleOrDefaultAsync(
+            r => r.UserId == userId && r.Endpoint == WithdrawEndpoint && r.Key == key);
+        (record?.Status).Should().NotBe(IdempotencyStatus.Executed,
+            "the flip rolled back with the withdrawal: the key has no record, or one still Processing");
+        (record?.Status).Should().NotBe(IdempotencyStatus.Completed);
+
+        // The premise, read from what reached the server: the record's UPDATE went out, and in the
+        // batch that wrote the ledger row. A flip sent on its own, ahead of that batch, would be a
+        // save between the flip and the business commit.
+        var flips = sent.Writes
+            .Where(c => c.Contains("UPDATE [IdempotencyRecords]", StringComparison.Ordinal))
+            .ToList();
+        flips.Should().NotBeEmpty(
+            "the flip to Executed must have been sent inside the transaction that then rolled back");
+        flips.Should().Contain(
+            c => c.Contains("[Transactions]", StringComparison.Ordinal),
+            "and it went out in the batch that wrote the ledger row");
+
         _output.WriteLine(
             $"consume matched 0 rows -> {(int)response.StatusCode}, balance {before} unchanged, "
-            + $"chain intact over {verification.Verified} rows");
+            + $"chain intact over {verification.Verified} rows, "
+            + $"record under the key: {record?.Status.ToString() ?? "none"}");
     }
 
     /// <summary>
@@ -348,12 +378,167 @@ public sealed class WithdrawalStepUpSqlServerTests : IDisposable
             + "chain intact");
     }
 
+    /// <summary>
+    /// A withdrawal whose commit landed and whose acknowledgement was lost is not run again, and the
+    /// answer says it was applied.
+    /// </summary>
+    /// <remarks>
+    /// The fault is thrown right after the commit, so the execution strategy re-runs the attempt
+    /// against a database that already holds the withdrawal and the record's flip. The re-run
+    /// reloads the record under its key, reads <c>Executed</c>, and refuses. The transfers have had
+    /// this proof since the retry was hardened; the withdrawal joined the same rule with ADR-0056
+    /// and had none.
+    /// </remarks>
+    [SqlServerFact]
+    public async Task AWithdrawalWhoseCommitAcknowledgementWasLost_IsNotRunAgain_AndAnswersThatItWasApplied()
+    {
+        var fault = new TransferTransientFault(TransferFaultMode.AfterCommit);
+        var client = CreateRetryingClient(fault);
+
+        var (token, accountId) = await RegisterFundedAsync(client, funding: 100m);
+        var authorizationId = await MintWithdrawalAsync(client, token, accountId, Amount);
+        var before = await BalanceOfAsync(client, token, accountId);
+
+        // Armed only now: the funding deposit also inserts a ledger row.
+        fault.Arm();
+        var key = Guid.NewGuid();
+        var response = await WithdrawAsync(client, token, accountId, Amount, authorizationId, key);
+        var text = await response.Content.ReadAsStringAsync();
+        _output.WriteLine($"commit acknowledgement lost: {(int)response.StatusCode} {text}");
+
+        fault.Fired.Should().BeTrue("the transient must actually have been injected");
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict,
+            "the withdrawal committed on the first attempt; the re-run must not execute it again");
+        var problem = JsonSerializer.Deserialize<JsonElement>(text);
+        problem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.IdempotencyResultUnknown);
+        response.Dispose();
+
+        using var scope = _factory!.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+
+        (await db.Transactions.AsNoTracking()
+                .CountAsync(x => x.AccountId == accountId && x.Type == TransactionType.Withdrawal))
+            .Should().Be(1, "one withdrawal, not two");
+        (await BalanceOfAsync(client, token, accountId)).Should().Be(before - Amount,
+            "the money moved exactly once");
+
+        var authorization = await db.StepUpAuthorizations.AsNoTracking()
+            .SingleAsync(a => a.Id == authorizationId);
+        authorization.Status.Should().Be(StepUpAuthorizationStatus.Consumed, "spent by the attempt that committed");
+
+        var record = await db.IdempotencyRecords.AsNoTracking().SingleAsync(
+            r => r.UserId == authorization.UserId && r.Endpoint == WithdrawEndpoint && r.Key == key);
+        record.Status.Should().Be(IdempotencyStatus.Executed,
+            "committed but the response was lost: never Completed, never re-executed");
+
+        // The re-run read the record as Executed, so it knows the commit landed.
+        problem.TryGetProperty("applied", out var applied).Should().BeTrue(
+            "the re-run read the record under its key as committed, so the answer says it was applied");
+        applied.ValueKind.Should().Be(JsonValueKind.True, "the boolean true, not a string and not false");
+        problem.GetProperty("detail").GetString().Should().Be(
+            "The operation sent with this idempotency key was applied, but this request cannot return "
+            + "its result. Do not send it again with a new key: look for it with GET /api/transactions.");
+    }
+
+    /// <summary>
+    /// A refusal before any write leaves no record under the key: the funds guard answers before the
+    /// withdrawal opens its transaction, so the claim is released whole.
+    /// </summary>
+    [SqlServerFact]
+    public async Task AWithdrawalRefusedBeforeAnyWrite_LeavesNoRecordUnderItsKey()
+    {
+        var client = CreateSqlClient();
+        var (token, accountId) = await RegisterFundedAsync(client, funding: 5m);
+
+        // A reference that is presented and worth nothing: the funds guard runs ahead of the
+        // authorisation check (ADR-0056 D4), so the refusal under test never looks at it.
+        var key = Guid.NewGuid();
+        var response = await WithdrawAsync(client, token, accountId, Amount, Guid.CreateVersion7(), key);
+        var text = await response.Content.ReadAsStringAsync();
+
+        response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity, text);
+        JsonSerializer.Deserialize<JsonElement>(text).GetProperty("errorCode").GetString()
+            .Should().Be(ErrorCodes.InsufficientFunds);
+        response.Dispose();
+
+        using var scope = _factory!.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+
+        (await db.IdempotencyRecords.AsNoTracking().AnyAsync(r => r.Endpoint == WithdrawEndpoint && r.Key == key))
+            .Should().BeFalse("the refusal came before any write, so the claim was released whole");
+        (await db.Transactions.AsNoTracking()
+                .CountAsync(x => x.AccountId == accountId && x.Type == TransactionType.Withdrawal))
+            .Should().Be(0);
+        (await BalanceOfAsync(client, token, accountId)).Should().Be(5m);
+    }
+
+    /// <summary>
+    /// A flip written, rolled back, and read again: the withdrawal's save runs, its commit is refused
+    /// as it starts, the strategy re-runs the attempt, and its reload must read <c>Processing</c>.
+    /// </summary>
+    /// <remarks>
+    /// The direct negative of the answer a re-run gives when it reads <c>Executed</c>: were the
+    /// rollback not to undo the flip, this withdrawal would be answered 409 "applied" with no money
+    /// moved, instead of running.
+    /// </remarks>
+    [SqlServerFact]
+    public async Task AWithdrawalWhoseCommitIsRefusedAsItStarts_RunsAgainAndMovesTheMoneyOnce()
+    {
+        var fault = new TransferTransientFault(TransferFaultMode.BeforeCommit);
+        var client = CreateRetryingClient(fault);
+
+        var (token, accountId) = await RegisterFundedAsync(client, funding: 100m);
+        var authorizationId = await MintWithdrawalAsync(client, token, accountId, Amount);
+        var before = await BalanceOfAsync(client, token, accountId);
+
+        fault.Arm();
+        var key = Guid.NewGuid();
+        var response = await WithdrawAsync(client, token, accountId, Amount, authorizationId, key);
+        _output.WriteLine(
+            $"commit refused as it started: {(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
+
+        fault.Fired.Should().BeTrue("the commit must actually have been refused, else the test proves nothing");
+        response.StatusCode.Should().Be(HttpStatusCode.Created,
+            "nothing committed, so the re-run reads Processing and executes");
+        response.Dispose();
+
+        using var scope = _factory!.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+
+        (await db.Transactions.AsNoTracking()
+                .CountAsync(x => x.AccountId == accountId && x.Type == TransactionType.Withdrawal))
+            .Should().Be(1, "exactly one withdrawal");
+        (await BalanceOfAsync(client, token, accountId)).Should().Be(before - Amount,
+            "the money moved exactly once");
+
+        var authorization = await db.StepUpAuthorizations.AsNoTracking()
+            .SingleAsync(a => a.Id == authorizationId);
+        authorization.Status.Should().Be(StepUpAuthorizationStatus.Consumed, "spent by the attempt that committed");
+
+        var record = await db.IdempotencyRecords.AsNoTracking().SingleAsync(
+            r => r.UserId == authorization.UserId && r.Endpoint == WithdrawEndpoint && r.Key == key);
+        record.Status.Should().Be(IdempotencyStatus.Completed);
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
+
+    private const string WithdrawEndpoint = "POST api/transactions/withdraw";
 
     private HttpClient CreateSqlClient()
     {
         _factory = new CustomWebApplicationFactory();
         _factory.SetConnectionString(SqlServerFactAttribute.ConnectionString!);
+        return _factory.CreateClient();
+    }
+
+    /// <summary>The production wiring: the retrying strategy, with a one-shot fault at the commit.</summary>
+    private HttpClient CreateRetryingClient(TransferTransientFault fault)
+    {
+        _factory = new CustomWebApplicationFactory();
+        _factory.SetConnectionString(SqlServerFactAttribute.ConnectionString!);
+        _factory.EnableSqlRetryOnFailure();
+        _factory.AddInterceptor(new TransferCommandFaultInterceptor(fault));
+        _factory.AddInterceptor(new TransferCommitFaultInterceptor(fault));
         return _factory.CreateClient();
     }
 

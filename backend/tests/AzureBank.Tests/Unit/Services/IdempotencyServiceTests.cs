@@ -150,8 +150,9 @@ public class IdempotencyServiceTests : IDisposable
 
         var act = () => _sut.TryAcquireAsync(userId, Endpoint, key, HashA, CancellationToken.None);
 
-        (await act.Should().ThrowAsync<IdempotencyException>())
-            .Which.ErrorCode.Should().Be(Shared.Constants.ErrorCodes.IdempotencyInFlight);
+        var refusal = (await act.Should().ThrowAsync<IdempotencyException>()).Which;
+        refusal.ErrorCode.Should().Be(Shared.Constants.ErrorCodes.IdempotencyInFlight);
+        refusal.Details.Should().BeNull("a claim that is still Processing has committed nothing");
     }
 
     [Theory]
@@ -191,21 +192,53 @@ public class IdempotencyServiceTests : IDisposable
 
         var act = () => _sut.TryAcquireAsync(userId, Endpoint, key, HashA, CancellationToken.None);
 
-        (await act.Should().ThrowAsync<IdempotencyException>())
-            .Which.ErrorCode.Should().Be(Shared.Constants.ErrorCodes.IdempotencyInFlight);
+        var refusal = (await act.Should().ThrowAsync<IdempotencyException>()).Which;
+        refusal.ErrorCode.Should().Be(Shared.Constants.ErrorCodes.IdempotencyInFlight);
+        refusal.Details.Should().BeNull(
+            "the stored answer may still come, and a replay of it is the better answer: an "
+            + "in-flight 409 never says applied");
     }
 
     [Fact]
-    public async Task TryAcquire_StaleExecutedSameHash_ThrowsResultUnknown()
+    public async Task TryAcquire_StaleExecutedSameHash_ThrowsResultUnknown_AndSaysTheOperationWasApplied()
     {
         // Executed and old: the claimant died AFTER committing — the
         // response will never be stored. Never re-execute, never guess.
+        // The record was read from the store as Executed, a state written only with the business
+        // commit, so the answer says so: applied is true, and nothing invites a new key.
         var (userId, key) = await SeedAsync(IdempotencyStatus.Executed, HashA, ageMinutes: 11);
 
         var act = () => _sut.TryAcquireAsync(userId, Endpoint, key, HashA, CancellationToken.None);
 
-        (await act.Should().ThrowAsync<IdempotencyException>())
-            .Which.ErrorCode.Should().Be(Shared.Constants.ErrorCodes.IdempotencyResultUnknown);
+        var refusal = (await act.Should().ThrowAsync<IdempotencyException>()).Which;
+        refusal.ErrorCode.Should().Be(Shared.Constants.ErrorCodes.IdempotencyResultUnknown);
+        refusal.StatusCode.Should().Be(409);
+
+        refusal.Details.Should().NotBeNull("a stale Executed record proves the commit, and the answer must say it");
+        refusal.Details!.Keys.Should().Equal("applied");
+        refusal.Details["applied"].Should().BeOfType<bool>().Which.Should().BeTrue();
+
+        refusal.Message.Should().Be(
+            "The operation sent with this idempotency key was applied, but this request cannot return "
+            + "its result. Do not send it again with a new key: look for it with GET /api/transactions.");
+        refusal.Message.Should().NotMatchRegex(
+            "before .*with a new key",
+            "a sentence that ends in 'before retrying with a new key' invites a second payment of a proven one");
+    }
+
+    [Fact]
+    public async Task TryAcquire_StaleExecutedDifferentHash_ThrowsKeyReuse_NotThatItWasApplied()
+    {
+        // The fingerprint is compared before the age. Past the stale age a caller who sent OTHER
+        // bytes under the key must still be told 422, never that "it" went through.
+        var (userId, key) = await SeedAsync(IdempotencyStatus.Executed, HashA, ageMinutes: 11);
+
+        var act = () => _sut.TryAcquireAsync(userId, Endpoint, key, HashB, CancellationToken.None);
+
+        var refusal = (await act.Should().ThrowAsync<IdempotencyException>()).Which;
+        refusal.ErrorCode.Should().Be(Shared.Constants.ErrorCodes.IdempotencyKeyReuse);
+        refusal.StatusCode.Should().Be(422);
+        refusal.Details.Should().BeNull();
     }
 
     [Fact]

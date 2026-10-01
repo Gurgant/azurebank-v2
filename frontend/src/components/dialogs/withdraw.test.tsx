@@ -1,13 +1,14 @@
 import { Route, Routes } from 'react-router-dom';
-import { act, cleanup, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
 import { problem } from '../../mocks/problem';
 import { mockState } from '../../mocks/state';
 import { makeTestStore, renderWithProviders } from '../../test/renderWithProviders';
 import { expectNoNestedLiveRegions } from '../../test/liveRegions';
+import { COPY, committedAnswerLost, emulateFocusFixup } from '../../test/outage';
 import { WithdrawDialog } from './WithdrawDialog';
 
 /*
@@ -771,5 +772,115 @@ describe('withdraw (the idempotent mutation; its PIN moved to the mint, ADR-0056
     const statuses = screen.getAllByRole('status');
     expect(statuses).toHaveLength(1);
     expect(statuses[0]).toContainElement(note);
+  });
+});
+
+/**
+ * The dialog has drawn what it made of the answer: the one send reached the server, and Close,
+ * barred while the key was live, is back. True of every outcome that drops the key, so a test can
+ * then say which view is on screen instead of waiting for the one it hopes for.
+ */
+async function answerDrawn(keys: unknown[]) {
+  await waitFor(() => expect(keys).toHaveLength(1));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled());
+}
+
+/**
+ * A withdrawal the server says went through, when its receipt cannot be shown: the API's 409
+ * `IDEMPOTENCY_RESULT_UNKNOWN` carrying `applied: true` (ADR-0009). Until that member existed the
+ * dialog drew the check view for it, with "It didn't go through — try again" beside it.
+ */
+describe('withdraw — the server says it went through', () => {
+  // The Withdraw button is disabled during the send, and a browser hands its focus to `body`.
+  let stopFocusFixup: () => void;
+  beforeEach(() => {
+    stopFocusFixup = emulateFocusFixup();
+  });
+  afterEach(() => {
+    stopFocusFixup();
+  });
+
+  /** What each button is called: its label when it has no text of its own (the shell's X). */
+  const names = (buttons: HTMLElement[]) =>
+    buttons.map((button) => button.getAttribute('aria-label') ?? button.textContent);
+
+  it('says the withdrawal went through, under the receipt’s title, and offers the history and nothing that could send again', async () => {
+    const keys: (string | null)[] = [];
+    server.use(
+      http.post('*/api/transactions/withdraw', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        return committedAnswerLost('/api/transactions/withdraw');
+      }),
+    );
+    renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    const withdrawButton = screen.getByRole('button', { name: 'Withdraw €100.00' });
+    await userEvent.click(withdrawButton);
+
+    // The check view is what the dialog drew for this answer before it read `applied`.
+    await answerDrawn(keys);
+    expect(screen.queryByText("We couldn't confirm your withdrawal")).not.toBeInTheDocument();
+    const sentence = screen.getByText(COPY.withdrawalWentThrough);
+    // The receipt's title, which is also the dialog's accessible name.
+    const dialog = screen.getByRole('dialog', { name: 'Withdrawal Complete' });
+
+    // The shell's X, and the one action. No Withdraw, no Back, no "try again", no check view.
+    expect(names(within(dialog).getAllByRole('button'))).toEqual(['Close', 'View History']);
+    expect(within(dialog).getByRole('button', { name: 'Close' })).toBeEnabled();
+    expect(screen.queryByText(/didn't go through/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/may or may not/)).not.toBeInTheDocument();
+
+    // The PIN step is gone with the form: no boxes, no heading of the step.
+    expect(screen.queryByText('Verify Withdrawal')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Withdraw amount')).not.toBeInTheDocument();
+
+    // Said once, by focus: no alert and no status bar with words in the dialog, the sentence in
+    // no live region, and focus on the sentence itself.
+    const spoken = Array.from(
+      dialog.querySelectorAll<HTMLElement>('[role="alert"], [role="status"]'),
+    ).filter((region) => region.textContent?.trim());
+    expect(spoken.map((region) => region.textContent)).toEqual([]);
+    expect(sentence.closest('[role="alert"], [role="status"], [aria-live]')).toBeNull();
+    await waitFor(() => expect(sentence).toHaveFocus());
+
+    const viewHistory = within(dialog).getByRole('button', { name: 'View History' });
+    expect(viewHistory).not.toBe(withdrawButton);
+    expect(withdrawButton).not.toBeInTheDocument();
+    expect(viewHistory).not.toHaveAttribute('aria-describedby');
+
+    expect(keys).toHaveLength(1);
+    await userEvent.click(viewHistory);
+    expect(await screen.findByText('HISTORY PAGE')).toBeInTheDocument();
+    expect(keys).toHaveLength(1);
+  });
+
+  it('a 409 whose body cannot be trusted shows the check view, not "Withdrawal failed"', async () => {
+    // As for the deposit: a 409 that names no readable code may have been a send that landed.
+    const keys: (string | null)[] = [];
+    server.use(
+      http.post('*/api/transactions/withdraw', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        return problem({
+          status: 409,
+          errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN',
+          extensions: { applied: 'true' },
+        });
+      }),
+    );
+    renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+
+    await answerDrawn(keys);
+    expect(screen.queryByText(/Withdrawal failed/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByText("We couldn't confirm your withdrawal")).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Withdraw/ })).not.toBeInTheDocument();
+    // Not proven either: this is the check view, not the went-through one.
+    expect(screen.queryByText(COPY.withdrawalWentThrough)).not.toBeInTheDocument();
+    expect(keys).toHaveLength(1);
   });
 });

@@ -256,25 +256,90 @@ public class IdempotencyEndpointTests : IntegrationTestBase
         (await GetBalanceAsync(accountId)).Should().Be(75m);
     }
 
+    /*
+      Until 2026-10-01 this was Deposit_ExecutedRecord_Returns409ResultUnknown: it wrote an Executed
+      record by hand for a deposit that never happened and asserted a balance of 0. No request can
+      leave that state behind, since Executed reaches the database only with the business commit,
+      and an answer that says "applied" would have been asserted over nothing. The record below is
+      a real deposit's, put in the state a lost answer leaves it in.
+    */
     [Fact]
-    public async Task Deposit_ExecutedRecord_Returns409ResultUnknown()
+    public async Task Deposit_CommittedWithItsAnswerLost_Returns409ResultUnknown_SayingItWasApplied()
     {
         var (token, userId, accountId) = await RegisterTestUserAsync();
         SetAuthHeader(token);
         var key = Guid.NewGuid();
         var rawBody = RawJson(NewDeposit(accountId, 50m));
 
+        var first = await PostRawAsync("/api/transactions/deposit", rawBody, key);
+        first.StatusCode.Should().Be(HttpStatusCode.Created, "the deposit commits");
+        await LoseTheStoredAnswerAsync(userId, key, ageMinutes: 30);
+
         // Executed = the operation committed but the response was lost:
         // never re-execute, never invent a response.
-        SeedRecord(userId, "POST api/transactions/deposit", key, HashOf(rawBody),
-            IdempotencyStatus.Executed, ageMinutes: 30);
-
         var response = await PostRawAsync("/api/transactions/deposit", rawBody, key);
 
         response.StatusCode.Should().Be(HttpStatusCode.Conflict);
         var problem = await ReadProblemAsync(response);
         problem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.IdempotencyResultUnknown);
-        (await GetBalanceAsync(accountId)).Should().Be(0m, "nothing may execute");
+        (await GetBalanceAsync(accountId)).Should().Be(50m, "the one deposit, and nothing executed again");
+        (await CountTransactionsAsync(token, accountId)).Should().Be(1, "one ledger row");
+
+        problem.TryGetProperty("applied", out var applied).Should().BeTrue(
+            "the record was read from the store as Executed, so the answer says the deposit was applied");
+        applied.ValueKind.Should().Be(JsonValueKind.True, "the boolean true, not a string and not false");
+        problem.EnumerateObject().Select(member => member.Name).Should().BeEquivalentTo(
+            new[] { "type", "title", "status", "detail", "instance", "errorCode", "traceId", "applied" });
+        problem.GetProperty("detail").GetString().Should().Be(
+            "The operation sent with this idempotency key was applied, but this request cannot return "
+            + "its result. Do not send it again with a new key: look for it with GET /api/transactions.");
+    }
+
+    [Fact]
+    public async Task Deposit_CommittedWithItsAnswerNotStoredYet_Returns409InFlight_WithoutApplied()
+    {
+        var (token, userId, accountId) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        var key = Guid.NewGuid();
+        var rawBody = RawJson(NewDeposit(accountId, 50m));
+
+        var first = await PostRawAsync("/api/transactions/deposit", rawBody, key);
+        first.StatusCode.Should().Be(HttpStatusCode.Created);
+        // The same record, still young: its answer may yet be stored, and a replay is the better
+        // answer, so this 409 says nothing about what happened.
+        await LoseTheStoredAnswerAsync(userId, key, ageMinutes: 0);
+
+        var response = await PostRawAsync("/api/transactions/deposit", rawBody, key);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        var problem = await ReadProblemAsync(response);
+        problem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.IdempotencyInFlight);
+        problem.TryGetProperty("applied", out _).Should().BeFalse(
+            "applied belongs to IDEMPOTENCY_RESULT_UNKNOWN alone: it is absent here, never false");
+        (await GetBalanceAsync(accountId)).Should().Be(50m);
+    }
+
+    [Fact]
+    public async Task Deposit_CommittedWithItsAnswerLost_OtherBodyUnderTheKey_Returns422_WithoutApplied()
+    {
+        var (token, userId, accountId) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        var key = Guid.NewGuid();
+
+        var first = await PostRawAsync("/api/transactions/deposit", RawJson(NewDeposit(accountId, 50m)), key);
+        first.StatusCode.Should().Be(HttpStatusCode.Created);
+        await LoseTheStoredAnswerAsync(userId, key, ageMinutes: 30);
+
+        // Other bytes under the key, past the stale age: the fingerprint is compared before the
+        // age, so this caller is never told that "it" was applied.
+        var response = await PostRawAsync(
+            "/api/transactions/deposit", RawJson(NewDeposit(accountId, 999m)), key);
+
+        response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        var problem = await ReadProblemAsync(response);
+        problem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.IdempotencyKeyReuse);
+        problem.TryGetProperty("applied", out _).Should().BeFalse();
+        (await GetBalanceAsync(accountId)).Should().Be(50m, "the second amount must not execute");
     }
 
     [Fact]
@@ -507,6 +572,29 @@ public class IdempotencyEndpointTests : IntegrationTestBase
             ExpiresAt = expired ? now.AddMinutes(-1) : now.AddHours(24)
         });
         db.SaveChanges();
+    }
+
+    /// <summary>
+    /// Puts a committed deposit's record in the state a lost answer leaves it in: <c>Executed</c>,
+    /// no stored response, and its claim <paramref name="ageMinutes"/> old (the stale age is 2
+    /// minutes). The service reads the wall clock, so the age is written, as
+    /// <see cref="SeedRecord"/> writes it.
+    /// </summary>
+    private async Task LoseTheStoredAnswerAsync(Guid userId, Guid key, int ageMinutes)
+    {
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        var record = db.IdempotencyRecords.Single(
+            r => r.UserId == userId && r.Endpoint == "POST api/transactions/deposit" && r.Key == key);
+        record.Status.Should().Be(
+            IdempotencyStatus.Completed, "the deposit answered 201, so its answer was stored");
+
+        record.Status = IdempotencyStatus.Executed;
+        record.ResponseStatusCode = null;
+        record.ResponseContentType = null;
+        record.ResponseBody = null;
+        record.CreatedAt = DateTime.UtcNow.AddMinutes(-ageMinutes);
+        await db.SaveChangesAsync();
     }
 
     private async Task<decimal> GetBalanceAsync(Guid accountId)

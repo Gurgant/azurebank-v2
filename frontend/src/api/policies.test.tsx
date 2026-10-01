@@ -6,10 +6,25 @@ import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { server } from '../mocks/server';
 import { problem, serviceUnavailable } from '../mocks/problem';
-import { seedMockSession } from '../mocks/state';
-import { makeTestStore } from '../test/renderWithProviders';
-import { COPY, advance, advanceUntil, never, sleep, track, installFakeClock } from '../test/outage';
-import { apiSlice, useDepositMutation, useWithdrawMutation } from '../features/api/apiSlice';
+import { mockState, seedMockSession } from '../mocks/state';
+import { makeTestStore, type TestStore } from '../test/renderWithProviders';
+import {
+  COPY,
+  advance,
+  advanceUntil,
+  committedAnswerLost,
+  never,
+  sleep,
+  track,
+  installFakeClock,
+} from '../test/outage';
+import {
+  apiSlice,
+  useDepositMutation,
+  useGetAccountsQuery,
+  useGetTransactionsQuery,
+  useWithdrawMutation,
+} from '../features/api/apiSlice';
 import { useIdempotentMutation, type IdempotentTrigger } from '../hooks/useIdempotentMutation';
 import type { BaseQueryApi } from '@reduxjs/toolkit/query';
 import { problemBaseQuery, toApiProblem, type ApiProblem } from './problemBaseQuery';
@@ -907,6 +922,153 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
     expect(keys[3]).not.toBe(keys[2]);
   });
 
+  /** Counts the deposits that reach the server, answering each with `answer`. */
+  function countDeposits(answer: () => Response) {
+    const sent = { count: 0 };
+    server.use(
+      http.post('*/api/transactions/deposit', () => {
+        sent.count += 1;
+        return answer();
+      }),
+    );
+    return sent;
+  }
+
+  it('6b — RESULT_UNKNOWN that says applied: true is known to have gone through, and still sends nothing more', async () => {
+    // The API read this key's record as committed (ADR-0009). The key is dropped and the check is
+    // latched exactly as without the flag; what the flag adds is that the hook can say which.
+    const sent = countDeposits(() => committedAnswerLost('/api/transactions/deposit'));
+    const { Wrapper } = hookWrapper();
+    const { result } = renderHook(() => useDepositIntent(), { wrapper: Wrapper });
+    const body = { accountId: UUID, amount: 75 };
+
+    const first = await act(() => settle(result.current.submit(body)));
+    expect(first.ok).toBe(false);
+    if (first.ok) throw new Error('unreachable');
+    expect(first.error).toMatchObject({
+      status: 409,
+      errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN',
+      applied: true,
+    });
+    expect(result.current.keyRetained).toBe(false);
+    expect(result.current.verifyRequired).toBe(true);
+
+    const refused = await act(() => settle(result.current.submit(body)));
+    expect(refused.ok).toBe(false);
+    expect(sent.count).toBe(1); // refused client-side — no HTTP request happened
+
+    expect(result.current.wentThrough).toBe(true);
+  });
+
+  it('6c — after applied: true, resetIntent does nothing: no new key can exist in this page or dialog', async () => {
+    /*
+      "It didn't go through — start over" is `resetIntent`, and over a payment the server has just
+      called committed it is a second payment under a new key. A flow that showed the check view by
+      mistake must find that button dead; a new payment needs a new mount.
+    */
+    const sent = countDeposits(() => committedAnswerLost('/api/transactions/deposit'));
+    const { Wrapper } = hookWrapper();
+    const { result } = renderHook(() => useDepositIntent(), { wrapper: Wrapper });
+    const body = { accountId: UUID, amount: 75 };
+
+    const first = await act(() => settle(result.current.submit(body)));
+    expect(first.ok).toBe(false);
+    expect(result.current.verifyRequired).toBe(true);
+
+    act(() => result.current.resetIntent());
+    expect(result.current.verifyRequired).toBe(true);
+
+    const again = await act(() => settle(result.current.submit(body)));
+    expect(again.ok).toBe(false);
+    expect(sent.count).toBe(1);
+    expect(result.current.wentThrough).toBe(true);
+  });
+
+  it.each([
+    ['409 RESULT_UNKNOWN that carries no applied', () => ({})],
+    ['409 RESULT_UNKNOWN whose applied is false', () => ({ applied: false })],
+  ])(
+    '6d — %s asks for a check, and is not known to have gone through',
+    async (_name, extensions) => {
+      countDeposits(() =>
+        problem({
+          status: 409,
+          errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN',
+          extensions: extensions(),
+        }),
+      );
+      const { Wrapper } = hookWrapper();
+      const { result } = renderHook(() => useDepositIntent(), { wrapper: Wrapper });
+
+      const first = await act(() => settle(result.current.submit({ accountId: UUID, amount: 75 })));
+      expect(first.ok).toBe(false);
+      expect(result.current.verifyRequired).toBe(true);
+      expect(result.current.wentThrough).toBe(false);
+    },
+  );
+
+  it('6e — a check the flow asks for itself is not known to have gone through', async () => {
+    // `requireVerify`: the visitor edited the form while a key was held. Nothing was answered.
+    const { Wrapper } = hookWrapper();
+    const { result } = renderHook(() => useDepositIntent(), { wrapper: Wrapper });
+
+    act(() => result.current.requireVerify());
+
+    expect(result.current.verifyRequired).toBe(true);
+    expect(result.current.wentThrough).toBe(false);
+  });
+
+  it('6f — applied must be the boolean true: any other value is not known to have gone through', async () => {
+    /*
+      `problemBaseQuery` lets only a boolean through, so no real answer can carry this; the hook
+      is handed it directly. "true" as a string is truthy, and a truthiness read would say the
+      payment went through on a member the server never wrote as true.
+    */
+    const unwrap = vi.fn(() =>
+      Promise.reject({ status: 409, errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN', applied: 'true' }),
+    );
+    const trigger: IdempotentTrigger<{ amount: number }, unknown> = () => ({ unwrap });
+    const { Wrapper } = hookWrapper();
+    const { result } = renderHook(() => useIdempotentMutation(trigger), { wrapper: Wrapper });
+
+    const first = await act(() => settle(result.current.submit({ amount: 5 })));
+    expect(first.ok).toBe(false);
+    expect(result.current.verifyRequired).toBe(true);
+    expect(result.current.wentThrough).toBe(false);
+  });
+
+  it('6g — a 409 on a money send that names no code asks for a check before any new key', async () => {
+    /*
+      A body with a wrong-typed member is not trusted at all (`toApiProblem` falls back to an
+      empty body), so this 409 reaches the hook with the code the SPA derives from the status,
+      HTTP_409. It may have been IN_FLIGHT or RESULT_UNKNOWN: a send that may have landed.
+      Dropping the key with no latch let the next press go out under a new key.
+    */
+    const sent = countDeposits(() =>
+      problem({
+        status: 409,
+        errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN',
+        extensions: { applied: 'true' },
+      }),
+    );
+    const { Wrapper } = hookWrapper();
+    const { result } = renderHook(() => useDepositIntent(), { wrapper: Wrapper });
+    const body = { accountId: UUID, amount: 75 };
+
+    const first = await act(() => settle(result.current.submit(body)));
+    expect(first.ok).toBe(false);
+    if (first.ok) throw new Error('unreachable');
+    expect(first.error).toMatchObject({ status: 409, errorCode: 'HTTP_409' });
+    expect(first.error).not.toHaveProperty('applied');
+    expect(result.current.keyRetained).toBe(false);
+
+    expect(result.current.verifyRequired).toBe(true);
+    const second = await act(() => settle(result.current.submit(body)));
+    expect(second.ok).toBe(false);
+    expect(sent.count).toBe(1);
+    expect(result.current.wentThrough).toBe(false);
+  });
+
   it('7 — a money send with no answer ends at 65 s and keeps its key for the retry', async () => {
     const keys: string[] = [];
     let received = 0;
@@ -983,5 +1145,234 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
     expect(
       classifyMoneyProblem(noStatus as unknown as ApiProblem, { ...opts, phase: 'mint' }),
     ).toEqual({ kind: 'message', text: 'Transfer failed. Please try again.', scope: 'attempt' });
+  });
+
+  it('8c — a money send rejected with no HTTP status is not known to have gone through', async () => {
+    // The same rejection as 8: it may have landed, and nothing says that it did.
+    const unwrap = vi.fn(() =>
+      Promise.reject({ name: 'SchemaError', message: 'The answer did not match its schema.' }),
+    );
+    const trigger: IdempotentTrigger<{ amount: number }, unknown> = () => ({ unwrap });
+    const { Wrapper } = hookWrapper();
+    const { result } = renderHook(() => useIdempotentMutation(trigger), { wrapper: Wrapper });
+
+    const first = await act(() => settle(result.current.submit({ amount: 5 })));
+    expect(first.ok).toBe(false);
+    expect(result.current.verifyRequired).toBe(true);
+    expect(result.current.wentThrough).toBe(false);
+  });
+
+  it('8d — the money classifier words a 409 that names no code as a check for a send, as a failure for a mint', () => {
+    // What `toApiProblem` makes of a 409 whose body it could not trust: the status, and the code
+    // derived from it. The hook latches the check for it (6g), so the words must match the view.
+    const unnamed: ApiProblem = { status: 409, errorCode: 'HTTP_409' };
+    const opts = { messages: {}, fallback: 'Transfer failed. Please try again.' };
+
+    // A mint holds no key and moved nothing: the flow's own sentence, as before.
+    expect(classifyMoneyProblem(unnamed, { ...opts, phase: 'mint' })).toEqual({
+      kind: 'message',
+      text: 'Transfer failed. Please try again.',
+      scope: 'attempt',
+    });
+    // A send may have moved the money: the verify view, never "failed, try again".
+    expect(classifyMoneyProblem(unnamed, { ...opts, phase: 'send' })).toEqual({ kind: 'verify' });
+  });
+
+  describe('what RESULT_UNKNOWN does to the cache', () => {
+    /*
+      The flow tells the visitor to look at their transactions, and with `applied: true` it tells
+      them the payment went through: the balance and the list the page holds are from before it.
+      So the four money mutations invalidate on this code what they invalidate on success. Measured
+      on the running app before this: behind a deposit that had landed, the dashboard kept the old
+      balance through the loss, the two minutes and the check view.
+
+      Asserted at the store, with a reader of each list mounted: a transfer page reads accounts
+      only and a dialog reads nothing, so a refetch asserted there would have nothing to refetch.
+    */
+    const MAIN = mockState.accounts[0].id;
+    const SAVINGS = mockState.accounts[1].id;
+    const HISTORY = { page: 1, pageSize: 20 };
+
+    function useListReaders() {
+      return { accounts: useGetAccountsQuery(), transactions: useGetTransactionsQuery(HISTORY) };
+    }
+
+    /** Counts the reads of the two lists, letting each one through to the mock. */
+    function countListReads() {
+      const reads = { accounts: 0, transactions: 0 };
+      server.use(
+        http.get('*/api/accounts', () => {
+          reads.accounts += 1;
+          return undefined;
+        }),
+        http.get('*/api/transactions', () => {
+          reads.transactions += 1;
+          return undefined;
+        }),
+      );
+      return reads;
+    }
+
+    async function mountReaders(reads: { accounts: number; transactions: number }) {
+      const { store, Wrapper } = hookWrapper();
+      const { result } = renderHook(() => useListReaders(), { wrapper: Wrapper });
+      await waitFor(() => {
+        expect(result.current.accounts.isSuccess).toBe(true);
+        expect(result.current.transactions.isSuccess).toBe(true);
+      });
+      expect(reads).toEqual({ accounts: 1, transactions: 1 });
+      return store;
+    }
+
+    /**
+     * One more request, sent now and answered: whatever the store sent before it has reached its
+     * handler by then, so a count read after this is not a count read too soon.
+     */
+    async function afterARoundTrip(store: TestStore) {
+      const probe = store.dispatch(apiSlice.endpoints.getAccount.initiate(SAVINGS));
+      await probe.unwrap();
+      probe.unsubscribe();
+    }
+
+    const SENDS: {
+      name: string;
+      path: string;
+      send: (store: TestStore) => Promise<unknown>;
+    }[] = [
+      {
+        name: 'deposit',
+        path: '/api/transactions/deposit',
+        send: (store) =>
+          store
+            .dispatch(
+              apiSlice.endpoints.deposit.initiate({
+                idempotencyKey: crypto.randomUUID(),
+                body: { accountId: MAIN, amount: 5 },
+              }),
+            )
+            .unwrap(),
+      },
+      {
+        name: 'withdrawal',
+        path: '/api/transactions/withdraw',
+        send: (store) =>
+          store
+            .dispatch(
+              apiSlice.endpoints.withdraw.initiate({
+                idempotencyKey: crypto.randomUUID(),
+                body: { accountId: MAIN, amount: 5 },
+                stepUpAuthorizationId: crypto.randomUUID(),
+              }),
+            )
+            .unwrap(),
+      },
+      {
+        name: 'transfer',
+        path: '/api/transfers',
+        send: (store) =>
+          store
+            .dispatch(
+              apiSlice.endpoints.transfer.initiate({
+                idempotencyKey: crypto.randomUUID(),
+                body: { fromAccountId: MAIN, recipientAzureTag: 'friend', amount: 5 },
+                stepUpAuthorizationId: crypto.randomUUID(),
+              }),
+            )
+            .unwrap(),
+      },
+      {
+        name: 'transfer between own accounts',
+        path: '/api/transfers/internal',
+        send: (store) =>
+          store
+            .dispatch(
+              apiSlice.endpoints.transferInternal.initiate({
+                idempotencyKey: crypto.randomUUID(),
+                body: { fromAccountId: MAIN, toAccountId: SAVINGS, amount: 5 },
+                stepUpAuthorizationId: crypto.randomUUID(),
+              }),
+            )
+            .unwrap(),
+      },
+    ];
+
+    const ANSWERS: { flag: string; answer: (path: string) => Response }[] = [
+      { flag: 'with applied: true', answer: (path) => committedAnswerLost(path) },
+      {
+        flag: 'without applied',
+        answer: (path) =>
+          problem({ status: 409, errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN', instance: path }),
+      },
+    ];
+
+    it.each(SENDS.flatMap((send) => ANSWERS.map((answer) => ({ ...send, ...answer }))))(
+      '9 — a $name answered RESULT_UNKNOWN $flag reads the accounts and the transactions once more',
+      async ({ path, send, answer }) => {
+        const reads = countListReads();
+        const store = await mountReaders(reads);
+        server.use(http.post(`*${path}`, () => answer(path)));
+
+        const outcome = await settle(send(store));
+        expect(outcome.ok).toBe(false);
+        if (outcome.ok) throw new Error('unreachable');
+        expect(outcome.error.errorCode).toBe('IDEMPOTENCY_RESULT_UNKNOWN');
+
+        await waitFor(() => expect(reads).toEqual({ accounts: 2, transactions: 2 }));
+        // Once more, not twice.
+        await afterARoundTrip(store);
+        expect(reads).toEqual({ accounts: 2, transactions: 2 });
+      },
+    );
+
+    it.each([
+      [
+        '409 IN_FLIGHT',
+        () => problem({ status: 409, errorCode: 'IDEMPOTENCY_IN_FLIGHT' }),
+        'IDEMPOTENCY_IN_FLIGHT',
+      ],
+      [
+        '422 KEY_REUSE',
+        () => problem({ status: 422, errorCode: 'IDEMPOTENCY_KEY_REUSE' }),
+        'IDEMPOTENCY_KEY_REUSE',
+      ],
+    ])('9b — a deposit answered %s reads neither list again', async (_name, answer, errorCode) => {
+      // IN_FLIGHT committed nothing that an answer will not report; a refusal changed nothing.
+      const reads = countListReads();
+      const store = await mountReaders(reads);
+      server.use(http.post('*/api/transactions/deposit', answer));
+
+      const outcome = await settle(SENDS[0].send(store));
+      expect(outcome.ok).toBe(false);
+      if (outcome.ok) throw new Error('unreachable');
+      expect(outcome.error.errorCode).toBe(errorCode);
+
+      await afterARoundTrip(store);
+      expect(reads).toEqual({ accounts: 1, transactions: 1 });
+    });
+
+    it('9c — a cached history nobody is reading is dropped, so the history page reads it afresh', async () => {
+      /*
+        "View History" is the one action the visitor is given. The history's list has no reader
+        on a transfer page or under a dialog, and an invalidated entry with no reader is not
+        refetched: it is removed. Without the invalidation, a list cached in the last minute would
+        be shown on arrival, without the movement the page had just said went through.
+      */
+      const { store } = hookWrapper();
+      const read = store.dispatch(apiSlice.endpoints.getTransactions.initiate(HISTORY));
+      await read.unwrap();
+      read.unsubscribe();
+      const cached = () => apiSlice.endpoints.getTransactions.select(HISTORY)(store.getState());
+      expect(cached().status).toBe('fulfilled');
+
+      server.use(
+        http.post('*/api/transactions/deposit', () =>
+          committedAnswerLost('/api/transactions/deposit'),
+        ),
+      );
+      const outcome = await settle(SENDS[0].send(store));
+      expect(outcome.ok).toBe(false);
+
+      await waitFor(() => expect(cached().status).toBe('uninitialized'));
+    });
   });
 });

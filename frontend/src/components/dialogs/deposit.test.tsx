@@ -1,12 +1,13 @@
 import { Route, Routes } from 'react-router-dom';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
 import { problem } from '../../mocks/problem';
 import { mockState } from '../../mocks/state';
 import { renderWithProviders } from '../../test/renderWithProviders';
+import { COPY, committedAnswerLost, emulateFocusFixup } from '../../test/outage';
 import { DepositDialog } from './DepositDialog';
 
 /**
@@ -368,5 +369,122 @@ describe('deposit (T3 — idempotent mutation)', () => {
     await userEvent.keyboard('{Escape}');
     expect(closed).toBe(false);
     expect(screen.getByText('Deposit Money')).toBeInTheDocument(); // still open
+  });
+});
+
+/**
+ * The dialog has drawn what it made of the answer: the one send reached the server, and Close,
+ * barred while the key was live, is back. True of every outcome that drops the key, so a test can
+ * then say which view is on screen instead of waiting for the one it hopes for.
+ */
+async function answerDrawn(keys: unknown[]) {
+  await waitFor(() => expect(keys).toHaveLength(1));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled());
+}
+
+/**
+ * A deposit the server says went through, when its receipt cannot be shown: the API's 409
+ * `IDEMPOTENCY_RESULT_UNKNOWN` carrying `applied: true` (ADR-0009). Until that member existed the
+ * dialog drew the check view for it, and "It didn't go through — try again" followed by Deposit
+ * was a second deposit under a new key: measured on the running app, two deposits of one amount.
+ */
+describe('deposit — the server says it went through', () => {
+  // The Deposit button is disabled during the send, and a browser hands its focus to `body`.
+  let stopFocusFixup: () => void;
+  beforeEach(() => {
+    stopFocusFixup = emulateFocusFixup();
+  });
+  afterEach(() => {
+    stopFocusFixup();
+  });
+
+  /** What each button is called: its label when it has no text of its own (the shell's X). */
+  const names = (buttons: HTMLElement[]) =>
+    buttons.map((button) => button.getAttribute('aria-label') ?? button.textContent);
+
+  it('says the deposit went through, under the receipt’s title, and offers the history and nothing that could send again', async () => {
+    const keys: (string | null)[] = [];
+    server.use(
+      http.post('*/api/transactions/deposit', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        return committedAnswerLost('/api/transactions/deposit');
+      }),
+    );
+    renderDeposit();
+
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    const depositButton = screen.getByRole('button', { name: 'Deposit €100.00' });
+    await userEvent.click(depositButton);
+
+    // The check view is what the dialog drew for this answer before it read `applied`.
+    await answerDrawn(keys);
+    expect(screen.queryByText("We couldn't confirm your deposit")).not.toBeInTheDocument();
+    const sentence = screen.getByText(COPY.depositWentThrough);
+    // The receipt's title, which is also the dialog's accessible name.
+    const dialog = screen.getByRole('dialog', { name: 'Deposit Complete' });
+
+    // The shell's X, and the one action. No Deposit, no "try again", no check view.
+    expect(names(within(dialog).getAllByRole('button'))).toEqual(['Close', 'View History']);
+    expect(within(dialog).getByRole('button', { name: 'Close' })).toBeEnabled();
+    expect(screen.queryByText(/didn't go through/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/may or may not/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Deposit amount')).not.toBeInTheDocument();
+
+    // Said once, by focus: no alert and no status bar with words in the dialog, the sentence in
+    // no live region, and focus on the sentence itself.
+    const spoken = Array.from(
+      dialog.querySelectorAll<HTMLElement>('[role="alert"], [role="status"]'),
+    ).filter((region) => region.textContent?.trim());
+    expect(spoken.map((region) => region.textContent)).toEqual([]);
+    expect(sentence.closest('[role="alert"], [role="status"], [aria-live]')).toBeNull();
+    await waitFor(() => expect(sentence).toHaveFocus());
+
+    /*
+      A NEW node, not the Deposit button with other words. Both are the footer's only button, so
+      without a key of its own React would keep the node — and the focus that never left it: a
+      second press of "Deposit" would land on "View History", and the sentence would never be
+      reached.
+    */
+    const viewHistory = within(dialog).getByRole('button', { name: 'View History' });
+    expect(viewHistory).not.toBe(depositButton);
+    expect(depositButton).not.toBeInTheDocument();
+    expect(viewHistory).not.toHaveAttribute('aria-describedby');
+
+    expect(keys).toHaveLength(1);
+    await userEvent.click(viewHistory);
+    expect(await screen.findByText('HISTORY PAGE')).toBeInTheDocument();
+    expect(keys).toHaveLength(1);
+  });
+
+  it('a 409 whose body cannot be trusted shows the check view, not "Deposit failed"', async () => {
+    /*
+      A wrong-typed member makes the whole body untrusted, so this 409 names no code the SPA can
+      read. It may have been the answer above, or IN_FLIGHT: a deposit that may have landed. The
+      dialog said "Deposit failed. Please try again." and the next press was a new key.
+    */
+    const keys: (string | null)[] = [];
+    server.use(
+      http.post('*/api/transactions/deposit', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        return problem({
+          status: 409,
+          errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN',
+          extensions: { applied: 'true' },
+        });
+      }),
+    );
+    renderDeposit();
+
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+
+    await answerDrawn(keys);
+    expect(screen.queryByText(/Deposit failed/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByText("We couldn't confirm your deposit")).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Deposit/ })).not.toBeInTheDocument();
+    // Not proven either: this is the check view, not the went-through one.
+    expect(screen.queryByText(COPY.depositWentThrough)).not.toBeInTheDocument();
+    expect(keys).toHaveLength(1);
   });
 });
