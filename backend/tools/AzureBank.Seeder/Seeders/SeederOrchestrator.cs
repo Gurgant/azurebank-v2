@@ -33,11 +33,9 @@ public class SeederOrchestrator
 
         foreach (var seeder in seederList)
         {
-            if (cancellationToken.IsCancellationRequested)
-            {
-                _logger.LogWarning("Seeding cancelled");
-                break;
-            }
+            // A cancelled run throws. It used to leave the loop and reach the "completed
+            // successfully" line below, with some seeders never run.
+            cancellationToken.ThrowIfCancellationRequested();
 
             _logger.LogInformation("Running {Seeder} (Order: {Order})...", seeder.Name, seeder.Order);
 
@@ -46,9 +44,10 @@ public class SeederOrchestrator
                 await seeder.SeedAsync(cancellationToken);
                 _logger.LogInformation("Completed {Seeder}", seeder.Name);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _logger.LogError(ex, "Failed to execute {Seeder}", seeder.Name);
+                // Which seeder it was; the exception itself is logged once, by the command.
+                _logger.LogError("Failed to execute {Seeder}", seeder.Name);
                 throw;
             }
         }

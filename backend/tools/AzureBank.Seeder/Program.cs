@@ -1,25 +1,43 @@
 using System.CommandLine;
 using AzureBank.Seeder.Commands;
 using AzureBank.Seeder.Extensions;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Options;
 using Serilog;
 
 // ============================================
 // AzureBank Database Seeder Tool
 // ============================================
-// A standalone CLI tool for database seeding and management.
+// A standalone CLI tool for migrating, seeding and resetting the database.
 // Lives outside the main architecture to avoid circular dependencies.
+// It is also what the tools image runs (the Dockerfile and README.md beside this file).
 //
 // Usage:
+//   dotnet run --project tools/AzureBank.Seeder -- migrate
 //   dotnet run --project tools/AzureBank.Seeder -- seed
 //   dotnet run --project tools/AzureBank.Seeder -- reset --confirm
 //   dotnet run --project tools/AzureBank.Seeder -- --help
+//
+// Exit codes (Commands/ExitCodes.cs): 0 done; 1 failed, or the command line was wrong;
+// 2 refused before any connection was opened.
 // ============================================
 
-// Build host with services
-var builder = Host.CreateApplicationBuilder(args);
+/*
+  THE CONTENT ROOT IS THE BINARY'S FOLDER, not the current directory, which is what
+  Host.CreateApplicationBuilder(args) takes. The tool's appsettings.json sits beside its dll, so
+  started from anywhere else it used to run without it: CI starts it from backend/, where one
+  `reset` printed 874 lines, 169 of them "Executed DbCommand", and opened with a pool of 12 instead
+  of the 5 its settings ask for (measured 2026-10-01; 17 lines and 0 from its own folder).
+
+  THE COMMAND LINE IS NOT A CONFIGURATION SOURCE: Args is not handed to the host. Configuration
+  comes from the settings file beside the binary, user-secrets in Development, and the
+  environment. The arguments are the command and its options and nothing else, so a secret has no
+  reason to be typed there, where a process list shows it and the parser prints back a token it
+  does not know. DOTNET_ENVIRONMENT still selects the environment.
+*/
+var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
+{
+    ContentRootPath = AppContext.BaseDirectory,
+});
 
 // Configure Serilog for console output
 Log.Logger = new LoggerConfiguration()
@@ -35,21 +53,33 @@ builder.Services.AddSeederServices(builder.Configuration, builder.Environment);
 
 var host = builder.Build();
 
-// Fail fast on a misconfigured options set (e.g. a missing/short PIN pepper) BEFORE
-// any command runs — `reset` wipes and re-migrates the DB, so late validation would
-// destroy data then throw. This CLI never calls host.StartAsync(), so .ValidateOnStart()
-// alone would never fire; invoking the startup validator here runs it explicitly.
-host.Services.GetService<IStartupValidator>()?.Validate();
+/*
+  THE PIN-PEPPER CHECK MOVED INTO THE COMMANDS THAT NEED IT, and this comment records why rather
+  than vanishing. It ran here, before the command line was parsed, so with no pepper configured no
+  invocation got as far as its command: --help, a missing command and `migrate`, which never reads
+  the pepper, all ended in an unhandled OptionsValidationException (exit 139 in a Linux container,
+  measured 2026-10-01). `seed` and `reset` now run the validator at their own start, still before
+  any database work, so `reset` cannot drop a database it then cannot seed, and answer with a
+  sentence and exit 2 (ServiceCollectionExtensions.PinPepperIsUsable).
+*/
 
 // Build CLI with System.CommandLine
 var rootCommand = new RootCommand("AzureBank Database Seeder Tool")
 {
-    Description = "CLI tool for seeding and managing the AzureBank database"
+    Description = "CLI tool for migrating, seeding and resetting the AzureBank database"
 };
 
 // Add commands
+rootCommand.AddCommand(MigrateCommand.Create(host.Services));
 rootCommand.AddCommand(SeedCommand.Create(host.Services));
 rootCommand.AddCommand(ResetCommand.Create(host.Services));
 
-// Execute CLI
-return await rootCommand.InvokeAsync(args);
+// Execute CLI. Each handler sets the exit code on its invocation, and that is what comes back.
+try
+{
+    return await rootCommand.InvokeAsync(args);
+}
+finally
+{
+    await Log.CloseAndFlushAsync();
+}

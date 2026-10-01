@@ -87,8 +87,8 @@ public sealed class MigrateCommandSqlServerTests : IDisposable
                 + $"pool {expected.MaxPoolSize}, pool blocking {expected.PoolBlockingPeriod}; "
                 + "EF retries 4, back-off capped at 00:00:10");
             messages.Should().Contain($"Pending migrations: {known.Length}, from {known[0]} to {known[^1]}");
-            messages.Should().Contain(m => m.StartsWith(
-                $"The database is at {known[^1]}: {known.Length} of {known.Length} migrations. migrate took ", StringComparison.Ordinal));
+            var done = $"The database is at {known[^1]}: {known.Length} of {known.Length} migrations. migrate took ";
+            messages.Should().Contain(m => m.StartsWith(done, StringComparison.Ordinal));
             messages.Should().Contain(m => m.StartsWith("Applying migration '", StringComparison.Ordinal))
                 .And.NotContain(m => m.StartsWith("Waiting for the database", StringComparison.Ordinal),
                     "a server that answers and does not hold the database is not waited for");

@@ -200,7 +200,7 @@ public class DatabaseGateTests
 
         using var all = new AssertionScope();
         result.Verdict.Should().Be(GateVerdict.TimedOut);
-        result.LastAnswer.Should().Contain("11001").And.Contain("No such host is known.");
+        result.LastAnswer.Should().Be("11001, class 20: No such host is known");
         script.Clock.Elapsed.Should().Be(TimeSpan.FromSeconds(10), "the wait is a time budget, not a count of attempts");
         script.Opens.Should().Be(6, "one attempt at the start and one after each of five pauses, the last at the deadline");
         script.Warnings.Should().HaveCount(6, "the attempt that ran out of time is logged too");

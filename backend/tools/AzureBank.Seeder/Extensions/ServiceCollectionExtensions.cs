@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace AzureBank.Seeder.Extensions;
@@ -46,9 +47,10 @@ public static class ServiceCollectionExtensions
         .AddDefaultTokenProviders();
 
         // PIN-hash pepper keyring (ADR-0011). MUST match the API's Security:PinPepper,
-        // else seeded PINs won't verify. Same shared validator as the API. Eager
-        // fail-fast is triggered in Program.cs (this CLI never starts the host, so
-        // .ValidateOnStart() alone would not fire — see Program.cs).
+        // else seeded PINs won't verify. Same shared validator as the API. This CLI never
+        // starts the host, so .ValidateOnStart() alone would not fire: `seed` and `reset`
+        // run the validator themselves, before any database work (PinPepperIsUsable below).
+        // Until 2026-10-01 Program.cs ran it ahead of the command line, for every command.
         services.AddOptions<PinHashingOptions>()
             .Bind(configuration.GetSection(PinHashingOptions.SectionName))
             .ValidateOnStart();
@@ -73,5 +75,28 @@ public static class ServiceCollectionExtensions
         services.AddScoped<SeederOrchestrator>();
 
         return services;
+    }
+
+    /// <summary>
+    /// Whether the PIN pepper keyring passes the shared validator, with the refusal logged when it
+    /// does not. <c>seed</c> and <c>reset</c> ask before they open anything: a false means exit 2.
+    /// </summary>
+    /// <remarks>
+    /// The failures name keys and lengths only (<c>PinHashingOptionsValidator</c>), never a value,
+    /// so they are printed as they are, without the exception's stack.
+    /// </remarks>
+    public static bool PinPepperIsUsable(this IServiceProvider services, ILogger logger, string command)
+    {
+        try
+        {
+            services.GetRequiredService<IStartupValidator>().Validate();
+            return true;
+        }
+        catch (OptionsValidationException e)
+        {
+            logger.LogError(
+                "{Command} refused: {Failures} Nothing was opened.", command, string.Join(" ", e.Failures));
+            return false;
+        }
     }
 }

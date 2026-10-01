@@ -19,7 +19,7 @@ namespace AzureBank.Tests.Fixtures;
 /// </summary>
 /// <remarks>
 /// The host registers <see cref="IConfiguration"/> in the real tool; here the fixture does. An
-/// interceptor registered as <see cref="IInterceptor"/> reaches the context, because
+/// interceptor registered as <c>IInterceptor</c> reaches the context, because
 /// <c>AddInfrastructure</c> attaches every one the provider holds.
 /// </remarks>
 internal static class SeederHost
