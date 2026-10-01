@@ -95,7 +95,8 @@ public class ProvenCommitSourceTests
             file);
     }
 
-    private static List<string> SourceFilesCalling(Regex call)
+    /// <summary>The source files that hold the call, each with how many times it holds it.</summary>
+    private static List<(string Name, int Calls)> SourceCalls(Regex call)
     {
         var root = Path.Combine(RepoRoot().FullName, "backend", "src");
         var all = Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)
@@ -107,11 +108,14 @@ public class ProvenCommitSourceTests
         all.Count.Should().BeGreaterThan(100, "the walk must have read the API's sources");
 
         return all
-            .Where(path => call.IsMatch(File.ReadAllText(path)))
-            .Select(path => Path.GetFileName(path))
-            .OrderBy(name => name, StringComparer.Ordinal)
+            .Select(path => (Name: Path.GetFileName(path), Calls: call.Matches(File.ReadAllText(path)).Count))
+            .Where(found => found.Calls > 0)
+            .OrderBy(found => found.Name, StringComparer.Ordinal)
             .ToList();
     }
+
+    private static List<string> SourceFilesCalling(Regex call) =>
+        SourceCalls(call).Select(found => found.Name).ToList();
 
     [Fact]
     public void ResultUnknown_IsAnsweredFromTheClaimAndTheReRunOnly()
@@ -128,15 +132,23 @@ public class ProvenCommitSourceTests
     }
 
     [Fact]
-    public void TheAnswerThatSaysApplied_IsThrownFromExactlyTwoFiles()
+    public void TheAnswerThatSaysApplied_IsThrownOnceInEachOfExactlyTwoFiles()
     {
         // applied: true is said from a database read of the key's record, made by the request that
         // answers: the claim's untracked read, and the re-run's reload. Nowhere else has one.
-        var callers = SourceFilesCalling(
+        //
+        // Counted per file, not only listed. Both files give other answers where nothing was read
+        // as committed: the claim that is still in flight, the claim given up after lost races, the
+        // record gone on reload. A second call inside either file would leave the list of two files
+        // as it is. And the give-up is reached only when every attempt loses a race, which no
+        // behaviour test stages: a call put there fails this count and nothing else.
+        var calls = SourceCalls(
             new Regex(@"IdempotencyException\.ResultUnknownApplied\(", RegexOptions.CultureInvariant));
 
-        callers.Should().Equal(
-            new[] { "ConcurrencyRetry.cs", "IdempotencyService.cs" },
-            "the answer that says a payment went through is given only where the record was just read as committed");
+        calls.Should().Equal(
+            new[] { ("ConcurrencyRetry.cs", 1), ("IdempotencyService.cs", 1) },
+            "the answer that says a payment went through is given only where the record was just read as "
+            + "committed: once after the claim's read, once after the re-run's reload. A new call must show "
+            + "which database read it stands on (ADR-0009), and then this list changes");
     }
 }
