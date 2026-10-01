@@ -11,6 +11,7 @@ import {
   COPY,
   advance,
   advanceUntil,
+  alertSlot,
   expectSilentHintTakesNoRoom,
   fakeClockUser,
   hintRegion,
@@ -185,16 +186,40 @@ describe('the confirm wait', () => {
     await advanceUntil(mintAt, 3_100);
     await waitFor(() => expect(sends).toBe(1));
 
-    // Counted from the sixth digit, not restarted by the hand-off.
+    // Counted from the sixth digit, not restarted by the hand-off. From 20 s it asks the visitor
+    // to stay: a reload is the one thing that could send this transfer twice.
     await advanceUntil(shownAt, 5_000);
     hintRegion(COPY.slow);
     await advanceUntil(shownAt, 20_000);
-    const region = hintRegion(COPY.stillTrying);
+    const region = hintRegion(COPY.keepPageOpen);
 
     expect(screen.queryByText(COPY.noDoubleCharge, { exact: false })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: COPY.stopWaiting })).not.toBeInTheDocument();
     const boxes = screen.getByRole('group', { name: 'Enter your PIN' });
     expect(boxes.compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('between your own accounts, asks from 20 s to keep the page open too', async () => {
+    let sentAt = 0;
+    server.use(
+      http.post('*/api/transfers/internal', () => {
+        sentAt = Date.now();
+        return never();
+      }),
+    );
+    renderInternal();
+    await internalToPin();
+
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByLabelText('Digit 1 of 6'));
+    await user.paste(TEST_PIN);
+    const shownAt = await hintShownAt();
+    await waitFor(() => expect(sentAt).toBeGreaterThan(0));
+
+    await advanceUntil(shownAt, 20_000);
+    hintRegion(COPY.keepPageOpen);
+    expect(screen.queryByText(COPY.noDoubleMove, { exact: false })).not.toBeInTheDocument();
   });
 
   /** Counts the mints on `path`, letting each one through to the mock. */
@@ -572,16 +597,22 @@ describe.each([
     const user = fakeClockUser();
     try {
       flow.render();
-      const first = await screen.findByRole('alert');
+      const slot = alertSlot();
+      const first = await waitFor(() => {
+        const bar = within(slot).getByRole('group');
+        expect(within(bar).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+        return bar;
+      });
 
       holdNext = true;
       const retriedAt = Date.now();
       await user.click(within(first).getByRole('button', { name: 'Retry' }));
       await waitFor(() => expect(calls).toBe(2));
 
-      // The bar goes while the accounts load again, and an empty form does not take its place.
+      // The bar goes while the accounts load again, out of the alert that stays to say the next
+      // failure, and an empty form does not take its place.
       const shownAt = await hintShownAt();
-      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(slot).toBeEmptyDOMElement();
       expect(screen.queryByRole('button', { name: 'Review Transfer' })).not.toBeInTheDocument();
       await advanceUntil(retriedAt, 4_900);
       expect(screen.queryByText(COPY.slow)).not.toBeInTheDocument();
@@ -592,8 +623,9 @@ describe.each([
       expect(screen.getByRole('button', { name: COPY.stopWaiting })).toBeInTheDocument();
 
       release();
-      const second = await screen.findByRole('alert');
+      const second = await waitFor(() => within(slot).getByRole('group'));
       expect(second).not.toBe(first);
+      expect(alertSlot()).toBe(slot);
       expect(second).toHaveTextContent('An unexpected error occurred. Please try again later.');
       await waitFor(() =>
         expect(document.activeElement).toBe(within(second).getByRole('button', { name: 'Retry' })),
@@ -603,11 +635,12 @@ describe.each([
     }
   });
 
-  it('every new failure of the accounts is a new alert, with focus on its Retry', async () => {
+  it("every new failure of the accounts is a new bar in the page's alert, with focus on its Retry", async () => {
     /*
       A 500 is not retried and the mock answers it at once, so a Retry's start and its failure can
       reach the page in the same frame, and the wait is never drawn. A bar that stayed the same
-      element would then say nothing the second time. Pressed twice, as on the reading pages.
+      element would then be no change of the alert, and say nothing the second time. Pressed
+      twice, as on the reading pages.
     */
     let calls = 0;
     server.use(
@@ -618,8 +651,12 @@ describe.each([
     );
     const user = userEvent.setup();
     flow.render();
-    const alertOf = () =>
-      screen.getByText(/Something broke\./).closest<HTMLElement>('[role="alert"]');
+    const slot = alertSlot();
+    const alertOf = () => {
+      const bar = screen.getByText(/Something broke\./).closest<HTMLElement>('[role="group"]');
+      expect(bar?.closest('[role="alert"]')).toBe(slot);
+      return bar;
+    };
     await screen.findByText(/Something broke\./);
 
     for (let press = 1; press <= 2; press += 1) {
@@ -783,6 +820,29 @@ describe('the recipient check', () => {
     expectSilentHintTakesNoRoom();
     await advanceUntil(shownAt, 5_000);
     hintRegion(COPY.slow);
+  });
+
+  it('a check that said it was slow says "Loaded." when the recipient is found, unseen', async () => {
+    const lookups: number[] = [];
+    server.use(
+      http.get('*/api/users/:azureTag', async () => {
+        lookups.push(Date.now());
+        await sleep(6_000);
+        return undefined;
+      }),
+    );
+    await verifyOnTheFakeClock();
+    await waitFor(() => expect(lookups).toHaveLength(1));
+    await advanceUntil(lookups[0], 5_000);
+    const region = hintRegion(COPY.slow);
+
+    await advanceUntil(lookups[0], 6_100);
+
+    await screen.findByText('A. Friend');
+    await waitFor(() => expect(region.textContent).toBe(COPY.loaded));
+    expect(getComputedStyle(region.closest('[data-wait-hint]') as HTMLElement).position).toBe(
+      'absolute',
+    );
   });
 
   it('a check with no answer ends at 65 s saying the service is unavailable', async () => {

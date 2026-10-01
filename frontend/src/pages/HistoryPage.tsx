@@ -23,7 +23,7 @@ import {
 } from '../components/shared/TransactionRow';
 import type { TransactionType } from '../api/enums';
 import { useAppDispatch } from '../app/hooks';
-import { WaitHint } from '../components/feedback';
+import { AlertSlot, WaitHint } from '../components/feedback';
 import type { TransactionResponse } from '../features/api/apiSlice';
 import { useGetTransactionHistoryInfiniteQuery } from '../features/api/apiSlice';
 import { abortRunning, useWaitLanding } from '../hooks/useWaitLanding';
@@ -154,6 +154,10 @@ const useStyles = makeStyles({
   errorContainer: {
     padding: '16px',
   },
+
+  // After the first page's wait: no box, so that the hint left inside for its "Loaded." takes no
+  // room either.
+  afterWait: { display: 'contents' },
 
   // The buttons in a row, and a slow page's words under them.
   loadMoreContainer: {
@@ -336,18 +340,18 @@ export function HistoryPage() {
 
       {/* Content */}
       <div className={styles.content}>
-        {waiting && (
-          <div className={styles.stateContainer}>
-            <Spinner size="large" aria-label="Loading transactions" />
-            <WaitHint active kind="read" onStopWaiting={stopWaiting} />
-          </div>
-        )}
+        {/* The spinner's box while the first page waits, and no box afterwards: the hint stays
+            inside it for its "Loaded.". */}
+        <div className={waiting ? styles.stateContainer : styles.afterWait}>
+          {waiting && <Spinner size="large" aria-label="Loading transactions" />}
+          <WaitHint active={waiting} kind="read" failed={failed} onStopWaiting={stopWaiting} />
+        </div>
 
         {/* Keyed by the request that failed, so that a Retry which fails again before its wait is
-            ever drawn still puts a new alert on the page, and it is announced again. */}
-        {problem && (
-          <div className={styles.errorContainer}>
-            <MessageBar key={requestId} intent="error" role="alert">
+            ever drawn still puts a new bar into the alert, and it is announced again. */}
+        <AlertSlot className={styles.errorContainer}>
+          {problem && (
+            <MessageBar key={requestId} intent="error">
               <MessageBarBody>
                 {problem.detail || 'Could not load your transactions.'}
                 {problem.traceId ? ` Support code: ${problem.traceId}` : ''}
@@ -358,8 +362,8 @@ export function HistoryPage() {
                 </Button>
               </MessageBarActions>
             </MessageBar>
-          </div>
-        )}
+          )}
+        </AlertSlot>
 
         {!waiting && !problem && (
           <>
@@ -437,7 +441,7 @@ export function HistoryPage() {
                   </div>
                   {/* No "Stop waiting" here: the rows already loaded stay readable while the next
                       page is on its way, and stopping it would put an error bar in their place. */}
-                  <WaitHint active={isFetchingNextPage} kind="read" />
+                  <WaitHint active={isFetchingNextPage} kind="read" failed={failed} />
                 </div>
               </div>
             ) : (

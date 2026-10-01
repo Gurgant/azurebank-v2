@@ -47,6 +47,20 @@ export const WAIT_SLOW = 'Taking longer than usual…';
 /** The same hint from 20 s. */
 export const WAIT_STILL_TRYING = 'Still trying…';
 
+/**
+ * `WAIT_STILL_TRYING` on a money send: a transfer, a move between the visitor's own accounts, a
+ * deposit or a withdrawal. While it is pending the one unsafe thing the visitor can do is reload,
+ * because the idempotency key lives only in this page and a reload sends the money with a new one.
+ */
+export const WAIT_KEEP_PAGE_OPEN = 'Still trying… Keep this page open.';
+
+/**
+ * Read, not shown, in the hint's own region when a read that said `WAIT_SLOW` or
+ * `WAIT_STILL_TRYING` loads: a visitor who heard that it was slow is told that it is done. A load
+ * that said nothing says nothing at its end either.
+ */
+export const WAIT_LOADED = 'Loaded.';
+
 /** Beside `WAIT_STILL_TRYING` on a read the visitor can give up on. */
 export const STOP_WAITING = 'Stop waiting';
 
@@ -68,6 +82,14 @@ export const SERVICE_UNAVAILABLE_TITLE = 'Temporarily unavailable';
 
 /** Offered where the visitor's next step is to send the same thing again. */
 export const TRY_AGAIN = 'Try again';
+
+/**
+ * A sign-out that failed with anything but a 401, before what went wrong where there is a
+ * sentence for it. The session is alive behind the page, and a visitor who leaves a shared
+ * computer believing otherwise leaves it signed in. A 401 means the session was already gone,
+ * which is what a sign-out asks for.
+ */
+export const SIGN_OUT_FAILED = "We couldn't sign you out. You're still signed in.";
 
 /**
  * A money send answered 503 with `applied: false`: the server says it changed nothing. Only that

@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import type { ApiProblem } from '../../api/problemBaseQuery';
+import { SIGN_OUT_FAILED } from '../../api/problemMessages';
 import { useAppSelector } from '../../app/hooks';
 import { useProblemToast } from '../../components/feedback';
 import { selectCurrentUser } from '../../features/auth/authSlice';
@@ -41,7 +42,10 @@ function ShellWithSession({ children }: ProtectedShellProps) {
       await logout().unwrap();
       navigate('/login', { replace: true });
     } catch (caught) {
-      showProblem(caught as ApiProblem);
+      // A 401 says the session was already gone, which sessionMiddleware takes from here. Any
+      // other failure left the visitor signed in, and the toast says so before saying why.
+      const problem = caught as ApiProblem;
+      showProblem(problem, problem.status === 401 ? undefined : SIGN_OUT_FAILED);
     }
   };
 

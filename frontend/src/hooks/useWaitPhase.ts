@@ -16,20 +16,42 @@ export const SLOW_AFTER_MS = 5_000;
 /** From here the wait says "Still trying…", and a read may offer "Stop waiting". */
 export const STILL_TRYING_AFTER_MS = 20_000;
 
-/** What a wait has to say so far: nothing, that it is slow, or that it is still trying. */
-export type WaitPhase = 'none' | 'slow' | 'stillTrying';
+/**
+ * How long a wait that said something and then ended keeps its region, for the one word a read
+ * says at its end ("Loaded."), before the region goes. Not measured against a screen reader; the
+ * word is never shown, so keeping it costs nothing on screen.
+ */
+export const LOADED_KEPT_MS = 2_000;
 
 /**
- * Where a wait that started when `active` turned true has got to.
+ * What a wait has to say so far: nothing, that it is slow, or that it is still trying; and, just
+ * after it, `'ended'` if it had said something.
+ */
+export type WaitPhase = 'none' | 'slow' | 'stillTrying' | 'ended';
+
+/**
+ * Where a wait that started when `active` turned true has got to, and, once it is over, whether
+ * it had said something: `'ended'` from the render it ends in, for `LOADED_KEPT_MS`, then
+ * `'none'`. A wait that ends before 5 s goes straight to `'none'`.
  *
  * `useDelayedFlag`'s pattern with two thresholds: the timers are the only thing that sets the
- * phase, the cleanup puts it back to `'none'` when `active` flips or the host unmounts, and the
- * value returned is derived — `active ? phase : 'none'` — so a wait that ends is silent in the very
- * render it ends, with no state update of its own. A new wait starts from zero: the cleanup clears
- * the old timers, so a wait that ended at 3 s cannot speak into the next one at 5 s.
+ * phase, and the cleanup puts it back to `'none'` when `active` flips or the host unmounts. A new
+ * wait starts from zero: the cleanup clears the old timers, so a wait that ended at 3 s cannot
+ * speak into the next one at 5 s, and a wait that starts drops an `'ended'` at once.
+ *
+ * The end is noticed in the render that sees `active` turn false, while `phase` is still the
+ * wait's own (its cleanup runs after that render), so `'ended'` is there in that very render: the
+ * host never draws a frame without its region, which would make the next one a new region, and a
+ * new region filled at once is not a change a screen reader reads.
  */
 export function useWaitPhase(active: boolean): WaitPhase {
-  const [phase, setPhase] = useState<WaitPhase>('none');
+  const [phase, setPhase] = useState<'none' | 'slow' | 'stillTrying'>('none');
+  const [ended, setEnded] = useState(false);
+  const [wasActive, setWasActive] = useState(active);
+  if (wasActive !== active) {
+    setWasActive(active);
+    setEnded(!active && phase !== 'none');
+  }
 
   useEffect(() => {
     if (!active) return;
@@ -42,7 +64,14 @@ export function useWaitPhase(active: boolean): WaitPhase {
     };
   }, [active]);
 
-  return active ? phase : 'none';
+  useEffect(() => {
+    if (!ended) return;
+    const done = setTimeout(() => setEnded(false), LOADED_KEPT_MS);
+    return () => clearTimeout(done);
+  }, [ended]);
+
+  if (active) return phase;
+  return ended ? 'ended' : 'none';
 }
 
 /** The parts of an RTK Query hook's result that say whether a read is on its way. */

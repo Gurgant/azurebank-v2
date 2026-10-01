@@ -476,8 +476,9 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
           </Button>
         )}
         {/* Under the button that started the send, inside the dialog (a modal hides everything
-            outside it), and promising nothing: during the wait nothing here can re-send it. */}
-        <WaitHint active={isSubmitting} kind="write" />
+            outside it), and promising nothing: during the wait nothing here can re-send it. From
+            20 s it asks the visitor to keep the page open: a reload would send it with a new key. */}
+        <WaitHint active={isSubmitting} kind="moneySend" />
       </div>
     </MoneyDialogShell>
   );

@@ -28,7 +28,7 @@ import { useMoneyWizard } from '../hooks/useMoneyWizard';
 import { abortRunning, useWaitLanding } from '../hooks/useWaitLanding';
 import { readWait } from '../hooks/useWaitPhase';
 import { formatCurrency, maskAccountNumber } from '../utils/format';
-import { RetryCountdown, WaitHint, retryDeadline } from '../components/feedback';
+import { AlertSlot, RetryCountdown, WaitHint, retryDeadline } from '../components/feedback';
 import {
   insufficientFundsMessage,
   internalTransferFormSchema,
@@ -577,27 +577,30 @@ export function InternalTransferPage() {
         <WaitHint
           active={accountsHoldThePage && accountsRead.waiting}
           kind="read"
+          failed={accountsRead.failed}
           onStopWaiting={stopWaitingForAccounts}
         />
         {/* Keyed by the request that failed, so that a Retry which fails again before its wait is
-            ever drawn still puts a new alert on the page, and it is announced again. */}
-        {accountsProblem && (
-          <MessageBar key={accountsRequestId} intent="error" role="alert">
-            <MessageBarBody>
-              {accountsProblem.detail || 'Could not load your accounts.'}
-              {accountsProblem.traceId ? ` Support code: ${accountsProblem.traceId}` : ''}
-            </MessageBarBody>
-            <MessageBarActions>
-              <Button
-                ref={accountsLanding.landingRef}
-                appearance="transparent"
-                onClick={retryAccounts}
-              >
-                Retry
-              </Button>
-            </MessageBarActions>
-          </MessageBar>
-        )}
+            ever drawn still puts a new bar into the alert, and it is announced again. */}
+        <AlertSlot>
+          {accountsProblem && (
+            <MessageBar key={accountsRequestId} intent="error">
+              <MessageBarBody>
+                {accountsProblem.detail || 'Could not load your accounts.'}
+                {accountsProblem.traceId ? ` Support code: ${accountsProblem.traceId}` : ''}
+              </MessageBarBody>
+              <MessageBarActions>
+                <Button
+                  ref={accountsLanding.landingRef}
+                  appearance="transparent"
+                  onClick={retryAccounts}
+                >
+                  Retry
+                </Button>
+              </MessageBarActions>
+            </MessageBar>
+          )}
+        </AlertSlot>
         {error && (
           <MessageBar id={pinErrorId} intent="error" role="alert">
             <MessageBarBody>{error}</MessageBarBody>
@@ -862,8 +865,10 @@ export function InternalTransferPage() {
               </div>
             )}
             {/* Under the boxes and the spinner, outside their described-by targets, and promising
-                nothing: during the wait no control here can re-send the same key. */}
-            <WaitHint active={confirming} kind="write" />
+                nothing: during the wait no control here can re-send the same key. From 20 s it
+                asks the visitor to keep the page open, since a reload would send the move again
+                with a new key. */}
+            <WaitHint active={confirming} kind="moneySend" />
             <div className={styles.actions}>
               <Button
                 appearance="secondary"

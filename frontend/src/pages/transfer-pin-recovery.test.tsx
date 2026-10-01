@@ -63,7 +63,12 @@ async function reachPinStep() {
  * named "PIN", described by nothing, and focus was left on a box that had just been emptied.
  */
 async function expectAReadyRetry() {
-  const alert = await screen.findByRole('alert');
+  // The alert with words: the page also keeps an empty one for its accounts.
+  const alert = await waitFor(() => {
+    const said = screen.getAllByRole('alert').filter((region) => region.textContent?.trim());
+    expect(said).toHaveLength(1);
+    return said[0];
+  });
   const group = screen.getByRole('group', { name: 'Enter your PIN' });
   expect(group).toHaveAccessibleDescription(
     expect.stringContaining('sends as soon as the last digit is in'),

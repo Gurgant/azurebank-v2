@@ -29,7 +29,47 @@ export const COPY = {
     "The service is temporarily unavailable, and we can't tell yet whether your account was opened. Check your accounts before trying again.",
   tryAgain: 'Try again',
   unavailableTitle: 'Temporarily unavailable',
+  loaded: 'Loaded.',
+  keepPageOpen: 'Still trying… Keep this page open.',
+  signOutFailed: "We couldn't sign you out. You're still signed in.",
 } as const;
+
+/**
+ * The browser's focus fixup, which jsdom does not run. Measured in headless Chromium 151 on
+ * 2026-10-01: a focused button that is disabled hands focus to `body`, and enabling it again does
+ * not give it back. In jsdom the disabled button keeps focus, so a test of where focus goes after
+ * a pending button comes back would pass whatever the page did. Returns the function that stops
+ * the emulation.
+ */
+export function emulateFocusFixup(): () => void {
+  const observer = new MutationObserver((records) => {
+    for (const { target } of records) {
+      const control = target as HTMLButtonElement;
+      if (control !== document.activeElement || !control.disabled) continue;
+      // jsdom's blur() ignores an element that cannot take focus, so it is let go for a moment.
+      control.disabled = false;
+      control.blur();
+      control.disabled = true;
+    }
+  });
+  observer.observe(document.body, {
+    attributes: true,
+    attributeFilter: ['disabled'],
+    subtree: true,
+  });
+  return () => observer.disconnect();
+}
+
+/**
+ * A read page's one alert region, in `scope`: on the page before anything has failed, empty until
+ * then, and atomic, so that whatever fills it is read whole.
+ */
+export function alertSlot(scope: HTMLElement = document.body): HTMLElement {
+  const alerts = Array.from(scope.querySelectorAll<HTMLElement>('[role="alert"]'));
+  expect(alerts, 'not exactly one role="alert"').toHaveLength(1);
+  expect(alerts[0]).toHaveAttribute('aria-atomic', 'true');
+  return alerts[0];
+}
 
 /*
   jsdom runs `requestAnimationFrame` on a Node `setInterval`, which it starts on the first frame

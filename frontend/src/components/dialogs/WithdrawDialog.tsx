@@ -919,8 +919,9 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
             </Button>
             {/* One wait across the mint and the send (`isSubmitting` holds through both), under
                 the button that started it, outside the described-by target above, and promising
-                nothing: during the wait nothing here can re-send the same key. */}
-            <WaitHint active={isSubmitting} kind="write" />
+                nothing: during the wait nothing here can re-send the same key. From 20 s it asks
+                the visitor to keep the page open: a reload would send it with a new key. */}
+            <WaitHint active={isSubmitting} kind="moneySend" />
             <Button
               appearance="secondary"
               size="large"

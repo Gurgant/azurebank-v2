@@ -8,6 +8,7 @@ import { makeTestStore, renderWithProviders } from '../../test/renderWithProvide
 import { COPY, advance, expectSilentHintTakesNoRoom, never } from '../../test/outage';
 import { apiSlice } from '../../features/api/apiSlice';
 import {
+  LOADED_KEPT_MS,
   SLOW_AFTER_MS,
   STILL_TRYING_AFTER_MS,
   readWait,
@@ -57,7 +58,7 @@ describe('useWaitPhase', () => {
     expect(result.current).toBe('stillTrying');
   });
 
-  it('says nothing once the wait ends, and a new wait starts again from zero', async () => {
+  it('is over once the wait ends, for a while, and a new wait starts again from zero', async () => {
     vi.useFakeTimers();
     const { result, rerender } = renderHook(({ active }) => useWaitPhase(active), {
       initialProps: { active: true },
@@ -66,6 +67,10 @@ describe('useWaitPhase', () => {
     expect(result.current).toBe('stillTrying');
 
     rerender({ active: false });
+    expect(result.current).toBe('ended');
+    await advance(LOADED_KEPT_MS - 1);
+    expect(result.current).toBe('ended');
+    await advance(1);
     expect(result.current).toBe('none');
 
     rerender({ active: true });
@@ -76,7 +81,18 @@ describe('useWaitPhase', () => {
     expect(result.current).toBe('slow');
   });
 
-  it('is silent in the very render its wait ends, not one render later', async () => {
+  it('a wait that ends before it said anything is simply over', async () => {
+    vi.useFakeTimers();
+    const { result, rerender } = renderHook(({ active }) => useWaitPhase(active), {
+      initialProps: { active: true },
+    });
+    await advance(SLOW_AFTER_MS - 1);
+
+    rerender({ active: false });
+    expect(result.current).toBe('none');
+  });
+
+  it('is over in the very render its wait ends, not one render later', async () => {
     vi.useFakeTimers();
     const renders: Array<{ active: boolean; phase: string }> = [];
     const { rerender } = renderHook(
@@ -93,7 +109,10 @@ describe('useWaitPhase', () => {
     rerender({ active: false });
 
     expect(renders.filter(({ active }) => !active).length).toBeGreaterThan(0);
-    expect(renders.filter(({ active, phase }) => !active && phase !== 'none')).toEqual([]);
+    expect(
+      renders.filter(({ active, phase }) => !active && phase !== 'ended' && phase !== 'none'),
+    ).toEqual([]);
+    expect(renders.at(-1)).toEqual({ active: false, phase: 'ended' });
   });
 
   it("a wait that ends early is timed afresh when the next one starts: the first wait's timers never fire into it", async () => {
@@ -233,6 +252,101 @@ describe('WaitHint', () => {
     await advance(STILL_TRYING_AFTER_MS);
     expect(screen.getAllByText(COPY.stillTrying)).toHaveLength(2);
     expect(screen.queryByRole('button', { name: COPY.stopWaiting })).toBeNull();
+  });
+
+  it('its region is atomic: a change of words is read whole', () => {
+    renderHint({ active: true, kind: 'read' });
+
+    expect(screen.getByRole('status')).toHaveAttribute('aria-atomic', 'true');
+  });
+
+  it('a money send asks, from 20 s, to keep the page open; other writes and reads do not', async () => {
+    vi.useFakeTimers();
+    renderHint({ active: true, kind: 'moneySend' });
+    renderHint({ active: true, kind: 'write' });
+    renderHint({ active: true, kind: 'read' });
+
+    await advance(SLOW_AFTER_MS);
+    expect(screen.getAllByText(COPY.slow)).toHaveLength(3);
+
+    await advance(STILL_TRYING_AFTER_MS - SLOW_AFTER_MS);
+    const regions = screen.getAllByRole('status').map((region) => region.textContent);
+    expect(regions).toEqual([COPY.keepPageOpen, COPY.stillTrying, COPY.stillTrying]);
+    expect(screen.queryByRole('button', { name: COPY.stopWaiting })).toBeNull();
+  });
+});
+
+describe('WaitHint: the end of a wait', () => {
+  /** A hint whose props the test changes, as its host would from one render to the next. */
+  function renderChanging(props: Parameters<typeof WaitHint>[0]) {
+    const utils = renderWithProviders(<WaitHint {...props} />);
+    return (next: Parameters<typeof WaitHint>[0]) => utils.rerender(<WaitHint {...next} />);
+  }
+
+  it('a read that said something and then loads says "Loaded." in the same region, unseen, then goes', async () => {
+    vi.useFakeTimers();
+    const update = renderChanging({ active: true, kind: 'read', failed: false });
+    await advance(STILL_TRYING_AFTER_MS);
+    const region = screen.getByRole('status');
+    expect(region.textContent).toBe(COPY.stillTrying);
+
+    update({ active: false, kind: 'read', failed: false });
+
+    // The same element: a new region filled at once is not a change a screen reader reads.
+    expect(screen.getByRole('status')).toBe(region);
+    expect(region.textContent).toBe(COPY.loaded);
+    expect(screen.queryByRole('button', { name: COPY.stopWaiting })).toBeNull();
+    const hint = document.querySelector('[data-wait-hint]') as HTMLElement;
+    expect(getComputedStyle(hint).position).toBe('absolute');
+
+    await advance(LOADED_KEPT_MS - 1);
+    expect(screen.getByRole('status')).toBe(region);
+    await advance(1);
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(document.querySelector('[data-wait-hint]')).toBeNull();
+  });
+
+  it('a read that loads before it said anything stays quiet', async () => {
+    vi.useFakeTimers();
+    const update = renderChanging({ active: true, kind: 'read', failed: false });
+    await advance(SLOW_AFTER_MS - 1);
+
+    update({ active: false, kind: 'read', failed: false });
+
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByText(COPY.loaded)).toBeNull();
+  });
+
+  it.each([
+    ['a read that failed: its alert speaks', { kind: 'read', failed: true }],
+    ['a read whose host says nothing about its outcome', { kind: 'read' }],
+    ['a write, which ends on its own outcome', { kind: 'write' }],
+    ['a money send, which ends on its own outcome', { kind: 'moneySend' }],
+  ] as const)('%s says nothing more when its wait ends', async (_name, props) => {
+    vi.useFakeTimers();
+    const update = renderChanging({ active: true, ...props });
+    await advance(SLOW_AFTER_MS);
+    expect(screen.getByRole('status').textContent).toBe(COPY.slow);
+
+    update({ active: false, ...props });
+
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByText(COPY.loaded)).toBeNull();
+  });
+
+  it('a new wait that starts while "Loaded." is up starts from silence, and a fast end stays quiet', async () => {
+    vi.useFakeTimers();
+    const update = renderChanging({ active: true, kind: 'read', failed: false });
+    await advance(SLOW_AFTER_MS);
+    update({ active: false, kind: 'read', failed: false });
+    expect(screen.getByRole('status').textContent).toBe(COPY.loaded);
+
+    update({ active: true, kind: 'read', failed: false });
+    expect(screen.getByRole('status').textContent).toBe('');
+    await advance(SLOW_AFTER_MS - 1);
+    update({ active: false, kind: 'read', failed: false });
+
+    expect(screen.queryByRole('status')).toBeNull();
   });
 });
 

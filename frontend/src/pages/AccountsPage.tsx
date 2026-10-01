@@ -44,7 +44,7 @@ import {
   RenameAccountDialog,
   WithdrawDialog,
 } from '../components';
-import { useProblemToast, WaitHint } from '../components/feedback';
+import { AlertSlot, useProblemToast, WaitHint } from '../components/feedback';
 
 // The legacy money dialogs (mock flow until their own PRs) take this minimal shape.
 interface LegacyDialogAccount {
@@ -279,6 +279,8 @@ const useStyles = makeStyles({
     gap: '12px',
     padding: '48px 0',
   },
+  // After the wait: no box, so that the hint left inside for its "Loaded." takes no room either.
+  afterWait: { display: 'contents' },
 
   accountActions: {
     display: 'flex',
@@ -520,29 +522,30 @@ export function AccountsPage() {
           </button>
         </div>
 
-        {/* Loading / error are first-class states (D22) */}
-        {waiting && (
-          <div className={styles.stateContainer}>
-            <Spinner size="large" aria-label="Loading accounts" />
-            <WaitHint active kind="read" onStopWaiting={stopWaiting} />
-          </div>
-        )}
+        {/* Loading / error are first-class states (D22). The box is the spinner's while the read
+            waits, and no box at all afterwards: the hint stays inside it for its "Loaded.". */}
+        <div className={waiting ? styles.stateContainer : styles.afterWait}>
+          {waiting && <Spinner size="large" aria-label="Loading accounts" />}
+          <WaitHint active={waiting} kind="read" failed={failed} onStopWaiting={stopWaiting} />
+        </div>
 
         {/* Keyed by the request that failed, so that a Retry which fails again before its wait is
-            ever drawn still puts a new alert on the page, and it is announced again. */}
-        {problem && (
-          <MessageBar key={requestId} intent="error" role="alert">
-            <MessageBarBody>
-              {problem.detail || 'Could not load your accounts.'}
-              {problem.traceId ? ` Support code: ${problem.traceId}` : ''}
-            </MessageBarBody>
-            <MessageBarActions>
-              <Button ref={landingRef} appearance="transparent" onClick={retry}>
-                Retry
-              </Button>
-            </MessageBarActions>
-          </MessageBar>
-        )}
+            ever drawn still puts a new bar into the alert, and it is announced again. */}
+        <AlertSlot>
+          {problem && (
+            <MessageBar key={requestId} intent="error">
+              <MessageBarBody>
+                {problem.detail || 'Could not load your accounts.'}
+                {problem.traceId ? ` Support code: ${problem.traceId}` : ''}
+              </MessageBarBody>
+              <MessageBarActions>
+                <Button ref={landingRef} appearance="transparent" onClick={retry}>
+                  Retry
+                </Button>
+              </MessageBarActions>
+            </MessageBar>
+          )}
+        </AlertSlot>
 
         {/* Accounts Grid — cards are intentionally non-clickable: no /accounts/:id route
             exists yet (it previously bounced off the catch-all); management flows come later. */}

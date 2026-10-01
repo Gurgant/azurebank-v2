@@ -357,14 +357,16 @@ describe('a money send whose answer arrives but cannot be read', () => {
 
 describe("a money dialog's wait hint", () => {
   /**
-   * The hint's checks shared by both dialogs: inside the dialog, no promise, no stop, no nesting.
+   * The hint's checks shared by both dialogs: inside the dialog, no promise, no stop, no nesting;
+   * and from 20 s the one thing that keeps a slow send safe, staying on the page, since a reload
+   * would send it again with a new key.
    */
   async function expectWriteHint(sentAt: number) {
     const dialog = screen.getByRole('dialog');
     await advanceUntil(sentAt, 5_000);
     hintRegion(COPY.slow, dialog);
     await advanceUntil(sentAt, 20_000);
-    const region = hintRegion(COPY.stillTrying, dialog);
+    const region = hintRegion(COPY.keepPageOpen, dialog);
 
     expect(within(dialog).queryByText(COPY.noDoubleCharge, { exact: false })).toBeNull();
     expect(within(dialog).queryByRole('button', { name: COPY.stopWaiting })).toBeNull();

@@ -1,3 +1,4 @@
+export { AlertSlot } from './AlertSlot';
 export { AppToaster } from './AppToaster';
 export { RetryCountdown } from './RetryCountdown';
 export { retryDeadline } from './retryDeadline';

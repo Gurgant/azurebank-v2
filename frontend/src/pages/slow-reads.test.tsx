@@ -11,15 +11,20 @@ import {
   COPY,
   advance,
   advanceUntil,
+  alertSlot,
   fakeClockUser,
   hintRegion,
   never,
+  sleep,
   installFakeClock,
 } from '../test/outage';
+import { LOADED_KEPT_MS } from '../hooks/useWaitPhase';
 import { AccountsPage } from './AccountsPage';
 import { DashboardPage } from './DashboardPage';
 import { HistoryPage } from './HistoryPage';
+import { InternalTransferPage } from './InternalTransferPage';
 import { TransactionDetailPage } from './TransactionDetailPage';
+import { TransferPage } from './TransferPage';
 
 /**
  * A read that is slow says so, can be stopped, and a read that failed is announced — every time.
@@ -124,6 +129,7 @@ describe('a slow read says so', () => {
     expect(words.closest('[role="alert"]')).not.toBeNull();
     const retry = screen.getByRole('button', { name: 'Retry' });
     await waitFor(() => expect(document.activeElement).toBe(retry));
+    expect(screen.queryByText(COPY.loaded)).not.toBeInTheDocument();
 
     await advance(30_000);
     expect(seen).toHaveLength(1);
@@ -312,71 +318,215 @@ describe('a slow read says so', () => {
 });
 
 describe('a failed read is announced', () => {
+  /*
+    Into an alert that was on the page, empty, before anything failed. A screen reader reads a
+    CHANGE to a live region; an alert added to the page with its words already in it is, for
+    several of them, no change at all.
+  */
+
   /** Let every retry either policy could make run out before looking. */
   async function settle() {
     await advance(5_000);
   }
 
-  it('Accounts', async () => {
-    server.use(http.get('*/api/accounts', outage));
+  it.each([
+    {
+      page: 'Accounts',
+      path: '*/api/accounts',
+      render: () => renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] }),
+    },
+    {
+      page: 'History',
+      path: '*/api/transactions',
+      render: () => renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] }),
+    },
+    { page: 'Transaction detail', path: '*/api/transactions/:id', render: () => renderDetail() },
+    { page: 'Dashboard, the accounts', path: '*/api/accounts', render: renderDashboard },
+    {
+      page: 'Send Money, the accounts',
+      path: '*/api/accounts',
+      render: () => renderWithProviders(<TransferPage />, { routerEntries: ['/transfer'] }),
+    },
+    {
+      page: 'Move Money, the accounts',
+      path: '*/api/accounts',
+      render: () =>
+        renderWithProviders(<InternalTransferPage />, { routerEntries: ['/transfer/internal'] }),
+    },
+  ])('$page: into the alert that was there, empty, before it failed', async ({ path, render }) => {
+    server.use(http.get(path, outage));
     installFakeClock();
-    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    render();
+    const slot = alertSlot();
+    expect(slot).toBeEmptyDOMElement();
+    // Empty, it takes no room: an empty box in the page's column would still earn its gap.
+    expect(getComputedStyle(slot).position).toBe('absolute');
+
     await settle();
 
-    const alert = await screen.findByRole('alert');
-    expect(within(alert).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
-  });
-
-  it('History', async () => {
-    server.use(http.get('*/api/transactions', outage));
-    installFakeClock();
-    renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });
-    await settle();
-
-    const alert = await screen.findByRole('alert');
-    expect(within(alert).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
-  });
-
-  it('Transaction detail', async () => {
-    server.use(http.get('*/api/transactions/:id', outage));
-    installFakeClock();
-    renderDetail();
-    await settle();
-
-    const alert = await screen.findByRole('alert');
-    expect(within(alert).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
-  });
-
-  it('Dashboard: the accounts', async () => {
-    server.use(http.get('*/api/accounts', outage));
-    installFakeClock();
-    renderDashboard();
-    await settle();
-
-    const alert = await screen.findByRole('alert');
-    expect(within(alert).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    await waitFor(() => expect(slot).toHaveTextContent(COPY.unavailable));
+    expect(alertSlot()).toBe(slot);
+    expect(getComputedStyle(slot).position).not.toBe('absolute');
+    expect(within(slot).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expectNoNestedLiveRegions();
   });
 
   it('Dashboard: this month, with the accounts on screen', async () => {
     server.use(http.get('*/api/transactions/summary', outage));
     installFakeClock();
     renderDashboard();
+    const slot = alertSlot();
+    expect(slot).toBeEmptyDOMElement();
     await settle();
 
     await screen.findByRole('heading', { level: 1 });
     const words = await screen.findByText(/Could not load this month\./);
-    expect(words.closest('[role="alert"]')).not.toBeNull();
+    expect(words.closest('[role="alert"]')).toBe(slot);
   });
 
   it('Dashboard: recent activity, with the accounts on screen', async () => {
     server.use(http.get('*/api/transactions', outage));
     installFakeClock();
     renderDashboard();
+    const slot = alertSlot();
+    expect(slot).toBeEmptyDOMElement();
     await settle();
 
     await screen.findByRole('heading', { level: 1 });
     const words = await screen.findByText(/Could not load recent activity\./);
-    expect(words.closest('[role="alert"]')).not.toBeNull();
+    expect(words.closest('[role="alert"]')).toBe(slot);
+  });
+
+  it('Dashboard: this month and recent activity failing together are one alert, saying both', async () => {
+    // Two alerts at once may be read as one: a screen reader may drop what is queued when an
+    // assertive change arrives.
+    server.use(
+      http.get('*/api/transactions/summary', outage),
+      http.get('*/api/transactions', outage),
+    );
+    installFakeClock();
+    renderDashboard();
+    await settle();
+
+    await screen.findByRole('heading', { level: 1 });
+    await screen.findByText(/Could not load recent activity\./);
+    const slot = alertSlot();
+    expect(slot).toHaveTextContent(`Could not load this month. ${COPY.unavailable}`);
+    expect(slot).toHaveTextContent(`Could not load recent activity. ${COPY.unavailable}`);
+    expect(slot.textContent).toMatch(/this month\..*recent activity\./);
+    expectNoNestedLiveRegions();
+  });
+});
+
+describe('a read that said it was slow says when it has loaded', () => {
+  /*
+    A visitor who heard "Taking longer than usual…" is owed the end of the story: the region that
+    said it says "Loaded." when the content is there, without showing it, and then goes. A load
+    inside 5 s said nothing, so it says nothing at the end either.
+  */
+  const reads = [
+    {
+      page: 'Accounts',
+      path: '*/api/accounts',
+      render: () => renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] }),
+    },
+    {
+      page: 'History',
+      path: '*/api/transactions',
+      render: () => renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] }),
+    },
+    { page: 'Transaction detail', path: '*/api/transactions/:id', render: () => renderDetail() },
+    { page: 'Dashboard', path: '*/api/accounts', render: renderDashboard },
+    {
+      page: 'Send Money',
+      path: '*/api/accounts',
+      render: () => renderWithProviders(<TransferPage />, { routerEntries: ['/transfer'] }),
+    },
+    {
+      page: 'Move Money',
+      path: '*/api/accounts',
+      render: () =>
+        renderWithProviders(<InternalTransferPage />, { routerEntries: ['/transfer/internal'] }),
+    },
+  ];
+
+  /** Answers the read `path` with the mock's own data, `ms` after it arrives. */
+  function answerAfter(path: string, ms: number) {
+    const seen: number[] = [];
+    server.use(
+      http.get(path, async () => {
+        seen.push(Date.now());
+        await sleep(ms);
+        return undefined;
+      }),
+    );
+    return seen;
+  }
+
+  it.each(reads)(
+    '$page: "Loaded." in the region that said it was slow, unseen, then nothing',
+    async ({ path, render }) => {
+      const seen = answerAfter(path, 6_000);
+      installFakeClock();
+      render();
+      await waitFor(() => expect(seen).toHaveLength(1));
+      await advanceUntil(seen[0], 5_000);
+      const region = hintRegion(COPY.slow);
+
+      await advanceUntil(seen[0], 6_100);
+
+      await waitFor(() => expect(region).toHaveTextContent(COPY.loaded));
+      expect(region).toBeInTheDocument();
+      expect(region.textContent).toBe(COPY.loaded);
+      expect(getComputedStyle(region.closest('[data-wait-hint]') as HTMLElement).position).toBe(
+        'absolute',
+      );
+      expect(screen.queryByRole('button', { name: COPY.stopWaiting })).not.toBeInTheDocument();
+      expect(alertSlot()).toBeEmptyDOMElement();
+
+      await advance(LOADED_KEPT_MS);
+      expect(region).not.toBeInTheDocument();
+      expect(screen.queryByText(COPY.loaded)).not.toBeInTheDocument();
+    },
+  );
+
+  it('Accounts: a load inside 5 s says nothing at its end either', async () => {
+    const seen = answerAfter('*/api/accounts', 4_000);
+    installFakeClock();
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    await waitFor(() => expect(seen).toHaveLength(1));
+
+    await advanceUntil(seen[0], 4_100);
+    await screen.findByText('Main Account');
+
+    expect(screen.queryAllByRole('status')).toHaveLength(0);
+    expect(screen.queryByText(COPY.loaded)).not.toBeInTheDocument();
+  });
+
+  it('History: "Load more" that said it was slow says "Loaded." when the next page is there', async () => {
+    renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });
+    await screen.findByText('Salary');
+
+    const nextPage: number[] = [];
+    server.use(
+      http.get('*/api/transactions', async ({ request }) => {
+        if (new URL(request.url).searchParams.get('Page') !== '2') return undefined;
+        nextPage.push(Date.now());
+        await sleep(6_000);
+        return undefined;
+      }),
+    );
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByRole('button', { name: 'Load more' }));
+    await waitFor(() => expect(nextPage).toHaveLength(1));
+    await advanceUntil(nextPage[0], 5_000);
+    const region = hintRegion(COPY.slow);
+
+    await advanceUntil(nextPage[0], 6_100);
+
+    await waitFor(() => expect(region).toHaveTextContent(COPY.loaded));
+    expect(region.textContent).toBe(COPY.loaded);
   });
 });
 
@@ -443,7 +593,8 @@ describe('a Retry shows its wait, and nothing the page has not loaded', () => {
       hold = true;
       await user.click(within(bar as HTMLElement).getByRole('button', { name: 'Retry' }));
       await waitFor(() => expect(seen).toHaveLength(2));
-      await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+      // The alert stays, emptied, so that a second failure is a change it reads again.
+      await waitFor(() => expect(alertSlot()).toBeEmptyDOMElement());
 
       expect(document.querySelector('[data-wait-hint]')).not.toBeNull();
       if (spinner) expect(screen.getByLabelText(spinner)).toBeInTheDocument();
@@ -506,8 +657,18 @@ describe('a Retry that fails again before its wait is drawn is announced again',
     },
   ];
 
+  /**
+   * The bar that says `words`, inside the page's alert. A new failure puts a new bar into the same
+   * alert, and that change is what a screen reader reads.
+   */
+  const barOf = (words: RegExp) => {
+    const bar = screen.getByText(words).closest<HTMLElement>('[role="group"]');
+    expect(bar?.closest('[role="alert"]')).toBe(alertSlot());
+    return bar;
+  };
+
   for (const { page, path, render, words } of bars) {
-    it(`${page}: every new failure is a new alert, with focus on its Retry`, async () => {
+    it(`${page}: every new failure is a new bar in the page's alert, with focus on its Retry`, async () => {
       let calls = 0;
       server.use(
         http.get(path, () => {
@@ -517,7 +678,7 @@ describe('a Retry that fails again before its wait is drawn is announced again',
       );
       const user = userEvent.setup();
       render();
-      const alertOf = () => screen.getByText(words).closest<HTMLElement>('[role="alert"]');
+      const alertOf = () => barOf(words);
       await screen.findByText(words);
 
       for (let press = 1; press <= 2; press += 1) {
@@ -550,8 +711,7 @@ describe('a Retry that fails again before its wait is drawn is announced again',
     );
     const user = userEvent.setup();
     renderDashboard();
-    const alertOf = () =>
-      screen.getByText(/Something broke\./).closest<HTMLElement>('[role="alert"]');
+    const alertOf = () => barOf(/Something broke\./);
     await screen.findByText(/Something broke\./);
     const first = alertOf();
 
@@ -572,8 +732,7 @@ describe('a Retry that fails again before its wait is drawn is announced again',
     );
     const user = userEvent.setup();
     renderDashboard();
-    const recentBar = () =>
-      screen.getByText(/Could not load recent activity\./).closest<HTMLElement>('[role="alert"]');
+    const recentBar = () => barOf(/Could not load recent activity\./);
     await screen.findByText(/Could not load this month\./);
     const first = recentBar();
     expect(first).not.toBeNull();

@@ -130,12 +130,14 @@ function parseRetryAfterSeconds(
   // outage 503 does too; the header is the fallback, for the BFF's own rate limiter, which
   // sets it and has no body field.
   if (typeof body?.retryAfterSeconds === 'number') return body.retryAfterSeconds;
-  const header = headers?.get('Retry-After');
-  if (header) {
-    const seconds = Number.parseInt(header, 10);
-    if (Number.isFinite(seconds)) return seconds;
-  }
-  return undefined;
+  const header = headers?.get('Retry-After')?.trim();
+  if (!header) return undefined;
+  // RFC 9110 §10.2.3: a number of seconds, or an HTTP-date. A date is rounded up to the whole
+  // second, so the wait is never shorter than the one asked for; a date already past is no wait.
+  if (/^\d+$/.test(header)) return Number.parseInt(header, 10);
+  const at = Date.parse(header);
+  if (Number.isNaN(at)) return undefined;
+  return Math.max(0, Math.ceil((at - Date.now()) / 1000));
 }
 
 export function toApiProblem(error: FetchBaseQueryError, response?: Response): ApiProblem {
@@ -225,8 +227,23 @@ export const REQUEST_TIMEOUT_MS = 65_000;
 /** A read's whole budget, its one retry included: two of the BFF's worst answers. */
 export const READ_BUDGET_MS = 120_000;
 
-/** A read's wait before its retry when the answer names none. */
-const DEFAULT_RETRY_AFTER_S = 1;
+/** A read's wait before its retry when a connection failed and nothing named a wait. */
+const CONNECTION_RETRY_AFTER_S = 1;
+
+/**
+ * A read's wait before its retry when a 502, 503 or 504 names none. Such an answer says that the
+ * service behind it is down, not that a connection blinked, and a second later it most likely
+ * still is. Microsoft's guidance for clients of its identity platform puts the first retry at
+ * least 5 s after the answer.
+ */
+const GATEWAY_RETRY_AFTER_S = 5;
+
+/**
+ * Up to how much later than asked a read's retry goes, as a fraction of the wait. Every reader in
+ * one outage hears the same `Retry-After`; without a spread they all come back in the same second.
+ * Never earlier than asked: the spread only adds.
+ */
+const RETRY_SPREAD = 0.2;
 
 /** A retry left with less than this of the budget is not sent: it could only time out. */
 const MIN_RETRY_ATTEMPT_MS = 5_000;
@@ -276,15 +293,28 @@ const problemQuery: BaseQueryFn<
   return result;
 };
 
-/** How long a failed read waits before its one retry, or `null` when it is never retried. */
-function queryRetryDelayMs(problem: ApiProblem): number | null {
+/**
+ * How long a failed read waits before its one retry, or `null` when it is never retried: the wait
+ * the answer named, or the default for its kind, plus up to `RETRY_SPREAD` of it.
+ */
+function queryRetryDelayMs(problem: ApiProblem, random: () => number): number | null {
   // The service had REQUEST_TIMEOUT_MS and did not answer: a second wait that long would only
   // double the visitor's.
   if (problem.errorCode === 'TIMEOUT_ERROR') return null;
   const gateway = problem.status === 502 || problem.status === 503 || problem.status === 504;
   // PARSE, a 500 and every 4xx (a 429 included) are answers, not a service that could not give one.
   if (problem.status !== 'NETWORK' && !gateway) return null;
-  return Math.max(0, problem.retryAfterSeconds ?? DEFAULT_RETRY_AFTER_S) * 1000;
+  const asked =
+    problem.retryAfterSeconds ?? (gateway ? GATEWAY_RETRY_AFTER_S : CONNECTION_RETRY_AFTER_S);
+  return Math.max(0, asked) * 1000 * (1 + RETRY_SPREAD * random());
+}
+
+/**
+ * What the base query takes besides the request. Only a test sets it: `random` fixes the spread
+ * of a read's retry, which is `Math.random` otherwise.
+ */
+export interface ProblemQueryOptions {
+  random?: () => number;
 }
 
 /** Resolves `true` after `ms`, or `false` at once if the request is aborted first. */
@@ -314,10 +344,11 @@ function withTimeout(args: string | FetchArgs, timeout: number): FetchArgs {
  * Retry policy (ADR-0059): QUERIES only, and only when the service could not answer — a transport
  * failure that is not the SPA's own timeout, a 503 whatever its body (`toApiProblem` makes an
  * unreadable one the outage), or a 502 or 504 whose body is JSON or empty (an unreadable one is
- * PARSE, an answer). ONE retry, after the answer's `retryAfterSeconds` (1 s when it names none),
- * and only if it still fits the read's `READ_BUDGET_MS`, counted from the first attempt; the
- * retry's own abort is cut to what is left of it. A read the visitor stops (an abort of its
- * signal) sends nothing more, even from the wait before the retry.
+ * PARSE, an answer). ONE retry, after the answer's `retryAfterSeconds` — 5 s when a 502, 503 or
+ * 504 names none, 1 s after a failed connection — plus up to a fifth of it at random, and only if
+ * that wait still fits the read's `READ_BUDGET_MS`, counted from the first attempt; the retry's
+ * own abort is cut to what is left of it. A read the visitor stops (an abort of its signal) sends
+ * nothing more, even from the wait before the retry.
  *
  * Mutations are NEVER auto-retried — a retry of a monetary POST is a user decision that must reuse
  * the same Idempotency-Key (useIdempotentMutation owns that), and a 429 is never retried
@@ -330,19 +361,23 @@ export const problemBaseQuery: BaseQueryFn<
   string | FetchArgs,
   unknown,
   ApiProblem,
-  object,
+  ProblemQueryOptions,
   FetchBaseQueryMeta
 > = async (args, api, extraOptions) => {
   const startedAt = Date.now();
   const first = await problemQuery(args, api, extraOptions);
   if (!first.error || api.type !== 'query') return first;
 
-  const delayMs = queryRetryDelayMs(first.error);
+  // RTK hands on the endpoint's `extraOptions`, which no endpoint sets: undefined, whatever the
+  // type says.
+  const random = (extraOptions as ProblemQueryOptions | undefined)?.random ?? Math.random;
+  const delayMs = queryRetryDelayMs(first.error, random);
   if (delayMs === null) return first;
-  // What the retry may use is worked out BEFORE the wait, never after it. A wait can end late —
-  // a phone suspends a page in the background for minutes — and a limit counted after it could
-  // fall under the 5 s floor, to zero (which RTK reads as no limit at all) or below it (an abort
-  // before the retry is answered, so a service that is back still reads as down).
+  // What the retry may use is worked out BEFORE the wait, its spread included, never after it. A
+  // wait can end late — a phone suspends a page in the background for minutes — and a limit
+  // counted after it could fall under the 5 s floor, to zero (which RTK reads as no limit at all)
+  // or below it (an abort before the retry is answered, so a service that is back still reads as
+  // down).
   const leftMs = READ_BUDGET_MS - (Date.now() - startedAt) - delayMs;
   if (leftMs < MIN_RETRY_ATTEMPT_MS) return first;
   if (!(await sleepUnlessAborted(delayMs, api.signal))) return first;

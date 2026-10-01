@@ -1,5 +1,6 @@
 import { Route, Routes } from 'react-router-dom';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { server } from '../../mocks/server';
@@ -11,13 +12,18 @@ import {
   COPY,
   advance,
   advanceUntil,
+  alertSlot,
+  emulateFocusFixup,
   fakeClockUser,
   hintRegion,
   never,
   track,
   installFakeClock,
 } from '../../test/outage';
+import { AppToaster } from '../../components/feedback';
 import { ProtectedRoute } from '../../components/layout/ProtectedRoute';
+import { ProtectedShell } from '../../components/layout/ProtectedShell';
+import { SettingsPage } from '../../pages/SettingsPage';
 import { apiSlice } from '../api/apiSlice';
 import { authReducer } from './authSlice';
 import { AuthBootstrap } from './AuthBootstrap';
@@ -383,8 +389,9 @@ describe('"Sign out now" during an outage', () => {
       within(screen.getByRole('alertdialog'))
         .getAllByRole('alert')
         .map((alert) => alert.textContent);
-    await waitFor(() => expect(alertTexts()).toContain(CONNECTION));
-    expect(alertTexts()).toEqual([CONNECTION]);
+    const signOutWords = `${COPY.signOutFailed} ${CONNECTION}`;
+    await waitFor(() => expect(alertTexts()).toContain(signOutWords));
+    expect(alertTexts()).toEqual([signOutWords]);
   });
 
   it('the words of a failed sign-out do not follow the visitor into their next session', async () => {
@@ -843,5 +850,227 @@ describe('the words where a 503 meets a PIN or a password', () => {
     await advanceUntil(sentAt, 65_100);
     await warningSays(COPY.unavailable);
     expect(screen.queryByText(CONNECTION)).not.toBeInTheDocument();
+  });
+});
+
+describe('the expiry warning, for a keyboard and a screen reader', () => {
+  it('opens on "Stay signed in", which comes first, so the key that presses a button keeps the session', async () => {
+    const store = await boot();
+    const asked = { me: 0, logout: 0 };
+    server.use(
+      http.get('*/bff/auth/me', () => {
+        asked.me += 1;
+        return undefined;
+      }),
+      http.post('*/bff/auth/logout', () => {
+        asked.logout += 1;
+        return undefined;
+      }),
+    );
+    installFakeClock();
+    renderApp(store);
+    await reachTheWarning();
+
+    const dialog = screen.getByRole('alertdialog');
+    const stay = within(dialog).getByRole('button', { name: /stay signed in/i });
+    expect(within(dialog).getAllByRole('button')[0]).toBe(stay);
+    await waitFor(() => expect(document.activeElement).toBe(stay));
+
+    const before = { ...asked };
+    await fakeClockUser().keyboard(' ');
+
+    await waitFor(() => expect(asked.me).toBe(before.me + 1));
+    await advance(1_000);
+    expect(asked.me).toBe(before.me + 1);
+    expect(asked.logout).toBe(before.logout);
+    expect(store.getState().auth.status).toBe('authenticated');
+  });
+
+  it('is described by its sentence and its countdown, and by nothing it may show later', async () => {
+    const store = await boot();
+    server.use(http.post('*/bff/auth/logout', () => HttpResponse.error()));
+    installFakeClock();
+    renderApp(store);
+    await reachTheWarning();
+    const dialog = screen.getByRole('alertdialog');
+    const description =
+      /^You have been inactive for a while\. You will be signed out in \d:\d\d\.$/;
+    expect(dialog).toHaveAccessibleDescription(description);
+
+    // A failed sign-out's alert and a wait's words are inside the dialog, never inside its
+    // description: they speak for themselves.
+    await fakeClockUser().click(screen.getByRole('button', { name: /sign out now/i }));
+    await warningSays(CONNECTION);
+    expect(dialog).toHaveAccessibleDescription(description);
+  });
+
+  it('at the cap, is described by its own sentence and countdown, not by the password field', async () => {
+    const store = await bootAtTheCap();
+    installFakeClock();
+    renderApp(store);
+    await reachTheCapWarning();
+
+    expect(screen.getByRole('alertdialog')).toHaveAccessibleDescription(
+      /^This session has reached its maximum length\. For your security it ends on a fixed schedule, whether or not you are using it\. You will be signed out in \d:\d\d\.$/,
+    );
+  });
+
+  it('after a failed "Sign out now", focus is back on it', async () => {
+    const store = await boot();
+    server.use(http.post('*/bff/auth/logout', () => HttpResponse.error()));
+    installFakeClock();
+    // While it is pending the button is disabled, and a browser then hands focus to the page.
+    const stopFixup = emulateFocusFixup();
+    try {
+      renderApp(store);
+      await reachTheWarning();
+
+      await fakeClockUser().click(screen.getByRole('button', { name: /sign out now/i }));
+      await warningSays(CONNECTION);
+
+      await waitFor(() =>
+        expect(document.activeElement).toBe(screen.getByRole('button', { name: /sign out now/i })),
+      );
+    } finally {
+      stopFixup();
+    }
+  });
+});
+
+describe('a sign-out that fails says the visitor is still signed in', () => {
+  it.each([
+    [
+      'the service is down',
+      () => serviceUnavailable({ via: 'bff', instance: '/bff/auth/logout' }),
+      COPY.unavailable,
+    ],
+    ['the connection failed', () => HttpResponse.error(), CONNECTION],
+  ])('"Sign out now", when %s: that sentence first, then why', async (_what, answer, why) => {
+    const store = await boot();
+    server.use(http.post('*/bff/auth/logout', answer));
+    installFakeClock();
+    renderApp(store);
+    await reachTheWarning();
+
+    await fakeClockUser().click(screen.getByRole('button', { name: /sign out now/i }));
+
+    await waitFor(() =>
+      expect(within(screen.getByRole('alertdialog')).getByRole('alert').textContent).toBe(
+        `${COPY.signOutFailed} ${why}`,
+      ),
+    );
+  });
+
+  /** A signed-in page in the app's shell, with the toasts' outlet, and the sign-in page. */
+  function renderShell(store: TestStore, page = <div>PAGE</div>) {
+    return renderWithProviders(
+      <>
+        <AppToaster />
+        <Routes>
+          <Route path="/login" element={<div>LOGIN PAGE</div>} />
+          <Route path="/dashboard" element={<ProtectedShell>{page}</ProtectedShell>} />
+        </Routes>
+      </>,
+      { store, routerEntries: ['/dashboard'] },
+    );
+  }
+
+  /** The toast's body that holds `start`, whole. */
+  async function toastBodyStartingWith(start: string): Promise<string> {
+    const words = await screen.findByText((content) => content.startsWith(start));
+    return words.textContent ?? '';
+  }
+
+  it("the shell's Sign out, on an outage: that sentence before the outage's", async () => {
+    const store = await boot(15 * 60_000);
+    server.use(
+      http.post('*/bff/auth/logout', () =>
+        serviceUnavailable({ via: 'bff', instance: '/bff/auth/logout' }),
+      ),
+    );
+    renderShell(store);
+
+    await userEvent.click(screen.getByRole('button', { name: /sign out/i }));
+
+    const body = await toastBodyStartingWith(COPY.signOutFailed);
+    expect(body.startsWith(`${COPY.signOutFailed} ${COPY.unavailable}`)).toBe(true);
+    expect(store.getState().auth.status).toBe('authenticated');
+    expect(screen.queryByText('LOGIN PAGE')).not.toBeInTheDocument();
+  });
+
+  it("Settings' Log out, when the connection failed: that sentence before the connection's", async () => {
+    const store = await boot(15 * 60_000);
+    server.use(http.post('*/bff/auth/logout', () => HttpResponse.error()));
+    renderShell(store, <SettingsPage />);
+    await screen.findByRole('heading', { level: 1, name: 'Settings' });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Log out' }));
+
+    expect(await toastBodyStartingWith(COPY.signOutFailed)).toBe(
+      `${COPY.signOutFailed} ${CONNECTION}`,
+    );
+    expect(store.getState().auth.status).toBe('authenticated');
+  });
+
+  it("a 401 from the shell's Sign out says nothing of the kind: that session is gone", async () => {
+    const store = await boot(15 * 60_000);
+    server.use(
+      http.post('*/bff/auth/logout', () => {
+        mockState.session = null;
+        return bffProblem({
+          status: 401,
+          title: 'Unauthorized',
+          detail: 'Session expired or invalid',
+        });
+      }),
+    );
+    renderShell(store);
+
+    await userEvent.click(screen.getByRole('button', { name: /sign out/i }));
+
+    await waitFor(() => expect(store.getState().auth.status).not.toBe('authenticated'));
+    await act(async () => {});
+    expect(
+      screen.queryByText((content) => content.includes(COPY.signOutFailed)),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe('the outage page at start-up', () => {
+  it('says the outage into the alert that was there, empty, while the session was checked', async () => {
+    // No answer: the check gives up at 65 s, and that is the outage.
+    server.use(http.get('*/bff/auth/me', never));
+    installFakeClock();
+    renderApp(makeTestStore());
+    await screen.findByLabelText('Checking your session');
+    const slot = alertSlot();
+    expect(slot).toBeEmptyDOMElement();
+
+    await advance(65_100);
+
+    await screen.findByRole('heading', { level: 1, name: COPY.unavailableTitle });
+    expect(alertSlot()).toBe(slot);
+    expect(slot).toHaveTextContent(COPY.unavailable);
+  });
+
+  it('is titled "Temporarily unavailable", and gives the page its title back once the service answers', async () => {
+    let down = true;
+    server.use(
+      http.get('*/bff/auth/me', () =>
+        down ? serviceUnavailable({ via: 'bff', instance: '/bff/auth/me' }) : undefined,
+      ),
+    );
+    document.title = 'Home · AzureBank';
+    installFakeClock();
+    renderApp(makeTestStore());
+    await advance(15_000);
+    await screen.findByRole('heading', { level: 1, name: COPY.unavailableTitle });
+
+    expect(document.title).toBe('Temporarily unavailable · AzureBank');
+
+    down = false;
+    fireEvent.click(screen.getByRole('button', { name: COPY.tryAgain }));
+    expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
+    expect(document.title).toBe('Home · AzureBank');
   });
 });

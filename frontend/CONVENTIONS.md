@@ -52,13 +52,18 @@ started them, never as a page-level overlay.
 page or dialog renders its own rather than one for the app, because a Fluent modal hides everything
 outside it from assistive technology; never inside a `role="alert"` or an element an
 `aria-describedby` points at, or its words are read as part of those. It says nothing for 5 s, then
-"Taking longer than usual…", then "Still trying…". Only a read can be offered "Stop waiting", from
-20 s and only when its host passes `onStopWaiting`: a write the server may already be doing is never
-given up on. A read's spinner and error bar follow `readWait`, not `isLoading` and `error`, so **a
-read's error bar hides while its read refetches**: a Retry shows the wait again, and a second
-failure mounts a new `role="alert"` that is announced again. Stop and Retry arm `useWaitLanding`,
-which puts focus on the control the failed wait comes back with (the bar's Retry) unless the visitor
-has put it somewhere else meanwhile. ADR-0059 has the reasons.
+"Taking longer than usual…", then "Still trying…" — on a money send (`kind="moneySend"`) "Still
+trying… Keep this page open.". Only a read can be offered "Stop waiting", from 20 s and only when its
+host passes `onStopWaiting`: a write the server may already be doing is never given up on. A read
+whose content takes the wait's place passes `failed`, and a wait of it that said something says
+"Loaded.", unseen, when it loads. A read's spinner and error bar follow `readWait`, not `isLoading`
+and `error`, so **a read's error bar hides while its read refetches**: a Retry shows the wait again.
+**The bar goes inside the page's `AlertSlot`**, an empty `role="alert"` that is on the page from the
+start, never into an alert of its own that mounts already filled: a failure is then a change of a
+region that was there, which is what a screen reader reads, and a second failure fills it again. One
+slot per page, so two failures at once are one alert. Stop and Retry arm `useWaitLanding`, which puts
+focus on the control the failed wait comes back with (the bar's Retry) unless the visitor has put it
+somewhere else meanwhile. ADR-0059 has the reasons.
 
 ## Money and formatting
 

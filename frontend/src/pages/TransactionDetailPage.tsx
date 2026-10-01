@@ -20,7 +20,7 @@ import { atMedia } from '../theme/breakpoints';
 import { colors, shadows } from '../theme/tokens';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import { useAppDispatch } from '../app/hooks';
-import { WaitHint } from '../components/feedback';
+import { AlertSlot, WaitHint } from '../components/feedback';
 import { PageHeader } from '../components/layout/PageHeader';
 import type { TransactionStatus, TransactionType } from '../api/enums';
 import { useGetTransactionQuery } from '../features/api/apiSlice';
@@ -235,6 +235,9 @@ const useStyles = makeStyles({
     padding: '48px 24px',
   },
 
+  // After the wait: no box, so that the hint left inside for its "Loaded." takes no room either.
+  afterWait: { display: 'contents' },
+
   stateIcon: {
     width: '80px',
     height: '80px',
@@ -334,12 +337,12 @@ export function TransactionDetailPage() {
           contradicting each other on one screen. */}
       <PageHeader title="Transaction Details" onBack={() => navigate('/history')} />
 
-      {waiting && (
-        <div className={styles.stateContainer}>
-          <Spinner size="large" aria-label="Loading transaction" />
-          <WaitHint active kind="read" onStopWaiting={stopWaiting} />
-        </div>
-      )}
+      {/* The spinner's box while the read waits, and no box afterwards: the hint stays inside it
+          for its "Loaded.". */}
+      <div className={waiting ? styles.stateContainer : styles.afterWait}>
+        {waiting && <Spinner size="large" aria-label="Loading transaction" />}
+        <WaitHint active={waiting} kind="read" failed={failed} onStopWaiting={stopWaiting} />
+      </div>
 
       {/* A 404 is a first-class outcome, not an error bar: the link may be stale. */}
       {isNotFound && (
@@ -358,10 +361,10 @@ export function TransactionDetailPage() {
       )}
 
       {/* Keyed by the request that failed, so that a Retry which fails again before its wait is
-          ever drawn still puts a new alert on the page, and it is announced again. */}
-      {problem && !isNotFound && (
-        <div className={styles.content}>
-          <MessageBar key={requestId} intent="error" role="alert">
+          ever drawn still puts a new bar into the alert, and it is announced again. */}
+      <AlertSlot className={styles.content}>
+        {problem && !isNotFound && (
+          <MessageBar key={requestId} intent="error">
             <MessageBarBody>
               {problem.detail || 'Could not load the transaction.'}
               {problem.traceId ? ` Support code: ${problem.traceId}` : ''}
@@ -372,8 +375,8 @@ export function TransactionDetailPage() {
               </Button>
             </MessageBarActions>
           </MessageBar>
-        </div>
-      )}
+        )}
+      </AlertSlot>
 
       {transaction && (
         <div className={styles.content}>
