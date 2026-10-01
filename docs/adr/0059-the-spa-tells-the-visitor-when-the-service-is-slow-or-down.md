@@ -101,9 +101,10 @@ not happened.
      nothing more.
    - Mutations are never retried (ADR-0022): a money send is sent again only by the visitor, with
      the same key.
-   - One retry that honours the API's 10 s lets a database outage of about a minute end without
-     the visitor seeing an error, and the 120 s, two of the BFF's worst answers, bound everything
-     else.
+   - One retry that honours the API's 10 s lets a database that refuses connections for about a
+     minute come back without the visitor seeing an error, and the 120 s, two of the BFF's worst
+     answers, bound everything else. A hung database, measured, failed each attempt in less than
+     40 s, so a hang of a minute can still put a bar on the page (Validation).
 
 3. **A 503 reads as the SPA's own sentence, whoever wrote it.** `toApiProblem` sets the `detail`
    of every 503 to `SERVICE_UNAVAILABLE`: the API's, the BFF's, an empty one, and one that is not
@@ -132,8 +133,9 @@ not happened.
      When the API is slow or down, the BFF answers that check from its cache once its own 5 s
      read-through ceiling is up, so a word due at 5 s raced that answer: measured in Chromium on
      2026-10-01, it flashed for 20 to 33 ms on each of five reloads during an outage, then the page
-     came. `timeoutChain.test.ts` reads the ceiling from the BFF's code and holds the word a second
-     past it.
+     came. With the word at 6 s, five reloads during an outage removed the region at 5.09 to 5.14 s
+     with no word in it (Validation). `timeoutChain.test.ts` reads the ceiling from the BFF's code
+     and holds the word a second past it.
    - On a money send (a transfer, a move between the visitor's own accounts, a deposit, a
      withdrawal) the 20 s words are "Still trying… Keep this page open." While it is pending the
      one unsafe thing left to the visitor is a reload: the key lives only in the page (ADR-0022
@@ -349,9 +351,13 @@ not happened.
 | `SESSION_CHECK_SLOW_AFTER_MS` (`useWaitPhase.ts`) | 6 s | The BFF's 5 s ceiling on the session check, and 1 s so that its answer from the cache is not raced (decision 4) |
 | `LOADED_KEPT_MS` (`useWaitPhase.ts`) | 2 s | How long "Loaded." stays in the region before it goes; not measured |
 
-What a visitor would meet, reasoned from ADR-0058's numbers and not yet measured against this
-client. Every wait says "Taking longer than usual…" at 5 s and "Still trying…" at 20 s ("Still
-trying… Keep this page open." on a money send).
+What a visitor would meet, reasoned from ADR-0058's numbers before any browser run. Every wait
+says "Taking longer than usual…" at 5 s (the session check at start-up at 6 s) and "Still trying…"
+at 20 s ("Still trying… Keep this page open." once a money send holds its key). A browser on the
+compose stack has since measured the reads of the first, third and fourth rows and the writes of
+the first and third, and each held (Validation). The second row and the last row's write were not
+measured, and a database that hangs instead of refusing answers each attempt sooner than the first
+row says.
 
 | Outage | A read | A write |
 |---|---|---|
@@ -395,8 +401,9 @@ trying… Keep this page open." on a money send).
   when there is one; decision 5 names the few that have no hint.
 - An outage reads the same on every surface and never names a session or a time; a money send says
   whether money moved, or how to find out with the same key.
-- A read's retry waits what the server asked, so an outage of about a minute on the database ends
-  without an error, and a second failure is announced again.
+- A read's retry waits what the server asked, so a database that refuses connections for about a
+  minute comes back without an error (a hung one can still show a bar), and a second failure is
+  announced again.
 - An outage is never a sign-out, at start-up or from the expiry dialog's "Sign out now", and a
   sign-out that failed says the visitor is still signed in.
 - A read's failure is a change of an alert that was already on the page; a wait that said it was
@@ -471,11 +478,114 @@ Test files are under `frontend/src/`, browser specs under `frontend/e2e/`.
   focus and description, and the sign-outs that fail.
 - `slowService.spec.ts`, and the slow-read scans in `accessibility.spec.ts` (light, dark and
   375 px), on the served build under its CSP with Playwright's clock.
-- Not measured yet: a real outage on the compose stack against this client. The times under "The
-  numbers" are reasoned.
-- Not heard yet: no screen reader has read any of this. The announcements (the hint's words,
-  "Loaded.", the alerts, the expiry dialog's description and focus) are to be checked with NVDA
-  and Chrome on Windows; JAWS, Narrator, VoiceOver on macOS and iOS, and TalkBack are not tested.
+- **In a browser on the compose stack**, on 2026-10-01, on this change as committed just before
+  this section was written: headless Chromium 151 through the SPA the BFF serves, signed in, with
+  outages made by `docker compose stop` or `pause`, or by an exclusive lock on `Transactions`,
+  from a script kept outside this repository. One run per row; times are seconds after the
+  visitor's action. For a send to meet an outage, the browser held it until the outage had begun
+  and then let it go unchanged.
+  - Database stopped 60 s, the dashboard reloaded: the session check got 200 in 4.99 s, and its
+    region left the page at 5.14 s without a word. The dashboard said "Taking longer than usual…"
+    at 10.15 s and "Still trying…" with "Stop waiting" at 25.15 s. Each of its three reads got the
+    API's 503 after 40.00 to 40.01 s and was sent again 10.29 to 11.18 s later; the retries got
+    200 at 65.05 to 65.12 s, and "Loaded." came at 65.11 s and went at 67.12 s. Two requests per
+    read, and no error at any time.
+  - The same outage, with "Stop waiting" pressed at 30.01 s: the three reads ended in the browser
+    at 30.08 to 30.09 s, "Could not load your accounts." came at 30.07 s with focus on its Retry,
+    and nothing was sent until that Retry, pressed after the database was back: three 200s and
+    the data.
+  - Database paused 60 s, the dashboard reloaded. A hung database answers sooner than a stopped
+    one: the API answered the three reads 503 after 9.99, 19.98 and 29.98 s, and the accounts
+    read's retry after 19.65 s, so the accounts bar, with a support code, came at 45.13 s. Focus
+    stayed where it was, since nothing had been stopped or retried. Its Retry, pressed at 46.23 s,
+    brought the hint back, "Taking longer than usual…" 5.07 s after the press, and then "Could not
+    load recent activity." at 55.13 s, whose Retry was pressed at 56.28 s. Once the database was
+    unpaused (the command issued at 59.00 s) the reads got 200, "Loaded." came at 59.33 s, and no
+    error was left.
+  - Database paused 150 s, Retry pressed about a second after each bar: seven failures, one after
+    another, in the dashboard's one alert. The accounts bar came twice, at 74.11 and 134.11 s,
+    each time with focus on its Retry, and after each of those Retries the hint's first word came
+    5.03 s after the press. The five section bars all came before the accounts read had ended,
+    and focus stayed where it was. Across both paused runs the API answered each failed attempt
+    after 9.99 to 35.0 s.
+  - API paused 150 s, the dashboard reloaded: the session check got 200 in 4.99 s, and its region
+    left at 5.09 s without a word. The reads got the BFF's 503 after 54.98 to 55.01 s and were
+    sent again 10.07 to 11.10 s later; the browser ended the retries at 125.11 to 125.13 s,
+    120.00 s after each read's first attempt, and the outage sentence came, alone, at 125.10 s.
+    Retry, once the API was back: the data.
+  - BFF paused 90 s, "Accounts" clicked: one request, never answered, which the SPA ended after
+    65.00 s; the outage sentence at 65.07 s, and no retry.
+  - API paused, "Sign in" (150 s) and the step-up PIN dialog of a reveal (90 s): "Taking longer
+    than usual…" at 5.04 and 5.03 s and "Still trying…" at 20.04 and 20.03 s, with no Stop; the
+    BFF's 503 after 55.07 and 55.01 s, then the outage sentence. The sign-in issued no refresh
+    token during the pause, and both worked once the API was back.
+  - Database stopped 60 s, the PIN's sixth digit on a transfer and on a withdrawal: "Taking longer
+    than usual…" at 5.03 s, and "Still trying…" without "Keep this page open." at 20.02 and
+    20.04 s, with no Stop. The PIN check got the API's 503 after 40.01 and 40.02 s, then "The
+    service is temporarily unavailable, and no money was moved. Please try again later." No send
+    left the browser during the outage. The transfer page emptied the PIN boxes and put focus in
+    the first; withdraw kept the six digits. Afterwards each moved the money once.
+  - Database stopped 60 s, a send that met it, on a transfer, a move between the visitor's own
+    accounts, a withdrawal and two deposits: the hint's first word 5.00 to 5.01 s after the
+    action, "Still trying… Keep this page open." 20.00 to 20.01 s after the action, in one region
+    from the action to the answer, and the API's 503 without `applied` 40.01 to 40.02 s after the
+    send was let go. Then:
+    - the transfer: the outage sentence and "We couldn't reach the bank. Your transfer may or may
+      not have gone through — check again. Retrying won't charge you twice." with "Check again",
+      and between the visitor's own accounts the same with "Retrying won't move the money
+      twice."; "Check again" sent the same key with the same authorisation: 201, one movement;
+    - the withdrawal: "The service is temporarily unavailable, and we can't tell yet whether your
+      withdrawal went through. Tap Withdraw again to check. Retrying won't charge you twice." in
+      its dialog, which stayed; Withdraw sent the same key with the same authorisation: 201, one
+      withdrawal;
+    - the deposits: "…whether your deposit went through. Tap Deposit again to check.", with no
+      "charge" anywhere on the screen; Deposit sent the same key: 201, one credit. In the other
+      run the amount was edited instead: "We couldn't confirm your deposit", one request in all,
+      and no credit.
+  - An exclusive lock on `Transactions` for 60 s, a transfer's send let go into it: the API's 503
+    with `applied: false` after 30.07 s, then "The service is temporarily unavailable, and nothing
+    was changed. Please try again later.", "Retrying won't charge you twice." and "Try again",
+    which after the lock sent the same key with the same authorisation: 201, one movement.
+  - Database stopped 60 s, the step-up PIN dialog of a reveal: its hint at 5.02 and 20.03 s, the
+    API's 503 after 40.01 s and the outage sentence in the dialog's alert, never "Couldn't verify
+    right now"; after the outage the PIN showed the number.
+  - One transfer run was repeated, because its script, by a fault of its own, pressed "Check
+    again" 60.27 s after the database was back instead of 3 s, 130.4 s after the authorisation was
+    issued. The answer was 401, "This authorisation has expired."; the page said "For your
+    security, your confirmation expired. Your transfer details are still here — enter your PIN
+    again to confirm.", and the PIN sent the same key with a new authorisation: 201, one
+    movement. The transfer of the row above is the repeat.
+  - In none of these runs did the page say "Your session has expired", "An unexpected error
+    occurred", "shortly", "We couldn't sign you out" or "Couldn't verify right now", or send the
+    visitor to the sign-in page, and in each outage the BFF and the API logged no ended session
+    and no 401. Control runs made each of those five checks fire: a session ended at the BFF, and
+    three 500s and a 503 that the browser answered itself.
+  - The runs measured only the precondition of an announcement, with a MutationObserver: the
+    element was in the page, empty, before its text. Each of the 21 hints' first words came 5.000
+    to 5.015 s after its region was put in the page empty, and the words changed in place after
+    that. Each of the 14 texts of a read page's alert, two of them in the control runs, came into
+    the alert while it was in the page and empty, for 0.055 to 120.01 s before; so did the 19
+    route announcements, and the sign-out sentence in the toast region (0.265 s). The session
+    check's region at start-up was in the page 20 times and never had a word. The other alerts, a
+    money flow's, the resend bars, the sign-in page's and the step-up dialog's, 18 in all, were
+    put in the page with their words in them, as decision 6 leaves them, and so was the amount
+    field's "Minimum … is €0.01." alert, 10 times, for 1 to 3 ms while the script filled the
+    amount.
+  - A first pass earlier the same day measured the start-up word of decision 4. It also saw, once,
+    the dashboard's one alert take two texts 5 ms apart, the recent-activity bar and then the
+    accounts bar, when the 120 s ended its three reads together; this pass saw one. Nothing was
+    changed for it.
+- Not heard: no screen reader listened to any of this; the runs above measured the precondition
+  only. Whether and how the hint's words, "Loaded.", the alerts, those put in the page already
+  filled among them, and the expiry dialog's description and focus are read is to be checked with
+  NVDA and Chrome on Windows; JAWS, Narrator, VoiceOver on macOS and iOS, and TalkBack are not
+  tested.
+- Not measured in a browser: anything on Azure; any browser but Chromium; a database stopped for
+  longer than a minute, and a write against a stuck BFF (the second row of "The numbers" and the
+  last row's write); the start-up page of decision 10, since each session check got its 200; the
+  expiry dialog; the sign-out in Settings, and the shell's against a real outage; a reload during
+  a send; and, during an outage, History, a transaction's details, the recipient and funds checks,
+  opening, closing and renaming accounts, the PIN change, registration and PIN set-up.
 
 ## What would change this
 
