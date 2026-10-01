@@ -87,7 +87,9 @@ and after `MigrateAsync`. A newer build migrated it, and an older build must not
 a schema it does not know. The command claims no "applied n": two runs at once read the same
 pending list before EF's lock. EF's own `Applying migration '…'.` lines are the record.
 
-**7. SIGTERM cancels the command.** `Program.cs` registers for it. The command says what was cut
+**7. SIGTERM cancels the command.** `Program.cs` registers for it, and the token it cancels goes
+to every call a command makes to the database. Identity's managers take no token, so the tool
+registers two that read the run's (`Seeders/RunCancellation.cs`). The command says what was cut
 short and whether a rerun is safe, and exits 1.
 
 **8. The design-time factory gets the limits and the budget, and reads no environment variable.**
@@ -99,7 +101,9 @@ factory has run, so such a run keeps the retry budget and opens with its own str
 builds, before any job creates a database.
 
 **10. compose runs `sqlserver` (healthy) → `migrate` → `seed` → `api`.** `seed` is for local runs
-and CI.
+and CI. Both one-shots run again on every `up`, so `seed` has to exit 0 on a database people have
+used: its final check counts the five demo accounts by their numbers, closed ones included. The
+app neither changes an account's number nor removes its row; a user's handle it does change.
 
 ## Rejected
 
@@ -146,7 +150,11 @@ and CI.
   not completed by running it again: `reset` starts over.
 - The Azure SQL rule does not see an alias or an IP address.
 - `--connection` on `dotnet ef` still opens with SqlClient's own limits.
-- The `sqlserver` job in CI creates three more databases.
+- The `sqlserver` job in CI creates four more databases, one for each of the four tests below
+  that need a database of their own.
+- "Never creates a database on Azure SQL" is the wait's rule. A database that stopped answering
+  after the wait had passed would reach EF, which answers "cannot open" with `CREATE DATABASE`.
+  The login a deployment gives `migrate` must not be able to create one.
 
 **Neutral**
 
@@ -159,28 +167,35 @@ and CI.
 ## Validation
 
 **Tests** (`backend/tests/AzureBank.Tests`). Each guard below was removed again, one at a time, and
-the test that covers it failed: 19 removals, 19 failures.
+the test that covers it failed: 27 removals, 27 failures.
 
 - `Unit/Tools/DatabaseGateTests`: the wait as a script of server answers on a fake clock.
 - `Unit/Tools/ConnectionTargetTests`: the Azure SQL name rule, and what counts as missing or
   unreadable.
 - `Unit/Tools/SeederCommandTests`: every refusal on the tool's own composition root, with an
-  interceptor that counts the opens EF starts, and one test in which it counts one.
+  interceptor that counts the opens EF starts, and one test in which it counts one; and a run
+  cancelled as EF starts an open, which has to find that open's own token cancelled, for `seed`
+  and for each of Identity's two managers.
 - `Unit/Data/DesignTimeFactoryTests`: the factory's limits, its budget, and
   `HasPendingModelChanges()`.
-- `Integration/MigrateCommandSqlServerTests`, `SeedCommandSqlServerTests`: each command on a
-  database of its own, three acts each.
-- `Integration/SeederProcessTests`: the real `azurebank-seeder.dll` as a child process.
+- `Integration/MigrateCommandSqlServerTests`: the command on a database of its own, three acts.
+- `Integration/SeedCommandSqlServerTests`: four acts on a database of its own, the last after a
+  handle was renamed and an account closed; and, on another, a seed that loses one user of four.
+- `Integration/SeederProcessTests`: the real `azurebank-seeder.dll` as a child process. That it
+  reads its settings from its own folder is checked twice: against a port nothing listens on, in
+  the job with no SQL Server, and on a real one.
 
 **Measured on 2026-10-01** on the compose stack under a private project name, the three images
 built from this change. One run per row unless it says otherwise.
 
 | What was run | What happened |
 |---|---|
-| `up -d` from an empty volume | `migrate` exited 0: the limits line with pool 5, "Pending migrations: 16", 16 "Applying migration" lines, "16 of 16 migrations", in 6.1 s the first time and 2.5 s on a later run. `seed` exited 0. `/health/ready` answered 200. 26 transactions (22 on John's accounts), 4 users, 5 accounts, 2 roles, 16 migrations |
+| `up -d` from an empty volume | `migrate` exited 0: the limits line with pool 5, "Pending migrations: 16", 16 "Applying migration" lines, "16 of 16 migrations", in 6.1 s the first time and 2.5 s and 2.9 s on later runs. `seed` exited 0. The `api` container was running, and a sign-in as a demo user through the BFF answered 200 with its session cookie. 26 transactions (22 on John's accounts), 4 users, 5 accounts, 2 roles, 16 migrations |
+| the same, then the `api` container stopped | The sign-in answered 503. The BFF's `/health/ready` still answered 200, with "Degraded" where it had said "Healthy": it answers 200 for an API it cannot reach, so it is not the evidence in the row above |
 | `run --rm migrate`, twice | Exit 0 both, "Pending migrations: 0", 4.0 s and 3.5 s by its own clock |
 | `up -d` again, then `up -d --wait` | Exit 0 both. The one-shots ran again and changed nothing; the API was not restarted |
 | `run --rm seed` again | Exit 0, the same counts |
+| a demo handle renamed and a demo account closed, as the API writes them (by SQL), then `stop` and `up -d` | Exit 0: `seed` exited 0 with "The demo data is in place", the API started, the sign-in answered 200. With the check as it first was, by handle: after the rename alone `seed` exited 1 with "3 of 4 demo users, 26 ledger rows", `up -d` exited 1 and the `api` container stayed exited |
 | SQL Server stopped, `migrate` started, the server started 15 s later (two runs) | **Exit 0** both. 5 Warnings and 39.7 s; 2 Warnings and 20.8 s. No Error line. Among the first run's Warnings, two 4060: the answer EF would have met with `CREATE DATABASE` |
 | the same with `--wait-seconds 0` | Exit 1 after one attempt, before the server was back |
 | SQL Server stopped for the whole run | Exit 1 after 70.5 s, "did not accept a connection within 60 s" with the last answer; a rerun with the server up: exit 0 |
@@ -194,6 +209,7 @@ built from this change. One run per row unless it says otherwise.
 | `seed` and `reset --confirm` on an Azure SQL name, no pepper, no network | Exit 2 both, each with its refusal, in about a second |
 | the same two on a name that is not Azure's and does not resolve | Exit 1 both: they tried to open |
 | `docker stop` during the wait | Exit 1 and the cancellation line, in under a second. Before decision 7: exit 143 and no line |
+| SQL Server stopped; `seed` (three times), `migrate` and `reset --confirm` each started, `docker stop` sent 5 s in | Exit 1 and the command's own cancellation line every time, 0.3 to 0.4 s after the stop was sent. Before Identity's managers read the token, `migrate` and `reset` already exited 1 with their line, and `seed` printed no line and was killed at the end of whatever grace it was given: exit 137, seven runs of seven (docker's default four times, then 10, 20 and 60 s) |
 | `docker stop` while waiting for EF's lock, then a rerun | Exit 1 and the cancellation line; the rerun exited 0 with 16 of 16 |
 | no arguments and no variables; `migrate` with no variables | Exit 1 and the usage; exit 2 naming the variable |
 | canary `appsettings.Development.json` and `.env.canary` in the Seeder's and the API's folders | In none of the three images. A control build without the three exclusion rules held the settings file |
@@ -203,8 +219,10 @@ The CI step, on a Release build of the solution: exit 0 and its success line in 
 `int` property added to `Account`, exit 1.
 
 **Not measured:** anything on Azure SQL (the name rule's refusals were measured with a name nobody
-can register, and the "missing database" verdict with a scripted answer); the CI step on the
-runner; the time the three new databases add to the SQL job.
+can register, and the "missing database" verdict with a scripted answer); a database that stops
+answering between the wait and EF's own check (read in the code); a stop that arrives while a
+command is writing, with the server up; the CI step on the runner; the time the four new databases
+add to the SQL job.
 
 ## What would change this
 

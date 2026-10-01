@@ -34,7 +34,7 @@ string.
 | Command | Does | Needs | Runs |
 |---|---|---|---|
 | `migrate [--wait-seconds N]` | Waits up to N seconds (60; 0 to 600) for the database to accept a connection, then applies every pending migration; changes nothing when there is none. Off Azure it creates the database if the server has none by that name; on an Azure SQL server name it never creates one | The connection string, with a login that may change the schema. **No pepper, no other secret** | Everywhere, a deployment included |
-| `seed` | Adds the two roles, the four demo users with their public password and PIN, their five accounts and a 26-row ledger, to a database that has none of them | The connection string and the PIN pepper, which must be the API's | Local runs and CI. **Refuses an Azure SQL server name** |
+| `seed` | Adds the two roles, the four demo users with their public password and PIN, their five accounts and a 26-row ledger, to a database that has none of them. A database that was seeded is left as it is, exit 0, whatever its users did since | The connection string and the PIN pepper, which must be the API's | Local runs and CI. **Refuses an Azure SQL server name** |
 | `reset [--confirm]` | Drops the database, migrates, seeds | The same as `seed` | Development and CI. **Refuses an Azure SQL server name** |
 
 ## Variables
@@ -88,17 +88,32 @@ waited for the server and then migrated an empty database):
 - **A database ahead of the build is refused**, exit 1, and nothing is changed: an older build must
   not move an app onto a schema it does not know. Locally that is a volume a newer branch
   migrated: `docker compose down -v`.
-- **SIGTERM cancels the run and the exit code is 1.** The last line says whether running it again
-  is safe. A `migrate` that was stopped is: only migrations the history table does not list are
-  applied.
+- **SIGTERM cancels the run and the exit code is 1**, for each of the three commands. The last
+  line says whether running it again is safe. A `migrate` that was stopped is: only migrations the
+  history table does not list are applied. Measured in the image with SQL Server down, `docker
+  stop` sent five seconds in: each command printed its line and exited 0.3 to 0.4 s after the stop
+  was sent.
+- **A command is cancelled only where its token reaches.** The signal cancels a token; the call
+  that is in flight has to have been given it. Identity's managers take none, so the tool registers
+  two that read it from `RunCancellation`, which the seeders' orchestrator sets. A new command
+  that calls Identity another way sets it on its own scope first, or a stop does nothing until the
+  process is killed (`seed` before this: exit 137 and no line).
 - **`migrate` leaves a schema with no rows**: no roles, no users. The roles come from `seed`. Where
   `seed` never runs, whatever creates the first user has to create the roles.
 - **`seed` fills an empty database only.** The seeders skip what is already there, so a seed that
   was cut short is not completed by running it again: it exits 1 every time, and `reset` starts
   over.
+- **`seed` on a database people have used exits 0.** compose runs it on every `up`. Its final check
+  counts the five demo accounts by their numbers, closed ones included: nothing in the app changes
+  an account's number or removes its row, while a demo user can rename their handle.
 - **The Azure SQL rule goes by the server's name**: `.database.windows.net`,
   `.database.cloudapi.de`, `.database.usgovcloudapi.net`, `.database.chinacloudapi.cn` and
   `.database.fabric.microsoft.com`, the five SqlClient itself knows. An alias or an IP address in
   front of an Azure SQL server is not recognised.
+- **On Azure SQL, give `migrate` a login that cannot create a database.** "Never creates one
+  there" is the wait's rule: it stops the run when the server says the database is missing. A
+  database that stopped answering after the wait had passed would reach EF, which answers "cannot
+  open" with `CREATE DATABASE`. That window was read in the code, not produced; the login's rights
+  are what closes it.
 - **A declined `reset` prompt exits 0.** Nothing was done and nothing failed. In a container there
   is no terminal: pass `--confirm`.
