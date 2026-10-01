@@ -3,6 +3,7 @@ extern alias seeder;
 using FluentAssertions;
 using FluentAssertions.Execution;
 using Xunit;
+using AzureBank.Tests.Fixtures;
 using ConnectionTarget = seeder::AzureBank.Seeder.Commands.ConnectionTarget;
 using ConnectionTargetKind = seeder::AzureBank.Seeder.Commands.ConnectionTargetKind;
 
@@ -139,5 +140,36 @@ public class ConnectionTargetTests
         target.Kind.Should().Be(ConnectionTargetKind.Unreadable);
         target.IsAzureSql.Should().BeFalse();
         target.Server.Should().BeEmpty("nothing of an unreadable string is repeated");
+    }
+
+    [Theory]
+    [InlineData("Server=tcp:not_a_server.database.windows.net,1433;Database=x;User Id=u;Password=not-a-secret")]
+    // With no database too: the proofs that make a database of their own put a name in.
+    [InlineData("Server=tcp:not_a_server.database.windows.net,1433;User Id=u;Password=not-a-secret")]
+    public void TheSqlServerProofs_SkipOnAnAzureSqlName(string connectionString)
+    {
+        // The same rule guards the suite: [SqlServerFact] and [SqlServerTheory] run against whatever
+        // AZUREBANK_TEST_SQLSERVER names, and several of them create and drop databases there.
+        SqlServerFactAttribute.SkipReason(connectionString).Should()
+            .Contain("names an Azure SQL server (not_a_server.database.windows.net)");
+    }
+
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("  ", true)]
+    [InlineData(@"Server=(localdb)\MSSQLLocalDB;Database=AzureBankTests;Trusted_Connection=True", false)]
+    [InlineData("Server=localhost,1433;Database=AzureBankProofs;User Id=sa;Password=not-a-secret", false)]
+    public void TheSqlServerProofs_RunOnAnyOtherName_AndSkipWithoutOne(string? connectionString, bool skipped)
+    {
+        var reason = SqlServerFactAttribute.SkipReason(connectionString);
+
+        if (skipped)
+        {
+            reason.Should().StartWith("Requires SQL Server - set AZUREBANK_TEST_SQLSERVER");
+        }
+        else
+        {
+            reason.Should().BeNull();
+        }
     }
 }

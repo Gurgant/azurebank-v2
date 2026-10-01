@@ -561,7 +561,8 @@ reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
 ### Test Infrastructure
 
 - **`AZUREBANK_TEST_SQLSERVER`**: the tests that need a real database connect to the SQL Server it
-  names — LocalDB locally, a service container in CI — and skip without it. There is no
+  names — LocalDB locally, a service container in CI — and skip without it. They also skip when it
+  names an Azure SQL server: several of them create and drop databases there. There is no
   Testcontainers harness: the packages were referenced and never used, and were removed on
   2026-08-10 (`ac0a2f9`).
 - **CustomWebApplicationFactory**: Creates isolated API instance for each test
