@@ -1,4 +1,5 @@
 using AzureBank.Infrastructure.Extensions;
+using AzureBank.Seeder.Pool;
 using AzureBank.Seeder.Seeders;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Options;
@@ -78,6 +79,10 @@ public static class ServiceCollectionExtensions
 
         // Register orchestrator
         services.AddScoped<SeederOrchestrator>();
+
+        // The demo pool: what `seed-pool` and `recycle` run.
+        services.AddScoped<DemoCopyBuilder>();
+        services.AddScoped<DemoCopyRecycler>();
 
         return services;
     }

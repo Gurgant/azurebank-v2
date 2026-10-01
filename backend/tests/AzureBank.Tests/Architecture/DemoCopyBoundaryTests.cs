@@ -1,0 +1,318 @@
+extern alias seeder;
+
+using System.Reflection;
+using System.Text.RegularExpressions;
+using AzureBank.Infrastructure.Data;
+using AzureBank.Shared.Entities;
+using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
+using seeder::AzureBank.Seeder.Pool;
+
+namespace AzureBank.Tests.Architecture;
+
+/// <summary>
+/// The edges of a demo copy, held where a later change would cross them unseen: every place a handle
+/// is compared, every table that holds a copy's rows, and the random source its identifiers come
+/// from.
+/// </summary>
+/// <remarks>
+/// <para>
+/// A copy is three users that reach each other and nobody else, and it is deleted whole. Both
+/// properties are true only of the code that exists today. A new query by handle that forgets the
+/// copy would let one visitor see or pay another's users; a new table keyed on a user would make
+/// every copy that wrote to it undeletable, or leave its rows behind. Neither would fail a test
+/// written for the code as it is now, so these read the source and the model instead.
+/// </para>
+/// <para>
+/// Source scans in the <see cref="SourceHygieneTests"/> shape, each with a liveness floor: a scan
+/// that reads nothing reports clean for ever.
+/// </para>
+/// </remarks>
+public class DemoCopyBoundaryTests
+{
+    private static DirectoryInfo RepoRoot()
+    {
+        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".github")))
+        {
+            dir = dir.Parent;
+        }
+
+        dir.Should().NotBeNull(because: "the scan needs the sources; a guard that cannot run must fail loudly");
+        return dir!;
+    }
+
+    private static bool IsBuildOutput(string file) =>
+        file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
+        || file.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}");
+
+    // ── Every comparison of a handle ─────────────────────────────────────────────────────────────
+
+    private static readonly Regex HandleComparison = new(@"AzureTag\s*==", RegexOptions.Compiled);
+
+    private sealed record Site(string File, int Line, string Text, string[] Lines);
+
+    /// <summary>What a comparison of a handle is for, and so what it owes the copy.</summary>
+    private enum Role
+    {
+        /// <summary>It hands another user to the caller, so it must also compare the copy.</summary>
+        HandsAnotherUserToTheCaller,
+
+        /// <summary>It answers whether a handle is free in the whole table: the unique index is global.</summary>
+        AsksWhetherAHandleIsTaken,
+
+        /// <summary>It compares the caller's own row with what the caller typed.</summary>
+        ReadsTheCallersOwnRow,
+    }
+
+    /// <summary>
+    /// Every comparison of a handle in <c>backend/src</c>, by the file it is in and the text that
+    /// begins it. A comparison this table does not know fails the test below until someone decides
+    /// which of the three it is.
+    /// </summary>
+    private static readonly (string File, string Begins, Role Role)[] Classified =
+    [
+        ("AuthService.cs", "AnyAsync(u => u.AzureTag == normalizedAzureTag", Role.AsksWhetherAHandleIsTaken),
+        ("TransferService.cs", "u.AzureTag == recipientAzureTag.ToLower()", Role.HandsAnotherUserToTheCaller),
+        ("UserService.cs", ".Where(u => u.AzureTag == normalizedTag", Role.HandsAnotherUserToTheCaller),
+        ("UserService.cs", "u => u.AzureTag == normalized && u.Id != userId", Role.AsksWhetherAHandleIsTaken),
+        ("UserService.cs", "if (user.AzureTag == normalized)", Role.ReadsTheCallersOwnRow),
+    ];
+
+    private static List<Site> HandleComparisons()
+    {
+        var root = RepoRoot();
+        var folder = Path.Combine(root.FullName, "backend", "src");
+        Directory.Exists(folder).Should().BeTrue(because: $"expected to scan {folder}");
+
+        var sites = new List<Site>();
+        var scanned = 0;
+        foreach (var file in Directory.EnumerateFiles(folder, "*.cs", SearchOption.AllDirectories))
+        {
+            if (IsBuildOutput(file))
+            {
+                continue;
+            }
+
+            scanned++;
+            var lines = File.ReadAllLines(file);
+            for (var i = 0; i < lines.Length; i++)
+            {
+                if (HandleComparison.IsMatch(lines[i]))
+                {
+                    sites.Add(new Site(Path.GetFileName(file), i + 1, lines[i].Trim(), lines));
+                }
+            }
+        }
+
+        scanned.Should().BeGreaterThan(100, "a scan that reads nothing reports clean for ever");
+        return sites;
+    }
+
+    private static (string File, string Begins, Role Role)? ClassificationOf(Site site)
+    {
+        var known = Classified.Where(c => c.File == site.File && site.Text.Contains(c.Begins, StringComparison.Ordinal)).ToList();
+        return known.Count == 1 ? known[0] : null;
+    }
+
+    /// <summary>
+    /// A GUARD: green on the code as it is, and it stays green when the two resolvers gain their
+    /// comparison of the copy. It goes red when a comparison of a handle appears that the table
+    /// does not list.
+    /// </summary>
+    [Fact]
+    public void EveryComparisonOfAHandleInTheBackend_IsOneThatWasClassified()
+    {
+        var sites = HandleComparisons();
+
+        var unclassified = sites
+            .Where(site => ClassificationOf(site) is null)
+            .Select(site => $"{site.File}:{site.Line}  {site.Text}")
+            .ToList();
+        unclassified.Should().BeEmpty(
+            "a query by handle either hands another user to the caller, and then it must compare the "
+            + "copy as well, or it does not, and the table in this test says which");
+
+        foreach (var known in Classified)
+        {
+            sites.Count(site => site.File == known.File && site.Text.Contains(known.Begins, StringComparison.Ordinal))
+                .Should().Be(1, "'{0}' in {1} is one of the comparisons this table classifies; if it moved or changed, the table must follow", known.Begins, known.File);
+        }
+
+        sites.Should().HaveCount(Classified.Length);
+    }
+
+    [Fact]
+    public void EveryComparisonThatHandsAnotherUserToTheCaller_AlsoComparesTheCopy()
+    {
+        var resolvers = HandleComparisons()
+            .Where(site => ClassificationOf(site)?.Role == Role.HandsAnotherUserToTheCaller)
+            .ToList();
+        resolvers.Should().HaveCount(2, "the lookup, and the resolver the transfer and its mint share");
+
+        foreach (var site in resolvers)
+        {
+            Statement(site).Should().MatchRegex(
+                @"DemoCopyId\s*==",
+                "{0}:{1} resolves a handle to another user, and a handle is resolved only inside the caller's copy",
+                site.File, site.Line);
+        }
+    }
+
+    /// <summary>The statement a line belongs to: from the line after the previous one that ended a statement or a block, to the first that ends this one.</summary>
+    private static string Statement(Site site)
+    {
+        static bool Ends(string line) =>
+            line.TrimEnd().EndsWith(';') || line.TrimEnd().EndsWith('{') || line.TrimEnd().EndsWith('}');
+
+        var first = site.Line - 1;
+        while (first > 0 && !Ends(site.Lines[first - 1]))
+        {
+            first--;
+        }
+
+        var last = site.Line - 1;
+        while (last < site.Lines.Length - 1 && !site.Lines[last].TrimEnd().EndsWith(';'))
+        {
+            last++;
+        }
+
+        // Without its comments: a sentence about the copy is not a comparison of it.
+        return string.Join(
+            "\n",
+            site.Lines[first..(last + 1)].Where(line => !line.TrimStart().StartsWith("//", StringComparison.Ordinal)));
+    }
+
+    // ── Every table that holds a copy's rows ─────────────────────────────────────────────────────
+
+    private static IModel Model()
+    {
+        // The model only: nothing connects.
+        using var context = new AzureBankDbContext(
+            new DbContextOptionsBuilder<AzureBankDbContext>()
+                .UseSqlServer("Server=.;Database=DemoCopyBoundaryTests")
+                .Options);
+        return context.Model;
+    }
+
+    private static readonly Type[] WhatACopyIsMadeOf = [typeof(ApplicationUser), typeof(Account), typeof(Transaction)];
+
+    /// <summary>
+    /// The entities whose rows belong to a copy's users: the users themselves, everything with a
+    /// foreign key to a user, an account or a ledger row, and everything that names a user in a
+    /// <c>UserId</c> column no foreign key covers.
+    /// </summary>
+    private static List<IEntityType> EntitiesThatHoldACopysRows(IModel model) =>
+    [
+        .. model.GetEntityTypes().Where(entity =>
+            entity.ClrType == typeof(ApplicationUser)
+            || entity.GetForeignKeys().Any(key => WhatACopyIsMadeOf.Contains(key.PrincipalEntityType.ClrType))
+            || (entity.FindProperty("UserId") is { } userId && !userId.IsForeignKey())),
+    ];
+
+    [Fact]
+    public void EveryTableThatHoldsACopysRows_IsOneTheRecyclerNames()
+    {
+        var holders = EntitiesThatHoldACopysRows(Model());
+
+        // Liveness: users, their four Identity tables, accounts, ledger rows, grants, notices, and
+        // the two tables with a UserId and no foreign key.
+        holders.Count.Should().BeGreaterThanOrEqualTo(11, "the walk found the tables that exist today");
+        holders.Select(e => e.ClrType).Should().Contain(
+            new[] { typeof(StepUpAuthorization), typeof(IdempotencyRecord) },
+            "the two tables no foreign key covers are the ones a cascade would leave behind");
+
+        var unnamed = holders
+            .Select(entity => entity.GetTableName()!)
+            .Where(table => !DemoCopyRecycler.TablesOfACopy.ContainsKey(table))
+            .ToList();
+        unnamed.Should().BeEmpty(
+            "a table that holds rows of a copy's users and that the recycler does not name either blocks "
+            + "the copy's delete or keeps its rows for ever; name it in DemoCopyRecycler.TablesOfACopy "
+            + "and delete it there, or declare that it leaves with the user");
+    }
+
+    [Fact]
+    public void ATableTheRecyclerLeavesToTheDatabase_ReallyCascadesFromTheUser()
+    {
+        var model = Model();
+        var byTable = model.GetEntityTypes()
+            .Where(entity => entity.GetTableName() is not null)
+            .ToDictionary(entity => entity.GetTableName()!);
+
+        DemoCopyRecycler.TablesOfACopy.Should().NotBeEmpty("the recycler names the tables it empties");
+
+        foreach (var (table, fate) in DemoCopyRecycler.TablesOfACopy)
+        {
+            byTable.Should().ContainKey(table, "the recycler names a table the model has");
+            if (fate != CopyRowFate.CascadesFromUser)
+            {
+                continue;
+            }
+
+            var keys = byTable[table].GetForeignKeys().ToList();
+            keys.Should().Contain(
+                key => key.PrincipalEntityType.ClrType == typeof(ApplicationUser) && key.DeleteBehavior == DeleteBehavior.Cascade,
+                "{0} is declared to leave with its user, so a cascading foreign key to the user must exist", table);
+            keys.Where(key => WhatACopyIsMadeOf.Contains(key.PrincipalEntityType.ClrType))
+                .Should().OnlyContain(
+                    key => key.DeleteBehavior == DeleteBehavior.Cascade,
+                    "a restricting key from {0} to a copy's rows would stop the delete of the user", table);
+        }
+
+        DemoCopyRecycler.TablesOfACopy.Should().Contain(
+            new KeyValuePair<string, CopyRowFate>("AspNetUsers", CopyRowFate.Deleted), "the users are what the recycler deletes");
+    }
+
+    // ── The random source ────────────────────────────────────────────────────────────────────────
+
+    private static readonly Regex SystemRandom = new(@"\bRandom\b", RegexOptions.Compiled);
+
+    private static string[] PoolSources()
+    {
+        var folder = Path.Combine(RepoRoot().FullName, "backend", "tools", "AzureBank.Seeder", "Pool");
+        Directory.Exists(folder).Should().BeTrue(because: $"expected to scan {folder}");
+        var files = Directory.GetFiles(folder, "*.cs", SearchOption.AllDirectories).Where(f => !IsBuildOutput(f)).ToArray();
+        files.Select(f => Path.GetFileName(f)).Should().Contain(
+            new[] { "DemoCredentials.cs", "DemoCopyBuilder.cs", "DemoCopyRecycler.cs" },
+            "a scan that reads nothing reports clean for ever");
+        return files;
+    }
+
+    /// <summary>
+    /// A GUARD: green until somebody reaches for <c>System.Random</c> in the pool's code. A copy's
+    /// email address is the only thing between a stranger and a claimed copy's sign-in form, so it
+    /// must not come from a generator whose next value can be computed from its last.
+    /// </summary>
+    [Fact]
+    public void ThePoolsCode_NeverUsesSystemRandom()
+    {
+        var offenders = new List<string>();
+        foreach (var file in PoolSources())
+        {
+            var lines = File.ReadAllLines(file);
+            for (var i = 0; i < lines.Length; i++)
+            {
+                var text = lines[i].TrimStart();
+                var isComment = text.StartsWith("//", StringComparison.Ordinal) || text.StartsWith('*') || text.StartsWith("/*", StringComparison.Ordinal);
+                if (!isComment && SystemRandom.IsMatch(text))
+                {
+                    offenders.Add($"{Path.GetFileName(file)}:{i + 1}  {text}");
+                }
+            }
+        }
+
+        offenders.Should().BeEmpty("every random character of a copy comes from RandomNumberGenerator");
+    }
+
+    [Fact]
+    public void ACopysIdentifiers_AreDrawnFromTheCryptographicGenerator()
+    {
+        var source = File.ReadAllText(PoolSources().Single(f => Path.GetFileName(f) == "DemoCredentials.cs"));
+
+        source.Should().Contain(
+            "RandomNumberGenerator.GetInt32(",
+            "each character is drawn with GetInt32, which is uniform over the alphabet; a byte and a modulo would not be");
+    }
+}

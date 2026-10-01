@@ -222,6 +222,87 @@ public class UserServiceTests : IDisposable
 
     #endregion
 
+    #region GetUserByAzureTagAsync - a handle is resolved only inside the caller's demo copy
+
+    /*
+      A demo copy is three users that can pay each other and nobody else. The lookup hands another
+      user's name to the caller, so it must not see past the caller's copy, and a handle in another
+      copy must be answered EXACTLY as a handle nobody holds: any difference would tell a visitor
+      that some other copy uses it.
+
+      Outside the demo every user's copy is null, and null matches null: the tests above this region
+      pin that nothing changed for them.
+    */
+
+    private async Task<ApplicationUser> AddUserAsync(string azureTag, Guid? copy, string firstName = "Test", string lastName = "User")
+    {
+        var user = CreateTestUser(azureTag, firstName, lastName);
+        user.DemoCopyId = copy;
+        _context.Users.Add(user);
+        await _context.SaveChangesAsync();
+        return user;
+    }
+
+    [Fact]
+    public async Task GetUserByAzureTagAsync_AHandleInAnotherCopy_IsAnsweredExactlyAsAnUnknownHandle()
+    {
+        var caller = await AddUserAsync("john_a1b2", copy: Guid.NewGuid());
+        await AddUserAsync("jane_c3d4", copy: Guid.NewGuid(), "Jane", "Smith");
+
+        var foreign = await _sut.GetUserByAzureTagAsync("jane_c3d4", caller.Id);
+        var unknown = await _sut.GetUserByAzureTagAsync("jane_zzzz", caller.Id);
+
+        foreign.Exists.Should().BeFalse("the handle belongs to another copy");
+        foreign.DisplayName.Should().BeEmpty("no name crosses from one copy to another");
+        foreign.Should().BeEquivalentTo(
+            unknown,
+            options => options.Excluding(answer => answer.AzureTag),
+            "beyond the handle each answer echoes, nothing tells a foreign handle from an unknown one");
+    }
+
+    /// <summary>
+    /// CONTROL: green before the copy is compared and after. It shows the refusals beside it are
+    /// about the copy, not about the lookup having stopped working for users that have one.
+    /// </summary>
+    [Fact]
+    public async Task GetUserByAzureTagAsync_AHandleInTheCallersOwnCopy_IsFound()
+    {
+        var copy = Guid.NewGuid();
+        var caller = await AddUserAsync("john_a1b2", copy);
+        await AddUserAsync("jane_a1b2", copy, "Jane", "Smith");
+
+        var result = await _sut.GetUserByAzureTagAsync("jane_a1b2", caller.Id);
+
+        result.Exists.Should().BeTrue();
+        result.DisplayName.Should().Be("Jane S.");
+    }
+
+    [Fact]
+    public async Task GetUserByAzureTagAsync_ACopysUser_CannotResolveAUserOutsideEveryCopy()
+    {
+        var caller = await AddUserAsync("john_a1b2", copy: Guid.NewGuid());
+        await AddUserAsync("outsider", copy: null, "Olga", "Outside");
+
+        var result = await _sut.GetUserByAzureTagAsync("outsider", caller.Id);
+
+        result.Exists.Should().BeFalse("a copy pays nobody outside itself");
+        result.DisplayName.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetUserByAzureTagAsync_AUserOutsideEveryCopy_CannotResolveACopysUser()
+    {
+        var caller = await AddUserAsync("outsider", copy: null);
+        await AddUserAsync("jane_c3d4", copy: Guid.NewGuid(), "Jane", "Smith");
+
+        var result = await _sut.GetUserByAzureTagAsync("jane_c3d4", caller.Id);
+
+        result.Exists.Should().BeFalse("nobody outside a copy pays into it");
+        result.DisplayName.Should().BeEmpty();
+    }
+
+    #endregion
+
     #region RenameAzureTagAsync Tests
 
     [Fact]

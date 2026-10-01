@@ -50,6 +50,16 @@ public class ApplicationUser : IdentityUser<Guid>
     /// </remarks>
     public int SessionStamp { get; set; }
 
+    /// <summary>
+    /// The demo copy this user belongs to. Null for every user outside the demo.
+    /// </summary>
+    /// <remarks>
+    /// NOT A COLUMN YET. <c>[NotMapped]</c> keeps the model as it is, so the tests of the pool
+    /// compile against the property before the migration that maps it exists.
+    /// </remarks>
+    [NotMapped]
+    public Guid? DemoCopyId { get; set; }
+
     [Required]
     public required string FirstName { get; set; }
     [Required]

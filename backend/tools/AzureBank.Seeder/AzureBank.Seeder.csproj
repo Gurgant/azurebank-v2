@@ -57,4 +57,13 @@
     </None>
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      The recycler's controls are internal: a test runs the recycler's own delete with one
+      safeguard removed (the contacts' rows, the closed accounts, the try around each copy) and
+      shows what that safeguard is for. No command sets them.
+    -->
+    <InternalsVisibleTo Include="AzureBank.Tests" />
+  </ItemGroup>
+
 </Project>
