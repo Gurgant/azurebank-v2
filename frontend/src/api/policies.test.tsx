@@ -21,6 +21,7 @@ import {
 import {
   apiSlice,
   useDepositMutation,
+  useGetAccountQuery,
   useGetAccountsQuery,
   useGetTransactionsQuery,
   useWithdrawMutation,
@@ -1069,6 +1070,45 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
     expect(result.current.wentThrough).toBe(false);
   });
 
+  it.each([
+    [
+      '409 IN_FLIGHT, whose key is kept',
+      { status: 409, errorCode: 'IDEMPOTENCY_IN_FLIGHT', applied: true },
+      { keyRetained: true, verifyRequired: false },
+    ],
+    [
+      'a 409 that names no code, which asks for a check',
+      { status: 409, errorCode: 'HTTP_409', applied: true },
+      { keyRetained: false, verifyRequired: true },
+    ],
+    [
+      '422 KEY_REUSE, whose key is dropped',
+      { status: 422, errorCode: 'IDEMPOTENCY_KEY_REUSE', applied: true },
+      { keyRetained: false, verifyRequired: false },
+    ],
+  ])(
+    '6h — applied: true under any other code is not known to have gone through: %s',
+    async (_name, rejection, expected) => {
+      /*
+        Only RESULT_UNKNOWN can say that the payment went through. The API writes `applied: true`
+        on no other answer (ADR-0009), so the hook is handed each of these directly, as in 6f. A
+        read of the member alone, without the code, would put "went through" on the page, which
+        every flow shows ahead of anything else: under IN_FLIGHT, over a send that is still
+        running. What each code does to the key and to the check is unchanged by the member.
+      */
+      const unwrap = vi.fn(() => Promise.reject(rejection));
+      const trigger: IdempotentTrigger<{ amount: number }, unknown> = () => ({ unwrap });
+      const { Wrapper } = hookWrapper();
+      const { result } = renderHook(() => useIdempotentMutation(trigger), { wrapper: Wrapper });
+
+      const first = await act(() => settle(result.current.submit({ amount: 5 })));
+      expect(first.ok).toBe(false);
+      expect(result.current.keyRetained).toBe(expected.keyRetained);
+      expect(result.current.verifyRequired).toBe(expected.verifyRequired);
+      expect(result.current.wentThrough).toBe(false);
+    },
+  );
+
   it('7 — a money send with no answer ends at 65 s and keeps its key for the retry', async () => {
     const keys: string[] = [];
     let received = 0;
@@ -1237,11 +1277,14 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
     const SENDS: {
       name: string;
       path: string;
+      /** The caller's accounts whose balance the send changes. */
+      moves: string[];
       send: (store: TestStore) => Promise<unknown>;
     }[] = [
       {
         name: 'deposit',
         path: '/api/transactions/deposit',
+        moves: [MAIN],
         send: (store) =>
           store
             .dispatch(
@@ -1255,6 +1298,7 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
       {
         name: 'withdrawal',
         path: '/api/transactions/withdraw',
+        moves: [MAIN],
         send: (store) =>
           store
             .dispatch(
@@ -1269,6 +1313,8 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
       {
         name: 'transfer',
         path: '/api/transfers',
+        // The other side is another user's account, which this visitor never reads.
+        moves: [MAIN],
         send: (store) =>
           store
             .dispatch(
@@ -1283,6 +1329,7 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
       {
         name: 'transfer between own accounts',
         path: '/api/transfers/internal',
+        moves: [MAIN, SAVINGS],
         send: (store) =>
           store
             .dispatch(
@@ -1321,6 +1368,62 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
         // Once more, not twice.
         await afterARoundTrip(store);
         expect(reads).toEqual({ accounts: 2, transactions: 2 });
+      },
+    );
+
+    function useAccountReaders() {
+      return { main: useGetAccountQuery(MAIN), savings: useGetAccountQuery(SAVINGS) };
+    }
+
+    /** Counts the reads of each account on its own, letting each one through to the mock. */
+    function countAccountReads() {
+      const reads: Record<string, number> = { [MAIN]: 0, [SAVINGS]: 0 };
+      server.use(
+        http.get('*/api/accounts/:id', ({ params }) => {
+          const id = String(params.id);
+          reads[id] = (reads[id] ?? 0) + 1;
+          return undefined;
+        }),
+      );
+      return reads;
+    }
+
+    it.each(SENDS.flatMap((send) => ANSWERS.map((answer) => ({ ...send, ...answer }))))(
+      '9d — a $name answered RESULT_UNKNOWN $flag reads again each account it moves, and no other',
+      async ({ path, send, answer, moves }) => {
+        /*
+          Test 9 counts the accounts list, and the list carries a tag for every account: it is
+          read again when any one of them is invalidated, so it cannot tell one account from two.
+          A reader of a single account holds that account's tag only. A transfer between own
+          accounts moves both balances, and a page reading the receiving one would keep the old
+          figure if only the sending one were refreshed.
+        */
+        const reads = countAccountReads();
+        const { store, Wrapper } = hookWrapper();
+        const { result } = renderHook(() => useAccountReaders(), { wrapper: Wrapper });
+        await waitFor(() => {
+          expect(result.current.main.isSuccess).toBe(true);
+          expect(result.current.savings.isSuccess).toBe(true);
+        });
+        expect(reads).toEqual({ [MAIN]: 1, [SAVINGS]: 1 });
+        server.use(http.post(`*${path}`, () => answer(path)));
+
+        const outcome = await settle(send(store));
+        expect(outcome.ok).toBe(false);
+        if (outcome.ok) throw new Error('unreachable');
+        expect(outcome.error.errorCode).toBe('IDEMPOTENCY_RESULT_UNKNOWN');
+
+        const expected = {
+          [MAIN]: moves.includes(MAIN) ? 2 : 1,
+          [SAVINGS]: moves.includes(SAVINGS) ? 2 : 1,
+        };
+        await waitFor(() => expect(reads).toEqual(expected));
+        // Once more, not twice. The list is the request sent after them here: both single
+        // accounts have a reader, so asking for one of those again would send nothing.
+        const probe = store.dispatch(apiSlice.endpoints.getAccounts.initiate());
+        await probe.unwrap();
+        probe.unsubscribe();
+        expect(reads).toEqual(expected);
       },
     );
 

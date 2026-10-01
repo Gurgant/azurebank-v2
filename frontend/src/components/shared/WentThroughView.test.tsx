@@ -50,8 +50,8 @@ describe('WentThroughView', () => {
       'View History',
       'Done',
     ]);
-    // Named individually too: the array above would still pass if a Back button were added with an
-    // icon and no text content.
+    // Named individually too, so that a failure says which control appeared. The array above
+    // already fails for any third button: one with an icon and no text is in it as ''.
     expect(screen.queryByRole('button', { name: 'Back' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
     expect(screen.queryByText(/didn't go through/)).not.toBeInTheDocument();
