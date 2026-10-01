@@ -385,12 +385,10 @@ export function SessionExpiryWarning() {
                   <MessageBarBody>{signOutError}</MessageBarBody>
                 </MessageBar>
               )}
-              {/* Last, and outside both alerts: the words of a wait are not part of a failure. */}
-              {waiting && (
-                <div className={styles.hint}>
-                  <WaitHint active kind="write" />
-                </div>
-              )}
+              {/* Last, and outside both alerts: the words of a wait are not part of a failure.
+                  Its margin is the hint's own, not a wrapper's: a wrapper stays in the flow while
+                  the hint has no words, and its margin grew the dialog when the wait began. */}
+              {waiting && <WaitHint active kind="write" className={styles.hint} />}
             </DialogContent>
             <DialogActions>
               {/* No X and no Escape, and that is deliberate — on a security prompt "close" cannot say

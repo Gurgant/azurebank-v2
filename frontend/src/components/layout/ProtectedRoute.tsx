@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useContext, useEffect } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import {
   Button,
@@ -19,7 +19,7 @@ import { selectAuthStatus } from '../../features/auth/authSlice';
 import { useWaitLanding } from '../../hooks/useWaitLanding';
 import { colors, surfaces } from '../../theme/tokens';
 import { AlertSlot, WaitHint } from '../feedback';
-import { pageTitle } from './pageTitle';
+import { TitleOverride } from './pageTitle';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -81,16 +81,14 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
   const checking = status === 'unknown' && !probe.isError;
   const { landingRef, arm } = useWaitLanding<HTMLButtonElement>(checking, probe.requestId);
 
+  // Titled through the route announcer, which writes the title and announces a route change: a
+  // Back or Forward under this page keeps its title, and leaving it gives the route its own back.
+  const setTitle = useContext(TitleOverride);
   useEffect(() => {
     if (!unavailable) return;
-    const before = document.title;
-    const title = pageTitle(SERVICE_UNAVAILABLE_TITLE);
-    document.title = title;
-    return () => {
-      // A route change meanwhile titled the page itself; that title stays.
-      if (document.title === title) document.title = before;
-    };
-  }, [unavailable]);
+    setTitle(SERVICE_UNAVAILABLE_TITLE);
+    return () => setTitle(null);
+  }, [unavailable, setTitle]);
 
   const tryAgain = () => {
     arm();
@@ -112,9 +110,11 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
         )}
         {checking && <Spinner size="large" aria-label="Checking your session" />}
         <WaitHint active={checking} kind="read" />
+        {/* Keyed by the check that failed, so that a "Try again" which fails again before its
+            wait is ever drawn still puts a new bar into the alert, and it is announced again. */}
         <AlertSlot className={styles.bar}>
           {unavailable && (
-            <MessageBar intent="error">
+            <MessageBar key={probe.requestId} intent="error">
               <MessageBarBody>{SERVICE_UNAVAILABLE}</MessageBarBody>
             </MessageBar>
           )}

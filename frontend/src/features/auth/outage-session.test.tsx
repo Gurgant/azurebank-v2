@@ -1,5 +1,12 @@
-import { Route, Routes } from 'react-router-dom';
-import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { Provider } from 'react-redux';
+import {
+  createMemoryRouter,
+  createRoutesFromElements,
+  Route,
+  RouterProvider,
+  Routes,
+} from 'react-router-dom';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -14,8 +21,10 @@ import {
   advanceUntil,
   alertSlot,
   emulateFocusFixup,
+  expectSilentHintTakesNoRoom,
   fakeClockUser,
   hintRegion,
+  hintShownAt,
   never,
   track,
   installFakeClock,
@@ -23,6 +32,8 @@ import {
 import { AppToaster } from '../../components/feedback';
 import { ProtectedRoute } from '../../components/layout/ProtectedRoute';
 import { ProtectedShell } from '../../components/layout/ProtectedShell';
+import { RouteAnnouncer } from '../../components/layout/RouteAnnouncer';
+import { ThemeProvider } from '../../theme/ThemeProvider';
 import { SettingsPage } from '../../pages/SettingsPage';
 import { apiSlice } from '../api/apiSlice';
 import { authReducer } from './authSlice';
@@ -175,6 +186,27 @@ describe('"Sign out now" during an outage', () => {
 
     await advanceUntil(sentAt, 5_000);
     hintRegion(COPY.slow, screen.getByRole('alertdialog'));
+  });
+
+  it('moves nothing in the dialog while the sign-out is pending and its hint has no words', async () => {
+    const store = await boot();
+    let sentAt = 0;
+    server.use(
+      http.post('*/bff/auth/logout', () => {
+        sentAt = Date.now();
+        return never();
+      }),
+    );
+    installFakeClock();
+    renderApp(store);
+    await reachTheWarning();
+    const dialog = screen.getByRole('alertdialog');
+
+    await fakeClockUser().click(within(dialog).getByRole('button', { name: /sign out now/i }));
+    await waitFor(() => expect(sentAt).toBeGreaterThan(0));
+    await hintShownAt(dialog);
+
+    expectSilentHintTakesNoRoom(dialog);
   });
 
   it('a 200 still signs out', async () => {
@@ -1078,6 +1110,37 @@ describe('the outage page at start-up', () => {
     expect(slot).toHaveTextContent(COPY.unavailable);
   });
 
+  it('every "Try again" that fails again puts a new bar into the alert, even inside one frame', async () => {
+    /*
+      A 500 is not retried and the mock answers it at once, so the check's start and its failure can
+      reach the page in the same frame: unavailable to unavailable, with no check drawn between. A
+      bar that stayed the same element would say nothing the second time.
+    */
+    let calls = 0;
+    server.use(
+      http.get('*/bff/auth/me', () => {
+        calls += 1;
+        return problem({ status: 500, errorCode: 'INTERNAL_ERROR', detail: 'Something broke.' });
+      }),
+    );
+    renderApp(makeTestStore());
+    await screen.findByRole('heading', { level: 1, name: COPY.unavailableTitle });
+    const barOf = () => screen.getByText(COPY.unavailable).closest<HTMLElement>('[role="group"]');
+
+    for (let press = 1; press <= 2; press += 1) {
+      const shown = barOf();
+      expect(shown?.closest('[role="alert"]')).toBe(alertSlot());
+      const before = calls;
+      await userEvent.click(screen.getByRole('button', { name: COPY.tryAgain }));
+      await waitFor(() => expect(calls).toBe(before + 1));
+
+      await waitFor(() => {
+        expect(barOf()).not.toBeNull();
+        expect(barOf()).not.toBe(shown);
+      });
+    }
+  });
+
   it('is titled "Temporarily unavailable", and gives the page its title back once the service answers', async () => {
     let down = true;
     server.use(
@@ -1085,9 +1148,9 @@ describe('the outage page at start-up', () => {
         down ? serviceUnavailable({ via: 'bff', instance: '/bff/auth/me' }) : undefined,
       ),
     );
-    document.title = 'Home · AzureBank';
+    document.title = 'AzureBank';
     installFakeClock();
-    renderApp(makeTestStore());
+    renderTitledApp(['/dashboard']);
     await advance(15_000);
     await screen.findByRole('heading', { level: 1, name: COPY.unavailableTitle });
 
@@ -1098,4 +1161,79 @@ describe('the outage page at start-up', () => {
     expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
     expect(document.title).toBe('Home · AzureBank');
   });
+
+  it('stays titled "Temporarily unavailable" when Back changes the route under it, and says so', async () => {
+    /*
+      Every guarded route renders the same guard in the same place, so Back from one to another
+      keeps the outage page on screen. The route's own title and "<route> page loaded" would name a
+      page that is not there.
+    */
+    server.use(
+      http.get('*/bff/auth/me', () => serviceUnavailable({ via: 'bff', instance: '/bff/auth/me' })),
+    );
+    document.title = 'AzureBank';
+    installFakeClock();
+    const router = renderTitledApp(['/dashboard', '/accounts']);
+    await advance(15_000);
+    await screen.findByRole('heading', { level: 1, name: COPY.unavailableTitle });
+    expect(router.state.location.pathname).toBe('/accounts');
+    const region = document.querySelector<HTMLElement>('[data-route-announcer]') as HTMLElement;
+    const said: string[] = [];
+    const observer = new MutationObserver(() => said.push(region.textContent ?? ''));
+    observer.observe(region, { childList: true, characterData: true, subtree: true });
+
+    await act(async () => {
+      await router.navigate(-1);
+    });
+    await advance(1_000);
+    observer.disconnect();
+
+    expect(router.state.location.pathname).toBe('/dashboard');
+    expect(screen.getByRole('heading', { level: 1, name: COPY.unavailableTitle })).toBeVisible();
+    expect(document.title).toBe('Temporarily unavailable · AzureBank');
+    expect(said).not.toContain('Home page loaded');
+    expect(said).toContain('Temporarily unavailable page loaded');
+  });
 });
+
+/**
+ * The app's route tree in small: the route announcer above two titled, guarded routes, as
+ * `App.tsx` has it, so that the page's title and the announcement of a route change are the
+ * app's own. Opens on the last of `entries`.
+ */
+function renderTitledApp(entries: string[]) {
+  const router = createMemoryRouter(
+    createRoutesFromElements(
+      <Route element={<RouteAnnouncer />}>
+        <Route
+          path="/dashboard"
+          handle={{ title: 'Home' }}
+          element={
+            <ProtectedRoute>
+              <div>DASHBOARD</div>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/accounts"
+          handle={{ title: 'Accounts' }}
+          element={
+            <ProtectedRoute>
+              <div>ACCOUNTS</div>
+            </ProtectedRoute>
+          }
+        />
+      </Route>,
+    ),
+    { initialEntries: entries, initialIndex: entries.length - 1 },
+  );
+  render(
+    <ThemeProvider>
+      <Provider store={makeTestStore()}>
+        <AuthBootstrap />
+        <RouterProvider router={router} />
+      </Provider>
+    </ThemeProvider>,
+  );
+  return router;
+}
