@@ -9,8 +9,9 @@ Consequences of ADR-0058 (a read's 503 is retried once, after the wait the answe
 SPA reads `applied`)
 
 **Where the code's citations point.** The code cites this record as "ADR-0059", with no section:
-`problemBaseQuery.ts` for decisions 1 to 3, `useWaitPhase.ts`, `WaitHint.tsx` and the wait rules
-in `frontend/CONVENTIONS.md` for decisions 4 to 6, and `problemMessages.ts` for decisions 7 and 8.
+`problemBaseQuery.ts` for decisions 1 to 3, `useWaitPhase.ts`, `WaitHint.tsx`, `AlertSlot.tsx` and
+the wait rules in `frontend/CONVENTIONS.md` for decisions 4 to 6, and `problemMessages.ts` for
+decisions 7 and 8.
 
 ## Context
 
@@ -74,15 +75,25 @@ not happened.
      own 65 s abort: a second wait that long would only double the visitor's), a 503 whatever its
      body, or a 502 or 504 whose body is JSON or empty. An unreadable answer, a 502 or 504 that is
      not JSON among them (decision 3), a 500 and every 4xx, a 429 included, are answers.
-   - The wait is `retryAfterSeconds`: the body's first, the `Retry-After` header's otherwise, 1 s
-     when the answer names none. On the wire it is 10 s for an outage (ADR-0058), 5 s for a refused
-     service key and 1 to 15 s for a renewal that failed (ADR-0057 §4.5). The visitor is never
-     told the number (ADR-0058: "a visitor is told no time").
-   - The retry is sent only if the first attempt's time, the wait and 5 s still fit in
-     `READ_BUDGET_MS`, 120 s from the first attempt, and the retry's own abort is cut to what is
-     left of it. A wait that does not fit means no retry. What is left is worked out before the
-     wait, never after it: a phone can suspend a page in the background for minutes, and a limit
-     counted after that could fall to zero, which RTK reads as no limit at all.
+   - The wait is `retryAfterSeconds`: the body's first, the `Retry-After` header's otherwise, as a
+     number of seconds or as an HTTP-date (RFC 9110 allows both; a date is rounded up to the whole
+     second). On the wire it is 10 s for an outage (ADR-0058), 5 s for a refused service key and 1
+     to 15 s for a renewal that failed (ADR-0057 §4.5). The visitor is never told the number
+     (ADR-0058: "a visitor is told no time").
+   - When the answer names no wait: 5 s after a 502, 503 or 504, 1 s after a failed connection.
+     Both servers put a wait on every 503 they send, so a gateway answer that names none comes
+     from something in front of the BFF and says that what is behind it is down, and a second
+     later it most likely still is; Microsoft's guidance for clients of its identity platform puts
+     the first retry at least 5 s after such an answer. A failed connection may have been a blink,
+     and a second finds out.
+   - To the wait the SPA adds up to a fifth of it, at random, and never takes anything off. Every
+     reader in one outage hears the same `Retry-After`, the Dashboard's three reads among them;
+     without a spread they would all come back in the same second.
+   - The retry is sent only if the first attempt's time, the wait with its spread and 5 s still
+     fit in `READ_BUDGET_MS`, 120 s from the first attempt, and the retry's own abort is cut to
+     what is left of it. A wait that does not fit means no retry. What is left is worked out before
+     the wait, never after it: a phone can suspend a page in the background for minutes, and a
+     limit counted after that could fall to zero, which RTK reads as no limit at all.
    - A read the visitor stops (decision 6) ends the wait before its retry at once, and sends
      nothing more.
    - Mutations are never retried (ADR-0022): a money send is sent again only by the visitor, with
@@ -114,6 +125,13 @@ not happened.
    flicker on most loads, and a sentence that appears and vanishes teaches people to ignore it.
    Neither number comes from measured response times yet; both live in one file, so a measurement
    moves them for every wait at once. Every wait starts from zero.
+   - On a money send (a transfer, a move between the visitor's own accounts, a deposit, a
+     withdrawal) the 20 s words are "Still trying… Keep this page open." While it is pending the
+     one unsafe thing left to the visitor is a reload: the key lives only in the page (ADR-0022
+     decision 1), and a reload sends the money again with a new one. The words ask; nothing stops
+     a reload (see the Consequences). Ratified on 2026-09-30.
+   - A read that said something and then loads says "Loaded." (decision 5). Ratified on
+     2026-09-30.
 
 5. **Each host shows its own hint, under the control or spinner that started the wait**
    (`WaitHint`).
@@ -124,12 +142,21 @@ not happened.
      words are read as part of those.
    - The hint follows the host's own waiting flag, not the life of the RTK request, which on the
      reveal of a full account number includes the time the PIN dialog is open.
-   - Its words sit in a `role="status"` of their own, not `RetryCountdown`'s timer. The region is
-     in the page, empty, from the first instant of the wait, because a polite region has to exist
-     before its text changes; it is gone once nothing is pending. Until it has words it is out of
-     the page's flow and visually hidden, still read, so a wait that ends inside 5 s moves nothing
-     on the page, and a wait that reaches its words moves what is below it once. The Dashboard's
-     hint sits above its grid while the page loads.
+   - Its words sit in a `role="status"` of their own, atomic, not `RetryCountdown`'s timer. The
+     region is in the page, empty, from the first instant of the wait, because a polite region has
+     to exist before its text changes; it is gone once nothing is pending. Until it has words it
+     is out of the page's flow and visually hidden, still read, so a wait that ends inside 5 s
+     moves nothing on the page, and a wait that reaches its words moves what is below it once. The
+     Dashboard's hint sits above its grid while the page loads.
+   - A read whose content takes the wait's place, and whose wait said something, says "Loaded."
+     in the same region when it loads, read and not shown, and the region goes 2 s later
+     (`LOADED_KEPT_MS`, not measured against a screen reader). WCAG 4.1.3 names this case: a
+     non-visible status message that the system is available. A load inside 5 s said nothing and
+     says nothing at its end either, and a failure says nothing more, because its alert speaks.
+     The hosts that do it: the Dashboard, Accounts, History (its first page and "Load more"), a
+     transaction's details, a transfer page's first load of the accounts and the recipient check.
+     Not the funds check on Continue nor the session check at start-up: their success moves the
+     visitor on rather than putting something on the page.
    - A transfer's confirm, the PIN step's authorisation and then the send, is one wait with one
      hint from the sixth digit, so the hand-off between the two requests does not start it again.
    - The hosts: the Dashboard (one hint for its three reads), Accounts, History (its first page,
@@ -159,8 +186,20 @@ not happened.
      after a failure, and it has failed only once nothing is fetching. RTK keeps the old error
      through a refetch and leaves `isLoading` false, so a bar shown on `error` stayed up, and was
      never announced again, through a Retry. Now the bar goes while the read runs again, the hint
-     comes back, and a second failure mounts a new bar, announced again. The six read bars that had
-     no role are `role="alert"`.
+     comes back, and a second failure puts a new bar on the page, announced again.
+   - Each read page keeps one `role="alert"`, atomic, in the page from the start and empty until a
+     read fails (`AlertSlot`), and its bar goes inside it: in on a failure, out while the read runs
+     again, in again if that fails too. The APG says an alert added to the page already filled is
+     announced by most screen readers; MDN says it generally is not, since nothing in it changed;
+     W3C's technique ARIA19 keeps the container in the page from the start. A slot that is
+     always there satisfies all three. The read pages, both transfer pages' accounts bar and the
+     page of decision 10 at start-up have one; the bar inside has no role of its own, so no live
+     region is nested in another.
+   - The Dashboard has one slot for its three bars, above its grid. An outage fails "this month"
+     and "recent activity" together, and WAI-ARIA 1.2 lets a screen reader drop queued speech when
+     an assertive change arrives, so two alerts raised in one render may be heard as one. One
+     atomic alert reads both. The section bars therefore sit above the grid, not in their
+     sections, which show their headings and no figures while they have failed.
    - `useWaitLanding` puts focus on the new bar's Retry (on Verify for the recipient check) when a
      wait the visitor stopped or retried is over, because the control they pressed has gone. It is
      armed only when Stop stopped something or Retry was pressed, it is spent when that request is
@@ -241,17 +280,41 @@ not happened.
       unreadable answer, a 5xx, the 65 s abort or a rejection with no status leave the session
       undecided, and the visitor gets a page of its own: a `main` with the heading "Temporarily
       unavailable", the outage sentence in an alert, and "Try again", which takes focus back if
-      the check fails again. A check RTK skipped because another was running decides nothing.
+      the check fails again. The check and that page are one `main`, so the alert is there, empty,
+      while the check runs. The page is titled "Temporarily unavailable", as the page for a route
+      that failed is titled for itself, and the route's own title comes back when the service
+      answers. A check RTK skipped because another was running decides nothing.
     - "Sign out now" in the expiry dialog that fails with anything but a 401 ends nothing and
-      clears nothing: the dialog stays, says why (the connection sentence for a failed connection
-      or an unreadable answer, the outage sentence otherwise, the 65 s abort included) and the
-      button works again. The BFF ends a session without the API, so a logout that failed most
-      likely never ran and the cookie is alive. A failed revocation still never passes for a
-      sign-out.
+      clears nothing: the dialog stays, says so and why (decision 11), focus goes back to the
+      button, and the button works again. The BFF ends a session without the API, so a logout that
+      failed most likely never ran and the cookie is alive. A failed revocation still never passes
+      for a sign-out.
     - At 0:00 of the countdown, if the status check fails, the session still ends as expired: the
       countdown ended it, not the error, and keeping account data on screen past the session while
       the service is down would be worse. The plan said a 5xx never shows "session expired"; this
       exception was ratified on 2026-09-30.
+
+11. **A sign-out that fails says the visitor is still signed in, and the expiry dialog opens on
+    staying.**
+    - Whenever a sign-out fails with anything but a 401 — "Sign out now" in the expiry dialog, and
+      the sign-outs in the shell and in Settings — the visitor reads first "We couldn't sign you
+      out. You're still signed in.", then why: in the expiry dialog the connection sentence for a
+      failed connection or an unreadable answer and the outage sentence otherwise, the 65 s abort
+      included; in the shell's and Settings' toast the problem's own words. A visitor who leaves a
+      shared computer believing they signed out leaves it signed in. A 401 says the session was
+      already gone, which is what a sign-out asks for. Ratified on 2026-09-30.
+    - In the inactivity branch "Stay signed in" comes first, in the page and on screen. The dialog
+      opens with focus on its first control, so Space or Enter, pressed by someone who meant to
+      stay, keeps the session instead of ending it: one `/me`, no logout. HMRC's timeout pattern
+      puts focus on its "Stay signed in" button, and WCAG 2.2.1 gives the space bar as the simple
+      way to extend. At the cap the password field comes first, as before.
+    - The dialog is described (`aria-describedby`) by its sentence and its countdown only, not by
+      the content around them, which can hold a wait's words or a failure's alert: those speak for
+      themselves.
+    - "Sign out now" is disabled while it is pending, and a browser hands the focus of a control
+      it disables to the page (measured in headless Chromium 151: focus went to `body` and stayed
+      there when the button was enabled again). When the sign-out fails, `useWaitLanding` puts
+      focus back on it.
 
 ## The numbers
 
@@ -259,24 +322,31 @@ not happened.
 |---|---|---|
 | `REQUEST_TIMEOUT_MS` (`problemBaseQuery.ts`) | 65 s | The BFF's worst answer, 5 + 55 = 60 s, and 5 s of margin; below the ingress's 240 s |
 | `READ_BUDGET_MS` | 120 s | Two of the BFF's worst answers: a first attempt and its retry |
-| The wait when the answer names none | 1 s | Only a failed connection, or a gateway answer from something in front of the BFF, names none: both servers put a wait on every 503 they send |
+| The wait after a 502, 503 or 504 that names none | 5 s | Something in front of the BFF answered for a service that is down; both servers put a wait on every 503 they send |
+| The wait after a failed connection | 1 s | A connection may have blinked |
+| The spread added to a retry's wait | 0 to 20 % | Readers that heard the same wait do not all come back in the same second; never less than asked |
 | The least a retry may be left | 5 s | Less could only time out |
 | `SLOW_AFTER_MS`, `STILL_TRYING_AFTER_MS` (`useWaitPhase.ts`) | 5 s, 20 s | Not measured; one place to move them |
+| `LOADED_KEPT_MS` (`useWaitPhase.ts`) | 2 s | How long "Loaded." stays in the region before it goes; not measured |
 
 What a visitor would meet, reasoned from ADR-0058's numbers and not yet measured against this
-client. Every wait says "Taking longer than usual…" at 5 s and "Still trying…" at 20 s.
+client. Every wait says "Taking longer than usual…" at 5 s and "Still trying…" at 20 s ("Still
+trying… Keep this page open." on a money send).
 
 | Outage | A read | A write |
 |---|---|---|
-| Database down about a minute (the API's 503 at 40 s, `Retry-After: 10`) | the retry at about 50 s, then the data and no error | the flow's outage words at about 40 s, never retried |
-| Database down longer | the outage sentence at about 40 + 10 + 40 = 90 s | the flow's outage words at about 40 s |
-| API frozen (the BFF's 503 at 55 s) | the retry at about 65 s, cut where the 120 s end: the outage sentence at about 120 s | the flow's outage words at about 55 s |
+| Database down about a minute (the API's 503 at 40 s, `Retry-After: 10`) | the retry at about 50 to 52 s, then the data, "Loaded." and no error | the flow's outage words at about 40 s, never retried |
+| Database down longer | the outage sentence at about 40 + 10 to 12 + 40 = 90 to 92 s | the flow's outage words at about 40 s |
+| API frozen (the BFF's 503 at 55 s) | the retry at about 65 to 67 s, cut where the 120 s end: the outage sentence at about 120 s | the flow's outage words at about 55 s |
 | BFF stuck | the outage sentence at 65 s, no retry | the flow's outage words at 65 s |
 
 ## Rejected
 
 - **RTK's `retry()`**, kept and tuned: its back-off never sees the error, so it cannot wait what
   the answer asks for.
+- **A retry at exactly the wait asked for, and 1 s when none is named:** every reader of one
+  outage would come back in the same second, and a gateway's 5xx would be asked again while what
+  is behind it is most likely still down (decision 2).
 - **Retrying a read that got no answer in 65 s:** it doubles the visitor's wait for a service that
   has just shown it does not answer.
 - **Retrying a write automatically,** keyed or not: ADR-0022's reason, a possible single spend made
@@ -290,6 +360,8 @@ client. Every wait says "Taking longer than usual…" at 5 s and "Still trying�
   bar:** decision 8.
 - **Disabling Retry while its read runs again,** rather than hiding the bar: the bar would stay
   mounted through the wait, so a second failure would still not be announced.
+- **A bar that is its own alert, mounted already filled:** whether it is read depends on the
+  screen reader (decision 6).
 - **Keeping the key on a rejection with no status:** when the server had answered a 2xx whose body
   failed its schema, the same key replays that same answer, and the visitor is held on "failed"
   with no way on.
@@ -305,27 +377,33 @@ client. Every wait says "Taking longer than usual…" at 5 s and "Still trying�
   whether money moved, or how to find out with the same key.
 - A read's retry waits what the server asked, so an outage of about a minute on the database ends
   without an error, and a second failure is announced again.
-- An outage is never a sign-out, at start-up or from the expiry dialog's "Sign out now".
+- An outage is never a sign-out, at start-up or from the expiry dialog's "Sign out now", and a
+  sign-out that failed says the visitor is still signed in.
+- A read's failure is a change of an alert that was already on the page; a wait that said it was
+  slow says when it has loaded.
 
 **Negative, and what is left open**
 
 - **The key dies with the page** (ADR-0022 decision 1). A visitor who reloads during a stuck send,
-  or opens a new tab, sends a new key, and if the first request lands they pay twice. The page asks
-  before a reload; nothing stops one. A warning at the review step about the same payment made a
-  few minutes before, from the server's data, is not built.
+  or opens a new tab, sends a new key, and if the first request lands they pay twice: the outcome
+  the FCA's 2022 Final Notice to TSB records (¶4.24(e)), payments made twice after error messages
+  that followed successful ones. The page asks before a reload, and from 20 s the wait asks to
+  keep the page open; nothing stops a reload. A warning at the review step about the same payment
+  made a few minutes before, from the server's data, is not built.
 - **Nothing answers "did key X land?" without sending it again:** "Check again" re-sends the same
   key, which executes if nothing was recorded. A read-only status by key is not built.
 - **`RESULT_UNKNOWN` also covers a commit that is proven** (a stale `Executed` claim, ADR-0009),
   and the check view still offers "It didn't go through — start over" for it. Saying that it went
-  through needs the server to say so first.
+  through needs the server to say so first: a small change of its own, after this one.
 - **Opening an account carries no key** (ADR-0058 residual risk 2): an outage can hide an account
   that was opened, which is why its words say to check first and the list is read again; a second
-  attempt can still open a second, empty account.
+  attempt can still open a second, empty account. An optional key on that request is not built.
 - **Nothing bounds retries across visitors.** Each visitor's read is sent at most twice, and the
   API tries each database operation up to five times (ADR-0058's four EF retries), so one read can
   reach the database up to ten times per operation it makes, and a write up to five, before
   anybody presses anything. With ADR-0058's NeverBlock (its residual risk 5) a busy outage
-  multiplies the logins the database receives. A budget shared by the process is not built.
+  multiplies the logins the database receives. The spread of decision 2 keeps readers from coming
+  back in step; it bounds nothing. A budget shared by the process is not built.
 - **Each page of an infinite query has its own 120 s.** RTK refetches the cached pages one after
   another, and no endpoint turns that off, so a History refetch of k pages during an outage can
   take k × 120 s. Accepted: during such a refetch the page shows the rows it has, and a first-page
@@ -355,20 +433,27 @@ Test files are under `frontend/src/`, browser specs under `frontend/e2e/`.
   SPA's sentence; a failed fetch never shows the runtime's error; a 500 keeps its detail;
   `applied: false` reaches the caller; a request with no answer ends at 65 s and is not retried.
 - `api/policies.test.tsx`: a read's 503 is retried once after its `retryAfterSeconds`, a
-  mutation's never; the 120 s budget and the 5 s floor; the 1 s default; a stop during the wait;
-  a wait that ends late; a money send with no answer keeps its key; one rejected with no status
-  asks for a check.
+  mutation's never; the 5 s default after a gateway's answer and the 1 s after a failed
+  connection; the spread, never below the wait asked for, and the 120 s budget checked with it; a
+  `Retry-After` date; the 5 s floor; a stop during the wait; a wait that ends late; a money send
+  with no answer keeps its key; one rejected with no status asks for a check.
 - `api/timeoutChain.test.ts`: the abort and the budget against the BFF's two settings, read from
   the files that set them.
-- `components/feedback/WaitHint.test.tsx`: the phases and their restart, the empty region, Stop
-  only on a read and at the medium size, `readWait`, and when `useWaitLanding` moves focus.
+- `components/feedback/WaitHint.test.tsx`: the phases and their restart, the empty and atomic
+  region, Stop only on a read and at the medium size, a money send's words, "Loaded." and when it
+  is not said, `readWait`, and when `useWaitLanding` moves focus.
 - `pages/slow-reads.test.tsx`, `pages/transfer-outage.test.tsx`, `pages/slow-sign-in.test.tsx`,
   `components/dialogs/outage.test.tsx` and `features/auth/outage-session.test.tsx`: each host's
-  hint, Stop and landing, the money and keyless words, and the start-up and sign-out paths.
+  hint, Stop and landing, "Loaded.", the alert that is there before a failure and the Dashboard's
+  one alert, the money and keyless words, the start-up page and its title, the expiry dialog's
+  focus and description, and the sign-outs that fail.
 - `slowService.spec.ts`, and the slow-read scans in `accessibility.spec.ts` (light, dark and
   375 px), on the served build under its CSP with Playwright's clock.
 - Not measured yet: a real outage on the compose stack against this client. The times under "The
   numbers" are reasoned.
+- Not heard yet: no screen reader has read any of this. The announcements (the hint's words,
+  "Loaded.", the alerts, the expiry dialog's description and focus) are to be checked with NVDA
+  and Chrome on Windows; JAWS, Narrator, VoiceOver on macOS and iOS, and TalkBack are not tested.
 
 ## What would change this
 

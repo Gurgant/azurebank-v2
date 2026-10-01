@@ -600,9 +600,10 @@ nobody checks. What that runbook rests on is decided here.
   Schemathesis hooks follow; the direct callers send the marker. No SPA application code changes:
   the SPA retries a 503 only on a read, ~~up to 3 attempts in all on RTK's own backoff, without
   reading `Retry-After`~~ *(2026-10-01, [ADR-0059](0059-the-spa-tells-the-visitor-when-the-service-is-slow-or-down.md):
-  once, after the answer's `retryAfterSeconds`, and only while that retry still fits the read's two
-  minutes)* (`problemBaseQuery`); a write that gets one is shown as an error and never retried
-  automatically (ADR-0022). Either way it is not a 401, so nobody is signed out.
+  once, after the answer's `retryAfterSeconds` and up to a fifth more, and only while that retry
+  still fits the read's two minutes)* (`problemBaseQuery`); a write that gets one is shown as an
+  error and never retried automatically (ADR-0022). Either way it is not a 401, so nobody is
+  signed out.
 
 ## 9. Records and plans affected
 

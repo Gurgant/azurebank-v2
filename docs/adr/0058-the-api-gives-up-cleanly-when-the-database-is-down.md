@@ -396,12 +396,12 @@ sending it) observes a token. Three ways to put a deadline on that were weighed:
 - A read during a long outage waits longer before the SPA gives up: the SPA retries a read's 503
   ~~up to 3 attempts in all (ADR-0057 §8)~~ *(2026-10-01,
   [ADR-0059](0059-the-spa-tells-the-visitor-when-the-service-is-slow-or-down.md): once, after
-  the answer's `retryAfterSeconds`, 10 s here, and only while that retry still fits the read's two
-  minutes)*, and each can take up to about 45 s (the deadline plus the cancelled command's
-  acknowledgement). ~~The SPA does not read `applied` or `Retry-After` yet.~~ *(2026-10-01,
-  ADR-0059: it reads both. `applied: false` changes the words of a money send, never its key; the
-  wait before a read's retry is the body's `retryAfterSeconds`, or the `Retry-After` header's when
-  the body has none.)*
+  the answer's `retryAfterSeconds`, 10 s here, and up to a fifth more, and only while that retry
+  still fits the read's two minutes)*, and each can take up to about 45 s (the deadline plus the
+  cancelled command's acknowledgement). ~~The SPA does not read `applied` or `Retry-After`
+  yet.~~ *(2026-10-01, ADR-0059: it reads both. `applied: false` changes the words of a money
+  send, never its key; the wait before a read's retry is the body's `retryAfterSeconds`, or the
+  `Retry-After` header's when the body has none.)*
 - A pool of 12 is a real ceiling. Twelve requests stuck on a hung database take every connection,
   and the thirteenth waits up to the connect timeout for one; refresh, revoke and logout, which are
   exempt, hold theirs to the end.
