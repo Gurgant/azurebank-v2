@@ -101,7 +101,7 @@ not happened.
      nothing more.
    - Mutations are never retried (ADR-0022): a money send is sent again only by the visitor, with
      the same key.
-   - One retry that honours the API's 10 s lets a database that refuses connections for about a
+   - One retry that honours the API's 10 s lets a database the API cannot reach at all for about a
      minute come back without the visitor seeing an error, and the 120 s, two of the BFF's worst
      answers, bound everything else. A hung database, measured, failed each attempt in less than
      40 s, so a hang of a minute can still put a bar on the page (Validation).
@@ -349,15 +349,16 @@ not happened.
 | The least a retry may be left | 5 s | Less could only time out |
 | `SLOW_AFTER_MS`, `STILL_TRYING_AFTER_MS` (`useWaitPhase.ts`) | 5 s, 20 s | Not measured; one place to move them |
 | `SESSION_CHECK_SLOW_AFTER_MS` (`useWaitPhase.ts`) | 6 s | The BFF's 5 s ceiling on the session check, and 1 s so that its answer from the cache is not raced (decision 4) |
-| `LOADED_KEPT_MS` (`useWaitPhase.ts`) | 2 s | How long "Loaded." stays in the region before it goes; not measured |
+| `LOADED_KEPT_MS` (`useWaitPhase.ts`) | 2 s | How long "Loaded." stays in the region before it goes; measured in the page at 2.008 to 2.012 s, not heard through a screen reader |
 
 What a visitor would meet, reasoned from ADR-0058's numbers before any browser run. Every wait
 says "Taking longer than usual…" at 5 s (the session check at start-up at 6 s) and "Still trying…"
 at 20 s ("Still trying… Keep this page open." once a money send holds its key). A browser on the
-compose stack has since measured the reads of the first, third and fourth rows and the writes of
-the first and third, and each held (Validation). The second row and the last row's write were not
-measured, and a database that hangs instead of refusing answers each attempt sooner than the first
-row says.
+compose stack has since measured the reads of the first, third and fourth rows, the money writes
+of the first row, and of the third row only a sign-in and a step-up PIN check, not a money send;
+each held (Validation). The second row and the last row's write were not measured, and a database
+that hangs, where the measured first row's could not be reached at all, answers each attempt
+sooner than the first row says.
 
 | Outage | A read | A write |
 |---|---|---|
@@ -401,7 +402,7 @@ row says.
   when there is one; decision 5 names the few that have no hint.
 - An outage reads the same on every surface and never names a session or a time; a money send says
   whether money moved, or how to find out with the same key.
-- A read's retry waits what the server asked, so a database that refuses connections for about a
+- A read's retry waits what the server asked, so a database the API cannot reach for about a
   minute comes back without an error (a hung one can still show a bar), and a second failure is
   announced again.
 - An outage is never a sign-out, at start-up or from the expiry dialog's "Sign out now", and a
@@ -481,9 +482,11 @@ Test files are under `frontend/src/`, browser specs under `frontend/e2e/`.
 - **In a browser on the compose stack**, on 2026-10-01, on this change as committed just before
   this section was written: headless Chromium 151 through the SPA the BFF serves, signed in, with
   outages made by `docker compose stop` or `pause`, or by an exclusive lock on `Transactions`,
-  from a script kept outside this repository. One run per row; times are seconds after the
-  visitor's action. For a send to meet an outage, the browser held it until the outage had begun
-  and then let it go unchanged.
+  from a script kept outside this repository. One run per item unless the item names several;
+  times are seconds after the visitor's action unless the item says otherwise. A stopped database
+  could not be reached at all: the API logged SQL error 35, its name no longer resolving. For a
+  send to meet an outage, the browser held it until the outage had begun and then let it go
+  unchanged.
   - Database stopped 60 s, the dashboard reloaded: the session check got 200 in 4.99 s, and its
     region left the page at 5.14 s without a word. The dashboard said "Taking longer than usual…"
     at 10.15 s and "Still trying…" with "Stop waiting" at 25.15 s. Each of its three reads got the
@@ -519,15 +522,16 @@ Test files are under `frontend/src/`, browser specs under `frontend/e2e/`.
     than usual…" at 5.04 and 5.03 s and "Still trying…" at 20.04 and 20.03 s, with no Stop; the
     BFF's 503 after 55.07 and 55.01 s, then the outage sentence. The sign-in issued no refresh
     token during the pause, and both worked once the API was back.
-  - Database stopped 60 s, the PIN's sixth digit on a transfer and on a withdrawal: "Taking longer
+  - Database stopped 60 s, the PIN's sixth digit on a transfer, and "Withdraw" pressed with the
+    PIN already entered on a withdrawal: "Taking longer
     than usual…" at 5.03 s, and "Still trying…" without "Keep this page open." at 20.02 and
     20.04 s, with no Stop. The PIN check got the API's 503 after 40.01 and 40.02 s, then "The
     service is temporarily unavailable, and no money was moved. Please try again later." No send
     left the browser during the outage. The transfer page emptied the PIN boxes and put focus in
     the first; withdraw kept the six digits. Afterwards each moved the money once.
   - Database stopped 60 s, a send that met it, on a transfer, a move between the visitor's own
-    accounts, a withdrawal and two deposits: the hint's first word 5.00 to 5.01 s after the
-    action, "Still trying… Keep this page open." 20.00 to 20.01 s after the action, in one region
+    accounts, a withdrawal and two deposits: the hint's first word 5.02 to 5.07 s after the
+    action, "Still trying… Keep this page open." 20.02 to 20.07 s after the action, in one region
     from the action to the answer, and the API's 503 without `applied` 40.01 to 40.02 s after the
     send was let go. Then:
     - the transfer: the outage sentence and "We couldn't reach the bank. Your transfer may or may
@@ -543,8 +547,9 @@ Test files are under `frontend/src/`, browser specs under `frontend/e2e/`.
       run the amount was edited instead: "We couldn't confirm your deposit", one request in all,
       and no credit.
   - An exclusive lock on `Transactions` for 60 s, a transfer's send let go into it: the API's 503
-    with `applied: false` after 30.07 s, then "The service is temporarily unavailable, and nothing
-    was changed. Please try again later.", "Retrying won't charge you twice." and "Try again",
+    with `applied: false` 30.07 s after the send was let go, then "The service is temporarily
+    unavailable, and nothing was changed. Please try again later.", "Retrying won't charge you
+    twice." and "Try again",
     which after the lock sent the same key with the same authorisation: 201, one movement.
   - Database stopped 60 s, the step-up PIN dialog of a reveal: its hint at 5.02 and 20.03 s, the
     API's 503 after 40.01 s and the outage sentence in the dialog's alert, never "Couldn't verify
