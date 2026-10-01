@@ -16,13 +16,16 @@ import { USER } from './fixtures';
  * was. The authorisations of the withdrawal and of the transfer are minted for real, with the right
  * PIN, and expire unused. What is proven here is the SPA's reaction to a copied wire, in a real
  * browser: focus, the Tab order, the layout at phone width and in the dark theme, and axe. The wire
- * itself is pinned by the backend's tests, and the real sequence (a commit, a lost answer, the same
- * key after the stale age) is run by hand against the compose stack.
+ * itself is pinned by the backend's tests. The real sequence (a commit, a lost answer, the same key
+ * after the stale age) is NOT staged here: it takes a second database session and two minutes for
+ * each payment. ADR-0059's Validation says when it was run on the compose stack, and what was
+ * measured.
  *
- * WHERE THE BODY BELOW COMES FROM. Its members, their order, the status and the headers are the 409
- * measured on the running stack on 2026-10-01 for a deposit and a transfer whose answer had been
- * lost (`application/json; charset=utf-8`, `no-cache,no-store`), to which this adds the `applied`
- * member and the sentence the API now sends with it.
+ * WHERE THE BODY BELOW COMES FROM. It is the 409 measured in that run, on 2026-10-01, at the
+ * browser and through the BFF, for a deposit, a withdrawal and both transfers whose answer had been
+ * lost: the eight members in this order, the sentence, the status and the two headers
+ * (`application/json; charset=utf-8`, `no-cache,no-store`). Byte for byte the measured body once
+ * its `traceId`, which every answer mints, is replaced by the one below.
  */
 
 const SENTENCE = {

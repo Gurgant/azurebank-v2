@@ -640,7 +640,10 @@ Test files are under `frontend/src/`, browser specs under `frontend/e2e/`.
     a withdrawal and a transfer each showed the receipt's title and the sentence with focus on
     it, "didn't go through" nowhere on the page, "View History" one Tab away and leading to
     `/history`, and one key sent. The dialogs' buttons were Close and "View History"; the
-    transfer page's, "View History" and "Done".
+    transfer page's, "View History" and "Done". A second press where "Deposit" had been, which
+    with the view up is on the backdrop, left the dialog and its sentence on screen with focus
+    on the sentence, and Escape then closed it. The whole browser suite, 44 tests with these,
+    passed on the compose stack and on a stack run from source the way CI's job runs it.
   - Measured in that run, on the deposit dialog and on the transfer page, each in the light
     theme, in the dark theme and at 375 × 812: the sentence took 2 lines in all six, centred, and
     it and "View History" were whole in the viewport with no sideways scroll; axe, on the rules
@@ -649,20 +652,71 @@ Test files are under `frontend/src/`, browser specs under `frontend/e2e/`.
     light theme and at 375, and 15.45:1 and 12.2:1 in the dark theme. axe's own figure agreed on
     the page (13.33 and 15.45); in the dialog it could not decide the sentence's background,
     since it looks through the modal to the page behind.
-  - The focus ring, in the same run: after a key press (Enter on Deposit; a transfer's sixth PIN
-    digit, which is its send) the sentence had the app's ring, 2 px solid at a 2 px offset; after
-    a click on Deposit or Withdraw it had none. On the transfer page the ring was whole in the
-    viewport, at 375 too; in the dialog that was not measured.
+  - The focus ring, in the same run: after a key press (Enter on Deposit; Enter on Withdraw; a
+    transfer's sixth PIN digit, which is its send) the sentence had the app's ring, 2 px solid at
+    a 2 px offset; after a click on Deposit or Withdraw it had none, with focus on it. On the
+    transfer page the ring was whole in the viewport, at 375 too; in the dialog that was not
+    measured.
   - Not heard: the sentence itself. Focus is on it when the view appears, in jsdom and in
     Chromium; no screen reader has been listened to on this view. Nor the check view, which
     lands no focus (on `5b50681`, measured, focus was on `body` in every one), and to which one
     more answer is routed since this date, a 409 that names no code; nor the view arriving while
     another dialog holds focus, or after the visitor moved focus during the wait, when the
     landing does not run; nor JAWS, Narrator, VoiceOver and TalkBack.
-  - Not run with this change: the sequence the "before" above measured, a commit on the compose
-    stack whose answer is lost and whose key is sent again after two minutes. The browser tests
-    answer the send themselves; the API's side of it is `RequestDeadlineSqlServerTests`'
-    `ACommittedDepositWhoseAnswerWasNeverStored_IsInFlightWhileYoung_ThenAnswersThatItWasApplied`.
+  - Not held by a test: that the page's own copies of the PIN and of the authorisation are let go
+    when that answer arrives (decision 3's note). Nothing on the view shows them; read in the
+    code.
+  - On the compose stack, in headless Chromium at 1280 × 900, the sequence the "before" above
+    measured was run on this change twice that day: a payment committed while its answer is
+    neither stored nor delivered, then the page's own control pressed once the record is past
+    the stale age. First on the change as it stood before the two fixes named below: a transfer,
+    two deposits, a withdrawal, a move between the visitor's own accounts, a transfer with two
+    early presses, and a double click on a deposit and on a transfer. Then on the change as it
+    is, built again from its head: a transfer, a withdrawal, a deposit, and the double click on
+    a deposit. Twelve payments in all.
+    - The answer, all twelve times: the same key, sent when the record was 126.2 to 128.6 s
+      old, got 409 `IDEMPOTENCY_RESULT_UNKNOWN` with `"applied":true` and the sentence ADR-0009's
+      note quotes; eight members in the order type, title, status, detail, instance, errorCode,
+      traceId, applied (the "before" had seven); `application/json; charset=utf-8` and
+      `no-cache,no-store`; read at the browser, through the BFF. Once its `traceId` is replaced
+      it is byte for byte the body `wentThrough.spec.ts` answers with. The two early presses, at
+      15.6 and 61.1 s, got `IDEMPOTENCY_IN_FLIGHT` with no `applied`, and the page said "Still
+      processing — check again to see whether it went through.", as in the "before".
+    - The page: a transfer page showed `<h1>` "Transfer Complete", the sentence, and two controls
+      on the whole page, "View History" and "Done"; a dialog was named "Deposit Complete" or
+      "Withdrawal Complete" and held the sentence, Close and "View History", the only controls
+      on the page neither disabled nor inert. No alert, no button matching "didn't go through",
+      no PIN box. Focus was on the sentence, a `<p>` with `tabindex="-1"` in no alert, status or
+      live region; in the "before" it was on `body`. Behind a dialog the balance was the
+      database's (the "before" still showed the one from before the payment). "Done" and the
+      navigation's "Home" led to the dashboard, whose balances equalled the database's; "View
+      History" led to `/history` with one read of its first page, whose first row was the
+      movement.
+    - The money: one movement per payment in the database after the loss, after the 409 and at
+      the end; one key in every send; no request to a money path after the view appeared. The
+      deposit that ended as two deposits in the "before" ended as one.
+    - The double click, and the first fix. In the first run the second press of a double click
+      on "Deposit", 143 ms after the first, landed on the dialog's backdrop: the view is shorter
+      than the form, so the place the button had been was outside the dialog. The dialog was
+      gone at most 109 ms after its sentence had appeared, and the visitor was left on the
+      dashboard with focus on `body`, beside the refreshed balance and the new row of "Recent
+      activity", told nothing. On a transfer page the second press landed on the sentence and
+      the view stayed. Since then a press on the backdrop closes nothing while that view is up
+      and leaves focus where it was (`MoneyDialogShell`'s `keepOnOutsidePress`); the X and Escape
+      close the dialog. In the second run the same double click, 178 ms apart with the second
+      press at the same point, left the dialog "Deposit Complete" on screen with focus on the
+      sentence: one request, one key, one deposit. In that run's other deposit, Close closed
+      the dialog with no request, and the Deposit tile then opened a new, empty dialog whose
+      submit was disabled. Not measured: a double click on "Withdraw", whose dialog has the
+      same shell and its own test; and the success receipt, which is not changed.
+    - The second fix is the API's: a retried attempt compares the request hash after its reload
+      (ADR-0009's note). No browser run stages it; the second run shows a transfer and a
+      withdrawal, which pass through it, answering as in the first.
+    - Not staged in a browser: the two answers a retried attempt gives, for a record reloaded as
+      committed and for a record that is gone. They are the SQL Server tests'. The loss is made
+      by holding the record's row from a second database session past the 3 s its store is
+      given, and by dropping the page's answer in the browser; neither is an outage. The images
+      are the Production ones under compose, on one machine.
 - Not measured in a browser: anything on Azure; any browser but Chromium; a database stopped for
   longer than a minute, and a write against a stuck BFF (the second row of "The numbers" and the
   last row's write); the start-up page of decision 10, since each session check got its 200; the
