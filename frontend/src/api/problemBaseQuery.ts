@@ -122,6 +122,42 @@ const problemDetailsBodySchema = z.looseObject({
   resetsAt: z.string().optional(),
 });
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MONTH = `(${MONTHS.join('|')})`;
+const DAY_NAME = '(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)';
+const LONG_DAY_NAME = '(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)';
+const TIME_OF_DAY = '(\\d{2}):(\\d{2}):(\\d{2})';
+
+/** `Sun, 06 Nov 1994 08:49:37 GMT`, the form a sender uses. */
+const IMF_FIXDATE = new RegExp(`^${DAY_NAME}, (\\d{2}) ${MONTH} (\\d{4}) ${TIME_OF_DAY} GMT$`);
+/** `Sunday, 06-Nov-94 08:49:37 GMT`, obsolete. */
+const RFC850_DATE = new RegExp(`^${LONG_DAY_NAME}, (\\d{2})-${MONTH}-(\\d{2}) ${TIME_OF_DAY} GMT$`);
+/** `Sun Nov  6 08:49:37 1994`, obsolete, and GMT although it does not say so. */
+const ASCTIME_DATE = new RegExp(`^${DAY_NAME} ${MONTH} ([ \\d]\\d) ${TIME_OF_DAY} (\\d{4})$`);
+
+/**
+ * An HTTP-date as a time, or `undefined` for anything else. RFC 9110 §5.6.7 has a recipient accept
+ * all three forms, and all three are GMT. Not `Date.parse`: it reads the asctime form in the
+ * visitor's zone, hours off anywhere but UTC, and takes "1.5" or "-5" for dates long past.
+ */
+function parseHttpDate(value: string): number | undefined {
+  const at = (year: number, month: string, day: string, hh: string, mm: string, ss: string) =>
+    Date.UTC(year, MONTHS.indexOf(month), Number(day), Number(hh), Number(mm), Number(ss));
+
+  let parts = IMF_FIXDATE.exec(value);
+  if (parts) return at(Number(parts[3]), parts[2], parts[1], parts[4], parts[5], parts[6]);
+  parts = ASCTIME_DATE.exec(value);
+  if (parts) return at(Number(parts[6]), parts[1], parts[2], parts[3], parts[4], parts[5]);
+  parts = RFC850_DATE.exec(value);
+  if (!parts) return undefined;
+  // Two digits of the year: one that would put the date more than 50 years ahead is the most
+  // recent such year in the past.
+  const thisYear = new Date().getUTCFullYear();
+  let year = thisYear - (thisYear % 100) + Number(parts[3]);
+  if (year > thisYear + 50) year -= 100;
+  return at(year, parts[2], parts[1], parts[4], parts[5], parts[6]);
+}
+
 function parseRetryAfterSeconds(
   body: ProblemDetailsBody | undefined,
   headers?: Headers,
@@ -134,9 +170,10 @@ function parseRetryAfterSeconds(
   if (!header) return undefined;
   // RFC 9110 §10.2.3: a number of seconds, or an HTTP-date. A date is rounded up to the whole
   // second, so the wait is never shorter than the one asked for; a date already past is no wait.
+  // Anything else names no wait, and the default for the answer's kind applies.
   if (/^\d+$/.test(header)) return Number.parseInt(header, 10);
-  const at = Date.parse(header);
-  if (Number.isNaN(at)) return undefined;
+  const at = parseHttpDate(header);
+  if (at === undefined) return undefined;
   return Math.max(0, Math.ceil((at - Date.now()) / 1000));
 }
 

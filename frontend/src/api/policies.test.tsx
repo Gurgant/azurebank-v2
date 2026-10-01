@@ -12,7 +12,7 @@ import { COPY, advance, advanceUntil, never, sleep, track, installFakeClock } fr
 import { apiSlice, useDepositMutation, useWithdrawMutation } from '../features/api/apiSlice';
 import { useIdempotentMutation, type IdempotentTrigger } from '../hooks/useIdempotentMutation';
 import type { BaseQueryApi } from '@reduxjs/toolkit/query';
-import { problemBaseQuery, type ApiProblem } from './problemBaseQuery';
+import { problemBaseQuery, toApiProblem, type ApiProblem } from './problemBaseQuery';
 import { classifyMoneyProblem } from './moneyProblem';
 
 afterEach(() => {
@@ -581,6 +581,77 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
     expect(outcome.value).toMatchObject({ error: { status: 503 } });
     expect((outcome.at ?? 0) - first).toBeLessThan(55_500);
   });
+
+  it('2o — a Retry-After date with part of a second to go is rounded up: the retry never goes before it', async () => {
+    // A date has whole seconds and the answer comes partway through one, so the wait to the date
+    // has a fraction. Rounded down, the retry would go up to a second before the date.
+    let named = 0;
+    const times = recordReads(() => {
+      // The first answer names the date; the retry is answered with the same one.
+      if (named === 0) named = (Math.floor(Date.now() / 1000) + 30) * 1000;
+      return new HttpResponse('Service Unavailable', {
+        status: 503,
+        headers: { 'Content-Type': 'text/plain', 'Retry-After': new Date(named).toUTCString() },
+      });
+    });
+    installFakeClock();
+    // Half a second into a second: the date is about 29.5 s ahead when the answer is read.
+    vi.setSystemTime(Math.floor(Date.now() / 1000) * 1000 + 500);
+    const outcome = track(
+      Promise.resolve(problemBaseQuery('/api/accounts', readApi(), { random: () => 0 })),
+    );
+    await waitFor(() => expect(times.length).toBeGreaterThan(0));
+
+    await advanceUntil(named, -50);
+    expect(times).toHaveLength(1);
+
+    await advanceUntil(named, 1_100);
+    await waitFor(() => expect(times).toHaveLength(2));
+    expect(times[1]).toBeGreaterThanOrEqual(named);
+    await waitFor(() => expect(outcome.state).toBe('fulfilled'));
+  });
+
+  /** A 503 whose body is not JSON, as an ingress answers, with `retryAfter` as its header. */
+  function plainOutage(retryAfter: string): ApiProblem {
+    return toApiProblem(
+      {
+        status: 'PARSING_ERROR',
+        originalStatus: 503,
+        data: 'Service Unavailable',
+        error: 'SyntaxError: Unexpected token',
+      },
+      new Response(null, { status: 503, headers: { 'Retry-After': retryAfter } }),
+    );
+  }
+
+  it.each([
+    ['IMF-fixdate', 'Thu, 01 Oct 2026 12:00:30 GMT'],
+    ['RFC 850', 'Thursday, 01-Oct-26 12:00:30 GMT'],
+    ['asctime', 'Thu Oct  1 12:00:30 2026'],
+  ])('2p — a Retry-After date in the %s form is read as GMT', (_form, date) => {
+    // RFC 9110 §5.6.7: a recipient accepts all three, and all three are GMT, the asctime one
+    // without saying so. Read in the local zone, it was hours off anywhere but UTC: early east of
+    // it, so the retry went at once, late west of it. In UTC both readings agree, so this can only
+    // fail in another zone (the suite's two zone runs).
+    vi.useFakeTimers({ now: Date.UTC(2026, 9, 1, 12, 0, 0), toFake: ['Date'] });
+    expect(plainOutage(date).retryAfterSeconds).toBe(30);
+  });
+
+  it('2p — an RFC 850 date whose two-digit year would be more than 50 years ahead is in the past', () => {
+    // RFC 9110 §5.6.7: "77" in 2026 is 1977, a date already past, so no wait. Read as 2077 it
+    // would be a wait of 51 years.
+    vi.useFakeTimers({ now: Date.UTC(2026, 9, 1, 12, 0, 0), toFake: ['Date'] });
+    expect(plainOutage('Saturday, 01-Oct-77 12:00:30 GMT').retryAfterSeconds).toBe(0);
+  });
+
+  it.each(['1.5', '-5', 'Thu, 01 Oct 2026 12:00:30', 'soon'])(
+    '2q — a Retry-After of "%s" is neither a number of seconds nor a date, and names no wait',
+    (value) => {
+      // Not a wait of 0: the default for the answer's kind applies (2e).
+      vi.useFakeTimers({ now: Date.UTC(2026, 9, 1, 12, 0, 0), toFake: ['Date'] });
+      expect(plainOutage(value).retryAfterSeconds).toBeUndefined();
+    },
+  );
 
   it('3 — normalizes ProblemDetails to ApiProblem (traceId through); synthesizes VALIDATION_ERROR on 400 + errors', async () => {
     server.use(

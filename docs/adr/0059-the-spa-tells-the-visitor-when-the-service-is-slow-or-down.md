@@ -76,10 +76,13 @@ not happened.
      body, or a 502 or 504 whose body is JSON or empty. An unreadable answer, a 502 or 504 that is
      not JSON among them (decision 3), a 500 and every 4xx, a 429 included, are answers.
    - The wait is `retryAfterSeconds`: the body's first, the `Retry-After` header's otherwise, as a
-     number of seconds or as an HTTP-date (RFC 9110 allows both; a date is rounded up to the whole
-     second). On the wire it is 10 s for an outage (ADR-0058), 5 s for a refused service key and 1
-     to 15 s for a renewal that failed (ADR-0057 §4.5). The visitor is never told the number
-     (ADR-0058: "a visitor is told no time").
+     number of seconds or as an HTTP-date (RFC 9110 allows both). A date can come in any of the
+     three forms RFC 9110 has a recipient accept, all three GMT, the asctime one without saying so;
+     the SPA reads them itself, because `Date.parse` reads that one in the visitor's zone. A date
+     is rounded up to the whole second; a value that is neither names no wait. On the wire it is
+     10 s for an outage (ADR-0058), 5 s for a refused service key and 1 to 15 s for a renewal that
+     failed (ADR-0057 §4.5). The visitor is never told the number (ADR-0058: "a visitor is told no
+     time").
    - When the answer names no wait: 5 s after a 502, 503 or 504, 1 s after a failed connection.
      Both servers put a wait on every 503 they send, so a gateway answer that names none comes
      from something in front of the BFF and says that what is behind it is down, and a second
@@ -435,8 +438,9 @@ Test files are under `frontend/src/`, browser specs under `frontend/e2e/`.
 - `api/policies.test.tsx`: a read's 503 is retried once after its `retryAfterSeconds`, a
   mutation's never; the 5 s default after a gateway's answer and the 1 s after a failed
   connection; the spread, never below the wait asked for, and the 120 s budget checked with it; a
-  `Retry-After` date; the 5 s floor; a stop during the wait; a wait that ends late; a money send
-  with no answer keeps its key; one rejected with no status asks for a check.
+  `Retry-After` date in each of its three forms, read as GMT and rounded up, and a value that is
+  neither; the 5 s floor; a stop during the wait; a wait that ends late; a money send with no
+  answer keeps its key; one rejected with no status asks for a check.
 - `api/timeoutChain.test.ts`: the abort and the budget against the BFF's two settings, read from
   the files that set them.
 - `components/feedback/WaitHint.test.tsx`: the phases and their restart, the empty and atomic
