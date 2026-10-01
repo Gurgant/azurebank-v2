@@ -1,8 +1,12 @@
 extern alias seeder;
 
+using System.Data.Common;
+using AzureBank.Shared.Entities;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using FluentAssertions.Execution;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Xunit;
@@ -10,6 +14,7 @@ using GateResult = seeder::AzureBank.Seeder.Commands.GateResult;
 using GateVerdict = seeder::AzureBank.Seeder.Commands.GateVerdict;
 using MigrateCommand = seeder::AzureBank.Seeder.Commands.MigrateCommand;
 using ResetCommand = seeder::AzureBank.Seeder.Commands.ResetCommand;
+using RunCancellation = seeder::AzureBank.Seeder.Seeders.RunCancellation;
 using SeedCommand = seeder::AzureBank.Seeder.Commands.SeedCommand;
 
 namespace AzureBank.Tests.Unit.Tools;
@@ -260,6 +265,55 @@ public class SeederCommandTests
     }
 
     [Fact]
+    public async Task ASeedCancelledWhileIdentityOpensAConnection_IsCancelledAtThatOpen()
+    {
+        // The first thing seed asks the database is RoleManager.RoleExistsAsync, and Identity's
+        // managers take no token: each reads one from a property that answers "none" unless it is
+        // overridden. So a stop that arrived while SQL Server was away cancelled nothing, the open
+        // went on through EF's whole retry budget, and the container was killed without a line
+        // (exit 137, measured 2026-10-01 in the tools image, three runs of three).
+        var log = new RecordingLoggerProvider();
+        using var run = new CancellationTokenSource();
+        var probe = new CancelAtTheOpen(run);
+        await using var provider = SeederHost.Build(
+            log, probe, onCommittedSettings: false, (ConnectionKey, AbsentServer), (PepperKey, SeederHost.Pepper), NoEfRetry);
+
+        var exitCode = await SeedCommand.RunAsync(provider, run.Token);
+
+        using var all = new AssertionScope();
+        probe.Seen.Should().Equal([true], "the open in flight carried the run's token, and nothing was opened after it");
+        exitCode.Should().Be(1);
+        log.Lines.Select(line => line.Message).Should().Contain(message => message.Contains("seed was cancelled"));
+    }
+
+    [Theory]
+    [InlineData("roles")]
+    [InlineData("users")]
+    public async Task EachIdentityManagerTheToolRegisters_OpensWithTheRunsToken(string manager)
+    {
+        // The seed above stops at its first open, which is the role manager's. This asks each
+        // manager on its own, so the user manager's override is not covered by the other's.
+        using var run = new CancellationTokenSource();
+        var probe = new CancelAtTheOpen(run);
+        await using var provider = SeederHost.Build(
+            new RecordingLoggerProvider(),
+            probe,
+            onCommittedSettings: false,
+            (ConnectionKey, AbsentServer),
+            (PepperKey, SeederHost.Pepper),
+            NoEfRetry);
+        await using var scope = provider.CreateAsyncScope();
+        scope.ServiceProvider.GetRequiredService<RunCancellation>().Token = run.Token;
+
+        Func<Task> call = manager == "roles"
+            ? () => scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole<Guid>>>().RoleExistsAsync("User")
+            : () => scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>().FindByIdAsync(Guid.Empty.ToString());
+
+        await call.Should().ThrowAsync<OperationCanceledException>();
+        probe.Seen.Should().Equal([true]);
+    }
+
+    [Fact]
     public async Task Seed_OnAServerThatIsNotThere_Fails_AndTheOpenIsCounted()
     {
         // The control for every "0 opens" above: the same instrument on the same registration, and
@@ -276,5 +330,43 @@ public class SeederCommandTests
         exitCode.Should().Be(1, "the server was tried and did not answer");
         opens.Opens.Should().BeGreaterThan(0);
         Errors(log).Should().Contain(message => message.StartsWith("seed failed", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Cancels the run at the moment EF starts to open a connection, and records whether the token
+    /// that open was given saw it. An open that did is stopped there; one that did not goes on to
+    /// the server that is not there, as it would in a container that was told to stop.
+    /// </summary>
+    private sealed class CancelAtTheOpen(CancellationTokenSource run) : DbConnectionInterceptor
+    {
+        private readonly List<bool> _seen = [];
+
+        /// <summary>For each open EF started: whether its own token was cancelled with the run.</summary>
+        public IReadOnlyList<bool> Seen
+        {
+            get
+            {
+                lock (_seen)
+                {
+                    return _seen.ToArray();
+                }
+            }
+        }
+
+        public override async ValueTask<InterceptionResult> ConnectionOpeningAsync(
+            DbConnection connection,
+            ConnectionEventData eventData,
+            InterceptionResult result,
+            CancellationToken cancellationToken = default)
+        {
+            await run.CancelAsync();
+            lock (_seen)
+            {
+                _seen.Add(cancellationToken.IsCancellationRequested);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            return result;
+        }
     }
 }

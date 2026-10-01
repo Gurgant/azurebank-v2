@@ -9,14 +9,17 @@ namespace AzureBank.Seeder.Seeders;
 public class SeederOrchestrator
 {
     private readonly IEnumerable<ISeeder> _seeders;
+    private readonly RunCancellation _run;
     private readonly ILogger<SeederOrchestrator> _logger;
 
     public SeederOrchestrator(
         IEnumerable<ISeeder> seeders,
+        RunCancellation run,
         ILogger<SeederOrchestrator> logger)
     {
         // Order seeders by their Order property (ascending)
         _seeders = seeders.OrderBy(s => s.Order);
+        _run = run;
         _logger = logger;
     }
 
@@ -26,6 +29,9 @@ public class SeederOrchestrator
     /// <param name="cancellationToken">Cancellation token</param>
     public async Task SeedAllAsync(CancellationToken cancellationToken = default)
     {
+        // The seeders' calls into Identity take no token; this is how they get this run's.
+        _run.Token = cancellationToken;
+
         _logger.LogInformation("Starting database seeding...");
 
         var seederList = _seeders.ToList();

@@ -44,7 +44,12 @@ public static class ServiceCollectionExtensions
             options.User.RequireUniqueEmail = true;
         })
         .AddEntityFrameworkStores<Infrastructure.Data.AzureBankDbContext>()
+        // Identity's own managers hand their stores no token; these two hand them the run's
+        // (Seeders/RunCancellation.cs has the measurement).
+        .AddUserManager<CancellableUserManager>()
+        .AddRoleManager<CancellableRoleManager>()
         .AddDefaultTokenProviders();
+        services.AddScoped<RunCancellation>();
 
         // PIN-hash pepper keyring (ADR-0011). MUST match the API's Security:PinPepper,
         // else seeded PINs won't verify. Same shared validator as the API. This CLI never

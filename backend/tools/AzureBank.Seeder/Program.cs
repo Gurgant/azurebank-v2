@@ -71,6 +71,11 @@ var host = builder.Build();
   the wait and during a pause of it): System.CommandLine's own handling of process termination
   never got to cancel anything. With it the command's token is cancelled, the command says what
   was cut short and whether running it again is safe, and the exit code is its own, 1.
+
+  THE TOKEN HAS TO REACH THE CALL THAT IS IN FLIGHT, or the registration cancels nothing: the
+  process then runs on until that call ends by itself, or until it is killed. A command hands the
+  token to every call that takes one, and Identity's managers, which take none, read it from
+  RunCancellation (Seeders/RunCancellation.cs has what happened to `seed` before they did).
 */
 using var stopping = new CancellationTokenSource();
 using var sigterm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, signal =>
