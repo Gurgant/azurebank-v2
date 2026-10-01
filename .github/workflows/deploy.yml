@@ -1,0 +1,100 @@
+name: Deploy AzureBank draft
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Build images, or migrate and deploy the selected commit
+        required: true
+        type: choice
+        options:
+          - build-push
+          - deploy
+
+jobs:
+  build-push:
+    if: inputs.action == 'build-push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Sign in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push commit images
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for service in api bff; do
+            case "$service" in
+              api) dockerfile=backend/src/AzureBank.Api/Dockerfile ;;
+              bff) dockerfile=backend/src/AzureBank.Bff/Dockerfile ;;
+            esac
+            docker build --platform linux/amd64 --file "$dockerfile" \
+              --tag "ghcr.io/gurgant/azurebank-$service:$IMAGE_TAG" .
+            docker push "ghcr.io/gurgant/azurebank-$service:$IMAGE_TAG"
+          done
+          # The tools change is separate. Agree its path before first deployment.
+          tools_files=()
+          for candidate in backend/tools/Dockerfile backend/tools/AzureBank.Tools/Dockerfile; do
+            if [[ -f "$candidate" ]]; then tools_files+=("$candidate"); fi
+          done
+          if (( ${#tools_files[@]} > 1 )); then
+            echo 'Multiple tools Dockerfiles found; choose the canonical path.' >&2
+            exit 1
+          elif (( ${#tools_files[@]} == 1 )); then
+            docker build --platform linux/amd64 --file "${tools_files[0]}" \
+              --tag "ghcr.io/gurgant/azurebank-tools:$IMAGE_TAG" .
+            docker push "ghcr.io/gurgant/azurebank-tools:$IMAGE_TAG"
+          else
+            echo '::warning::Tools Dockerfile absent; build-push skips tools. Deploy requires its image.'
+          fi
+
+  deploy:
+    if: inputs.action == 'deploy'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    environment: demo
+    concurrency:
+      group: azurebank-demo-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check all three images are publicly pullable
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for service in api bff tools; do
+            docker manifest inspect "ghcr.io/gurgant/azurebank-$service:$IMAGE_TAG" > /dev/null
+          done
+      - name: Sign in to Azure with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Migrate, update both containers, and smoke test
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: python3 infra/deploy.py
