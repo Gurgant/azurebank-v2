@@ -392,6 +392,107 @@ public class DatabaseGateTests
         script.Opens.Should().Be(1);
     }
 
+    [Theory]
+    // What Azure SQL answers below class 20 while a database is not available right now, as
+    // Microsoft's table of transient faults lists them (read 2026-10-01; none was produced on
+    // Azure): the service failing over, the database not available, the service busy, a replica
+    // that is not ready.
+    [InlineData(40197, 17)]
+    [InlineData(40613, 17)]
+    [InlineData(49918, 16)]
+    [InlineData(4221, 16)]
+    public async Task OnAnAzureSqlName_AnAnswerTheGateDoesNotKnow_IsWaitedFor(int number, byte errorClass)
+    {
+        // Off Azure these go to EF at once (the two tests above). On an Azure SQL name only an open
+        // that succeeded hands the database to EF: the next thing EF met could be the 4060 of a
+        // database that is not there, which it answers with CREATE DATABASE.
+        var script = new Script()
+            .Then(Sql(number, errorClass))
+            .Then(Sql(number, errorClass))
+            .ThenSuccess();
+
+        var result = await script.Run(Minute, azureSql: true);
+
+        using var all = new AssertionScope();
+        result.Verdict.Should().Be(GateVerdict.Proceed);
+        script.Opens.Should().Be(3);
+        script.Clock.Pauses.Should().Equal(Pause, Pause);
+        script.Warnings.Should().HaveCount(2).And.OnlyContain(
+            warning => warning.StartsWith($"Waiting for the database ({number}, class {errorClass}): ", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task OnAnAzureSqlName_AMissingDatabaseBehindAnotherAnswer_IsStillRefused()
+    {
+        // The sequence that would have created a database: "not available" went to EF at once, and
+        // EF then met the 4060 of a database the server does not hold.
+        var script = new Script()
+            .Then(Sql(40613, 17))
+            .Then(Sql(4060, 11), MasterAnswer.NoRow);
+
+        var result = await script.Run(Minute, azureSql: true);
+
+        using var all = new AssertionScope();
+        result.Verdict.Should().Be(GateVerdict.NoSuchDatabase);
+        script.Opens.Should().Be(2);
+        script.MasterQuestions.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task OnAnAzureSqlName_AnAnswerThatNeverChanges_TimesOut_AndIsNamed()
+    {
+        // The price of the rule: an answer that waiting cannot change takes the whole wait before
+        // the run ends, where off Azure it goes to EF at once (262 again, as above).
+        var script = new Script().Then(Sql(262, 14, "CREATE DATABASE permission denied in database 'master'."));
+
+        var result = await script.Run(TimeSpan.FromSeconds(10), azureSql: true);
+
+        using var all = new AssertionScope();
+        result.Verdict.Should().Be(GateVerdict.TimedOut);
+        result.LastAnswer.Should().Be("262, class 14: CREATE DATABASE permission denied in database 'master'");
+        script.Opens.Should().Be(6);
+        script.Clock.Elapsed.Should().Be(TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
+    public async Task OnAnAzureSqlName_AFailureThatIsNotSqlServers_IsWaitedFor_AndOnlyItsTypeIsPrinted()
+    {
+        // Its message is text nobody checked for what it quotes, so the Warning and the last answer
+        // carry the exception's type and nothing else.
+        var script = new Script().Then(new InvalidOperationException("text nobody checked"));
+
+        var result = await script.Run(TimeSpan.FromSeconds(10), azureSql: true);
+
+        using var all = new AssertionScope();
+        result.Verdict.Should().Be(GateVerdict.TimedOut);
+        result.LastAnswer.Should().Be("InvalidOperationException, not an answer from SQL Server");
+        script.Opens.Should().Be(6);
+        script.Warnings.Should().HaveCount(6).And.OnlyContain(warning => warning.StartsWith(
+            "Waiting for the database (InvalidOperationException, not an answer from SQL Server). ", StringComparison.Ordinal));
+        script.Log.Lines.Select(line => line.Message).Should().NotContain(message => message.Contains("text nobody checked"));
+    }
+
+    [Fact]
+    public async Task OnAnAzureSqlName_ARefusedLogin_BetweenAnswersTheGateDoesNotKnow_IsStillWaitedFor()
+    {
+        // "Three in a row" means nothing else in between, and an answer the gate does not know is
+        // something else.
+        var script = new Script()
+            .Then(Sql(18456, 14))
+            .Then(Sql(18456, 14))
+            .Then(Sql(40613, 17))
+            .Then(Sql(18456, 14))
+            .Then(Sql(18456, 14))
+            .ThenSuccess();
+
+        var result = await script.Run(Minute, azureSql: true);
+
+        using var all = new AssertionScope();
+        result.Verdict.Should().Be(GateVerdict.Proceed);
+        script.Opens.Should().Be(6);
+        script.Clock.Pauses.Should().HaveCount(5);
+    }
+
     [Fact]
     public async Task WithNoWait_ThereIsOneAttempt_AndNoPause()
     {

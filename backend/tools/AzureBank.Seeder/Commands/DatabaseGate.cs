@@ -6,7 +6,10 @@ namespace AzureBank.Seeder.Commands;
 /// <summary>How the wait for the database ended.</summary>
 public enum GateVerdict
 {
-    /// <summary>The server answered, or answered something the wait does not judge: go on to EF.</summary>
+    /// <summary>
+    /// Go on to EF. An open succeeded; or, never on an Azure SQL name, the server answered
+    /// something the wait leaves to EF.
+    /// </summary>
     Proceed,
 
     /// <summary>The server did not accept a connection within the wait.</summary>
@@ -44,7 +47,8 @@ public enum MasterAnswer
 /// <summary>The wait's verdict and the last thing the server answered, for the line that reports it.</summary>
 /// <param name="Verdict">How the wait ended.</param>
 /// <param name="LastAnswer">
-/// The number, the class and the first line of the last failed open's message; null when no open failed.
+/// The number, the class and the first line of the last failed open's message, or the type alone of
+/// a failure that is not SQL Server's; null when no open failed.
 /// </param>
 public readonly record struct GateResult(GateVerdict Verdict, string? LastAnswer);
 
@@ -69,6 +73,18 @@ public readonly record struct GateResult(GateVerdict Verdict, string? LastAnswer
 /// SQL name, where a new database is a new paid resource at the service's default size: there the
 /// run stops, and it also stops when <c>master</c> cannot be read, which is the case for the login
 /// a deployment gives this job.
+/// </para>
+/// <para>
+/// ON AN AZURE SQL NAME ONLY AN OPEN THAT SUCCEEDED HANDS THE DATABASE TO EF (ADR-0060). Off Azure
+/// an answer the wait does not judge goes to EF at once, with EF's own strategy and message. On an
+/// Azure SQL name that was a way round the paragraph above. Measured 2026-10-01 on LocalDB, with
+/// the gate told the name was Azure's and its first open answered 40613 or 40197, class 17, for a
+/// database the server did not hold: one open, and the run exited 0 with a new database, 16
+/// migrations applied. Those are also what Azure SQL answers while a database is not available
+/// right now: Microsoft's table of transient faults lists 40197 and 40613 at class 17 and 49918 at
+/// 16 (read 2026-10-01; none was produced on Azure), so the wait did not cover them. There, every
+/// failed open is now waited for, a failure that is not SQL Server's included. The price: an
+/// answer that waiting cannot change takes the whole wait before the run ends.
 /// </para>
 /// <para>
 /// WHY A REFUSED LOGIN IS COUNTED. EF retries 18456 every 500 ms for a minute and logs nothing:
@@ -106,7 +122,10 @@ public static class DatabaseGate
     /// </summary>
     /// <param name="open">Opens one connection on the string the run will use, and closes it.</param>
     /// <param name="askMaster">Asks <c>master</c> for the state of the database the string names.</param>
-    /// <param name="azureSql">Whether the server's name is an Azure SQL one.</param>
+    /// <param name="azureSql">
+    /// Whether the server's name is an Azure SQL one: there the database goes to EF only after an
+    /// open succeeded, and never when the server holds none of that name.
+    /// </param>
     /// <param name="wait">How long to go on trying. Zero is one attempt.</param>
     /// <param name="clock">The clock the deadline and the pauses run on.</param>
     /// <param name="logger">Gets one Warning per failed attempt.</param>
@@ -128,26 +147,23 @@ public static class DatabaseGate
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            SqlException failure;
+            Exception failure;
             try
             {
                 await open(cancellationToken);
                 return new GateResult(GateVerdict.Proceed, null);
             }
-            catch (SqlException e)
+            catch (Exception e) when (e is not OperationCanceledException)
             {
                 failure = e;
             }
-            catch (Exception e) when (e is not OperationCanceledException)
-            {
-                // Not an answer from SQL Server. EF meets the same failure and reports it its way.
-                return new GateResult(GateVerdict.Proceed, null);
-            }
 
+            // Null for a failure that is not an answer from SQL Server.
+            var sql = failure as SqlException;
             var answer = Describe(failure);
             GateVerdict? ending = null;
 
-            if (failure.Number == LoginFailed)
+            if (sql?.Number == LoginFailed)
             {
                 openRefusals = 0;
                 if (++loginRefusals >= InARow)
@@ -155,7 +171,7 @@ public static class DatabaseGate
                     ending = GateVerdict.LoginRefused;
                 }
             }
-            else if (failure.Number == CannotOpenDatabase)
+            else if (sql?.Number == CannotOpenDatabase)
             {
                 loginRefusals = 0;
                 switch (await askMaster(cancellationToken))
@@ -182,15 +198,23 @@ public static class DatabaseGate
                         break;
                 }
             }
-            else if (failure.Class >= FatalClass || failure.Number == Timeout)
+            else if (sql is not null && (sql.Class >= FatalClass || sql.Number == Timeout))
             {
                 loginRefusals = 0;
                 openRefusals = 0;
             }
+            else if (!azureSql)
+            {
+                // An answer the wait does not judge, or a failure that is not SQL Server's. EF
+                // meets the same one, and its own strategy and message apply.
+                return new GateResult(GateVerdict.Proceed, sql is null ? null : answer);
+            }
             else
             {
-                // An answer the wait does not judge. EF's own strategy and message apply.
-                return new GateResult(GateVerdict.Proceed, answer);
+                // On an Azure SQL name it is waited for, like a server that did not answer: only
+                // an open that succeeded hands the database to EF (the remarks above say why).
+                loginRefusals = 0;
+                openRefusals = 0;
             }
 
             var left = wait - clock.GetElapsedTime(started);
@@ -199,12 +223,24 @@ public static class DatabaseGate
                 left = TimeSpan.Zero;
             }
 
-            logger.LogWarning(
-                "Waiting for the database ({Number}, class {Class}): {Answer}. {SecondsLeft} s left.",
-                failure.Number,
-                failure.Class,
-                FirstLine(failure),
-                (int)Math.Ceiling(left.TotalSeconds));
+            var secondsLeft = (int)Math.Ceiling(left.TotalSeconds);
+            if (sql is not null)
+            {
+                logger.LogWarning(
+                    "Waiting for the database ({Number}, class {Class}): {Answer}. {SecondsLeft} s left.",
+                    sql.Number,
+                    sql.Class,
+                    FirstLine(sql),
+                    secondsLeft);
+            }
+            else
+            {
+                // The type and nothing else: nobody has checked what such a message can quote.
+                logger.LogWarning(
+                    "Waiting for the database ({Failure}, not an answer from SQL Server). {SecondsLeft} s left.",
+                    failure.GetType().Name,
+                    secondsLeft);
+            }
 
             if (ending is { } verdict)
             {
@@ -271,8 +307,10 @@ public static class DatabaseGate
             }
         };
 
-    private static string Describe(SqlException failure) =>
-        $"{failure.Number}, class {failure.Class}: {FirstLine(failure)}";
+    private static string Describe(Exception failure) =>
+        failure is SqlException sql
+            ? $"{sql.Number}, class {sql.Class}: {FirstLine(sql)}"
+            : $"{failure.GetType().Name}, not an answer from SQL Server";
 
     /// <summary>
     /// The first line of SqlClient's message, without its closing full stop. It can name the
