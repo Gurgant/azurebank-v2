@@ -76,12 +76,19 @@ design — see Notes).
   request cannot return its result. Do not send it again with a new key: look for it with GET
   /api/transactions." The same code carries `applied: true` when a retried attempt reloads the
   record under its key and finds it `Executed` or `Completed` (the transfer retry under
-  Post-merge hardening). `Completed` there means another request with the same key and bytes took
-  a stale claim over, committed and stored its answer: the payment under this key went through,
-  and the same key sent again would be replayed that answer. The code carries **no** `applied`
-  when that reload finds no row: nothing is proven, and its sentence says "may have been
-  executed". `applied` is absent, never `false`, on every other 409, and the document declares it
-  on the four money 409s with `true` as its only value.)*
+  Post-merge hardening), under the request hash the attempt claimed the key with. `Completed`
+  there means another request with the same key and bytes took a stale claim over, committed and
+  stored its answer: the payment under this key went through, and the same key sent again would
+  be replayed that answer. The code carries **no** `applied` when that reload finds no row, or
+  finds a record claimed with another body: nothing is proven about this request, and its
+  sentence says "may have been executed". The reload is by key, and a key can come to hold
+  another body's record: the request's claim is taken over as stale by an instance whose clock is
+  a minute or more ahead, the request that took it is refused before any write and releases it,
+  and with no record left there is no hash to refuse another body on. The attempt keeps the hash
+  it claimed with and compares it after the reload, so "the same bytes" is checked there and not
+  assumed; `Processing` under another hash is refused the same way, not re-armed. The SPA cannot
+  send another body under a key it holds. `applied` is absent, never `false`, on every other
+  409, and the document declares it on the four money 409s with `true` as its only value.)*
   *(What the flag stands on: the flip to `Executed` reaches the database only with the business
   commit, and a rollback takes it back. Since the same date tests hold both halves on SQL Server.
   A refusal thrown after the flip was written leaves no `Executed` record:
@@ -92,7 +99,9 @@ design — see Notes).
   `AWithdrawalWhoseCommitIsRefusedAsItStarts_RunsAgainAndMovesTheMoneyOnce`. And
   `ProvenCommitSourceTests` counts the saves in each file of the money path, because a save on
   the request's context between the flip and the business commit would write `Executed` with no
-  money moved. Not in the answer: the transaction's id, since the record holds no link to a
+  money moved. The reload's comparison of the request hash is held without SQL Server, by
+  `ARecordClaimedAgainWithOtherBytes_RefusesToRun_AndDoesNotSayTheOperationWasApplied`, for a
+  record `Executed`, `Completed` and `Processing`. Not in the answer: the transaction's id, since the record holds no link to a
   ledger row. With one a client could show the movement; without it the client is told that it
   exists. Nor a promise that `GET /api/transactions` lists it: a movement on an account closed
   afterwards is not listed. Still withheld for two minutes: a committed send whose answer was
@@ -187,7 +196,8 @@ design — see Notes).
 *(Amended 2026-10-01: each of the three rows that answer `RESULT_UNKNOWN` is a record read
 `Executed` from the database, so each carries `applied: true` (the note on the wire contract
 above). The table has no row for the one answer of that code that does not: a retried attempt
-whose reload finds the record gone, under Post-merge hardening below.)*
+whose reload finds the record gone, or replaced by one claimed with another body, under
+Post-merge hardening below.)*
 
 *(Amended 2026-09-30, ADR-0058: `ProcessingStaleAfter` is **2 minutes**, down from 10. A request
 now gives up at its 40-second deadline, lets no commit start after it, and gives the release of its
@@ -301,9 +311,11 @@ tracing. It surfaced a set of bounded issues, resolved as follows.
   commit ack (Case B). Fixed by resetting the tracked work **and** re-reading the
   idempotency record from database truth at the top of every attempt (→ 409
   `RESULT_UNKNOWN` when already `Executed`/`Completed`). *(Amended 2026-10-01: with `applied:
-  true`, since that is the record as the database holds it. The arm this paragraph did not
-  mention, a reload that finds no row, answers the same code without `applied`: the claim was
-  deleted under the request, and neither a commit nor its absence is proven.)*
+  true`, since that is the record as the database holds it, when its request hash is the one the
+  attempt claimed with. The arm this paragraph did not mention, a reload that finds no row,
+  answers the same code without `applied`: the claim was deleted under the request, and neither a
+  commit nor its absence is proven. So does a reload that finds a record claimed with another
+  body, whatever its state: the request's own claim is gone there too.)*
   The regression test injects
   a one-shot transient on a *retrying* context — it fails on pre-fix code (double
   debit / 500) and passes after (single execution).

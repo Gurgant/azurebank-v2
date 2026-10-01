@@ -24,15 +24,18 @@ namespace AzureBank.Tests.Unit.Services;
 /// </para>
 /// <para>
 /// The InMemory provider shows the SHAPE of each answer, not the proof behind it: it has no
-/// transactions, so "read as Executed" here is whatever the second context wrote. The same three
-/// answers on SQL Server, over real commits and a real rollback, are in
-/// <c>TransferTransientRetrySqlServerTests</c> and <c>WithdrawalStepUpSqlServerTests</c>.
+/// transactions, so "read as Executed" here is whatever the second context wrote. The committed
+/// record, the record that is gone and the record still <c>Processing</c> are on SQL Server too,
+/// over real commits and a real rollback, in <c>TransferTransientRetrySqlServerTests</c> and
+/// <c>WithdrawalStepUpSqlServerTests</c>. The record claimed again with another body is held here
+/// only.
 /// </para>
 /// </remarks>
 public sealed class ConcurrencyRetryIdempotentAttemptTests : IDisposable
 {
     private const string Endpoint = "POST api/transfers";
     private const string Hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    private const string OtherHash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
     private const string AppliedSentence =
         "The operation sent with this idempotency key was applied, but this request cannot return "
@@ -126,6 +129,68 @@ public sealed class ConcurrencyRetryIdempotentAttemptTests : IDisposable
 
         refusal.Details.Should().BeNull("nothing was read from the store, so nothing is proven: no applied member at all");
         refusal.Message.Should().Be(NotKnownSentence);
+    }
+
+    [Theory]
+    [InlineData(IdempotencyStatus.Executed)]
+    [InlineData(IdempotencyStatus.Completed)]
+    [InlineData(IdempotencyStatus.Processing)]
+    public async Task ARecordClaimedAgainWithOtherBytes_RefusesToRun_AndDoesNotSayTheOperationWasApplied(
+        IdempotencyStatus stored)
+    {
+        // The reload is by key, and a key can come to hold a record that is not this request's:
+        // this request's claim was taken over as stale and released by a request that was refused,
+        // and the key was then claimed again with another body. What that record says is about
+        // those bytes. Executed or Completed there is not this request's payment, and Processing
+        // there is not this request's claim to re-arm.
+        var record = await ClaimAsync();
+        var otherClaimId = Guid.NewGuid();
+        await ElsewhereAsync(async db =>
+        {
+            var mine = await db.IdempotencyRecords.SingleAsync();
+            db.IdempotencyRecords.Remove(mine);
+            await db.SaveChangesAsync();
+
+            var now = DateTime.UtcNow;
+            db.IdempotencyRecords.Add(new IdempotencyRecord
+            {
+                UserId = mine.UserId,
+                Endpoint = mine.Endpoint,
+                Key = mine.Key,
+                ClaimId = otherClaimId,
+                RequestHash = OtherHash,
+                Status = stored,
+                ResponseStatusCode = stored == IdempotencyStatus.Completed ? 201 : null,
+                ResponseContentType = stored == IdempotencyStatus.Completed ? "application/json" : null,
+                ResponseBody = stored == IdempotencyStatus.Completed
+                    ? """{"data":null,"message":"the answer to the other body"}"""
+                    : null,
+                CreatedAt = now,
+                ExpiresAt = now.AddHours(24),
+            });
+            await db.SaveChangesAsync();
+        });
+
+        var act = () => ConcurrencyRetry.PrepareIdempotentAttemptAsync(_request, [], CancellationToken.None);
+
+        var refusal = (await act.Should().ThrowAsync<IdempotencyException>(
+            "the record under the key is {0} for other bytes: this request must neither run nor take it over",
+            stored)).Which;
+        refusal.ErrorCode.Should().Be(ErrorCodes.IdempotencyResultUnknown);
+        refusal.StatusCode.Should().Be(409);
+
+        _request.Entry(record).State.Should().Be(
+            EntityState.Unchanged, "a row is there, read from the store, and nothing is pending against it");
+        record.RequestHash.Should().Be(OtherHash, "the reload read the other request's record; this is the case under test");
+
+        refusal.Details.Should().BeNull(
+            "what was read is about another body, so nothing is proven about this one: no applied member at all");
+        refusal.Message.Should().Be(NotKnownSentence);
+
+        var after = await ElsewhereAsync(db => db.IdempotencyRecords.AsNoTracking().SingleAsync());
+        after.Status.Should().Be(stored, "the other request's record is left as it was");
+        after.ClaimId.Should().Be(otherClaimId);
+        after.RequestHash.Should().Be(OtherHash);
     }
 
     [Fact]

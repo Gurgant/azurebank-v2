@@ -69,8 +69,10 @@ public class IdempotencyException(string message, string errorCode, int statusCo
     };
 
     /// <summary>
-    /// The key's record is no longer there, so nothing about the outcome is proven: the same code
-    /// as <see cref="ResultUnknownApplied"/>, with no <c>applied</c> member at all.
+    /// The request's record is no longer there, so nothing about the outcome is proven: the same
+    /// code as <see cref="ResultUnknownApplied"/>, with no <c>applied</c> member at all. Gone is
+    /// deleted, or replaced under the same key by a record claimed with another body, which says
+    /// nothing about this request.
     /// </summary>
     /// <remarks>
     /// Until 2026-10-01 this was the one answer of every path and said "was executed, but its
