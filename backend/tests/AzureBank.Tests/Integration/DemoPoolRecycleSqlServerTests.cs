@@ -1,6 +1,7 @@
 extern alias seeder;
 
 using System.Net;
+using System.Text.RegularExpressions;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
@@ -63,6 +64,18 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
         copy!.Users.Should().BeEmpty(because);
         copy.Row.DeletedAt.Should().NotBeNull(because);
     }
+
+    // "DELETE FROM [Accounts]", or the form a set-based delete is sent in: "DELETE FROM [a] FROM [Accounts] AS [a]".
+    private static readonly Regex DeleteStatement = new(
+        @"\bDELETE FROM \[(?<name>\w+)\](?:\s+FROM \[(?<table>\w+)\] AS \[\k<name>\])?", RegexOptions.Compiled);
+
+    /// <summary>The table each DELETE statement of a run removes rows from: one entry per statement.</summary>
+    private static List<string> TablesDeletedFrom(CommandTimeoutRecordingInterceptor sent) =>
+    [
+        .. sent.Commands
+            .SelectMany(command => DeleteStatement.Matches(command.Text))
+            .Select(statement => statement.Groups["table"].Success ? statement.Groups["table"].Value : statement.Groups["name"].Value),
+    ];
 
     // ── A copy a visitor used ────────────────────────────────────────────────────────────────────
 
@@ -149,8 +162,17 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
         // A delete of a used copy is the one statement here that can be slow, and a timeout is not
         // retried: the recycler gives its statements 120 seconds, not the 30 every other one has.
         var deletes = sent.Commands.Where(c => c.Text.Contains("DELETE", StringComparison.Ordinal)).ToList();
-        deletes.Should().HaveCountGreaterThanOrEqualTo(5, "the copy's delete is at least five statements");
         deletes.Should().OnlyContain(c => c.TimeoutSeconds == 120);
+
+        // SET-BASED: one DELETE per table, whatever the copy holds. The two sweeps come first; then
+        // thirty ledger rows, four accounts and three users leave in three statements. A delete
+        // that loaded the rows and removed them one by one would send a statement for each, and
+        // the copy of a visitor who went on writing holds a few hundred.
+        var deletedFrom = TablesDeletedFrom(sent);
+        output.WriteLine("deletes: " + string.Join(", ", deletedFrom));
+        deletedFrom.Should().BeEquivalentTo(
+            new[] { "IdempotencyRecords", "RefreshTokens", "StepUpAuthorizations", "IdempotencyRecords", "Transactions", "Accounts", "AspNetUsers" },
+            "the run sends seven DELETE statements: the two sweeps, and one for each table the recycler empties of a copy");
 
         // Nothing of the three users is left, in any table that held their rows.
         (await database.RowsOfAsync(copy.UserIds)).Should().OnlyContain(table => table.Value == 0);
@@ -304,7 +326,9 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
         var act = () => database.RecycleAsync(
             control: RecyclerControl.NoTryPerCopy, interceptors: poison);
 
-        await act.Should().ThrowAsync<Exception>("nothing catches the failure, so the process would exit 1 and print no summary");
+        (await act.Should().ThrowAsync<Exception>("nothing catches the failure, so the process would exit 1 and print no summary"))
+            .Which.GetBaseException().Message.Should().Be(
+                FailingCommandInterceptor.Message, "what ended the run is the poisoned copy's failure, and no other");
         poison.Failures.Should().BeGreaterThan(0);
         StillWhole(await database.CopyAsync(poisoned.Id), "its delete rolled back whole");
         (await database.CopyAsync(copies[3].Id)).Should().NotBeNull(
@@ -348,6 +372,44 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
         ATombstone(await database.CopyAsync(copy.Id), "no grant is live any more");
     }
 
+    /// <summary>
+    /// A GUARD for the delete as it is: the copy's grants leave with its users, and the recycler
+    /// has no statement of its own for them. A grant can name the one that replaced it, through a
+    /// foreign key that restricts; the database checks that key when the statement ends, and by
+    /// then both grants are gone. So the links need no clearing first, and this is what would
+    /// say so if that stopped being true.
+    /// </summary>
+    [SqlServerFact]
+    public async Task ACopyWhoseGrantsNameEachOther_IsDeletedLikeAnyOther()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copy = (await database.BuildCopiesAsync(3))[0];
+        await database.MarkClaimedAsync(copy.Id, ADayAndAnHourAgo);
+
+        // Two grants the sweep leaves alone (neither has expired) and that keep nothing alive (both
+        // are revoked), the older naming the newer.
+        var now = DateTime.UtcNow;
+        var newer = AGrant(copy.Owner.Id, expiresAt: now.AddHours(1));
+        var older = AGrant(copy.Owner.Id, expiresAt: now.AddHours(1));
+        newer.RevokedAt = older.RevokedAt = now;
+        older.ReplacedByTokenId = newer.Id;
+        await using (var db = database.NewContext())
+        {
+            db.RefreshTokens.Add(newer);
+            await db.SaveChangesAsync();
+            db.RefreshTokens.Add(older);
+            await db.SaveChangesAsync();
+        }
+
+        var summary = await database.RecycleAsync();
+
+        summary.Failures.Should().BeEmpty();
+        (summary.SweptGrants, summary.DeletedExpired, summary.DeleteFailed).Should().Be(
+            (0, 1, 0), "the sweep took neither grant, and the copy went with both");
+        (await database.RowsOfAsync(copy.UserIds)).Should().OnlyContain(table => table.Value == 0);
+        ATombstone(await database.CopyAsync(copy.Id), "a link between two grants of the same user stops nothing");
+    }
+
     [SqlServerFact]
     public async Task PastTheBackstop_ACopyIsDeleted_EvenWithALiveGrant()
     {
@@ -373,6 +435,34 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
             (0, 1, 0), "hardStop is its own count: above 0 it says sign-in went on being accepted past a copy's end");
         ATombstone(await database.CopyAsync(pastTheBackstop.Id), "no copy outlives the backstop, grant or no grant");
         StillWhole(await database.CopyAsync(insideTheBackstop.Id), "inside the backstop a live grant still protects the copy");
+    }
+
+    [SqlServerFact]
+    public async Task TheBackstop_IsTheConfiguredLifetimePlusFortyEightHours()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copy = (await database.BuildCopiesAsync(3))[0];
+        await database.ClaimForAVisitorAsync(copy, DateTime.UtcNow);
+        using (var client = database.Api().CreateClient())
+        {
+            await DemoVisitor.SignInAsync(client, copy.Owner.Email!, DemoPoolDatabase.VisitorPassword);
+        }
+
+        // Claimed 51 hours ago, and its session is still running.
+        await database.BackdateClaimAsync(copy.Id, DateTime.UtcNow.AddHours(-51));
+
+        // CONTROL: with the default lifetime of 24 hours the backstop is at 72, so the grant
+        // still protects the copy.
+        var inside = await database.RecycleAsync();
+
+        (inside.DeletedExpired, inside.DeletedHardStop).Should().Be((0, 0));
+        StillWhole(await database.CopyAsync(copy.Id), "51 hours of 72, and a live grant");
+
+        // With a lifetime of 2 hours the backstop is at 50.
+        var summary = await database.RecycleAsync(settings: new() { ["Demo:CopyLifetimeHours"] = "2" });
+
+        (summary.DeletedExpired, summary.DeletedHardStop, summary.DeleteFailed).Should().Be((0, 1, 0));
+        ATombstone(await database.CopyAsync(copy.Id), "51 hours of 50: past the backstop, grant or no grant");
     }
 
     [SqlServerFact]
@@ -435,6 +525,49 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
         (await database.RowsOfAsync(stale.UserIds)).Should().OnlyContain(table => table.Value == 0);
         StillWhole(await database.CopyAsync(copies[1].Id), "a fresh free copy is not touched");
         summary.ExitCode.Should().Be(0, "one fresh free copy is not below a low mark of 0, and the pool was not empty");
+    }
+
+    [SqlServerFact]
+    public async Task HowLongAFreeCopyIsKept_IsTheConfiguredAge()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copies = await database.BuildCopiesAsync(2);
+        var older = copies[0];
+        await database.BackdateSeedAsync(older.Id, DateTime.UtcNow.AddHours(-11));
+
+        // CONTROL: 11 hours of the default 44. The copy is fresh: it counts, and it stays.
+        var kept = await database.RecycleAsync();
+
+        (kept.FreeAtStart, kept.Seeded, kept.DeletedStaleFree).Should().Be((2, 0, 0));
+        StillWhole(await database.CopyAsync(older.Id), "11 hours of 44");
+
+        // 11 hours of 10: it no longer counts, one is built in its place, and it is deleted.
+        var summary = await database.RecycleAsync(settings: new() { ["Demo:Pool:MaxFreeAgeHours"] = "10" });
+
+        (summary.FreeAtStart, summary.Seeded, summary.DeletedStaleFree, summary.Free).Should().Be((1, 1, 1, 2));
+        (await database.CopyAsync(older.Id)).Should().BeNull("11 hours of 10");
+    }
+
+    [SqlServerFact]
+    public async Task WhenTheAnswerToADeletesCommitIsLost_TheCopyIsCountedOnce_AndIsNotAFailure()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copies = await database.BuildCopiesAsync(2);
+        var stale = copies[0];
+        await database.BackdateSeedAsync(stale.Id, DateTime.UtcNow.AddHours(-45));
+
+        // The delete of the stale copy commits, and the answer never arrives. The last statement of
+        // that delete is the one that removes the pool row.
+        var lost = new LostCommitAnswerInterceptor("DELETE", "[DemoCopies]");
+        var summary = await database.RecycleAsync(interceptors: lost);
+
+        lost.Fired.Should().BeTrue("the answer must actually have been lost, else the test proves nothing");
+        summary.Failures.Should().BeEmpty();
+        (summary.DeletedStaleFree, summary.DeleteFailed, summary.Free).Should().Be(
+            (1, 0, 2),
+            "the copy is gone, so it is counted: a recycler that ran the delete again would find nothing to take and report that it skipped a copy it had deleted");
+        (await database.CopyAsync(stale.Id)).Should().BeNull();
+        (await database.RowsOfAsync(stale.UserIds)).Should().OnlyContain(table => table.Value == 0);
     }
 
     [SqlServerFact]
@@ -503,12 +636,28 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
         (await resident.DepositAsync(account, 75m)).StatusCode.Should().Be(HttpStatusCode.Created);
         var before = await database.RowsOfAsync([resident.UserId]);
         before["Transactions"].Should().Be(1, "ARRANGE: the ordinary user has a ledger row");
+        before["RefreshTokens"].Should().Be(1, "ARRANGE: and a grant that has not expired");
+        before["IdempotencyRecords"].Should().Be(1, "ARRANGE: and an idempotency record that has not expired");
+
+        // Beside those, a grant and a record of the same user that HAVE expired.
+        var anHourAgo = DateTime.UtcNow.AddHours(-1);
+        await using (var db = database.NewContext())
+        {
+            db.RefreshTokens.Add(AGrant(resident.UserId, expiresAt: anHourAgo));
+            db.IdempotencyRecords.Add(ARecord(resident.UserId, expiresAt: anHourAgo));
+            await db.SaveChangesAsync();
+        }
 
         var summary = await database.RecycleAsync();
 
         (summary.ForeignUsers, summary.ExitCode).Should().Be((1, 13), "a user outside every copy is reported");
+
+        // The two sweeps take what has expired, whoever it belongs to, as the API's own clean-up
+        // does. Everything else of the ordinary user is still there: the delete of a copy is keyed
+        // on the copy.
+        (summary.SweptGrants, summary.SweptIdempotency).Should().Be((1, 1), "expired grants and records are swept for everyone, not only for copies");
         (await database.RowsOfAsync([resident.UserId])).Should().Equal(
-            before, "every delete is keyed on a copy, so a user of no copy loses nothing: not a grant, not a record, not a row");
+            before, "a user of no copy loses nothing that has not expired: not the live grant, not the live record, not a ledger row");
 
         // TWIN: in the same run, the copy whose time was over is deleted.
         summary.DeletedExpired.Should().Be(1);
@@ -718,6 +867,63 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
         (second.DeletedExpired, second.DeletedHardStop, second.DeleteFailed, second.Tombstones, second.RowsAtStart, second.Claimed)
             .Should().Be((0, 0, 0, 1, 2, 0), "a tombstone is a record: it is counted as one and as nothing else");
         (await database.CopyAsync(copy.Id))!.Row.Should().BeEquivalentTo(tombstone, "the record is not rewritten");
+    }
+
+    // ── What a run writes down ───────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// A copy's email address is the name its visitor signs in with, and a job's log is kept
+    /// somewhere else, for longer, and read by other people than the database is. A run names a
+    /// copy by its id.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The recorder takes every line of every category at every level, with the text of any
+    /// exception attached: the builder's and the recycler's own lines, Identity's, and EF's. The
+    /// run is one in which each of the pool's own log statements has a reason to speak: a copy is
+    /// built, a collision is retried, three copies are deleted and one delete fails.
+    /// </para>
+    /// <para>
+    /// NOT COVERED, because it does not happen: two copies that draw the same sixteen characters.
+    /// A failure's message is the database's own, and SQL Server's message for a duplicate names
+    /// the value that was refused.
+    /// </para>
+    /// </remarks>
+    [SqlServerFact]
+    public async Task ARun_NeverWritesACopysEmailAddressToItsLog()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var log = new RecordingLoggerProvider();
+        database.Log = log;
+
+        var copies = await ThreeExpiredOneStaleOneFreshAsync(database);
+        var poison = FailingCommandInterceptor.OnDeleteNaming(await database.IdsOfAsync(copies[1]));
+        string taken;
+        await using (var db = database.NewContext())
+        {
+            taken = await db.Accounts.Select(a => a.AccountNumber).FirstAsync();
+        }
+
+        var collision = new CollidingAccountNumberInterceptor(taken);
+        var summary = await database.RecycleAsync(interceptors: [poison, collision]);
+
+        collision.Fired.Should().BeTrue("ARRANGE: a build collided and was retried");
+        (summary.Seeded, summary.DeletedExpired, summary.DeleteFailed, summary.DeletedStaleFree).Should().Be(
+            (1, 2, 1, 1), "ARRANGE: the run built a copy, deleted three and failed to delete one");
+
+        var lines = log.Lines;
+        lines.Should().Contain(
+            line => line.Message.Contains("[AspNetUsers]", StringComparison.Ordinal),
+            "the recorder saw the statements that carried the addresses: a recorder that heard nothing reports clean for ever");
+
+        var everyCopy = copies.Concat(await database.CopiesAsync()).SelectMany(c => c.Users).Select(u => u.Email!).Distinct().ToList();
+        everyCopy.Should().HaveCount(18, "ARRANGE: five copies built for the test and one by the run, three users each");
+        var written = lines
+            .Where(line => line.Message.Contains("@azurebank.example", StringComparison.OrdinalIgnoreCase)
+                || everyCopy.Any(email => line.Message.Contains(email[..email.IndexOf('@')], StringComparison.OrdinalIgnoreCase)))
+            .Select(line => $"{line.Level}: {line.Message}")
+            .ToList();
+        written.Should().BeEmpty("a run names a copy by its id, never by the address its visitor signs in with");
     }
 
     // ── The flag ─────────────────────────────────────────────────────────────────────────────────

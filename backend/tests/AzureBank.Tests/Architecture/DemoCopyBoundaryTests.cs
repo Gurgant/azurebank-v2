@@ -265,6 +265,75 @@ public class DemoCopyBoundaryTests
             new KeyValuePair<string, CopyRowFate>("AspNetUsers", CopyRowFate.Deleted), "the users are what the recycler deletes");
     }
 
+    // ── The recycler's controls ──────────────────────────────────────────────────────────────────
+
+    /// <summary>The lines of a source file that are code: no line that is only a comment.</summary>
+    private static IEnumerable<string> CodeLines(string file) =>
+        File.ReadAllLines(file).Where(line =>
+        {
+            var text = line.TrimStart();
+            return !text.StartsWith("//", StringComparison.Ordinal)
+                && !text.StartsWith('*')
+                && !text.StartsWith("/*", StringComparison.Ordinal);
+        });
+
+    /// <summary>
+    /// A GUARD: green while the recycler's controls are named by the recycler alone. A control runs
+    /// the delete with one safeguard taken out (the contacts' rows, the closed accounts, the try
+    /// around each copy); it exists for the tests that show what each safeguard is for. A command
+    /// that set one would ship a delete that fails on purpose, so no code that ships may name the
+    /// type: every value but the default has to be named to be set.
+    /// </summary>
+    [Fact]
+    public void TheRecyclersControls_AreNamedByNoCodeThatShips_ButTheRecyclerItself()
+    {
+        var backend = Path.Combine(RepoRoot().FullName, "backend");
+        var scanned = 0;
+        var naming = new List<string>();
+        foreach (var folder in new[] { "src", "tools" })
+        {
+            foreach (var file in Directory.EnumerateFiles(Path.Combine(backend, folder), "*.cs", SearchOption.AllDirectories))
+            {
+                if (IsBuildOutput(file))
+                {
+                    continue;
+                }
+
+                scanned++;
+                if (CodeLines(file).Any(line => line.Contains("RecyclerControl", StringComparison.Ordinal)))
+                {
+                    naming.Add(Path.GetFileName(file));
+                }
+            }
+        }
+
+        scanned.Should().BeGreaterThan(100, "a scan that reads nothing reports clean for ever");
+        naming.Should().Equal(
+            new[] { "DemoCopyRecycler.cs" },
+            "the controls are declared and read in the recycler, and set by tests only");
+    }
+
+    // ── One history ──────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The fixed demo and a visitor's copy show the same history, so there is one place that holds
+    /// it. A second table of rows in the fixed demo's seeder would be free to drift from the one a
+    /// copy is built from, and no test of either would notice.
+    /// </summary>
+    [Fact]
+    public void TheFixedDemo_TakesItsHistoryFromTheLedgerACopyIsBuiltFrom()
+    {
+        var file = Path.Combine(
+            RepoRoot().FullName, "backend", "tools", "AzureBank.Seeder", "Seeders", "TransactionSeeder.cs");
+        File.Exists(file).Should().BeTrue(because: $"expected to read {file}");
+        var code = string.Join("\n", CodeLines(file));
+
+        code.Should().Contain("DemoLedger.Build(", "the fixed demo's rows are the ones DemoLedger builds");
+        code.Should().NotContain(
+            "TransactionType.",
+            "a deposit or a withdrawal written down in the seeder is a second copy of the history");
+    }
+
     // ── The random source ────────────────────────────────────────────────────────────────────────
 
     private static readonly Regex SystemRandom = new(@"\bRandom\b", RegexOptions.Compiled);

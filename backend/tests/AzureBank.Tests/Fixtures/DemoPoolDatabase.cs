@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Moq;
 using seeder::AzureBank.Seeder.Extensions;
 using seeder::AzureBank.Seeder.Pool;
@@ -65,6 +66,19 @@ internal sealed class DemoPoolDatabase : IAsyncDisposable
 
     public string ConnectionString { get; }
 
+    /// <summary>
+    /// When set, every Seeder container built afterwards writes its log here, at every level and
+    /// from every category: the builder's and the recycler's own lines, Identity's, and EF's, which
+    /// name each statement that was sent.
+    /// </summary>
+    public RecordingLoggerProvider? Log { get; set; }
+
+    /// <summary>
+    /// When set, registers more services in every Seeder container built afterwards, after the
+    /// Seeder's own: how a test puts a collaborator that refuses beside the real ones.
+    /// </summary>
+    public Action<IServiceCollection>? AlsoRegister { get; set; }
+
     /// <summary>Creates the database and applies every migration.</summary>
     public static async Task<DemoPoolDatabase> CreateAsync()
     {
@@ -116,13 +130,20 @@ internal sealed class DemoPoolDatabase : IAsyncDisposable
         environment.SetupGet(e => e.EnvironmentName).Returns("Production");
 
         var services = new ServiceCollection();
-        services.AddLogging();
+        services.AddLogging(logging =>
+        {
+            if (Log is { } recorder)
+            {
+                logging.SetMinimumLevel(LogLevel.Trace).AddProvider(recorder);
+            }
+        });
         foreach (var interceptor in interceptors)
         {
             services.AddSingleton(interceptor);
         }
 
         services.AddSeederServices(new ConfigurationBuilder().AddInMemoryCollection(values).Build(), environment.Object);
+        AlsoRegister?.Invoke(services);
 
         var provider = services.BuildServiceProvider();
         _hosts.Add(provider);

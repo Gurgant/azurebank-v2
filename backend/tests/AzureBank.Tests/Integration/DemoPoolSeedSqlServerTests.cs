@@ -1,3 +1,5 @@
+extern alias seeder;
+
 using System.Net;
 using System.Text.Json;
 using AzureBank.Shared.Constants;
@@ -8,7 +10,10 @@ using AzureBank.Shared.Services.Implementations;
 using AzureBank.Shared.Utilities;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using seeder::AzureBank.Seeder.Seeders;
 
 namespace AzureBank.Tests.Integration;
 
@@ -207,6 +212,17 @@ public sealed class DemoPoolSeedSqlServerTests
             mine.Should().HaveCount(26, "fourteen movements and six transfers of two rows each");
             mine.Should().OnlyContain(t => IdGenerator.IsValidTransactionNumber(t.TransactionNumber));
 
+            // The rows themselves, not only how many: which account, how long before the seed
+            // instant, what moved, how much, and the words the history shows.
+            mine.Select(t => new ExpectedDemoLedger.Row(
+                    RoleOf(accounts[t.AccountId], copy),
+                    WholeHours(copy.Row.CreatedAt - t.CreatedAt),
+                    t.Type,
+                    t.Amount,
+                    t.Description))
+                .Should().BeEquivalentTo(
+                    ExpectedDemoLedger.Rows, "a visitor's copy opens on the demo's own history, row for row");
+
             // Every account's history ends at the balance the account holds.
             foreach (var chain in mine.GroupBy(t => t.AccountId))
             {
@@ -250,6 +266,19 @@ public sealed class DemoPoolSeedSqlServerTests
         copies.SelectMany(c => c.Users).Select(u => u.AzureTag).Should().OnlyHaveUniqueItems();
         accounts.Values.Select(a => a.AccountNumber).Should().OnlyHaveUniqueItems();
     }
+
+    /// <summary>Which of the ledger's four accounts this account of <paramref name="copy"/> is.</summary>
+    private static DemoLedgerAccount RoleOf(Account account, BuiltCopy copy) =>
+        account.UserId == copy.Jane.Id ? DemoLedgerAccount.JaneSavings
+        : account.UserId == copy.Mike.Id ? DemoLedgerAccount.MikeInvestment
+        : account.IsPrimary ? DemoLedgerAccount.OwnerSavings
+        : DemoLedgerAccount.OwnerChecking;
+
+    /// <summary>
+    /// An offset to the hour. Every row of the ledger is a whole number of hours before the seed
+    /// instant; the pool row and the ledger may read the clock a moment apart.
+    /// </summary>
+    private static TimeSpan WholeHours(TimeSpan offset) => TimeSpan.FromHours(Math.Round(offset.TotalHours));
 
     [SqlServerFact]
     public async Task AnAccountNumberThatCollides_RetriesTheWholeCopy_AndLeavesNoHalfCopy()
@@ -319,6 +348,52 @@ public sealed class DemoPoolSeedSqlServerTests
     }
 
     [SqlServerFact]
+    public async Task WhenTheAnswerToACopysCommitIsLost_TheCopyIsBuiltOnce_AndIsNotAFailure()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+
+        // The copy commits, and the answer to the commit never arrives: the database holds the
+        // copy, and the builder sees a fault it would retry. Before it does, it has to ask the
+        // database whether this copy is already there.
+        var lost = new TransferTransientFault(TransferFaultMode.AfterCommit);
+        lost.Arm();
+        var summary = await database.SeedPoolAsync(
+            1, interceptors: [new TransferCommandFaultInterceptor(lost), new TransferCommitFaultInterceptor(lost)]);
+
+        lost.Fired.Should().BeTrue("the acknowledgement must actually have been lost, else the test proves nothing");
+        (summary.Seeded, summary.BuildFailed, summary.Free, summary.ExitCode).Should().Be(
+            (1, 0, 1, 0), "the copy landed: it is counted once, and it is not a failure");
+        summary.Failures.Should().BeEmpty();
+        (await CountAsync(database)).Should().Be(
+            new Counts(Copies: 1, Users: 3, RoleRows: 3, Accounts: 4, LedgerRows: 26),
+            "a builder that did not ask would run the attempt again, fail it on the copy's own row, and build a second copy beside the first");
+    }
+
+    [SqlServerFact]
+    public async Task WhenIdentityRefusesAUserItsRole_TheCopyIsNotBuilt_AndNothingOfItIsLeft()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+
+        // AddToRoleAsync answers a failure here and throws nothing, so only a builder that reads
+        // the answer knows the role was not given.
+        var refusal = new RefusingAfterCreationUserValidator();
+        database.AlsoRegister = services => services.AddSingleton<IUserValidator<ApplicationUser>>(refusal);
+
+        var summary = await database.SeedPoolAsync(2);
+
+        refusal.Refusals.Should().BeGreaterThan(0, "the refusal must actually have been injected, else the test proves nothing");
+        (summary.Seeded, summary.BuildFailed, summary.Free, summary.ExitCode).Should().Be(
+            (0, 3, 0, 12), "a user without its role is not a copy: each attempt fails, and the run stops at three in a row");
+        summary.Failures.Should().HaveCount(3).And.OnlyContain(
+            f => f.Message.Contains(RefusingAfterCreationUserValidator.Code), "the failure says what Identity answered");
+        (await CountAsync(database)).Total.Should().Be(0, "the attempt rolled back whole: no user is left without a role, and no role row without a copy");
+
+        // CONTROL: the same run without the refusal builds, so the failures were the refusal's.
+        database.AlsoRegister = null;
+        (await database.SeedPoolAsync(2)).Seeded.Should().Be(2);
+    }
+
+    [SqlServerFact]
     public async Task WhenNoCopyCanBeBuilt_SeedPoolStopsAfterThreeFailuresInARow_AndExitsTwelve()
     {
         await using var database = await DemoPoolDatabase.CreateAsync();
@@ -346,6 +421,25 @@ public sealed class DemoPoolSeedSqlServerTests
 
         (summary.FreeAtStart, summary.Seeded, summary.Free).Should().Be((1, 1, 2));
         (await CountAsync(database)).Copies.Should().Be(3, "the stale copy stays until recycle deletes it");
+    }
+
+    [SqlServerFact]
+    public async Task HowLongAFreeCopyCounts_IsTheConfiguredAge()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copies = await database.BuildCopiesAsync(2);
+        await database.BackdateSeedAsync(copies[0].Id, DateTime.UtcNow.AddHours(-11));
+
+        // CONTROL: 11 hours of the default 44. Both copies count, and there is nothing to build.
+        var withTheDefault = await database.SeedPoolAsync(2);
+
+        (withTheDefault.FreeAtStart, withTheDefault.Seeded, withTheDefault.Free).Should().Be((2, 0, 2));
+
+        // 11 hours of 10: the older copy no longer counts, and one is built in its place.
+        var summary = await database.SeedPoolAsync(2, settings: new() { ["Demo:Pool:MaxFreeAgeHours"] = "10" });
+
+        (summary.FreeAtStart, summary.Seeded, summary.Free).Should().Be((1, 1, 2));
+        (await CountAsync(database)).Copies.Should().Be(3);
     }
 
     [SqlServerFact]

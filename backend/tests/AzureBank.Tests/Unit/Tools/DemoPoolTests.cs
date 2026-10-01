@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using seeder::AzureBank.Seeder.Pool;
 using seeder::AzureBank.Seeder.Seeders;
@@ -173,6 +174,21 @@ public class DemoPoolTests
         });
         ledger.Select(e => e.Row.TransactionNumber).Should().OnlyHaveUniqueItems();
         ledger.Should().OnlyContain(e => e.Row.Status == TransactionStatus.Completed);
+    }
+
+    [Fact]
+    public void TheLedger_IsTheDemosHistory_RowForRow()
+    {
+        var accounts = ACopysAccounts();
+        var roles = accounts.ToDictionary(account => account.Value.Id, account => account.Key);
+
+        var ledger = DemoLedger.Build(accounts, SeedInstant);
+
+        // What a visitor reads: which account, how long ago, what moved, how much, and the words.
+        ledger.Select(e => new ExpectedDemoLedger.Row(
+                roles[e.Row.AccountId], SeedInstant - e.OccurredAt, e.Row.Type, e.Row.Amount, e.Row.Description))
+            .Should().BeEquivalentTo(
+                ExpectedDemoLedger.Rows, "a count and a chain that adds up are also true of a ledger with other amounts and other words");
     }
 
     [Fact]

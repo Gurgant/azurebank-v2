@@ -31,6 +31,9 @@ namespace AzureBank.Tests.Integration;
 [Collection(SqlServerProofsCollection.Name)]
 public sealed class DemoIsolationSqlServerTests
 {
+    /// <summary>Six digits that are not the demo PIN.</summary>
+    private const string WrongPin = "135790";
+
     /// <summary>A handle of a copy's shape that no copy in <paramref name="copies"/> holds.</summary>
     private static string UnknownHandleLike(string prefix, IReadOnlyList<BuiltCopy> copies)
     {
@@ -63,9 +66,11 @@ public sealed class DemoIsolationSqlServerTests
             found.GetProperty("displayName").GetString().Should().BeEmpty("no name crosses from one copy to another");
             (await DemoVisitor.AnswerAsync(lookedUp, foreign)).Should().Be(await DemoVisitor.AnswerAsync(lookedUpUnknown, unknown));
 
-            // The mint: 404 Recipient, before the PIN is looked at.
-            using var minted = await visitor.MintTransferAsync(savings.Id, foreign, 10m);
-            using var mintedUnknown = await visitor.MintTransferAsync(savings.Id, unknown, 10m);
+            // The mint: 404 Recipient, before the PIN is looked at. The PIN sent is WRONG, so a mint
+            // that looked at it first would answer for the PIN and count an attempt; six of them
+            // here would lock it.
+            using var minted = await visitor.MintTransferAsync(savings.Id, foreign, 10m, WrongPin);
+            using var mintedUnknown = await visitor.MintTransferAsync(savings.Id, unknown, 10m, WrongPin);
             minted.StatusCode.Should().Be(HttpStatusCode.NotFound, "{0} belongs to another copy", foreign);
             (await DemoVisitor.AnswerAsync(minted, foreign)).Should().Be(await DemoVisitor.AnswerAsync(mintedUnknown, unknown));
 
@@ -81,7 +86,14 @@ public sealed class DemoIsolationSqlServerTests
         (await db.StepUpAuthorizations.CountAsync()).Should().Be(0, "nothing was minted");
         (await db.Transactions.CountAsync()).Should().Be(52, "nothing moved: two copies of 26 rows");
         (await db.Users.Where(u => u.Id == mine.Owner.Id).Select(u => u.PinAccessFailedCount).SingleAsync())
-            .Should().Be(0, "a refusal about the payee costs no PIN attempt");
+            .Should().Be(0, "a refusal about the payee costs no PIN attempt, and six wrong PINs were sent");
+
+        // CONTROL: the same wrong PIN to the copy's own contact IS looked at, refused and counted,
+        // so the 404s above came before the PIN and not from a PIN nobody checks.
+        using var refused = await visitor.MintTransferAsync(savings.Id, mine.Jane.AzureTag, 10m, WrongPin);
+        refused.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await db.Users.Where(u => u.Id == mine.Owner.Id).Select(u => u.PinAccessFailedCount).SingleAsync())
+            .Should().Be(1, "a wrong PIN for a payee the caller can reach costs an attempt");
     }
 
     [SqlServerFact]
