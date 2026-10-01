@@ -276,6 +276,70 @@ test.describe('a payment the server says went through', () => {
     expect(await afterKey.evaluate(focusRing)).toEqual(APP_RING);
   });
 
+  test('a second press where Deposit was, outside the shorter dialog, leaves the sentence on screen', async ({
+    page,
+  }) => {
+    /*
+      A double click on Deposit. The went-through view is shorter than the form, so the dialog
+      shrinks under the pointer, and the place the button was is outside it: the second press
+      lands on the backdrop. Measured on the running stack at this viewport: the dialog was gone a
+      tenth of a second after its sentence appeared, and the visitor was left on the dashboard,
+      told nothing. The press outside must leave the view where it is; Escape and the X close it.
+    */
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const keys = await answerThatItWentThrough(page, '/api/transactions/deposit');
+    const form = await openMoneyDialog(page, 'Deposit', /deposit money/i);
+    await form.getByRole('textbox', { name: 'Deposit amount' }).fill('1');
+    const deposit = form.getByRole('button', { name: 'Deposit €1.00' });
+    await expect(deposit).toBeEnabled();
+    const box = await deposit.boundingBox();
+    if (!box) throw new Error('the Deposit button has no box to press');
+    const where = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+
+    await page.mouse.click(where.x, where.y);
+    await expect.poll(() => keys.length).toBe(1);
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toHaveAccessibleName('Deposit Complete');
+    const sentence = dialog.getByText(SENTENCE.deposit);
+    await expect(sentence).toBeFocused();
+
+    // What this test stages: the second press is on the backdrop, not on anything in the dialog.
+    // The press is recorded as the page receives it, so "the dialog is still there" below is said
+    // after a press that did arrive, and on that element.
+    await page.evaluate(() => {
+      const record = window as unknown as { pressedOn?: string };
+      record.pressedOn = undefined;
+      document.addEventListener(
+        'click',
+        (event) => {
+          record.pressedOn = (event.target as Element).className;
+        },
+        { capture: true, once: true },
+      );
+    });
+    await page.mouse.click(where.x, where.y);
+    const pressedOn = await page.evaluate(
+      () => (window as unknown as { pressedOn?: string }).pressedOn,
+    );
+    expect(pressedOn, 'the second press did not land on the backdrop').toContain(
+      'fui-DialogSurface__backdrop',
+    );
+
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toHaveAccessibleName('Deposit Complete');
+    await expect(sentence).toBeVisible();
+    expect(page.url()).toMatch(/\/dashboard(?:[?#]|$)/);
+    expect(keys).toHaveLength(1);
+    // Nor does it take focus out of the dialog: from `body` Escape reaches no dialog, and the
+    // view that stayed would have lost its keyboard exit.
+    await expect(sentence, 'the press outside took focus off the sentence').toBeFocused();
+
+    // Not a trap: the exit nobody presses by accident closes it.
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    expect(keys).toHaveLength(1);
+  });
+
   test('on a transfer page the PIN is typed, so the sentence shows the app’s focus ring', async ({
     page,
   }) => {

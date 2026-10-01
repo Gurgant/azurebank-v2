@@ -276,6 +276,9 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
       tone="credit"
       onClose={requestClose}
       closeDisabled={keyLive}
+      // The went-through view is shorter than the form: the second press of a double click on
+      // Deposit lands outside the dialog, and must not take the sentence away unread.
+      keepOnOutsidePress={wentThrough}
     >
       {/* Success */}
       {success && (

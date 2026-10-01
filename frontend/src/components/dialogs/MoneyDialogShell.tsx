@@ -23,6 +23,14 @@ import { useMoneyDialogStyles } from './moneyDialogStyles';
  * `modalType="modal"` is likewise not decoration: it is what makes Fluent trap focus and bind
  * Escape. `onOpenChange` routes BOTH of those back through the caller's own close handler rather
  * than closing the surface directly, so the guard applies to the keyboard too.
+ *
+ * **A press outside the dialog does not close it while `keepOnOutsidePress` is set.** The caller
+ * sets it while the dialog shows how a send ended in place of the form that sent it. That view is
+ * shorter than the form, so the dialog shrinks under the pointer, and the second press of a double
+ * click on the send button lands on the backdrop: measured in Chromium on the running stack, the
+ * dialog was gone a tenth of a second after its sentence appeared, before anybody could read it.
+ * The press changes nothing then: it closes nothing, and it leaves focus where it was. The X and
+ * Escape still close the dialog, since nobody presses those by accident.
  */
 
 export interface MoneyDialogShellProps {
@@ -36,6 +44,8 @@ export interface MoneyDialogShellProps {
   onClose: () => void;
   /** True while an idempotency key is live. Bars every exit, and looks barred. */
   closeDisabled?: boolean;
+  /** True while the dialog shows how a send ended: a press on the backdrop then closes nothing. */
+  keepOnOutsidePress?: boolean;
   children: ReactNode;
 }
 
@@ -46,6 +56,7 @@ export function MoneyDialogShell({
   tone,
   onClose,
   closeDisabled = false,
+  keepOnOutsidePress = false,
   children,
 }: MoneyDialogShellProps) {
   const styles = useMoneyDialogStyles();
@@ -55,12 +66,23 @@ export function MoneyDialogShell({
       open={open}
       modalType="modal"
       onOpenChange={(_event, data) => {
-        if (!data.open) {
-          onClose();
-        }
+        if (data.open) return;
+        if (keepOnOutsidePress && data.type === 'backdropClick') return;
+        onClose();
       }}
     >
-      <DialogSurface className={styles.surface} aria-label={title} aria-describedby={undefined}>
+      <DialogSurface
+        className={styles.surface}
+        aria-label={title}
+        aria-describedby={undefined}
+        // The press that closes nothing must take nothing either. A mouse press on the backdrop
+        // moves focus to `body`, and from there Escape reaches no dialog: measured in Chromium,
+        // the view stayed and Escape no longer closed it. Refusing the press's default keeps focus
+        // where it was, on the sentence.
+        backdrop={
+          keepOnOutsidePress ? { onMouseDown: (event) => event.preventDefault() } : undefined
+        }
+      >
         <div className={styles.header}>
           <div className={styles.headerTitle}>
             <div

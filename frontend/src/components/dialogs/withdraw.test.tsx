@@ -40,12 +40,12 @@ function seedAccount() {
   return { id: MAIN.id, name: 'Main Account', accountNumber: 'AB-••••-••••-90', balance: 1250.5 };
 }
 
-function renderWithdraw(store = makeTestStore()) {
+function renderWithdraw(store = makeTestStore(), onClose: () => void = () => {}) {
   return renderWithProviders(
     <Routes>
       <Route
         path="/"
-        element={<WithdrawDialog isOpen onClose={() => {}} accounts={[seedAccount()]} />}
+        element={<WithdrawDialog isOpen onClose={onClose} accounts={[seedAccount()]} />}
       />
       <Route path="/transactions/:id" element={<div>TX DETAIL PAGE</div>} />
       <Route path="/history" element={<div>HISTORY PAGE</div>} />
@@ -856,6 +856,52 @@ describe('withdraw — the server says it went through', () => {
     expect(keys).toHaveLength(1);
     await userEvent.click(viewHistory);
     expect(await screen.findByText('HISTORY PAGE')).toBeInTheDocument();
+    expect(keys).toHaveLength(1);
+  });
+
+  it('a press outside the dialog leaves the sentence on screen, and Close and Escape still close it', async () => {
+    // DepositDialog's case, in the dialog whose footer and PIN step are built differently: the
+    // went-through view is shorter than what it replaces, and a second press that lands on the
+    // backdrop must not take the sentence away unread.
+    const closed = vi.fn();
+    const keys: (string | null)[] = [];
+    server.use(
+      http.post('*/api/transactions/withdraw', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        return committedAnswerLost('/api/transactions/withdraw');
+      }),
+    );
+    renderWithdraw(makeTestStore(), closed);
+    const backdrop = () => {
+      const element = document.querySelector<HTMLElement>('.fui-DialogSurface__backdrop');
+      if (!element) throw new Error('the dialog has no backdrop to press');
+      return element;
+    };
+
+    // The control: over the form a press outside closes the dialog, so the press does arrive.
+    await userEvent.click(backdrop());
+    expect(closed).toHaveBeenCalledTimes(1);
+
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    await answerDrawn(keys);
+    const sentence = screen.getByText(COPY.withdrawalWentThrough);
+    await waitFor(() => expect(sentence).toHaveFocus());
+
+    await userEvent.click(backdrop());
+    expect(closed).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('dialog', { name: 'Withdrawal Complete' })).toBeInTheDocument();
+    expect(screen.getByText(COPY.withdrawalWentThrough)).toBeInTheDocument();
+    // Nor does the press take focus out of the dialog: from `body` Escape reaches no dialog.
+    expect(sentence).toHaveFocus();
+
+    // The exits nobody presses by accident are open: the view is not a trap. Escape as a
+    // visitor presses it, wherever focus is, not aimed at the dialog.
+    await userEvent.keyboard('{Escape}');
+    expect(closed).toHaveBeenCalledTimes(2);
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(closed).toHaveBeenCalledTimes(3);
     expect(keys).toHaveLength(1);
   });
 

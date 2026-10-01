@@ -1,7 +1,7 @@
 import { Route, Routes } from 'react-router-dom';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
 import { problem } from '../../mocks/problem';
@@ -23,12 +23,12 @@ function seedAccount() {
   return { id: MAIN.id, name: 'Main Account', accountNumber: 'AB-****-****-90', balance: 1250.5 };
 }
 
-function renderDeposit() {
+function renderDeposit(onClose: () => void = () => {}) {
   return renderWithProviders(
     <Routes>
       <Route
         path="/"
-        element={<DepositDialog isOpen onClose={() => {}} accounts={[seedAccount()]} />}
+        element={<DepositDialog isOpen onClose={onClose} accounts={[seedAccount()]} />}
       />
       <Route path="/transactions/:id" element={<div>TX DETAIL PAGE</div>} />
       <Route path="/history" element={<div>HISTORY PAGE</div>} />
@@ -456,6 +456,54 @@ describe('deposit — the server says it went through', () => {
     expect(keys).toHaveLength(1);
     await userEvent.click(viewHistory);
     expect(await screen.findByText('HISTORY PAGE')).toBeInTheDocument();
+    expect(keys).toHaveLength(1);
+  });
+
+  it('a press outside the dialog leaves the sentence on screen, and Close and Escape still close it', async () => {
+    /*
+      The view is shorter than the form it replaces, so the dialog shrinks under the pointer.
+      Measured in Chromium on the running stack: the second press of a double click on Deposit
+      landed on the backdrop and closed the dialog a tenth of a second after the sentence had
+      appeared. The visitor was left on the page behind it, told nothing.
+    */
+    const closed = vi.fn();
+    const keys: (string | null)[] = [];
+    server.use(
+      http.post('*/api/transactions/deposit', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        return committedAnswerLost('/api/transactions/deposit');
+      }),
+    );
+    renderDeposit(closed);
+    const backdrop = () => {
+      const element = document.querySelector<HTMLElement>('.fui-DialogSurface__backdrop');
+      if (!element) throw new Error('the dialog has no backdrop to press');
+      return element;
+    };
+
+    // The control: over the form a press outside closes the dialog, so the press does arrive.
+    await userEvent.click(backdrop());
+    expect(closed).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    await answerDrawn(keys);
+    const sentence = screen.getByText(COPY.depositWentThrough);
+    await waitFor(() => expect(sentence).toHaveFocus());
+
+    await userEvent.click(backdrop());
+    expect(closed).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('dialog', { name: 'Deposit Complete' })).toBeInTheDocument();
+    expect(screen.getByText(COPY.depositWentThrough)).toBeInTheDocument();
+    // Nor does the press take focus out of the dialog: from `body` Escape reaches no dialog.
+    expect(sentence).toHaveFocus();
+
+    // The exits nobody presses by accident are open: the view is not a trap. Escape as a
+    // visitor presses it, wherever focus is, not aimed at the dialog.
+    await userEvent.keyboard('{Escape}');
+    expect(closed).toHaveBeenCalledTimes(2);
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(closed).toHaveBeenCalledTimes(3);
     expect(keys).toHaveLength(1);
   });
 

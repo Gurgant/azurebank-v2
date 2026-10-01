@@ -76,8 +76,11 @@ and no `aria-describedby` on a button:** beside the landing those would say the 
 time, and a description would say it again at the Tab. The went-through view of the four money
 flows is built this way: `WentThroughView` on the two transfer pages, and the same block in the
 deposit and withdrawal dialogs, where the action carries a `key` so that it is a new node, not the
-send button renamed under a focus that never left it. After a key press the browser draws the app's
-focus ring around the sentence; after a click it draws none. Three limits, known:
+send button renamed under a focus that never left it. In a dialog the view is shorter than the form
+it replaces, so the second press of a double click on the send button lands on the backdrop: the
+dialog tells its shell (`keepOnOutsidePress`), and a press outside then closes nothing, while the X
+and Escape still do. After a key press the browser draws the app's focus ring around the sentence;
+after a click it draws none. Three limits, known:
 
 - when another dialog holds focus as the answer arrives, or the visitor moved focus during the wait,
   the landing does not run, and nothing brings the sentence to a screen reader;

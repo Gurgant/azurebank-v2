@@ -601,6 +601,8 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
       tone="debit"
       onClose={requestClose}
       closeDisabled={keyLive}
+      // As in DepositDialog: a press outside the dialog does not take the sentence away unread.
+      keepOnOutsidePress={wentThrough}
     >
       {/* Success */}
       {success && (
