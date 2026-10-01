@@ -72,10 +72,14 @@ async function answerThatItWentThrough(page: Page, path: string) {
   return keys;
 }
 
+/**
+ * The PIN, typed as a visitor types it: one key per digit, each box handing focus to the next.
+ * Typed and not filled, because it decides what is drawn afterwards: a browser matches
+ * `:focus-visible` on an element that a script gave focus to when the visitor's last action was a
+ * key, and a filled box is no key at all.
+ */
 async function enterPin(scope: Page | Locator) {
-  for (const [index, digit] of [...USER.pin].entries()) {
-    await scope.getByRole('textbox', { name: `Digit ${index + 1} of 6` }).fill(digit);
-  }
+  await scope.getByRole('textbox', { name: 'Digit 1 of 6' }).pressSequentially(USER.pin);
 }
 
 /** What each button is called: its label when it has no text of its own (a dialog's X). */
@@ -87,14 +91,49 @@ function buttonNames(scope: Page | Locator) {
     );
 }
 
-/** A deposit of €1 from the dashboard, answered that it went through; returns the dialog. */
-async function depositThatWentThrough(page: Page) {
+/** The outline the browser computes for an element, as the three values the ring is made of. */
+function focusRing(element: Element) {
+  const style = getComputedStyle(element);
+  return { style: style.outlineStyle, width: style.outlineWidth, offset: style.outlineOffset };
+}
+
+/** The app's ring, as `index.css` draws it on a container that was given focus. */
+const APP_RING = { style: 'solid', width: '2px', offset: '2px' };
+
+/**
+ * How far the drawn ring reaches past the viewport, in px, on its worst side: 0 or less when the
+ * whole ring is on screen. The ring is the element's box grown by the outline's offset and width.
+ */
+function ringOverflow(element: Element) {
+  const style = getComputedStyle(element);
+  const reach = parseFloat(style.outlineOffset) + parseFloat(style.outlineWidth);
+  const box = element.getBoundingClientRect();
+  return Math.max(
+    reach - box.left,
+    reach - box.top,
+    box.right + reach - document.documentElement.clientWidth,
+    box.bottom + reach - document.documentElement.clientHeight,
+  );
+}
+
+/**
+ * A deposit of €1 from the dashboard, answered that it went through; returns the dialog. `send` is
+ * how the Deposit button is pressed: the browser shows a focus ring after a key, not after a click.
+ */
+async function depositThatWentThrough(page: Page, send: 'click' | 'Enter' = 'click') {
   const keys = await answerThatItWentThrough(page, '/api/transactions/deposit');
   await page.goto('/dashboard');
   await page.getByRole('button', { name: 'Deposit', exact: true }).click();
   const form = page.getByRole('dialog', { name: /deposit money/i });
   await form.getByRole('textbox', { name: 'Deposit amount' }).fill('1');
-  await form.getByRole('button', { name: 'Deposit €1.00' }).click();
+  const deposit = form.getByRole('button', { name: 'Deposit €1.00' });
+  if (send === 'Enter') {
+    // A click waits for the button to be enabled; a key press does not.
+    await expect(deposit).toBeEnabled();
+    await deposit.press('Enter');
+  } else {
+    await deposit.click();
+  }
 
   // The answer has been drawn once the send was answered and Close, barred while the key was
   // live, is back: true of whatever the dialog made of it.
@@ -116,7 +155,8 @@ async function transferThatWentThrough(page: Page) {
   await page.getByRole('textbox', { name: 'Transfer amount' }).fill('1');
   await page.getByRole('button', { name: 'Review Transfer' }).click();
   await page.getByRole('button', { name: 'Continue' }).click();
-  // The sixth digit sends: the mint is real, the send is answered by the route above.
+  // The sixth digit sends: the mint is real, the send is answered by the route above. So the
+  // visitor's last action before the view is a key.
   await enterPin(page);
 
   // The answer has been drawn once the send was answered and the PIN step is gone.
@@ -132,6 +172,8 @@ async function transferThatWentThrough(page: Page) {
 async function expectReadThenLed(page: Page, sentence: Locator, viewHistory: Locator) {
   await expect(sentence).toBeVisible();
   await expect(sentence).toBeFocused();
+  // Focused, and not a stop of its own in the Tab order.
+  await expect(sentence).toHaveAttribute('tabindex', '-1');
   await expect(page.getByText(/didn't go through/)).toHaveCount(0);
 
   await page.keyboard.press('Tab');
@@ -176,6 +218,8 @@ test.describe('a payment the server says went through', () => {
     await expect(dialog).toHaveAccessibleName('Withdrawal Complete');
 
     expect(await buttonNames(dialog)).toEqual(['Close', 'View History']);
+    // The PIN was typed, but the send was a click on Withdraw: no ring around the sentence.
+    expect((await dialog.getByText(SENTENCE.withdrawal).evaluate(focusRing)).style).toBe('none');
     await expectReadThenLed(
       page,
       dialog.getByText(SENTENCE.withdrawal),
@@ -198,6 +242,39 @@ test.describe('a payment the server says went through', () => {
     );
     expect(keys).toHaveLength(1);
   });
+
+  test('in a dialog the sentence shows the app’s focus ring when the send was a key, and none after a click', async ({
+    page,
+  }) => {
+    // Focus lands on the sentence either way. What is drawn follows the visitor's last action:
+    // after a click on Deposit the browser does not match :focus-visible on the sentence, so no
+    // box is drawn around the paragraph.
+    const clicked = await depositThatWentThrough(page);
+    const afterClick = clicked.dialog.getByText(SENTENCE.deposit);
+    await expect(afterClick).toBeFocused();
+    expect((await afterClick.evaluate(focusRing)).style).toBe('none');
+
+    // After a key it does, and the ring is this app's, not the browser's default (`auto`).
+    const pressed = await depositThatWentThrough(page, 'Enter');
+    const afterKey = pressed.dialog.getByText(SENTENCE.deposit);
+    await expect(afterKey).toBeFocused();
+    expect(await afterKey.evaluate(focusRing)).toEqual(APP_RING);
+  });
+
+  test('on a transfer page the PIN is typed, so the sentence shows the app’s focus ring', async ({
+    page,
+  }) => {
+    // Not the keyboard visitor's case alone: the sixth digit is the send, so when that send is
+    // the one answered, whoever typed the PIN arrives at the view from a key and the browser
+    // draws a ring around the sentence. It must be this app's, whole on screen, and not the
+    // browser's default (`auto`).
+    await transferThatWentThrough(page);
+    const sentence = page.getByText(SENTENCE.transfer);
+    await expect(sentence).toBeFocused();
+    expect(await sentence.evaluate((element) => element.matches(':focus-visible'))).toBe(true);
+    expect(await sentence.evaluate(focusRing)).toEqual(APP_RING);
+    expect(await sentence.evaluate(ringOverflow)).toBeLessThanOrEqual(0);
+  });
 });
 
 /*
@@ -213,6 +290,10 @@ test.describe('a payment the server says went through', () => {
   4.5:1 or more, and a second, narrower axe run looks only at the sentence and only at contrast and
   must have looked at it; the page does not scroll sideways; the sentence and its action are in the
   viewport; the sentence is centred; and at 375 px it takes three lines or fewer.
+
+  EACH SHELL AS ITS VISITOR MEETS IT. The transfer page is reached with the PIN typed, so its
+  three pictures have the focus ring around the sentence, and the ring must be the app's and whole
+  in the viewport, at 375 px too. The deposit is sent with a click, so its three have none.
 
   WHY THE CONTRAST IS MEASURED HERE AS WELL AS BY AXE. axe decides a text's background from what
   lies under each of its lines, and it looks through the dialog to the page behind it: for a
@@ -286,6 +367,7 @@ async function measure(
   scope: string,
   sentenceText: string,
   phone: boolean,
+  ringDrawn: boolean,
 ) {
   // The sentence, by what it is: the one paragraph that takes focus without being in the Tab order.
   const sentenceSelector = `${scope} p[tabindex="-1"]`;
@@ -303,6 +385,19 @@ async function measure(
         .map((a) => a.finished.catch(() => undefined)),
     ),
   );
+
+  // What is drawn around the sentence, checked before the picture is taken so that each picture
+  // is known to show its case: the app's ring, whole on screen, or no ring at all.
+  const ring = await sentence.evaluate(focusRing);
+  if (ringDrawn) {
+    expect(ring, `${name}: the ring around the sentence is not the app's`).toEqual(APP_RING);
+    expect(
+      await sentence.evaluate(ringOverflow),
+      `${name}: the ring around the sentence leaves the viewport`,
+    ).toBeLessThanOrEqual(0);
+  } else {
+    expect(ring.style, `${name}: a ring is drawn around the sentence after a click`).toBe('none');
+  }
 
   await mkdir(SHOTS, { recursive: true });
   const shot = await page.screenshot({ path: `${SHOTS}/${name}.png` });
@@ -391,7 +486,14 @@ test.describe('the went-through view, measured', () => {
     }) => {
       await prepare(page);
       await depositThatWentThrough(page);
-      await measure(page, `deposit-dialog-${name}`, '[role="dialog"]', SENTENCE.deposit, phone);
+      await measure(
+        page,
+        `deposit-dialog-${name}`,
+        '[role="dialog"]',
+        SENTENCE.deposit,
+        phone,
+        false,
+      );
     });
 
     test(`the transfer page (${name}) is centred, in view, and has no serious or critical finding`, async ({
@@ -399,7 +501,7 @@ test.describe('the went-through view, measured', () => {
     }) => {
       await prepare(page);
       await transferThatWentThrough(page);
-      await measure(page, `transfer-page-${name}`, '#root', SENTENCE.transfer, phone);
+      await measure(page, `transfer-page-${name}`, '#root', SENTENCE.transfer, phone, true);
     });
   }
 });
