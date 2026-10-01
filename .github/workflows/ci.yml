@@ -57,6 +57,20 @@ jobs:
         working-directory: backend
         run: dotnet build AzureBank.slnx --no-restore --configuration Release
 
+      # The model the code builds and the migrations must describe the same schema. A changed
+      # entity with no migration used to show only in the jobs that create a database, where the
+      # seeder's MigrateAsync refuses it after the database is dropped (measured 2026-10-01 with a
+      # probe column). The tool is the one backend/.config/dotnet-tools.json pins. Its success line
+      # is asserted, because a step that printed nothing would exit 0 too.
+      - name: Every model change has a migration
+        working-directory: backend
+        run: |
+          dotnet tool restore
+          dotnet ef migrations has-pending-model-changes --no-build --configuration Release \
+            --project src/AzureBank.Infrastructure | tee "$RUNNER_TEMP/pending-model-changes.log"
+          grep -q 'No changes have been made to the model since the last migration' \
+            "$RUNNER_TEMP/pending-model-changes.log"
+
       # No DB or secrets needed: the test fixture runs on the EF InMemory
       # provider and supplies its own test-only JWT secret. The 14 skipped
       # tests are the explicit SQL-Server-only ones.
