@@ -18,8 +18,9 @@ public static class ExitCodes
 
     /// <summary>
     /// The command refused before any connection was opened: a setting it needs is missing, too
-    /// short or unreadable, or it was aimed at a server it must not touch. Running it again
-    /// changes nothing until the configuration does.
+    /// short or unreadable, the connection string names no database, <c>migrate</c> was given a
+    /// connect timeout of 0, or the command was aimed at a server it must not touch. Running it
+    /// again changes nothing until the configuration does.
     /// </summary>
     public const int Refused = 2;
 }

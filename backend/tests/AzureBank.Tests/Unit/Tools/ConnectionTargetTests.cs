@@ -10,7 +10,8 @@ namespace AzureBank.Tests.Unit.Tools;
 
 /// <summary>
 /// What every Seeder command asks of its connection string before it opens anything: is there one,
-/// can it be read, and does it name an Azure SQL server. The answer comes from the string alone.
+/// can it be read, does it name a database, and does it name an Azure SQL server. The answer comes
+/// from the string alone.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -102,6 +103,25 @@ public class ConnectionTargetTests
         target.Kind.Should().Be(ConnectionTargetKind.Missing);
         target.IsAzureSql.Should().BeFalse();
         target.Server.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("Server=localhost,1433;User Id=u;Password=not-a-secret", "localhost", false)]
+    [InlineData("Server=localhost,1433;Database=;User Id=u;Password=not-a-secret", "localhost", false)]
+    [InlineData("Server=localhost,1433;Initial Catalog=   ;User Id=u;Password=not-a-secret", "localhost", false)]
+    [InlineData("Server=tcp:not_a_server.database.windows.net,1433;User Id=u;Password=not-a-secret", "not_a_server.database.windows.net", true)]
+    public void AStringThatNamesNoDatabase_IsItsOwnKind_AndItsServerIsStillRead(
+        string connectionString, string expectedServer, bool expectedAzureSql)
+    {
+        // SqlClient accepts such a string, and the server then opens the login's default database.
+        // The server is still read: a caller that only asks "is this Azure SQL" must get the same
+        // answer with or without a database in the string.
+        var target = ConnectionTarget.Read(connectionString);
+
+        using var all = new AssertionScope();
+        target.Kind.Should().Be(ConnectionTargetKind.NoDatabase);
+        target.Server.Should().Be(expectedServer);
+        target.IsAzureSql.Should().Be(expectedAzureSql);
     }
 
     [Theory]

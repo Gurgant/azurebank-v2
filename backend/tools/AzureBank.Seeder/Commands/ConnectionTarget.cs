@@ -15,13 +15,16 @@ public enum ConnectionTargetKind
     /// <summary>SqlClient's parser refuses the string, or it names no server.</summary>
     Unreadable,
 
-    /// <summary>The string names a server.</summary>
+    /// <summary>The string names a server and no database.</summary>
+    NoDatabase,
+
+    /// <summary>The string names a server and a database.</summary>
     Named,
 }
 
 /// <summary>
 /// What every command asks of its connection string before it opens a connection: is there one,
-/// can it be read, and does it name an Azure SQL server.
+/// can it be read, does it name a database, and does it name an Azure SQL server.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -44,9 +47,14 @@ public enum ConnectionTargetKind
 /// strings). The protocol prefix, the port and the instance are cut off, and trailing dots, which
 /// DNS ignores.
 /// </para>
+/// <para>
+/// A STRING WITH NO DATABASE IS REFUSED. SqlClient accepts one and the server then opens the
+/// login's default database, so <c>migrate</c> would have built the schema wherever that is. Before,
+/// only the server was looked at, and a run with no database in its string went on to open it.
+/// </para>
 /// </remarks>
-/// <param name="Kind">Whether a string is there and names a server.</param>
-/// <param name="Server">The server's name alone; empty unless <paramref name="Kind"/> is Named.</param>
+/// <param name="Kind">Whether a string is there and names a server and a database.</param>
+/// <param name="Server">The server's name alone; empty when the string is missing or unreadable.</param>
 /// <param name="IsAzureSql">Whether <paramref name="Server"/> ends in an Azure SQL suffix.</param>
 public sealed record ConnectionTarget(ConnectionTargetKind Kind, string Server, bool IsAzureSql)
 {
@@ -73,9 +81,12 @@ public sealed record ConnectionTarget(ConnectionTargetKind Kind, string Server, 
         }
 
         string dataSource;
+        string database;
         try
         {
-            dataSource = new SqlConnectionStringBuilder(connectionString).DataSource;
+            var parsed = new SqlConnectionStringBuilder(connectionString);
+            dataSource = parsed.DataSource;
+            database = parsed.InitialCatalog;
         }
         catch (Exception e) when (e is ArgumentException or FormatException or OverflowException)
         {
@@ -91,16 +102,19 @@ public sealed record ConnectionTarget(ConnectionTargetKind Kind, string Server, 
             return new ConnectionTarget(ConnectionTargetKind.Unreadable, string.Empty, IsAzureSql: false);
         }
 
+        // The server and the Azure answer are kept for a string with no database too: whoever
+        // asks only "is this Azure SQL" gets the same answer with or without one.
         return new ConnectionTarget(
-            ConnectionTargetKind.Named,
+            string.IsNullOrWhiteSpace(database) ? ConnectionTargetKind.NoDatabase : ConnectionTargetKind.Named,
             server,
             AzureSqlSuffixes.Any(suffix => server.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)));
     }
 
     /// <summary>
     /// The target of the configured connection string, or null once the refusal has been logged:
-    /// the string is missing or unreadable, or <paramref name="refusedOnAzureSql"/> is given and
-    /// the server is an Azure SQL one. A null means exit <see cref="ExitCodes.Refused"/>.
+    /// the string is missing or unreadable or names no database, or
+    /// <paramref name="refusedOnAzureSql"/> is given and the server is an Azure SQL one. A null
+    /// means exit <see cref="ExitCodes.Refused"/>.
     /// </summary>
     /// <param name="services">The tool's provider; the string is read from its configuration.</param>
     /// <param name="logger">Where the refusal goes.</param>
@@ -128,6 +142,14 @@ public sealed record ConnectionTarget(ConnectionTargetKind Kind, string Server, 
                     "{Command} refused: {Variable} is not a SQL Server connection string this tool can read. "
                     + "Its text is not shown. A password that holds ';', '=' or a quote has to be quoted. "
                     + "Nothing was opened.",
+                    command,
+                    Variable);
+                return null;
+
+            case ConnectionTargetKind.NoDatabase:
+                logger.LogError(
+                    "{Command} refused: {Variable} names no database. Add Database=<name> to it: without one "
+                    + "the server opens the login's default database. Nothing was opened.",
                     command,
                     Variable);
                 return null;

@@ -119,6 +119,23 @@ public static class MigrateCommand
             // opened by reading them.
             var effective = database.GetConnectionString()!;
             var opened = new SqlConnectionStringBuilder(effective);
+
+            // SqlClient reads a connect timeout of 0 as "no limit". The wait is read between two
+            // opens, so one open that never ends is a run that never ends, and EF's opens after it
+            // are no different. Measured 2026-10-01 against a listener that accepts and never
+            // answers, --wait-seconds 3: exit 1 after 11.2 s with the default of 10; with 0, from
+            // the string or from Database:ConnectTimeoutSeconds, still running at 25 s with the
+            // limits line as its only output. Only the API validates that setting at start.
+            if (opened.ConnectTimeout == 0)
+            {
+                logger.LogError(
+                    "migrate refused: the connect timeout is 0, which means no limit, so nothing would bound "
+                    + "the wait for the database. Set Connect Timeout in {Variable}, or "
+                    + "Database__ConnectTimeoutSeconds, to 1 or more. Nothing was opened.",
+                    ConnectionTarget.Variable);
+                return ExitCodes.Refused;
+            }
+
             var strategy = database.CreateExecutionStrategy() as ExecutionStrategy;
             logger.LogInformation(
                 "Database limits: connect timeout {ConnectTimeoutSeconds} s, connect retries {ConnectRetryCount}, "

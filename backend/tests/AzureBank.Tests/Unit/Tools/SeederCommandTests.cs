@@ -56,6 +56,10 @@ public class SeederCommandTests
     private const string AbsentServer =
         "Server=127.0.0.1,1;Database=x;User Id=u;Password=not-a-secret;Connect Timeout=1";
 
+    // A server and no database. SqlClient would open the login's default database.
+    private const string NoDatabase =
+        "Server=127.0.0.1,1;User Id=u;Password=not-a-secret;Connect Timeout=1";
+
     private static readonly (string Key, string? Value) NoEfRetry = ("Database:MaxRetryCount", "0");
 
     private static Task<int> Run(string command, ServiceProvider provider, CancellationToken token = default) =>
@@ -162,6 +166,74 @@ public class SeederCommandTests
         output.Should().NotContainEquivalentOf("fragment");
         output.Should().NotContain("bbb");
         output.Should().NotContain("aaa");
+        opens.Opens.Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData("migrate")]
+    [InlineData("seed")]
+    [InlineData("reset")]
+    public async Task AStringThatNamesNoDatabase_IsRefused_AndNothingIsOpened(string command)
+    {
+        // Without a database in the string the server picks the login's default one, and migrate
+        // would build the schema there. Before, each command went on to open the server.
+        var log = new RecordingLoggerProvider();
+        var opens = new OpenCountingInterceptor();
+        await using var provider = SeederHost.Build(
+            log, opens, onCommittedSettings: false, (ConnectionKey, NoDatabase), (PepperKey, SeederHost.Pepper), NoEfRetry);
+
+        var exitCode = await Run(command, provider);
+
+        using var all = new AssertionScope();
+        exitCode.Should().Be(2, "refused before any connection was opened");
+        Errors(log).Should().ContainSingle()
+            .Which.Should().Contain($"{command} refused")
+            .And.Contain("names no database")
+            .And.Contain("Nothing was opened");
+        opens.Opens.Should().Be(0);
+    }
+
+    [Theory]
+    // The keyword under its two names, then the setting with a string that leaves it unset.
+    [InlineData("Connect Timeout=0", null)]
+    [InlineData("Connection Timeout=0", null)]
+    [InlineData(null, "0")]
+    public async Task Migrate_WithAConnectTimeoutOfZero_IsRefused_BeforeTheWait(string? keyword, string? setting)
+    {
+        // SqlClient reads 0 as "no limit": one open then never ends, and the wait is only read
+        // between two opens. The wait is handed in, so a regression is seen and nothing hangs.
+        var log = new RecordingLoggerProvider();
+        var opens = new OpenCountingInterceptor();
+        var settings = new List<(string Key, string? Value)>
+        {
+            (ConnectionKey, "Server=127.0.0.1,1;Database=x;User Id=u;Password=not-a-secret" + (keyword is null ? "" : ";" + keyword)),
+            NoEfRetry,
+        };
+        if (setting is not null)
+        {
+            settings.Add(("Database:ConnectTimeoutSeconds", setting));
+        }
+
+        await using var provider = SeederHost.Build(log, opens, onCommittedSettings: false, [.. settings]);
+        var reached = false;
+
+        var exitCode = await MigrateCommand.RunAsync(
+            provider,
+            TimeSpan.Zero,
+            CancellationToken.None,
+            _ =>
+            {
+                reached = true;
+                return Task.FromResult(new GateResult(GateVerdict.TimedOut, null));
+            });
+
+        using var all = new AssertionScope();
+        exitCode.Should().Be(2, "refused before any connection was opened");
+        reached.Should().BeFalse("the wait is not started with a limit that bounds nothing");
+        Errors(log).Should().ContainSingle()
+            .Which.Should().Contain("migrate refused")
+            .And.Contain("connect timeout is 0")
+            .And.Contain("Nothing was opened");
         opens.Opens.Should().Be(0);
     }
 
