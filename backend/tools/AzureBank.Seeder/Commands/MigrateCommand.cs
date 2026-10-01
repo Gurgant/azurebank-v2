@@ -47,7 +47,9 @@ public static class MigrateCommand
 
     private const int DefaultWaitSeconds = 60;
 
-    public static Command Create(IServiceProvider services)
+    /// <param name="services">The tool's provider.</param>
+    /// <param name="stopping">Cancelled when the process is asked to stop (SIGTERM; Program.cs).</param>
+    public static Command Create(IServiceProvider services, CancellationToken stopping = default)
     {
         var command = new Command("migrate", "Apply every pending migration; change nothing when there is none");
 
@@ -66,13 +68,15 @@ public static class MigrateCommand
 
         command.AddOption(waitOption);
 
-        // The handler asks for the invocation's token: that is what makes Ctrl+C and SIGTERM
-        // cancel the run. And it sets the exit code on the context, which is what the process
-        // returns.
+        // The handler asks for the invocation's token, which is what makes Ctrl+C cancel the run,
+        // and links it to the token a SIGTERM cancels. It sets the exit code on the context, which
+        // is what the process returns.
         command.SetHandler(async (InvocationContext invocation) =>
         {
             var wait = TimeSpan.FromSeconds(invocation.ParseResult.GetValueForOption(waitOption));
-            invocation.ExitCode = await RunAsync(services, wait, invocation.GetCancellationToken());
+            using var cancelled = CancellationTokenSource.CreateLinkedTokenSource(
+                invocation.GetCancellationToken(), stopping);
+            invocation.ExitCode = await RunAsync(services, wait, cancelled.Token);
         });
 
         return command;
@@ -193,8 +197,11 @@ public static class MigrateCommand
                 watch.Elapsed.TotalSeconds.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture));
             return ExitCodes.Done;
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
+            // The filter is the token, not the exception's type: SqlClient reports a command that
+            // was cancelled in flight as a SqlException ("A severe error occurred on the current
+            // command", measured 2026-10-01 on a run stopped while it waited for EF's lock).
             logger.LogWarning(
                 "migrate was cancelled before it finished. Run it again: only migrations the history "
                 + "table does not list are applied.");

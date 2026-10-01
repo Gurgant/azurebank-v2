@@ -32,7 +32,9 @@ public static class ResetCommand
         "reset drops the database and creates it again, and on Azure that would create a new database "
         + "at the service's default size.";
 
-    public static Command Create(IServiceProvider services)
+    /// <param name="services">The tool's provider.</param>
+    /// <param name="stopping">Cancelled when the process is asked to stop (SIGTERM; Program.cs).</param>
+    public static Command Create(IServiceProvider services, CancellationToken stopping = default)
     {
         var command = new Command("reset", "Reset database (DELETE all data) and reseed (development and CI only)");
 
@@ -42,13 +44,16 @@ public static class ResetCommand
 
         command.AddOption(confirmOption);
 
-        // Asking for the invocation's token is what makes Ctrl+C and SIGTERM cancel the run.
+        // Asking for the invocation's token is what makes Ctrl+C cancel the run; a SIGTERM
+        // cancels the other one.
         command.SetHandler(async (InvocationContext invocation) =>
         {
+            using var cancelled = CancellationTokenSource.CreateLinkedTokenSource(
+                invocation.GetCancellationToken(), stopping);
             invocation.ExitCode = await RunAsync(
                 services,
                 invocation.ParseResult.GetValueForOption(confirmOption),
-                invocation.GetCancellationToken());
+                cancelled.Token);
         });
 
         return command;
@@ -106,8 +111,10 @@ public static class ResetCommand
             logger.LogInformation("Database reset and reseeded");
             return ExitCodes.Done;
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
+            // The token, not the exception's type: SqlClient reports a command cancelled in flight
+            // as a SqlException (MigrateCommand has the measurement).
             logger.LogWarning(
                 "reset was cancelled. The database may be missing or half built; run reset again.");
             return ExitCodes.Failed;

@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.Runtime.InteropServices;
 using AzureBank.Seeder.Commands;
 using AzureBank.Seeder.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -63,6 +64,21 @@ var host = builder.Build();
   sentence and exit 2 (ServiceCollectionExtensions.PinPepperIsUsable).
 */
 
+/*
+  SIGTERM CANCELS THE COMMAND, and the registration below is what makes that true. It is what
+  `docker stop` sends, and a job runner whose time limit has passed. Without it the process ended at
+  once with exit 143 and not a line from the command (measured 2026-10-01 in the tools image, during
+  the wait and during a pause of it): System.CommandLine's own handling of process termination
+  never got to cancel anything. With it the command's token is cancelled, the command says what
+  was cut short and whether running it again is safe, and the exit code is its own, 1.
+*/
+using var stopping = new CancellationTokenSource();
+using var sigterm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, signal =>
+{
+    signal.Cancel = true;
+    stopping.Cancel();
+});
+
 // Build CLI with System.CommandLine
 var rootCommand = new RootCommand("AzureBank Database Seeder Tool")
 {
@@ -70,9 +86,9 @@ var rootCommand = new RootCommand("AzureBank Database Seeder Tool")
 };
 
 // Add commands
-rootCommand.AddCommand(MigrateCommand.Create(host.Services));
-rootCommand.AddCommand(SeedCommand.Create(host.Services));
-rootCommand.AddCommand(ResetCommand.Create(host.Services));
+rootCommand.AddCommand(MigrateCommand.Create(host.Services, stopping.Token));
+rootCommand.AddCommand(SeedCommand.Create(host.Services, stopping.Token));
+rootCommand.AddCommand(ResetCommand.Create(host.Services, stopping.Token));
 
 // Execute CLI. Each handler sets the exit code on its invocation, and that is what comes back.
 try

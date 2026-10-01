@@ -37,7 +37,9 @@ public static class SeedCommand
     /// <summary>The demo users <see cref="UserSeeder"/> creates.</summary>
     private const int DemoUsers = 4;
 
-    public static Command Create(IServiceProvider services)
+    /// <param name="services">The tool's provider.</param>
+    /// <param name="stopping">Cancelled when the process is asked to stop (SIGTERM; Program.cs).</param>
+    public static Command Create(IServiceProvider services, CancellationToken stopping = default)
     {
         var command = new Command("seed", "Add the demo data to an empty database (local runs and CI only)");
 
@@ -47,10 +49,13 @@ public static class SeedCommand
 
         command.AddOption(forceOption);
 
-        // Asking for the invocation's token is what makes Ctrl+C and SIGTERM cancel the run.
+        // Asking for the invocation's token is what makes Ctrl+C cancel the run; a SIGTERM
+        // cancels the other one.
         command.SetHandler(async (InvocationContext invocation) =>
         {
-            invocation.ExitCode = await RunAsync(services, invocation.GetCancellationToken());
+            using var cancelled = CancellationTokenSource.CreateLinkedTokenSource(
+                invocation.GetCancellationToken(), stopping);
+            invocation.ExitCode = await RunAsync(services, cancelled.Token);
         });
 
         return command;
@@ -83,8 +88,10 @@ public static class SeedCommand
             logger.LogInformation("The demo data is in place");
             return ExitCodes.Done;
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
+            // The token, not the exception's type: SqlClient reports a command cancelled in flight
+            // as a SqlException (MigrateCommand has the measurement).
             logger.LogWarning(
                 "seed was cancelled. A seed cut short cannot be completed by running it again; run reset.");
             return ExitCodes.Failed;
