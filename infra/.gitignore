@@ -1,0 +1,8 @@
+# Only the placeholder example belongs in Git.
+*.bicepparam
+!main.example.bicepparam
+*.parameters.json
+main.json
+main.example.json
+.local/
+__pycache__/
