@@ -1,0 +1,280 @@
+extern alias seeder;
+
+using AzureBank.Tests.Fixtures;
+using FluentAssertions;
+using FluentAssertions.Execution;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Xunit;
+using GateResult = seeder::AzureBank.Seeder.Commands.GateResult;
+using GateVerdict = seeder::AzureBank.Seeder.Commands.GateVerdict;
+using MigrateCommand = seeder::AzureBank.Seeder.Commands.MigrateCommand;
+using ResetCommand = seeder::AzureBank.Seeder.Commands.ResetCommand;
+using SeedCommand = seeder::AzureBank.Seeder.Commands.SeedCommand;
+
+namespace AzureBank.Tests.Unit.Tools;
+
+/// <summary>
+/// What the Seeder's commands refuse, and that they refuse it before any connection is opened:
+/// exit code 2 and one sentence. Run on the tool's own composition root, with an interceptor that
+/// counts the opens EF starts.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Before, the PIN pepper was checked in <c>Program.cs</c>, ahead of the command line, so a missing
+/// one ended every invocation (<c>--help</c> included) with an unhandled exception; with no
+/// connection string the tool fell back to <c>Server=localhost</c>; and <c>seed</c> and
+/// <c>reset</c> opened whatever server the string named.
+/// </para>
+/// <para>
+/// A test that would open a connection if its guard regressed names a server nobody can register
+/// (an underscore is not allowed in an Azure SQL server name), one second to connect and no EF
+/// retry, so a regression fails fast instead of reaching anything.
+/// </para>
+/// <para>
+/// ZERO OPENS IS ONLY EVIDENCE BESIDE A COUNT THAT IS NOT ZERO.
+/// <see cref="Seed_OnAServerThatIsNotThere_Fails_AndTheOpenIsCounted"/> is that count: the same
+/// instrument, the same registration, and a command that does reach for the database.
+/// </para>
+/// </remarks>
+public class SeederCommandTests
+{
+    private const string ConnectionKey = "ConnectionStrings:DefaultConnection";
+    private const string PepperKey = "Security:PinPepper";
+
+    private const string AzureName = "not_a_server.database.windows.net";
+
+    private const string AzureConnection =
+        "Server=tcp:" + AzureName + ",1433;Database=x;User Id=u;Password=not-a-secret;Connect Timeout=1";
+
+    // Port 1 on loopback: nothing listens there, and nothing leaves the machine.
+    private const string AbsentServer =
+        "Server=127.0.0.1,1;Database=x;User Id=u;Password=not-a-secret;Connect Timeout=1";
+
+    private static readonly (string Key, string? Value) NoEfRetry = ("Database:MaxRetryCount", "0");
+
+    private static Task<int> Run(string command, ServiceProvider provider, CancellationToken token = default) =>
+        command switch
+        {
+            "migrate" => MigrateCommand.RunAsync(provider, TimeSpan.Zero, token),
+            "seed" => SeedCommand.RunAsync(provider, token),
+            "reset" => ResetCommand.RunAsync(provider, confirm: true, token),
+            _ => throw new ArgumentOutOfRangeException(nameof(command), command, "not a Seeder command"),
+        };
+
+    private static IEnumerable<string> Errors(RecordingLoggerProvider log) =>
+        log.Lines.Where(line => line.Level == LogLevel.Error).Select(line => line.Message);
+
+    [Theory]
+    [InlineData("seed", "seed adds four users whose password and PIN are public")]
+    [InlineData("reset", "reset drops the database and creates it again")]
+    public async Task OnAnAzureSqlName_SeedAndReset_AreRefused_AndNothingIsOpened(string command, string reason)
+    {
+        var log = new RecordingLoggerProvider();
+        var opens = new OpenCountingInterceptor();
+        await using var provider = SeederHost.Build(
+            log, opens, onCommittedSettings: false, (ConnectionKey, AzureConnection), (PepperKey, SeederHost.Pepper), NoEfRetry);
+
+        var exitCode = await Run(command, provider);
+
+        using var all = new AssertionScope();
+        exitCode.Should().Be(2, "refused before any connection was opened");
+        Errors(log).Should().ContainSingle()
+            .Which.Should().Contain($"{command} refused: {AzureName} is an Azure SQL server")
+            .And.Contain(reason)
+            .And.Contain("Nothing was opened");
+        opens.Opens.Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData("seed")]
+    [InlineData("reset")]
+    public async Task WithoutAPinPepper_SeedAndReset_AreRefused_AndNothingIsOpened(string command)
+    {
+        var log = new RecordingLoggerProvider();
+        var opens = new OpenCountingInterceptor();
+        await using var provider = SeederHost.Build(
+            log, opens, onCommittedSettings: false, (ConnectionKey, AbsentServer), NoEfRetry);
+
+        var exitCode = await Run(command, provider);
+
+        using var all = new AssertionScope();
+        exitCode.Should().Be(2);
+        Errors(log).Should().ContainSingle()
+            .Which.Should().Contain($"{command} refused")
+            .And.Contain("Security:PinPepper must be configured with at least 32 characters")
+            .And.NotContain("   at ", "the refusal is a sentence, not a stack trace");
+        opens.Opens.Should().Be(0, "reset must not drop a database it cannot then seed");
+    }
+
+    [Theory]
+    [InlineData("migrate")]
+    [InlineData("seed")]
+    [InlineData("reset")]
+    public async Task WithoutAConnectionString_EveryCommand_IsRefused_AndNothingIsOpened(string command)
+    {
+        var log = new RecordingLoggerProvider();
+        var opens = new OpenCountingInterceptor();
+        await using var provider = SeederHost.Build(
+            log, opens, onCommittedSettings: false, (PepperKey, SeederHost.Pepper), NoEfRetry);
+
+        var exitCode = await Run(command, provider);
+
+        using var all = new AssertionScope();
+        exitCode.Should().Be(2);
+        Errors(log).Should().ContainSingle()
+            .Which.Should().Contain($"{command} refused")
+            .And.Contain("ConnectionStrings__DefaultConnection", "the sentence names the variable to set");
+        opens.Opens.Should().Be(0, "there is no fallback to a server on localhost");
+    }
+
+    [Theory]
+    [InlineData("migrate")]
+    [InlineData("seed")]
+    [InlineData("reset")]
+    public async Task AStringTheParserRefuses_IsRefused_AndNoneOfItsTextIsPrinted(string command)
+    {
+        // A password holding an unquoted ';' leaves a tail the parser reads as a keyword and names
+        // in its message: "Keyword not supported: 'fragment'". That tail is half a password.
+        var log = new RecordingLoggerProvider();
+        var opens = new OpenCountingInterceptor();
+        await using var provider = SeederHost.Build(
+            log,
+            opens,
+            onCommittedSettings: false,
+            (ConnectionKey, "Server=127.0.0.1,1;Database=x;User Id=u;Password=aaa;FRAGMENT=bbb;Connect Timeout=1"),
+            (PepperKey, SeederHost.Pepper),
+            NoEfRetry);
+
+        var exitCode = await Run(command, provider);
+
+        var output = string.Join('\n', log.Lines.Select(line => line.Message));
+        using var all = new AssertionScope();
+        exitCode.Should().Be(2);
+        Errors(log).Should().ContainSingle()
+            .Which.Should().Contain($"{command} refused")
+            .And.Contain("is not a SQL Server connection string this tool can read");
+        output.Should().NotContainEquivalentOf("fragment");
+        output.Should().NotContain("bbb");
+        output.Should().NotContain("aaa");
+        opens.Opens.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Migrate_OnAnAzureSqlServerWithoutTheDatabase_Fails_AndNeverCreatesIt()
+    {
+        // EF answers "cannot open the database" with CREATE DATABASE. On Azure SQL that is a new
+        // database at the service's default size, so the wait's verdict stops the command before
+        // EF is asked anything. The verdict is handed in: no test server can be an Azure SQL one.
+        var log = new RecordingLoggerProvider();
+        var opens = new OpenCountingInterceptor();
+        await using var provider = SeederHost.Build(
+            log, opens, onCommittedSettings: false, (ConnectionKey, AzureConnection), NoEfRetry);
+
+        var exitCode = await MigrateCommand.RunAsync(
+            provider,
+            TimeSpan.Zero,
+            CancellationToken.None,
+            _ => Task.FromResult(new GateResult(GateVerdict.NoSuchDatabase, "4060, class 11")));
+
+        using var all = new AssertionScope();
+        exitCode.Should().Be(1, "the server was contacted, so this is a failure and not a refusal");
+        Errors(log).Should().ContainSingle()
+            .Which.Should().Contain("does not exist on this Azure SQL server")
+            .And.Contain("migrate does not create databases on Azure SQL");
+        opens.Opens.Should().Be(0, "MigrateAsync, which would create the database, is never called");
+        log.Lines.Should().Contain(
+            line => line.Message.StartsWith("Database limits:", StringComparison.Ordinal),
+            "the limits are logged before the wait, without opening anything");
+    }
+
+    [Theory]
+    [InlineData(GateVerdict.TimedOut, "did not accept a connection within")]
+    [InlineData(GateVerdict.LoginRefused, "the login was refused three times")]
+    [InlineData(GateVerdict.CannotOpenDatabase, "this login cannot open the database")]
+    public async Task Migrate_OnAnyVerdictButProceed_Fails_WithoutAskingEf(GateVerdict verdict, string sentence)
+    {
+        var log = new RecordingLoggerProvider();
+        var opens = new OpenCountingInterceptor();
+        await using var provider = SeederHost.Build(
+            log, opens, onCommittedSettings: false, (ConnectionKey, AbsentServer), NoEfRetry);
+
+        var exitCode = await MigrateCommand.RunAsync(
+            provider,
+            TimeSpan.FromSeconds(7),
+            CancellationToken.None,
+            _ => Task.FromResult(new GateResult(verdict, "258, class 20: the wait operation timed out")));
+
+        using var all = new AssertionScope();
+        exitCode.Should().Be(1);
+        Errors(log).Should().ContainSingle().Which.Should().Contain(sentence);
+        opens.Opens.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Migrate_NeverReadsThePinPepper()
+    {
+        // The deployment's migrate job gets the connection string and no other secret. With no
+        // pepper configured the command still reaches its wait.
+        var log = new RecordingLoggerProvider();
+        var reached = false;
+        await using var provider = SeederHost.Build(
+            log, interceptor: null, onCommittedSettings: false, (ConnectionKey, AbsentServer), NoEfRetry);
+
+        var exitCode = await MigrateCommand.RunAsync(
+            provider,
+            TimeSpan.Zero,
+            CancellationToken.None,
+            _ =>
+            {
+                reached = true;
+                return Task.FromResult(new GateResult(GateVerdict.TimedOut, null));
+            });
+
+        using var all = new AssertionScope();
+        reached.Should().BeTrue();
+        exitCode.Should().Be(1);
+        log.Lines.Select(line => line.Message).Should().NotContain(message => message.Contains("PinPepper"));
+    }
+
+    [Fact]
+    public async Task ACancelledSeed_Fails_AndDoesNotClaimSuccess()
+    {
+        // The orchestrator used to leave its loop on a cancelled token and then log "Database
+        // seeding completed successfully", and the command printed "Database seeded successfully!".
+        var log = new RecordingLoggerProvider();
+        var opens = new OpenCountingInterceptor();
+        await using var provider = SeederHost.Build(
+            log, opens, onCommittedSettings: false, (ConnectionKey, AbsentServer), (PepperKey, SeederHost.Pepper), NoEfRetry);
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+
+        var exitCode = await SeedCommand.RunAsync(provider, cancelled.Token);
+
+        var messages = log.Lines.Select(line => line.Message).ToList();
+        using var all = new AssertionScope();
+        exitCode.Should().Be(1);
+        messages.Should().Contain(message => message.Contains("seed was cancelled"));
+        messages.Should().NotContain(message => message.Contains("successfully"));
+        opens.Opens.Should().Be(0, "the token was cancelled before the first seeder ran");
+    }
+
+    [Fact]
+    public async Task Seed_OnAServerThatIsNotThere_Fails_AndTheOpenIsCounted()
+    {
+        // The control for every "0 opens" above: the same instrument on the same registration, and
+        // a string that is neither Azure nor refused. The command reaches for the database, the
+        // count moves, and the failure is one Error and exit 1 rather than an unhandled exception.
+        var log = new RecordingLoggerProvider();
+        var opens = new OpenCountingInterceptor();
+        await using var provider = SeederHost.Build(
+            log, opens, onCommittedSettings: false, (ConnectionKey, AbsentServer), (PepperKey, SeederHost.Pepper), NoEfRetry);
+
+        var exitCode = await SeedCommand.RunAsync(provider, CancellationToken.None);
+
+        using var all = new AssertionScope();
+        exitCode.Should().Be(1, "the server was tried and did not answer");
+        opens.Opens.Should().BeGreaterThan(0);
+        Errors(log).Should().Contain(message => message.StartsWith("seed failed", StringComparison.Ordinal));
+    }
+}
