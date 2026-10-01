@@ -19,7 +19,7 @@ import { Controller, useForm, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { colors } from '../../theme/tokens';
 import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
-import type { MoneyPhase } from '../../api/moneyProblem';
+import { isUnconfirmedSend, type MoneyPhase } from '../../api/moneyProblem';
 import { useAuthoriseWithdrawalMutation, useWithdrawMutation } from '../../features/api/apiSlice';
 import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
 import { selectCurrentUser } from '../../features/auth/authSlice';
@@ -446,13 +446,14 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
     drift ADR-0056's own corrections spent two rounds undoing elsewhere.
 
     `phase` is which call failed, and it matters only where the two differ: a SEND with no HTTP
-    status has latched verify-first in the hook (the withdrawal may have landed), a MINT with none
-    moved nothing and keeps the fallback sentence; and an outage during the mint moved no money.
+    status, or answered a 409 that named no code, has latched verify-first in the hook (the
+    withdrawal may have landed), a MINT with either moved nothing and keeps the fallback sentence;
+    and an outage during the mint moved no money.
   */
   const handleRefusal = (problem: ApiProblem, phase: MoneyPhase) => {
     if (
       problem.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN' ||
-      (phase === 'send' && (problem as Partial<ApiProblem>).status === undefined)
+      (phase === 'send' && isUnconfirmedSend(problem))
     ) {
       // hook latched verifyRequired; the verify view renders below.
     } else if (problem.errorCode === 'IDEMPOTENCY_IN_FLIGHT') {

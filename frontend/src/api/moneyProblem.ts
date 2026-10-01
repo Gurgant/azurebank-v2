@@ -74,9 +74,50 @@ export type MessageScope = 'input' | 'attempt';
  */
 export type MoneyPhase = 'mint' | 'send';
 
+/**
+ * The API read this key's record from the database as committed (ADR-0009): the one answer after
+ * which a payment is known to have gone through. Both halves are needed. The API writes
+ * `applied: true` on no other code, and a read of the member alone would say "went through" under
+ * an answer that never claimed it; and the comparison is with the boolean, as the 503's flag is
+ * read `=== false`, so a truthy value of another type proves nothing.
+ */
+export function isProvenCommit(problem: ApiProblem | null | undefined): boolean {
+  return problem?.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN' && problem.applied === true;
+}
+
+/**
+ * A SEND's rejection after which the money may have moved, so the idempotency hook drops the key
+ * and latches the check instead of letting a new key go out. Written once because it has four
+ * readers that must agree — the hook, the classifier below and the two money dialogs — and a
+ * reader that missed one of the three would say "failed, try again" over a latched check:
+ *
+ *  - no HTTP status: `problemBaseQuery` gives every answer and every transport failure a status,
+ *    so what is left is a 2xx whose body failed its schema — the server acted — or an abort;
+ *  - `IDEMPOTENCY_RESULT_UNKNOWN`, with or without `applied`;
+ *  - `HTTP_409`: a 409 that named no code the SPA could read. A body with a wrong-typed member is
+ *    not trusted at all, so this is what an unreadable `IDEMPOTENCY_IN_FLIGHT` or
+ *    `IDEMPOTENCY_RESULT_UNKNOWN` looks like, and each money send declares no other 409. The code
+ *    is derived from the status, not sent by the server; it is used in the safe direction only,
+ *    towards a check and never towards a retry.
+ *
+ * Only for a send: a mint holds no key and moves no money.
+ */
+export function isUnconfirmedSend(problem: ApiProblem): boolean {
+  return (
+    (problem as Partial<ApiProblem> | undefined)?.status === undefined ||
+    problem.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN' ||
+    problem.errorCode === 'HTTP_409'
+  );
+}
+
 /** What the caller should do. Deliberately not "an error string": two outcomes are not errors. */
 export type MoneyFailure =
-  /** RESULT_UNKNOWN. The hook has latched `verifyRequired`; the flow shows the verify view and sets NO error. */
+  /**
+   * The send's outcome is not confirmed ({@link isUnconfirmedSend}). The hook has latched
+   * `verifyRequired`, and says `wentThrough` beside it when the payment is proven; the flow shows
+   * the view for what the hook says and sets NO error. (Until 2026-10-01 this said RESULT_UNKNOWN
+   * only.)
+   */
   | { kind: 'verify' }
   /** The user dismissed the PIN modal. Benign — stay put, say nothing, let them press Send again. */
   | { kind: 'silent' }
@@ -100,12 +141,12 @@ export function classifyMoneyProblem(
     return { kind: 'verify' };
   }
   /*
-    A SEND rejected with no HTTP status: the idempotency hook has latched `verifyRequired` for it,
-    as for RESULT_UNKNOWN (a 2xx whose body failed its schema, or an abort — the money may have
-    moved), so this says the same thing and never "failed, try again". A MINT with no status moved
-    nothing and keeps the flow's fallback sentence, further down.
+    A SEND rejected with no HTTP status, or with a 409 that named no code: the idempotency hook
+    has latched `verifyRequired` for it, as for RESULT_UNKNOWN (the money may have moved), so this
+    says the same thing and never "failed, try again". A MINT with no status, or with such a 409,
+    moved nothing and keeps the flow's fallback sentence, further down.
   */
-  if (opts.phase === 'send' && (problem as Partial<ApiProblem>).status === undefined) {
+  if (opts.phase === 'send' && isUnconfirmedSend(problem)) {
     return { kind: 'verify' };
   }
   if (problem.errorCode === 'STEP_UP_CANCELLED') {

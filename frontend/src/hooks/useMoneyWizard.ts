@@ -82,8 +82,18 @@ export interface MoneyWizard<TBody, TResult> {
    * always a mistake. It exists for the awaiting handler and for nothing else.
    */
   lastProblem: { current: ApiProblem | null };
-  /** The result could not be confirmed. The flow must show its verify view and offer no exits. */
+  /**
+   * The result could not be confirmed. The flow must show its verify view and offer no exits —
+   * unless `wentThrough` is set too, which a flow must test first.
+   */
   verifyRequired: boolean;
+  /**
+   * The API said the payment was committed and could not return its receipt: 409
+   * `IDEMPOTENCY_RESULT_UNKNOWN` with `applied: true` (ADR-0009). `verifyRequired` is set with
+   * it, so a flow that tests this first can say that the payment went through, and one that does
+   * not still shows a check and never a live Send. `startOver` re-arms nothing then.
+   */
+  wentThrough: boolean;
   /**
    * `isSubmitting || keyRetained` — an idempotency key is alive. Every exit must consult this: a key
    * survives IN_FLIGHT, network and 5xx failures too, and abandoning one then starting again mints a
@@ -123,7 +133,11 @@ export interface MoneyWizard<TBody, TResult> {
    */
   fail: (text: string) => void;
   toForm: () => void;
-  /** The verify view's "it didn't go through" — abandons the intent so the next send is a NEW one. */
+  /**
+   * The verify view's "it didn't go through" — abandons the intent so the next send is a NEW one.
+   * Not to be offered while `wentThrough`, and it could not re-arm the send there: the
+   * idempotency hook refuses the reset.
+   */
   startOver: () => void;
   /** The ONLY way out. Refuses while a key is live. */
   requestLeave: (to: string) => void;
@@ -141,7 +155,8 @@ export function useMoneyWizard<TBody, TResult>(
   options: { messages: DomainMessages; fallback: string },
 ): MoneyWizard<TBody, TResult> {
   const navigate = useNavigate();
-  const { submit, resetIntent, verifyRequired, keyRetained } = useIdempotentMutation(trigger);
+  const { submit, resetIntent, verifyRequired, wentThrough, keyRetained } =
+    useIdempotentMutation(trigger);
 
   const [step, setStep] = useState<MoneyWizardStep>('form');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -249,6 +264,7 @@ export function useMoneyWizard<TBody, TResult>(
     error: failure?.text ?? null,
     lastProblem,
     verifyRequired,
+    wentThrough,
     keyLive,
 
     async run(body, extras) {

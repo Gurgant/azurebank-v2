@@ -884,3 +884,74 @@ describe('withdraw — the server says it went through', () => {
     expect(keys).toHaveLength(1);
   });
 });
+
+/**
+ * The MINT answered the two ways that, on the SEND, mean the money may have moved: a 409 that
+ * names no readable code, and an answer with no HTTP status. A mint holds no key and moves no
+ * money, and it never passes through the idempotency hook, so nothing is latched for it. If the
+ * dialog read these as it reads them on the send it would set no error and wait for a check view
+ * that never comes: the PIN step would be left with no words at all.
+ */
+describe('withdraw — the authorisation is answered in a way that cannot be read', () => {
+  const MINT = '*/api/transactions/withdraw/authorizations';
+
+  /** Counts the withdrawals that reach the server, behind a mint answered by `mintAnswer`. */
+  function mintAnswered(mintAnswer: () => Response) {
+    const sent = { withdrawals: 0 };
+    server.use(
+      http.post(MINT, mintAnswer),
+      http.post('*/api/transactions/withdraw', () => {
+        sent.withdrawals += 1;
+        return withdrawSuccessBody(900);
+      }),
+    );
+    return sent;
+  }
+
+  async function pressWithdraw() {
+    renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+  }
+
+  /** The withdrawal failed in so many words, on the PIN step, with the way to try again open. */
+  async function expectAPlainFailure(sent: { withdrawals: number }) {
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Withdrawal failed. Please try again.');
+    expect(screen.queryByText("We couldn't confirm your withdrawal")).not.toBeInTheDocument();
+    expect(screen.getByText('Verify Withdrawal')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Withdraw €100.00' })).toBeEnabled();
+    // No key was ever held, so the dialog can be left; and no withdrawal left the page.
+    expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
+    expect(sent.withdrawals).toBe(0);
+  }
+
+  it('a 409 whose body cannot be trusted says the withdrawal failed, and asks for no check', async () => {
+    // A wrong-typed member: the body is not trusted, so the code is the status's own.
+    const sent = mintAnswered(() =>
+      problem({
+        status: 409,
+        errorCode: 'IDEMPOTENCY_IN_FLIGHT',
+        extensions: { applied: 'true' },
+      }),
+    );
+    await pressWithdraw();
+
+    await expectAPlainFailure(sent);
+  });
+
+  it('a 201 whose body fails its schema says the withdrawal failed, and asks for no check', async () => {
+    // RTK logs a response transform that throws, once, on console.error, which this suite treats
+    // as a failure. Here that error is the scenario, so it is stubbed, and asserted to be that one.
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const sent = mintAnswered(() =>
+      HttpResponse.json({ data: null, message: 'Done.' }, { status: 201 }),
+    );
+    await pressWithdraw();
+
+    await expectAPlainFailure(sent);
+    expect(logged).toHaveBeenCalledTimes(1);
+    expect(String(logged.mock.calls[0][0])).toMatch(/An unhandled error occurred processing/);
+  });
+});

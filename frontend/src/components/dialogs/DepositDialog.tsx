@@ -9,6 +9,7 @@ import {
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
+import { isUnconfirmedSend } from '../../api/moneyProblem';
 import { useDepositMutation } from '../../features/api/apiSlice';
 import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
 import { formatCurrency } from '../../utils/format';
@@ -200,13 +201,11 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
     } catch (caught) {
       const problem = caught as ApiProblem;
       // D17 / §2.3: route on errorCode, never a blanket toast. RESULT_UNKNOWN is
-      // handled by the hook (latches verifyRequired) — we just render that view. So is a
-      // rejection with no HTTP status (an answer whose body failed its schema): the deposit may
-      // have landed, and "Deposit failed" under the verify view would say it had not.
-      if (
-        problem.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN' ||
-        (problem as Partial<ApiProblem>).status === undefined
-      ) {
+      // handled by the hook (latches verifyRequired) — we just render that view. So are a
+      // rejection with no HTTP status (an answer whose body failed its schema) and a 409 that
+      // named no code: the deposit may have landed, and "Deposit failed" under the verify view
+      // would say it had not. The hook's own test, so the two cannot disagree.
+      if (isUnconfirmedSend(problem)) {
         // hook set verifyRequired; the verify view renders below.
       } else if (problem.errorCode === 'IDEMPOTENCY_IN_FLIGHT') {
         setInFlight(true);
