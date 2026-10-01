@@ -867,8 +867,9 @@ export function InternalTransferPage() {
             {/* Under the boxes and the spinner, outside their described-by targets, and promising
                 nothing: during the wait no control here can re-send the same key. From 20 s it
                 asks the visitor to keep the page open, since a reload would send the move again
-                with a new key. */}
-            <WaitHint active={confirming} kind="moneySend" />
+                with a new key — once there is a key: while the PIN alone is being checked none
+                exists yet, and it says only that it is still trying. */}
+            <WaitHint active={confirming} kind={isMinting && !keyLive ? 'write' : 'moneySend'} />
             <div className={styles.actions}>
               <Button
                 appearance="secondary"

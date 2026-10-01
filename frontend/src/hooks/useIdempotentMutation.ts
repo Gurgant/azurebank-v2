@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import type { IdempotentArg } from '../features/api/apiSlice';
 
@@ -70,6 +70,24 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
   // KEPT after an IN_FLIGHT / network / parse / 5xx failure too, and abandoning it then
   // reopening would mint a fresh key = a new intent = a double-spend.
   const [keyRetained, setKeyRetained] = useState(false);
+
+  /*
+    A reload or a tab close while a key is held. The key lives only in this page, so the next
+    attempt from a reloaded page carries a new one, and if the first request lands the visitor
+    pays twice. No in-app control covers that path, so the browser is asked to ask first. It warns
+    and defers to the visitor; it cannot stop a reload, and a key abandoned that way is still lost.
+    Here rather than in each flow, so that every money send — both transfer pages, deposit and
+    withdraw — has it for as long as it holds a key, and none can be left without it.
+  */
+  useEffect(() => {
+    if (!keyRetained) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [keyRetained]);
 
   const resetIntent = useCallback(() => {
     keyRef.current = null;

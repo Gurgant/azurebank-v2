@@ -13,6 +13,7 @@ import {
   Select,
   Spinner,
 } from '@fluentui/react-components';
+import { useRef } from 'react';
 import { useDispatch } from 'react-redux';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -79,12 +80,27 @@ export function CreateAccountDialog({ open, onClose }: CreateAccountDialogProps)
     defaultValues: { name: '', type: 'Checking' },
   });
 
+  /*
+    Whether a create met an outage while this dialog was open. The bar tells the visitor to check
+    their accounts, but the mutation refreshes the list only on success (apiSlice.ts), and the page
+    behind this dialog keeps its list subscribed: an account that was opened anyway would stay off
+    the list, inviting a second Create. So the list is read again, as DeleteAccountDialog does for
+    ACCOUNT_NOT_FOUND — when the dialog closes, not while it is open: behind a modal the page is
+    hidden from assistive technology, and a list read that failed there would put its bar where
+    nobody hears it, in place of the card that focus returns to.
+  */
+  const metOutage = useRef(false);
+
   const close = () => {
     // Belt-and-braces: the page mounts this dialog per open (fresh state by
     // construction), but clearing the form and the mutation here keeps the
     // component correct even under a persistent parent.
     reset();
     resetMutation();
+    if (metOutage.current) {
+      metOutage.current = false;
+      dispatch(apiSlice.util.invalidateTags([{ type: 'Account', id: 'LIST' }]));
+    }
     onClose();
   };
 
@@ -94,13 +110,7 @@ export function CreateAccountDialog({ open, onClose }: CreateAccountDialogProps)
       close();
     } catch (caught) {
       const rejected = caught as ApiProblem;
-      if (isServiceOutage(rejected)) {
-        // The bar below tells the visitor to check their accounts, but the mutation refreshes the
-        // list only on success (apiSlice.ts), and the page behind this dialog keeps its list
-        // subscribed: an account that was opened anyway would stay off the list, inviting a
-        // second Create. Read the list again, as DeleteAccountDialog does for ACCOUNT_NOT_FOUND.
-        dispatch(apiSlice.util.invalidateTags([{ type: 'Account', id: 'LIST' }]));
-      }
+      if (isServiceOutage(rejected)) metOutage.current = true;
       if (rejected.errorCode === 'VALIDATION_ERROR' && rejected.errors) {
         for (const [key, messages] of Object.entries(rejected.errors)) {
           if (isOurField(key) && messages.length > 0) {

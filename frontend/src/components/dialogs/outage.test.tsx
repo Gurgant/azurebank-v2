@@ -1,5 +1,5 @@
 import { Route, Routes } from 'react-router-dom';
-import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -16,9 +16,11 @@ import {
   hintShownAt,
   never,
   installFakeClock,
+  reloadAsksFirst,
 } from '../../test/outage';
 import { CONNECTION_FAILED } from '../../api/problemMessages';
 import { AccountsPage } from '../../pages/AccountsPage';
+import { DashboardPage } from '../../pages/DashboardPage';
 import { ChangePinDialog } from './ChangePinDialog';
 import { CreateAccountDialog } from './CreateAccountDialog';
 import { DepositDialog } from './DepositDialog';
@@ -355,6 +357,108 @@ describe('a money send whose answer arrives but cannot be read', () => {
   });
 });
 
+describe('a reload while a money dialog holds a key', () => {
+  /*
+    The key lives only in the page, so a reload after a send whose outcome is unknown would send
+    the money again with a new one. The browser asks first, as on the transfer pages; before any
+    send there is nothing to lose, and it does not.
+  */
+  it.each([
+    {
+      dialog: 'withdraw',
+      path: '*/api/transactions/withdraw',
+      open: async () => {
+        renderWithdraw();
+        await withdrawToPin();
+      },
+      send: 'Withdraw €100.00',
+      words: COPY.withdrawalUnknown,
+    },
+    {
+      dialog: 'deposit',
+      path: '*/api/transactions/deposit',
+      open: async () => {
+        renderDeposit();
+        await userEvent.click(screen.getByRole('button', { name: '€100' }));
+      },
+      send: 'Deposit €100.00',
+      words: COPY.depositUnknown,
+    },
+  ])(
+    '$dialog: the browser asks before a reload once a send is unknown, and not before',
+    async (flow) => {
+      server.use(
+        http.post(flow.path, () =>
+          serviceUnavailable({ via: 'api', instance: flow.path.slice(1) }),
+        ),
+      );
+      await flow.open();
+      expect(reloadAsksFirst()).toBe(false);
+
+      await userEvent.click(screen.getByRole('button', { name: flow.send }));
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(flow.words));
+
+      expect(reloadAsksFirst()).toBe(true);
+    },
+  );
+});
+
+describe('a money dialog on the Dashboard, when the accounts behind it fail', () => {
+  /*
+    The Dashboard swaps its sections for the accounts bar when its accounts read fails, and the
+    withdraw dialog's funds check reads those same accounts. A dialog mounted inside the sections
+    went with them, and with it the key of a send whose outcome is unknown: the next Withdraw
+    would have been a new intent beside one that may have landed.
+  */
+  it('stays open, and pressing Withdraw again re-sends the same key', async () => {
+    const keys: (string | null)[] = [];
+    let accountsDown = false;
+    server.use(
+      http.post('*/api/transactions/withdraw', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        return serviceUnavailable({ via: 'api', instance: '/api/transactions/withdraw' });
+      }),
+      http.get('*/api/accounts', () =>
+        accountsDown
+          ? serviceUnavailable({ via: 'api', instance: '/api/accounts', retryAfterSeconds: 1 })
+          : undefined,
+      ),
+    );
+    renderWithProviders(
+      <Routes>
+        <Route path="/" element={<DashboardPage />} />
+      </Routes>,
+      { routerEntries: ['/'] },
+    );
+    await userEvent.click(await screen.findByRole('button', { name: 'Withdraw' }));
+    await withdrawToPin();
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    const dialog = screen.getByRole('dialog');
+    await waitFor(() =>
+      expect(within(dialog).getByRole('alert')).toHaveTextContent(COPY.withdrawalUnknown),
+    );
+
+    // Back to the amount, and Continue again while the accounts cannot be read: the funds check
+    // and its one retry fail, and the page behind the dialog gives way to the accounts bar.
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Back' }));
+    accountsDown = true;
+    await userEvent.click(within(dialog).getByRole('button', { name: /^Continue/ }));
+    const pageAlert = () =>
+      Array.from(document.querySelectorAll<HTMLElement>('[role="alert"]')).find(
+        (alert) => !dialog.contains(alert),
+      );
+    await waitFor(() => expect(pageAlert()?.textContent ?? '').toContain(COPY.unavailable), {
+      timeout: 5_000,
+    });
+
+    expect(screen.getByRole('dialog')).toBe(dialog);
+    await within(dialog).findByText('Verify Withdrawal');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Withdraw €100.00' }));
+    await waitFor(() => expect(keys).toHaveLength(2));
+    expect(keys[1]).toBe(keys[0]);
+  });
+});
+
 describe("a money dialog's wait hint", () => {
   /**
    * The hint's checks shared by both dialogs: inside the dialog, no promise, no stop, no nesting;
@@ -408,6 +512,29 @@ describe("a money dialog's wait hint", () => {
     await waitFor(() => expect(sentAt).toBeGreaterThan(0));
 
     await expectWriteHint(sentAt);
+  });
+
+  it('withdraw: while only the PIN is being checked, no key exists yet, and 20 s says only "Still trying…"', async () => {
+    let mintAt = 0;
+    server.use(
+      http.post('*/api/transactions/withdraw/authorizations', () => {
+        mintAt = Date.now();
+        return never();
+      }),
+    );
+    renderWithdraw();
+    await withdrawToPin();
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    await waitFor(() => expect(mintAt).toBeGreaterThan(0));
+    const dialog = screen.getByRole('dialog');
+    const shownAt = await hintShownAt(dialog);
+
+    await advanceUntil(shownAt, 25_000);
+
+    hintRegion(COPY.stillTrying, dialog);
+    expect(within(dialog).queryByText(COPY.keepPageOpen)).toBeNull();
   });
 
   it("withdraw: a slow funds check beside a PIN lock keeps its hint out of the lock's described-by target", async () => {
@@ -519,6 +646,40 @@ describe('a change with no key, during an outage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
     expect(await screen.findByText('Holiday Fund')).toBeInTheDocument();
+  });
+
+  it('reads the list again once the dialog closes, not behind it while it is open', async () => {
+    /*
+      Behind an open modal the page is hidden from assistive technology, so a list read there that
+      failed would put its bar where nobody hears it, in place of the card focus returns to. The
+      list is read again when the visitor goes back to it.
+    */
+    const listReads: number[] = [];
+    server.use(
+      http.post('*/api/accounts', () =>
+        serviceUnavailable({ via: 'api', instance: '/api/accounts' }),
+      ),
+      http.get('*/api/accounts', () => {
+        listReads.push(Date.now());
+        return undefined;
+      }),
+    );
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Main Account');
+    const loads = listReads.length;
+
+    await userEvent.click(screen.getByRole('button', { name: 'Add New Account' }));
+    fireEvent.change(await screen.findByRole('textbox', { name: /account name/i }), {
+      target: { value: 'Holiday Fund' },
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Create Account' }));
+    await alertSays(COPY.accountUnknown);
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 200)));
+    expect(listReads).toHaveLength(loads);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => expect(listReads).toHaveLength(loads + 1));
   });
 
   async function fillPins() {

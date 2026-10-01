@@ -916,26 +916,31 @@ export function DashboardPage() {
               </div>
             </section>
           </div>
+        </>
+      )}
 
-          {/* Mounted only while open, as the current dashboard does: these forms hold money state and
+      {/* Mounted only while open, as the current dashboard does: these forms hold money state and
           a hidden mounted instance is a hidden mounted form. There is no `defaultAccountId` prop
           today, so the scope does NOT yet reach the dialogs — the one gap between this design and
-          "everything obeys the scope", recorded rather than glossed. */}
-          {depositOpen && (
-            <DepositDialog
-              isOpen={depositOpen}
-              onClose={() => setDepositOpen(false)}
-              accounts={legacyAccounts}
-            />
-          )}
-          {withdrawOpen && (
-            <WithdrawDialog
-              isOpen={withdrawOpen}
-              onClose={() => setWithdrawOpen(false)}
-              accounts={legacyAccounts}
-            />
-          )}
-        </>
+          "everything obeys the scope", recorded rather than glossed.
+
+          Outside the sections, as on the accounts page: the withdraw dialog's funds check reads the
+          page's own accounts, and when that read fails the accounts bar takes the sections' place.
+          A dialog inside them went too, and with it the key of a send whose outcome was unknown, so
+          the next Withdraw was a new intent beside one that may have landed. */}
+      {depositOpen && (
+        <DepositDialog
+          isOpen={depositOpen}
+          onClose={() => setDepositOpen(false)}
+          accounts={legacyAccounts}
+        />
+      )}
+      {withdrawOpen && (
+        <WithdrawDialog
+          isOpen={withdrawOpen}
+          onClose={() => setWithdrawOpen(false)}
+          accounts={legacyAccounts}
+        />
       )}
     </div>
   );

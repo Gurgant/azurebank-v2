@@ -18,6 +18,7 @@ import {
   hintShownAt,
   never,
   pinBoxValues,
+  reloadAsksFirst,
   sleep,
   installFakeClock,
 } from '../test/outage';
@@ -222,6 +223,35 @@ describe('the confirm wait', () => {
     expect(screen.queryByText(COPY.noDoubleMove, { exact: false })).not.toBeInTheDocument();
   });
 
+  it.each([
+    ['external', renderTransfer, externalToPin, '*/api/transfers/authorizations'],
+    ['internal', renderInternal, internalToPin, '*/api/transfers/internal/authorizations'],
+  ])(
+    '%s: while only the PIN is being checked, no key exists yet, and 20 s says only "Still trying…"',
+    async (_name, render, toPin, mintPath) => {
+      let mintAt = 0;
+      server.use(
+        http.post(mintPath, () => {
+          mintAt = Date.now();
+          return never();
+        }),
+      );
+      render();
+      await toPin();
+      installFakeClock();
+      const user = fakeClockUser();
+      await user.click(screen.getByLabelText('Digit 1 of 6'));
+      await user.paste(TEST_PIN);
+      await waitFor(() => expect(mintAt).toBeGreaterThan(0));
+      const shownAt = await hintShownAt();
+
+      await advanceUntil(shownAt, 25_000);
+
+      hintRegion(COPY.stillTrying);
+      expect(screen.queryByText(COPY.keepPageOpen)).not.toBeInTheDocument();
+    },
+  );
+
   /** Counts the mints on `path`, letting each one through to the mock. */
   function countMints(path: string) {
     const mints = { count: 0 };
@@ -359,6 +389,8 @@ describe.each([
     const check = screen.getByRole('button', { name: 'Check again' });
     expect(check.closest('[role="status"]')).toHaveTextContent(`${UNKNOWN_BAR} ${flow.safeRetry}`);
     expect(pinBoxValues()).toEqual(TEST_PIN.split(''));
+    // The key lives only in this page: a reload would send the money again with a new one.
+    expect(reloadAsksFirst()).toBe(true);
 
     await userEvent.click(check);
     expect(await screen.findByText(flow.sent)).toBeInTheDocument();
@@ -843,6 +875,35 @@ describe('the recipient check', () => {
     expect(getComputedStyle(region.closest('[data-wait-hint]') as HTMLElement).position).toBe(
       'absolute',
     );
+  });
+
+  it('a slow check that finds nobody says so in its alert, and its hint never says "Loaded."', async () => {
+    const lookups: number[] = [];
+    server.use(
+      http.get('*/api/users/:azureTag', async () => {
+        lookups.push(Date.now());
+        await sleep(6_000);
+        return undefined;
+      }),
+    );
+    renderTransfer();
+    await screen.findByText('Main Account');
+    await userEvent.type(screen.getByLabelText('Recipient handle'), 'nobody_here');
+    installFakeClock();
+    await fakeClockUser().click(screen.getByRole('button', { name: 'Verify' }));
+    await waitFor(() => expect(lookups).toHaveLength(1));
+    await advanceUntil(lookups[0], 5_000);
+    const region = hintRegion(COPY.slow);
+    const said: string[] = [];
+    const observer = new MutationObserver(() => said.push(region.textContent ?? ''));
+    observer.observe(region, { childList: true, characterData: true, subtree: true });
+
+    await advanceUntil(lookups[0], 6_100);
+
+    await alertSays("We couldn't find @nobody_here. Check the handle and try again.");
+    observer.disconnect();
+    expect(said).not.toContain(COPY.loaded);
+    expect(screen.queryByText(COPY.loaded)).toBeNull();
   });
 
   it('a check with no answer ends at 65 s saying the service is unavailable', async () => {

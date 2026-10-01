@@ -920,8 +920,13 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
             {/* One wait across the mint and the send (`isSubmitting` holds through both), under
                 the button that started it, outside the described-by target above, and promising
                 nothing: during the wait nothing here can re-send the same key. From 20 s it asks
-                the visitor to keep the page open: a reload would send it with a new key. */}
-            <WaitHint active={isSubmitting} kind="moneySend" />
+                the visitor to keep the page open: a reload would send it with a new key — once
+                there is a key: while the PIN alone is being checked none exists yet, and it says
+                only that it is still trying. */}
+            <WaitHint
+              active={isSubmitting}
+              kind={isMinting && !keyRetained ? 'write' : 'moneySend'}
+            />
             <Button
               appearance="secondary"
               size="large"

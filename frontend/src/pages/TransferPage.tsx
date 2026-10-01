@@ -993,10 +993,12 @@ export function TransferPage() {
                   </Text>
                 )}
               </AlertSlot>
+              {/* A handle that matches nobody is an answer, not an error, but for the visitor it
+                  is the check failing: the alert above says so, and "Loaded." would contradict it. */}
               <WaitHint
                 active={lookupState.isFetching}
                 kind="read"
-                failed={lookupState.isError}
+                failed={lookupState.isError || lookupState.currentData?.exists === false}
                 onStopWaiting={stopWaitingForLookup}
                 className={styles.lookupHint}
               />
@@ -1152,8 +1154,10 @@ export function TransferPage() {
             {/* Under the boxes and the spinner, and outside the boxes' described-by targets. It
                 promises nothing: during the wait no control here can re-send the same key. From
                 20 s it asks the visitor to keep the page open, since a reload would send the
-                transfer again with a new key. */}
-            <WaitHint active={confirming} kind="moneySend" />
+                transfer again with a new key — once there is a key: while the PIN alone is being
+                checked none exists yet, nothing can be sent twice, and it says only that it is
+                still trying. The kind changes the words, never the wait's clock. */}
+            <WaitHint active={confirming} kind={isMinting && !keyLive ? 'write' : 'moneySend'} />
             <div className={styles.actions}>
               <Button
                 appearance="secondary"

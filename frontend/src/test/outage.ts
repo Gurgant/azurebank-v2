@@ -174,6 +174,16 @@ export function expectSilentHintTakesNoRoom(scope: HTMLElement = document.body) 
   expect(getComputedStyle(box).position).toBe('absolute');
 }
 
+/**
+ * Whether the page would ask before a reload or a tab close: a `beforeunload` that a listener
+ * cancelled is the browser's "Leave site?" prompt.
+ */
+export function reloadAsksFirst(): boolean {
+  const event = new Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(event);
+  return event.defaultPrevented;
+}
+
 /** The six PIN boxes' values, in order. */
 export const pinBoxValues = () =>
   Array.from(

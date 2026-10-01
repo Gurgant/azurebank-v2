@@ -192,7 +192,8 @@ export function useMoneyWizard<TBody, TResult>(
     and `requestLeave` no-ops. Browser Back is the ONLY exit from that state short of closing the
     tab. A blocker with no `proceed()` would make closing the tab the app's error recovery.
 
-    So the contract is the one `beforeunload` already concedes below: warn, then defer to the user.
+    So the contract is the one `beforeunload` already concedes in `useIdempotentMutation`: warn,
+    then defer to the user.
     It does not close the double-spend window — an abandoned key is still lost until TTL — it makes
     the abandonment deliberate instead of silent.
 
@@ -217,18 +218,11 @@ export function useMoneyWizard<TBody, TResult>(
     if (blocker.state === 'blocked' && !keyLive) blocker.reset?.();
   }, [blocker, keyLive]);
 
-  // The other path no in-app control covers: a refresh or tab-close while a key is live. Kept
-  // ALONGSIDE the blocker, not replaced by it — `useBlocker`'s own JSDoc says it "does not handle
-  // hard-reloads or cross-origin navigations", which is exactly what this catches.
-  useEffect(() => {
-    if (!keyLive) return;
-    const warn = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = '';
-    };
-    window.addEventListener('beforeunload', warn);
-    return () => window.removeEventListener('beforeunload', warn);
-  }, [keyLive]);
+  // The other path no in-app control covers, a refresh or tab-close while a key is live, is
+  // `useIdempotentMutation`'s, for every money send. Kept ALONGSIDE the blocker, not replaced by
+  // it — `useBlocker`'s own JSDoc says it "does not handle hard-reloads or cross-origin
+  // navigations", which is exactly what that catches. (Until 2026-10-01 the listener was here,
+  // and the deposit and withdraw dialogs had none.)
 
   /** The one place a classified failure becomes state; see `failFrom`. */
   const applyProblem = (caught: ApiProblem, phase: MoneyPhase) => {
