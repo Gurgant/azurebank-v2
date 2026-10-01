@@ -80,16 +80,23 @@ Five outcomes, and each one tells the client something different:
 |---|---|---|
 | `2xx` with `Idempotency-Replayed: true` | This exact request already succeeded | Shows the stored result, byte-identical |
 | `409 IDEMPOTENCY_IN_FLIGHT` | A duplicate is still running | Keeps the key, retries later |
-| `409 IDEMPOTENCY_RESULT_UNKNOWN` | It executed but the response was lost | **Stops.** Asks the user to verify against their transactions |
+| `409 IDEMPOTENCY_RESULT_UNKNOWN` | With `applied: true`: it was committed, and this answer cannot return its result. Without it: the outcome is not known | **Stops.** With `applied: true`, says the payment went through and offers the history, with no way to send again. Without it, asks the user to verify against their transactions |
 | `422 IDEMPOTENCY_KEY_REUSE` | Same key, different payload | Rotates the key |
 | Business `4xx` | Insufficient funds, wrong PIN | Releases the key; fix and retry |
+
+*(Until 2026-10-01 the third row said "It executed but the response was lost" of every such answer,
+and that the client always asked the user to verify.)*
 
 The client half matters as much as the server half, because a client that mints a fresh key after
 a timeout has manufactured a double-spend that the server cannot detect. So the rule is
 inverted from the intuitive one: **a failure the server might have seen keeps the key; only a
 definitive answer spends it.** `RESULT_UNKNOWN` is the one case where the correct behaviour is to
-stop and involve the user rather than guess — there is no endpoint that answers "did key X land?",
-and inventing a guess would be worse than asking.
+stop rather than guess. When the server read the key's record as committed it says so, with
+`applied: true`, and the client says the payment went through and offers nothing that could send it
+again. When it did not, the client involves the user, because inventing a guess would be worse than
+asking. *(Until 2026-10-01 this said the user was always involved, because "there is no endpoint
+that answers 'did key X land?'". There is still no endpoint to ask; for a commit the server can
+prove, the 409 itself answers.)*
 
 There are **no optimistic updates on money**. Balances come from a refetch after invalidation. In
 a bank a briefly-wrong balance is a correctness failure, not a UX blemish.

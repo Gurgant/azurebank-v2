@@ -191,12 +191,19 @@ that long cannot enforce its deadline. So the request, timed from when it arrive
 than that age less 10 s (room for two processes' clocks while a revision replaces another); an
 older one, or one with no arrival stamp, leaves `applied` out. Anywhere else the key is left out, never set to a guess: a commit that started may
 have landed even if it failed, and a request that failed reading its key, claiming it or writing a
-replay cannot know what an earlier request with the same key did. **A client never drops the key on
+replay cannot know what an earlier request with the same key did. *(2026-10-01: `applied: true`
+exists since this date, on the 409 `IDEMPOTENCY_RESULT_UNKNOWN` only, under the mirror of this
+rule: it is said only from a database read of the key's record made by the request that answers
+(ADR-0009's note of the same date). A 503 still never says `true`.)*
+**A client never drops the key on
 `applied: false`**: the flag changes what the visitor is told, never which key the retry uses. A
 client that keeps its key on every 503 is safe either way; one told "nothing was applied" when
 something was would pay again under a new key. The document declares `applied` on the four money
-503s only, through the `MoneyServiceUnavailable` component, and the 503 on every operation
-(`ServiceUnavailableResponseTransformer`, `PublishedErrorContractTests`).
+503s ~~only~~, through the `MoneyServiceUnavailable` component, and the 503 on every operation
+(`ServiceUnavailableResponseTransformer`, `PublishedErrorContractTests`). *(2026-10-01: and on
+the four money 409s, inline in each 409's schema and with `true` as its only value
+(`IdempotencyOperationTransformer`); a 503's is still `false` only, and no other response
+declares the member.)*
 
 **D8 — The idempotency bookkeeping has budgets of its own.** Storing an answer for replay and
 releasing a claim on the error path get 3 s each, not the request's token: each writes one row, and
@@ -312,6 +319,10 @@ sending it) observes a token. Three ways to put a deadline on that were weighed:
 | A commit started and its outcome is unknown | 503 without `applied` | the replayed 201, `IN_FLIGHT` or `RESULT_UNKNOWN` |
 | The BFF stopped waiting | the BFF's 503, without `applied` | as above |
 | The client or the BFF hung up after a commit that landed and was answered | nothing: the client is gone | the whole 201, replayed |
+
+*(2026-10-01: where the third column says `RESULT_UNKNOWN`, the key's record was read `Executed`
+from the database, so that answer carries `applied: true` (ADR-0009's note of that date). The
+first answers are unchanged.)*
 
 ### Residual risks
 

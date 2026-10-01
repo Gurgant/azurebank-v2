@@ -114,9 +114,14 @@ not happened.
    `CONNECTION_FAILED` instead of the runtime's error. `isServiceOutage(problem)`, a 503 or the
    65 s abort, is exported, and every surface that words an outage asks it **before** its
    `NETWORK` branch, because the abort is `NETWORK` too.
-   - `applied` is passed on to the caller, and read only as `applied === false`, only on the four
+   - `applied` is passed on to the caller, and ~~read only as `applied === false`~~, only on the four
      money sends: it changes the words, never the key (ADR-0058: "A client never drops the key on
      `applied: false`").
+     *(2026-10-01: it is also read as `applied === true`, only on a money send's 409
+     `IDEMPOTENCY_RESULT_UNKNOWN` (ADR-0009's note of this date). There it changes the words, the
+     actions offered and what the page keeps in memory (the PIN and the held authorisation are
+     cleared), never the key, which that code drops either way. The balances and the lists are
+     read again on that code with or without it (ADR-0022 decision 4's note).)*
    - A 503 whose `errorCode` no server wrote (`HTTP_503`) does not slide the SPA's copy of the
      session's inactivity clock. Both servers put `SERVICE_UNAVAILABLE` on every 503 they send, so
      this one came from in front of the BFF, which never saw the request; counting it would move
@@ -422,9 +427,27 @@ sooner than the first row says.
   made a few minutes before, from the server's data, is not built.
 - **Nothing answers "did key X land?" without sending it again:** "Check again" re-sends the same
   key, which executes if nothing was recorded. A read-only status by key is not built.
-- **`RESULT_UNKNOWN` also covers a commit that is proven** (a stale `Executed` claim, ADR-0009),
+- ~~**`RESULT_UNKNOWN` also covers a commit that is proven** (a stale `Executed` claim, ADR-0009),
   and the check view still offers "It didn't go through — start over" for it. Saying that it went
-  through needs the server to say so first: a small change of its own, after this one.
+  through needs the server to say so first: a small change of its own, after this one.~~
+  *(Closed 2026-10-01 for the stale claim. Before, measured that day on `5b50681`, on the compose
+  stack in headless Chromium: five payments were committed while their answer was neither stored
+  nor delivered (a deposit, a withdrawal, a move between the visitor's own accounts and two
+  transfers). The same key, sent once the record was 126.18 to 126.22 s old, got 409
+  `IDEMPOTENCY_RESULT_UNKNOWN` with no `applied` member each time, and the page said "We
+  couldn't confirm your transfer" (or deposit, or withdrawal) over "Check recent transactions"
+  and "It didn't go through — start over" ("— try again" in the two dialogs). On the deposit
+  that second button was pressed, and then "Deposit €8.47" again: a new key, a 201, and a second
+  deposit of €8.47 in the database. Since this date that answer says `applied: true` (ADR-0009),
+  and the flow draws the receipt's title, "Your deposit went through, but we couldn't show its
+  receipt." (or transfer, or withdrawal), "View History", and nothing that sends; the tests and
+  the measurements are under Validation. **Not closed:** for the first two minutes the same
+  commit is answered `IDEMPOTENCY_IN_FLIGHT` (measured on a transfer, at 15.5 and 60.6 s), and
+  the visitor learns that it went through only by checking again after that. In that run the
+  transfer page said "Still processing — check again to see whether it went through."; the page
+  for a move between the visitor's own accounts has the same words, and the two dialogs have
+  "Still processing — tap Deposit again to check." and its Withdraw twin (those three read in
+  the code, not measured in that run). None of the four says how long that is.)*
 - **Opening an account carries no key** (ADR-0058 residual risk 2): an outage can hide an account
   that was opened, which is why its words say to check first and the list is read again; a second
   attempt can still open a second, empty account. An optional key on that request is not built.
@@ -595,6 +618,46 @@ Test files are under `frontend/src/`, browser specs under `frontend/e2e/`.
   and a read's support code is spoken digit by digit. Not heard: the transfer pages' outage bars,
   `applied: false`, a failed PIN check, the start-up page, the PIN dialog and sign-in; JAWS,
   Narrator, VoiceOver on macOS and iOS, and TalkBack.
+- **Added 2026-10-01: the went-through view** (decision 3's note, and the residual closed above).
+  - Tests. The API's answer and its two arms: `IdempotencyServiceTests`,
+    `ConcurrencyRetryIdempotentAttemptTests` and `IdempotencyEndpointTests`, and on SQL Server
+    `RequestDeadlineSqlServerTests`, `TransferTransientRetrySqlServerTests` and
+    `WithdrawalStepUpSqlServerTests`; the document, `PublishedErrorContractTests`; what the flag
+    stands on, `ProvenCommitSourceTests` and the SQL Server tests ADR-0009's note names. The SPA,
+    under `frontend/src`: `api/policies.test.tsx` (the flag read as the boolean `true` only, the
+    latch, `resetIntent`, a 409 that names no code, the cache), `api/outage.test.tsx`,
+    `hooks/useMoneyWizard.blocker.test.tsx`, `components/shared/WentThroughView.test.tsx`,
+    `pages/transfer-went-through.test.tsx`, and `components/dialogs/deposit.test.tsx` and
+    `withdraw.test.tsx`.
+  - In a browser, `frontend/e2e/wentThrough.spec.ts`: Chromium on the build the BFF serves under
+    its CSP, each send answered by the browser with the 409 and `applied: true`, so no money
+    moved; the authorisations of the withdrawal and the transfer were minted for real. A deposit,
+    a withdrawal and a transfer each showed the receipt's title and the sentence with focus on
+    it, "didn't go through" nowhere on the page, "View History" one Tab away and leading to
+    `/history`, and one key sent. The dialogs' buttons were Close and "View History"; the
+    transfer page's, "View History" and "Done".
+  - Measured in that run, on the deposit dialog and on the transfer page, each in the light
+    theme, in the dark theme and at 375 × 812: the sentence took 2 lines in all six, centred, and
+    it and "View History" were whole in the viewport with no sideways scroll; axe, on the rules
+    tagged WCAG 2.0 A and AA, 2.1 AA and 2.2 AA, reported 0 violations in each; the sentence's
+    contrast, computed from its colours, was 13.34:1 on the page and 14.68:1 in the dialog in the
+    light theme and at 375, and 15.45:1 and 12.2:1 in the dark theme. axe's own figure agreed on
+    the page (13.33 and 15.45); in the dialog it could not decide the sentence's background,
+    since it looks through the modal to the page behind.
+  - The focus ring, in the same run: after a key press (Enter on Deposit; a transfer's sixth PIN
+    digit, which is its send) the sentence had the app's ring, 2 px solid at a 2 px offset; after
+    a click on Deposit or Withdraw it had none. On the transfer page the ring was whole in the
+    viewport, at 375 too; in the dialog that was not measured.
+  - Not heard: the sentence itself. Focus is on it when the view appears, in jsdom and in
+    Chromium; no screen reader has been listened to on this view. Nor the check view, which
+    lands no focus (on `5b50681`, measured, focus was on `body` in every one), and to which one
+    more answer is routed since this date, a 409 that names no code; nor the view arriving while
+    another dialog holds focus, or after the visitor moved focus during the wait, when the
+    landing does not run; nor JAWS, Narrator, VoiceOver and TalkBack.
+  - Not run with this change: the sequence the "before" above measured, a commit on the compose
+    stack whose answer is lost and whose key is sent again after two minutes. The browser tests
+    answer the send themselves; the API's side of it is `RequestDeadlineSqlServerTests`'
+    `ACommittedDepositWhoseAnswerWasNeverStored_IsInFlightWhileYoung_ThenAnswersThatItWasApplied`.
 - Not measured in a browser: anything on Azure; any browser but Chromium; a database stopped for
   longer than a minute, and a write against a stuck BFF (the second row of "The numbers" and the
   last row's write); the start-up page of decision 10, since each session check got its 200; the
