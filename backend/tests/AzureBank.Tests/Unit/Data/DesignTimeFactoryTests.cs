@@ -125,12 +125,19 @@ public sealed class DesignTimeFactoryTests : IDisposable
 
         context.Database.SetConnectionString(FromTheCommandLine);
 
+        // Compared as parsed strings: EF hands back the string with its own Application Name added.
         var strategy = context.Database.CreateExecutionStrategy().Should().BeAssignableTo<ExecutionStrategy>().Subject;
+        var opened = new SqlConnectionStringBuilder(context.Database.GetConnectionString());
+        var sqlClientsOwn = new SqlConnectionStringBuilder();
         using var all = new AssertionScope();
         strategy.MaxRetryCount.Should().Be(4, "the budget belongs to the context, not to the string");
-        context.Database.GetConnectionString().Should().Be(
-            FromTheCommandLine,
-            "the limits are written into the string the factory reads, and this one replaced it: "
-            + "a --connection run opens with SqlClient's defaults unless the string sets its own");
+        opened.DataSource.Should().Be("127.0.0.1,1", "the string that was set is the one opened");
+
+        // The limits are written into the string the factory reads, and this one replaced it: a
+        // --connection run opens with SqlClient's defaults unless its string sets its own.
+        opened.ConnectTimeout.Should().Be(sqlClientsOwn.ConnectTimeout).And.Be(15);
+        opened.ConnectRetryCount.Should().Be(sqlClientsOwn.ConnectRetryCount).And.Be(1);
+        opened.MaxPoolSize.Should().Be(sqlClientsOwn.MaxPoolSize).And.Be(100);
+        opened.PoolBlockingPeriod.Should().Be(PoolBlockingPeriod.Auto);
     }
 }
