@@ -243,7 +243,8 @@ export const useMoneyDialogStyles = makeStyles({
     visitor's last action was a key: Enter on Deposit or on Withdraw draws a ring around the
     sentence, a click on either draws none, even with the PIN typed just before. This rule makes
     it the ring the app draws on a container that was given focus (`index.css`); without it the
-    browser draws its own default. `e2e/wentThrough.spec.ts` holds each of the three.
+    browser draws its own default. `e2e/wentThrough.spec.ts` holds each of the four: Enter on
+    Deposit, Enter on Withdraw, a click on Deposit, and a click on Withdraw with the PIN typed.
   */
   outcomeSentence: {
     fontSize: '20px',

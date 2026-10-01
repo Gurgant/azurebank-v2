@@ -163,6 +163,34 @@ async function depositThatWentThrough(page: Page, send: 'click' | 'Enter' = 'cli
   return { dialog, keys };
 }
 
+/**
+ * A withdrawal of €1 from the dashboard, answered that it went through; returns the dialog. The PIN
+ * is typed either way; `send` is how the Withdraw button is then pressed.
+ */
+async function withdrawalThatWentThrough(page: Page, send: 'click' | 'Enter' = 'click') {
+  const keys = await answerThatItWentThrough(page, '/api/transactions/withdraw');
+  const form = await openMoneyDialog(page, 'Withdraw', /withdraw money/i);
+  await form.getByRole('textbox', { name: 'Withdraw amount' }).fill('1');
+  await form.getByRole('button', { name: /^Continue/ }).click();
+  await enterPin(form);
+  const withdraw = form.getByRole('button', { name: 'Withdraw €1.00' });
+  if (send === 'Enter') {
+    // A click waits for the button to be enabled; a key press does not.
+    await expect(withdraw).toBeEnabled();
+    await withdraw.press('Enter');
+  } else {
+    await withdraw.click();
+  }
+
+  await expect.poll(() => keys.length).toBe(1);
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('button', { name: 'Close' })).toBeEnabled();
+  // The check view is what the dialog drew for this answer before it read `applied`.
+  await expect(dialog.getByText("We couldn't confirm your withdrawal")).toBeHidden();
+  await expect(dialog).toHaveAccessibleName('Withdrawal Complete');
+  return { dialog, keys };
+}
+
 /** A transfer of €1 to a seeded payee, answered that it went through. */
 async function transferThatWentThrough(page: Page) {
   const keys = await answerThatItWentThrough(page, '/api/transfers');
@@ -219,21 +247,12 @@ test.describe('a payment the server says went through', () => {
   test('a withdrawal says so in its dialog, with focus on the sentence and the history one Tab away', async ({
     page,
   }) => {
-    const keys = await answerThatItWentThrough(page, '/api/transactions/withdraw');
-    const form = await openMoneyDialog(page, 'Withdraw', /withdraw money/i);
-    await form.getByRole('textbox', { name: 'Withdraw amount' }).fill('1');
-    await form.getByRole('button', { name: /^Continue/ }).click();
-    await enterPin(form);
-    await form.getByRole('button', { name: 'Withdraw €1.00' }).click();
-
-    await expect.poll(() => keys.length).toBe(1);
-    const dialog = page.getByRole('dialog');
-    await expect(dialog.getByRole('button', { name: 'Close' })).toBeEnabled();
-    await expect(dialog.getByText("We couldn't confirm your withdrawal")).toBeHidden();
-    await expect(dialog).toHaveAccessibleName('Withdrawal Complete');
+    const { dialog, keys } = await withdrawalThatWentThrough(page);
 
     expect(await buttonNames(dialog)).toEqual(['Close', 'View History']);
-    // The PIN was typed, but the send was a click on Withdraw: no ring around the sentence.
+    // The PIN was typed, but the send was a click on Withdraw: no ring around the sentence. Focus
+    // first: a sentence that focus never reached has no ring either.
+    await expect(dialog.getByText(SENTENCE.withdrawal)).toBeFocused();
     expect((await dialog.getByText(SENTENCE.withdrawal).evaluate(focusRing)).style).toBe('none');
     await expectReadThenLed(
       page,
@@ -274,6 +293,12 @@ test.describe('a payment the server says went through', () => {
     const afterKey = pressed.dialog.getByText(SENTENCE.deposit);
     await expect(afterKey).toBeFocused();
     expect(await afterKey.evaluate(focusRing)).toEqual(APP_RING);
+
+    // The withdrawal's button is another node in another footer: Enter on Withdraw, the same ring.
+    const withdrawn = await withdrawalThatWentThrough(page, 'Enter');
+    const afterKeyOnWithdraw = withdrawn.dialog.getByText(SENTENCE.withdrawal);
+    await expect(afterKeyOnWithdraw).toBeFocused();
+    expect(await afterKeyOnWithdraw.evaluate(focusRing)).toEqual(APP_RING);
   });
 
   test('a second press where Deposit was, outside the shorter dialog, leaves the sentence on screen', async ({
@@ -466,7 +491,9 @@ async function measure(
   );
 
   // What is drawn around the sentence, checked before the picture is taken so that each picture
-  // is known to show its case: the app's ring, whole on screen, or no ring at all.
+  // is known to show its case: the app's ring, whole on screen, or no ring at all. Focus first,
+  // for both: a sentence that focus never reached has no ring, and would pass for the second.
+  await expect(sentence, `${name}: focus is not on the sentence`).toBeFocused();
   const ring = await sentence.evaluate(focusRing);
   if (ringDrawn) {
     expect(ring, `${name}: the ring around the sentence is not the app's`).toEqual(APP_RING);
