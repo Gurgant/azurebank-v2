@@ -89,6 +89,25 @@ public sealed class SeederProcessTests
         output.Should().Contain("migrate refused").And.Contain("ConnectionStrings__DefaultConnection");
         output.Should().NotContain("Unhandled exception");
     }
+
+    [Fact]
+    public async Task Migrate_StartedFromAnotherFolder_OpensWithThePoolItsOwnSettingsAskFor()
+    {
+        // The content root is the binary's folder, not the folder the process starts in (here the
+        // temporary one). The limits line is printed before anything is opened, so reading it
+        // needs no server: nothing listens on port 1 of loopback, the wait is one attempt, exit 1.
+        // The same claim on a real server is SeederProcessSqlServerTests below, which a job with no
+        // SQL Server skips.
+        var (output, exitCode) = await SeederProcess.Run(
+            ["migrate", "--wait-seconds", "0"],
+            ("ConnectionStrings__DefaultConnection", "Server=127.0.0.1,1;Database=x;User Id=u;Password=not-a-secret;Connect Timeout=1"));
+
+        using var all = new AssertionScope();
+        exitCode.Should().Be(1, SeederProcess.Shown(output));
+        output.Should().Contain("pool 5, pool blocking", "the 5 is in the appsettings.json beside the dll, and nowhere else");
+        output.Should().Contain("did not accept a connection within 0 s");
+        output.Should().NotContain("Unhandled exception");
+    }
 }
 
 /// <summary>
