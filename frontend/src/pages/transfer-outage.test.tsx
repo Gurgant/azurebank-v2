@@ -855,4 +855,35 @@ describe('the recipient check', () => {
     await alertSays(COPY.unavailable);
     expect(screen.queryByText(CONNECTION_FAILED)).not.toBeInTheDocument();
   });
+
+  it('says why it failed into an alert that was under the handle, empty, before Verify', async () => {
+    // An alert added to the page with its words already in it is often not read out; a change to
+    // one that was there is. Verify empties it, so a second failure is a change again.
+    const lookups: number[] = [];
+    server.use(
+      http.get('*/api/users/:azureTag', () => {
+        lookups.push(Date.now());
+        return serviceUnavailable({ via: 'bff', retryAfterSeconds: 1, instance: '/api/users' });
+      }),
+    );
+    renderTransfer();
+    await screen.findByText('Main Account');
+    const section = screen.getByText("To (recipient's @handle)").parentElement as HTMLElement;
+    const slot = alertSlot(section);
+    expect(slot).toBeEmptyDOMElement();
+    await userEvent.type(screen.getByLabelText('Recipient handle'), 'friend');
+    installFakeClock();
+    const user = fakeClockUser();
+
+    for (let press = 1; press <= 2; press += 1) {
+      await user.click(screen.getByRole('button', { name: 'Verify' }));
+      await waitFor(() => expect(lookups).toHaveLength(press * 2 - 1));
+      expect(slot).toBeEmptyDOMElement();
+
+      await advanceUntil(lookups[press * 2 - 2], 1_300);
+      await waitFor(() => expect(lookups).toHaveLength(press * 2));
+      await waitFor(() => expect(slot).toHaveTextContent(COPY.unavailable));
+      expect(alertSlot(section)).toBe(slot);
+    }
+  });
 });

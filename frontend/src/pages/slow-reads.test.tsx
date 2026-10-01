@@ -482,7 +482,11 @@ describe('a read that said it was slow says when it has loaded', () => {
         'absolute',
       );
       expect(screen.queryByRole('button', { name: COPY.stopWaiting })).not.toBeInTheDocument();
-      expect(alertSlot()).toBeEmptyDOMElement();
+      // Nothing failed, so every alert on the page is there and empty: one on most pages, and on
+      // Send Money also the recipient check's, under the handle the loaded form now shows.
+      const alerts = Array.from(document.querySelectorAll('[role="alert"]'));
+      expect(alerts.length).toBeGreaterThan(0);
+      for (const alert of alerts) expect(alert).toBeEmptyDOMElement();
 
       await advance(LOADED_KEPT_MS);
       expect(region).not.toBeInTheDocument();

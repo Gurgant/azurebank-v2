@@ -984,15 +984,15 @@ export function TransferPage() {
                   </div>
                 </div>
               )}
-              {recipientError && (
-                <Text
-                  role="alert"
-                  className={styles.hint}
-                  style={{ marginTop: '8px', display: 'block' }}
-                >
-                  {recipientError}
-                </Text>
-              )}
+              {/* The check's own alert, there and empty before it runs, as on the read pages: its
+                  line comes and goes inside it. Verify empties it, so each failure is a change. */}
+              <AlertSlot>
+                {recipientError && (
+                  <Text className={styles.hint} style={{ marginTop: '8px', display: 'block' }}>
+                    {recipientError}
+                  </Text>
+                )}
+              </AlertSlot>
               <WaitHint
                 active={lookupState.isFetching}
                 kind="read"

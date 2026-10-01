@@ -61,9 +61,10 @@ and `error`, so **a read's error bar hides while its read refetches**: a Retry s
 **The bar goes inside the page's `AlertSlot`**, an empty `role="alert"` that is on the page from the
 start, never into an alert of its own that mounts already filled: a failure is then a change of a
 region that was there, which is what a screen reader reads, and a second failure fills it again. One
-slot per page, so two failures at once are one alert. Stop and Retry arm `useWaitLanding`, which puts
-focus on the control the failed wait comes back with (the bar's Retry) unless the visitor has put it
-somewhere else meanwhile. ADR-0059 has the reasons.
+slot per page, so two failures at once are one alert; a check whose line sits under its own field,
+as the recipient check's does, keeps a slot of its own there. Stop and Retry arm `useWaitLanding`,
+which puts focus on the control the failed wait comes back with (the bar's Retry) unless the visitor
+has put it somewhere else meanwhile. ADR-0059 has the reasons.
 
 ## Money and formatting
 

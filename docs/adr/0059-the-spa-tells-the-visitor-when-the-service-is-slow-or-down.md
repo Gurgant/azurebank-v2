@@ -197,7 +197,9 @@ not happened.
      W3C's technique ARIA19 keeps the container in the page from the start. A slot that is
      always there satisfies all three. The read pages, both transfer pages' accounts bar and the
      page of decision 10 at start-up have one; the bar inside has no role of its own, so no live
-     region is nested in another.
+     region is nested in another. The recipient check has its own under the handle, where its
+     line has always been: it answers the visitor's Verify, and Verify empties it, so a second
+     failure is a change again.
    - The Dashboard has one slot for its three bars, above its grid. An outage fails "this month"
      and "recent activity" together, and WAI-ARIA 1.2 lets a screen reader drop queued speech when
      an assertive change arrives, so two alerts raised in one render may be heard as one. One
