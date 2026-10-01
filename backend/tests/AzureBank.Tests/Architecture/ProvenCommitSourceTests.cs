@@ -19,16 +19,21 @@ namespace AzureBank.Tests.Architecture;
 /// answer <c>applied: true</c> for it.
 /// </para>
 /// <para>
-/// No compiler and no behaviour test sees such a save being added: it compiles, every existing test
-/// stays green, and the first evidence would be a visitor told that a payment went through which
-/// did not. So the save sites of the files on the money path are counted here. A changed count is
-/// not a defect by itself; it is the moment to read the new save against the rule above, and then
-/// to move the number.
+/// No compiler sees such a save being added, and the behaviour tests see it only in part. Measured
+/// on 2026-10-01, with one save added and this class left out of the count. On the deposit's path,
+/// which reloads nothing, no test failed, with SQL Server or without. In the external transfer's
+/// attempt, after the attempt is prepared, eight tests failed on SQL Server and none without it,
+/// which is the run a machine with no SQL Server gets. Before the attempt is prepared, the
+/// transfer answered 409 at its first attempt and tests failed either way. Where nothing fails,
+/// the first evidence would be a visitor told that a payment went through which did not. So the
+/// save sites of the files on the money path are counted here. A changed count is not a defect by
+/// itself; it is the moment to read the new save against the rule above, and then to move the
+/// number.
 /// </para>
 /// <para>
 /// A source scan in the <see cref="LedgerClockHygieneTests"/> shape. The SQL Server tests hold the
-/// behaviour: a refusal after the flip was written leaves no <c>Executed</c> record, and a commit
-/// refused as it starts is run again.
+/// behaviour for the two transfers and the withdrawal: a refusal after the flip was written leaves
+/// no <c>Executed</c> record, and a commit refused as it starts is run again.
 /// </para>
 /// </remarks>
 public class ProvenCommitSourceTests

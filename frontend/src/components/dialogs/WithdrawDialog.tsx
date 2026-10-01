@@ -463,9 +463,11 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
       // hook latched verifyRequired, and wentThrough when the server said the withdrawal was
       // committed; the went-through view or the verify view renders below.
       if (phase === 'send' && isProvenCommit(problem)) {
-        // Committed: nothing in this dialog sends again, so the PIN and the authorisation it
-        // minted are let go with the withdrawal they were for, as the transfer pages let theirs
-        // go. The unproven check view keeps them as it did.
+        // Committed: nothing in this dialog sends again, so the dialog's own copies of the PIN
+        // and of the authorisation it minted are let go with the withdrawal they were for, as
+        // the transfer pages let theirs go. The two mutation hooks keep their last arguments
+        // and answer, the PIN and the authorisation among them, until the dialog unmounts, as
+        // they do after a success. The unproven check view keeps them as it did.
         setPin('');
         lastAuthorization.current = null;
       }

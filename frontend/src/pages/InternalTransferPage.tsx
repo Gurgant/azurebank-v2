@@ -420,8 +420,10 @@ export function InternalTransferPage() {
   function handleRefusal(refusal: ApiProblem | null, phase: MoneyPhase) {
     if (phase === 'send' && isProvenCommit(refusal)) {
       // The server said the transfer was committed: the went-through view takes the page, and the
-      // PIN and the authorisation are let go as the success path lets them go. Only the send: the
-      // same answer to a mint, which carries no key, proves nothing and brings no view.
+      // page's own copies of the PIN and of the authorisation are let go as the success path lets
+      // them go (the mutation hooks keep theirs until the page unmounts: TransferPage has the
+      // note). Only the send: the same answer to a mint, which carries no key, proves nothing and
+      // brings no view.
       setPin('');
       enteredPin.current = '';
       lastAuthorization.current = null;

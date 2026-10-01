@@ -119,8 +119,10 @@ not happened.
      `applied: false`").
      *(2026-10-01: it is also read as `applied === true`, only on a money send's 409
      `IDEMPOTENCY_RESULT_UNKNOWN` (ADR-0009's note of this date). There it changes the words, the
-     actions offered and what the page keeps in memory (the PIN and the held authorisation are
-     cleared), never the key, which that code drops either way. The balances and the lists are
+     actions offered and what the page keeps in memory (the page's own copies of the PIN and of
+     the held authorisation are cleared; RTK Query's mutation hooks keep their last arguments and
+     answer, those two among them, until the page or the dialog unmounts, as they do after a
+     success), never the key, which that code drops either way. The balances and the lists are
      read again on that code with or without it (ADR-0022 decision 4's note).)*
    - A 503 whose `errorCode` no server wrote (`HTTP_503`) does not slide the SPA's copy of the
      session's inactivity clock. Both servers put `SERVICE_UNAVAILABLE` on every 503 they send, so
@@ -288,6 +290,9 @@ not happened.
 
 9. **A money send rejected with no HTTP status asks for a check before any new key, and so does
    an edit while a key is held.**
+   *(2026-10-01: and so does a 409 on a money send whose body names no code, which used to drop
+   the key with no check: [ADR-0022](0022-client-money-mutation-protocol.md) decision 3's note of
+   this date.)*
    - `problemBaseQuery` gives every answer and every transport failure a status, so what is left
      is a 2xx whose body failed its schema, where the server acted, or an abort. Either may have
      landed, which is what `RESULT_UNKNOWN` says, so `useIdempotentMutation` drops the key and

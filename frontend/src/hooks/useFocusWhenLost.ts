@@ -6,7 +6,8 @@ import { useEffect, useRef } from 'react';
  * A money send disables the control that started it, and the browser hands that control's focus to
  * `body`. The view that answers the send then appears with nothing focused, and a screen reader
  * says nothing about it: a region that mounts already filled is not read. Focus on the sentence is
- * what makes it read, once, before the actions under it are reached.
+ * there so that it is read, before the actions under it are reached, and one landing is meant to be
+ * one reading. What a screen reader was heard to say is in ADR-0059's Validation.
  *
  * Put the returned ref on the element, which needs `tabIndex={-1}` to take focus without joining
  * the Tab order. `active` is whether the view is on screen: `true` from the first render for a view

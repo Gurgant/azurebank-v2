@@ -21,12 +21,13 @@ import { useTransferWizardStyles } from '../../pages/transferWizardStyles';
  * and `MoneyDialogShell` follow: a shared component takes a handler and calls it, and the owning
  * flow decides the destination.
  *
- * **The sentence is read because focus lands on it.** The control that sent was disabled during
+ * **Focus lands on the sentence so that it is read.** The control that sent was disabled during
  * the send, so focus is on `body` when this view mounts, and a screen reader would say nothing.
- * The sentence takes that lost focus (`useFocusWhenLost`), so it is heard before the actions, and
+ * The sentence takes that lost focus (`useFocusWhenLost`), to be heard before the actions, and
  * one Tab reaches "View History". It is a paragraph, not a heading; it is in no alert, status or
- * live region, which would read it a second time; and it describes neither button, which would
- * read it again at the first Tab.
+ * live region, which would be a second reading; and it describes neither button, which would be
+ * another at the first Tab. That is the reasoning; what a screen reader was heard to say is in
+ * ADR-0059's Validation.
  */
 export interface WentThroughViewProps {
   /** The flow's success title, the receipt's own. */

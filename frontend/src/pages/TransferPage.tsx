@@ -593,10 +593,11 @@ export function TransferPage() {
     if (phase === 'send' && isProvenCommit(refusal)) {
       /*
         The server said the transfer was committed: the page shows the went-through view, and
-        nothing on it sends again. So the PIN and the authorisation are let go as the success path
-        lets them go, a few lines above: the transfer they were for is done, and neither should
-        outlive it in this page's memory. Read from the wizard's ref, like every arm here, so it is
-        this answer and not the one before it.
+        nothing on it sends again. So the page's own copies of the PIN and of the authorisation
+        are let go as the success path lets them go, a few lines above: the transfer they were for
+        is done. Not every copy: the two mutation hooks keep their last arguments and answer, the
+        PIN and the authorisation among them, until this page unmounts, after a success too. Read
+        from the wizard's ref, like every arm here, so it is this answer and not the one before it.
 
         Only the send. A mint carries no key, so the same answer to it proves nothing and brings
         no view: emptying the boxes there would leave the visitor on the PIN step with nothing

@@ -313,7 +313,9 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
           it: the hook sets `verifyRequired` with `wentThrough`, and "it didn't go through" over a
           committed deposit is how a second one is made. The receipt's title and icon, and one
           sentence in place of the amount and the balance the answer does not carry. A paragraph
-          that takes focus, in no alert or status: it is read once, because focus lands on it. */}
+          that takes focus, in no alert or status: the landing is there so that a screen reader
+          reads it, and one landing is meant to be one reading. What was heard is in ADR-0059's
+          Validation. */}
       {!success && wentThrough && (
         <div className={styles.centeredView}>
           <div className={styles.successIcon}>
