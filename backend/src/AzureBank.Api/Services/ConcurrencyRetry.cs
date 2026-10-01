@@ -316,8 +316,11 @@ internal static class ConcurrencyRetry
     /// </para>
     /// </remarks>
     /// <exception cref="IdempotencyException">
-    /// Result unknown: a prior attempt committed, or the claim row vanished under us, so this
-    /// operation must not be executed again. The middleware surfaces it as 409 RESULT_UNKNOWN.
+    /// Result unknown, 409 RESULT_UNKNOWN on the wire: this operation must not be executed again.
+    /// Two cases, and they are said differently. A record reloaded as committed carries
+    /// <c>applied: true</c>; a claim row that vanished under us carries no <c>applied</c>, because
+    /// nothing is proven there. (Until 2026-10-01 this named them as one answer: "a prior attempt
+    /// committed, or the claim row vanished under us".)
     /// </exception>
     public static async Task PrepareIdempotentAttemptAsync(
         AzureBankDbContext context, Account[] accounts, CancellationToken cancellationToken)

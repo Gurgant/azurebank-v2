@@ -48,9 +48,13 @@ export interface ApiProblem {
    */
   retryAfterSeconds?: number;
   /**
-   * The money sends' 503 only (ADR-0058): `false` when the API knows it changed nothing; absent
-   * whenever it cannot know. Read only as `applied === false`, and only to choose the words — a
-   * retry keeps its idempotency key either way.
+   * The money sends' 503 (ADR-0058): `false` when the API knows it changed nothing; absent
+   * whenever it cannot know. And the money sends' 409 `IDEMPOTENCY_RESULT_UNKNOWN` (ADR-0009):
+   * `true` when the API read the key's record as committed; absent otherwise. Read as
+   * `applied === false` on the 503, only to choose the words, and as `applied === true` on that
+   * 409 (`isProvenCommit`), to say the payment went through. Neither decides the idempotency key:
+   * a 503 keeps it and that 409 drops it, whatever this member says. (Until 2026-10-01 this said
+   * "the money sends' 503 only" and "read only as `applied === false`".)
    */
   applied?: boolean;
   /** Step-up 403s (D2): the level the endpoint demands, read from the header. */

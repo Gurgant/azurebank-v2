@@ -571,7 +571,10 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   // stopped being true in this PR. While a key is RETAINED, `onBodyEdit` latches verify-first
   // (`requireVerify`) rather than rotating — which also drops the key, so dismissal does come
   // back, but by way of a view that says the request may or may not have gone through. The only
-  // explicit release left is the verify branch's "It didn't go through — try again".
+  // explicit release left is the verify branch's "It didn't go through — try again". (Since
+  // 2026-10-01 that branch is not drawn when the answer said `applied: true`: the went-through
+  // view takes its place, with the key dropped and dismissal back all the same, and it offers no
+  // release at all — `resetIntent` does nothing there.)
   /*
     Every exit, held for BOTH phases of the submit.
 
