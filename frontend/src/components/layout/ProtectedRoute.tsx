@@ -17,6 +17,7 @@ import { useAppDispatch, useAppSelector } from '../../app/hooks';
 import { apiSlice } from '../../features/api/apiSlice';
 import { selectAuthStatus } from '../../features/auth/authSlice';
 import { useWaitLanding } from '../../hooks/useWaitLanding';
+import { SESSION_CHECK_SLOW_AFTER_MS } from '../../hooks/useWaitPhase';
 import { colors, surfaces } from '../../theme/tokens';
 import { AlertSlot, WaitHint } from '../feedback';
 import { TitleOverride } from './pageTitle';
@@ -100,7 +101,8 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
 
   if (unavailable || checking) {
     // While the probe is in flight: hold, don't flash the login page at authenticated users. The
-    // hint offers no Stop: without the probe's answer there is nothing to show instead.
+    // hint offers no Stop: without the probe's answer there is nothing to show instead. Its first
+    // word comes a second late, after the moment the BFF answers this check from its cache.
     return (
       <main className={unavailable ? styles.unavailable : styles.checking}>
         {unavailable && (
@@ -109,7 +111,7 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
           </Text>
         )}
         {checking && <Spinner size="large" aria-label="Checking your session" />}
-        <WaitHint active={checking} kind="read" />
+        <WaitHint active={checking} kind="read" slowAfterMs={SESSION_CHECK_SLOW_AFTER_MS} />
         {/* Keyed by the check that failed, so that a "Try again" which fails again before its
             wait is ever drawn still puts a new bar into the alert, and it is announced again. */}
         <AlertSlot className={styles.bar}>

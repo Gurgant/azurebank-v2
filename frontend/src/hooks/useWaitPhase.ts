@@ -13,6 +13,16 @@ import { useEffect, useState } from 'react';
 /** The wait's first word, "Taking longer than usual…", appears this long after it starts. */
 export const SLOW_AFTER_MS = 5_000;
 
+/**
+ * The session check at start-up says its first word this long after it starts: a second after
+ * every other wait. When the API is slow or down, the BFF answers that check from its cache once
+ * its read-through ceiling is up, 5 s (`BffAuthController.ReadThroughTimeout`), so a word due at
+ * 5 s raced that answer: measured in Chromium on 2026-10-01, it flashed for 20 to 33 ms on each of
+ * five reloads during an outage, then the page came. `timeoutChain.test.ts` reads the ceiling from
+ * the file that sets it.
+ */
+export const SESSION_CHECK_SLOW_AFTER_MS = 6_000;
+
 /** From here the wait says "Still trying…", and a read may offer "Stop waiting". */
 export const STILL_TRYING_AFTER_MS = 20_000;
 
@@ -32,7 +42,8 @@ export type WaitPhase = 'none' | 'slow' | 'stillTrying' | 'ended';
 /**
  * Where a wait that started when `active` turned true has got to, and, once it is over, whether
  * it had said something: `'ended'` from the render it ends in, for `LOADED_KEPT_MS`, then
- * `'none'`. A wait that ends before 5 s goes straight to `'none'`.
+ * `'none'`. A wait that ends before its first word (`slowAfterMs`, 5 s unless the host says
+ * otherwise) goes straight to `'none'`.
  *
  * `useDelayedFlag`'s pattern with two thresholds: the timers are the only thing that sets the
  * phase, and the cleanup puts it back to `'none'` when `active` flips or the host unmounts. A new
@@ -44,7 +55,7 @@ export type WaitPhase = 'none' | 'slow' | 'stillTrying' | 'ended';
  * host never draws a frame without its region, which would make the next one a new region, and a
  * new region filled at once is not a change a screen reader reads.
  */
-export function useWaitPhase(active: boolean): WaitPhase {
+export function useWaitPhase(active: boolean, slowAfterMs: number = SLOW_AFTER_MS): WaitPhase {
   const [phase, setPhase] = useState<'none' | 'slow' | 'stillTrying'>('none');
   const [ended, setEnded] = useState(false);
   const [wasActive, setWasActive] = useState(active);
@@ -55,14 +66,14 @@ export function useWaitPhase(active: boolean): WaitPhase {
 
   useEffect(() => {
     if (!active) return;
-    const slow = setTimeout(() => setPhase('slow'), SLOW_AFTER_MS);
+    const slow = setTimeout(() => setPhase('slow'), slowAfterMs);
     const stillTrying = setTimeout(() => setPhase('stillTrying'), STILL_TRYING_AFTER_MS);
     return () => {
       clearTimeout(slow);
       clearTimeout(stillTrying);
       setPhase('none');
     };
-  }, [active]);
+  }, [active, slowAfterMs]);
 
   useEffect(() => {
     if (!ended) return;

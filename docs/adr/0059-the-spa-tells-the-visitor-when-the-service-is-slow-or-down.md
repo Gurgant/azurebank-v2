@@ -128,6 +128,12 @@ not happened.
    flicker on most loads, and a sentence that appears and vanishes teaches people to ignore it.
    Neither number comes from measured response times yet; both live in one file, so a measurement
    moves them for every wait at once. Every wait starts from zero.
+   - The session check at start-up says its first word at 6 s (`SESSION_CHECK_SLOW_AFTER_MS`).
+     When the API is slow or down, the BFF answers that check from its cache once its own 5 s
+     read-through ceiling is up, so a word due at 5 s raced that answer: measured in Chromium on
+     2026-10-01, it flashed for 20 to 33 ms on each of five reloads during an outage, then the page
+     came. `timeoutChain.test.ts` reads the ceiling from the BFF's code and holds the word a second
+     past it.
    - On a money send (a transfer, a move between the visitor's own accounts, a deposit, a
      withdrawal) the 20 s words are "Still trying… Keep this page open." While it is pending the
      one unsafe thing left to the visitor is a reload: the key lives only in the page (ADR-0022
@@ -340,6 +346,7 @@ not happened.
 | The spread added to a retry's wait | 0 to 20 % | Readers that heard the same wait do not all come back in the same second; never less than asked |
 | The least a retry may be left | 5 s | Less could only time out |
 | `SLOW_AFTER_MS`, `STILL_TRYING_AFTER_MS` (`useWaitPhase.ts`) | 5 s, 20 s | Not measured; one place to move them |
+| `SESSION_CHECK_SLOW_AFTER_MS` (`useWaitPhase.ts`) | 6 s | The BFF's 5 s ceiling on the session check, and 1 s so that its answer from the cache is not raced (decision 4) |
 | `LOADED_KEPT_MS` (`useWaitPhase.ts`) | 2 s | How long "Loaded." stays in the region before it goes; not measured |
 
 What a visitor would meet, reasoned from ADR-0058's numbers and not yet measured against this

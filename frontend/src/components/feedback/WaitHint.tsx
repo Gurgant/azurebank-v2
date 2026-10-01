@@ -61,6 +61,11 @@ interface WaitHintProps {
    */
   failed?: boolean;
   /**
+   * When the first word comes, if not at `SLOW_AFTER_MS`. Only the session check at start-up moves
+   * it (`SESSION_CHECK_SLOW_AFTER_MS`), past the moment the BFF answers that check from its cache.
+   */
+  slowAfterMs?: number;
+  /**
    * The host's spacing, such as a margin from the control above. It takes effect once the hint has
    * words: while it is silent the hint is out of the page's flow, and so is any margin given here.
    */
@@ -94,9 +99,16 @@ interface WaitHintProps {
  * reaches for in the middle of a wait, so it gets the larger target. The row wraps on a narrow
  * screen instead of pushing the page sideways.
  */
-export function WaitHint({ active, kind, onStopWaiting, failed, className }: WaitHintProps) {
+export function WaitHint({
+  active,
+  kind,
+  onStopWaiting,
+  failed,
+  slowAfterMs,
+  className,
+}: WaitHintProps) {
   const styles = useStyles();
-  const phase = useWaitPhase(active);
+  const phase = useWaitPhase(active, slowAfterMs);
   const loaded = phase === 'ended' && kind === 'read' && failed === false;
 
   if (!active && !loaded) return null;

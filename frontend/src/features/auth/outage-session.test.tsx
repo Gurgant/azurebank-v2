@@ -509,8 +509,11 @@ describe('the boot probe during an outage', () => {
     renderApp(makeTestStore());
     await waitFor(() => expect(sentAt).toBeGreaterThan(0));
 
-    await advanceUntil(sentAt, 5_000);
+    // Its first word comes a second after every other wait's (`SESSION_CHECK_SLOW_AFTER_MS`).
+    await advanceUntil(sentAt, 5_500);
     expect(screen.getByLabelText('Checking your session')).toBeInTheDocument();
+    expect(screen.queryByText(COPY.slow)).toBeNull();
+    await advanceUntil(sentAt, 6_000);
     hintRegion(COPY.slow);
     await advanceUntil(sentAt, 20_000);
     hintRegion(COPY.stillTrying);

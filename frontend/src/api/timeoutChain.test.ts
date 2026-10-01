@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { SESSION_CHECK_SLOW_AFTER_MS } from '../hooks/useWaitPhase';
 import { READ_BUDGET_MS, REQUEST_TIMEOUT_MS } from './problemBaseQuery';
 
 /**
@@ -55,5 +56,27 @@ describe("the SPA's abort and budget against the BFF's worst answer", () => {
 
   it("gives a read the time for two of the BFF's worst answers", () => {
     expect(READ_BUDGET_MS).toBeGreaterThanOrEqual(2 * bffWorstAnswerMs);
+  });
+});
+
+/*
+  The session check at start-up, against the BFF's own ceiling on it. When the API is slow or down
+  the BFF answers that check from its cache once its read-through ceiling is up, so a first word
+  due at the same instant races the answer and flashes on every reload during an outage. The
+  word comes at least a second after the ceiling.
+*/
+const BFF_AUTH_CONTROLLER = '../backend/src/AzureBank.Bff/Controllers/BffAuthController.cs';
+const readThrough = /ReadThroughTimeout\s*=\s*TimeSpan\.FromSeconds\((\d+)\)/.exec(
+  readFileSync(BFF_AUTH_CONTROLLER, 'utf8'),
+);
+const readThroughMs = readThrough ? Number(readThrough[1]) * 1000 : undefined;
+
+describe("the session check's first word against the BFF's read-through ceiling", () => {
+  it('reads the ceiling from the file that sets it', () => {
+    expect(readThroughMs).toBeGreaterThan(0);
+  });
+
+  it('comes at least a second after the ceiling', () => {
+    expect(SESSION_CHECK_SLOW_AFTER_MS).toBeGreaterThanOrEqual(Number(readThroughMs) + 1_000);
   });
 });
