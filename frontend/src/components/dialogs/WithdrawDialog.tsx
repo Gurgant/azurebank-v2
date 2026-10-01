@@ -19,9 +19,10 @@ import { Controller, useForm, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { colors } from '../../theme/tokens';
 import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
-import { isUnconfirmedSend, type MoneyPhase } from '../../api/moneyProblem';
+import { isProvenCommit, isUnconfirmedSend, type MoneyPhase } from '../../api/moneyProblem';
 import { useAuthoriseWithdrawalMutation, useWithdrawMutation } from '../../features/api/apiSlice';
 import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
+import { useFocusWhenLost } from '../../hooks/useFocusWhenLost';
 import { selectCurrentUser } from '../../features/auth/authSlice';
 import { formatCurrency } from '../../utils/format';
 import { RetryCountdown, WaitHint, retryDeadline } from '../feedback';
@@ -45,6 +46,7 @@ import {
   SERVICE_UNAVAILABLE_NOTHING_CHANGED,
   SERVICE_UNAVAILABLE_NO_MONEY_MOVED,
   WITHDRAWAL_OUTCOME_UNKNOWN,
+  WITHDRAWAL_WENT_THROUGH,
 } from '../../api/problemMessages';
 
 // ============================================
@@ -148,8 +150,11 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
 
   const [authoriseWithdrawal, { isLoading: isMinting }] = useAuthoriseWithdrawalMutation();
   const [withdrawTrigger] = useWithdrawMutation();
-  const { submit, resetIntent, verifyRequired, keyRetained, requireVerify } =
+  const { submit, resetIntent, verifyRequired, wentThrough, keyRetained, requireVerify } =
     useIdempotentMutation(withdrawTrigger);
+  // The went-through sentence takes the focus the send lost: the Withdraw button was disabled for
+  // the send, and a view drawn while focus is on `body` is not read. DepositDialog has the note.
+  const wentThroughSentence = useFocusWhenLost<HTMLParagraphElement>(wentThrough);
 
   /*
     The authorisation minted for the intent currently in flight.
@@ -455,7 +460,15 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
       problem.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN' ||
       (phase === 'send' && isUnconfirmedSend(problem))
     ) {
-      // hook latched verifyRequired; the verify view renders below.
+      // hook latched verifyRequired, and wentThrough when the server said the withdrawal was
+      // committed; the went-through view or the verify view renders below.
+      if (phase === 'send' && isProvenCommit(problem)) {
+        // Committed: nothing in this dialog sends again, so the PIN and the authorisation it
+        // minted are let go with the withdrawal they were for, as the transfer pages let theirs
+        // go. The unproven check view keeps them as it did.
+        setPin('');
+        lastAuthorization.current = null;
+      }
     } else if (problem.errorCode === 'IDEMPOTENCY_IN_FLIGHT') {
       setInFlight(true);
     } else if (
@@ -580,7 +593,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   return (
     <MoneyDialogShell
       open={isOpen}
-      title={success ? 'Withdrawal Complete' : 'Withdraw Money'}
+      title={success || wentThrough ? 'Withdrawal Complete' : 'Withdraw Money'}
       icon={<ArrowUpload24Regular />}
       tone="debit"
       onClose={requestClose}
@@ -614,8 +627,24 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
         </div>
       )}
 
+      {/* The server said the withdrawal was committed and could not return its receipt (409
+          RESULT_UNKNOWN with `applied: true`, ADR-0009). Before the check view, and instead of
+          it: the hook sets `verifyRequired` with `wentThrough`. The PIN step and the form are
+          already gone, since both are shown only while nothing is latched. DepositDialog has the
+          note on the sentence. */}
+      {!success && wentThrough && (
+        <div className={styles.centeredView}>
+          <div className={styles.successIcon}>
+            <CheckmarkCircle24Filled style={{ width: '48px', height: '48px' }} />
+          </div>
+          <Text as="p" className={styles.outcomeSentence} ref={wentThroughSentence} tabIndex={-1}>
+            {WITHDRAWAL_WENT_THROUGH}
+          </Text>
+        </div>
+      )}
+
       {/* RESULT_UNKNOWN — verify-first (§2.3) */}
-      {!success && verifyRequired && (
+      {!success && verifyRequired && !wentThrough && (
         <div className={styles.centeredView}>
           <div className={styles.warningIcon}>
             <Warning24Regular style={{ width: '40px', height: '40px' }} />
@@ -846,6 +875,20 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
               Done
             </Button>
           </>
+        ) : wentThrough ? (
+          // The one action, and the shell's X beside it: no Withdraw, no Back, no "try again".
+          // Keyed as DepositDialog's is. Every other arm here is a fragment, so React would not
+          // keep the node of the button that sent even without it; the key says so on the button
+          // itself, for the day an arm becomes a bare button as DepositDialog's form arm is.
+          <Button
+            key="view-history"
+            appearance="primary"
+            size="large"
+            style={{ width: '100%', height: '48px' }}
+            onClick={() => void navigate('/history')}
+          >
+            View History
+          </Button>
         ) : verifyRequired ? (
           <>
             <Button

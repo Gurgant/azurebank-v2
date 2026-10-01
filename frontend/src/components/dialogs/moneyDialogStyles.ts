@@ -232,6 +232,31 @@ export const useMoneyDialogStyles = makeStyles({
   stateTitle: { fontSize: '20px', fontWeight: 700, color: colors.neutral[800] },
   successAmount: { fontSize: '32px', fontWeight: 700, color: colors.neutral[800] },
   stateBody: { fontSize: '15px', color: colors.neutral[500], lineHeight: '1.5' },
+  /*
+    The one sentence of a view that says how a send ended. `stateTitle`'s size, weight and colour,
+    and what a title that fits on one line never needed: the sentence is longer than its room at
+    every width, and Fluent's `Text` sets `text-align: start` and a 20 px line height, so its
+    wrapped lines would sit left-aligned and tight under a centred icon. No margin: it is rendered
+    as a `<p>`, and the view's gap spaces it. The same values as `transferWizardStyles`.
+
+    It takes focus when the view appears, and the browser matches `:focus-visible` on it when the
+    visitor's last action was a key: Enter on Deposit or on Withdraw draws a ring around the
+    sentence, a click on either draws none, even with the PIN typed just before. This rule makes
+    it the ring the app draws on a container that was given focus (`index.css`); without it the
+    browser draws its own default. `e2e/wentThrough.spec.ts` holds each of the three.
+  */
+  outcomeSentence: {
+    fontSize: '20px',
+    fontWeight: 700,
+    color: colors.neutral[800],
+    textAlign: 'center',
+    lineHeight: '1.3',
+    margin: 0,
+    ':focus-visible': {
+      outline: `2px solid ${tokens.colorStrokeFocus2}`,
+      outlineOffset: '2px',
+    },
+  },
   detailsCard: {
     width: '100%',
     backgroundColor: colors.neutral[50],

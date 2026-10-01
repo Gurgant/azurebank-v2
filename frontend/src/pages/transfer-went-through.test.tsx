@@ -5,7 +5,7 @@ import { HttpResponse, http } from 'msw';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { server } from '../mocks/server';
 import { renderWithProviders } from '../test/renderWithProviders';
-import { enterPin } from '../test/pinFlow';
+import { TEST_PIN, enterPin } from '../test/pinFlow';
 import { COPY, committedAnswerLost, emulateFocusFixup } from '../test/outage';
 import { StepUpModal } from '../features/auth';
 import { TransferPage } from './TransferPage';
@@ -149,12 +149,14 @@ describe.each([
     render: renderTransfer,
     toPin: externalToPin,
     sendPath: '/api/transfers',
+    mintPath: '/api/transfers/authorizations',
   },
   {
     page: 'internal',
     render: renderInternal,
     toPin: internalToPin,
     sendPath: '/api/transfers/internal',
+    mintPath: '/api/transfers/internal/authorizations',
   },
 ])('$page transfer: the server says it went through', (flow) => {
   it('the send answered 409 applied: true shows "Transfer Complete" and the sentence, and View History goes to the history', async () => {
@@ -191,5 +193,39 @@ describe.each([
     await userEvent.click(screen.getByRole('button', { name: 'Done' }));
     expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
     expect(sent).toHaveLength(2);
+  });
+
+  it('the same answer to the authorisation proves nothing: the PIN is left as typed, and nothing is sent', async () => {
+    /*
+      An authorisation carries no key and moves no money, so `applied: true` on its answer says
+      nothing about a payment, and no path of the API sends it there. The page lets the PIN go
+      when the SEND is so answered, because the went-through view then takes the page. Here no
+      view comes: the page must do with the answer what it does with the same code unflagged,
+      and not empty the boxes under a visitor who is told nothing.
+    */
+    let mints = 0;
+    server.use(
+      http.post(`*${flow.mintPath}`, () => {
+        mints += 1;
+        return committedAnswerLost(flow.mintPath);
+      }),
+    );
+    const sent = recordSends(flow.sendPath, []);
+    flow.render();
+    await flow.toPin();
+    await enterPin();
+
+    // Answered once the boxes, disabled while the authorisation was asked for, can be typed in.
+    await waitFor(() => expect(mints).toBe(1));
+    await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toBeEnabled());
+
+    expect(screen.queryByText(COPY.transferWentThrough)).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1 })).not.toHaveTextContent('Transfer Complete');
+    const typed = Array.from(
+      { length: TEST_PIN.length },
+      (_, index) => screen.getByLabelText<HTMLInputElement>(`Digit ${index + 1} of 6`).value,
+    );
+    expect(typed.join('')).toBe(TEST_PIN);
+    expect(sent).toHaveLength(0);
   });
 });

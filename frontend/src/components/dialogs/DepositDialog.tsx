@@ -12,6 +12,7 @@ import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
 import { isUnconfirmedSend } from '../../api/moneyProblem';
 import { useDepositMutation } from '../../features/api/apiSlice';
 import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
+import { useFocusWhenLost } from '../../hooks/useFocusWhenLost';
 import { formatCurrency } from '../../utils/format';
 import { WaitHint } from '../feedback';
 import { MoneyDialogShell } from './MoneyDialogShell';
@@ -27,6 +28,7 @@ import { DescriptionField } from '../form/DescriptionField';
 import {
   CONNECTION_FAILED,
   DEPOSIT_OUTCOME_UNKNOWN,
+  DEPOSIT_WENT_THROUGH,
   SERVICE_UNAVAILABLE_NOTHING_CHANGED,
 } from '../../api/problemMessages';
 
@@ -88,8 +90,15 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
   const navigate = useNavigate();
 
   const [depositTrigger] = useDepositMutation();
-  const { submit, resetIntent, verifyRequired, keyRetained, requireVerify } =
+  const { submit, resetIntent, verifyRequired, wentThrough, keyRetained, requireVerify } =
     useIdempotentMutation(depositTrigger);
+  /*
+    The went-through sentence takes the focus the send lost. The Deposit button was disabled for
+    the send and the browser handed its focus to `body`; a view drawn then is not read by a screen
+    reader, and the dialog has no description of its own (`MoneyDialogShell` clears it). The dialog
+    was mounted long before, so the landing is on the flag, not on the mount.
+  */
+  const wentThroughSentence = useFocusWhenLost<HTMLParagraphElement>(wentThrough);
 
   const schema = useMemo(() => depositFormSchema(), []);
   const { control, handleSubmit, setValue, getValues, watch, formState } = useForm<
@@ -206,7 +215,8 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
       // named no code: the deposit may have landed, and "Deposit failed" under the verify view
       // would say it had not. The hook's own test, so the two cannot disagree.
       if (isUnconfirmedSend(problem)) {
-        // hook set verifyRequired; the verify view renders below.
+        // hook set verifyRequired, and wentThrough when the server said it was committed; the
+        // went-through view or the verify view renders below.
       } else if (problem.errorCode === 'IDEMPOTENCY_IN_FLIGHT') {
         setInFlight(true);
       } else if (problem.errorCode === 'VALIDATION_ERROR') {
@@ -259,7 +269,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
   return (
     <MoneyDialogShell
       open={isOpen}
-      title={success ? 'Deposit Complete' : 'Deposit Money'}
+      title={success || wentThrough ? 'Deposit Complete' : 'Deposit Money'}
       icon={<ArrowDownload24Regular />}
       tone="credit"
       onClose={requestClose}
@@ -293,8 +303,25 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
         </div>
       )}
 
+      {/* The server said the deposit was committed and could not return its receipt (409
+          RESULT_UNKNOWN with `applied: true`, ADR-0009). Before the check view, and instead of
+          it: the hook sets `verifyRequired` with `wentThrough`, and "it didn't go through" over a
+          committed deposit is how a second one is made. The receipt's title and icon, and one
+          sentence in place of the amount and the balance the answer does not carry. A paragraph
+          that takes focus, in no alert or status: it is read once, because focus lands on it. */}
+      {!success && wentThrough && (
+        <div className={styles.centeredView}>
+          <div className={styles.successIcon}>
+            <CheckmarkCircle24Filled style={{ width: '48px', height: '48px' }} />
+          </div>
+          <Text as="p" className={styles.outcomeSentence} ref={wentThroughSentence} tabIndex={-1}>
+            {DEPOSIT_WENT_THROUGH}
+          </Text>
+        </div>
+      )}
+
       {/* RESULT_UNKNOWN — verify-first (§2.3) */}
-      {!success && verifyRequired && (
+      {!success && verifyRequired && !wentThrough && (
         <div className={styles.centeredView}>
           <div className={styles.warningIcon}>
             <Warning24Regular style={{ width: '40px', height: '40px' }} />
@@ -440,6 +467,23 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
               Done
             </Button>
           </>
+        ) : wentThrough ? (
+          /*
+            The one action, and the shell's X beside it: nothing here can send again. It carries a
+            `key` because the form's arm below is a bare button in this same slot: without one
+            React would keep that node and only change its words, under a focus that never left
+            it, so a second press meant for "Deposit" would land on "View History" and the
+            sentence would never be reached.
+          */
+          <Button
+            key="view-history"
+            appearance="primary"
+            size="large"
+            style={{ width: '100%', height: '48px' }}
+            onClick={() => void navigate('/history')}
+          >
+            View History
+          </Button>
         ) : verifyRequired ? (
           <>
             <Button

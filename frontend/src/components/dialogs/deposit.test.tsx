@@ -438,6 +438,9 @@ describe('deposit — the server says it went through', () => {
     expect(spoken.map((region) => region.textContent)).toEqual([]);
     expect(sentence.closest('[role="alert"], [role="status"], [aria-live]')).toBeNull();
     await waitFor(() => expect(sentence).toHaveFocus());
+    // It takes focus without joining the Tab order: a paragraph is not a stop between the
+    // dialog's X and its one action.
+    expect(sentence).toHaveAttribute('tabindex', '-1');
 
     /*
       A NEW node, not the Deposit button with other words. Both are the footer's only button, so

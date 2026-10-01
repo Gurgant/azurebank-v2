@@ -844,6 +844,9 @@ describe('withdraw — the server says it went through', () => {
     expect(spoken.map((region) => region.textContent)).toEqual([]);
     expect(sentence.closest('[role="alert"], [role="status"], [aria-live]')).toBeNull();
     await waitFor(() => expect(sentence).toHaveFocus());
+    // It takes focus without joining the Tab order: a paragraph is not a stop between the
+    // dialog's X and its one action.
+    expect(sentence).toHaveAttribute('tabindex', '-1');
 
     const viewHistory = within(dialog).getByRole('button', { name: 'View History' });
     expect(viewHistory).not.toBe(withdrawButton);
@@ -882,6 +885,44 @@ describe('withdraw — the server says it went through', () => {
     // Not proven either: this is the check view, not the went-through one.
     expect(screen.queryByText(COPY.withdrawalWentThrough)).not.toBeInTheDocument();
     expect(keys).toHaveLength(1);
+  });
+
+  it('the same answer to the authorisation proves nothing: the PIN is left as typed, and no withdrawal is sent', async () => {
+    /*
+      An authorisation carries no key and moves no money, so `applied: true` on its answer says
+      nothing about a withdrawal, and no path of the API sends it there. The dialog lets the PIN
+      go when the SEND is so answered, because the went-through view then replaces the PIN step.
+      Here no view comes, and the boxes must not be emptied under a visitor who is told nothing.
+    */
+    const MINT = '/api/transactions/withdraw/authorizations';
+    const sent = { mints: 0, withdrawals: 0 };
+    server.use(
+      http.post(`*${MINT}`, () => {
+        sent.mints += 1;
+        return committedAnswerLost(MINT);
+      }),
+      http.post('*/api/transactions/withdraw', () => {
+        sent.withdrawals += 1;
+        return withdrawSuccessBody(900);
+      }),
+    );
+    renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+
+    // Answered once the boxes, disabled while the authorisation was asked for, can be typed in.
+    await waitFor(() => expect(sent.mints).toBe(1));
+    await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toBeEnabled());
+
+    expect(screen.queryByText(COPY.withdrawalWentThrough)).not.toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Withdraw Money' })).toBeInTheDocument();
+    const typed = Array.from(
+      { length: 6 },
+      (_, index) => screen.getByLabelText<HTMLInputElement>(`Digit ${index + 1} of 6`).value,
+    );
+    expect(typed.join('')).toBe('123456');
+    expect(sent.withdrawals).toBe(0);
   });
 });
 

@@ -11,11 +11,12 @@ import { CheckmarkCircle24Filled, ArrowSwap24Regular } from '@fluentui/react-ico
 import { useForm, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import type { ApiProblem } from '../api/problemBaseQuery';
-import type { MoneyPhase } from '../api/moneyProblem';
-import { NO_DOUBLE_MOVE, TRY_AGAIN } from '../api/problemMessages';
+import { isProvenCommit, type MoneyPhase } from '../api/moneyProblem';
+import { NO_DOUBLE_MOVE, TRANSFER_WENT_THROUGH, TRY_AGAIN } from '../api/problemMessages';
 import { useTransferWizardStyles } from './transferWizardStyles';
 import { ConfirmDialog } from '../components/shared/ConfirmDialog';
 import { ResultUnknownView } from '../components/shared/ResultUnknownView';
+import { WentThroughView } from '../components/shared/WentThroughView';
 import { PageHeader } from '../components/layout/PageHeader';
 import {
   useGetAccountsQuery,
@@ -125,6 +126,7 @@ export function InternalTransferPage() {
     nothingChanged,
     error,
     verifyRequired,
+    wentThrough,
     keyLive,
     onBodyEdit,
     requestLeave,
@@ -416,7 +418,15 @@ export function InternalTransferPage() {
    * where the reasoning for each branch is written out in full.
    */
   function handleRefusal(refusal: ApiProblem | null, phase: MoneyPhase) {
-    if (refusal?.errorCode === 'INVALID_PIN') {
+    if (phase === 'send' && isProvenCommit(refusal)) {
+      // The server said the transfer was committed: the went-through view takes the page, and the
+      // PIN and the authorisation are let go as the success path lets them go. Only the send: the
+      // same answer to a mint, which carries no key, proves nothing and brings no view.
+      setPin('');
+      enteredPin.current = '';
+      lastAuthorization.current = null;
+      setAuthorizationHeld(false);
+    } else if (refusal?.errorCode === 'INVALID_PIN') {
       setPin('');
       enteredPin.current = '';
       setPinError(true);
@@ -533,6 +543,20 @@ export function InternalTransferPage() {
           </div>
         </div>
       </div>
+    );
+  }
+
+  // The server said it went through and could not return the receipt. Before the check view:
+  // `wentThrough` is set together with `verifyRequired`, so tested second it would never be
+  // reached. The receipt's title and its two ways on, as on TransferPage.
+  if (wentThrough) {
+    return (
+      <WentThroughView
+        title="Transfer Complete"
+        sentence={TRANSFER_WENT_THROUGH}
+        onViewHistory={() => requestLeave('/history')}
+        onDone={() => requestLeave('/dashboard')}
+      />
     );
   }
 
