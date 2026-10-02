@@ -500,17 +500,64 @@ Nothing local can show that a managed identity signs in: a workstation has none,
 engine refuses `TYPE = E`. The trial saw it on Azure with identities and users of its own
 ([Measured on Azure](#measured-on-azure)). This step sees it for the two users step 6 made, before
 any image exists, with a throwaway manual job, `azurebank-probe`: 0.5 vCPU, the image
-`mcr.microsoft.com/dotnet/sdk:10.0`, and a program of about thirty lines on
-Microsoft.Data.SqlClient 6.1.1, the driver the app ships. The program is a throwaway of that
-session and is not kept in this folder: one C# file that names its package itself, which
-`dotnet run` builds and starts. What it has to do:
+`mcr.microsoft.com/dotnet/sdk:10.0`, and the program below, on Microsoft.Data.SqlClient 6.1.1, the
+driver the app ships. It is one C# file that names its package itself, which `dotnet run` builds
+and starts; it is written outside the repository and removed with the job. What it does:
 
-- open the string in the variable `PROBE_CONNECTION`: the one the template gives the app, with
+- it opens the string in the variable `PROBE_CONNECTION`: the one the template gives the app, with
   `Connect Timeout=30` added so that a slow first token is measured and not cut;
-- print the milliseconds the open took, `USER_NAME()`, and `IS_ROLEMEMBER` for the three roles;
-- on a failure, print the exception's number, class and inner type name;
-- exit 0 for the roles expected (reader and writer; `db_ddladmin` too when `PROBE_EXPECTS_DDL` is
-  `1`, and not otherwise), 3 for no token, 4 for a refused login, 5 for other roles.
+- it prints the milliseconds the open took, `USER_NAME()`, and `IS_ROLEMEMBER` for the three roles;
+- on a failure it prints the error's number and class and the chain of exception types;
+- it exits 0 for the roles expected (reader and writer; `db_ddladmin` too when `PROBE_EXPECTS_DDL`
+  is `1`, and not otherwise), 3 for no token, 4 for a refused login, 5 for other roles and 2 for
+  any other failure. "No token" is the chain the trial saw, a `SqlException` around Azure.Identity's
+  `AuthenticationFailedException`, and not the class alone: a server that does not answer gives
+  class 20 too.
+
+```powershell
+# The probe's program, written outside the repository. Set-Probe reads it from there.
+$program = Join-Path $env:TEMP 'azurebank-probe.cs'
+@'
+#:package Microsoft.Data.SqlClient@6.1.1
+// Step 7's probe: one open of PROBE_CONNECTION, then who it signed in as and with which roles.
+// Exit 0: the roles expected; 3: no token; 4: the login refused; 5: other roles; 2: another failure.
+using System.Diagnostics;
+using Microsoft.Data.SqlClient;
+
+var expectsDdl = Environment.GetEnvironmentVariable("PROBE_EXPECTS_DDL") == "1";
+var clock = Stopwatch.StartNew();
+try
+{
+    using var connection = new SqlConnection(Environment.GetEnvironmentVariable("PROBE_CONNECTION"));
+    connection.Open();
+    Console.WriteLine($"open: {clock.ElapsedMilliseconds} ms");
+    using var command = new SqlCommand("SELECT USER_NAME(), IS_ROLEMEMBER('db_datareader'), " +
+        "IS_ROLEMEMBER('db_datawriter'), IS_ROLEMEMBER('db_ddladmin')", connection);
+    using var reader = command.ExecuteReader();
+    reader.Read();
+    var (reads, writes, ddl) = (reader.GetInt32(1), reader.GetInt32(2), reader.GetInt32(3));
+    Console.WriteLine($"user {reader.GetString(0)}: db_datareader {reads}, " +
+        $"db_datawriter {writes}, db_ddladmin {ddl}");
+    return reads == 1 && writes == 1 && ddl == (expectsDdl ? 1 : 0) ? 0 : 5;
+}
+catch (Exception e)
+{
+    var types = new List<string>();
+    for (var inner = e; inner is not null; inner = inner.InnerException)
+    {
+        types.Add(inner.GetType().Name);
+    }
+    var sql = e as SqlException;
+    Console.WriteLine($"failed after {clock.ElapsedMilliseconds} ms: number {sql?.Number}, " +
+        $"class {sql?.Class}, {string.Join(" > ", types)}");
+    // No token, as the trial saw it: a SqlException around Azure.Identity's exception. Class 20
+    // alone is not enough: a server that does not answer gives that class too.
+    var noToken = types.Contains("AuthenticationFailedException")
+        || types.Contains("CredentialUnavailableException");
+    return noToken ? 3 : sql?.Number == 18456 ? 4 : 2;
+}
+'@ | Set-Content -LiteralPath $program
+```
 
 | Start | The job carries | It asks a token for | Must end |
 | --- | --- | --- | --- |
@@ -524,7 +571,7 @@ was accepted on this API version; this one has not been sent:
 
 ```powershell
 # Creates the probe job or replaces it: the one identity it carries, and the identity its program
-# asks a token for. $Program is the file of the session's program.
+# asks a token for. $Program is the file the block above wrote.
 function Set-Probe([string]$Carries, [string]$AsksFor, [string]$Program) {
     $scope = az group show --name $group --query id --output tsv
     $fqdn = az sql server list --resource-group $group --query '[0].fullyQualifiedDomainName' --output tsv
@@ -573,12 +620,12 @@ The three starts, each followed by `Show-Executions azurebank-probe` until the e
 ended, and then the end of the job:
 
 ```powershell
-$program = '<the file of the session program>'
 Set-Probe azurebank-app azurebank-app $program;          Start-Probe   # start 1
 Set-Probe azurebank-app azurebank-migrate $program;      Start-Probe   # start 2: the same identity, the other one's token
 Set-Probe azurebank-migrate azurebank-migrate $program;  Start-Probe   # start 3: the job's identity is changed
 az containerapp job delete --name azurebank-probe --resource-group $group --yes
 az containerapp job list --resource-group $group --query '[].name' --output tsv   # nothing
+Remove-Item -LiteralPath $program
 ```
 
 `Show-Executions` reads each execution's status, its length and each container's exit code from
@@ -1627,10 +1674,18 @@ user type that goes with it. Everything else is the file as it is.
 checks; the ODBC `sqlcmd` is refused as the default tool and accepted with `-OdbcSignInName`; a
 program validly signed by someone else is refused. go-sqlcmd prints a refused sign-in as text with
 no error number, and an error inside a batch with `Msg` and its number: that is why the users
-script knows the firewall's refusal by its sentence. With the .NET SDK 10.0.401, one C# file that
-names its package is built and started by `dotnet run`, as step 7 has the probe job do. The
-helper functions of this file (`Show-Identities`, `Set-Probe`, `Start-Probe`) ran against a
-stand-in for `az`: the requests they send are the ones written here, and no Azure answered them.
+script knows the firewall's refusal by its sentence. With the .NET SDK 10.0.401, the program of
+step 7 is built and started by `dotnet run`, as the probe job does it. Run here against a local
+SQL Server, as SQL logins with the roles of the two users and others, it exited 0 for the roles
+expected; 5 when `db_ddladmin` was expected and absent, or present and not expected, and for a
+user that writes and cannot read; 4 for a wrong password (error 18456); 2 for a port where
+nothing listens (class 20, around a `Win32Exception`) and for a login with no user in the
+database (error 4060). Exit 3 needs a token refused on Azure. The helper functions of this file
+(`Show-Identities`, `Set-Probe`, `Start-Probe`, `Assert-EnvironmentMode`) ran against a stand-in
+for `az`: the requests they send are the ones written here, and no Azure answered them.
+`Assert-EnvironmentMode` passed `WorkloadProfiles`, and an answer with no mode whose logs go to
+`azure-monitor`; it threw on `Express`, `Archived` and `ConsumptionOnly`, on no mode with the
+logs off or elsewhere, and on no answer.
 
 **Not measured.** The trial sent requests by hand; read-only commands, offline tests and local
 stacks cannot show the rest. Each line is checked at the step named, on the first deployment.
@@ -1643,7 +1698,7 @@ stacks cannot show the rest. Each line is checked at the step named, on the firs
 | How the logs settings and the app's scale read back (a value Azure leaves out is read by `deploy.py` as its default) | steps 4 and 15 |
 | The users file on Azure SQL: a new database there has no trigger, no module and only the baseline rows the file expects; dropping and creating a user inside its transaction; its second form, `FROM EXTERNAL PROVIDER WITH OBJECT_ID` | step 6; the second form only if it is asked for |
 | The runner on Azure: the server's refusal as the script's own pattern reads it (the trial read the words "is not allowed to access the server" and an address in quotes, with a looser pattern), and the temporary firewall rule deleted with the lock on the database in place | step 6 |
-| The two users this folder makes, signing in from a job; the probe job's request accepted by the Deny policy; the SDK image building the session's program inside half a vCPU (the trial's program built there) | step 7 |
+| The two users this folder makes, signing in from a job; the probe job's request accepted by the Deny policy; the SDK image building step 7's program inside half a vCPU (the trial's own program built there); that program's exit 3, which only a token refused on Azure can give | step 7 |
 | A container of the app that asks for a token and names no identity gets none (read on Microsoft's page: such a request is answered for a system-assigned identity, and the app has none) | not provoked |
 | `-ProveSqlSignInRefused` as the script sends it (the trial's refusal was provoked without naming the sign-in method) | step 8 |
 | The API as `azurebank_app` under the three real-stack test suites, and a transfer as that user | before step 15, on a local SQL Server |

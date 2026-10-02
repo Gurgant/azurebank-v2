@@ -526,9 +526,11 @@ twice the cap: the logs go off. The alert is refused: it is left out, one of fou
 - The last-resort migration's command line, with `Active Directory Default`, against a server name
   that does not resolve: the tool reads the string, tries once and exits 1 with the last answer on
   its last line. No token was asked for.
-- The runbook: its 40 PowerShell blocks parse; every Azure CLI command and flag, every script
+- The runbook: its 41 PowerShell blocks parse; every Azure CLI command and flag, every script
   parameter and every `deploy.py` option it names is in that tool's own help; the functions that
-  list the identities and create the sign-in probe ran against a stand-in for the CLI.
+  list the identities, create the sign-in probe and read the environment's mode ran against a
+  stand-in for the CLI. The sign-in probe's program ran against a local SQL Server and gave each
+  of its exit codes but 3, which needs a token refused on Azure.
 
 **Not measured:** everything these files themselves do on Azure, since none has run there; what
 is listed under "Not measured" in the three sections above; the app with its two containers, its
