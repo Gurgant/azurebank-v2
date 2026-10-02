@@ -427,13 +427,15 @@ Nothing local can show that a managed identity signs in: a workstation has none,
 engine refuses `TYPE = E`. So the first session makes it happen on Azure with a throwaway manual
 job, `azurebank-probe`: 0.5 vCPU, the image `mcr.microsoft.com/dotnet/sdk:10.0`, and a program of
 about thirty lines on Microsoft.Data.SqlClient 6.1.1, the driver the app ships. The program is a
-throwaway of that session and is not kept in this folder. What it has to do:
+throwaway of that session and is not kept in this folder: one C# file that names its package
+itself, which `dotnet run` builds and starts. What it has to do:
 
-- open the connection string the template gives the app, with `Connect Timeout=30` added so that a
-  slow first token is measured and not cut;
+- open the string in the variable `PROBE_CONNECTION`: the one the template gives the app, with
+  `Connect Timeout=30` added so that a slow first token is measured and not cut;
 - print the milliseconds the open took, `USER_NAME()`, and `IS_ROLEMEMBER` for the three roles;
 - on a failure, print the exception's number, class and inner type name;
-- exit 0 for the roles expected, 3 for no token, 4 for a refused login, 5 for other roles.
+- exit 0 for the roles expected (reader and writer; `db_ddladmin` too when `PROBE_EXPECTS_DDL` is
+  `1`, and not otherwise), 3 for no token, 4 for a refused login, 5 for other roles.
 
 | Start | The job carries | It asks a token for | Must end |
 | --- | --- | --- | --- |
@@ -452,14 +454,69 @@ the other kind, the two switches below change places:
 # start the probe as the app: exit 0
 ```
 
-The commands around the job:
+The job is one request, sent again whenever the identity it carries or the one it asks for
+changes. Nothing in it is a secret, and none of it has been sent yet:
 
 ```powershell
-az containerapp job start --name azurebank-probe --resource-group $group --output none
-Show-Executions azurebank-probe
+# Creates the probe job or replaces it: the one identity it carries, and the identity its program
+# asks a token for. $Program is the file of the session's program.
+function Set-Probe([string]$Carries, [string]$AsksFor, [string]$Program) {
+    $scope = az group show --name $group --query id --output tsv
+    $fqdn = az sql server list --resource-group $group --query '[0].fullyQualifiedDomainName' --output tsv
+    $carried = az identity show --resource-group $group --name $Carries --query id --output tsv
+    $asked = az identity show --resource-group $group --name $AsksFor --query clientId --output tsv
+    $connection = "Server=tcp:$fqdn,1433;Database=AzureBank;Authentication=Active Directory Managed Identity;" +
+        "User ID=$asked;Encrypt=True;TrustServerCertificate=False;Connect Timeout=30"
+    $source = [Convert]::ToBase64String([System.IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $Program).Path))
+    $container = @{
+        name = 'probe'; image = 'mcr.microsoft.com/dotnet/sdk:10.0'; resources = @{ cpu = 0.5; memory = '1Gi' }
+        command = @('/bin/sh', '-c', 'mkdir /tmp/probe && cd /tmp/probe && printf %s "$PROBE_SOURCE" | base64 -d > probe.cs && dotnet run probe.cs')
+        env = @(@{ name = 'PROBE_SOURCE'; value = $source }, @{ name = 'PROBE_CONNECTION'; value = $connection },
+                @{ name = 'PROBE_EXPECTS_DDL'; value = if ($AsksFor -eq 'azurebank-migrate') { '1' } else { '0' } })
+    }
+    $job = @{
+        location = 'italynorth'
+        identity = @{ type = 'UserAssigned'; userAssignedIdentities = @{ $carried = @{} } }
+        properties = @{
+            environmentId = "$scope/providers/Microsoft.App/managedEnvironments/azurebank-env"
+            workloadProfileName = 'Consumption'
+            configuration = @{ triggerType = 'Manual'; replicaTimeout = 900; replicaRetryLimit = 0
+                               manualTriggerConfig = @{ parallelism = 1; replicaCompletionCount = 1 } }
+            template = @{ containers = @($container) }
+        }
+    }
+    $body = Join-Path $env:TEMP 'probe.json'
+    try {
+        $job | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $body
+        az rest --method put --body "@$body" --output none `
+            --url "https://management.azure.com$scope/providers/Microsoft.App/jobs/azurebank-probe?api-version=2025-01-01"
+    } finally {
+        Remove-Item -LiteralPath $body -ErrorAction Ignore
+    }
+}
+
+# One start, once the job has taken the request.
+function Start-Probe {
+    while ((az containerapp job show --name azurebank-probe --resource-group $group --query properties.provisioningState --output tsv) -ne 'Succeeded') {
+        Start-Sleep -Seconds 5
+    }
+    az containerapp job start --name azurebank-probe --resource-group $group --output none
+}
+```
+
+The three starts, each followed by `Show-Executions azurebank-probe` until the execution has
+ended, and then the end of the job:
+
+```powershell
+$program = '<the file of the session program>'
+Set-Probe azurebank-app azurebank-app $program;          Start-Probe   # start 1
+Set-Probe azurebank-app azurebank-migrate $program;      Start-Probe   # start 2: the same identity, the other one's token
+Set-Probe azurebank-migrate azurebank-migrate $program;  Start-Probe   # start 3: the job's identity is changed
 az containerapp job delete --name azurebank-probe --resource-group $group --yes
 az containerapp job list --resource-group $group --query '[].name' --output tsv   # nothing
 ```
+
+"Start the probe as the app", in the round trip above, is the first of those three lines.
 
 `Show-Executions` reads each execution's status, its length and each container's exit code from
 Azure itself, with the API version `deploy.py` uses for the migration's verdict. Nobody has seen
@@ -1382,7 +1439,12 @@ user type that goes with it. Everything else is the file as it is.
 
 **Measured on this machine, of the tools:** go-sqlcmd 1.10.0 passes the users script's three
 checks; the ODBC `sqlcmd` is refused as the default tool and accepted with `-OdbcSignInName`; a
-program validly signed by someone else is refused.
+program validly signed by someone else is refused. go-sqlcmd prints a refused sign-in as text with
+no error number, and an error inside a batch with `Msg` and its number: that is why the users
+script knows the firewall's refusal by its sentence. With the .NET SDK 10.0.401, one C# file that
+names its package is built and started by `dotnet run`, as step 7 has the probe job do. The
+helper functions of this file (`Show-Identities`, `Set-Probe`, `Start-Probe`) ran against a
+stand-in for `az`: the requests they send are the ones written here, and no Azure answered them.
 
 **Not measured.** Read-only commands, offline tests and local stacks cannot show any of this. Each
 line is checked at the step named, on the first deployment.
@@ -1398,6 +1460,7 @@ line is checked at the step named, on the first deployment.
 | go-sqlcmd signs in as the owner through the `az login` session; the server names this machine's address in its refusal, in the words the script looks for | step 6 |
 | The temporary firewall rule can be deleted with the lock on the database in place | step 6 |
 | Azure SQL runs `CREATE USER ... WITH SID, TYPE = E`; a new database there has no trigger, no module and only the baseline rows the file expects; dropping and creating a user inside the transaction works there | step 6 |
+| The request that creates the probe job is accepted, by Azure and by the Deny policy, and the SDK image builds the program inside half a vCPU | step 7 |
 | A user made from the client ID can sign in from a job; or whether it has to be the object ID | step 7 |
 | A job that carries only the app's identity gets no token for the migrator's | step 7 |
 | A container of the app that asks for a token and names no identity gets none (read on Microsoft's page: such a request is answered for a system-assigned identity, and the app has none) | not provoked |
