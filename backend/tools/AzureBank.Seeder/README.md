@@ -119,8 +119,10 @@ and then migrated an empty database):
   run stops when the server says the database is missing. A database that stopped answering after
   that open would still reach EF, which answers "cannot open" with `CREATE DATABASE`. That window
   was read in the code, not produced; the login's rights are what closes it.
-- **On an Azure SQL name every failed open is waited for**, also an answer that waiting cannot
-  change: the run then ends when the wait is over, with that answer in its last line. Off Azure an
-  answer the wait does not judge goes to EF at once.
+- **On an Azure SQL name an answer the wait has no rule for is waited for too**, also one that
+  waiting cannot change: the run then ends when the wait is over, with that answer in its last
+  line. Off Azure such an answer goes to EF at once. What the wait has a rule for still ends the
+  run sooner: a login refused three times in a row, and on an Azure SQL name a database the server
+  does not hold.
 - **A declined `reset` prompt exits 0.** Nothing was done and nothing failed. In a container there
   is no terminal: pass `--confirm`.
