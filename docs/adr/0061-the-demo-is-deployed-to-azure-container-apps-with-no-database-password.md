@@ -366,8 +366,9 @@ the warnings are the security record, the rate limiter's rejections among them (
 a cap of 0.05. With access by key off the platform still delivers: 45 lines arrived, the first
 under nine minutes after the setting was created. The lines of three runs that lasted seconds
 reached the table. A line of a job was billed 438 bytes. API `2026-07-01` fills the exit code in
-Italy North. And a line could be read six to eight minutes after it was written: the workflow
-could not print a migration's text in time even if that were wanted.
+Italy North. And a line could be read about six and a half minutes after it was written (the
+median), eight at the most: the workflow could not print a migration's text in time even if that
+were wanted.
 
 **Not measured.** That the free 5 GB apply: the cost view had no row on the same day. That the
 alert on the workspace is accepted, and at no cost. What a line of the app is billed. How far the

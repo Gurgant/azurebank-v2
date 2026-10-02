@@ -619,10 +619,10 @@ When the lines of the probe job are due, look for them: in the portal, the works
 `ContainerAppConsoleLogs | where JobName == 'azurebank-probe' | project TimeGenerated, Log`.
 Microsoft's page allows a new diagnostic setting up to 90 minutes before it delivers. In the trial
 the first line arrived under nine minutes after the setting was created, and a line could be read
-six to eight minutes after it was written. If the session ends first, this is the first step of
-the second one. The probe job restores and compiles, so it says nothing about a run that lasts
-seconds: in the trial three such runs each kept their line, and the first deployments show it for
-`migrate`.
+about six and a half minutes after it was written (the median), eight at the most. If the session
+ends first, this is the first step of the second one. The probe job restores and compiles, so it
+says nothing about a run that lasts seconds: in the trial three such runs each kept their line,
+and the first deployments show it for `migrate`.
 
 Then the reads of step 1 (one firewall rule, no job, nothing attached), `Test-Path $folder`
 (`False`), and:
@@ -759,8 +759,9 @@ Verdict: execution <name>: Succeeded, started <time>, ended <time> (<n> s), exit
 
 `CompletionsReached` is the reason a run that ended well carried in the trial; one that was made
 to fail carried `BackoffLimitExceeded`. What the migration printed is kept in the workspace. Read
-it once, when the lines are due (in the trial, six to eight minutes after they were written;
-Microsoft's page allows up to 90 minutes after a diagnostic setting is new):
+it once, when the lines are due (in the trial, about six and a half minutes after they were
+written, eight at the most; Microsoft's page allows up to 90 minutes after a diagnostic setting
+is new):
 
 ```powershell
 python infra/deploy.py --job-log
@@ -954,8 +955,9 @@ message is not printed at all. The same line is on the run's summary page. Aroun
 execution's name and its status are printed only in the shape expected, and in whatever else the
 run prints of Azure's words (a refusal, a revision's error, a replica's state) an ID is replaced
 by `<id>` and anything shaped like an IPv4 address by `<address>`. The name of a host is not
-looked for. The text could not be printed in time anyway: in the trial a line could be read six to
-eight minutes after it was written, and the verdict as soon as the run had ended.
+looked for. The text could not be printed in time anyway: in the trial a line could be read about
+six and a half minutes after it was written (the median), and the verdict as soon as the run had
+ended.
 
 **If step 5 or step 7 fails, the app is put back** on the template it had at step 2, under a new
 revision, and the run still fails, saying "put back to `<tag>`; the schema stays where the
@@ -986,8 +988,8 @@ inside GitHub Actions. The other way in is the portal: the workspace `azurebank-
   `dataIngestionStatus`, and the next reset. `OverQuota` means the workspace has taken no line
   since the cap was reached and takes none until the reset, at an hour Azure picks.
 - **An empty answer is not proof that nothing was printed.** A line takes minutes to arrive (in
-  the trial six to eight, 486 s at the most), Microsoft's page allows a new diagnostic setting up
-  to 90 minutes, and a capped workspace takes none. The trial's three runs that lasted seconds
+  the trial a median of 387 s and 398 s for two jobs, 486 s at the most), Microsoft's page allows
+  a new diagnostic setting up to 90 minutes, and a capped workspace takes none. The trial's three runs that lasted seconds
   each kept their line: three runs, not a promise.
 - **Telling two failures of the migration apart by the run's length**, which is on the verdict
   line: a login refused because the database has no user for the identity ends after about four
