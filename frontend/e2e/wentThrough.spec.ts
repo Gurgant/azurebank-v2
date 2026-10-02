@@ -400,8 +400,10 @@ test.describe('a payment the server says went through', () => {
       The same double click when the answer proves nothing: a 409 with no `applied`, for which the
       dialog draws the check view. That view is shorter than the form as well. Measured on the
       running stack at this viewport: the second press landed on the backdrop and the dialog was
-      gone, "We couldn't confirm your deposit" unread, the visitor on the dashboard beside a
-      Deposit tile to press again. The press outside must leave this view where it is too.
+      gone; recorded after it, no dialog, the dashboard's address, focus on `body`, no alert. So
+      "We couldn't confirm your deposit" went unread, on the page whose Deposit tile opens the
+      dialog again (the tile is read in the page's code, and pressed by this file's helper). The
+      press outside must leave this view where it is too.
     */
     await page.setViewportSize({ width: 1280, height: 900 });
     const keys = await answerEverySend(
@@ -463,10 +465,11 @@ test.describe('a payment the server says went through', () => {
     /*
       The other half of a double click: the answer takes longer than the gap between the presses.
       Measured on the running stack: the 409 came 192 and 225 ms after the first press, the second
-      press 130 ms after it. That press lands on the disabled button, and the browser gives focus
-      to the nearest ancestor that can hold it, the dialog itself; the view then appeared with
-      focus still there and its sentence unfocused. A container around the sentence is not a place
-      the visitor chose: the sentence takes focus from it as it does from `body`.
+      press 130 ms after it. That press came while the send was still out, and focus went to the
+      dialog's own `div`; the view then appeared with focus still there and its sentence
+      unfocused. Here the press is on the disabled button, as in the run that held the answer
+      back. A container around the sentence is not a place the visitor chose: the sentence takes
+      focus from it as it does from `body`.
     */
     await page.setViewportSize({ width: 1280, height: 900 });
     let answer = () => {};

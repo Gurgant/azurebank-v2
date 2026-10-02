@@ -101,11 +101,12 @@ describe('WentThroughView', () => {
 
   it('takes focus from a container that holds the view: nobody chose to put it there', () => {
     /*
-      A press on a disabled control gives focus to the nearest ancestor that can hold it: a
-      dialog's surface, a page's `main`. Measured in Chromium on the running stack: the second
-      press of a double click came while the send was still out, focus went to the dialog itself,
-      and the view then appeared with its sentence unfocused. A container around the sentence is
-      not a place a visitor chose, so focus there is as lost as focus on `body`.
+      Measured in Chromium on the running stack: the second press of a double click came while
+      the send was still out, on the disabled send button or on a `<div>` that is no control,
+      focus went to the dialog's own `div`, and the view then appeared with its sentence
+      unfocused. A container around the sentence is not a place a visitor chose, so focus there
+      is as lost as focus on `body`. A page's `main` is such a container too; no run put focus
+      on one.
     */
     outside = document.createElement('div');
     outside.tabIndex = -1;

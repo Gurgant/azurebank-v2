@@ -16,12 +16,13 @@ import { useEffect, useRef } from 'react';
  *
  * It only gives back focus that was lost: it moves focus only while nothing the visitor chose
  * holds it. Lost is on `body`, or on a container that holds the landing itself: a dialog's own
- * surface, a page's `main`. A press on a disabled control puts focus there, on the nearest
- * ancestor that can hold it. Measured in Chromium on the running stack: the second press of a
- * double click came on the send button while its send was still out, focus went to the dialog,
- * and the view then appeared with its sentence unfocused. (Until 2026-10-02 lost was `body`
- * alone, the test `useWaitLanding` makes.) A visitor who put focus on a control during the wait
- * keeps their place, and so does another dialog that holds it; nothing is spoken then.
+ * surface, a page's `main`. Measured in Chromium on the running stack: the second press of a
+ * double click came while the send was still out, on the disabled send button in one run and on
+ * a `<div>` that is no control in another, and each time focus went to the dialog's own `div`;
+ * the view then appeared with its sentence unfocused. That is where focus was seen to go, not a
+ * rule for where a browser puts it. (`useWaitLanding` tests for `body` alone.) A visitor who put
+ * focus on a control during the wait keeps their place, and so does another dialog that holds
+ * it; nothing is spoken then.
  */
 export function useFocusWhenLost<T extends HTMLElement = HTMLElement>(active: boolean) {
   const landingRef = useRef<T | null>(null);

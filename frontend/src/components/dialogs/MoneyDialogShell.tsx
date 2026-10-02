@@ -30,12 +30,13 @@ import { useMoneyDialogStyles } from './moneyDialogStyles';
  * checked first. Either view is shorter than the form, so the dialog shrinks under the pointer,
  * and the second press of a double click on the send button lands on the backdrop. Measured in
  * Chromium on the running stack, on each: the dialog was gone before anybody could read it, on
- * the first a tenth of a second after its sentence appeared, on the second with the tile that
- * opens the dialog again in front of the visitor. The press changes nothing then: it closes
- * nothing, and it leaves focus where it was. The X still closes the dialog, and so does Escape
- * from wherever in the dialog focus is, since nobody presses those by accident. The receipt of a
- * send that succeeded is not kept, and neither is the form: a press outside closes those as it
- * did. (Until 2026-10-02 only the first of the two views was kept.)
+ * the first a tenth of a second after its sentence appeared. On the second, what was recorded
+ * after the press is no dialog, the dashboard's address, focus on `body` and no alert; that the
+ * dashboard has the tile that opens the dialog again is read in its code. The press changes
+ * nothing then: it closes nothing, and it leaves focus where it was. The X still closes the
+ * dialog, and so does Escape from wherever in the dialog focus is, since nobody presses those by
+ * accident. The receipt of a send that succeeded is not kept, and neither is the form: a press
+ * outside closes those as it did.
  */
 
 export interface MoneyDialogShellProps {

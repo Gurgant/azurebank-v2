@@ -511,9 +511,10 @@ describe('deposit — the server says it went through', () => {
     /*
       The check view is shorter than the form as well. Measured in Chromium on the running stack,
       the send answered 409 with no `applied`: the second press of a double click on Deposit
-      landed on the backdrop and closed the dialog. The visitor was left on the page behind it,
-      "We couldn't confirm your deposit" unread, beside a Deposit tile to press again: the second
-      deposit this view is there to prevent.
+      landed on the backdrop and closed the dialog. Recorded after it: no dialog, the dashboard's
+      address, focus on `body`, no alert. So "We couldn't confirm your deposit" went unread, and
+      the dashboard has the Deposit tile (read in its code, not recorded by that run) to press
+      again: the second deposit this view is there to prevent.
     */
     const closed = vi.fn();
     const keys: (string | null)[] = [];
@@ -543,7 +544,9 @@ describe('deposit — the server says it went through', () => {
     await answerDrawn(keys);
     expect(screen.getByText("We couldn't confirm your deposit")).toBeInTheDocument();
     expect(screen.queryByText(COPY.depositWentThrough)).not.toBeInTheDocument();
-    // This view lands no focus. A visitor's Tab puts it on the first action: their own place.
+    // This view lands no focus. The test puts it on an action, as a visitor who has reached one
+    // has: their own place. (In Chromium, Tab from `body` after a press on the backdrop went to
+    // Close, measured; jsdom is not asked where a Tab goes.)
     const checkTransactions = screen.getByRole('button', { name: 'Check recent transactions' });
     checkTransactions.focus();
 
@@ -574,10 +577,9 @@ describe('deposit — the server says it went through', () => {
     /*
       The other half of a double click: the answer takes longer than the gap between the two
       presses. Measured in Chromium on the running stack: the second press came on the disabled
-      Deposit button while the send was still out, the browser gave focus to the nearest ancestor
-      that can hold it, the dialog's own surface, and the view then appeared with focus still
-      there and its sentence unfocused. jsdom moves no focus for a press on a disabled control,
-      so the test puts focus where the browser was measured to put it.
+      Deposit button while the send was still out, focus went to the dialog's own `div`, and the
+      view then appeared with focus still there and its sentence unfocused. jsdom moves no focus
+      for a press on a disabled control, so the test puts focus where it was measured to go.
     */
     const keys: (string | null)[] = [];
     let answer = () => {};

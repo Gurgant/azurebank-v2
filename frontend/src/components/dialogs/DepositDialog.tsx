@@ -278,9 +278,14 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
       closeDisabled={keyLive}
       // The went-through view and the check view are both shorter than the form: the second
       // press of a double click on Deposit lands outside the dialog, and must not take their
-      // words away unread. Behind a check view closed that way is the Deposit tile, to press for
-      // a second deposit. `verifyRequired` is true under both views, since the hook sets it with
-      // `wentThrough`, and under nothing else: the receipt and the form close as they did.
+      // words away unread. A check view closed that way leaves the visitor on the dashboard,
+      // which has the Deposit tile to press for a second deposit (the tile is read in the
+      // dashboard's code; the run that measured the closing recorded no dialog and focus on
+      // `body`). `verifyRequired` is true under both views and under nothing else, so the receipt
+      // and the form close as they did. The hook latches it in two places: on the answer, where
+      // `wentThrough` is set with it when the payment is proven, and in `requireVerify`, which
+      // this dialog calls when the body is edited while a key is retained. The check view that
+      // edit brings up is kept the same way.
       keepOnOutsidePress={verifyRequired}
     >
       {/* Success */}

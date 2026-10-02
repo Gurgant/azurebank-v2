@@ -605,7 +605,9 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
       closeDisabled={keyLive}
       // As in DepositDialog: a press outside the dialog takes away neither the went-through
       // sentence nor the check view's words unread. `verifyRequired` is true under both views,
-      // and under nothing else.
+      // and under nothing else. The hook latches it on the answer and in `requireVerify`, which
+      // this dialog calls when the body is edited while a key is retained: that check view is
+      // kept too.
       keepOnOutsidePress={verifyRequired}
     >
       {/* Success */}
