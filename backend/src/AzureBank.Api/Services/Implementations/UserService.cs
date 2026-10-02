@@ -63,6 +63,7 @@ public class UserService : IUserService
           nothing inside a copy.
 
           Only the one column is read, for the reason the next query gives.
+          DemoIsolationSqlServerTests reads what both statements send.
         */
         var callerCopy = await _context.Users
             .Where(u => u.Id == currentUserId)

@@ -183,4 +183,51 @@ public sealed class DemoIsolationSqlServerTests
         using var mintFromOutside = await outsider.MintTransferAsync(outsiderAccount, copy.Jane.AzureTag, 10m);
         mintFromOutside.StatusCode.Should().Be(HttpStatusCode.NotFound, "nobody outside a copy pays into it");
     }
+
+    /// <summary>
+    /// The lookup reads the caller's copy and the name it answers with, and no credential of either
+    /// user: not the caller's, whose copy is all it needs, and not the one of the user it finds.
+    /// </summary>
+    /// <remarks>
+    /// A claim about the statements the lookup sends, so it is read where they go: a command
+    /// recorder on the API's own context. The sign-in before it is the CONTROL: it reads a password
+    /// hash, so the same check can see a credential column when a statement reads one.
+    /// </remarks>
+    [SqlServerFact]
+    public async Task TheLookup_ReadsNoPasswordPinOrSecurityStamp_OfTheCallerOrOfTheUserItFinds()
+    {
+        string[] credentials = ["[PasswordHash]", "[PinHash]", "[SecurityStamp]"];
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copy = (await database.BuildCopiesAsync(1))[0];
+        await database.ClaimForAVisitorAsync(copy, DateTime.UtcNow);
+
+        var api = database.Api();
+        using var client = api.CreateClient();
+        var signIn = new CommandRecordingInterceptor();
+        var lookup = new CommandRecordingInterceptor();
+        api.AddInterceptor(signIn);
+        api.AddInterceptor(lookup);
+
+        signIn.Start();
+        var visitor = await DemoVisitor.SignInAsync(client, copy.Owner.Email!, DemoPoolDatabase.VisitorPassword);
+        signIn.Stop();
+        signIn.Selects.Should().Contain(statement => statement.Contains("[PasswordHash]"),
+            "CONTROL: a sign-in reads the password hash, and the recorder saw it");
+
+        lookup.Start();
+        using var lookedUp = await visitor.LookupAsync(copy.Jane.AzureTag);
+        lookup.Stop();
+
+        lookedUp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var found = JsonSerializer.Deserialize<JsonElement>(await lookedUp.Content.ReadAsStringAsync()).GetProperty("data");
+        found.GetProperty("exists").GetBoolean().Should().BeTrue("ARRANGE: Jane is this copy's own contact, so the lookup reads her row");
+        var statements = lookup.Selects.Concat(lookup.Writes).ToList();
+        statements.Should().Contain(statement => statement.Contains("[FirstName]"),
+            "the recorder must have seen the lookup read the name it answers with, or the absence below proves nothing");
+        foreach (var credential in credentials)
+        {
+            statements.Should().NotContain(statement => statement.Contains(credential),
+                "the lookup answers with a masked name, and no statement it sends reads {0}", credential);
+        }
+    }
 }
