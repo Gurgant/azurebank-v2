@@ -129,8 +129,11 @@ Three things are not certain:
 - **The cap is not a hard bound.** The workspace stops taking lines some time after the cap is
   reached. Microsoft's page says the excess "can be particularly large if the workspace is
   receiving high rates of data", and that it is billed. How large: not stated.
-- **What a line costs.** The numbers below are console bytes, measured locally; what the workspace
-  bills for a line is read after the first deployment.
+- **What a line costs.** In the trial the lines of two jobs were billed 438 bytes each on average
+  (45 lines, 19,732 bytes) for 194 characters of text: about 244 bytes a line on top of the text.
+  A cap of 0.05 GB is about 114,000 lines of that size a day (computed). No line of the app has
+  reached a workspace yet: the numbers below are its console bytes, measured locally, with that
+  overhead added where it says "computed".
 
 **What bounds the spending, meter by meter.** The demo's subscription is a credit offer with a
 spending limit: no bill is possible, and when the credit (86 at the time of writing) is used up the
@@ -155,15 +158,19 @@ the template sets it:
 - A request to `/api/...` with no session: one warning of about half a kilobyte, **whether the rate
   limiter lets it through or rejects it**. On a build of the BFF from source, 400 such requests in
   0.9 s wrote 400 lines, 209,200 bytes; on the built image the two warnings are 538 and 510 bytes.
-  The rate limiter therefore does not bound the log. A day's cap is about 95,600 such requests:
-  sixteen minutes at 100 a second.
-- During a database outage a failed sign-in writes about 28.7 KB: about 1,740 of them fill the day.
-  The sign-in limiter allows ten a minute, so that takes about three hours.
+  The rate limiter therefore does not bound the log. Computed, not measured: with the 244 bytes
+  a line of the trial added, such a warning is billed about 768 bytes, and a day's cap is about
+  65,100 such requests: eleven minutes at 100 a second. (By console bytes alone it was about
+  95,600 and sixteen minutes.)
+- During a database outage a failed sign-in writes about 28.7 KB of console text: at most about
+  1,740 of them fill the day, and fewer once each of its lines carries that overhead (how many
+  lines the text is was not kept). The sign-in limiter allows ten a minute, so that takes at most
+  about three hours.
 
-Past the free 5 GB, or without them, such a request costs $1.56 a million on the log meter on top
-of $0.40 on the request meter: the credit goes about five times faster, for whatever gets past the
-cap. A stranger can also fill the day's cap on purpose: the log is then dark until its reset, and a
-migration run on that day leaves a verdict and no text.
+Past the free 5 GB, or without them, such a request costs about $2.30 a million on the log meter
+(computed from the 768 bytes) on top of $0.40 on the request meter: the credit goes nearly seven
+times faster, for whatever gets past the cap. A stranger can also fill the day's cap on purpose:
+the log is then dark until its reset, and a migration run on that day leaves a verdict and no text.
 
 **What warns:** the four alert rules, by e-mail. Nothing warns that the cap itself was reached: the
 alert Microsoft documents for that is a log search rule, $0.50 a month or more, and is not used.
@@ -265,7 +272,8 @@ function Show-Executions([string]$Job) {
     (az rest --method get --url "https://management.azure.com$id/executions?api-version=2026-07-01" |
         ConvertFrom-Json).value | ForEach-Object {
             $codes = @($_.properties.detailedStatus.replicas.containers.code) -join ','
-            $took = if ($_.properties.endTime) { [int]($_.properties.endTime - $_.properties.startTime).TotalSeconds } else { '?' }
+            $both = $_.properties.startTime -and $_.properties.endTime
+            $took = if ($both) { [int]($_.properties.endTime - $_.properties.startTime).TotalSeconds } else { '?' }
             '{0}: {1}, {2} s, exit code [{3}]' -f $_.name, $_.properties.status, $took, $codes
         }
 }
@@ -352,8 +360,9 @@ owner.
 #### 3. The same deployment, a second time (operator, **writes** nothing if Azure accepts it)
 
 The server is created without a SQL administrator through a block that this API version documents
-for creation only. Whether a later run of the template disturbs the server has to be seen once,
-now, while the database is empty and the server can still be deleted.
+for creation only. Sent by hand in the trial, the same request was accepted a second time and the
+server read back exactly as before. What this step adds is the template's own second run, with
+its what-if, seen once while the database is still empty.
 
 ```powershell
 try {
@@ -366,7 +375,7 @@ try {
 
 It passes if the what-if shows nothing to create and nothing to delete, if a `Modify` on
 `Microsoft.Sql/servers` names no property under `properties.administrators`, and if the deployment
-then answers `Succeeded`.
+then answers `Succeeded`. If it does not pass: stop ([If Azure says no](#if-azure-says-no)).
 
 #### 4. Read back what was created (operator)
 
@@ -382,7 +391,7 @@ These are the expected values, not observed ones.
 | Three identities | `az identity list -g $group --query '[].name'`; `Show-Identities` | `azurebank-app`, `azurebank-deploy`, `azurebank-migrate`; attached to nothing yet |
 | The same, asked of the identity | `az identity list-resources -g $group -n azurebank-app`, and for `azurebank-migrate`. Tried once: nobody has seen this call answer | No resource yet; after step 15, exactly one each. If the call does not answer, it is dropped and `Show-Identities` stands alone |
 | One federated credential | `az identity federated-credential list --identity-name azurebank-deploy -g $group` | one: the GitHub issuer, the subject ending `:environment:demo`, the audience `api://AzureADTokenExchange` |
-| The role, unassigned | `az role definition list --custom-role-only true -g $group`; `az role assignment list --assignee <principal id> --all` | nine actions, no data action; no assignment yet. The role can be assigned in this resource group only, so it is listed through the group: whether a listing of the whole subscription shows it is not measured |
+| The role, unassigned | `az role definition list --custom-role-only true -g $group`; `az role assignment list --assignee <principal id> --all` | nine actions, no data action; no assignment yet. The role can be assigned in this resource group only, so it is listed through the group. In the trial a role of this shape was also found, by its ID and in the list of custom roles, when asked at the subscription |
 | The lock | `az lock list -g $group` | one, `CanNotDelete`, on the database |
 | The policy | `az policy assignment list -g $group` | `azurebank-shape`, enforcement `Default` |
 
@@ -394,19 +403,22 @@ A value that differs is a defect in the template: fix it before going on.
 budget that warns is one REST call with a body file. The body holds the address the e-mails go to,
 taken from the variable `AZUREBANK_ALERT_EMAIL`. `secrets.ps1 -Action New` makes the session's
 folder again, open to its owner only, before the file is written into it; both go in the
-`finally`. Whether a credit offer accepts a budget at all is not measured, and neither is this
-body: a refusal here changes nothing else.
+`finally`. The offer accepts a budget: in the trial one of this amount, with these four e-mail
+notifications to an outside mailbox, was created, read back and deleted. The body below is built
+to be the one that was accepted then (the same properties, operator, thresholds and a period of
+one year), under another name. A refusal here changes nothing else.
 
 ```powershell
 if (-not $env:AZUREBANK_ALERT_EMAIL) { throw 'Set AZUREBANK_ALERT_EMAIL first.' }
 try {
     ./infra/secrets.ps1 -Action New          # for the folder: only its owner can open it
-    $notify = { param($percent, $kind) @{ enabled = $true; operator = 'GreaterThanOrEqualTo'; threshold = $percent
-                                           thresholdType = $kind; contactEmails = @($env:AZUREBANK_ALERT_EMAIL) } }
+    $notify = { param($percent, $kind) @{ enabled = $true; operator = 'GreaterThan'; threshold = $percent; thresholdType = $kind
+                                           contactEmails = @($env:AZUREBANK_ALERT_EMAIL); contactGroups = @(); contactRoles = @() } }
+    $from = Get-Date -Day 1
     @{ properties = @{ category = 'Cost'; amount = 20; timeGrain = 'Monthly'
-        timePeriod = @{ startDate = (Get-Date -Day 1).ToString("yyyy-MM-'01T00:00:00Z'") }
-        notifications = @{ 'actual-30' = & $notify 30 'Actual'; 'actual-50' = & $notify 50 'Actual'
-                           'actual-100' = & $notify 100 'Actual'; 'forecast-30' = & $notify 30 'Forecasted' } } } |
+        timePeriod = @{ startDate = $from.ToString("yyyy-MM-'01T00:00:00Z'"); endDate = $from.AddYears(1).ToString("yyyy-MM-'01T00:00:00Z'") }
+        notifications = @{ actual_30_percent = & $notify 30 'Actual'; actual_50_percent = & $notify 50 'Actual'
+                           actual_100_percent = & $notify 100 'Actual'; forecast_30_percent = & $notify 30 'Forecasted' } } } |
         ConvertTo-Json -Depth 6 | Set-Content -LiteralPath "$folder\budget.json"
     $scope = az account show --query id --output tsv
     az rest --method put --body "@$folder\budget.json" --output none `
@@ -467,11 +479,13 @@ can fire a trigger.
 #### 7. A sign-in as each identity, before any image exists (operator, **writes** a job and deletes it)
 
 Nothing local can show that a managed identity signs in: a workstation has none, and the local
-engine refuses `TYPE = E`. So the first session makes it happen on Azure with a throwaway manual
-job, `azurebank-probe`: 0.5 vCPU, the image `mcr.microsoft.com/dotnet/sdk:10.0`, and a program of
-about thirty lines on Microsoft.Data.SqlClient 6.1.1, the driver the app ships. The program is a
-throwaway of that session and is not kept in this folder: one C# file that names its package
-itself, which `dotnet run` builds and starts. What it has to do:
+engine refuses `TYPE = E`. The trial saw it on Azure with identities and users of its own
+([Measured on Azure](#measured-on-azure)). This step sees it for the two users step 6 made, before
+any image exists, with a throwaway manual job, `azurebank-probe`: 0.5 vCPU, the image
+`mcr.microsoft.com/dotnet/sdk:10.0`, and a program of about thirty lines on
+Microsoft.Data.SqlClient 6.1.1, the driver the app ships. The program is a throwaway of that
+session and is not kept in this folder: one C# file that names its package itself, which
+`dotnet run` builds and starts. What it has to do:
 
 - open the string in the variable `PROBE_CONNECTION`: the one the template gives the app, with
   `Connect Timeout=30` added so that a slow first token is measured and not cut;
@@ -550,9 +564,10 @@ az containerapp job list --resource-group $group --query '[].name' --output tsv 
 ```
 
 `Show-Executions` reads each execution's status, its length and each container's exit code from
-Azure itself, with the API version `deploy.py` uses for the migration's verdict. Nobody has seen
-those fields filled in Italy North yet: if the exit code is absent there, a verdict is a status
-and two times.
+Azure itself, with the API version `deploy.py` uses for the migration's verdict. In the trial
+those fields were filled in Italy North: `Succeeded` with exit code 0, and `Failed` with exit code
+7 for a run made to end that way. The failed one carried no length (a start or an end time was
+absent), which is why the function prints `?` there.
 
 #### 8. A SQL-password sign-in must be refused (operator, **writes** only the temporary firewall rule)
 
@@ -572,6 +587,10 @@ Proved: a SQL sign-in is refused, and the server says it is because Microsoft En
 
 Any other refusal is "not proven", and the script exits non-zero after saying the users are fine.
 If the made-up sign-in is let in, Entra-only is not what the server enforces.
+
+The trial provoked this refusal by hand, on its own server, for a login that does not exist:
+go-sqlcmd exited 1 with "Login failed for user ... Reason: Azure Active Directory only
+authentication is enabled." This step does it through the script's own switch.
 
 #### 9. What the second session will add (operator; a what-if, answered "no")
 
@@ -595,11 +614,15 @@ Example: `-AlertEmail owner@example.invalid`.
 
 #### 10. End of the first session (operator)
 
-Once 90 minutes have passed since step 2 (a new diagnostic setting may deliver nothing before
-that), look for the probe's lines: in the portal, the workspace `azurebank-logs`, Logs, the query
-`ContainerAppConsoleLogs | where JobName == 'azurebank-probe' | project TimeGenerated, Log`. If the
-session ends first, this is the first step of the second one. It does not settle the lines of a
-run that lasts seconds, because the probe restores and compiles: the first deployments do.
+When the lines of the probe job are due, look for them: in the portal, the workspace
+`azurebank-logs`, Logs, the query
+`ContainerAppConsoleLogs | where JobName == 'azurebank-probe' | project TimeGenerated, Log`.
+Microsoft's page allows a new diagnostic setting up to 90 minutes before it delivers. In the trial
+the first line arrived under nine minutes after the setting was created, and a line could be read
+six to eight minutes after it was written. If the session ends first, this is the first step of
+the second one. The probe job restores and compiles, so it says nothing about a run that lasts
+seconds: in the trial three such runs each kept their line, and the first deployments show it for
+`migrate`.
 
 Then the reads of step 1 (one firewall rule, no job, nothing attached), `Test-Path $folder`
 (`False`), and:
@@ -731,11 +754,13 @@ python infra/deploy.py
 Nobody has to watch the portal. When the migration ends, either way, the run prints its verdict:
 
 ```text
-Verdict: execution <name>: Succeeded, started <time>, ended <time> (<n> s), exit code 0 (done), no reason given.
+Verdict: execution <name>: Succeeded, started <time>, ended <time> (<n> s), exit code 0 (done), reason CompletionsReached.
 ```
 
-What the migration printed is kept in the workspace. Read it once, when the lines are due (minutes
-after the run; up to 90 minutes after a workspace is new):
+`CompletionsReached` is the reason a run that ended well carried in the trial; one that was made
+to fail carried `BackoffLimitExceeded`. What the migration printed is kept in the workspace. Read
+it once, when the lines are due (in the trial, six to eight minutes after they were written;
+Microsoft's page allows up to 90 minutes after a diagnostic setting is new):
 
 ```powershell
 python infra/deploy.py --job-log
@@ -804,13 +829,15 @@ az logout
   own row: "no rows" is "not run", not "0". The three environment meters and the Dedicated one must
   read 0. **Any cost on the log ingestion meter switches the logs off.** Whether the free 5 GB
   apply is settled the first time a cost row covers 35 MB or more of ingestion; until then the
-  worst case stays in the numbers above.
-- **After the second session, in the workspace's Logs page:** the billed size of a line
+  worst case stays in the numbers above. On the trial's own day the cost view had no row at all
+  for its resource group, whose database existed for a little over two hours.
+- **After the second session, in the workspace's Logs page:** the billed size of a line of the app
   (`ContainerAppConsoleLogs | summarize avg(_BilledSize)`); the day's billable volume
   (`Usage | where IsBillable | summarize sum(Quantity) by bin(TimeGenerated, 1d)`, in MB; the
   `Usage` table is not billed); and the count, as a number only, of console lines that contain `@`.
-  The alert's threshold and the "about 95,600" above are then worked again from the billed size.
-  Neither query has been run yet.
+  The alert's threshold and the "about 65,100" above are then worked again from the app's own
+  billed size. The trial read `_BilledSize` and the `Usage` table for its jobs' lines; neither of
+  these two queries has been run as it is written here.
 
 ## If Azure says no
 
