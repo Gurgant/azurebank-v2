@@ -71,6 +71,8 @@ $Users = [ordered]@{
 }
 $Variables = 'AppClientId', 'AppObjectId', 'MigratorClientId', 'MigratorObjectId', 'IdKind', 'CreateForm'
 $OnlyEntra = 'Azure Active Directory only authentication is enabled'
+# The server's refusal of an address it does not let in (its error 40615), known by its sentence:
+# sqlcmd prints an error at sign-in as text, without the number it prints for an error in a batch.
 $FirewallRefusal = "Client with IP address '(?<address>[^']*)' is not allowed to access the server"
 
 function Say([string]$Message) { [Console]::Error.WriteLine($Message) }

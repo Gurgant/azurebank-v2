@@ -120,10 +120,14 @@ FAKE_AZ = textwrap.dedent('''
 # What stands where sqlcmd is. FAKE_SQLCMD says how it behaves, as words separated by commas:
 #   odbc, old, no-azcli         what --version and -? answer
 #   refused:N                   the first N runs are refused by the server's firewall
+#   numbered                    that refusal comes with its error number, as an error in a batch does
 #   login-failed, tampered, silent, wrong-roles, fails-after-the-refusals
 #                               what a run that reaches the database does instead of succeeding
 #   entra-only, let-in          what the one SQL sign-in of -ProveSqlSignInRefused is answered
 # It logs every start: its arguments, and which of the names sqlcmd would read are in its environment.
+# FIREWALL has the form go-sqlcmd 1.10.0 gives an error at sign-in: "mssql: login error: " and the
+# server's sentence, printed twice, with no error number (measured with a refused login on a local
+# server). That the server words this refusal so is seen on the first deployment (README.md).
 ADDRESS = '203.0.113.7'
 FIREWALL = ("mssql: login error: Cannot open server 'azurebank-test' requested by the login. Client with IP "
             f"address '{ADDRESS}' is not allowed to access the server. To enable access, use the Azure "
@@ -180,6 +184,8 @@ FAKE_SQLCMD = ''.join(f'{name} = {value!r}\n' for name, value in CONSTANTS.items
     if runs < refusals:
         # FAKE_SQLCMD_NAMES: what the refusal names in place of an address.
         refusal = FIREWALL.replace(ADDRESS, os.environ.get('FAKE_SQLCMD_NAMES', ADDRESS))
+        if 'numbered' in modes:
+            end(1, 'Msg 40615, Level 14, State 1, Server azurebank-test, Line 1', refusal[len('mssql: login error: '):])
         end(1, refusal, refusal)
     if 'login-failed' in modes:
         end(1, "mssql: login error: Login failed for user '<token-identified principal>'. "
@@ -813,6 +819,16 @@ class UsersRunTests(UsersCase):
         self.assertEqual(len(self.started('run')), 4, 'the rule takes a while: refused, refused, refused, let in')
         self.assertEqual(self.verbs().count('sql server firewall-rule create'), 1)
         self.assertEqual(self.rules_left(), ['AllowAzureServices'])
+
+    def test_the_firewalls_refusal_is_known_by_its_sentence_with_its_number_or_without(self):
+        # The number is 40615. sqlcmd leaves it out of an error at sign-in; a tool that printed it
+        # must still be let through the firewall and not be told its answer is some other failure.
+        result = self.users(tool='refused:2,numbered')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.started('run')), 3)
+        self.assertEqual(self.verbs().count('sql server firewall-rule create'), 1)
+        self.assertEqual(self.rules_left(), ['AllowAzureServices'])
+        self.assert_no_id_or_address_was_said(result)
 
     def test_a_failure_after_the_rule_is_in_ends_the_run_at_once(self):
         result = self.users(tool='refused:1,fails-after-the-refusals', WaitSeconds=5)
