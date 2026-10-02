@@ -156,25 +156,36 @@ internal sealed class DemoPoolDatabase : IAsyncDisposable
         return provider;
     }
 
-    /// <summary>What <c>seed-pool [target]</c> runs.</summary>
+    /// <summary>What <c>seed-pool [target]</c> runs. <paramref name="stop"/> stops the run, as stopping the job does.</summary>
     public async Task<PoolRunSummary> SeedPoolAsync(
-        int? target = null, Dictionary<string, string?>? settings = null, params IInterceptor[] interceptors)
+        int? target = null,
+        Dictionary<string, string?>? settings = null,
+        CancellationToken stop = default,
+        params IInterceptor[] interceptors)
     {
         using var scope = Seeder(settings, interceptors).CreateScope();
-        return await scope.ServiceProvider.GetRequiredService<DemoCopyBuilder>().SeedPoolAsync(target);
+        return await scope.ServiceProvider.GetRequiredService<DemoCopyBuilder>().SeedPoolAsync(target, stop);
     }
 
-    /// <summary>What <c>recycle</c> runs.</summary>
+    /// <summary>What <c>recycle</c> runs. <paramref name="stop"/> stops the run, as stopping the job does.</summary>
     public async Task<PoolRunSummary> RecycleAsync(
         Dictionary<string, string?>? settings = null,
         RecyclerControl control = RecyclerControl.None,
+        CancellationToken stop = default,
         params IInterceptor[] interceptors)
     {
         using var scope = Seeder(settings, interceptors).CreateScope();
         var recycler = scope.ServiceProvider.GetRequiredService<DemoCopyRecycler>();
         recycler.Control = control;
-        return await recycler.RunAsync();
+        return await recycler.RunAsync(stop);
     }
+
+    /// <summary>
+    /// Runs <paramref name="statement"/> on a second connection and holds the locks it took until
+    /// the result is disposed: a statement of a run that needs them then waits on the server.
+    /// </summary>
+    public Task<HeldLocks> HoldAsync(string statement, params SqlParameter[] parameters) =>
+        HeldLocks.TakeAsync(ConnectionString, statement, parameters);
 
     /// <summary>
     /// ARRANGE: <paramref name="count"/> free copies for a test to work on, built by the builder on a

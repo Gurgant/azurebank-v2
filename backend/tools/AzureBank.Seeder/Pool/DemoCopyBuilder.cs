@@ -179,8 +179,12 @@ public sealed class DemoCopyBuilder
                 seeded++;
                 inARow = 0;
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
             {
+                // Not when the run was stopped, which is read from the token and not from the
+                // kind of failure: a stop that reaches a statement the database already has
+                // comes back as the database's own error, not as a cancellation. That is
+                // nothing the copy did, and it ends the run.
                 inARow++;
 
                 // The root cause, not EF's "an error occurred while saving the entity changes",

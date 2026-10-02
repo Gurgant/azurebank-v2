@@ -14,6 +14,7 @@ using AzureBank.Shared.Utilities;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
@@ -621,6 +622,36 @@ public sealed class DemoPoolSeedSqlServerTests
 
         (await database.CopiesAsync()).Select(c => c.Id).Should().NotIntersectWith(
             summary.Failures.Select(f => f.CopyId), "a copy that failed is not in the pool");
+    }
+
+    [SqlServerFact]
+    public async Task ARunThatIsStopped_WhileACopyIsBeingWritten_Ends_AndBlamesNoCopy()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var log = new RecordingLoggerProvider();
+        database.Log = log;
+
+        // Another session holds the ledger's table, so the copy's ledger rows are sent and then
+        // wait for it. The job is stopped while they wait: the stop reaches a statement that is
+        // already with the database.
+        using var stop = new CancellationTokenSource();
+        Exception ended;
+        await using (var held = await database.HoldAsync("SELECT COUNT(*) FROM [Transactions] WITH (TABLOCKX, HOLDLOCK)"))
+        {
+            var run = database.SeedPoolAsync(2, stop: stop.Token);
+            await held.AStatementWaitsAsync();
+            await stop.CancelAsync();
+
+            ended = (await FluentActions.Awaiting(() => run).Should().ThrowAsync<Exception>(
+                "a run that is stopped ends: it prints no summary, and the next run tops the pool up from the rows as they are")).Which;
+        }
+
+        log.Lines.Should().NotContain(
+            line => line.Level == LogLevel.Error && line.Message.Contains("could not be built", StringComparison.Ordinal),
+            "being stopped is nothing a copy did: it is not written down as a copy that could not be built");
+        ended.GetBaseException().Should().BeOfType<SqlException>(
+            "ARRANGE: a stop that reaches a statement on the server comes back as the database's own error, not as a cancellation");
+        (await CountAsync(database)).Total.Should().Be(0, "the copy that was under way rolled back whole");
     }
 
     [SqlServerFact]
