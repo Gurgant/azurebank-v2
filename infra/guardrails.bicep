@@ -13,7 +13,7 @@ resource shape 'Microsoft.Authorization/policyDefinitions@2025-03-01' = {
     policyType: 'Custom'
     mode: 'All'
     displayName: 'AzureBank: one small replica, manual jobs'
-    description: 'Refuses a container app with more than one replica, a minimum above zero, several active revisions, plain HTTP, more than two containers or a container above half a vCPU; and a job with another trigger, parallel runs or a container above half a vCPU.'
+    description: 'Refuses a container app with more than one replica, a minimum above zero, several active revisions, plain HTTP, more than two containers, an init container or a container above half a vCPU; and a job with another trigger, parallel runs, an init container or a container above half a vCPU.'
     parameters: {
       allowedJobTriggers: {
         type: 'Array'
@@ -40,6 +40,9 @@ resource shape 'Microsoft.Authorization/policyDefinitions@2025-03-01' = {
                   }
                   { field: '${app}/configuration.ingress.allowInsecure', equals: true }
                   { count: { field: '${app}/template.containers[*]' }, greater: 2 }
+                  // An init container is a container too: none, or the two rules around this one
+                  // would bound nothing.
+                  { count: { field: '${app}/template.initContainers[*]' }, greater: 0 }
                   {
                     count: {
                       field: '${app}/template.containers[*]'
@@ -62,7 +65,12 @@ resource shape 'Microsoft.Authorization/policyDefinitions@2025-03-01' = {
                       { field: '${job}/configuration.triggerType', notIn: '[parameters(\'allowedJobTriggers\')]' }
                     ]
                   }
+                  // One run at a time, whatever starts it: a trigger allowed later must not bring
+                  // parallel runs with it.
                   { field: '${job}/configuration.manualTriggerConfig.parallelism', greater: 1 }
+                  { field: '${job}/configuration.scheduleTriggerConfig.parallelism', greater: 1 }
+                  { field: '${job}/configuration.eventTriggerConfig.parallelism', greater: 1 }
+                  { count: { field: '${job}/template.initContainers[*]' }, greater: 0 }
                   {
                     count: {
                       field: '${job}/template.containers[*]'

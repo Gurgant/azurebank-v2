@@ -607,6 +607,52 @@ FOUNDATION = ['Microsoft.App/managedEnvironments', 'Microsoft.Authorization/lock
               'Microsoft.Sql/servers', 'Microsoft.Sql/servers/administrators', 'Microsoft.Sql/servers/databases',
               'Microsoft.Sql/servers/firewallRules']
 BEHIND_DENY_POLICY = ['Microsoft.Authorization/policyAssignments', 'Microsoft.Resources/deployments']
+# Everything the Deny policy refuses, as Azure receives it. A rule that is dropped or loosened
+# fails the comparison below; so does a new one, until it is written here too.
+APP, JOB = 'Microsoft.App/containerApps', 'Microsoft.App/jobs'
+REFUSED_ON_AN_APP = [
+    {'field': f'{APP}/template.scale.maxReplicas', 'greater': 1},
+    {'field': f'{APP}/template.scale.minReplicas', 'greater': 0},
+    {'allOf': [{'field': f'{APP}/configuration.activeRevisionsMode', 'exists': True},
+               {'field': f'{APP}/configuration.activeRevisionsMode', 'notEquals': 'Single'}]},
+    {'field': f'{APP}/configuration.ingress.allowInsecure', 'equals': True},
+    {'count': {'field': f'{APP}/template.containers[*]'}, 'greater': 2},
+    {'count': {'field': f'{APP}/template.initContainers[*]'}, 'greater': 0},
+    {'count': {'field': f'{APP}/template.containers[*]',
+               'where': {'field': f'{APP}/template.containers[*].resources.cpu', 'greater': 0.5}}, 'greater': 0},
+]
+REFUSED_ON_A_JOB = [
+    {'allOf': [{'field': f'{JOB}/configuration.triggerType', 'exists': True},
+               {'field': f'{JOB}/configuration.triggerType', 'notIn': "[parameters('allowedJobTriggers')]"}]},
+    {'field': f'{JOB}/configuration.manualTriggerConfig.parallelism', 'greater': 1},
+    {'field': f'{JOB}/configuration.scheduleTriggerConfig.parallelism', 'greater': 1},
+    {'field': f'{JOB}/configuration.eventTriggerConfig.parallelism', 'greater': 1},
+    {'count': {'field': f'{JOB}/template.initContainers[*]'}, 'greater': 0},
+    {'count': {'field': f'{JOB}/template.containers[*]',
+               'where': {'field': f'{JOB}/template.containers[*].resources.cpu', 'greater': 0.5}}, 'greater': 0},
+]
+
+
+def as_azure_receives_it(node, variables):
+    """A compiled policy rule with the template's own expressions worked out: the two variables,
+    the numbers written with json(), and the "[[" that keeps a policy expression for Azure."""
+    if isinstance(node, dict):
+        return {key: as_azure_receives_it(value, variables) for key, value in node.items()}
+    if isinstance(node, list):
+        return [as_azure_receives_it(value, variables) for value in node]
+    if not isinstance(node, str):
+        return node
+    if node.startswith('[['):
+        return node[1:]
+    worked_out = ((r"\[variables\('(\w+)'\)\]", lambda m: variables[m.group(1)]),
+                  (r"\[format\('\{0\}(.*)', variables\('(\w+)'\)\)\]", lambda m: variables[m.group(2)] + m.group(1)),
+                  (r"\[json\('([0-9.]+)'\)\]", lambda m: float(m.group(1))))
+    for pattern, value in worked_out:
+        match = re.fullmatch(pattern, node)
+        if match:
+            return value(match)
+    assert not node.startswith('['), f'an expression this test cannot work out: {node}'
+    return node
 
 
 @unittest.skipUnless(BICEP, 'the Bicep CLI is not installed')
@@ -652,6 +698,14 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(role['properties']['assignableScopes'], ['[resourceGroup().id]'])
         for forbidden in ('listSecrets', 'delete', 'stop', '*'):
             self.assertNotIn(forbidden.lower(), ' '.join(permissions['actions']).lower())
+
+    def test_github_may_sign_in_from_the_environment_demo_of_this_repository_and_from_nowhere_else(self):
+        (identity,) = self.of_type('Microsoft.ManagedIdentity/userAssignedIdentities')
+        self.assertEqual(identity['name'], 'azurebank-deploy')
+        (credential,) = self.of_type('Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials')
+        self.assertEqual(credential['properties'], {'issuer': 'https://token.actions.githubusercontent.com',
+                                                    'subject': 'repo:Gurgant/azurebank-v2:environment:demo',
+                                                    'audiences': ['api://AzureADTokenExchange']})
 
     def test_the_role_is_assigned_on_the_app_and_on_the_job_and_nowhere_else(self):
         scopes = sorted(resource['scope'] for resource in self.of_type('Microsoft.Authorization/roleAssignments'))
@@ -703,12 +757,18 @@ class TemplateTests(unittest.TestCase):
                          {'external': True, 'targetPort': 8080, 'allowInsecure': False})
         self.assertNotIn('additionalPortMappings', configuration['ingress'])
         self.assertEqual(template['scale'], {'minReplicas': 0, 'maxReplicas': 1})
-        self.assertEqual([container['name'] for container in template['containers']], ['bff', 'api'])
+        self.assertEqual([(container['name'], container['resources']) for container in template['containers']],
+                         [('bff', {'cpu': "[json('0.25')]", 'memory': '0.5Gi'}),
+                          ('api', {'cpu': "[json('0.5')]", 'memory': '1Gi'})])
+        self.assertNotIn('initContainers', template)
         (job,) = self.of_type('Microsoft.App/jobs')
         configuration = job['properties']['configuration']
         self.assertEqual((configuration['triggerType'], configuration['replicaRetryLimit'],
                           configuration['manualTriggerConfig']['parallelism']), ('Manual', 0, 1))
-        self.assertEqual(job['properties']['template']['containers'][0]['args'], ['migrate'])
+        (migrate,) = job['properties']['template']['containers']
+        self.assertEqual((migrate['name'], migrate['args'], migrate['resources']),
+                         ('migrate', ['migrate'], {'cpu': "[json('0.25')]", 'memory': '0.5Gi'}))
+        self.assertNotIn('initContainers', job['properties']['template'])
 
     def test_the_policy_definition_sits_at_subscription_scope_and_denies(self):
         (module,) = self.of_type('Microsoft.Resources/deployments')
@@ -718,6 +778,7 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(nested['resources'], self.compiled['guardrails']['resources'])
         (definition,) = nested['resources']
         self.assertEqual(definition['type'], 'Microsoft.Authorization/policyDefinitions')
+        self.assertEqual((definition['properties']['policyType'], definition['properties']['mode']), ('Custom', 'All'))
         rule = definition['properties']['policyRule']
         self.assertEqual(rule['then'], {'effect': 'deny'})
         # A policy expression must reach Azure unevaluated: in a nested template it is written "[[".
@@ -725,6 +786,22 @@ class TemplateTests(unittest.TestCase):
         (assignment,) = self.of_type('Microsoft.Authorization/policyAssignments')
         self.assertEqual(assignment['name'], 'azurebank-shape')
         self.assertEqual(assignment['properties']['enforcementMode'], 'Default')
+
+    def test_the_policy_refuses_exactly_these_shapes(self):
+        definition = self.compiled['guardrails']['resources'][0]['properties']
+        rule = as_azure_receives_it(definition['policyRule']['if'], self.compiled['guardrails']['variables'])
+        self.assertEqual(rule, {'anyOf': [
+            {'allOf': [{'field': 'type', 'equals': APP}, {'anyOf': REFUSED_ON_AN_APP}]},
+            {'allOf': [{'field': 'type', 'equals': JOB}, {'anyOf': REFUSED_ON_A_JOB}]}]})
+
+    def test_a_job_may_only_be_started_by_hand_unless_the_template_is_told_otherwise(self):
+        definition = self.compiled['guardrails']['resources'][0]['properties']
+        self.assertEqual(definition['parameters'],
+                         {'allowedJobTriggers': {'type': 'Array', 'defaultValue': ['Manual']}})
+        self.assertEqual(self.main['parameters']['allowedJobTriggers']['defaultValue'], ['Manual'])
+        (assignment,) = self.of_type('Microsoft.Authorization/policyAssignments')
+        self.assertEqual(assignment['properties']['parameters'],
+                         {'allowedJobTriggers': {'value': "[parameters('allowedJobTriggers')]"}})
 
     def test_three_alerts_notify_one_action_group_and_stop_nothing(self):
         (alerts,) = self.of_type('Microsoft.Insights/metricAlerts')
