@@ -6,11 +6,15 @@ PowerShell 7. Why it is built this way, what was weighed and what was left as it
 [ADR-0061](../docs/adr/0061-the-demo-is-deployed-to-azure-container-apps-with-no-database-password.md).
 
 **State of this document.** The templates compile and the scripts are tested offline against
-stand-ins. The facts marked *measured* were read on 2026-10-02, from Azure or GitHub with read-only
-commands, on a local stack of this code, or on a local SQL Server. Nothing in this folder has been
-deployed yet: the resource group does not exist. What only a deployment can show is listed under
-[Not measured yet](#not-measured-yet), every expected value below is marked as expected, and every
-"if Azure refuses" has its next step written down before the first run
+stand-ins. Nothing in this folder has run on Azure yet: the resource group does not exist. What
+did run there, on 2026-10-02, is a throwaway trial: a resource group in the same subscription and
+region, created and deleted that day, in which the requests this folder makes were sent by hand,
+with `az rest` and go-sqlcmd, and not by this folder's template or scripts. What it saw is under
+[Measured on Azure](#measured-on-azure). The other facts marked *measured* were read the same day,
+from Azure or GitHub with read-only commands, on a local stack of this code, or on a local SQL
+Server. What only the first deployment can show is listed under
+[Not measured yet](#not-measured-yet), every expected value below is marked as expected, and what
+to do when Azure refuses a step is written down before the first run
 ([If Azure says no](#if-azure-says-no)).
 
 - [What this creates](#what-this-creates)
@@ -32,6 +36,7 @@ deployed yet: the resource group does not exist. What only a deployment can show
 - [Changing the infrastructure later](#changing-the-infrastructure-later)
 - [Removing everything](#removing-everything)
 - [What is not here](#what-is-not-here)
+- [Measured on Azure](#measured-on-azure)
 - [Not measured yet](#not-measured-yet)
 - [Checking these files](#checking-these-files)
 
@@ -1430,6 +1435,112 @@ users go with the group. On this machine, if it is no longer wanted:
 - The password design this folder first had: it is the last step down in
   [If Azure says no](#if-azure-says-no) and would have to be brought back from the history.
 
+## Measured on Azure
+
+On 2026-10-02, in a throwaway resource group in the same subscription and region (Italy North),
+created and deleted that day. The requests were sent by hand, with `az rest` and go-sqlcmd 1.10.0.
+**None of this folder's files ran.** The resources were the trial's own: another server, other
+identities, other users, other jobs. Where a request differed from the one this folder makes, the
+line says so. One run each, unless a line says otherwise.
+
+**The SQL server and the owner's sign-in**
+
+- A server that takes Microsoft Entra sign-ins only, created with the `administrators` block and
+  no SQL administrator login (API version `2023-08-01`, the properties `main.bicep` sends):
+  accepted, ready after 57 s, and read back as Entra-only. The service gave it an administrator
+  name of its own making, for which nobody has a password.
+- The same request a second time: accepted, done at once, and the server read back exactly as
+  before. The administrator and the Entra-only switch, sent once more as child resources: both
+  accepted.
+- The database, Basic, 5 DTU, 2 GB, local backups: online after 56 s.
+- go-sqlcmd signed in as the owner through the `az login` session (`ActiveDirectoryAzCli`): it was
+  `dbo`, a member of `db_owner`, and the server said it takes Entra sign-ins only. The first try
+  was refused for this machine's address, and a firewall rule for that address let it in after
+  19 s.
+- A SQL-password sign-in for a login that does not exist: refused, exit 1, "Login failed for user
+  ... Reason: Azure Active Directory only authentication is enabled."
+- The temporary firewall rule was deleted and read back as gone. About 20 s later the server still
+  accepted a new connection from the same address.
+
+**`CREATE USER`, and which ID a user carries**
+
+- `CREATE USER [<the identity's name>] FROM EXTERNAL PROVIDER`, run by the owner, who holds no
+  directory role: accepted. **The ID the server stored is the identity's client ID**, as 16 bytes.
+- `CREATE USER ... WITH SID = <the client ID as 16 bytes>, TYPE = E`, the form this folder uses:
+  accepted for both users, and the database's own comparison of each stored ID with the client ID
+  said they match.
+- So a user is bound to the client ID, and this folder has no switch for the object ID. The second
+  form this folder keeps, `FROM EXTERNAL PROVIDER WITH OBJECT_ID`, was not sent: the trial looked
+  the identity up by its name.
+
+**A sign-in as each identity, from Container Apps jobs**
+
+A throwaway program on Microsoft.Data.SqlClient 6.1.1, the app's version, in a job at 0.5 vCPU and
+1 GiB, with a string of the app's shape: the managed-identity sign-in, the client ID as `User ID`,
+and a connect timeout of 10 s.
+
+- Each identity signed in as its own user: a reader and a writer, `db_ddladmin` for the migrator
+  only, neither of them an owner.
+- **The first `Open()` on a cold replica took 3,810 ms**, token included, against the 10 s
+  timeout. One measurement. The next open, from the pool: 0 ms. A new login with the token already
+  held: 104 ms. In the other job, where the token endpoint had been asked once when the container
+  started, the first open took 1,065 ms.
+- The app's identity was refused a change of schema: `CREATE TABLE` with error 262 (class 14),
+  `ALTER TABLE` with error 1088 (class 16). It was allowed an application lock inside a
+  transaction, a locked read and an update.
+- The migrator's identity was allowed the thirteen kinds of statement tried (the lock and its
+  release, the history table, creating and dropping tables, an index, a column and a check
+  constraint, altering a column, a data update), and refused `CREATE USER` with error 15247.
+- **A token that cannot be had**, for an identity the job does not carry or for one that does not
+  exist: a `SqlException` with number 0 and **class 20**, around an
+  `Azure.Identity.AuthenticationFailedException`, after 40 to 71 ms (four tries). Read in the API,
+  not run there: its handler answers a class of 20 or above as the 503 of a database that cannot
+  be reached (`backend/src/AzureBank.Api/Handlers/ServiceUnavailableExceptionHandler.cs`, line
+  362, in `IsUnreachable`: `sql.Class >= 20`).
+- **A database with no user for the identity**: error 18456, class 14, "Login failed for user
+  '<token-identified principal>'", after 41 to 52 ms (two tries). Read in the same handler: that
+  number is not in its list (line 208) and the class is below 20, so the answer is a 500.
+- An execution read through API version `2026-07-01` carried its status and its container's exit
+  code: `Succeeded` and 0 for three runs (45, 44 and 29 s long), `Failed` and 7 for a run made to
+  exit 7. The reasons were `CompletionsReached` and `BackoffLimitExceeded`. The failed one carried
+  no length.
+
+**The environment and the logs**
+
+- An environment whose request named no mode (API version `2025-01-01`, the Consumption profile,
+  logs to Azure Monitor): refused, HTTP 400, `ExpressEnvironmentFeatureNotSupported`. With
+  `environmentMode: 'WorkloadProfiles'` on API version `2026-07-01`: accepted. The offer allows
+  one such environment in the region (0 of 1 before it, 1 of 1 with it).
+- A workspace on the pay-per-GB plan, kept 30 days, with a daily cap of 0.05 GB and key access
+  off: accepted, and read back with that cap (API version `2025-02-01`; `main.bicep` uses
+  `2023-09-01`). One diagnostic setting, console and system logs to that workspace: accepted.
+- The jobs' console lines reached the workspace, in the table `ContainerAppConsoleLogs`, with
+  `JobName` filled and the text in `Log`, and the owner read them through the log API with key
+  access off: 45 lines. **The first arrived under nine minutes after the setting was created**
+  (8 min 38 s), not the 90 minutes Microsoft's page allows for. A line could be read 387 s and
+  398 s after it was written (the median for each of the two jobs), and 486 s at the most.
+- Three runs that lasted seconds each kept their line.
+- Billed: 19,732 bytes for those 45 lines, 438 a line, for 194 characters of text on average.
+- **Not shown: what any of it cost.** The cost view had no row for the resource group on the same
+  day (once it answered 429), so whether the free 5 GB a month apply to this offer is still open.
+
+**The role, the policy, a budget**
+
+- A custom role with the nine actions, assignable in one resource group: accepted and read back
+  with nine actions. It was found by its ID, and in the list of custom roles, asked at the group
+  and asked at the subscription; after its deletion, by neither.
+- A custom policy definition at the subscription, assigned to the resource group, with the effect
+  Deny: accepted. **It refused at once**: a job at 0.75 vCPU got `RequestDisallowedByPolicy` on the
+  first try, within seconds of the assignment, and a job at 0.5 vCPU was accepted. The rule sent
+  was an earlier one than this folder's: it had every condition of `guardrails.bicep` but four
+  (an init container on an app, an init container on a job, parallel runs under a schedule
+  trigger and under an event trigger). Those four have never been sent.
+- A budget on the subscription, 20 a month, with four e-mail notifications to an outside mailbox:
+  accepted and read back. No e-mail was due in the seconds it existed.
+
+At the end the database, the workspace and then the resource group were deleted (the group took
+27 minutes to go), and the group, the role, the policy and the budget were each read back as gone.
+
 ## Not measured yet
 
 **Measured on a local stack of this code** (`compose.yaml`, Production images, SQL Server 2022,
@@ -1453,15 +1564,16 @@ on 2026-10-02), not on Azure:
 - A lost registration race prints the duplicate value in the API's console: an e-mail address
   four times in two lines, a handle the same way. The BFF's console holds neither.
 
-**Measured on a local SQL Server** (17.0, LocalDB, with go-sqlcmd 1.10.0 and `-b`). The local
-engine refuses both real forms of `CREATE USER` in `sql-principals.sql` (`TYPE = E`: a syntax
-error; `FROM EXTERNAL PROVIDER`: not configured), so the file ran with three substitutions: the
+**Measured on a local SQL Server** (17.0, LocalDB, with go-sqlcmd 1.10.0 and `-b`; run again on
+2026-10-03 on the file as it is now, without the switch for the object ID). The local engine
+refuses both real forms of `CREATE USER` in `sql-principals.sql` (`TYPE = E`: a syntax error;
+`FROM EXTERNAL PROVIDER`: not configured), so the file ran with three substitutions: the
 database's name, a user made from a disabled SQL login whose ID is the 16 bytes asked for, and the
 user type that goes with it. Everything else is the file as it is.
 
 - On a clean database it commits and exits 0; a second run changes nothing.
-- With the other kind of ID both users are replaced, and replaced back; a new app identity
-  replaces only that user.
+- A new app identity replaces only that user. Asking for the second form of `CREATE USER` while
+  both users exist changes nothing.
 - As the migrator, directly: `CREATE USER` is refused (Msg 15247) and so is joining `db_owner`
   (Msg 15151). A DDL trigger is accepted.
 - With both guards switched off, a trigger planted by the migrator makes the migrator an owner
@@ -1478,7 +1590,7 @@ user type that goes with it. Everything else is the file as it is.
   user was still there afterwards, because it was made before the transaction began. The file
   does not keep such text out; the runner does, by parsing each ID.
 - After all 16 migrations a database holds 0 triggers and 0 modules, and none of the lists has an
-  unexpected row.
+  unexpected row. (Measured on 2026-10-02 and not repeated: the lists have not changed since.)
 - Without `-b`, `sqlcmd` exits 0 when the file stops on an error.
 
 **Measured on this machine, of the tools:** go-sqlcmd 1.10.0 passes the users script's three
@@ -1490,49 +1602,43 @@ names its package is built and started by `dotnet run`, as step 7 has the probe 
 helper functions of this file (`Show-Identities`, `Set-Probe`, `Start-Probe`) ran against a
 stand-in for `az`: the requests they send are the ones written here, and no Azure answered them.
 
-**Not measured.** Read-only commands, offline tests and local stacks cannot show any of this. Each
-line is checked at the step named, on the first deployment.
+**Not measured.** The trial sent requests by hand; read-only commands, offline tests and local
+stacks cannot show the rest. Each line is checked at the step named, on the first deployment.
 
 | What | Where it shows |
 | --- | --- |
-| The subscription's offer accepts a SQL server, a custom role, a custom policy definition, the lock, three identities | step 2 |
-| A server with no SQL administrator is accepted with this API version, and a second run of the same template leaves it alone | steps 2 and 3 |
-| The offer accepts a workspace, the Azure Monitor destination, the diagnostic setting and a cap of 0.05; `disableLocalAuth` leaves the platform's own delivery alone | steps 2, 4 and 10 |
+| **This folder's own files on Azure.** `main.bicep` as a deployment with its what-if (fourteen resources, then nine more), `secrets.ps1`, `sql-principals.ps1` with `sql-principals.sql`, `deploy.py`, and the workflow `deploy.yml`. None has run there | every step |
+| What the template sends and the trial did not: the lock on the database, the federated credential, the policy definition deployed at another scope with a what-if that shows it, the four conditions of the policy named above, the workspace on its own API version, the action group and the four alert rules | steps 2, 4 and 15 |
+| A second run of the template leaves the server alone (by hand: the same request, twice) | step 3 |
 | How the logs settings and the app's scale read back (a value Azure leaves out is read by `deploy.py` as its default) | steps 4 and 15 |
-| A what-if shows the policy definition, which is deployed at another scope | step 2 |
-| The offer accepts a budget | step 5 |
-| go-sqlcmd signs in as the owner through the `az login` session; the server names this machine's address in its refusal, in the words the script looks for | step 6 |
-| The temporary firewall rule can be deleted with the lock on the database in place | step 6 |
-| Azure SQL runs `CREATE USER ... WITH SID, TYPE = E`; a new database there has no trigger, no module and only the baseline rows the file expects; dropping and creating a user inside the transaction works there | step 6 |
-| The request that creates the probe job is accepted, by Azure and by the Deny policy, and the SDK image builds the program inside half a vCPU | step 7 |
-| A user made from the client ID can sign in from a job; or whether it has to be the object ID | step 7 |
-| A job that carries only the app's identity gets no token for the migrator's | step 7 |
+| The users file on Azure SQL: a new database there has no trigger, no module and only the baseline rows the file expects; dropping and creating a user inside its transaction; its second form, `FROM EXTERNAL PROVIDER WITH OBJECT_ID` | step 6; the second form only if it is asked for |
+| The runner on Azure: the server's refusal as the script's own pattern reads it (the trial read the words "is not allowed to access the server" and an address in quotes, with a looser pattern), and the temporary firewall rule deleted with the lock on the database in place | step 6 |
+| The two users this folder makes, signing in from a job; the probe job's request accepted by the Deny policy; the SDK image building the session's program inside half a vCPU (the trial's program built there) | step 7 |
 | A container of the app that asks for a token and names no identity gets none (read on Microsoft's page: such a request is answered for a system-assigned identity, and the app has none) | not provoked |
-| The first token on a cold replica, in milliseconds, and what the driver throws when no token comes | step 7 |
-| The server names Entra-only in its refusal of a SQL sign-in for a name that does not exist | step 8 |
+| `-ProveSqlSignInRefused` as the script sends it (the trial's refusal was provoked without naming the sign-in method) | step 8 |
 | The API as `azurebank_app` under the three real-stack test suites, and a transfer as that user | before step 15, on a local SQL Server |
-| The four alert rules are accepted with these metric names (`Requests`, `TxBytes`, `Replicas`, `Ingestion Volume`), the fourth on a workspace and at no cost, and a test e-mail arrives | step 15 |
-| Our own template passes the Deny policy; the policy refuses a second replica on a PATCH | step 15 |
+| **The app itself:** two containers in one replica, its three probes against a cold start (1 s delay, 3 s period, 10 failures; 4 s timeout on readiness), the first database request after it, and scale to zero | steps 15 and 16, and the days after |
+| The four alert rules are accepted with these metric names (`Requests`, `TxBytes`, `Replicas`, `Ingestion Volume`), the fourth on a workspace and at no cost; a test e-mail arrives; any of the four ever firing | step 15, and the days after |
+| What the `Replicas` metric reports while the app is scaled to zero: 0, or nothing. If nothing, a day's average is 1 on any day the app ran at all, the alert on replica time fires on any use, and that rule has to count another way | the first days after step 16 |
+| Our own template passes the Deny policy; the policy refuses a second replica on a PATCH (the trial saw an earlier rule refuse a job above half a vCPU) | step 15 |
 | What the registry answers the workflow's token for a package that does not exist yet (anonymously, measured: `denied`); the digest line | step 14 |
 | The smoke test's answers through the Azure ingress, and whether every visitor shares one sign-in limit behind it | step 16 |
-| Real answer shapes: the job start, the execution states, an execution's exit code and reason, the revision's `active` flag, a replica's container states | steps 7 and 16 |
-| The columns the two log commands read (`JobName`, `ContainerAppName`, `ContainerName`, `Log`), and that the lines of a run that lasts seconds reach the table | steps 16 and 17 |
-| As the deployment identity: GET and PATCH of the app and of the job succeed with these nine actions, no right on the environment and no right on the attached identity; the listing of secrets is refused with `AuthorizationFailed` | step 17 |
+| The answers `deploy.py` reads, as it reads them: the job start it sends, the execution states while it polls, the revision's `active` flag, a replica's container states, and where each field of an execution sits (the trial kept an execution's values, not the answer itself) | steps 7 and 16 |
+| The columns `--app-log` reads (`ContainerAppName`, `ContainerName`); `--job-log` reads `JobName` and `Log`, which the trial saw filled | steps 16 and 17 |
+| **As the deployment identity:** GET and PATCH of the app and of the job succeed with these nine actions against resources that carry an identity, with no right on the environment and none on the attached identity; the listing of secrets is refused with `AuthorizationFailed` | step 17 |
 | On Azure, as on the local stack: the app becomes ready on an empty database, before the first migration | steps 15 and 16 |
+| `migrate` itself, as the migrator's identity (the trial ran the kinds of statement, not the tool) | step 16 |
 | The automatic put-back on a real failure. Its trigger is proved by unit tests only; its request and its wait are the ones `--app-only` uses | step 18 proves `--app-only` |
 | What the app reads just after the put-back request. If its state still says `Failed`, left by the deployment that failed, `deploy.py` reports a put-back that did not succeed although it may have | a real put-back; not provoked |
 | A request to Azure that fails once in the middle of a run. Nothing is asked twice: the run stops, and nothing is put back | not provoked |
 | The raw log of a workflow run holds none of the three identifiers, not the app's address, not the server's name, no client ID of a database identity and no address: step 17 counts each | step 17 |
 | `migrate` from a checkout, signed in as the owner with `Active Directory Default` | step 19 |
-| Cold start against the probes (1 s delay, 3 s period, 10 failures; 4 s timeout on readiness), and the first database request after it | after step 16 |
-| What the `Replicas` metric reports while the app is scaled to zero: 0, or nothing. If nothing, a day's average is 1 on any day the app ran at all, the alert on replica time fires on any use, and that rule has to count another way | the first days after step 16 |
-| The meters after 48 hours: the three environment meters and the Dedicated one at 0; whether the free 5 GB of logs apply to this offer; whether the cost view returns a row at all | after steps 2 and 20 |
-| What the workspace bills for a line; how far the cap overshoots; whether an environment set to `none` still feeds a setting that exists | after step 20; the last two are not provoked |
+| The meters after 48 hours: the three environment meters and the Dedicated one at 0; whether the free 5 GB of logs apply to this offer; whether the cost view returns a row at all (on the trial's own day it returned none) | after steps 2 and 20 |
+| What the workspace bills for a line of the app; how far the cap overshoots; whether an environment set to `none` still feeds a setting that exists | after step 20; the last two are not provoked |
 | How long a managed identity's token stays valid for the database | not found in the pages read |
 | That the identity is refused a scale change, a delete or a stop. One refusal is provoked on every deployment (the secrets listing); the policy's refusal is provoked as the owner | not provoked |
-| The role as a listing through the resource group shows it; every command under [Switching the logs off](#switching-the-logs-off), [If something was stolen](#if-something-was-stolen) and [Removing everything](#removing-everything) | step 4; the day they are needed |
-| `sql-principals.ps1` against a real database. Offline it runs from its first line to its last with a stand-in where `sqlcmd` is | step 6 |
-| The tests' PowerShell half on Linux: the folder's and the file's modes, the signature check that says it checked nothing | the CI job `infra` |
+| Every command under [Switching the logs off](#switching-the-logs-off), [If something was stolen](#if-something-was-stolen) and [Removing everything](#removing-everything). The trial made its own deletions with other commands | the day they are needed |
+| The tests' PowerShell half on Linux: the folder's and the file's modes, the signature check that says it checked nothing. The run blocks of the workflows under the shell linter, which only the CI job has | the CI job `infra` |
 
 ## Checking these files
 
@@ -1542,6 +1648,10 @@ bicep lint infra/main.bicep
 python -m unittest discover -s infra -p "test_*.py"
 ```
 
+Both commands must write nothing to standard error. `main.bicep` silences one warning on one line
+(BCP081: Bicep 0.47.16 has no types for the environment's API version); a test takes that line
+out of a copy and sees the warning come back, and sees an unused parameter still reported.
+
 `test_deploy.py` tests the deployment script's decisions against invented answers: time is a
 counter and no process is started. A few of its tests open a real connection to a server of their
 own on `127.0.0.1`, to see what a dropped connection really raises. `test_scripts.py` runs the two
@@ -1549,5 +1659,5 @@ PowerShell scripts for real against a stand-in for the Azure CLI and a stand-in 
 reads `sql-principals.sql` as text (the order of its guards and every condition, word for word;
 what a server does with them is above), and reads the compiled templates: the role's nine actions, the federated credential's
 subject, every rule of the policy, the two identities and the one each resource carries, that no
-database credential is anywhere, the workspace and its cap. The CI job `infra` runs the same three
-checks and actionlint on the workflows.
+database credential is anywhere, the workspace and its cap, the environment's mode and its API
+version. The CI job `infra` runs the same three checks and actionlint on the workflows.
