@@ -359,10 +359,11 @@ owner.
 
 #### 3. The same deployment, a second time (operator, **writes** nothing if Azure accepts it)
 
-The server is created without a SQL administrator through a block that this API version documents
-for creation only. Sent by hand in the trial, the same request was accepted a second time and the
-server read back exactly as before. What this step adds is the template's own second run, with
-its what-if, seen once while the database is still empty.
+The template gives the server no SQL administrator login, through a block that this API version
+documents for creation only (in the trial the service then named an administrator of its own,
+and no password was sent for it). Sent by hand in the trial, the same request was accepted a
+second time and the server read back exactly as before. What this step adds is the template's own
+second run, with its what-if, seen once while the database is still empty.
 
 ```powershell
 try {
@@ -1450,8 +1451,8 @@ line says so. One run each, unless a line says otherwise.
 
 - A server that takes Microsoft Entra sign-ins only, created with the `administrators` block and
   no SQL administrator login (API version `2023-08-01`, the properties `main.bicep` sends):
-  accepted, the operation done after 57 s, and read back as Entra-only. The service gave it an
-  administrator name of its own making, for which nobody has a password.
+  accepted, the operation done after 57 s, and read back as Entra-only. The service gave it a SQL
+  administrator name of its own making; no password was sent for it.
 - The same request a second time: accepted, done at once, and the server read back exactly as
   before. The administrator and the Entra-only switch, sent once more as child resources: both
   accepted.

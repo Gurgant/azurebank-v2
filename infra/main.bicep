@@ -104,11 +104,13 @@ resource environmentLogs 'Microsoft.Insights/diagnosticSettings@2021-05-01-previ
   }
 }
 
-// Microsoft Entra sign-ins only. The server is created without a SQL administrator, so its
-// sign-in, which every Azure customer can reach (the firewall rule below), has no password to
-// guess. The administrators block is what creates a server that way. The reference says this API
-// version reads it at creation only; sent by hand a second time, the same request was accepted
-// and the server read back as before (README.md, "Measured on Azure").
+// Microsoft Entra sign-ins only. The template gives the server no SQL administrator login and no
+// password (sent by hand, such a request got an administrator name the service made up, and no
+// password was sent for it), and Entra-only refuses every SQL sign-in: the server's sign-in,
+// which every Azure customer can reach (the firewall rule below), has no password to guess. The
+// administrators block is what creates a server that way. The reference says this API version
+// reads it at creation only; sent by hand a second time, the same request was accepted and the
+// server read back as before (README.md, "Measured on Azure").
 resource sql 'Microsoft.Sql/servers@2023-08-01' = {
   name: 'azurebank-${uniqueString(resourceGroup().id)}'
   location: location

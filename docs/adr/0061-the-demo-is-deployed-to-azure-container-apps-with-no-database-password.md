@@ -57,7 +57,7 @@ on Azure" has each line in full. One run per row unless it says otherwise.
 
 | What was sent | What happened |
 |---|---|
-| A SQL server with the `administrators` block, Entra-only, and no SQL administrator login, on API `2023-08-01` | Accepted, the operation done after 57 s, read back as Entra-only. **The same request a second time: accepted, and the server read back exactly as before.** The administrator and the Entra-only switch sent again as child resources: accepted |
+| A SQL server with the `administrators` block, Entra-only, and no SQL administrator login, on API `2023-08-01` | Accepted, the operation done after 57 s, read back as Entra-only, with a SQL administrator name the service made up (no password was sent for it). **The same request a second time: accepted, and the server read back exactly as before.** The administrator and the Entra-only switch sent again as child resources: accepted |
 | go-sqlcmd as the owner, through the `az login` session | Signed in, as `dbo`. The first try was refused for the caller's address, and a firewall rule for it let the next one in after 19 s |
 | A SQL-password sign-in for a login that does not exist | Refused, with "Reason: Azure Active Directory only authentication is enabled." |
 | `CREATE USER [<the identity's name>] FROM EXTERNAL PROVIDER`, by the owner, who holds no directory role | Accepted. **The ID the server stored is the identity's client ID** |
@@ -253,15 +253,16 @@ the job; a SQL administrator password made new at every run and used by nothing.
 | A migration nobody can read | The owner could run the tools image locally with the password | No managed identity off Azure: the last resort is the source at that commit, signed in as the owner |
 | Cutting off a thief | Change both passwords | No single step: an incident procedure, in the runbook |
 
-**Measured on Azure, by hand.** API `2023-08-01` creates a server with no SQL login, and the same
-request a second time leaves it alone. A user created from the client ID signs in, and the client
-ID is what the server stores. The first open on a cold replica took 3,810 ms against the 10 s
-connect timeout, once. When no token comes the driver throws a `SqlException` of class 20, which
-the API's handler answers as the 503 of a database it cannot reach; with no user for the identity
-it throws error 18456, class 14, which that handler leaves a 500 (the two errors were measured;
-the two answers were read in `ServiceUnavailableExceptionHandler.cs`, not run). A job carrying
-one identity gets no token for the other. The server names Entra-only in its refusal of a SQL
-sign-in.
+**Measured on Azure, by hand.** API `2023-08-01` accepts a server request that gives no SQL
+administrator login (the service named one of its own, and no password was sent for it), and the
+same request a second time leaves the server alone. A user created from the client ID signs in,
+and the client ID is what the server stores. The first open on a cold replica took 3,810 ms
+against the 10 s connect timeout, once. When no token comes the driver throws a `SqlException` of
+class 20, which the API's handler answers as the 503 of a database it cannot reach; with no user
+for the identity it throws error 18456, class 14, which that handler leaves a 500 (the two errors
+were measured; the two answers were read in `ServiceUnavailableExceptionHandler.cs`, not run). A
+job carrying one identity gets no token for the other. The server names Entra-only in its refusal
+of a SQL sign-in.
 
 **Not measured.** The same things done by these files: the template's own second run, and the two
 users the script makes. That a request for a token which names no identity gets none. Whether a
