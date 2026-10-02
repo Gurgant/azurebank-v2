@@ -48,7 +48,8 @@ import uuid
 
 API_VERSION = '2025-01-01'
 # The one read that needs a later version: from this one on an execution carries its container's
-# exit code and a reason. Every other call stays on API_VERSION.
+# exit code and a reason (seen filled once, by hand: README.md, "Measured on Azure"). Every other
+# call stays on API_VERSION.
 VERDICT_API_VERSION = '2026-07-01'
 WORKSPACE_API_VERSION = '2023-09-01'
 # The resolved path, so the same script also runs where az is a .cmd file.
@@ -392,7 +393,8 @@ def started_within(execution, seconds, now=None):
 
 def named(name):
     """An execution's name when it has the shape of one, else None. Every line of a deployment
-    may be public, and nobody has seen what Azure puts in a field it has never filled here."""
+    may be public, and this script has read no answer of Azure's yet: a field is printed only in
+    the shape expected of it."""
     return name if isinstance(name, str) and EXECUTION_NAME.fullmatch(name) else None
 
 
@@ -436,7 +438,7 @@ def stamp(time_):
 
 
 def listed(node, key):
-    """node[key] when it is a list, else nothing: an answer nobody has seen may hold anything."""
+    """node[key] when it is a list, else nothing: an answer this script never read may hold anything."""
     value = node.get(key) if isinstance(node, dict) else None
     return value if isinstance(value, list) else []
 
@@ -455,9 +457,10 @@ def exit_code(properties, container):
 
 def verdict(name, properties, in_actions=False):
     """One line about an execution: name, status, times, exit code, reason. Every field is checked
-    for its shape before it is printed, because inside GitHub Actions the line is public and
-    nobody has seen what Azure puts in a field it has never filled here. There, a reason that is
-    not one plain word is withheld, and Azure's message is not printed at all."""
+    for its shape before it is printed, because inside GitHub Actions the line is public. The
+    fields were seen filled once, by hand, for a throwaway job (README.md, "Measured on Azure");
+    this script has not read them from Azure itself. There, a reason that is not one plain word is
+    withheld, and Azure's message is not printed at all."""
     parts = [f"{told_name(name)}: {told_status(properties.get('status'))}"]
     began, ended = moment(properties.get('startTime')), moment(properties.get('endTime'))
     parts.append(f'started {stamp(began)}' if began else 'start not reported')

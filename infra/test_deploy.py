@@ -680,6 +680,32 @@ class VerdictTests(unittest.TestCase):
                 line = public_verdict(finished(reason=reason)['properties'])
                 self.assertTrue(line.endswith(', no reason given.'), line)
 
+    def test_the_values_a_real_execution_carried_on_azure_read_as_these_lines(self):
+        # What two executions of a throwaway job carried on API version 2026-07-01, read by hand on
+        # 2026-10-02 (README.md, "Measured on Azure"): one that ended well, one made to exit 7. The
+        # values are the ones read; the times are invented, and where each field sits in the answer
+        # is the reference's, not something that read kept.
+        def carried(status, code, reason, message):
+            properties = finished(status=status, code=code, reason=reason, message=message)['properties']
+            properties['detailedStatus']['replicas'][0]['containers'][0]['additionalInformation'] = 'ProcessExited'
+            return properties
+
+        ended_well = carried('Succeeded', 0, 'CompletionsReached', 'Reached expected number of succeeded pods')
+        self.assertEqual(public_verdict(ended_well), (
+            'Verdict: execution run: Succeeded, started 2026-10-02T18:00:03Z, '
+            'ended 2026-10-02T18:00:09Z (6 s), exit code 0 (done), reason CompletionsReached.'))
+        self.assertTrue(deploy.verdict('run', ended_well).endswith(
+            ', reason CompletionsReached. Azure says: Reached expected number of succeeded pods / ProcessExited'))
+        # On the one that failed no length could be worked out: a start or an end time was absent.
+        failed = carried('Failed', 7, 'BackoffLimitExceeded', 'Job has reached the specified backoff limit')
+        ending = ', exit code 7 (not a code the tool itself exits with), reason BackoffLimitExceeded.'
+        for absent, times in (('startTime', 'start not reported, ended 2026-10-02T18:00:09Z'),
+                              ('endTime', 'started 2026-10-02T18:00:03Z, end not reported')):
+            with self.subTest(absent=absent):
+                properties = {key: value for key, value in failed.items() if key != absent}
+                self.assertEqual(public_verdict(properties), f'Verdict: execution run: Failed, {times}{ending}')
+                self.assertNotIn('backoff limit', public_verdict(properties))
+
     def test_azures_own_message_is_for_the_owners_terminal_and_never_for_actions(self):
         properties = finished(reason='Container exited with a non-zero code',
                               message='MESSAGE-MARKER')['properties']
