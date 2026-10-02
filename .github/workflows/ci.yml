@@ -763,3 +763,58 @@ jobs:
       - name: API log on failure
         if: failure()
         run: cat "$RUNNER_TEMP/api.log"
+
+  # The infrastructure: the two Bicep templates, the deployment script, the two PowerShell scripts
+  # and the workflows themselves. Nothing here signs in to Azure or reads a secret.
+  infra:
+    name: Infrastructure (templates, scripts, workflows)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Bicep prints a warning on standard error and still exits 0 (measured with 0.47.16), so
+      # anything written there fails the step.
+      - name: Compile and lint the templates
+        shell: bash
+        run: |
+          set -euo pipefail
+          bicep --version
+          clean() {
+            local said status=0
+            said="$("$@" 2>&1 > /dev/null)" || status=$?
+            if (( status != 0 )) || [[ -n "$said" ]]; then
+              echo "::error::$* exited $status and said:"
+              printf '%s\n' "$said"
+              exit 1
+            fi
+            echo "$*: clean"
+          }
+          for template in infra/main.bicep infra/guardrails.bicep; do
+            clean bicep build "$template" --stdout
+            clean bicep lint "$template"
+          done
+
+      # Offline: every Azure and HTTP answer is a stand-in. The tests start PowerShell 7 and the
+      # Bicep CLI; here a missing tool is an error, not a skip (infra/test_scripts.py).
+      - name: Test the deployment script, the PowerShell scripts and the templates
+        run: python3 -m unittest discover -s infra -p 'test_*.py' -v
+
+      # The release is pinned by the SHA-256 of its archive, as published with it.
+      - name: Lint the workflows
+        shell: bash
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          set -euo pipefail
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl --silent --show-error --fail --location --output "$RUNNER_TEMP/$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/$archive"
+          echo "$ACTIONLINT_SHA256  $RUNNER_TEMP/$archive" | sha256sum --check --quiet
+          tar --extract --gzip --file "$RUNNER_TEMP/$archive" --directory "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -version
+          "$RUNNER_TEMP/actionlint" -color
