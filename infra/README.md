@@ -931,7 +931,11 @@ written once: an image that is already published is left as it is, and only the 
 **The workflow prints the migration's verdict and never its text.** The log of a public repository
 is public, and that text can name the server, an address or a value from a database error. Inside
 GitHub Actions the verdict's reason is printed only if it is one plain word, and Azure's own
-message is not printed at all. The same line is on the run's summary page.
+message is not printed at all. The same line is on the run's summary page. Around it, an
+execution's name and its status are printed only in the shape expected, and in whatever else the
+run prints of Azure's words (a refusal, a revision's error, a replica's state) an ID is replaced
+by `<id>` and anything shaped like an IPv4 address by `<address>`. The name of a host is not
+looked for.
 
 **If step 5 or step 7 fails, the app is put back** on the template it had at step 2, under a new
 revision, and the run still fails, saying "put back to `<tag>`; the schema stays where the
@@ -1507,8 +1511,8 @@ python -m unittest discover -s infra -p "test_*.py"
 counter and no process is started. A few of its tests open a real connection to a server of their
 own on `127.0.0.1`, to see what a dropped connection really raises. `test_scripts.py` runs the two
 PowerShell scripts for real against a stand-in for the Azure CLI and a stand-in for `sqlcmd`,
-reads `sql-principals.sql` as text (the order of its guards; what a server does with them is
-above), and reads the compiled templates: the role's nine actions, the federated credential's
+reads `sql-principals.sql` as text (the order of its guards and every condition, word for word;
+what a server does with them is above), and reads the compiled templates: the role's nine actions, the federated credential's
 subject, every rule of the policy, the two identities and the one each resource carries, that no
 database credential is anywhere, the workspace and its cap. The CI job `infra` runs the same three
 checks and actionlint on the workflows.
