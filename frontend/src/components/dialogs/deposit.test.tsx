@@ -507,6 +507,45 @@ describe('deposit — the server says it went through', () => {
     expect(keys).toHaveLength(1);
   });
 
+  it('takes focus from the dialog itself, where a press during the send had left it', async () => {
+    /*
+      The other half of a double click: the answer takes longer than the gap between the two
+      presses. Measured in Chromium on the running stack: the second press came on the disabled
+      Deposit button while the send was still out, the browser gave focus to the nearest ancestor
+      that can hold it, the dialog's own surface, and the view then appeared with focus still
+      there and its sentence unfocused. jsdom moves no focus for a press on a disabled control,
+      so the test puts focus where the browser was measured to put it.
+    */
+    const keys: (string | null)[] = [];
+    let answer = () => {};
+    const held = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    server.use(
+      http.post('*/api/transactions/deposit', async ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        await held;
+        return committedAnswerLost('/api/transactions/deposit');
+      }),
+    );
+    renderDeposit();
+
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    await waitFor(() => expect(keys).toHaveLength(1));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled());
+
+    const dialog = screen.getByRole('dialog', { name: 'Deposit Money' });
+    dialog.focus();
+    expect(dialog).toHaveFocus();
+
+    answer();
+    await answerDrawn(keys);
+    expect(screen.getByRole('dialog', { name: 'Deposit Complete' })).toBe(dialog);
+    await waitFor(() => expect(screen.getByText(COPY.depositWentThrough)).toHaveFocus());
+    expect(keys).toHaveLength(1);
+  });
+
   it('a 409 whose body cannot be trusted shows the check view, not "Deposit failed"', async () => {
     /*
       A wrong-typed member makes the whole body untrusted, so this 409 names no code the SPA can

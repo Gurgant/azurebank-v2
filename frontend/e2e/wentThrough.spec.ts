@@ -57,12 +57,14 @@ function wentThroughBody(path: string) {
 
 /**
  * Answers every send to `path` in the browser with that 409, and keeps each one's key. The glob
- * ends at the path, so the mint beside it (`…/authorizations`) goes to the real API.
+ * ends at the path, so the mint beside it (`…/authorizations`) goes to the real API. With `held`,
+ * the answer waits for it: the key is kept as the send arrives, the 409 goes out when it resolves.
  */
-async function answerThatItWentThrough(page: Page, path: string) {
+async function answerThatItWentThrough(page: Page, path: string, held?: Promise<void>) {
   const keys: string[] = [];
   await page.route(`**${path}`, async (route) => {
     keys.push(route.request().headers()['idempotency-key'] ?? '(missing)');
+    await held;
     await route.fulfill({
       status: 409,
       headers: {
@@ -365,6 +367,53 @@ test.describe('a payment the server says went through', () => {
     // Not a trap: the exit nobody presses by accident closes it.
     await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog')).toHaveCount(0);
+    expect(keys).toHaveLength(1);
+  });
+
+  test('a second press while the send is still out leaves the sentence to take focus when the answer comes', async ({
+    page,
+  }) => {
+    /*
+      The other half of a double click: the answer takes longer than the gap between the presses.
+      Measured on the running stack: the 409 came 192 and 225 ms after the first press, the second
+      press 130 ms after it. That press lands on the disabled button, and the browser gives focus
+      to the nearest ancestor that can hold it, the dialog itself; the view then appeared with
+      focus still there and its sentence unfocused. A container around the sentence is not a place
+      the visitor chose: the sentence takes focus from it as it does from `body`.
+    */
+    await page.setViewportSize({ width: 1280, height: 900 });
+    let answer = () => {};
+    const held = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    const keys = await answerThatItWentThrough(page, '/api/transactions/deposit', held);
+    const form = await openMoneyDialog(page, 'Deposit', /deposit money/i);
+    await form.getByRole('textbox', { name: 'Deposit amount' }).fill('1');
+    const deposit = form.getByRole('button', { name: 'Deposit €1.00' });
+    await expect(deposit).toBeEnabled();
+    const box = await deposit.boundingBox();
+    if (!box) throw new Error('the Deposit button has no box to press');
+    const where = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+
+    await page.mouse.click(where.x, where.y);
+    await expect.poll(() => keys.length).toBe(1);
+    await page.mouse.click(where.x, where.y);
+
+    // What this test stages: the second press came before the answer, and it left focus on the
+    // dialog's own surface, which is still the form's.
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toHaveAccessibleName('Deposit Money');
+    await expect(
+      dialog,
+      'the press during the send did not leave focus on the dialog',
+    ).toBeFocused();
+
+    answer();
+    await expect(dialog).toHaveAccessibleName('Deposit Complete');
+    await expect(
+      dialog.getByText(SENTENCE.deposit),
+      'the sentence did not take focus from the dialog around it',
+    ).toBeFocused();
     expect(keys).toHaveLength(1);
   });
 

@@ -70,20 +70,21 @@ has put it somewhere else meanwhile. ADR-0059 has the reasons.
 is disabled during the send and the browser hands its focus to `body`, so the view appears with
 nothing focused, and a view that mounts with its words already in it is not announced. The sentence
 is a `<Text as="p">` with `tabIndex={-1}` and the ref of `useFocusWhenLost(active)`, which focuses
-it when the view appears and focus is on `body`: the landing is there so that it is read before the
-actions, and one Tab reaches the first of them. **Not a live region, an alert or a status as well,
-and no `aria-describedby` on a button:** beside the landing those would say the sentence a second
-time, and a description would say it again at the Tab. The went-through view of the four money
-flows is built this way: `WentThroughView` on the two transfer pages, and the same block in the
-deposit and withdrawal dialogs, where the action carries a `key` so that it is a new node, not the
-send button renamed under a focus that never left it. In a dialog the view is shorter than the form
-it replaces, so the second press of a double click on the send button lands on the backdrop: the
-dialog tells its shell (`keepOnOutsidePress`), and a press outside then closes nothing, while the X
-and Escape still do. After a key press the browser draws the app's focus ring around the sentence;
-after a click it draws none. Three limits, known:
+it when the view appears and focus is on `body` or on a container around the sentence (the dialog
+itself, where a press on a disabled control leaves it): the landing is there so that it is read
+before the actions, and one Tab reaches the first of them. **Not a live region, an alert or a status
+as well, and no `aria-describedby` on a button:** beside the landing those would say the sentence a
+second time, and a description would say it again at the Tab. The went-through view of the four
+money flows is built this way: `WentThroughView` on the two transfer pages, and the same block in
+the deposit and withdrawal dialogs, where the action carries a `key` so that it is a new node, not
+the send button renamed under a focus that never left it. In a dialog the view is shorter than the
+form it replaces, so the second press of a double click on the send button lands on the backdrop:
+the dialog tells its shell (`keepOnOutsidePress`), and a press outside then closes nothing, while
+the X and Escape still do. After a key press the browser draws the app's focus ring around the
+sentence; after a click it draws none. Three limits, known:
 
-- when another dialog holds focus as the answer arrives, or the visitor moved focus during the wait,
-  the landing does not run, and nothing brings the sentence to a screen reader;
+- when another dialog holds focus as the answer arrives, or the visitor moved focus to a control
+  during the wait, the landing does not run, and nothing brings the sentence to a screen reader;
 - the check view ("We couldn't confirm …") lands no focus: it still appears with focus on `body`;
 - a landing does not depend on the screen reader, but what each one says on a focused paragraph
   does. ADR-0059's Validation says what was heard and what was not.

@@ -905,6 +905,41 @@ describe('withdraw — the server says it went through', () => {
     expect(keys).toHaveLength(1);
   });
 
+  it('takes focus from the dialog itself, where a press during the send had left it', async () => {
+    // DepositDialog's case: a press on a disabled control while the send is out leaves focus on
+    // the dialog's own surface (measured in Chromium, on Withdraw's footer too, where the second
+    // press of a double click came on the disabled Back). The sentence must still take it.
+    const keys: (string | null)[] = [];
+    let answer = () => {};
+    const held = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    server.use(
+      http.post('*/api/transactions/withdraw', async ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        await held;
+        return committedAnswerLost('/api/transactions/withdraw');
+      }),
+    );
+    renderWithdraw();
+
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    await waitFor(() => expect(keys).toHaveLength(1));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled());
+
+    const dialog = screen.getByRole('dialog', { name: 'Withdraw Money' });
+    dialog.focus();
+    expect(dialog).toHaveFocus();
+
+    answer();
+    await answerDrawn(keys);
+    expect(screen.getByRole('dialog', { name: 'Withdrawal Complete' })).toBe(dialog);
+    await waitFor(() => expect(screen.getByText(COPY.withdrawalWentThrough)).toHaveFocus());
+    expect(keys).toHaveLength(1);
+  });
+
   it('a 409 whose body cannot be trusted shows the check view, not "Withdrawal failed"', async () => {
     // As for the deposit: a 409 that names no readable code may have been a send that landed.
     const keys: (string | null)[] = [];

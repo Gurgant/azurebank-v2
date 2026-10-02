@@ -14,16 +14,23 @@ import { useEffect, useRef } from 'react';
  * that is mounted to be shown, the flag that shows it for one drawn inside a host that was already
  * there (a dialog). Focus moves when `active` turns true, and only then.
  *
- * It only gives back focus that was lost, the rule `useWaitLanding` follows: it moves focus only
- * while nothing holds it. A visitor who put focus somewhere during the wait keeps their place, and
- * so does another dialog that holds it; nothing is spoken then.
+ * It only gives back focus that was lost: it moves focus only while nothing the visitor chose
+ * holds it. Lost is on `body`, or on a container that holds the landing itself: a dialog's own
+ * surface, a page's `main`. A press on a disabled control puts focus there, on the nearest
+ * ancestor that can hold it. Measured in Chromium on the running stack: the second press of a
+ * double click came on the send button while its send was still out, focus went to the dialog,
+ * and the view then appeared with its sentence unfocused. (Until 2026-10-02 lost was `body`
+ * alone, the test `useWaitLanding` makes.) A visitor who put focus on a control during the wait
+ * keeps their place, and so does another dialog that holds it; nothing is spoken then.
  */
 export function useFocusWhenLost<T extends HTMLElement = HTMLElement>(active: boolean) {
   const landingRef = useRef<T | null>(null);
 
   useEffect(() => {
-    if (active && document.activeElement === document.body) {
-      landingRef.current?.focus();
+    const landing = landingRef.current;
+    // `body` holds everything on the page, so it is the first of the containers, not a case apart.
+    if (active && landing && document.activeElement?.contains(landing)) {
+      landing.focus();
     }
   }, [active]);
 

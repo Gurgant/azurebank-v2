@@ -15,7 +15,10 @@ import { WentThroughView } from './WentThroughView';
  * and it has no Back and no Close, because there is no form behind it to go back to.
  */
 describe('WentThroughView', () => {
-  const render = (overrides: Partial<Parameters<typeof WentThroughView>[0]> = {}) =>
+  const render = (
+    overrides: Partial<Parameters<typeof WentThroughView>[0]> = {},
+    container?: HTMLElement,
+  ) =>
     renderWithProviders(
       <WentThroughView
         title="Transfer Complete"
@@ -24,11 +27,12 @@ describe('WentThroughView', () => {
         onDone={() => {}}
         {...overrides}
       />,
+      container ? { container } : {},
     );
 
   const sentence = () => screen.getByText(COPY.transferWentThrough);
 
-  let outside: HTMLButtonElement | null = null;
+  let outside: HTMLElement | null = null;
   afterEach(() => {
     outside?.remove();
     outside = null;
@@ -93,6 +97,26 @@ describe('WentThroughView', () => {
     render();
 
     expect(outside).toHaveFocus();
+  });
+
+  it('takes focus from a container that holds the view: nobody chose to put it there', () => {
+    /*
+      A press on a disabled control gives focus to the nearest ancestor that can hold it: a
+      dialog's surface, a page's `main`. Measured in Chromium on the running stack: the second
+      press of a double click came while the send was still out, focus went to the dialog itself,
+      and the view then appeared with its sentence unfocused. A container around the sentence is
+      not a place a visitor chose, so focus there is as lost as focus on `body`.
+    */
+    outside = document.createElement('div');
+    outside.tabIndex = -1;
+    document.body.append(outside);
+    outside.focus();
+    expect(outside).toHaveFocus();
+
+    render({}, outside);
+
+    expect(outside).toContainElement(sentence());
+    expect(sentence()).toHaveFocus();
   });
 
   it('leaves the reading to that focus alone: no live region around the sentence, no description on the buttons', () => {
