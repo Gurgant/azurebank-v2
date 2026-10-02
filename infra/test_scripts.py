@@ -10,6 +10,7 @@ On a developer's machine a missing tool skips its tests; in CI a missing tool is
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -92,9 +93,72 @@ FAKE_AZ = textwrap.dedent('''
             rules.append(name)
         with open(rules_file, 'w', encoding='utf-8') as target:
             json.dump(rules, target)
+        if args[3] == 'delete' and state == 'delete-says-it-failed':
+            fail('ERROR: the answer was lost')
         out({})
     sys.stderr.write('fake az: unexpected call ' + ' '.join(args)); sys.exit(2)
 ''')
+
+# sql-principals.ps1 reaches the database through its function Open-Database and nowhere else.
+# PowerShell looks a command name up among the aliases before the functions, so the alias this
+# harness defines puts a stand-in behind that name, and the script itself runs unchanged.
+# STAND_IN_DATABASE says how the stand-in behaves; it logs each opening and the statement it is given.
+STAND_IN_DATABASE = textwrap.dedent('''
+    param([string]$Script, [string]$ParameterFile)
+
+    class Refusal : System.Exception {
+        [int]$Number
+        Refusal([int]$number, [string]$message) : base($message) { $this.Number = $number }
+    }
+
+    $global:StandInOpenings = 0
+    function Open-StandInDatabase([string]$Token) {
+        $modes = $env:STAND_IN_DATABASE -split ','
+        $global:StandInOpenings++
+        Add-Content -LiteralPath $env:STAND_IN_LOG -Value "open with $Token"
+        if ($modes -contains 'refused' -and $global:StandInOpenings -eq 1) {
+            throw [Refusal]::new(40615, "Cannot open server 'azurebank-test' requested by the login. " +
+                "Client with IP address '203.0.113.7' is not allowed to access the server.")
+        }
+        if ($modes -contains 'login-failed') {
+            throw [Refusal]::new(18456, "Login failed for the token. Client with IP address '203.0.113.7'.")
+        }
+        # The real parameter collection, on a command that is connected to nothing.
+        $command = [pscustomobject]@{
+            CommandText = ''; CommandTimeout = 0
+            Parameters  = [System.Data.SqlClient.SqlCommand]::new().Parameters
+        }
+        $command | Add-Member -MemberType ScriptMethod -Name ExecuteReader -Value {
+            $modes = $env:STAND_IN_DATABASE -split ','
+            $bound = [ordered]@{}
+            foreach ($parameter in $this.Parameters) {
+                $bound[$parameter.ParameterName] = [ordered]@{
+                    type = [string]$parameter.SqlDbType; size = $parameter.Size; value = $parameter.Value
+                }
+            }
+            [ordered]@{ text = $this.CommandText; timeout = $this.CommandTimeout; parameters = $bound } |
+                ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $env:STAND_IN_STATEMENT
+            if ($modes -contains 'statement-fails') { throw 'The statement was refused by the stand-in.' }
+            $table = [System.Data.DataTable]::new()
+            $null = $table.Columns.Add('user')
+            $null = $table.Columns.Add('roles')
+            $appRoles = if ($modes -contains 'wrong-roles') { 'db_owner' } else { 'db_datareader, db_datawriter' }
+            $null = $table.Rows.Add('azurebank_app', $appRoles)
+            $null = $table.Rows.Add('azurebank_migrator', 'db_datareader, db_datawriter, db_ddladmin')
+            , $table.CreateDataReader()
+        }
+        $connection = [pscustomobject]@{ Command = $command }
+        $connection | Add-Member -MemberType ScriptMethod -Name CreateCommand -Value { $this.Command }
+        $connection | Add-Member -MemberType ScriptMethod -Name Dispose -Value {
+            Add-Content -LiteralPath $env:STAND_IN_LOG -Value 'dispose'
+        }
+        $connection
+    }
+    Set-Alias -Name Open-Database -Value Open-StandInDatabase
+
+    & $Script -ParameterFile $ParameterFile
+''')
+ADDRESS = '203.0.113.7'
 
 LIVE = {
     'tag': 'b' * 40,
@@ -140,6 +204,12 @@ class ScriptCase(unittest.TestCase):
         env.update(environment)
         return subprocess.run([PWSH, '-NoProfile', '-NonInteractive', '-File', str(HERE / script), *args],
                               capture_output=True, text=True, env=env, timeout=180)
+
+    @staticmethod
+    def said(result):
+        """Standard error as one line of plain text: PowerShell folds a long error message and may colour it."""
+        text = re.sub(r'\x1b\[[0-9;]*m', '', result.stderr)
+        return re.sub(r'\s*\n\s*(\|\s*)?', ' ', text)
 
     def calls(self):
         if not self.log.exists():
@@ -311,13 +381,11 @@ class SecretsScriptTests(ScriptCase):
         self.assertFalse(self.folder.exists())
 
 
-@unittest.skipUnless(PWSH, 'PowerShell 7 (pwsh) is not installed')
-class UsersScriptTests(ScriptCase):
-    """sql-principals.ps1 up to the connection: the stand-in server name does not resolve, so no
-    database is ever reached. What the SQL itself does is checked on a real server (README.md)."""
-
+class UsersCase(ScriptCase):
     PASSWORDS = {'appSqlPassword': 'AppPassword0000000000000000000000000000000000000A',
                  'migratorSqlPassword': 'MigratorPassword00000000000000000000000000000000B'}
+    BY_HAND = (f'az sql server firewall-rule delete --resource-group azurebank-demo '
+               f'--server azurebank-test --name {RULE}')
 
     def setUp(self):
         super().setUp()
@@ -326,18 +394,28 @@ class UsersScriptTests(ScriptCase):
         self.file.write_text(json.dumps(
             {'parameters': {name: {'value': value} for name, value in self.PASSWORDS.items()}}), encoding='utf-8')
 
-    def users(self, **options):
-        return self.run_script('sql-principals.ps1', '-ParameterFile', str(self.file), '-ConnectTimeout', '1',
-                               **options)
-
     def verbs(self):
         return [' '.join(call[:4]) if call[:3] == ['sql', 'server', 'firewall-rule'] else ' '.join(call[:2])
                 for call in self.calls()]
+
+    def rules_left(self):
+        return json.loads(self.rules.read_text(encoding='utf-8'))
 
     def assert_no_password_left_the_file(self, result):
         self.assertEqual(result.stdout, '', 'standard output must stay empty')
         for value in self.PASSWORDS.values():
             self.assertNotIn(value, result.stderr + self.log.read_text(encoding='utf-8'))
+
+
+@unittest.skipUnless(PWSH, 'PowerShell 7 (pwsh) is not installed')
+class UsersScriptTests(UsersCase):
+    """sql-principals.ps1 up to the connection: the stand-in server name does not resolve, so no
+    database is ever reached, and every run ends non-zero for that reason alone. What these prove
+    is the order of the calls and what is said, never the exit code of a run that got further."""
+
+    def users(self, **options):
+        return self.run_script('sql-principals.ps1', '-ParameterFile', str(self.file), '-ConnectTimeout', '1',
+                               **options)
 
     def test_a_rule_left_by_an_earlier_run_is_deleted_before_anything_else(self):
         self.rules.write_text(json.dumps(['AllowAzureServices', RULE]), encoding='utf-8')
@@ -358,17 +436,17 @@ class UsersScriptTests(ScriptCase):
         self.assertIn('Firewall rules now: AllowAzureServices.', result.stderr)
         self.assert_no_password_left_the_file(result)
 
-    def test_a_failed_delete_prints_the_command_and_exits_non_zero(self):
+    def test_a_leftover_rule_that_cannot_be_deleted_stops_the_run_and_prints_the_command(self):
         self.rules.write_text(json.dumps(['AllowAzureServices', RULE]), encoding='utf-8')
         result = self.users(state='delete-fails')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('it may still be there', result.stderr)
-        self.assertIn(f'az sql server firewall-rule delete --resource-group azurebank-demo '
-                      f'--server azurebank-test --name {RULE}', result.stderr)
+        self.assertIn(self.BY_HAND, result.stderr)
         verbs = self.verbs()
         self.assertNotIn('account get-access-token', verbs, 'nothing else is done with the rule in place')
         self.assertEqual(verbs[-1], 'sql server firewall-rule list', 'the list is still read')
         self.assertIn(f'Firewall rules now: AllowAzureServices, {RULE}.', result.stderr)
+        self.assertIn(f'The temporary rule {RULE} is still there.', self.said(result))
 
     def test_a_rule_list_that_cannot_be_read_back_is_not_taken_for_a_clean_one(self):
         result = self.users(state='list-fails-at-the-end')
@@ -390,6 +468,111 @@ class UsersScriptTests(ScriptCase):
             self.assertIn(f"Parameters.Add('{name}'", runner)
         self.assertNotIn('$(', sql, 'no client-side substitution')
         self.assertIn("DB_NAME() <> N'AzureBank'", sql)
+
+
+@unittest.skipUnless(PWSH, 'PowerShell 7 (pwsh) is not installed')
+class UsersRunTests(UsersCase):
+    """sql-principals.ps1 from its first line to its last, with a stand-in where the database is
+    (STAND_IN_DATABASE above). These are the runs that get past the connection, so here an exit
+    code means something: the life of the temporary firewall rule, and what a failed delete leads
+    to. What SQL Server does with the statement is checked on a real server (README.md)."""
+
+    def setUp(self):
+        super().setUp()
+        self.harness = self.temp / 'with-a-stand-in-database.ps1'
+        self.harness.write_text(STAND_IN_DATABASE, encoding='utf-8')
+        self.statement = self.temp / 'statement.json'
+        self.openings = self.temp / 'database.log'
+
+    def users(self, database, **options):
+        return self.run_script(self.harness, '-Script', str(HERE / 'sql-principals.ps1'),
+                               '-ParameterFile', str(self.file), STAND_IN_DATABASE=database,
+                               STAND_IN_STATEMENT=str(self.statement), STAND_IN_LOG=str(self.openings), **options)
+
+    def opened(self):
+        return self.openings.read_text(encoding='utf-8-sig').splitlines()
+
+    def test_a_refused_address_is_allowed_for_the_run_and_the_rule_is_gone_at_the_end(self):
+        result = self.users('refused')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.verbs(), ['sql server', 'sql server firewall-rule list', 'account get-access-token',
+                                        'sql server firewall-rule create', 'sql server firewall-rule delete',
+                                        'sql server firewall-rule list'])
+        create = next(call for call in self.calls() if call[:4] == ['sql', 'server', 'firewall-rule', 'create'])
+        self.assertEqual([create[create.index(flag) + 1]
+                          for flag in ('--name', '--start-ip-address', '--end-ip-address')], [RULE, ADDRESS, ADDRESS])
+        self.assertEqual(self.rules_left(), ['AllowAzureServices'])
+        self.assertEqual(self.opened(), ['open with not-a-token', 'open with not-a-token', 'dispose'])
+        self.assertIn('azurebank_app: db_datareader, db_datawriter', result.stderr)
+        self.assertIn('azurebank_migrator: db_datareader, db_datawriter, db_ddladmin', result.stderr)
+        self.assertIn('Firewall rules now: AllowAzureServices.', result.stderr)
+        self.assertNotIn(ADDRESS, result.stderr, 'the report holds no address')
+        self.assert_no_password_left_the_file(result)
+
+    def test_an_address_that_is_already_allowed_adds_no_rule_and_deletes_none(self):
+        result = self.users('open')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.verbs(), ['sql server', 'sql server firewall-rule list', 'account get-access-token',
+                                        'sql server firewall-rule list'])
+        self.assertEqual(self.opened(), ['open with not-a-token', 'dispose'])
+
+    def test_the_statement_is_the_sql_file_with_both_passwords_bound_as_parameters(self):
+        result = self.users('open')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        statement = json.loads(self.statement.read_text(encoding='utf-8-sig'))
+        self.assertEqual(statement['text'].replace('\r\n', '\n'),
+                         (HERE / 'sql-principals.sql').read_text(encoding='utf-8'))
+        self.assertEqual(statement['parameters'], {
+            '@AppPassword': {'type': 'NVarChar', 'size': 4000, 'value': self.PASSWORDS['appSqlPassword']},
+            '@MigratorPassword': {'type': 'NVarChar', 'size': 4000, 'value': self.PASSWORDS['migratorSqlPassword']}})
+        for value in self.PASSWORDS.values():
+            self.assertNotIn(value, statement['text'])
+        self.assert_no_password_left_the_file(result)
+
+    def test_a_delete_that_fails_at_the_end_exits_non_zero_though_the_users_were_made(self):
+        result = self.users('refused', state='delete-fails')
+        self.assertNotEqual(result.returncode, 0, 'a rule left behind is never a success')
+        self.assertIn('azurebank_migrator: db_datareader, db_datawriter, db_ddladmin', result.stderr)
+        self.assertIn('it may still be there', result.stderr)
+        self.assertIn(self.BY_HAND, result.stderr)
+        self.assertEqual(self.verbs()[-2:], ['sql server firewall-rule delete', 'sql server firewall-rule list'])
+        self.assertIn(f'Firewall rules now: AllowAzureServices, {RULE}.', result.stderr)
+        self.assertIn(f'The temporary rule {RULE} is still there.', self.said(result))
+        self.assertNotIn(ADDRESS, result.stderr)
+
+    def test_a_delete_that_reports_a_failure_exits_non_zero_even_when_the_list_is_clean(self):
+        result = self.users('refused', state='delete-says-it-failed')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.rules_left(), ['AllowAzureServices'])
+        self.assertIn('Firewall rules now: AllowAzureServices.', result.stderr)
+        self.assertIn(self.BY_HAND, result.stderr)
+        self.assertIn('run the delete by hand to be sure', self.said(result))
+
+    def test_a_statement_that_fails_still_removes_the_rule(self):
+        result = self.users('refused,statement-fails')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('The statement was refused by the stand-in.', self.said(result))
+        self.assertEqual(self.verbs()[-2:], ['sql server firewall-rule delete', 'sql server firewall-rule list'])
+        self.assertEqual(self.rules_left(), ['AllowAzureServices'])
+        self.assertEqual(self.opened()[-1], 'dispose')
+        self.assertIn('Firewall rules now: AllowAzureServices.', result.stderr)
+
+    def test_roles_other_than_the_expected_ones_stop_the_run_and_the_rule_is_still_removed(self):
+        result = self.users('refused,wrong-roles')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('azurebank_app should hold [db_datareader, db_datawriter] and holds [db_owner].',
+                      self.said(result))
+        self.assertEqual(self.rules_left(), ['AllowAzureServices'])
+
+    def test_only_the_firewalls_own_refusal_opens_the_firewall_and_any_other_is_reported_without_an_address(self):
+        result = self.users('login-failed')
+        self.assertNotEqual(result.returncode, 0)
+        said = self.said(result)
+        self.assertIn('Could not connect to the database', said)
+        self.assertIn("Client with IP address '<address>'.", said)
+        self.assertNotIn(ADDRESS, result.stderr)
+        self.assertNotIn('sql server firewall-rule create', self.verbs())
+        self.assertEqual(self.rules_left(), ['AllowAzureServices'])
 
 
 @unittest.skipUnless(PWSH, 'PowerShell 7 (pwsh) is not installed')

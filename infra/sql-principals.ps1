@@ -67,6 +67,8 @@ function Remove-TemporaryRule {
     }
 }
 
+# The one door to the database. The tests put a stand-in behind this name (test_scripts.py), so
+# everything else in this file runs offline: keep every use of SqlClient inside it.
 function Open-Database([string]$Token) {
     $connection = [System.Data.SqlClient.SqlConnection]::new(
         "Server=tcp:$fqdn,1433;Database=AzureBank;Encrypt=True;TrustServerCertificate=False;Connect Timeout=$ConnectTimeout")
@@ -91,9 +93,10 @@ try {
         $connection = Open-Database $token
     } catch {
         $refusal = $_.Exception.GetBaseException()
-        # 40615: "Client with IP address '...' is not allowed to access the server."
-        if ($refusal -isnot [System.Data.SqlClient.SqlException] -or $refusal.Number -ne 40615 -or
-            $refusal.Message -notmatch "IP address '([0-9.]+)'") {
+        # 40615: "Client with IP address '...' is not allowed to access the server." Read by its
+        # number, as SqlException carries it, not by its type.
+        $number = $refusal.PSObject.Properties['Number']
+        if (-not $number -or $number.Value -ne 40615 -or $refusal.Message -notmatch "IP address '([0-9.]+)'") {
             # The server's own words, without any address they may carry.
             throw ('Could not connect to the database, and the server did not name an address to allow: ' +
                 ($refusal.Message -replace '\b\d{1,3}(\.\d{1,3}){3}\b', '<address>' -replace "IP address '[^']*'", "IP address '<address>'"))
@@ -125,6 +128,10 @@ try {
     foreach ($user in $expected.Keys) {
         if ($found[$user] -ne $expected[$user]) { throw "$user should hold [$($expected[$user])] and holds [$($found[$user])]." }
     }
+} catch {
+    # Thrown again as it is. An error that is thrown stops whoever called this script; a failed
+    # statement left to itself would end this script only, and a caller could go on to the next step.
+    throw
 } finally {
     if ($connection) { $connection.Dispose() }
     if ($ruleCreated) { Remove-TemporaryRule }
