@@ -599,8 +599,10 @@ NINE_ACTIONS = [
     'Microsoft.App/jobs/executions/read', 'Microsoft.App/jobs/execution/read',
 ]
 BEHIND_DEPLOY_APP = ['Microsoft.App/containerApps', 'Microsoft.App/jobs', 'Microsoft.Authorization/roleAssignments',
-                     'Microsoft.Authorization/roleAssignments', 'Microsoft.Insights/actionGroups',
-                     'Microsoft.Insights/metricAlerts']
+                     'Microsoft.Authorization/roleAssignments', 'Microsoft.Insights/actionGroups']
+# One loop. Each rule needs deployApp; the one on the log workspace also needs the logs and its own switch.
+ALERTS_CONDITION = ("[and(parameters('deployApp'), or(not(variables('alerts')[copyIndex()].onLogs), "
+                    "and(parameters('keepLogs'), parameters('logVolumeAlert'))))]")
 IDENTITIES = 'Microsoft.ManagedIdentity/userAssignedIdentities'
 FOUNDATION = ['Microsoft.App/managedEnvironments', 'Microsoft.Authorization/locks',
               'Microsoft.Authorization/roleDefinitions', IDENTITIES, IDENTITIES, IDENTITIES,
@@ -704,8 +706,9 @@ class TemplateTests(unittest.TestCase):
 
     def test_the_policy_can_be_switched_off_and_nothing_else_hangs_on_that_switch(self):
         self.assertEqual(self.conditions("[parameters('denyPolicy')]"), sorted(BEHIND_DENY_POLICY))
+        self.assertEqual(self.conditions(ALERTS_CONDITION), ['Microsoft.Insights/metricAlerts'])
         self.assertEqual(len(self.resources), len(BEHIND_DEPLOY_APP) + len(FOUNDATION) + len(BEHIND_DENY_POLICY)
-                         + len(BEHIND_KEEP_LOGS))
+                         + len(BEHIND_KEEP_LOGS) + 1)
 
     def test_the_logs_go_to_one_capped_workspace_that_takes_no_key(self):
         self.assertEqual(self.conditions("[parameters('keepLogs')]"), sorted(BEHIND_KEEP_LOGS))
@@ -905,14 +908,38 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(assignment['properties']['parameters'],
                          {'allowedJobTriggers': {'value': "[parameters('allowedJobTriggers')]"}})
 
-    def test_three_alerts_notify_one_action_group_and_stop_nothing(self):
+    def test_four_alerts_notify_one_action_group_and_stop_nothing(self):
         (alerts,) = self.of_type('Microsoft.Insights/metricAlerts')
         self.assertEqual(alerts['copy']['count'], "[length(variables('alerts'))]")
         rules = self.main['variables']['alerts']
         self.assertEqual([(rule['metric'], rule['aggregation'], rule['window']) for rule in rules],
-                         [('Requests', 'Total', 'PT1H'), ('TxBytes', 'Total', 'P1D'), ('Replicas', 'Average', 'P1D')])
+                         [('Requests', 'Total', 'PT1H'), ('TxBytes', 'Total', 'P1D'), ('Replicas', 'Average', 'P1D'),
+                          ('Ingestion Volume', 'Count', 'PT1H')])
+        self.assertEqual(alerts['properties']['actions'],
+                         [{'actionGroupId': "[resourceId('Microsoft.Insights/actionGroups', 'azurebank-owner')]"}])
         (group,) = self.of_type('Microsoft.Insights/actionGroups')
         self.assertEqual(list(group['properties']), ['groupShortName', 'enabled', 'emailReceivers'])
+        # The mailbox is a parameter: no address is written in the template.
+        self.assertEqual([receiver['emailAddress'] for receiver in group['properties']['emailReceivers']],
+                         ["[parameters('alertEmail')]"])
+        self.assertEqual(re.findall(r'[\w.+-]+@[\w-]+\.\w+', json.dumps(self.main)), [])
+
+    def test_the_alert_on_the_log_volume_watches_the_workspace_and_has_a_switch_of_its_own(self):
+        (alerts,) = self.of_type('Microsoft.Insights/metricAlerts')
+        rules = self.main['variables']['alerts']
+        self.assertEqual([rule['onLogs'] for rule in rules], [False, False, False, True])
+        self.assertEqual({key: rules[3][key] for key in ('name', 'threshold', 'every')},
+                         {'name': 'azurebank-log-volume', 'threshold': 50000, 'every': 'PT15M'})
+        self.assertEqual(alerts['condition'], ALERTS_CONDITION)
+        self.assertIs(self.main['parameters']['logVolumeAlert']['defaultValue'], True)
+        workspace = "resourceId('Microsoft.OperationalInsights/workspaces', 'azurebank-logs')"
+        app = "resourceId('Microsoft.App/containerApps', variables('appName'))"
+        self.assertEqual(alerts['properties']['scopes'],
+                         [f"[if(variables('alerts')[copyIndex()].onLogs, {workspace}, {app})]"])
+        (criterion,) = alerts['properties']['criteria']['allOf']
+        self.assertEqual(criterion['metricNamespace'],
+                         "[if(variables('alerts')[copyIndex()].onLogs, 'Microsoft.OperationalInsights/workspaces', "
+                         "'Microsoft.App/containerApps')]")
 
     @unittest.skipUnless(PWSH, 'PowerShell 7 (pwsh) is not installed')
     def test_every_name_the_secrets_script_writes_is_a_parameter_and_none_is_missing(self):

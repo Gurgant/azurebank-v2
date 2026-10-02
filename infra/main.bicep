@@ -12,7 +12,7 @@ param entraAdminLogin string
 @maxValue(840)
 param replicaTimeout int = 600
 
-@description('Where the three notify-only alerts send their e-mail. Needed only when deployApp is true; never committed.')
+@description('Where the notify-only alerts send their e-mail. Needed only when deployApp is true; never committed.')
 param alertEmail string = ''
 @description('False leaves the Deny policy out: the fallback if this subscription refuses a custom policy definition.')
 param denyPolicy bool = true
@@ -24,6 +24,8 @@ param allowedJobTriggers array = [
 param keepLogs bool = true
 @description('Daily cap of the log workspace, in GB. Text, because the property is typed as a whole number: a fraction has to pass through json().')
 param logDailyCapGb string = '0.05'
+@description('False leaves out the alert on the log workspace: the fallback if this subscription refuses that rule.')
+param logVolumeAlert bool = true
 
 // The seven values below are needed only when deployApp is true; infra/secrets.ps1 supplies them.
 @secure()
@@ -421,8 +423,8 @@ resource shapeAssignment 'Microsoft.Authorization/policyAssignments@2025-03-01' 
   }
 }
 
-// Notify only: nothing here stops the app. One e-mail receiver, three rules on the app, one per
-// meter that traffic can move: requests, bytes out, replica time.
+// Notify only: nothing here stops the app. One e-mail receiver; three rules on the app, one per
+// meter that traffic can move (requests, bytes out, replica time), and one on the log workspace.
 resource owner 'Microsoft.Insights/actionGroups@2023-01-01' = if (deployApp) {
   name: 'azurebank-owner'
   location: 'global'
@@ -441,14 +443,17 @@ resource owner 'Microsoft.Insights/actionGroups@2023-01-01' = if (deployApp) {
 
 var alerts = [
   // 66,667 requests is one day of the free monthly grant (2 million / 30), here in one hour.
-  { name: 'azurebank-requests', metric: 'Requests', aggregation: 'Total', threshold: 66667, window: 'PT1H', every: 'PT15M', text: 'More than 66,667 requests in one hour.' }
+  { name: 'azurebank-requests', onLogs: false, metric: 'Requests', aggregation: 'Total', threshold: 66667, window: 'PT1H', every: 'PT15M', text: 'More than 66,667 requests in one hour.' }
   // 3.3 GiB is one day of the free 100 GB a month.
-  { name: 'azurebank-bytes-out', metric: 'TxBytes', aggregation: 'Total', threshold: 3543348019, window: 'P1D', every: 'PT1H', text: 'More than 3.3 GiB sent in one day.' }
+  { name: 'azurebank-bytes-out', onLogs: false, metric: 'TxBytes', aggregation: 'Total', threshold: 3543348019, window: 'P1D', every: 'PT1H', text: 'More than 3.3 GiB sent in one day.' }
   // 0.093 is 66.7 free replica-hours a month, as a daily average of the replica count.
-  { name: 'azurebank-replica-time', metric: 'Replicas', aggregation: 'Average', threshold: json('0.093'), window: 'P1D', every: 'PT1H', text: 'The replica ran more than 2.2 hours in one day.' }
+  { name: 'azurebank-replica-time', onLogs: false, metric: 'Replicas', aggregation: 'Average', threshold: json('0.093'), window: 'P1D', every: 'PT1H', text: 'The replica ran more than 2.2 hours in one day.' }
+  // 50,000 lines of about half a kilobyte are half of the workspace's daily cap, here in one hour.
+  // It warns of volume; nothing warns that the cap itself was reached.
+  { name: 'azurebank-log-volume', onLogs: true, metric: 'Ingestion Volume', aggregation: 'Count', threshold: 50000, window: 'PT1H', every: 'PT15M', text: 'More than 50,000 log lines in one hour.' }
 ]
 
-resource notify 'Microsoft.Insights/metricAlerts@2018-03-01' = [for alert in alerts: if (deployApp) {
+resource notify 'Microsoft.Insights/metricAlerts@2018-03-01' = [for alert in alerts: if (deployApp && (!alert.onLogs || (keepLogs && logVolumeAlert))) {
   name: alert.name
   location: 'global'
   properties: {
@@ -456,7 +461,7 @@ resource notify 'Microsoft.Insights/metricAlerts@2018-03-01' = [for alert in ale
     severity: 2
     enabled: true
     scopes: [
-      app.id
+      alert.onLogs ? logs.id : app.id
     ]
     evaluationFrequency: alert.every
     windowSize: alert.window
@@ -467,7 +472,7 @@ resource notify 'Microsoft.Insights/metricAlerts@2018-03-01' = [for alert in ale
         {
           name: 'threshold'
           criterionType: 'StaticThresholdCriterion'
-          metricNamespace: 'Microsoft.App/containerApps'
+          metricNamespace: alert.onLogs ? 'Microsoft.OperationalInsights/workspaces' : 'Microsoft.App/containerApps'
           metricName: alert.metric
           operator: 'GreaterThan'
           threshold: alert.threshold
