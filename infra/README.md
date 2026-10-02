@@ -374,6 +374,9 @@ the migrate job. Nothing more is deployed into it, and what was read goes to the
 with no mode and the logs on `azure-monitor` passes, and the function says so: Express refused
 that destination in the trial.
 
+A stop removes nothing. From this step on the database's daily charge ($0.161) runs while the
+owner decides; the road to remove it all is [Removing everything](#removing-everything).
+
 #### 3. The same deployment, a second time (operator, **writes** nothing if Azure accepts it)
 
 The template gives the server no SQL administrator login, through a block that this API version
@@ -912,6 +915,11 @@ and bring the refusal's text to the owner. What Azure accepted when requests of 
 were sent by hand is under [Measured on Azure](#measured-on-azure): a refusal of something that
 was accepted there is a difference to understand, not a step to work around.
 
+A refusal or an answer that no row below names is a stop too (ADR-0061, decision 11). A stop
+removes nothing: whatever exists keeps its charge until the owner decides (from step 2 on, the
+database's $0.161 a day), and the road to remove it all is
+[Removing everything](#removing-everything), whose commands have not been run.
+
 **The foundation and its second run (steps 2 and 3)**
 
 | If | Then |
@@ -921,6 +929,7 @@ was accepted there is a difference to understand, not a step to work around.
 | It is refused on the **custom role** or on the **SQL server**; or the **second run** is refused, or its what-if shows the administrator changed or removed | Stop. There is one shape of the server in this folder and no other is written down: sent by hand it was accepted, twice. And there is no fallback that keeps the deployment identity away from the secrets |
 | It is refused on the **workspace**, the destination, the diagnostic setting or the cap | `./infra/secrets.ps1 -Action New -LogsOff`, run again, and say so: nothing is kept then. If a workspace or a setting was created on the way, [Switching the logs off](#switching-the-logs-off) |
 | A read in step 4 differs | A defect in the template: fix it before going on |
+| Anything else is refused in either run: the lock, the federated credential, the database, a firewall rule, the policy assignment, the API version `2026-07-01` itself, or with an error no row here names | Stop |
 
 `az sql server ad-only-auth disable` is never run, whatever is refused.
 
@@ -948,11 +957,13 @@ for what it refused. The what-if shows it first: a policy assignment, or a fourt
 
 | If | Then |
 | --- | --- |
-| Start 1 ends with exit 4 (the login is refused) | Stop. In the trial a user made from the client ID signed in, so here the user and the identity do not match: read the two lines the users script printed, run it once more, start the probe job again, and bring a second refusal to the owner |
-| Start 2 gets a token | Stop: the isolation between the two identities does not hold |
+| Start 1 or start 3 ends with exit 4 (the login is refused) | Stop. In the trial a user made from the client ID signed in, so here the user and the identity do not match: read the two lines the users script printed, run it once more, start the probe job again, and bring a second refusal to the owner |
+| Start 1 or start 3 ends with exit 5 (other roles) | Stop: the users script's own lists said these roles and no others. Bring the line the program printed (in the workspace, when it is due: step 10) and the two lines of step 6 to the owner |
+| Start 2 ends with exit 0, 4 or 5 | Stop: it got a token for an identity the job does not carry, and the isolation between the two identities does not hold |
 | The open took more than 10,000 ms | Nothing changes by itself. The number is recorded and the app's connect timeout stays 10 s: the first sign-in after a cold start may then answer one 503 with `Retry-After: 10`, and the smoke test tries four times. A larger value is the owner's decision, through `Database:ConnectTimeoutSeconds`, with ADR-0058's table worked again: that timeout also bounds each COMMIT. In the trial it took 3,810 ms, once |
-| Exit 3 on an identity that is attached, three times | Stop: that is not a timeout |
-| The probe job cannot be built or started | Skip it. Step 16 is then the first sign-in of these two users, and the pull request says so |
+| Start 1 or start 3 ends with exit 3 (no token for the identity the job carries) | Start it again. The third time: stop, that is not a timeout |
+| Any start ends with exit 2 (another failure) | Start it once more. The same again: stop, and bring the line the program printed (the error's number, its class and the chain of exception types; in the workspace when it is due) to the owner |
+| The probe job cannot be built or started (an exit code the program does not give, and no line of it) | Skip it. Step 16 is then the first sign-in of these two users, and the pull request says so |
 | The made-up SQL sign-in is refused without the Entra-only reason | "Not proven". `az sql server ad-only-auth get` then stands alone, and the pull request says the refusal was not provoked. A second try with a real SQL user made for the purpose and dropped at once is the owner's decision; no script here does it |
 | The made-up SQL sign-in is let in | Stop: Entra-only is not on |
 
