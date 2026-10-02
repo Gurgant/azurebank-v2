@@ -79,6 +79,12 @@ internal sealed class DemoPoolDatabase : IAsyncDisposable
     /// </summary>
     public Action<IServiceCollection>? AlsoRegister { get; set; }
 
+    /// <summary>
+    /// The environment every Seeder container built afterwards runs in. Production unless a test
+    /// says otherwise: in Development EF logs each statement with the values it carried.
+    /// </summary>
+    public string EnvironmentName { get; set; } = Environments.Production;
+
     /// <summary>Creates the database and applies every migration.</summary>
     public static async Task<DemoPoolDatabase> CreateAsync()
     {
@@ -127,7 +133,7 @@ internal sealed class DemoPoolDatabase : IAsyncDisposable
         }
 
         var environment = new Mock<IHostEnvironment>();
-        environment.SetupGet(e => e.EnvironmentName).Returns("Production");
+        environment.SetupGet(e => e.EnvironmentName).Returns(EnvironmentName);
 
         var services = new ServiceCollection();
         services.AddLogging(logging =>

@@ -88,7 +88,10 @@ public static class ServiceCollectionExtensions
             .ValidateOnStart();
         services.AddSingleton<IValidateOptions<DemoOptions>, DemoOptionsValidator>();
 
-        // The demo pool: what `seed-pool` and `recycle` run.
+        // The demo pool: what `seed-pool` and `recycle` run. The builder creates the roles with the
+        // seeder `seed` uses, which it asks for by its own type: above it is registered only as one
+        // of the ISeeders the orchestrator runs.
+        services.AddScoped<RoleSeeder>();
         services.AddScoped<DemoCopyBuilder>();
         services.AddScoped<DemoCopyRecycler>();
 

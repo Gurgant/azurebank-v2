@@ -114,6 +114,32 @@ public class DemoPoolTests
         string.Concat(emailParts).Distinct().Should().BeEquivalentTo(alphabet.ToCharArray());
     }
 
+    [Fact]
+    public void CopiesThatDrawTheSameSuffix_HaveAddressesThatShareNothing()
+    {
+        // The address is what a visitor signs in with. The suffix is on three handles, and a rename
+        // that is answered "taken" tells anyone that a handle exists. So an address worked out from
+        // the suffix would be an address a stranger can work out, and two copies that drew one
+        // suffix would then carry one address.
+        //
+        // 36^4 is 1,679,616 suffixes: 20,000 draws hold about 119 pairs that share one
+        // (20,000 x 19,999 / 2 / 1,679,616), and the chance that they hold none is below 1e-51. The
+        // thousand draws of the tests above hold 0.3, which is why they cannot see this.
+        var sharing = Enumerable.Range(0, 20_000)
+            .Select(_ => DemoCredentials.Create())
+            .GroupBy(copy => copy.Suffix)
+            .Where(copies => copies.Count() > 1)
+            .ToList();
+
+        sharing.Should().NotBeEmpty("ARRANGE: a suffix must have been drawn twice, else the test proves nothing");
+        foreach (var copies in sharing)
+        {
+            copies.SelectMany(copy => new[] { copy.Owner.Email, copy.Jane.Email, copy.Mike.Email })
+                .Should().OnlyHaveUniqueItems(
+                    "the suffix '{0}' says nothing about the addresses of a copy that carries it", copies.Key);
+        }
+    }
+
     // ── The ledger ───────────────────────────────────────────────────────────────────────────────
 
     private static readonly DateTime SeedInstant = new(2026, 10, 1, 9, 30, 0, DateTimeKind.Utc);
@@ -391,6 +417,22 @@ public class DemoPoolTests
     public void SeedPool_ExitsZero_WhenThePoolItFoundWasLowOrEmpty(int rowsAtStart, int freeAtStart, int free, int target)
     {
         var summary = Run(rowsAtStart, freeAtStart, free, target, buildFailed: 0, foreignUsers: 0, deleteFailed: 0, ceiling: false);
+
+        PoolExitCodes.ForSeedPool(summary).Should().Be(0);
+    }
+
+    /// <summary>
+    /// CONTROLS, for the same reason again. Exit 12 needs both halves: a copy that failed AND a
+    /// pool that ended short. Each half alone is not a signal.
+    /// </summary>
+    [Theory]
+    //          rows  was free target buildFailed
+    [InlineData(30, 30, 50, 50, 1)] // a copy failed, and the target was reached all the same
+    [InlineData(30, 30, 49, 50, 0)] // short with no copy failed: a visitor claimed one while the run counted
+    public void SeedPool_ExitsZero_UnlessACopyFailedAndThePoolEndedShort(
+        int rowsAtStart, int freeAtStart, int free, int target, int buildFailed)
+    {
+        var summary = Run(rowsAtStart, freeAtStart, free, target, buildFailed, foreignUsers: 0, deleteFailed: 0, ceiling: false);
 
         PoolExitCodes.ForSeedPool(summary).Should().Be(0);
     }

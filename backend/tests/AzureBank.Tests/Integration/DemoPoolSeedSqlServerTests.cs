@@ -1,7 +1,10 @@
 extern alias seeder;
 
+using System.Collections.Concurrent;
+using System.Data.Common;
 using System.Net;
 using System.Text.Json;
+using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
@@ -12,7 +15,11 @@ using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using seeder::AzureBank.Seeder.Pool;
 using seeder::AzureBank.Seeder.Seeders;
 
 namespace AzureBank.Tests.Integration;
@@ -284,12 +291,15 @@ public sealed class DemoPoolSeedSqlServerTests
     public async Task AnAccountNumberThatCollides_RetriesTheWholeCopy_AndLeavesNoHalfCopy()
     {
         await using var database = await DemoPoolDatabase.CreateAsync();
-        await database.BuildCopiesAsync(1);
+        var first = (await database.BuildCopiesAsync(1)).Single();
         string taken;
         await using (var db = database.NewContext())
         {
             taken = await db.Accounts.Select(a => a.AccountNumber).FirstAsync();
         }
+
+        var log = new RecordingLoggerProvider();
+        database.Log = log;
 
         // The second copy's first account number is rewritten to one the first copy holds: SQL
         // Server raises the real 2601, after the pool row and the three users were already sent.
@@ -304,6 +314,21 @@ public sealed class DemoPoolSeedSqlServerTests
             new Counts(Copies: 2, Users: 6, RoleRows: 6, Accounts: 8, LedgerRows: 52),
             "the attempt that collided rolled back whole: no pool row, no user and no account of it is left");
         (await database.CopiesAsync()).Should().OnlyContain(c => c.Users.Count == 3);
+
+        // The retry is written down, once, as a warning: by the id of the copy, which is the one
+        // the second attempt then built, and with the database's number. That line is the
+        // builder's, and says what the run did. What the database said is in the log already: EF
+        // writes the save that failed at Error, with SQL Server's message, and that message names
+        // the value it refused. So the warning does not carry the exception a second time.
+        var built = (await database.CopiesAsync()).Single(c => c.Id != first.Id);
+        var lines = log.Lines;
+        lines
+            .Where(line => line.Level == LogLevel.Warning && line.Message.Contains(built.Id.ToString(), StringComparison.Ordinal))
+            .Should().ContainSingle("a copy that collided keeps its id, and the collision is one line in the job's log")
+            .Which.Message.Should().Contain("2601").And.NotContain(taken, "the database's message is EF's line, and is not written twice");
+        lines.Should().Contain(
+            line => line.Level == LogLevel.Error && line.Message.Contains(taken, StringComparison.Ordinal),
+            "the database's message is in the log, value included, so the warning loses nothing by leaving it out");
     }
 
     [SqlServerFact]
@@ -393,6 +418,163 @@ public sealed class DemoPoolSeedSqlServerTests
         (await database.SeedPoolAsync(2)).Seeded.Should().Be(2);
     }
 
+    /// <summary>
+    /// Refuses a user the first time Identity validates it, which is when it is created, and never
+    /// again: the mirror of <see cref="RefusingAfterCreationUserValidator"/>.
+    /// </summary>
+    /// <remarks>
+    /// The description quotes the address, as Identity's own "Email '…' is already taken" does. The
+    /// code does not.
+    /// </remarks>
+    private sealed class RefusingAtCreationUserValidator : IUserValidator<ApplicationUser>
+    {
+        public const string Code = "InjectedCreationRefusal";
+
+        private readonly ConcurrentDictionary<Guid, int> _validations = new();
+        private int _refusals;
+
+        /// <summary>Validations this validator refused. 0 means the test proved nothing.</summary>
+        public int Refusals => Volatile.Read(ref _refusals);
+
+        public Task<IdentityResult> ValidateAsync(UserManager<ApplicationUser> manager, ApplicationUser user)
+        {
+            if (_validations.AddOrUpdate(user.Id, 1, (_, seen) => seen + 1) > 1)
+            {
+                return Task.FromResult(IdentityResult.Success);
+            }
+
+            Interlocked.Increment(ref _refusals);
+            return Task.FromResult(IdentityResult.Failed(
+                new IdentityError { Code = Code, Description = $"Identity would not create {user.Email}." }));
+        }
+    }
+
+    [SqlServerFact]
+    public async Task WhenIdentityRefusesToCreateAUser_TheFailureNamesIdentitysCode_AndNeverTheAddress()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+
+        // CreateAsync answers a failure here and throws nothing. A builder that did not read the
+        // answer would go on to give a role to a user that was never written, and report whatever
+        // that ran into.
+        var refusal = new RefusingAtCreationUserValidator();
+        database.AlsoRegister = services => services.AddSingleton<IUserValidator<ApplicationUser>>(refusal);
+
+        var summary = await database.SeedPoolAsync(2);
+
+        refusal.Refusals.Should().Be(3, "each copy stops at its first user, and the run stops at three copies in a row");
+        (summary.Seeded, summary.BuildFailed, summary.Free, summary.ExitCode).Should().Be((0, 3, 0, 12));
+        summary.Failures.Should().HaveCount(3).And.OnlyContain(
+            f => f.Message.Contains(RefusingAtCreationUserValidator.Code), "the failure says what Identity answered when the user was created");
+        summary.Failures.Should().OnlyContain(
+            f => !f.Message.Contains('@'),
+            "a failure's message is logged, so it carries Identity's code and never its description, which can quote the address");
+        (await CountAsync(database)).Total.Should().Be(0, "the attempt rolled back whole");
+    }
+
+    /// <summary>
+    /// Another run of the Seeder, at the worst moment: when this run sends the insert of a role it
+    /// looked for and did not find, the same role is inserted first, through a context of its own.
+    /// </summary>
+    /// <remarks>
+    /// SQL Server then raises the real 2601 against the real <c>RoleNameIndex</c>, as it does for
+    /// the run that loses the race. Only for the roles the test names, and once for each: the next
+    /// time this run looks for that role, it is there.
+    /// </remarks>
+    private sealed class RoleCreatedFirstInterceptor(
+        Func<AzureBankDbContext> anotherRun, IReadOnlyCollection<string> roles) : DbCommandInterceptor
+    {
+        private readonly ConcurrentDictionary<string, bool> _created = new();
+
+        /// <summary>The roles created ahead of the run. Empty means the test proved nothing.</summary>
+        public IReadOnlyCollection<string> Created => [.. _created.Keys];
+
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            await CreateFirstAsync(command, cancellationToken);
+            return await base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override async ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            await CreateFirstAsync(command, cancellationToken);
+            return await base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        private async Task CreateFirstAsync(DbCommand command, CancellationToken cancellationToken)
+        {
+            if (!command.CommandText.Contains("INSERT INTO [AspNetRoles]", StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            // By value, not by parameter name: EF names insert parameters by position.
+            var name = command.Parameters.Cast<DbParameter>()
+                .Select(parameter => parameter.Value as string)
+                .FirstOrDefault(value => value is not null && roles.Contains(value));
+            if (name is null || !_created.TryAdd(name, true))
+            {
+                return;
+            }
+
+            await using var db = anotherRun();
+            db.Roles.Add(new IdentityRole<Guid> { Id = Guid.CreateVersion7(), Name = name, NormalizedName = name.ToUpperInvariant() });
+            await db.SaveChangesAsync(cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// A seed-pool and a scheduled recycle that start together on a database that was only
+    /// migrated: both look for a role, both find none, and this run's insert arrives second.
+    /// </summary>
+    /// <remarks>
+    /// Two cases, because each stops a different mistake. With ONE role lost, this run goes on to
+    /// create the other one itself: the row it could not write must be off the context by then, or
+    /// that save sends it again. With BOTH lost, it has to look a third time, which is as often as
+    /// it can happen to one run.
+    /// </remarks>
+    [SqlServerTheory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task WhenAnotherRunCreatesARoleFirst_ThisRunLooksAgain_AndBuildsItsCopies(int rolesLost)
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var log = new RecordingLoggerProvider();
+        database.Log = log;
+
+        var lost = Roles.All.Take(rolesLost).ToArray();
+        var race = new RoleCreatedFirstInterceptor(database.NewContext, lost);
+        var summary = await database.SeedPoolAsync(2, interceptors: race);
+
+        race.Created.Should().BeEquivalentTo(
+            lost, "the race must actually have been lost, for each of these roles, else the test proves nothing");
+        (summary.Seeded, summary.BuildFailed, summary.Free, summary.ExitCode).Should().Be(
+            (2, 0, 2, 0), "the run lost a race and nothing else: the roles are there, which is all it needed of them");
+        (await CountAsync(database)).Should().Be(new Counts(Copies: 2, Users: 6, RoleRows: 6, Accounts: 8, LedgerRows: 52));
+
+        await using (var db = database.NewContext())
+        {
+            (await db.Roles.Select(r => r.Name).ToListAsync()).Should().BeEquivalentTo(
+                Roles.All, "each role once: the row this run could not write is not sent again with a later save");
+        }
+
+        // Each lost race is one warning under EF's own error line, so that line is not read as a
+        // failure of the run.
+        log.Lines
+            .Where(line => line.Level == LogLevel.Warning
+                && line.Message.Contains("role", StringComparison.OrdinalIgnoreCase)
+                && line.Message.Contains("2601", StringComparison.Ordinal))
+            .Should().HaveCount(rolesLost, "one line for each role another run created first");
+    }
+
     [SqlServerFact]
     public async Task WhenNoCopyCanBeBuilt_SeedPoolStopsAfterThreeFailuresInARow_AndExitsTwelve()
     {
@@ -406,6 +588,85 @@ public sealed class DemoPoolSeedSqlServerTests
         summary.Failures.Should().HaveCount(3).And.OnlyContain(f => f.Message.Contains(FailingCommandInterceptor.Message));
         summary.ExitCode.Should().Be(12, "a copy build failed and the pool is below its target");
         (await CountAsync(database)).Total.Should().Be(0, "a copy that could not be built leaves nothing behind");
+    }
+
+    [SqlServerFact]
+    public async Task FailuresThatAreNotInARow_DoNotEndTheRun_AndEachIsLoggedByItsCopysId()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var log = new RecordingLoggerProvider();
+        database.Log = log;
+
+        // Of the copies the run tries, the first two fail, the third is built, the next two fail and
+        // the rest are built: four failures, and never three in a row.
+        var refused = FailingCommandInterceptor.OnTurnsOfText(turn => turn is 1 or 2 or 4 or 5, "INSERT INTO [DemoCopies]");
+        var summary = await database.SeedPoolAsync(4, interceptors: refused);
+
+        refused.Failures.Should().Be(4, "the failures must actually have been injected, else the test proves nothing");
+        (summary.Seeded, summary.BuildFailed, summary.Free, summary.ExitCode).Should().Be(
+            (4, 4, 4, 0),
+            "a copy that is built ends the run of failures before it; and a pool that reached its target is not a signal, whatever failed on the way");
+
+        // Each copy that failed is named by its id, in the summary and in the log: the id is all
+        // that is left of it, so it is all an operator has to look for.
+        summary.Failures.Should().HaveCount(4);
+        summary.Failures.Select(f => f.CopyId).Should().OnlyHaveUniqueItems();
+        foreach (var failure in summary.Failures)
+        {
+            failure.CopyId.Version.Should().Be(7);
+            log.Lines.Should().Contain(
+                line => line.Level == LogLevel.Error && line.Message.Contains(failure.CopyId.ToString(), StringComparison.Ordinal),
+                "the run writes down each copy it could not build");
+        }
+
+        (await database.CopiesAsync()).Select(c => c.Id).Should().NotIntersectWith(
+            summary.Failures.Select(f => f.CopyId), "a copy that failed is not in the pool");
+    }
+
+    [SqlServerFact]
+    public async Task ACopyThatFailed_LeavesNothingForALaterSaveToWrite()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+
+        // The fault lands on the ledger insert: the attempt's pool row, users and accounts were sent
+        // and rolled back, and its ledger rows never left the context.
+        var refused = FailingCommandInterceptor.OnText("INSERT INTO [Transactions]");
+        using var scope = database.Seeder(interceptors: refused).CreateScope();
+        var summary = await scope.ServiceProvider.GetRequiredService<DemoCopyBuilder>().SeedPoolAsync(1);
+
+        refused.Failures.Should().Be(3, "the failure must actually have been injected, else the test proves nothing");
+        (summary.Seeded, summary.BuildFailed).Should().Be((0, 3));
+
+        // The context is the scope's, and `recycle` goes on using it after its top-up. Rows still
+        // tracked there would be written by the next save, outside the transaction that failed.
+        var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        context.ChangeTracker.Entries().Should().BeEmpty("the rows of an attempt that failed are not left waiting on the context");
+        (await context.SaveChangesAsync()).Should().Be(0);
+        (await CountAsync(database)).Total.Should().Be(0, "a copy that could not be built leaves nothing behind, now or at the next save");
+    }
+
+    [SqlServerFact]
+    public async Task ACopyThatWasBuilt_IsNotKeptOnTheContext_SoALaterReadAnswersFromTheDatabase()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        using var scope = database.Seeder().CreateScope();
+        var summary = await scope.ServiceProvider.GetRequiredService<DemoCopyBuilder>().SeedPoolAsync(1);
+
+        summary.Seeded.Should().Be(1, "ARRANGE: the run built a copy");
+
+        // The context is the scope's, and `recycle` goes on using it after its top-up. The rows of
+        // the copy it just built, still tracked there, would answer a later read in place of the
+        // database: as they were written, whatever has happened to the copy since.
+        var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        context.ChangeTracker.Entries().Should().BeEmpty("the rows of a copy that was built are not kept on the context");
+
+        // A visitor claims the copy, on a connection of their own, and the run's context is asked.
+        var copy = (await database.CopiesAsync()).Should().ContainSingle().Which;
+        await database.MarkClaimedAsync(copy.Id, DateTime.UtcNow);
+
+        var asTheRunReadsIt = await context.Set<DemoCopy>().SingleAsync(c => c.Id == copy.Id);
+        asTheRunReadsIt.ClaimedAt.Should().NotBeNull(
+            "the run reads the copy as the database holds it, claimed, and not as it wrote it, free");
     }
 
     [SqlServerFact]
@@ -470,6 +731,186 @@ public sealed class DemoPoolSeedSqlServerTests
         await database.GiveOwnerAPasswordAsync(copy);
         using var signedIn = await DemoVisitor.TrySignInAsync(client, copy.Owner.Email!, DemoPoolDatabase.VisitorPassword);
         signedIn.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    // ── What a run writes down ───────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The lines that carry an address on the demo's domain, or the random part of one of
+    /// <paramref name="emails"/>, whatever its case: Identity stores an address a second time in
+    /// upper case.
+    /// </summary>
+    private static List<string> LinesNaming(
+        IEnumerable<(LogLevel Level, string Message)> lines, IReadOnlyCollection<string> emails) =>
+        [.. lines
+            .Where(line => line.Message.Contains($"@{DemoCredentials.EmailDomain}", StringComparison.OrdinalIgnoreCase)
+                || emails.Any(email => line.Message.Contains(email[..email.IndexOf('@')], StringComparison.OrdinalIgnoreCase)))
+            .Select(line => $"{line.Level}: {line.Message}")];
+
+    /// <summary>
+    /// A copy's email address is the name its visitor signs in with, and a job's log is kept
+    /// somewhere else, for longer, and read by other people than the database is. A run names a
+    /// copy by its id.
+    /// </summary>
+    /// <remarks>
+    /// The recorder takes every line of every category at every level, with the text of any
+    /// exception attached: the builder's own lines, Identity's, and EF's. Two runs, so that each of
+    /// the builder's log statements has a reason to speak and each way an address could reach the
+    /// log is taken: Identity refuses a user with a description that quotes the address, the
+    /// database refuses the insert of a user, a copy collides and is drawn again, copies are built.
+    /// The environment is Production, as a deployment's is; the test below is the other one.
+    /// </remarks>
+    [SqlServerFact]
+    public async Task ARun_NeverWritesACopysEmailAddressToItsLog()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var log = new RecordingLoggerProvider();
+        database.Log = log;
+        await database.BuildCopiesAsync(1);
+        string taken;
+        await using (var db = database.NewContext())
+        {
+            taken = await db.Accounts.Select(a => a.AccountNumber).FirstAsync();
+        }
+
+        // Identity answers a refusal whose description quotes the address it refused.
+        var refusal = new RefusingAtCreationUserValidator();
+        database.AlsoRegister = services => services.AddSingleton<IUserValidator<ApplicationUser>>(refusal);
+        var refused = await database.SeedPoolAsync(2);
+        database.AlsoRegister = null;
+
+        // Then the database refuses the first insert of a user, and the copy after it collides.
+        var failing = FailingCommandInterceptor.OnTurnsOfText(turn => turn == 1, "INSERT INTO [AspNetUsers]");
+        var collision = new CollidingAccountNumberInterceptor(taken);
+        var built = await database.SeedPoolAsync(3, interceptors: [failing, collision]);
+
+        (refusal.Refusals, failing.Failures, collision.Fired).Should().Be(
+            (3, 1, true), "ARRANGE: every fault was actually injected");
+        (refused.Seeded, refused.BuildFailed).Should().Be((0, 3), "ARRANGE: Identity refused each copy's first user");
+        (built.Seeded, built.BuildFailed, built.Free).Should().Be(
+            (2, 1, 3), "ARRANGE: one copy failed on its first user, one collided and was drawn again, two were built");
+
+        var lines = log.Lines;
+        lines.Should().Contain(
+            line => line.Message.Contains("[AspNetUsers]", StringComparison.Ordinal),
+            "the recorder saw the statements that carried the addresses: a recorder that heard nothing reports clean for ever");
+        foreach (var failure in refused.Failures.Concat(built.Failures))
+        {
+            lines.Should().Contain(
+                line => line.Level == LogLevel.Error && line.Message.Contains(failure.CopyId.ToString(), StringComparison.Ordinal),
+                "ARRANGE: the builder wrote down each copy it could not build");
+        }
+
+        lines.Should().Contain(
+            line => line.Level == LogLevel.Warning && line.Message.Contains("2601", StringComparison.Ordinal),
+            "ARRANGE: the builder wrote down the collision");
+
+        var everyCopy = (await database.CopiesAsync()).SelectMany(c => c.Users).Select(u => u.Email!).ToList();
+        everyCopy.Should().HaveCount(9, "ARRANGE: three copies, three users each");
+        LinesNaming(lines, everyCopy).Should().BeEmpty(
+            "a run names a copy by its id, never by the address its visitor signs in with");
+    }
+
+    /// <summary>
+    /// In Development EF logs a statement with the values it carried, so there a statement that
+    /// fails puts an address in the log. It is the address of an attempt that rolled back, and it
+    /// must not also be the address of a copy that exists.
+    /// </summary>
+    [SqlServerFact]
+    public async Task WhereAStatementIsLoggedWithItsValues_AnAttemptThatIsRunAgainDrawsNewAddresses()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var log = new RecordingLoggerProvider();
+        database.Log = log;
+        database.EnvironmentName = Environments.Development;
+
+        // A transient fault on the insert of the copy's first user: the strategy runs the whole
+        // attempt again, on the same context.
+        var transient = new TransientFailureInterceptor("INSERT INTO [AspNetUsers]");
+        var summary = await database.SeedPoolAsync(1, interceptors: transient);
+
+        transient.Fired.Should().BeTrue("the transient fault must actually have been injected, else the test proves nothing");
+        (summary.Seeded, summary.BuildFailed).Should().Be((1, 0));
+
+        // What the Seeder prints: its appsettings.json holds EF and Identity at Warning. Below
+        // that, in Development, every statement that ran is written with its values, and the
+        // statements that built the copy are among them.
+        var printed = log.Lines.Where(line => line.Level >= LogLevel.Warning).ToList();
+        printed.Should().Contain(
+            line => line.Message.Contains($"@{DemoCredentials.EmailDomain}", StringComparison.OrdinalIgnoreCase),
+            "ARRANGE: in this environment the statement that failed is logged with the address it carried");
+
+        var copy = (await database.CopiesAsync()).Should().ContainSingle().Which;
+        var itsAddresses = copy.Users.Select(u => u.Email![..u.Email!.IndexOf('@')]).ToList();
+        itsAddresses.Should().HaveCount(3);
+        printed
+            .Where(line => itsAddresses.Any(address => line.Message.Contains(address, StringComparison.OrdinalIgnoreCase)))
+            .Select(line => $"{line.Level}: {line.Message}")
+            .Should().BeEmpty("the address in the log was drawn for the attempt that rolled back, and the copy that was built drew its own");
+    }
+
+    [SqlServerFact]
+    public async Task TheSummary_CountsWhatThePoolHeldAtTheStart_AndWhatItHoldsAtTheEnd()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copies = await database.BuildCopiesAsync(7);
+        var busy = Enumerable.Repeat((byte)0xA1, 32).ToArray();
+        var quiet = Enumerable.Repeat((byte)0xB2, 32).ToArray();
+        await database.MarkClaimedAsync(copies[0].Id, DateTime.UtcNow.AddHours(-1), busy);
+        await database.MarkClaimedAsync(copies[1].Id, DateTime.UtcNow.AddHours(-2), busy);
+        await database.MarkClaimedAsync(copies[2].Id, DateTime.UtcNow.AddHours(-3), quiet);
+        // The quiet client's second claim is 24 hours and 2 minutes old: outside the rolling day, so
+        // it is neither a claim of the day nor what would put that client at a cap of two.
+        await database.MarkClaimedAsync(copies[3].Id, DateTime.UtcNow.AddHours(-24).AddMinutes(-2), quiet);
+        // And the record of a copy claimed three days ago and deleted since: no client key, as the
+        // recycler leaves it.
+        await database.MarkClaimedAsync(copies[4].Id, DateTime.UtcNow.AddDays(-3));
+        await using (var db = database.NewContext())
+        {
+            DateTime? deletedAt = DateTime.UtcNow.AddDays(-2);
+            var marked = await db.Set<DemoCopy>()
+                .Where(c => c.Id == copies[4].Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(c => c.DeletedAt, deletedAt));
+            marked.Should().Be(1, "ARRANGE: the claimed copy becomes a record");
+        }
+
+        var summary = await database.SeedPoolAsync(3, settings: new() { ["Demo:Claim:MaxPerClientPerDay"] = "2" });
+
+        (summary.RowsAtStart, summary.FreeAtStart, summary.Claims24h, summary.ClientsAtCap, summary.ForeignUsers).Should().Be(
+            (6, 2, 3, 1, 0),
+            "before the run: six rows that are not a record, two of them free, three claims in the rolling day, one client with its two");
+        (summary.Target, summary.Seeded, summary.Free, summary.Claimed, summary.Tombstones).Should().Be(
+            (3, 1, 3, 4, 1),
+            "after it: the one copy that was missing, four claimed copies whose users exist, one record");
+        summary.ExitCode.Should().Be(0);
+    }
+
+    [SqlServerFact]
+    public async Task BesideAPool_AUserOutsideEveryCopyIsReported_AndThePoolIsFilledAllTheSame()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+
+        // A pool whose only row is the record of a deleted copy, and one user outside every copy.
+        // Not the wrong database: that is users and not one pool row, records included.
+        var copy = (await database.BuildCopiesAsync(1)).Single();
+        await database.MarkClaimedAsync(copy.Id, DateTime.UtcNow.AddDays(-3));
+        await using (var db = database.NewContext())
+        {
+            DateTime? deletedAt = DateTime.UtcNow.AddDays(-2);
+            var marked = await db.Set<DemoCopy>()
+                .Where(c => c.Id == copy.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(c => c.DeletedAt, deletedAt));
+            marked.Should().Be(1, "ARRANGE: the claimed copy becomes a record");
+        }
+
+        using var client = database.Api().CreateClient();
+        await DemoVisitor.RegisterAsync(client, "resident");
+
+        var summary = await database.SeedPoolAsync(2);
+
+        (summary.RowsAtStart, summary.Tombstones, summary.ForeignUsers).Should().Be((0, 1, 1), "ARRANGE: a record, no live row, one user outside");
+        (summary.Seeded, summary.Free, summary.ExitCode).Should().Be(
+            (2, 2, 13), "the pool is the demo's, so it is filled; the user that should not be there is what the exit code says");
     }
 
     [SqlServerFact]

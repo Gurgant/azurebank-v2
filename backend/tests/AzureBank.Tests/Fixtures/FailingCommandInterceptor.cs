@@ -15,7 +15,9 @@ namespace AzureBank.Tests.Fixtures;
 /// code under test once per command.
 /// </para>
 /// <para>
-/// Two ways to choose a command. <see cref="OnText"/> matches the statement's text.
+/// Three ways to choose a command. <see cref="OnText"/> matches the statement's text.
+/// <see cref="OnTurnsOfText"/> matches the same way and then fails only some of the matches, by
+/// their turn: the first, the second and the fourth, say, so that failures and successes alternate.
 /// <see cref="OnDeleteNaming"/> matches a DELETE that names one of a set of ids, in its text or in
 /// any parameter: it picks out the statements about one demo copy without depending on how those
 /// statements are written (a parameter per id, an inlined literal, or a JSON array of ids).
@@ -37,6 +39,18 @@ public sealed class FailingCommandInterceptor : DbCommandInterceptor
     /// <summary>Fails every command whose text contains every marker.</summary>
     public static FailingCommandInterceptor OnText(params string[] markers) =>
         new(command => markers.All(marker => command.CommandText.Contains(marker, StringComparison.Ordinal)));
+
+    /// <summary>
+    /// Fails the commands whose text contains every marker, but only on the turns
+    /// <paramref name="fails"/> picks. The first command that matches is turn 1.
+    /// </summary>
+    public static FailingCommandInterceptor OnTurnsOfText(Func<int, bool> fails, params string[] markers)
+    {
+        var turn = 0;
+        return new FailingCommandInterceptor(command =>
+            markers.All(marker => command.CommandText.Contains(marker, StringComparison.Ordinal))
+            && fails(Interlocked.Increment(ref turn)));
+    }
 
     /// <summary>Fails every DELETE that names one of <paramref name="ids"/>.</summary>
     public static FailingCommandInterceptor OnDeleteNaming(IEnumerable<Guid> ids)
