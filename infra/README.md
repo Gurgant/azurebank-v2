@@ -1051,14 +1051,33 @@ to), the steps are these, in this order. They have not been rehearsed.
    az containerapp job delete --name azurebank-migrate --resource-group $group --yes
    ```
 
-2. **Delete the two identities**, so that the template makes them again with new IDs.
+2. **Delete the two identities and make them again**, under the same names: each then has new
+   IDs. They are the resources the template makes, made now so that the next step does not wait
+   for a run of the template.
 
    ```powershell
-   az identity delete --name azurebank-app --resource-group $group
-   az identity delete --name azurebank-migrate --resource-group $group
+   'azurebank-app', 'azurebank-migrate' | ForEach-Object {
+       az identity delete --name $_ --resource-group $group
+       az identity create --name $_ --resource-group $group --location italynorth --output none
+   }
    ```
 
-3. **Run the template with the app**, on a commit whose images are known. With no app deployed,
+3. **Drop both database users: run the users script, and read what it prints.** The ID each user
+   stores now matches no identity, so the file runs `DROP USER` on both and creates them again
+   for the new identities, in its one guarded transaction. The drop is what refuses a token taken
+   earlier at its next sign-in (reasoned, not seen). A token is valid for a time the documentation
+   read does not state, and the platform caches tokens for about a day.
+
+   ```powershell
+   ./infra/sql-principals.ps1
+   ```
+
+   The drop goes through the file, never through a `DROP USER` typed as administrator: a trigger
+   left by whoever held the schema-changing identity would run as the administrator on that very
+   statement, and the file is what refuses a database that holds one. If the script stops with
+   `Msg 50003` or `Msg 50004`, the database itself was changed: run nothing else there.
+
+4. **Run the template with the app**, on a commit whose images are known. With no app deployed,
    `secrets.ps1` generates the seven application secrets anew.
 
    ```powershell
@@ -1070,21 +1089,12 @@ to), the steps are these, in this order. They have not been rehearsed.
    }
    ```
 
-4. **Run the users script and read what it prints.** It drops each user, whose stored ID now
-   matches no identity, and creates it again. Dropping the user is what refuses a token taken
-   earlier at its next sign-in (reasoned, not seen). A token is valid for a time the documentation
-   read does not state, and the platform caches tokens for about a day. If the script stops with
-   `Msg 50003` or `Msg 50004`, the database itself was changed: run nothing else there.
-
-   ```powershell
-   ./infra/sql-principals.ps1
-   ```
-
 5. **Look at who could run a job in `demo`** ([What each identity can do](#what-each-identity-can-do)),
    then deploy.
 
 While an intruder can still run code in the app or in the job, a new token is one request away:
-that is why step 1 comes first.
+that is why step 1 comes first. The app and the job are deleted, and not put back on known
+images, because nothing else in these files makes the seven application secrets anew.
 
 ## Where each secret lives
 

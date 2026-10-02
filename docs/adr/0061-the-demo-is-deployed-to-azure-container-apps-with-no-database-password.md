@@ -387,7 +387,8 @@ twice the cap: the logs go off. The alert is refused: it is left out, one of fou
   whoever next changes users there; the users file refuses such a database. The boundary is who
   can run a job in the environment `demo`.
 - **No single step cuts off a stolen token.** How long one stays valid was not found. The incident
-  procedure deletes the app, the job and the two identities and makes them again.
+  procedure deletes the app and the job, makes the two identities again, drops both database
+  users through the users file, and only then runs the template.
 - **The log can hold what ADR-0017 keeps out of the application's own messages**: an e-mail
   address or a handle inside a database error's text (measured), and by the same road any other
   unique value. It is read by the owner and by an administrator of the directory.
