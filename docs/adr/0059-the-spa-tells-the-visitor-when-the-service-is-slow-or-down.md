@@ -661,8 +661,9 @@ Test files are under `frontend/src/`, browser specs under `frontend/e2e/`.
     transfer page the ring was whole in the viewport, at 375 too; in the dialog that was not
     measured.
   - Heard, on 2026-10-02: NVDA 2026.2 with Chromium 151 in a window, on Windows, its speech logged
-    and matched to the moment each text was on the page, against the development build of commit
-    `94ed020` answered by the repository's mock handlers, each send answered by the browser with
+    and matched to the moment each text was on the page, against the development build of this
+    change as it was first published, before the check view was kept on a press outside, answered
+    by the repository's mock handlers, each send answered by the browser with
     the 409 and `applied: true`. Four flows: the deposit dialog, the withdrawal dialog, the
     transfer page and the page for a move between the visitor's own accounts. Of 18 expected
     texts NVDA spoke 16.
@@ -673,12 +674,12 @@ Test files are under `frontend/src/`, browser specs under `frontend/e2e/`.
       After the name and before the sentence NVDA also said "button", "View History".
     - The title, on the two transfer pages: not spoken (the 2 of the 18). "Transfer Complete" is
       the page's heading there, and focus goes to the sentence, which is all NVDA said of the
-      view. Just before it NVDA named the document by the form's title, "Send Money · AzureBank"
+      view. Just before it NVDA named the document by the route's title, "Send Money · AzureBank"
       on the transfer page and "Move Money · AzureBank" on the other.
     - The actions: the first Tab was spoken as "View History", "button" in all four, and the
       second, on the transfer pages, as "Done", "button". After "View History" in the dialogs NVDA
       said "History page loaded"; after "Done" on the pages, "Home page loaded".
-    - The commits after `94ed020` change which of a dialog's views a press outside leaves open,
+    - The commits after that build change which of a dialog's views a press outside leaves open,
       comments, tests and these records. The went-through view's markup is the same in them.
   - Not heard: the check view, which lands no focus (on `5b50681`, measured, focus was on `body`
     in every one), and to which one more answer is routed since this date, a 409 that names no
@@ -783,7 +784,7 @@ Test files are under `frontend/src/`, browser specs under `frontend/e2e/`.
       which comes first, the answer or the second press, and both were measured on a real deposit.
       When the 201 came after the second press, the press was on the disabled button, and the
       receipt then appeared and stayed, with focus on the dialog: the 201 came 322 ms after the
-      first press on that stack, and 881 ms on the stack built next, from the same product, in the
+      first press on that stack, and 881 ms on a later stack, built from the same product, in the
       first deposit sent to it. In the next deposit there the 201 came first: the receipt was on the
       page 111 ms after the first press, the second press landed on the backdrop at 149 ms, and the
       dialog was gone at 164 ms, 53 ms after the receipt appeared; one request, one deposit in the
