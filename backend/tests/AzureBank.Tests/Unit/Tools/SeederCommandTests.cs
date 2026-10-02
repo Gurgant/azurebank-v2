@@ -340,6 +340,32 @@ public class SeederCommandTests
     }
 
     [Fact]
+    public async Task Migrate_OnARefusedLogin_SaysWhatToCheck_ForAPasswordAndForAManagedIdentity()
+    {
+        // The Azure deployment signs in as a managed identity (infra/README.md): its string holds
+        // no password to check, and a refused login there means the database has no user for the
+        // identity. The sentence has to be true for both ways to sign in. It names the variable,
+        // never what the variable holds.
+        var log = new RecordingLoggerProvider();
+        await using var provider = SeederHost.Build(
+            log, interceptor: null, onCommittedSettings: false, (ConnectionKey, AbsentServer), NoEfRetry);
+
+        var exitCode = await MigrateCommand.RunAsync(
+            provider,
+            TimeSpan.FromSeconds(7),
+            CancellationToken.None,
+            _ => Task.FromResult(new GateResult(GateVerdict.LoginRefused, "18456, class 14: Login failed for user 'u'")));
+
+        using var all = new AssertionScope();
+        exitCode.Should().Be(1);
+        Errors(log).Should().ContainSingle().Which.Should().Be(
+            "migrate failed: the login was refused three times; check what "
+            + "ConnectionStrings__DefaultConnection signs in with: a user and its password, or a managed "
+            + "identity, which needs a user of its own in this database. "
+            + "The last answer was 18456, class 14: Login failed for user 'u'.");
+    }
+
+    [Fact]
     public async Task Migrate_NeverReadsThePinPepper()
     {
         // The deployment's migrate job gets the connection string and no other secret. With no

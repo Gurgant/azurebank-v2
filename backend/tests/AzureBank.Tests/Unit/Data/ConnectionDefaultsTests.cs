@@ -140,6 +140,45 @@ public class ConnectionDefaultsTests
     }
 
     [Fact]
+    public void AStringThatSignsInWithAManagedIdentity_KeepsItsSignIn()
+    {
+        // A guard, green before and after. The Azure deployment's string holds no password: it
+        // names a way to sign in and, as User ID, the client ID of a managed identity
+        // (infra/main.bicep). Filling in the limits parses the string and writes it again, so its
+        // keywords come back respelt; the sign-in has to come back whole. Nothing off Azure opens
+        // with such a string (no managed identity exists there), so this is where a rewrite that
+        // dropped it would show.
+        const string clientId = "00000000-0000-0000-0000-000000000001";
+        var effective = Effective(
+            "Server=tcp:not_a_server.database.windows.net,1433;Database=X;"
+            + $"Authentication=Active Directory Managed Identity;User ID={clientId};Encrypt=True");
+
+        using var all = new AssertionScope();
+        effective.Authentication.Should().Be(SqlAuthenticationMethod.ActiveDirectoryManagedIdentity);
+        effective.UserID.Should().Be(clientId, "it says which identity to ask a token for");
+        effective.Password.Should().BeEmpty();
+        effective.DataSource.Should().Be("tcp:not_a_server.database.windows.net,1433");
+        effective.InitialCatalog.Should().Be("X");
+        effective.ConnectTimeout.Should().Be(10, "the limits are filled in beside the sign-in, not instead of it");
+        effective.MaxPoolSize.Should().Be(12);
+        var create = () => new SqlConnection(effective.ConnectionString).Dispose();
+        create.Should().NotThrow("SqlClient checks the sign-in keywords against each other when a connection is created");
+    }
+
+    [Fact]
+    public void SqlClient_CarriesTheProviderThatSignsInWithAManagedIdentity()
+    {
+        // A guard for an upgrade. SqlClient 6 registers its Microsoft Entra providers itself. From
+        // 7.0 they are in a second package, Microsoft.Data.SqlClient.Extensions.Azure: a move to
+        // that major without it still compiles, every test here still passes, and the first open on
+        // Azure fails. GetProvider reads the registration and asks nobody for a token.
+        SqlAuthenticationProvider.GetProvider(SqlAuthenticationMethod.ActiveDirectoryManagedIdentity)
+            .Should().NotBeNull(
+                "the deployed app and the migrate job sign in to the database as managed identities "
+                + "(infra/README.md); if SqlClient no longer carries the provider, add the package that does");
+    }
+
+    [Fact]
     public void TheSeeder_OpensWithAPoolOfFive()
     {
         // The seeder's jobs share the database's 30 logins with the API: 2 x 12 + 5 = 29. Its pool
