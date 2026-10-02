@@ -107,11 +107,18 @@ def raise_(error):
     raise error
 
 
-def execution(name, status, started=None):
-    properties = {'status': status}
+def execution(name, status, started=None, **more):
+    properties = {'status': status, **more}
     if started:
         properties['startTime'] = started
     return {'name': name, 'properties': properties}
+
+
+def finished(name='run', status='Succeeded', code=0, reason='Completed', **more):
+    """An execution as the later API version describes it once it has ended."""
+    return execution(name, status, '2026-10-02T18:00:03.1234567Z', endTime='2026-10-02T18:00:09Z',
+                     reason=reason, detailedStatus={'replicas': [{'name': f'{name}-abcde', 'containers': [
+                         {'name': 'migrate', 'status': status, 'code': code}]}]}, **more)
 
 
 class Clock:
@@ -323,6 +330,44 @@ class AzTests(unittest.TestCase):
             self.assertNotIn(hidden, message)
         self.assertIn(SUBSCRIPTION, ' '.join(run.call_args.args[0]), 'the command line did hold it')
 
+    @patch('deploy.subprocess.run')
+    def test_a_timeout_on_a_resource_that_is_not_the_app_names_no_subscription_either(self, run):
+        run.side_effect = lambda command, **options: raise_(
+            subprocess.TimeoutExpired(command, options['timeout']))
+        workspace = (f'/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}/providers'
+                     '/Microsoft.OperationalInsights/workspaces/azurebank-logs')
+        with self.assertRaises(deploy.AzError) as raised:
+            deploy.rest('GET', workspace, api_version='2023-09-01')
+        message = str(raised.exception)
+        self.assertIn('(GET /Microsoft.OperationalInsights/workspaces/azurebank-logs)', message)
+        for hidden in (SUBSCRIPTION, 'subscriptions', 'resourceGroups'):
+            self.assertNotIn(hidden, message)
+
+    @patch('deploy.subprocess.run')
+    def test_a_request_carries_the_api_version_it_is_given_and_the_usual_one_otherwise(self, run):
+        run.return_value = subprocess.CompletedProcess([], 0, stdout='{}', stderr='')
+        deploy.rest('GET', APP_ID)
+        deploy.rest('GET', f'{MIGRATE_ID}/executions', api_version='2026-07-01')
+        urls = [call.args[0][call.args[0].index('--url') + 1] for call in run.call_args_list]
+        self.assertEqual(urls, [f'https://management.azure.com{APP_ID}?api-version=2025-01-01',
+                                f'https://management.azure.com{MIGRATE_ID}/executions?api-version=2026-07-01'])
+        self.assertEqual((deploy.API_VERSION, deploy.VERDICT_API_VERSION), ('2025-01-01', '2026-07-01'))
+
+    @patch('deploy.subprocess.run')
+    def test_a_log_query_travels_in_a_file_and_asks_for_the_log_service_by_name(self, run):
+        answer = '{"tables":[{"columns":[{"name":"Log"}],"rows":[["a line"],["another"]]}]}'
+        run.return_value = subprocess.CompletedProcess([], 0, stdout=answer, stderr='')
+        customer = 'cccccccc-9999-4aaa-8bbb-cccccccccccc'
+        rows = deploy.query(customer, 'ContainerAppConsoleLogs | take 2', 'PT5M')
+        self.assertEqual(rows, [{'Log': 'a line'}, {'Log': 'another'}])
+        command = run.call_args.args[0]
+        self.assertEqual(command[1:8], ['rest', '--method', 'POST', '--url',
+                                        f'https://api.loganalytics.io/v1/workspaces/{customer}/query',
+                                        '--resource', 'https://api.loganalytics.io'])
+        self.assertTrue(command[command.index('--body') + 1].startswith('@'))
+        self.assertNotIn('ContainerAppConsoleLogs', ' '.join(command))
+        self.assertEqual(deploy.query(customer, 'x', 'PT5M'), deploy.query(customer, 'y', 'PT5M'))
+
 
 class PatchTests(unittest.TestCase):
     def test_both_images_change_together_without_mutating_source_or_secrets(self):
@@ -422,6 +467,98 @@ class MigrationTests(Offline):
             deploy.run_migration(MIGRATE_ID, 600)
         self.assertGreaterEqual(self.clock.now, 720)
         self.assertIn('--job-execution-name run', str(raised.exception))
+
+
+VERDICT = ('Verdict: execution this-run: Succeeded, started 2026-10-02T18:00:03Z, '
+           'ended 2026-10-02T18:00:09Z (6 s), exit code 0 (done), reason Completed.')
+
+
+def public_verdict(properties, name='run'):
+    """The line as a workflow run prints it."""
+    return deploy.verdict(name, properties, in_actions=True)
+
+
+class VerdictTests(unittest.TestCase):
+    """`deploy.verdict`: the one line a migration leaves in a log that anybody can read."""
+
+    def test_the_line_names_the_execution_its_status_its_times_its_exit_code_and_its_reason(self):
+        self.assertEqual(public_verdict(finished('this-run')['properties'], 'this-run'), VERDICT)
+
+    def test_each_exit_code_of_the_tool_says_what_it_means(self):
+        # backend/tools/AzureBank.Seeder/Commands/ExitCodes.cs
+        meanings = {0: 'done', 1: 'failed after it reached for the server; running it again is safe',
+                    2: 'refused before any connection; the configuration must change',
+                    137: 'not a code the tool itself exits with'}
+        for code, meaning in meanings.items():
+            with self.subTest(code=code):
+                line = public_verdict(finished(status='Failed', code=code)['properties'])
+                self.assertIn(': Failed, started', line)
+                self.assertIn(f', exit code {code} ({meaning}), ', line)
+
+    def test_an_exit_code_azure_did_not_report_is_said_to_be_missing_and_never_guessed(self):
+        entry = {'name': 'migrate', 'code': 0}
+        for detailed in (
+                None, {}, {'replicas': []}, {'replicas': [{'containers': []}]},
+                {'replicas': [{'containers': [{'name': 'migrate'}]}]},
+                {'replicas': [{'containers': [{'name': 'migrate', 'code': '0'}]}]},
+                {'replicas': [{'containers': [{'name': 'migrate', 'code': True}]}]},
+                {'replicas': [{'containers': [{'name': 'one', 'code': 0}, {'name': 'two', 'code': 0}]}]},
+                {'replicas': [{'containers': [entry]}, {'containers': [entry]}]},
+                'text', {'replicas': 'text'}, {'replicas': [None, {'containers': 'text'}]},
+                {'replicas': [{'containers': [None, 5]}]}):
+            with self.subTest(detailed=detailed):
+                properties = {**finished()['properties'], 'detailedStatus': detailed}
+                self.assertIn(', exit code not reported, ', public_verdict(properties))
+
+    def test_the_one_container_of_the_job_is_read_whatever_azure_calls_it(self):
+        replicas = [{'containers': [{'containerName': 'migrate', 'code': 2}]}]
+        properties = {**finished()['properties'], 'detailedStatus': {'replicas': replicas}}
+        self.assertIn(', exit code 2 (refused before', public_verdict(properties))
+
+    def test_the_length_of_the_run_is_on_the_line_when_both_times_are(self):
+        # About four seconds is a sign-in the database refused; the whole wait is a token that never came.
+        properties = finished()['properties']
+        properties.update(startTime='2026-10-02T18:00:00Z', endTime='2026-10-02T18:01:01.6Z')
+        self.assertIn(', ended 2026-10-02T18:01:01Z (62 s), ', public_verdict(properties))
+        del properties['endTime']
+        self.assertIn(', started 2026-10-02T18:00:00Z, end not reported, ', public_verdict(properties))
+
+    def test_inside_actions_a_reason_is_printed_only_if_it_is_one_plain_word(self):
+        for reason in ('Completed', 'BackoffLimitExceeded', 'a' * 40):
+            with self.subTest(reason=reason):
+                line = public_verdict(finished(reason=reason)['properties'])
+                self.assertTrue(line.endswith(f', reason {reason}.'), line)
+        for reason in ('Container migrate exited: azurebank-x.database.windows.net refused 203.0.113.7',
+                       'Two words', 'Completed\n', '::error::Completed', 'Completed.', 'a' * 41, 7,
+                       ['Completed'], {'code': 'Completed'}):
+            with self.subTest(reason=reason):
+                line = public_verdict(finished(reason=reason)['properties'])
+                self.assertTrue(line.endswith(', reason withheld, read it with --job-log.'), line)
+                self.assertNotIn('\n', line)
+                for word in ('Completed', 'database.windows.net', '203.0.113.7', 'Two', 'aaaa'):
+                    self.assertNotIn(word, line)
+        for reason in (None, ''):
+            with self.subTest(reason=reason):
+                line = public_verdict(finished(reason=reason)['properties'])
+                self.assertTrue(line.endswith(', no reason given.'), line)
+
+    def test_azures_own_message_is_for_the_owners_terminal_and_never_for_actions(self):
+        properties = finished(reason='Container exited with a non-zero code',
+                              message='MESSAGE-MARKER')['properties']
+        container = properties['detailedStatus']['replicas'][0]['containers'][0]
+        container['additionalInformation'] = 'ADDITIONAL-MARKER'
+        self.assertIn(", reason 'Container exited with a non-zero code'. "
+                      'Azure says: MESSAGE-MARKER / ADDITIONAL-MARKER', deploy.verdict('run', properties))
+        for hidden in ('MESSAGE-MARKER', 'ADDITIONAL-MARKER', 'non-zero', 'Azure says'):
+            self.assertNotIn(hidden, public_verdict(properties))
+
+    def test_a_field_with_a_shape_nobody_expects_is_said_to_be_missing_and_is_never_printed(self):
+        strange = 'x\n::add-mask::something'
+        properties = {'status': strange, 'startTime': strange, 'endTime': 5, 'reason': strange,
+                      'detailedStatus': strange}
+        self.assertEqual(public_verdict(properties, strange), (
+            'Verdict: execution whose name is withheld: status not reported, start not reported, '
+            'end not reported, exit code not reported, reason withheld, read it with --job-log.'))
 
 
 class RevisionTests(Offline):
@@ -1003,6 +1140,40 @@ class MainTests(Offline):
         with patch.dict(deploy.os.environ, {**self.ENVIRONMENT, **extra}, clear=True):
             return deploy.main(arguments)
 
+    @patch('deploy.app_log')
+    @patch('deploy.job_log')
+    @patch('deploy.deploy')
+    def test_the_two_log_commands_deploy_nothing_and_need_no_image_tag(self, run, job_log, app_log):
+        environment = {'AZURE_SUBSCRIPTION_ID': SUBSCRIPTION, 'AZURE_RESOURCE_GROUP': GROUP}
+        with patch.dict(deploy.os.environ, environment, clear=True):
+            deploy.main(['--job-log'])
+            deploy.main(['--job-log', 'azurebank-migrate-abc123'])
+            deploy.main(['--app-log', '15'])
+        self.assertEqual([call.args + (call.kwargs,) for call in job_log.call_args_list],
+                         [(SUBSCRIPTION, GROUP, '', {'in_actions': False}),
+                          (SUBSCRIPTION, GROUP, 'azurebank-migrate-abc123', {'in_actions': False})])
+        app_log.assert_called_once_with(SUBSCRIPTION, GROUP, 15, in_actions=False)
+        run.assert_not_called()
+
+    @patch('deploy.rest')
+    @patch('deploy.az')
+    def test_the_two_log_commands_inside_actions_exit_non_zero_without_calling_azure(self, az, rest):
+        for arguments in (['--job-log'], ['--job-log', 'a-run'], ['--app-log', '15']):
+            with self.subTest(arguments=arguments):
+                with self.assertRaises(SystemExit) as raised:
+                    self.run_main(arguments, GITHUB_ACTIONS='true')
+                self.assertIn('refused inside GitHub Actions', str(raised.exception.code))
+        az.assert_not_called()
+        rest.assert_not_called()
+
+    def test_two_modes_at_once_are_refused_by_the_command_line(self):
+        for arguments in (['--app-only', '--job-log'], ['--job-log', '--app-log', '5'],
+                          ['--app-log', 'soon']):
+            with self.subTest(arguments=arguments), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as raised:
+                    self.run_main(arguments)
+                self.assertEqual(raised.exception.code, 2)
+
     @patch('deploy.deploy')
     def test_the_workflow_run_asks_for_the_mask_and_the_refusal(self, run):
         self.run_main([], GITHUB_ACTIONS='true', EXPECT_SECRETS_REFUSED='1')
@@ -1047,6 +1218,164 @@ class MainTests(Offline):
         self.assertIn('no answer in 180 s (GET /containerApps/azurebank)', str(raised.exception.code))
         self.assertIn(SUBSCRIPTION, commands[0], 'the command line did hold it')
         self.assertNotIn(SUBSCRIPTION, str(raised.exception.code) + self.printed())
+
+
+WORKSPACE_ID = (f'/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}/providers'
+                '/Microsoft.OperationalInsights/workspaces/azurebank-logs')
+CUSTOMER = 'cccccccc-9999-4aaa-8bbb-cccccccccccc'
+QUERY = ('rest', '--method', 'POST', '--url',
+         f'https://api.loganalytics.io/v1/workspaces/{CUSTOMER}/query',
+         '--resource', 'https://api.loganalytics.io')
+
+
+def workspace(status='RespectQuota', customer=CUSTOMER):
+    return {'properties': {'customerId': customer, 'workspaceCapping': {
+        'dailyQuotaGb': 0.05, 'dataIngestionStatus': status,
+        'quotaNextResetTime': '2026-10-03T07:00:00Z'}}}
+
+
+def table(*rows, columns=('TimeGenerated', 'Log')):
+    return {'tables': [{'name': 'PrimaryResult',
+                        'columns': [{'name': name, 'type': 'string'} for name in columns],
+                        'rows': [list(row) for row in rows]}]}
+
+
+class LogTests(Offline):
+    """--job-log and --app-log: the owner reads what the containers printed, from the workspace."""
+
+    def setUp(self):
+        super().setUp()
+        self.workspace = workspace()
+        earlier = finished('an-earlier-run', code=1)
+        earlier['properties'].update(startTime='2026-10-01T09:00:00Z', endTime='2026-10-01T09:00:05Z')
+        self.listed = [finished('this-run'), earlier]
+        self.answer = table(('2026-10-02T18:00:04Z', 'Applying migration 0001'),
+                            ('2026-10-02T18:00:08Z', 'Done.'))
+        self.reads = []
+        self.queries = []
+        self.start(patch('deploy.rest', self.rest))
+        self.start(patch('deploy.az', self.az))
+
+    def rest(self, method, resource_id, body=None, api_version=deploy.API_VERSION):
+        self.reads.append((method, resource_id, api_version))
+        if resource_id == WORKSPACE_ID:
+            if isinstance(self.workspace, Exception):
+                raise self.workspace
+            return self.workspace
+        if resource_id == MIGRATE_ID + '/executions':
+            return {'value': self.listed}
+        raise AssertionError(f'unexpected call: {method} {resource_id}')
+
+    def az(self, *args, what=None):
+        # The body is a file that exists only while the call runs: read it here.
+        with open(args[args.index('--body') + 1][1:], encoding='utf-8') as request:
+            self.queries.append((args[:args.index('--body')], json.load(request)))
+        return self.answer
+
+    def said(self):
+        """What was printed, without the clock in front of the lines that carry one."""
+        return [re.sub(r'^\d\d:\d\d:\d\dZ ', '', line) for line in self.printed().splitlines()]
+
+    def test_the_job_log_says_what_the_cap_is_doing_then_the_verdict_then_the_lines(self):
+        deploy.job_log(SUBSCRIPTION, GROUP)
+        self.assertEqual(self.said(), [
+            'Log workspace azurebank-logs: daily cap 0.05 GB, ingestion RespectQuota, '
+            'next reset 2026-10-03T07:00:00Z.',
+            VERDICT, '2026-10-02T18:00:04Z Applying migration 0001', '2026-10-02T18:00:08Z Done.',
+            '2 line(s).'])
+        self.assertEqual(self.reads, [('GET', WORKSPACE_ID, '2023-09-01'),
+                                      ('GET', MIGRATE_ID + '/executions', '2026-07-01')])
+        # The latest execution, from two minutes before its start to five after its end.
+        self.assertEqual(self.queries, [(QUERY, {
+            'query': "ContainerAppConsoleLogs | where JobName == 'azurebank-migrate' "
+                     '| where TimeGenerated between (datetime(2026-10-02T17:58:03Z) .. '
+                     'datetime(2026-10-02T18:05:09Z)) | order by TimeGenerated asc | take 5000 '
+                     '| project TimeGenerated, Log',
+            'timespan': '2026-10-02T17:58:03Z/2026-10-02T18:05:09Z'})])
+
+    def test_a_named_execution_is_the_one_read_and_a_name_nobody_has_is_an_error(self):
+        deploy.job_log(SUBSCRIPTION, GROUP, 'an-earlier-run')
+        self.assertIn('Verdict: execution an-earlier-run: Succeeded', self.said()[1])
+        self.assertEqual(self.queries[0][1]['timespan'], '2026-10-01T08:58:00Z/2026-10-01T09:05:05Z')
+        with self.assertRaisesRegex(RuntimeError, 'has no execution named no-such-run'):
+            deploy.job_log(SUBSCRIPTION, GROUP, 'no-such-run')
+        self.listed = []
+        with self.assertRaisesRegex(RuntimeError, 'has no execution yet'):
+            deploy.job_log(SUBSCRIPTION, GROUP)
+        self.assertEqual(len(self.queries), 1)
+
+    def test_on_the_owners_terminal_the_verdict_carries_what_azure_said(self):
+        self.listed = [finished('this-run', status='Failed', code=1, message='MESSAGE-MARKER',
+                                reason='Container failed to start')]
+        deploy.job_log(SUBSCRIPTION, GROUP)
+        self.assertIn("reason 'Container failed to start'. Azure says: MESSAGE-MARKER", self.said()[1])
+
+    def test_a_cap_that_was_reached_is_said_before_an_answer_with_no_line(self):
+        self.workspace, self.answer = workspace('OverQuota'), table()
+        deploy.job_log(SUBSCRIPTION, GROUP)
+        said = self.said()
+        self.assertIn('ingestion OverQuota', said[0])
+        self.assertTrue(said[1].startswith('The cap was reached: the workspace takes no line'), said[1])
+        self.assertEqual(said[3], '0 line(s).')
+        self.assertTrue(said[4].startswith('No line is not proof that nothing was printed'), said[4])
+
+    def test_without_a_workspace_both_commands_say_that_nothing_is_kept(self):
+        self.workspace = deploy.AzError(
+            'Not Found({"error":{"code":"ResourceNotFound","message":"The Resource '
+            "'Microsoft.OperationalInsights/workspaces/azurebank-logs' was not found.\"}})")
+        for read in (lambda: deploy.job_log(SUBSCRIPTION, GROUP),
+                     lambda: deploy.app_log(SUBSCRIPTION, GROUP, 15)):
+            with self.assertRaisesRegex(RuntimeError, 'the logs are switched off and nothing is kept'):
+                read()
+        self.workspace = deploy.AzError('Forbidden: AuthorizationFailed')
+        with self.assertRaisesRegex(deploy.AzError, 'AuthorizationFailed'):
+            deploy.job_log(SUBSCRIPTION, GROUP)
+        self.assertEqual(self.queries, [])
+
+    def test_an_id_that_is_not_an_id_never_becomes_part_of_a_url(self):
+        for customer in ('x/../../other?', None, '', f'{CUSTOMER}/query?x='):
+            with self.subTest(customer=customer):
+                self.workspace = workspace(customer=customer)
+                with self.assertRaisesRegex(RuntimeError, 'did not report the ID a query is sent to'):
+                    deploy.app_log(SUBSCRIPTION, GROUP, 15)
+        self.assertEqual(self.queries, [])
+        self.workspace = workspace(customer=CUSTOMER.upper())
+        deploy.app_log(SUBSCRIPTION, GROUP, 15)
+        self.assertEqual(self.queries[0][0], QUERY, 'parsed, and printed again')
+
+    def test_the_app_log_reads_the_last_minutes_of_the_app(self):
+        self.answer = table(('2026-10-02T18:00:04Z', 'api', 'a line of the api'),
+                            ('2026-10-02T18:00:05Z', 'bff', 'a line of the bff'),
+                            columns=('TimeGenerated', 'ContainerName', 'Log'))
+        deploy.app_log(SUBSCRIPTION, GROUP, 15)
+        self.assertEqual(self.said()[1:], ['2026-10-02T18:00:04Z api a line of the api',
+                                           '2026-10-02T18:00:05Z bff a line of the bff', '2 line(s).'])
+        self.assertEqual(self.reads, [('GET', WORKSPACE_ID, '2023-09-01')])
+        self.assertEqual(self.queries, [(QUERY, {
+            'query': "ContainerAppConsoleLogs | where ContainerAppName == 'azurebank' "
+                     '| where TimeGenerated > ago(15m) | order by TimeGenerated asc | take 5000 '
+                     '| project TimeGenerated, ContainerName, Log',
+            'timespan': 'PT15M'})])
+
+    def test_minutes_outside_one_day_are_refused_before_any_call(self):
+        for minutes in (0, -5, 1441):
+            with self.subTest(minutes=minutes), self.assertRaisesRegex(ValueError, 'between 1 and 1440'):
+                deploy.app_log(SUBSCRIPTION, GROUP, minutes)
+        self.assertEqual(self.reads + self.queries, [])
+
+    def test_both_commands_are_refused_inside_actions_before_any_call(self):
+        for read in (lambda: deploy.job_log(SUBSCRIPTION, GROUP, in_actions=True),
+                     lambda: deploy.app_log(SUBSCRIPTION, GROUP, 15, in_actions=True)):
+            with self.assertRaisesRegex(ValueError, 'refused inside GitHub Actions'):
+                read()
+        self.assertEqual(self.reads + self.queries, [])
+        self.assertEqual(self.printed(), '')
+
+    def test_an_execution_without_a_start_has_no_period_to_read(self):
+        self.listed = [execution('this-run', 'Unknown')]
+        with self.assertRaisesRegex(RuntimeError, 'no start time'):
+            deploy.job_log(SUBSCRIPTION, GROUP)
+        self.assertEqual(self.queries, [])
 
 
 SPA = ('<!doctype html><title>AzureBank</title><div id="root"></div>'

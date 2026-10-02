@@ -1,10 +1,14 @@
 """Deploy one commit to the running AzureBank app, or move the app alone by hand.
 
-    python infra/deploy.py              migrate the database, then move the app, then check it
-    python infra/deploy.py --app-only   move the app only: the owner's road back, from a terminal
+    python infra/deploy.py                    migrate the database, then move the app, then check it
+    python infra/deploy.py --app-only         move the app only: the owner's road back
+    python infra/deploy.py --job-log [NAME]   print what a migration printed (the latest one, or NAME)
+    python infra/deploy.py --app-log MINUTES  print what the app printed in the last MINUTES
 
-It needs the Azure CLI signed in and on PATH, and three environment variables:
-AZURE_SUBSCRIPTION_ID, AZURE_RESOURCE_GROUP and IMAGE_TAG (the full SHA of a commit whose three
+The last three are for the owner's terminal and are refused inside GitHub Actions.
+
+It needs the Azure CLI signed in and on PATH, and the environment variables AZURE_SUBSCRIPTION_ID
+and AZURE_RESOURCE_GROUP. A deployment also needs IMAGE_TAG (the full SHA of a commit whose three
 images are published).
 
 A full run, in order:
@@ -16,9 +20,13 @@ A full run, in order:
 If the new revision never gets ready, or the smoke test gets a wrong answer, the app is put back
 on the template it had at step 1 and the run still fails. The schema is never put back.
 
-Every Azure call is `az rest` on the app or on a job. The deployment identity can reach nothing
-else, so it could not follow the status URL of a long-running operation, and this script never
-asks it to.
+What a migration printed is never fetched by a deployment: the log of a public repository is
+public, and that text can name the server, an address, or a value from a database error. It is
+kept in the log workspace, where --job-log reads it as the owner.
+
+In a deployment every Azure call is `az rest` on the app or on a job. The deployment identity can
+reach nothing else, so it could not follow the status URL of a long-running operation, and this
+script never asks it to.
 """
 
 import argparse
@@ -38,6 +46,10 @@ import urllib.request
 import uuid
 
 API_VERSION = '2025-01-01'
+# The one read that needs a later version: from this one on an execution carries its container's
+# exit code and a reason. Every other call stays on API_VERSION.
+VERDICT_API_VERSION = '2026-07-01'
+WORKSPACE_API_VERSION = '2023-09-01'
 # The resolved path, so the same script also runs where az is a .cmd file.
 AZ = shutil.which('az') or 'az'
 AZ_TIMEOUT = 180
@@ -46,6 +58,9 @@ MIGRATE_JOB = 'azurebank-migrate'
 # What each signs in to the database as: the one user-assigned identity it may carry.
 APP_IDENTITY = 'azurebank-app'
 MIGRATE_IDENTITY = 'azurebank-migrate'
+WORKSPACE = 'azurebank-logs'
+LOG_QUERY = 'https://api.loganalytics.io'
+MAX_LOG_LINES = 5000
 # Job name -> container name. Every job runs the tools image and moves with the commit: the
 # migrate job before the migration, the others only after it succeeded.
 JOBS = {MIGRATE_JOB: 'migrate'}
@@ -53,7 +68,11 @@ MAX_JOB_TIMEOUT = 840
 ACTIVE = {'Running', 'Processing'}
 FAILED = {'Failed', 'Stopped', 'Degraded'}
 FINISHED = FAILED | {'Succeeded'}
+STATUSES = ACTIVE | FINISHED | {'Unknown'}
 GUID = re.compile(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}')
+# What the tools image exits with (backend/tools/AzureBank.Seeder/Commands/ExitCodes.cs).
+EXIT_CODES = {0: 'done', 1: 'failed after it reached for the server; running it again is safe',
+              2: 'refused before any connection; the configuration must change'}
 
 # The sign-in the smoke test sends. It goes to the BFF's own door: the BFF answers 404 itself on
 # the proxied /api/auth/login and never forwards it. The address is one nobody can register, and
@@ -107,7 +126,8 @@ def say(message):
 
 def short(resource_id):
     """The part of a resource ID that names the resource: no subscription, no resource group."""
-    return resource_id.split('/providers/Microsoft.App', 1)[-1]
+    tail = resource_id.split('/providers/', 1)[-1]
+    return tail[len('Microsoft.App'):] if tail.startswith('Microsoft.App/') else f'/{tail}'
 
 
 def run_az(arguments, what):
@@ -128,8 +148,8 @@ def az(*args, what=None):
     return json.loads(result.stdout) if result.stdout.strip() else {}
 
 
-def rest(method, resource_id, body=None):
-    url = f'https://management.azure.com{resource_id}?api-version={API_VERSION}'
+def rest(method, resource_id, body=None, api_version=API_VERSION):
+    url = f'https://management.azure.com{resource_id}?api-version={api_version}'
     args = ['rest', '--method', method, '--url', url]
     what = f'{method} {short(resource_id)}'
     if body is None:
@@ -372,6 +392,76 @@ def stop_hint(job_id, execution):
             f'--resource-group {group} --job-execution-name {execution}')
 
 
+def moment(text):
+    """A time as Azure writes it, or None. What is printed is this value printed again."""
+    if not isinstance(text, str):
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(text.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=datetime.timezone.utc)
+
+
+def stamp(time_):
+    return time_.astimezone(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+def listed(node, key):
+    """node[key] when it is a list, else nothing: an answer nobody has seen may hold anything."""
+    value = node.get(key) if isinstance(node, dict) else None
+    return value if isinstance(value, list) else []
+
+
+def exit_code(properties, container):
+    """(code, the container's entry), or (None, None) when Azure did not report one exit code."""
+    entries = [entry for replica in listed(properties.get('detailedStatus'), 'replicas')
+               for entry in listed(replica, 'containers') if isinstance(entry, dict)]
+    named = [entry for entry in entries if entry.get('name') == container]
+    if len(named) != 1 and len(entries) == 1:
+        named = entries
+    if len(named) == 1 and type(named[0].get('code')) is int:
+        return named[0]['code'], named[0]
+    return None, None
+
+
+def verdict(name, properties, in_actions=False):
+    """One line about an execution: name, status, times, exit code, reason. Every field is checked
+    for its shape before it is printed, because inside GitHub Actions the line is public and
+    nobody has seen what Azure puts in a field it has never filled here. There, a reason that is
+    not one plain word is withheld, and Azure's message is not printed at all."""
+    known = isinstance(name, str) and re.fullmatch(r'[A-Za-z0-9-]{1,100}', name)
+    status = properties.get('status')
+    reported = isinstance(status, str) and status in STATUSES
+    parts = [f"execution {name if known else 'whose name is withheld'}: "
+             f"{status if reported else 'status not reported'}"]
+    began, ended = moment(properties.get('startTime')), moment(properties.get('endTime'))
+    parts.append(f'started {stamp(began)}' if began else 'start not reported')
+    if began and ended:
+        parts.append(f'ended {stamp(ended)} ({round((ended - began).total_seconds())} s)')
+    else:
+        parts.append(f'ended {stamp(ended)}' if ended else 'end not reported')
+    code, entry = exit_code(properties, JOBS[MIGRATE_JOB])
+    meaning = EXIT_CODES.get(code, 'not a code the tool itself exits with')
+    parts.append('exit code not reported' if code is None else f'exit code {code} ({meaning})')
+    reason = properties.get('reason')
+    if reason in (None, ''):
+        parts.append('no reason given')
+    elif isinstance(reason, str) and re.fullmatch(r'[A-Za-z]{1,40}', reason):
+        parts.append(f'reason {reason}')
+    elif in_actions:
+        parts.append('reason withheld, read it with --job-log')
+    else:
+        parts.append(f'reason {redact(str(reason))[:300]!r}')
+    line = 'Verdict: ' + ', '.join(parts) + '.'
+    if not in_actions:
+        texts = (properties.get('message'), (entry or {}).get('additionalInformation'))
+        said = [str(text) for text in texts if text]
+        if said:
+            line += ' Azure says: ' + ' / '.join(redact(text)[:500] for text in said)
+    return line
+
+
 def run_migration(job_id, timeout):
     before = executions(job_id)
     for execution in before:
@@ -411,8 +501,10 @@ def run_migration(job_id, timeout):
         if status in FAILED:
             raise RuntimeError(f'The migration did not succeed (execution {name}: {status}). The '
                                'app was not touched. The job now runs the new tools image and some '
-                               'migrations may be applied; its log is in the portal, on the '
-                               "execution's log stream.")
+                               'migrations may be applied. What it printed is kept in the log '
+                               'workspace and is never fetched here: read it from a terminal with '
+                               "`python infra/deploy.py --job-log`, and the app's own lines with "
+                               '`--app-log <minutes>`.')
         time.sleep(5)
     raise RuntimeError(f'Timed out waiting for execution {name}. The app was not touched. '
                        f'{stop_hint(job_id, name)}')
@@ -637,20 +729,148 @@ def deploy(subscription, resource_group, tag, app_only=False, in_actions=False,
         diagnose(app_id)
         label = put_back(app_id, app)
         raise RuntimeError(f'{failure} The app was put back to {label}; the schema stays where '
-                           'the migration left it.') from failure
+                           'the migration left it. What the containers printed is in the log '
+                           'workspace: `python infra/deploy.py --app-log 30`, from a terminal.'
+                           ) from failure
+
+
+# --- Reading the log workspace: the owner's terminal only ---
+# The deployment identity has no right on the workspace, and a public log must never hold this
+# text. Both commands sign in as whoever ran `az login`.
+
+def prefix_of(subscription, resource_group):
+    if not subscription or not resource_group:
+        raise ValueError('AZURE_SUBSCRIPTION_ID and AZURE_RESOURCE_GROUP must be set.')
+    return (f'/subscriptions/{urllib.parse.quote(subscription, safe="")}'
+            f'/resourceGroups/{urllib.parse.quote(resource_group, safe="")}/providers')
+
+
+def refuse_in_actions(option, in_actions):
+    if in_actions:
+        raise ValueError(f'{option} is refused inside GitHub Actions: what the containers printed '
+                         'is read by the owner, from a terminal, and never reaches a public log.')
+
+
+def workspace_id(prefix):
+    """Print what the daily cap is doing, then return the ID a query is sent to. The cap comes
+    first: a log that stopped taking lines explains an empty answer better than the answer does."""
+    try:
+        workspace = rest('GET', f'{prefix}/Microsoft.OperationalInsights/workspaces/{WORKSPACE}',
+                         api_version=WORKSPACE_API_VERSION)
+    except AzError as error:
+        if 'ResourceNotFound' in str(error):
+            raise RuntimeError(f'There is no log workspace {WORKSPACE} in this resource group: the '
+                               'logs are switched off and nothing is kept.') from None
+        raise
+    properties = workspace.get('properties') or {}
+    capping = properties.get('workspaceCapping') or {}
+    status = capping.get('dataIngestionStatus')
+    reset = moment(capping.get('quotaNextResetTime'))
+    say(f"Log workspace {WORKSPACE}: daily cap {capping.get('dailyQuotaGb')} GB, ingestion "
+        f"{status}, next reset {stamp(reset) if reset else 'not reported'}.")
+    if status == 'OverQuota':
+        say('The cap was reached: the workspace takes no line until the reset, so what was printed '
+            'since it was reached is not there.')
+    try:
+        # Parsed and printed again before it becomes part of a URL.
+        return str(uuid.UUID(str(properties.get('customerId'))))
+    except ValueError:
+        raise RuntimeError('The workspace did not report the ID a query is sent to.') from None
+
+
+def query(customer_id, text, timespan):
+    """Rows of a log query, as dictionaries. The query travels in a file, like every body."""
+    with tempfile.TemporaryDirectory() as directory:
+        path = os.path.join(directory, 'query.json')
+        with open(path, 'w', encoding='utf-8') as request:
+            json.dump({'query': text, 'timespan': timespan}, request)
+        answer = az('rest', '--method', 'POST', '--url',
+                    f'{LOG_QUERY}/v1/workspaces/{customer_id}/query', '--resource', LOG_QUERY,
+                    '--body', f'@{path}', what='POST the log query')
+    table = (answer.get('tables') or [{}])[0]
+    names = [column.get('name') for column in table.get('columns') or []]
+    return [dict(zip(names, row)) for row in table.get('rows') or []]
+
+
+def print_lines(rows, columns):
+    for row in rows:
+        print(' '.join(str(row.get(column)) for column in columns), flush=True)
+    say(f'{len(rows)} line(s).' + (f' Only the first {MAX_LOG_LINES} of the period are shown.'
+                                  if len(rows) >= MAX_LOG_LINES else ''))
+    if not rows:
+        say('No line is not proof that nothing was printed: a line takes minutes to arrive, a new '
+            'workspace up to 90 minutes, a run that lasts seconds may leave none, and a capped '
+            'workspace takes none until its reset.')
+
+
+def job_log(subscription, resource_group, execution='', in_actions=False):
+    refuse_in_actions('--job-log', in_actions)
+    prefix = prefix_of(subscription, resource_group)
+    job_id = f'{prefix}/Microsoft.App/jobs/{MIGRATE_JOB}'
+    customer_id = workspace_id(prefix)
+    known = listed(rest('GET', job_id + '/executions', api_version=VERDICT_API_VERSION), 'value')
+    if execution:
+        chosen = [entry for entry in known if entry.get('name') == execution]
+    else:
+        known.sort(key=lambda entry: str((entry.get('properties') or {}).get('startTime')))
+        chosen = known[-1:]
+    if not chosen:
+        raise RuntimeError(f'The job {MIGRATE_JOB} has no execution'
+                           + (f' named {execution}.' if execution else ' yet.'))
+    properties = chosen[0].get('properties') or {}
+    say(verdict(chosen[0].get('name'), properties))
+    began = moment(properties.get('startTime'))
+    if not began:
+        raise RuntimeError('The execution has no start time: there is no period to read.')
+    ended = moment(properties.get('endTime')) or datetime.datetime.now(datetime.timezone.utc)
+    # A margin on both sides: a line is stamped by the platform, not by the job.
+    since, until = began - datetime.timedelta(minutes=2), ended + datetime.timedelta(minutes=5)
+    rows = query(customer_id,
+                 f"ContainerAppConsoleLogs | where JobName == '{MIGRATE_JOB}' "
+                 f'| where TimeGenerated between (datetime({stamp(since)}) .. datetime({stamp(until)})) '
+                 f'| order by TimeGenerated asc | take {MAX_LOG_LINES} | project TimeGenerated, Log',
+                 f'{stamp(since)}/{stamp(until)}')
+    print_lines(rows, ('TimeGenerated', 'Log'))
+
+
+def app_log(subscription, resource_group, minutes, in_actions=False):
+    refuse_in_actions('--app-log', in_actions)
+    if not 1 <= minutes <= 1440:
+        raise ValueError('--app-log takes a number of minutes between 1 and 1440.')
+    customer_id = workspace_id(prefix_of(subscription, resource_group))
+    rows = query(customer_id,
+                 f"ContainerAppConsoleLogs | where ContainerAppName == '{APP}' "
+                 f'| where TimeGenerated > ago({minutes}m) | order by TimeGenerated asc '
+                 f'| take {MAX_LOG_LINES} | project TimeGenerated, ContainerName, Log',
+                 f'PT{minutes}M')
+    print_lines(rows, ('TimeGenerated', 'ContainerName', 'Log'))
 
 
 def main(arguments=None):
     parser = argparse.ArgumentParser(description='Deploy one commit to the running AzureBank app.')
-    parser.add_argument('--app-only', action='store_true',
-                        help='move the app to IMAGE_TAG without touching any job: the road back, '
-                             'by hand; refused inside GitHub Actions')
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument('--app-only', action='store_true',
+                       help='move the app to IMAGE_TAG without touching any job: the road back, '
+                            'by hand; refused inside GitHub Actions')
+    modes.add_argument('--job-log', nargs='?', const='', metavar='EXECUTION',
+                       help='print what a migration printed, from the log workspace: the latest '
+                            'execution, or the one named; refused inside GitHub Actions')
+    modes.add_argument('--app-log', type=int, metavar='MINUTES',
+                       help='print what the app printed in the last MINUTES, from the log '
+                            'workspace; refused inside GitHub Actions')
     options = parser.parse_args(arguments)
+    subscription = os.environ.get('AZURE_SUBSCRIPTION_ID', '')
+    resource_group = os.environ.get('AZURE_RESOURCE_GROUP', '')
+    in_actions = os.environ.get('GITHUB_ACTIONS') == 'true'
     try:
-        deploy(os.environ.get('AZURE_SUBSCRIPTION_ID', ''), os.environ.get('AZURE_RESOURCE_GROUP', ''),
-               os.environ.get('IMAGE_TAG', ''), app_only=options.app_only,
-               in_actions=os.environ.get('GITHUB_ACTIONS') == 'true',
-               expect_secrets_refused=os.environ.get('EXPECT_SECRETS_REFUSED') == '1')
+        if options.job_log is not None:
+            job_log(subscription, resource_group, options.job_log, in_actions=in_actions)
+        elif options.app_log is not None:
+            app_log(subscription, resource_group, options.app_log, in_actions=in_actions)
+        else:
+            deploy(subscription, resource_group, os.environ.get('IMAGE_TAG', ''),
+                   app_only=options.app_only, in_actions=in_actions,
+                   expect_secrets_refused=os.environ.get('EXPECT_SECRETS_REFUSED') == '1')
     except AzError as error:
         raise SystemExit(f'Azure refused or failed a request: {error}')
     except KeyError as error:
