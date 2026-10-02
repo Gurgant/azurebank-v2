@@ -266,6 +266,57 @@ public class SeederCommandTests
     }
 
     [Theory]
+    [InlineData("tcp:" + AzureName + ",1433", true)]
+    [InlineData("127.0.0.1,1", false)]
+    public async Task Migrate_WithTheRealWait_KeepsAFirstAnswerItDoesNotJudgeFromEf_OnAnAzureSqlNameOnly(
+        string server, bool azureSql)
+    {
+        // The real wait on the string the command opens with: no verdict is handed in. The string
+        // asks for two ways to sign in at once. SqlClient's parser, which the commands read it
+        // with, accepts that; SqlClient refuses it when the connection is made, before it reaches
+        // for the network. So the wait's first open fails with a failure that is not SQL Server's,
+        // on any machine. Off Azure that goes to EF at once, which meets the same failure. On an
+        // Azure SQL name the command has to tell the wait so, and the wait keeps the database from
+        // EF, whose next step could be the CREATE DATABASE it answers a missing database with.
+        var log = new RecordingLoggerProvider();
+        var opens = new OpenCountingInterceptor();
+        var twoWaysToSignIn =
+            $"Server={server};Database=x;User Id=u;Password=not-a-secret;Connect Timeout=1;"
+            + "Authentication=Active Directory Integrated";
+        await using var provider = SeederHost.Build(
+            log, opens, onCommittedSettings: false, (ConnectionKey, twoWaysToSignIn), NoEfRetry);
+
+        var exitCode = await MigrateCommand.RunAsync(provider, TimeSpan.Zero, CancellationToken.None);
+
+        var waited = log.Lines
+            .Where(line => line.Level == LogLevel.Warning)
+            .Select(line => line.Message)
+            .Where(message => message.StartsWith("Waiting for the database (", StringComparison.Ordinal))
+            .ToList();
+
+        using var all = new AssertionScope();
+        exitCode.Should().Be(1);
+        opens.Opens.Should().Be(0, "the failure comes before any open is started");
+        if (azureSql)
+        {
+            waited.Should().ContainSingle()
+                .Which.Should().StartWith("Waiting for the database (ArgumentException, not an answer from SQL Server).");
+            Errors(log).Should().ContainSingle()
+                .Which.Should().Contain("migrate failed: the database did not accept a connection within 0 s")
+                .And.Contain("the last answer was ArgumentException, not an answer from SQL Server");
+        }
+        else
+        {
+            // The control: the same string on a name that is not Azure's goes past the wait, and
+            // the one Error is the failure EF met.
+            waited.Should().BeEmpty();
+            Errors(log).Should().ContainSingle()
+                .Which.Should().StartWith("migrate failed: ")
+                .And.NotContain("did not accept a connection");
+        }
+    }
+
+    [Theory]
     [InlineData(GateVerdict.TimedOut, "did not accept a connection within")]
     [InlineData(GateVerdict.LoginRefused, "the login was refused three times")]
     [InlineData(GateVerdict.CannotOpenDatabase, "this login cannot open the database")]

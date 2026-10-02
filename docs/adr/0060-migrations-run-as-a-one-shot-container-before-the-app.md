@@ -184,9 +184,10 @@ app neither changes an account's number nor removes its row; a user's handle it 
 ## Validation
 
 **Tests** (`backend/tests/AzureBank.Tests`). Each guard below was removed again, one at a time, and
-the test that covers it failed: 27 removals, 27 failures. The same for the guards added later the
-same day (the two rules of the wait's last row, a string with no database, a connect timeout of 0,
-the proofs' skip on an Azure SQL name): 8 removals, 8 failures.
+the test that covers it failed: 27 removals, 27 failures. The same for the guards added after
+that (the two rules of the wait's last row, a string with no database, a connect timeout of 0, the
+proofs' skip on an Azure SQL name, and the argument by which `migrate` tells the wait that the name
+is Azure's): 9 removals, 9 failures.
 
 - `Unit/Tools/DatabaseGateTests`: the wait as a script of server answers on a fake clock, off and
   on an Azure SQL name.
@@ -195,7 +196,9 @@ the proofs' skip on an Azure SQL name): 8 removals, 8 failures.
 - `Unit/Tools/SeederCommandTests`: every refusal on the tool's own composition root, with an
   interceptor that counts the opens EF starts, and one test in which it counts one; and a run
   cancelled as EF starts an open, which has to find that open's own token cancelled, for `seed`
-  and for each of Identity's two managers.
+  and for each of Identity's two managers. One test runs `migrate` with the real wait on a string
+  SqlClient refuses before it reaches for the network: on an Azure SQL name that failure is waited
+  for, on any other it goes to EF.
 - `Unit/Data/DesignTimeFactoryTests`: the factory's limits, its budget, and
   `HasPendingModelChanges()`.
 - `Integration/MigrateCommandSqlServerTests`: the command on a database of its own, three acts.
