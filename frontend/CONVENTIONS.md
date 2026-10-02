@@ -90,7 +90,9 @@ sentence; after a click it draws none. Three limits, known:
 - the check view ("We couldn't confirm …") lands no focus: it still appears with focus on `body`,
   and from there Escape reaches its dialog only after a Tab has brought focus into it;
 - a landing does not depend on the screen reader, but what each one says on a focused paragraph
-  does. ADR-0059's Validation says what was heard and what was not.
+  does. NVDA said the sentence once in each of the four flows, and the title only where it is a
+  dialog's name: on the two transfer pages, where it is the page's heading, it was not spoken.
+  ADR-0059's Validation has the rest of what was heard, and what was not.
 
 ## Money and formatting
 

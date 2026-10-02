@@ -660,12 +660,31 @@ Test files are under `frontend/src/`, browser specs under `frontend/e2e/`.
     a 2 px offset; after a click on Deposit or Withdraw it had none, with focus on it. On the
     transfer page the ring was whole in the viewport, at 375 too; in the dialog that was not
     measured.
-  - Not heard: the sentence itself. Focus is on it when the view appears, in jsdom and in Chromium;
-    no screen reader has been listened to on this view. Nor the check view, which lands no focus (on
-    `5b50681`, measured, focus was on `body` in every one), and to which one more answer is routed
-    since this date, a 409 that names no code; nor the view arriving while another dialog holds
-    focus, or after the visitor moved focus to a control during the wait, when the landing does not
-    run; nor JAWS, Narrator, VoiceOver and TalkBack.
+  - Heard, on 2026-10-02: NVDA 2026.2 with Chromium 151 in a window, on Windows, its speech logged
+    and matched to the moment each text was on the page, against the development build of commit
+    `94ed020` answered by the repository's mock handlers, each send answered by the browser with
+    the 409 and `applied: true`. Four flows: the deposit dialog, the withdrawal dialog, the
+    transfer page and the page for a move between the visitor's own accounts. Of 18 expected
+    texts NVDA spoke 16.
+    - The sentence, in all four: spoken once when the view appeared, 0.04 to 0.11 s after it was
+      on the page, and not again after the first Tab, in the 3 s counted after it.
+    - The title, in the two dialogs: spoken as the dialog's name, "Deposit Complete" and
+      "Withdrawal Complete", each followed by "dialog", 0.09 and 0.10 s after it was on the page.
+      After the name and before the sentence NVDA also said "button", "View History".
+    - The title, on the two transfer pages: not spoken (the 2 of the 18). "Transfer Complete" is
+      the page's heading there, and focus goes to the sentence, which is all NVDA said of the
+      view. Just before it NVDA named the document by the form's title, "Send Money · AzureBank"
+      on the transfer page and "Move Money · AzureBank" on the other.
+    - The actions: the first Tab was spoken as "View History", "button" in all four, and the
+      second, on the transfer pages, as "Done", "button". After "View History" in the dialogs NVDA
+      said "History page loaded"; after "Done" on the pages, "Home page loaded".
+    - The commits after `94ed020` change which of a dialog's views a press outside leaves open,
+      comments, tests and these records. The went-through view's markup is the same in them.
+  - Not heard: the check view, which lands no focus (on `5b50681`, measured, focus was on `body`
+    in every one), and to which one more answer is routed since this date, a 409 that names no
+    code; the view arriving while another dialog holds focus, or after the visitor moved focus to
+    a control during the wait, when the landing does not run; JAWS, Narrator, VoiceOver and
+    TalkBack.
   - Not held by a test: that the page's own copies of the PIN and of the authorisation are let go
     when that answer arrives (decision 3's note). Nothing on the view shows them; read in the
     code.
