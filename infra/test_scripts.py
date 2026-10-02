@@ -1025,6 +1025,75 @@ class UsersFileTests(unittest.TestCase):
         self.assertIn('IF (SELECT COUNT(*) FROM sys.database_role_members WHERE member_principal_id > 4) <> 5',
                       self.code)
 
+    def test_every_condition_in_the_file_is_this_one_and_no_looser(self):
+        # What follows each WHERE, to the end of its statement, in the file's order. A condition
+        # loosened by one word still runs, and its list is then silent about what it was written
+        # to name: CONTROL taken for an expected permission, guest allowed to connect.
+        def given(role, user):
+            return (f"role_principal_id = DATABASE_PRINCIPAL_ID(N'{role}') AND member_principal_id = "
+                    f"DATABASE_PRINCIPAL_ID(N'{user}')) ALTER ROLE [{role}] ADD MEMBER [{user}]")
+        code = 'object_id NOT IN (SELECT object_id FROM sys.triggers)) AS code)'
+        self.assertEqual([' '.join(found.split()) for found in re.findall(r'\bWHERE (.+?);\n', self.code, re.S)], [
+            code,
+            # A user is replaced when its stored ID is another one, or when it is another kind of user.
+            "name = N'azurebank_app' AND (sid <> @AppSid OR type <> 'E')) DROP USER [azurebank_app]",
+            "name = N'azurebank_migrator' AND (sid <> @MigratorSid OR type <> 'E')) DROP USER [azurebank_migrator]",
+            given('db_datareader', 'azurebank_app'), given('db_datawriter', 'azurebank_app'),
+            given('db_datareader', 'azurebank_migrator'), given('db_datawriter', 'azurebank_migrator'),
+            given('db_ddladmin', 'azurebank_migrator'),
+            # The lists before the commit: code, users, roles, role members and their count,
+            # permissions, schema owners.
+            code,
+            "principal_id > 4 AND type <> 'R' AND NOT (type = 'E' AND ((name = N'azurebank_app' AND sid = @AppSid) "
+            "OR (name = N'azurebank_migrator' AND sid = @MigratorSid))))",
+            "type = 'R' AND is_fixed_role = 0 AND name <> N'public')",
+            "NOT ((m.member_principal_id = 1 AND USER_NAME(m.role_principal_id) = N'db_owner') "
+            "OR (USER_NAME(m.member_principal_id) = N'azurebank_app' "
+            "AND USER_NAME(m.role_principal_id) IN (N'db_datareader', N'db_datawriter')) "
+            "OR (USER_NAME(m.member_principal_id) = N'azurebank_migrator' "
+            "AND USER_NAME(m.role_principal_id) IN (N'db_datareader', N'db_datawriter', N'db_ddladmin'))))",
+            "member_principal_id > 4) <> 5 SET @bad += N'our role memberships are not five; '",
+            # CONNECT for dbo and the two users, granted; and to public, granted, only what the
+            # engine gives it: system objects (their IDs are negative) and two database permissions.
+            "NOT (d.class = 0 AND d.type = 'CO' AND d.state = 'G' "
+            "AND USER_NAME(d.grantee_principal_id) IN (N'dbo', N'azurebank_app', N'azurebank_migrator')) "
+            "AND NOT (d.grantee_principal_id = 0 AND d.state = 'G' "
+            "AND ((d.class = 1 AND d.major_id < 0) OR (d.class = 0 AND d.type IN ('VWCK', 'VWCM')))))",
+            "p.type <> 'R' AND p.principal_id NOT IN (1, 2, 3, 4))",
+            # After the commit: the roles of each user, and whether its stored ID is the one asked for.
+            "member_principal_id = DATABASE_PRINCIPAL_ID(N'azurebank_app'))",
+            "name = N'azurebank_app' AND type = 'E' AND sid = @AppSid), N'1', N'0')",
+            "member_principal_id = DATABASE_PRINCIPAL_ID(N'azurebank_migrator'))",
+            "name = N'azurebank_migrator' AND type = 'E' AND sid = @MigratorSid), N'1', N'0')"])
+
+    def test_every_if_in_the_file_is_this_one(self):
+        found, absent = '@found IS NOT NULL', 'NOT EXISTS (SELECT 1 FROM sys.database_role_members'
+        self.assertEqual(re.findall(r'^IF (.+)$', self.code, re.M), [
+            "DB_NAME() <> N'AzureBank'",
+            "@IdKind NOT IN (N'ClientId', N'ObjectId') OR @CreateForm NOT IN (N'Sid', N'ExternalProvider')",
+            '@AppClientId = @MigratorClientId OR @AppObjectId = @MigratorObjectId',
+            found,
+            'EXISTS (SELECT 1 FROM sys.database_principals', 'EXISTS (SELECT 1 FROM sys.database_principals',
+            "DATABASE_PRINCIPAL_ID(N'azurebank_app') IS NULL", "DATABASE_PRINCIPAL_ID(N'azurebank_migrator') IS NULL",
+            absent, absent, absent, absent, absent,
+            found, found, found, found,
+            '(SELECT COUNT(*) FROM sys.database_role_members WHERE member_principal_id > 4) <> 5',
+            found, found,
+            "@bad <> N''"])
+        self.assertIn("   OR (@CreateForm = N'ExternalProvider' AND @IdKind <> N'ClientId')\n    THROW 50002,", self.code)
+
+    def test_each_list_that_finds_something_says_so_in_the_refusal_and_prints_the_names(self):
+        for word, heading in (('code', 'Code found'), ('unknown user', 'Unknown user'),
+                              ('unknown role', 'Unknown role'), ('unknown role member', 'Unknown role member'),
+                              ('unknown permission', 'Unknown permission'),
+                              ('schema owned by a user', 'Schema owned by a user')):
+            self.assertIn(f"IF @found IS NOT NULL\nBEGIN\n    SET @bad += N'{word}; ';\n"
+                          f"    PRINT N'{heading}: ' + LEFT(@found, 3500);\nEND", self.code)
+        # Each list fills @found itself: none reads what the list before it left there.
+        lists = self.code[self.at('ALTER ROLE [db_ddladmin] ADD MEMBER [azurebank_migrator];'):self.at("IF @bad <> N''")]
+        self.assertEqual(lists.count('SET @found = (SELECT STRING_AGG('), 6)
+        self.assertEqual(lists.count('IF @found IS NOT NULL'), 6)
+
     def test_the_roles_it_gives_are_the_five_and_no_other(self):
         self.assertEqual(sorted(re.findall(r'ALTER ROLE \[(\w+)\] ADD MEMBER \[(\w+)\];', self.code)),
                          [('db_datareader', 'azurebank_app'), ('db_datareader', 'azurebank_migrator'),
