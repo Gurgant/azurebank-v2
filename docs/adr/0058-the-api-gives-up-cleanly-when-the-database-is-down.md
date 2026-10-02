@@ -194,9 +194,9 @@ have landed even if it failed, and a request that failed reading its key, claimi
 replay cannot know what an earlier request with the same key did. *(2026-10-01: `applied: true`
 exists since this date, on the 409 `IDEMPOTENCY_RESULT_UNKNOWN` only, under the mirror of this
 rule: it is said only from a database read of the key's record made by the request that answers,
-and only when that record holds the hash of this request's bytes: a record claimed with another
-body never says it for this one (ADR-0009's note of the same date). A 503 still never says
-`true`.)*
+which finds it committed (`Executed`, or `Completed` when a retried attempt reloads it) and
+holding the hash of this request's bytes: a record claimed with another body never says it for
+this one (ADR-0009's note of the same date). A 503 still never says `true`.)*
 **A client never drops the key on
 `applied: false`**: the flag changes what the visitor is told, never which key the retry uses. A
 client that keeps its key on every 503 is safe either way; one told "nothing was applied" when
@@ -324,7 +324,10 @@ sending it) observes a token. Three ways to put a deadline on that were weighed:
 
 *(2026-10-01: where the third column says `RESULT_UNKNOWN`, the key's record was read `Executed`
 from the database with the hash of the same request bytes, so that answer carries `applied: true`
-(ADR-0009's note of that date). The first answers are unchanged.)*
+(ADR-0009's note of that date); a record read `Completed` there is the replayed 201. The same 409
+is also a first answer, outside this table: a request whose retried attempt reloads its record as
+`Executed` or `Completed`, under the hash it claimed with, answers it with `applied: true`. The
+table's first answers are unchanged.)*
 
 ### Residual risks
 
