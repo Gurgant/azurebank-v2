@@ -8,13 +8,14 @@ PowerShell 7. Why it is built this way, what was weighed and what was left as it
 **State of this document.** The templates compile and the scripts are tested offline against
 stand-ins. Nothing in this folder has run on Azure yet: the resource group does not exist. What
 did run there, on 2026-10-02, is a throwaway trial: a resource group in the same subscription and
-region, created and deleted that day, in which the requests this folder makes were sent by hand,
-with `az rest` and go-sqlcmd, and not by this folder's template or scripts. What it saw is under
+region, created and deleted that day, in which requests of the shapes this folder makes were sent
+by hand, with `az rest` and go-sqlcmd, and not by this folder's template or scripts. Not every
+request of this folder was among them. What the trial saw is under
 [Measured on Azure](#measured-on-azure). The other facts marked *measured* were read the same day,
 from Azure or GitHub with read-only commands, on a local stack of this code, or on a local SQL
-Server. What only the first deployment can show is listed under
-[Not measured yet](#not-measured-yet), every expected value below is marked as expected, and what
-to do when Azure refuses a step is written down before the first run
+Server. What only the first deployment can show, the requests the trial did not send among it, is
+listed under [Not measured yet](#not-measured-yet), every expected value below is marked as
+expected, and what to do when Azure refuses a step is written down before the first run
 ([If Azure says no](#if-azure-says-no)).
 
 - [What this creates](#what-this-creates)
@@ -855,9 +856,9 @@ az logout
 ## If Azure says no
 
 Each row is decided now, so that nothing is decided on the day. "Stop" means: change nothing more
-and bring the refusal's text to the owner. What Azure accepted when the same requests were sent by
-hand is under [Measured on Azure](#measured-on-azure): a refusal of something that was accepted
-there is a difference to understand, not a step to work around.
+and bring the refusal's text to the owner. What Azure accepted when requests of the same shapes
+were sent by hand is under [Measured on Azure](#measured-on-azure): a refusal of something that
+was accepted there is a difference to understand, not a step to work around.
 
 **The foundation and its second run (steps 2 and 3)**
 
@@ -882,7 +883,7 @@ for what it refused. The what-if shows it first: a policy assignment, or a fourt
 
 | If | Then |
 | --- | --- |
-| The tool's `-?` does not name `ActiveDirectoryAzCli`, or the sign-in with it fails | `./infra/sql-principals.ps1 -AuthenticationMethod ActiveDirectoryDefault`. In the trial go-sqlcmd 1.10.0 signed in with `ActiveDirectoryAzCli` |
+| The tool's `-?` does not name `ActiveDirectoryAzCli`, or the sign-in with it fails | `./infra/sql-principals.ps1 -AuthenticationMethod ActiveDirectoryDefault`. In the trial go-sqlcmd signed in with `ActiveDirectoryAzCli` (its version was not recorded) |
 | That fails too | The older ODBC `sqlcmd`, which signs in through a window: `-SqlcmdPath '<its path>' -OdbcSignInName '<the account's sign-in name>'`. It runs with `-X1`, so that it starts no operating-system command |
 | The tool's signature is not a valid Microsoft one | Stop: this program is handed the administrator's sign-in |
 | The address cannot be read from the server's refusal | The script stops and prints the two commands to allow the address by hand under another name and to delete that rule afterwards |
@@ -1453,10 +1454,14 @@ users go with the group. On this machine, if it is no longer wanted:
 ## Measured on Azure
 
 On 2026-10-02, in a throwaway resource group in the same subscription and region (Italy North),
-created and deleted that day. The requests were sent by hand, with `az rest` and go-sqlcmd 1.10.0.
-**None of this folder's files ran.** The resources were the trial's own: another server, other
-identities, other users, other jobs. Where a request differed from the one this folder makes, the
-line says so. One run each, unless a line says otherwise.
+created and deleted that day. Requests of the shapes this folder makes were sent by hand, with
+`az rest` and go-sqlcmd (its version was not recorded). Each line below comes from a run of the
+trial that was recorded as it went, but one: the environment request that named its mode, sent
+between two recorded runs, and its line says so. **None of this folder's files ran.** The
+resources were the trial's own: another server, other identities, other users, other jobs. Where
+a request differed from the one this folder makes, the line says so, and what the template sends
+and the trial did not is under [Not measured yet](#not-measured-yet). One run each, unless a line
+says otherwise.
 
 **The SQL server and the owner's sign-in**
 

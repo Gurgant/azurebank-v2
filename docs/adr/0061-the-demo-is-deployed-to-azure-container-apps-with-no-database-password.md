@@ -11,9 +11,10 @@ measured, and what is known and left as it is.
 are tested against stand-ins and, where a local engine can run them, for real. The resource group
 does not exist (`az group exists` answers `false`; the same command answers `true` for a group
 that is there). What did run on Azure, on 2026-10-02, is a throwaway trial: a resource group in
-the same subscription and region, created and deleted that day, in which the requests these files
-make were sent by hand. What it measured has a table of its own below. Every other sentence about
-what Azure does is marked as read or as not measured.
+the same subscription and region, created and deleted that day, in which requests of the shapes
+these files make were sent by hand: not by these files, and not every one of them. What it
+measured has a table of its own below. Every other sentence about what Azure does is marked as
+read or as not measured.
 
 ## Context
 
@@ -52,8 +53,10 @@ One run per row unless it says otherwise.
 | `az bicep version` on the machine that will deploy | No Bicep of its own is found. The Bicep CLI on `PATH` is 0.47.16, the one the tests use |
 
 **Measured on Azure on 2026-10-02**, in the throwaway trial. The requests were sent by hand, with
-`az rest` and go-sqlcmd 1.10.0, on resources of the trial's own. The runbook's section "Measured
-on Azure" has each line in full. One run per row unless it says otherwise.
+`az rest` and go-sqlcmd (its version was not recorded), on resources of the trial's own. Each row
+comes from a run that was recorded as it went, but one, the environment's, whose row says so. The
+runbook's section "Measured on Azure" has each line in full. One run per row unless it says
+otherwise.
 
 | What was sent | What happened |
 |---|---|
