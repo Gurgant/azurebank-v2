@@ -17,6 +17,7 @@ import re
 import socket
 import struct
 import subprocess
+import tempfile
 import threading
 import unittest
 from unittest.mock import MagicMock, patch
@@ -156,7 +157,11 @@ class FakeAzure:
         self.drift_job_on_patch = None
         self.refuse = None
         self.refusal = 'Forbidden: AuthorizationFailed'
+        # None: the migration is a stand-in. A list: the job runs here, and ends as `outcome`.
+        self.executions = None
+        self.outcome = finished('this-run')
         self.calls = []
+        self.versions = []
         self.events = []
         self.printed_before_first_write = None
 
@@ -167,8 +172,9 @@ class FakeAzure:
         return [body for method, resource_id, body in self.calls
                 if method == 'PATCH' and resource_id == APP_ID]
 
-    def rest(self, method, resource_id, body=None):
+    def rest(self, method, resource_id, body=None, api_version=deploy.API_VERSION):
         self.calls.append((method, resource_id, copy.deepcopy(body)))
+        self.versions.append((method, resource_id.rsplit('/', 1)[-1], api_version))
         if method != 'GET' and self.printed_before_first_write is None:
             self.printed_before_first_write = self.out.getvalue()
         if self.refuse and self.refuse(method, resource_id, body):
@@ -229,6 +235,8 @@ class FakeAzure:
 
     def job_call(self, method, tail, body):
         name, _, rest = tail.partition('/')
+        if rest and self.executions is not None:
+            return self.execution_call(method, rest)
         assert not rest, f'the migration is run by a stand-in in these tests: {tail}'
         if method == 'GET':
             return copy.deepcopy(self.jobs[name])
@@ -239,6 +247,15 @@ class FakeAzure:
             self.drift_job_on_patch(self.jobs[name])
         self.events.append(f'job {name}')
         return {}
+
+    def execution_call(self, method, tail):
+        """A job that runs for real: started once, and finished by the next time it is read."""
+        if (method, tail) == ('POST', 'start'):
+            self.executions.append(copy.deepcopy(self.outcome))
+            self.events.append('migration')
+            return {'name': 'this-run'}
+        assert (method, tail) == ('GET', 'executions'), f'unexpected call: {method} {tail}'
+        return {'value': copy.deepcopy(self.executions)}
 
 
 class Offline(unittest.TestCase):
@@ -252,6 +269,9 @@ class Offline(unittest.TestCase):
         # it would send a real request.
         self.start(patch('deploy.subprocess.run',
                          side_effect=AssertionError('a test tried to start a process')))
+        # Under Actions the verdict is also written to the run's summary: never from a test.
+        self.start(patch.dict(deploy.os.environ))
+        deploy.os.environ.pop('GITHUB_STEP_SUMMARY', None)
         self.out = io.StringIO()
         redirect = contextlib.redirect_stdout(self.out)
         redirect.__enter__()
@@ -265,6 +285,11 @@ class Offline(unittest.TestCase):
     def printed(self):
         return self.out.getvalue()
 
+    def clear(self):
+        """Forget what was printed so far."""
+        self.out.seek(0)
+        self.out.truncate()
+
 
 class DeployCase(Offline):
     """`deploy.deploy` against FakeAzure, with a stand-in for the migration and for the smoke test."""
@@ -273,8 +298,8 @@ class DeployCase(Offline):
         super().setUp()
         self.azure = FakeAzure(self.out)
         self.start(patch('deploy.rest', self.azure.rest))
-        self.migration = self.start(patch(
-            'deploy.run_migration', side_effect=lambda *args: self.azure.events.append('migration')))
+        self.migration = self.start(patch('deploy.run_migration', side_effect=(
+            lambda *args, **options: self.azure.events.append('migration'))))
         self.smoke = self.start(patch(
             'deploy.smoke', side_effect=lambda *args: self.azure.events.append('smoke')))
 
@@ -395,7 +420,8 @@ class MigrationTests(Offline):
         executions.side_effect = [[old], [old], [old, execution('this-run', 'Running')],
                                   [old, execution('this-run', 'Succeeded')]]
         self.assertEqual(deploy.run_migration('/job', 600), 'this-run')
-        start.assert_called_once_with('POST', '/job/start')
+        self.assertEqual([call.args for call in start.call_args_list if call.args[0] != 'GET'],
+                         [('POST', '/job/start')])
 
     @patch('deploy.rest', return_value={})
     @patch('deploy.executions')
@@ -404,7 +430,7 @@ class MigrationTests(Offline):
         executions.side_effect = [[old], [old], [old, execution('new-run', 'Running')],
                                   [old, execution('new-run', 'Succeeded')]]
         self.assertEqual(deploy.run_migration('/job', 600), 'new-run')
-        self.assertEqual(start.call_count, 1)
+        self.assertEqual([call.args[0] for call in start.call_args_list].count('POST'), 1)
 
     @patch('deploy.rest', return_value={})
     @patch('deploy.executions', return_value=[])
@@ -561,6 +587,90 @@ class VerdictTests(unittest.TestCase):
             'end not reported, exit code not reported, reason withheld, read it with --job-log.'))
 
 
+class MigrationVerdictTests(Offline):
+    """`deploy.run_migration` leaves the verdict whichever way the run ends."""
+
+    def run_with(self, final, later=None, in_actions=True):
+        """A migration that the polling sees end as `final`. `later` is what the read with the
+        later API version answers: an execution, nothing, or an error to raise."""
+        self.calls = []
+
+        def rest(method, resource_id, body=None, api_version=deploy.API_VERSION):
+            self.calls.append((method, resource_id, api_version))
+            if method == 'POST':
+                return {'name': 'this-run'}
+            if isinstance(later, Exception):
+                raise later
+            return {'value': [finished('another-run', code=2), later]} if later else {}
+
+        self.start(patch('deploy.rest', rest))
+        self.start(patch('deploy.executions', side_effect=[[], [final]]))
+        try:
+            return deploy.run_migration('/job', 600, in_actions=in_actions)
+        except RuntimeError as error:
+            return error
+
+    def verdicts(self):
+        return [line.split(' ', 1)[1] for line in self.printed().splitlines() if 'Verdict:' in line]
+
+    def test_a_run_that_succeeds_leaves_its_verdict_read_once_with_the_later_version(self):
+        result = self.run_with(execution('this-run', 'Succeeded'), finished('this-run'))
+        self.assertEqual(result, 'this-run')
+        self.assertEqual(self.verdicts(), [VERDICT])
+        self.assertEqual(self.calls, [('POST', '/job/start', '2025-01-01'),
+                                      ('GET', '/job/executions', '2026-07-01')])
+
+    def test_a_run_that_fails_leaves_its_verdict_and_says_where_its_text_is(self):
+        later = finished('this-run', status='Failed', code=1, reason='Error', message='MESSAGE-MARKER')
+        result = self.run_with(execution('this-run', 'Failed'), later)
+        self.assertIsInstance(result, RuntimeError)
+        self.assertEqual(self.verdicts(), [
+            'Verdict: execution this-run: Failed, started 2026-10-02T18:00:03Z, '
+            'ended 2026-10-02T18:00:09Z (6 s), exit code 1 (failed after it reached for the server; '
+            'running it again is safe), reason Error.'])
+        message = str(result)
+        self.assertIn('execution this-run: Failed', message)
+        self.assertIn('kept in the log workspace and is never fetched here', message)
+        self.assertIn('`python infra/deploy.py --job-log`', message)
+        self.assertIn('`--app-log <minutes>`', message)
+        self.assertNotIn('MESSAGE-MARKER', message + self.printed())
+        self.assertNotIn('portal', message)
+
+    def test_a_verdict_azure_will_not_detail_is_still_a_verdict_and_changes_nothing_of_the_run(self):
+        known = execution('this-run', 'Succeeded', '2026-10-02T18:00:03Z')
+        refused = deploy.AzError('Bad Request: NoRegisteredProviderFound for the API version')
+        for later in (refused, None, finished('a-third-run')):
+            with self.subTest(later=later):
+                self.clear()
+                self.assertEqual(self.run_with(known, later), 'this-run')
+                self.assertEqual(self.verdicts(), [
+                    'Verdict: execution this-run: Succeeded, started 2026-10-02T18:00:03Z, '
+                    'end not reported, exit code not reported, no reason given.'])
+        self.clear()
+        self.assertIsInstance(self.run_with(execution('this-run', 'Failed'), refused), RuntimeError)
+        self.assertEqual(self.verdicts(), [
+            'Verdict: execution this-run: Failed, start not reported, end not reported, '
+            'exit code not reported, no reason given.'])
+
+    def test_inside_actions_the_verdict_is_also_on_the_summary_page_and_nowhere_else(self):
+        with tempfile.TemporaryDirectory() as directory:
+            summary = os.path.join(directory, 'summary.md')
+            deploy.os.environ['GITHUB_STEP_SUMMARY'] = summary
+            self.run_with(execution('this-run', 'Succeeded'), finished('this-run'), in_actions=False)
+            self.assertFalse(os.path.exists(summary), 'outside Actions the variable means nothing')
+            self.run_with(execution('this-run', 'Succeeded'), finished('this-run'))
+            with open(summary, encoding='utf-8') as page:
+                self.assertEqual(page.read(), f'Migration: {VERDICT}\n')
+            self.assertEqual(os.listdir(directory), ['summary.md'])
+
+    def test_a_summary_page_that_cannot_be_written_fails_nothing(self):
+        deploy.os.environ['GITHUB_STEP_SUMMARY'] = os.path.join(
+            tempfile.gettempdir(), 'no-such-folder-here', 'summary.md')
+        result = self.run_with(execution('this-run', 'Succeeded'), finished('this-run'))
+        self.assertEqual(result, 'this-run')
+        self.assertEqual(self.verdicts(), [VERDICT])
+
+
 class RevisionTests(Offline):
     @patch('deploy.rest')
     def test_the_revision_before_this_run_does_not_pass_and_any_new_name_does(self, rest):
@@ -603,7 +713,7 @@ class DeploymentTests(DeployCase):
         self.assertRegex(body['properties']['template']['revisionSuffix'], r'^d-a{12}-[0-9a-f]{8}$')
         self.assertEqual(deploy.images(self.azure.jobs['azurebank-migrate']),
                          {'migrate': f'ghcr.io/gurgant/azurebank-tools:{NEW}'})
-        self.migration.assert_called_once_with(MIGRATE_ID, 600)
+        self.migration.assert_called_once_with(MIGRATE_ID, 600, in_actions=False)
         self.smoke.assert_called_once_with(f'https://{ADDRESS}')
 
     def test_the_app_request_carries_the_template_it_read_and_nothing_else(self):
@@ -1376,6 +1486,43 @@ class LogTests(Offline):
         with self.assertRaisesRegex(RuntimeError, 'no start time'):
             deploy.job_log(SUBSCRIPTION, GROUP)
         self.assertEqual(self.queries, [])
+
+
+class WholeRunTests(Offline):
+    """`deploy.deploy` with the real `run_migration`, as the workflow runs it: what a public log
+    gets from a migration, and what a deployment never asks for."""
+
+    def setUp(self):
+        super().setUp()
+        self.azure = FakeAzure(self.out)
+        self.azure.executions = []
+        self.start(patch('deploy.rest', self.azure.rest))
+        self.start(patch('deploy.az', side_effect=AssertionError('a deployment sent a log query')))
+        self.smoke = self.start(patch('deploy.smoke'))
+
+    def verdicts(self):
+        return [line.split(' ', 1)[1] for line in self.printed().splitlines() if 'Verdict:' in line]
+
+    def test_a_deployment_prints_the_verdict_and_fetches_nothing_the_job_printed(self):
+        deploy.deploy(SUBSCRIPTION, GROUP, NEW, in_actions=True)
+        self.assertEqual(self.verdicts(), [VERDICT])
+        # Every call is on the app or on a job: nothing reads the log workspace.
+        self.assertEqual({resource_id.split('/providers/')[1].split('/')[0]
+                          for _, resource_id, _ in self.azure.calls}, {'Microsoft.App'})
+        self.assertEqual([call for call in self.azure.versions if call[2] != deploy.API_VERSION],
+                         [('GET', 'executions', '2026-07-01')])
+        self.smoke.assert_called_once()
+
+    def test_a_failed_migration_prints_its_verdict_and_leaves_the_app_alone(self):
+        self.azure.outcome = finished('this-run', status='Failed', code=2, reason='Error')
+        with self.assertRaisesRegex(RuntimeError, 'did not succeed .execution this-run: Failed.'):
+            deploy.deploy(SUBSCRIPTION, GROUP, NEW, in_actions=True)
+        self.assertEqual(self.verdicts(), [
+            'Verdict: execution this-run: Failed, started 2026-10-02T18:00:03Z, '
+            'ended 2026-10-02T18:00:09Z (6 s), exit code 2 (refused before any connection; '
+            'the configuration must change), reason Error.'])
+        self.assertEqual(self.azure.app_patches(), [])
+        self.smoke.assert_not_called()
 
 
 SPA = ('<!doctype html><title>AzureBank</title><div id="root"></div>'

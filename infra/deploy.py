@@ -20,9 +20,10 @@ A full run, in order:
 If the new revision never gets ready, or the smoke test gets a wrong answer, the app is put back
 on the template it had at step 1 and the run still fails. The schema is never put back.
 
-What a migration printed is never fetched by a deployment: the log of a public repository is
-public, and that text can name the server, an address, or a value from a database error. It is
-kept in the log workspace, where --job-log reads it as the owner.
+A migration leaves one line here, its verdict: the execution's name, status, times, exit code and
+a one-word reason. What it printed is never fetched by a deployment: the log of a public
+repository is public, and that text can name the server, an address, or a value from a database
+error. It is kept in the log workspace, where --job-log reads it as the owner.
 
 In a deployment every Azure call is `az rest` on the app or on a job. The deployment identity can
 reach nothing else, so it could not follow the status URL of a long-running operation, and this
@@ -462,7 +463,31 @@ def verdict(name, properties, in_actions=False):
     return line
 
 
-def run_migration(job_id, timeout):
+def report_verdict(job_id, name, known, in_actions):
+    """Read the execution once more, with the version that carries its exit code, and print its
+    verdict. Never raises: if that read fails or lacks the execution, the verdict is what the
+    polling already knew, and "Failed" is still a verdict."""
+    properties = (known or {}).get('properties') or {}
+    try:
+        answer = rest('GET', job_id + '/executions', api_version=VERDICT_API_VERSION)
+        for execution in listed(answer, 'value'):
+            if execution.get('name') == name and isinstance(execution.get('properties'), dict):
+                properties = execution['properties']
+    except (AzError, AttributeError):
+        pass
+    line = verdict(name, properties, in_actions)
+    say(line)
+    summary = os.environ.get('GITHUB_STEP_SUMMARY') if in_actions else None
+    if summary:
+        # The same line on the run's summary page. A summary that cannot be written fails nothing.
+        try:
+            with open(summary, 'a', encoding='utf-8') as page:
+                page.write(f'Migration: {line}\n')
+        except OSError:
+            pass
+
+
+def run_migration(job_id, timeout, in_actions=False):
     before = executions(job_id)
     for execution in before:
         status = execution['properties'].get('status')
@@ -497,8 +522,10 @@ def run_migration(job_id, timeout):
             say(f'Execution {name}: {status}.')
             seen = status
         if status == 'Succeeded':
+            report_verdict(job_id, name, match[0], in_actions)
             return name
         if status in FAILED:
+            report_verdict(job_id, name, match[0], in_actions)
             raise RuntimeError(f'The migration did not succeed (execution {name}: {status}). The '
                                'app was not touched. The job now runs the new tools image and some '
                                'migrations may be applied. What it printed is kept in the log '
@@ -708,7 +735,7 @@ def deploy(subscription, resource_group, tag, app_only=False, in_actions=False,
     if not app_only:
         moved = move_job(MIGRATE_JOB)
         assert_shape(f'The job {MIGRATE_JOB}', job_drift(moved), 'after its image moved')
-        run_migration(f'{prefix}/jobs/{MIGRATE_JOB}', timeout)
+        run_migration(f'{prefix}/jobs/{MIGRATE_JOB}', timeout, in_actions=in_actions)
         # Only now: a failed migration must leave the other jobs on the image that matches the
         # schema they run on.
         for name in job_patches:
