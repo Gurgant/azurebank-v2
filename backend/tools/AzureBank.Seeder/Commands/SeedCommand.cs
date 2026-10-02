@@ -23,9 +23,9 @@ namespace AzureBank.Seeder.Commands;
 /// IT CHECKS WHAT IT LEFT BEHIND. The seeders skip quietly: a user that fails to be created is
 /// logged and passed over, then the accounts find no users and skip, then the ledger finds no
 /// accounts and skips. That used to end in "Database seeded successfully!" and exit 0 with
-/// nothing seeded. Now the five demo accounts and a ledger have to be there afterwards, or the
-/// exit code is 1. The seeders still fill an empty database only, so a seed that was cut short is
-/// not completed by running it again; <c>reset</c> starts over.
+/// nothing seeded. Now the five demo accounts and a ledger of at least the demo's rows have to be
+/// there afterwards, or the exit code is 1. The seeders still fill an empty database only, so a
+/// seed that was cut short is not completed by running it again; <c>reset</c> starts over.
 /// </para>
 /// <para>
 /// THE CHECK GOES BY THE ACCOUNT NUMBERS, NOT THE HANDLES. compose runs <c>seed</c> on every
@@ -108,12 +108,23 @@ public static class SeedCommand
     }
 
     /// <summary>
-    /// Whether the five demo accounts and a ledger are there, with an Error when they are not.
-    /// Asked after the seeders ran, by <c>seed</c> and by <c>reset</c>.
+    /// Whether the five demo accounts and the demo ledger are there, with an Error when they are
+    /// not. Asked after the seeders ran, by <c>seed</c> and by <c>reset</c>.
     /// </summary>
     /// <remarks>
-    /// The accounts <see cref="AccountSeeder"/> names and "some ledger rows", not the 26: the
-    /// ledger may grow, with the demo data or with use, and the suite pins the counts.
+    /// <para>
+    /// The accounts <see cref="AccountSeeder"/> names, and at least as many ledger rows as
+    /// <see cref="TransactionSeeder"/> writes. "Some ledger rows" was the rule until 2026-10-02,
+    /// and it passed a ledger of one: the ledger seeder skips a table that holds any row, so with
+    /// the five accounts seeded and one deposit made before the ledger was, <c>seed</c> exited 0
+    /// without the demo's rows, and exit 0 is what compose starts the API on.
+    /// </para>
+    /// <para>
+    /// At least, not exactly: the app adds ledger rows and never removes one (the context refuses
+    /// a deleted transaction), so a seeded ledger only grows with use. The count cannot tell the
+    /// demo's rows from other rows: a database with that many rows of its own and no demo ledger
+    /// would pass.
+    /// </para>
     /// </remarks>
     internal static async Task<bool> DemoDataIsCompleteAsync(
         IServiceProvider scoped, ILogger logger, CancellationToken cancellationToken)
@@ -129,18 +140,21 @@ public static class SeedCommand
             .Distinct()
             .CountAsync(cancellationToken);
         var ledgerRows = await context.Transactions.CountAsync(cancellationToken);
+        var demoLedgerRows = TransactionSeeder.DemoLedgerRowCount;
 
-        if (demoAccounts == expected.Length && ledgerRows > 0)
+        if (demoAccounts == expected.Length && ledgerRows >= demoLedgerRows)
         {
             return true;
         }
 
         logger.LogError(
-            "The demo data is incomplete: {DemoAccounts} of {Expected} demo accounts, {LedgerRows} ledger rows. "
+            "The demo data is incomplete: {DemoAccounts} of {Expected} demo accounts, {LedgerRows} ledger rows "
+            + "where the demo ledger has {DemoLedgerRows}. "
             + "seed fills an empty database only; reset starts again (it drops the database).",
             demoAccounts,
             expected.Length,
-            ledgerRows);
+            ledgerRows,
+            demoLedgerRows);
         return false;
     }
 }

@@ -109,7 +109,8 @@ and then migrated an empty database):
   over.
 - **`seed` on a database people have used exits 0.** compose runs it on every `up`. Its final check
   counts the five demo accounts by their numbers, closed ones included: nothing in the app changes
-  an account's number or removes its row, while a demo user can rename their handle.
+  an account's number or removes its row, while a demo user can rename their handle. It also asks
+  for at least the demo ledger's 26 rows: the app adds ledger rows and never removes one.
 - **The Azure SQL rule goes by the server's name**: `.database.windows.net`,
   `.database.cloudapi.de`, `.database.usgovcloudapi.net`, `.database.chinacloudapi.cn` and
   `.database.fabric.microsoft.com`, the five SqlClient itself knows. An alias or an IP address in

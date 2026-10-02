@@ -114,7 +114,9 @@ builds, which opens no database.
 **10. compose runs `sqlserver` (healthy) → `migrate` → `seed` → `api`.** `seed` is for local runs
 and CI. Both one-shots run again on every `up`, so `seed` has to exit 0 on a database people have
 used: its final check counts the five demo accounts by their numbers, closed ones included. The
-app neither changes an account's number nor removes its row; a user's handle it does change.
+app neither changes an account's number nor removes its row; a user's handle it does change. The
+check also asks for at least the demo ledger's 26 rows, which use only adds to *(since 2026-10-02;
+any ledger row was enough before, so a ledger of one row passed)*.
 
 ## Rejected
 
@@ -203,7 +205,8 @@ is Azure's): 9 removals, 9 failures.
   `HasPendingModelChanges()`.
 - `Integration/MigrateCommandSqlServerTests`: the command on a database of its own, three acts.
 - `Integration/SeedCommandSqlServerTests`: four acts on a database of its own, the last after a
-  handle was renamed and an account closed; and, on another, a seed that loses one user of four.
+  handle was renamed, an account closed and a deposit made; on another, a seed that loses one user
+  of four; and, on a third, all five accounts with a ledger of one row.
 - `Integration/SeederProcessTests`: the real `azurebank-seeder.dll` as a child process. That it
   reads its settings from its own folder is checked twice: against a port nothing listens on, in
   the job with no SQL Server, and on a real one.

@@ -1,6 +1,9 @@
 extern alias seeder;
 
 using AzureBank.Infrastructure.Data;
+using AzureBank.Shared.Entities;
+using AzureBank.Shared.Enums;
+using AzureBank.Shared.Utilities;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using FluentAssertions.Execution;
@@ -8,7 +11,9 @@ using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using ISeeder = seeder::AzureBank.Seeder.Seeders.ISeeder;
 using SeedCommand = seeder::AzureBank.Seeder.Commands.SeedCommand;
+using TransactionSeeder = seeder::AzureBank.Seeder.Seeders.TransactionSeeder;
 
 namespace AzureBank.Tests.Integration;
 
@@ -16,7 +21,7 @@ namespace AzureBank.Tests.Integration;
 /// The Seeder's <c>seed</c> command on a real SQL Server, through the tool's own composition root
 /// and its committed settings: it exits 1 when the demo data is not all there afterwards, fills an
 /// empty database with the four demo users and their 26-row ledger, changes nothing the second
-/// time, and still exits 0 on a seeded database its users have since changed.
+/// time, and still exits 0 on a seeded database its users have since changed and added to.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -103,7 +108,9 @@ public sealed class SeedCommandSqlServerTests : IDisposable
         (await CountsAsync()).Should().Be(seeded, "seed fills an empty database only");
 
         // Act 4: the demo was used. John renamed his handle and closed his second account, as the
-        // API writes both: one column, and a soft delete.
+        // API writes both: one column, and a soft delete. He also made a deposit: the ledger only
+        // grows, so the check asks for the demo's rows at least, not for exactly those.
+        await DepositOnJohnsSavingsAsync();
         await using (var db = Context())
         {
             (await db.Users.Where(u => u.AzureTag == "johnsmith")
@@ -126,7 +133,7 @@ public sealed class SeedCommandSqlServerTests : IDisposable
             await using var db = Context();
             (await db.Users.CountAsync()).Should().Be(4);
             (await db.Accounts.IgnoreQueryFilters().CountAsync()).Should().Be(5);
-            (await db.Transactions.CountAsync()).Should().Be(26);
+            (await db.Transactions.CountAsync()).Should().Be(27);
         }
     }
 
@@ -134,7 +141,7 @@ public sealed class SeedCommandSqlServerTests : IDisposable
     public async Task Seed_FailsWhenOneDemoUserIsMissing_EvenWithALedger()
     {
         // The admin is the last user created and no ledger row hangs off its account, so a seed
-        // that loses only the admin still writes all 26 rows. "Some ledger rows" alone would call
+        // that loses only the admin still writes all 26 rows. The ledger's count alone would call
         // that complete; the fifth account is what says it is not.
         await using (var db = Context())
         {
@@ -153,6 +160,47 @@ public sealed class SeedCommandSqlServerTests : IDisposable
         (await CountsAsync()).Should().Be(new Counts(Users: 3, Accounts: 4, Transactions: 26, OnJohnsAccounts: 22));
     }
 
+    [SqlServerFact]
+    public async Task Seed_FailsWhenTheLedgerIsShort_EvenWithAllFiveDemoAccounts()
+    {
+        // A seed that stopped between the accounts and the ledger, on a database where one deposit
+        // was then made. The ledger seeder skips a table that holds any row, so the 26 demo rows
+        // are never written. All five accounts are there; the ledger's count is what says the
+        // demo is not.
+        await using (var db = Context())
+        {
+            await db.Database.MigrateAsync();
+        }
+
+        await using (var provider = Provider(new RecordingLoggerProvider()))
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var allButTheLedger = scope.ServiceProvider.GetServices<ISeeder>()
+                .Where(seeder => seeder is not TransactionSeeder)
+                .OrderBy(seeder => seeder.Order);
+            foreach (var seeder in allButTheLedger)
+            {
+                await seeder.SeedAsync();
+            }
+        }
+
+        await DepositOnJohnsSavingsAsync();
+
+        var cutShort = new Counts(Users: 4, Accounts: 5, Transactions: 1, OnJohnsAccounts: 1);
+        (await CountsAsync()).Should().Be(cutShort);
+
+        var log = new RecordingLoggerProvider();
+        await using (var provider = Provider(log))
+        {
+            (await SeedCommand.RunAsync(provider, CancellationToken.None)).Should().Be(1, Output(log));
+        }
+
+        using var all = new AssertionScope();
+        log.Lines.Where(line => line.Level == LogLevel.Error).Select(line => line.Message)
+            .Should().Contain(message => message.Contains("The demo data is incomplete: 5 of 5 demo accounts, 1 ledger rows"));
+        (await CountsAsync()).Should().Be(cutShort, "seed fills an empty database only");
+    }
+
     private sealed record Counts(int Users, int Accounts, int Transactions, int OnJohnsAccounts);
 
     private async Task<Counts> CountsAsync()
@@ -163,6 +211,30 @@ public sealed class SeedCommandSqlServerTests : IDisposable
             await db.Accounts.CountAsync(),
             await db.Transactions.CountAsync(),
             await db.Transactions.CountAsync(t => t.Account.User.AzureTag == "johnsmith"));
+    }
+
+    /// <summary>
+    /// One ledger row more on John's savings account, and the balance it leaves: what a deposit
+    /// through the app writes to these two tables.
+    /// </summary>
+    private async Task DepositOnJohnsSavingsAsync()
+    {
+        await using var db = Context();
+        var account = await db.Accounts.SingleAsync(a => a.AccountNumber == "AB-1234-5678-90");
+        db.Transactions.Add(new Transaction
+        {
+            TransactionNumber = IdGenerator.GenerateTransactionNumber(),
+            AccountId = account.Id,
+            Account = account,
+            Type = TransactionType.Deposit,
+            Amount = 10m,
+            BalanceBefore = account.Balance,
+            BalanceAfter = account.Balance + 10m,
+            Description = "A deposit made after the seed",
+            Status = TransactionStatus.Completed,
+        });
+        account.Balance += 10m;
+        await db.SaveChangesAsync();
     }
 
     private ServiceProvider Provider(RecordingLoggerProvider log, params (string Key, string? Value)[] settings) =>
