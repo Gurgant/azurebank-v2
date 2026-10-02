@@ -185,9 +185,10 @@ resource migrateIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-
 }
 
 // Each string names the identity to ask a token for and holds no credential. The two are secrets
-// all the same, referenced by the api container and by the job only: an identity can be used by
-// every container of the app, and the bff, which faces the internet, is told neither the client
-// ID nor the server's name. A secret also stays out of every read of the app and of an execution.
+// all the same, referenced by the api container and by the job only. An identity can be used by
+// every container of the app, the bff included, and the bff faces the internet: it is handed
+// neither the server's name nor the client ID. That is not a lock, because neither is a secret;
+// it keeps both out of that container, and out of every read of the app and of an execution.
 // The connection limits (connect timeout, retries, pool size) are the hosts' own defaults (ADR-0058): none is set here.
 var appConnection = 'Server=tcp:${sql.properties.fullyQualifiedDomainName},1433;Database=AzureBank;Authentication=Active Directory Managed Identity;User ID=${appIdentity.properties.clientId};Encrypt=True;TrustServerCertificate=False'
 var migrationConnection = 'Server=tcp:${sql.properties.fullyQualifiedDomainName},1433;Database=AzureBank;Authentication=Active Directory Managed Identity;User ID=${migrateIdentity.properties.clientId};Encrypt=True;TrustServerCertificate=False'

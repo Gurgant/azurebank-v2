@@ -1081,9 +1081,10 @@ that is why step 1 comes first.
 | In GitHub | The three Azure identifiers, as secrets of the environment `demo`. No application secret | A job in `demo` |
 
 The two connection strings are secrets although they hold no password. An identity can be used by
-every container of the app, and the BFF, which faces the internet, is told neither the client ID
-nor the server's name. A secret also stays out of every read of the app and of an execution, which
-a plain setting would not.
+every container of the app, so the string is kept out of the BFF, which faces the internet: that
+container is handed neither the server's name nor the client ID. This is not a lock, because
+neither is a secret ([What each identity can do](#what-each-identity-can-do)). A secret also stays
+out of every read of the app and of an execution, which a plain setting would not.
 
 `secrets.ps1 -Action New` never generates a value twice: each of the seven application secrets
 comes from the deployed app if it exists, else from a file left by a run that stopped, else from
@@ -1138,10 +1139,14 @@ the packages can; deploying by digest would close that and is not done here.
 **The app's identity, `azurebank-app`.** In the database it reads and writes every row and cannot
 change the schema. That includes the rows of the migrations history table, by which it could steer
 the next migration: a `DENY` on that table is not set. It holds no role on any Azure resource.
-**It is available to both containers of the app.** The BFF, which faces the internet, can
-therefore ask for a database token if it learns the client ID and the server's name; it is given
-neither. With passwords only the `api` container held the credential. The real fix is the API in
-an app of its own, and it is not done here.
+**It is available to both containers of the app.** Code running in the BFF, which faces the
+internet, can therefore ask for a database token. Between that code and the database stands only
+what the BFF is not handed: the server's name and the identity's client ID. Both are identifiers,
+not secrets, so neither is a barrier to count on. Microsoft's page says a request for a token
+must name the identity, and that one which names none is answered for a system-assigned identity,
+which the app does not have; whether such a request is refused here has not been seen. With
+passwords only the `api` container held the credential. The real fix is the API in an app of its
+own, and it is not done here.
 
 **The migration's identity, `azurebank-migrate`.** The same, and it may change the schema. It
 cannot create a user or make itself an owner directly (measured on a local engine: both refused).
@@ -1335,6 +1340,7 @@ line is checked at the step named, on the first deployment.
 | Azure SQL runs `CREATE USER ... WITH SID, TYPE = E`; a new database there has no trigger, no module and only the baseline rows the file expects; dropping and creating a user inside the transaction works there | step 6 |
 | A user made from the client ID can sign in from a job; or whether it has to be the object ID | step 7 |
 | A job that carries only the app's identity gets no token for the migrator's | step 7 |
+| A container of the app that asks for a token and names no identity gets none (read on Microsoft's page: such a request is answered for a system-assigned identity, and the app has none) | not provoked |
 | The first token on a cold replica, in milliseconds, and what the driver throws when no token comes | step 7 |
 | The server names Entra-only in its refusal of a SQL sign-in for a name that does not exist | step 8 |
 | The API as `azurebank_app` under the three real-stack test suites, and a transfer as that user | before step 15, on a local SQL Server |

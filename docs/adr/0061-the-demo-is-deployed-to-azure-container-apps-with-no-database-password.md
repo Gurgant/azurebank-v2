@@ -82,8 +82,10 @@ One run per row unless it says otherwise.
   SqlClient 7.0 the Entra sign-in providers are in a second package
   (<https://learn.microsoft.com/en-us/sql/connect/ado-net/sql/azure-active-directory-authentication>,
   2026-09-21).
-- A managed identity is available to every main container of an app, and whoever may start a job
-  with a template of their own can use the identity the job carries
+- A managed identity is available to every main container of an app; a request for a token must
+  name a user-assigned identity, and one that names none is answered for the system-assigned
+  identity, whether the app has one or not; and whoever may start a job with a template of their
+  own can use the identity the job carries
   (<https://learn.microsoft.com/en-us/azure/container-apps/managed-identity>, 2025-06-03;
   <https://learn.microsoft.com/en-us/azure/container-apps/jobs>, 2026-09-16). The platform caches
   managed-identity tokens for about a day
@@ -169,8 +171,9 @@ the run stops and the refusal goes to the owner.
 owner's machine into one file outside the repository, which is removed when the session ends. The
 three Azure identifiers are secrets of the GitHub environment, so that a public log never prints
 them. The two connection strings are secrets too, although they hold no password, and only the
-`api` container and the job reference them: the BFF is told neither the client ID nor the server's
-name.
+`api` container and the job reference them: the BFF is handed neither the server's name nor the
+client ID. That keeps both out of the container that faces the internet. It is not a lock:
+neither is a secret.
 
 **10. Nothing stops the app automatically, and the owner accepts that.** Four alerts send an
 e-mail: requests, data out and replica time on the app, and log lines on the workspace. The owner
@@ -205,7 +208,7 @@ the job; a SQL administrator password made new at every run and used by nothing.
 | | With passwords | With identities |
 |---|---|---|
 | Rehearsal | The sign-in and the users script ran on the local stack | Neither can run before Azure: the local engine refuses `TYPE = E`, and a workstation has no managed identity |
-| Which container holds the credential | Only `api` had the string | Every main container of the app can use the identity. The BFF, which faces the internet, could ask for a database token if it learned the client ID and the server's name |
+| Which container holds the credential | Only `api` had the string | Every main container of the app can use the identity. Code in the BFF, which faces the internet, could ask for a database token. It is handed neither the server's name nor the client ID, and neither is a secret |
 | A migration nobody can read | The owner could run the tools image locally with the password | No managed identity off Azure: the last resort is the source at that commit, signed in as the owner |
 | Cutting off a thief | Change both passwords | No single step: an incident procedure, in the runbook |
 
@@ -213,9 +216,9 @@ the job; a SQL administrator password made new at every run and used by nothing.
 second run of the same template leaves it alone. That a user created from the client ID can sign
 in, or whether it has to be the object ID. How long the first token takes on a cold replica
 against the 10 s connect timeout, and what the driver throws when no token comes. That a job
-carrying only the app's identity gets no token for the migrator's. That the server names Entra-only
-in its refusal of a SQL sign-in. Whether a change that touches no identity needs a right on the
-attached one.
+carrying only the app's identity gets no token for the migrator's. That a request for a token
+which names no identity gets none. That the server names Entra-only in its refusal of a SQL
+sign-in. Whether a change that touches no identity needs a right on the attached one.
 
 **The fallbacks.** The server refused for its missing login: a second shape, with an administrator
 name, a password used by the one run that creates the server and kept nowhere, and Entra-only as
@@ -371,7 +374,8 @@ twice the cap: the logs go off. The alert is refused: it is left out, one of fou
 **Negative: known, and left as it is**
 
 - **The BFF container can ask for a database token.** The identity belongs to the app, not to a
-  container. The real fix is the API in an app of its own; it is not done here.
+  container. What the BFF is not handed, the server's name and the client ID, are identifiers and
+  not secrets. The real fix is the API in an app of its own; it is not done here.
 - **The log's cap is not a hard bound**, and the rate limiter does not bound what a stranger can
   write. One warning per caller per window, instead of one per request, would let it; that change
   touches the BFF's security logging and is not made here.
