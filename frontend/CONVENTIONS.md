@@ -87,8 +87,10 @@ sentence; after a click it draws none. Three limits, known:
 
 - when another dialog holds focus as the answer arrives, or the visitor moved focus to a control
   during the wait, the landing does not run, and nothing brings the sentence to a screen reader;
-- the check view ("We couldn't confirm …") lands no focus: it still appears with focus on `body`,
-  and from there Escape reaches its dialog only after a Tab has brought focus into it;
+- the check view ("We couldn't confirm …") lands no focus, so focus stays where the send left it.
+  Measured: on `body` after one press on the send button, and from there Escape reaches the
+  dialog only after a Tab has brought focus into it; on the dialog itself after the second press
+  of a double click on "Withdraw", and from there Escape closes it at once;
 - a landing does not depend on the screen reader, but what each one says on a focused paragraph
   does. NVDA said the sentence once in each of the four flows, and the title only where it is a
   dialog's name: on the two transfer pages, where it is the page's heading, it was not spoken.

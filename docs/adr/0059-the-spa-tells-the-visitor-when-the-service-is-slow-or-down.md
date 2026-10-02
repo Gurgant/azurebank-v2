@@ -748,37 +748,46 @@ Test files are under `frontend/src/`, browser specs under `frontend/e2e/`.
       after the first): on "Deposit" the second press was on the backdrop, and the dialog stayed
       with focus on the sentence; on "Withdraw" the place the button had been is still inside the
       shorter dialog, on no control, and the press moved focus from the sentence to the dialog
-      itself. The sentence had it 106 and 147 ms after the first press on the page's clock, the
-      stamp the page put on its own snapshots, which reached the driver at 244 and 272 ms. The
-      dialog stayed. Measured on the deposit's view after such a press: Tab reached Close, Shift+Tab
-      then "View History", and Escape closed the dialog. That is not changed: the landing is made
-      once, when the view appears.
+      itself. The sentence had it 106 and 147 ms after the first press. Those two stamps are the
+      page's, its own `Date.now()` on each snapshot; their zero is the driver's, the time it noted
+      just before it sent the mouse down, on the same machine. The snapshots reached the driver at
+      244 and 272 ms. The dialog stayed. Measured on the deposit's view after such a press: Tab
+      reached Close, Shift+Tab then "View History", and Escape closed the dialog. That is not
+      changed: the landing is made once, when the view appears.
     - The check view and the success receipt, which the change at first left as they were. Measured
       then, once each on the deposit dialog, the send answered by the browser or by the API with
       nothing held: the same double click over the check view (a 409 with no `applied`, answered in
       16 ms) and over the success receipt of a real deposit (a 201 after 50 ms). The second press,
-      129 and 124 ms after the first, was on the backdrop and closed the dialog: the visitor was on
-      the dashboard with focus on `body` and no alert, the check view's words unread, beside the
-      tile that opens the dialog for a second deposit; one request each, and one deposit. The same
-      was not measured on `main`. Since then, the fourth fix, the two dialogs keep the check view as
-      they keep the went-through view: a press on the backdrop closes nothing and leaves focus where
-      it was (`keepOnOutsidePress`, set while the check is latched). On a stack built again with
-      that, the day after the first runs, each run once, the send answered by the browser with a 409
-      that has no `applied`: the double click on "Deposit", its second press on the backdrop 120 ms
-      after the first, left the dialog "Deposit Money" and "We couldn't confirm your deposit" on
-      screen with focus on `body`, where the send had left it; one request, and no deposit in the
-      database. From `body` Escape did nothing; a Tab put focus on Close, and Escape then closed the
-      dialog. On "Withdraw" the authorisation is minted first, and its answer came 470 ms after the
-      first press: the second press, 133 ms after the first, came before it, on the disabled button,
-      and moved focus to the dialog itself; the check view then appeared and stayed, and Escape
-      closed it; one request to the withdrawal's path, and no withdrawal. A press on the backdrop
-      about a second after either check view had appeared left it on screen. The place where
-      "Withdraw" had been is inside that view, on "Check recent transactions": a second press made
-      0.7 s after the first, after the view, pressed it and led to `/history`. The receipt is as it
-      was: a press on the backdrop about a second after it appeared closed the dialog. In the double
-      click on a real deposit the 201 came 322 ms after the first press, so the second press came
-      before it, on the disabled button, and the receipt then appeared and stayed, with focus on the
-      dialog. The browser suite, 46 tests with the one that presses twice over the check view,
+      129 and 124 ms after the first, was on the backdrop and closed the dialog. What was recorded
+      1.5 s later, each time: no dialog, the dashboard's address, focus on `body`, no alert; one
+      request each, and one deposit, the real one. So the check view's words went unread. That the
+      dashboard has the tile that opens the dialog again, for a second deposit, is read in the
+      page's code; those runs did not record it. The same was not measured on `main`. Since then,
+      the fourth fix, the two dialogs keep the check view as they keep the went-through view: a
+      press on the backdrop closes nothing and leaves focus where it was (`keepOnOutsidePress`, set
+      while the check is latched). On a stack built again with that, the day after the first runs,
+      each run once, the send answered by the browser with a 409 that has no `applied`: the double
+      click on "Deposit", its second press on the backdrop 120 ms after the first, left the dialog
+      "Deposit Money" and "We couldn't confirm your deposit" on screen with focus on `body`, where
+      the send had left it; one request, and no deposit in the database. From `body` Escape did
+      nothing; a Tab put focus on Close, and Escape then closed the dialog. On "Withdraw" the
+      authorisation is minted first, and its answer came 470 ms after the first press: the second
+      press, 133 ms after the first, came before it, on the disabled button, and moved focus to the
+      dialog itself; the check view then appeared and stayed, and Escape closed it; one request to
+      the withdrawal's path, and no withdrawal. A press on the backdrop 1.12 s after the deposit's
+      check view had appeared, and one 0.81 s after the withdrawal's, left each on screen. The place
+      where "Withdraw" had been is inside that view, on "Check recent transactions": a second press
+      made 0.7 s after the first, after the view, pressed it and led to `/history`. The receipt is
+      as it was, and nothing guards it, which a test in each dialog's suite holds: a press on the
+      backdrop 1.07 s after it appeared closed the dialog. What a double click does to it depends on
+      which comes first, the answer or the second press, and both were measured on a real deposit.
+      When the 201 came after the second press, the press was on the disabled button, and the
+      receipt then appeared and stayed, with focus on the dialog: the 201 came 322 ms after the
+      first press on that stack, and 881 ms on the stack built next, from the same product, in the
+      first deposit sent to it. In the next deposit there the 201 came first: the receipt was on the
+      page 111 ms after the first press, the second press landed on the backdrop at 149 ms, and the
+      dialog was gone at 164 ms, 53 ms after the receipt appeared; one request, one deposit in the
+      database. The browser suite, 46 tests with the one that presses twice over the check view,
       passed on that stack. That test and one in each dialog's suite failed before the change, the
       browser one on a stack built without it.
     - The other fix is the API's: a retried attempt compares the request hash after its reload
