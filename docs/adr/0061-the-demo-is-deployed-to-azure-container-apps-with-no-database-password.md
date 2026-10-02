@@ -40,7 +40,7 @@ One run per row unless it says otherwise.
 | The users file as it is, that trigger in place | Msg 50003, exit 1, nothing changed |
 | The same with only the first check off, and then with a trigger that grants `CONTROL` and removes itself | Msg 50004, exit 1, everything rolled back; the self-removing trigger passes a check of users and role members alone and is caught by the permission list |
 | The app's 16 migrations on an empty database | 0 triggers, 0 modules, and no row the file's lists do not expect |
-| go-sqlcmd with a variable holding a GUID, a quote and a statement | The statement ran: `-v` is text substitution. Without `-b`, a file that stops on an error exits 0 |
+| go-sqlcmd with a variable holding a GUID, a quote and a statement | The statement ran: `-v` is text substitution. What it created was still there after the users file refused the run, because it ran before the file's transaction began. Without `-b`, a file that stops on an error exits 0 |
 | The provider's policy aliases, searched for the identity block of an app or of a job | 0 of 1,058; the alias for the replica count is found by the same search |
 | The BFF on the built image, the same 31 requests, without and with `Serilog__MinimumLevel__Override__Serilog=Warning` | 26 request lines at Information became 0. The 2 request lines of 5xx answers stayed, the 11 warnings stayed kind by kind, the API's own lines were untouched |
 | 400 requests to `/api/accounts` with no session, in 0.9 s, on a build of the BFF from source with that setting | 100 answered 401 and 300 were rejected by the rate limiter, and **400 warning lines** were written, 209,200 bytes. On the built image the two warnings are 538 and 510 bytes |
@@ -255,9 +255,11 @@ catches it.
 **Where the approved choice was better.** It ran for real on the local SQL Server; its bound
 parameters could not become SQL, where `-v` is text; and it read the firewall refusal as an error
 number, where a tool gives text. The second is answered by the runner, which parses each ID as a
-GUID and passes on what it parsed, and by the file, which builds each statement from a typed
-value. The first is lost: on a local engine the file ran with stand-in users, and its two real
-`CREATE USER` forms have run nowhere.
+GUID and passes on what it parsed. The file cannot answer it: it builds each statement from a
+typed value, but text that `sqlcmd` put in would run above its transaction (measured). The third
+stays: the refusal is known by its sentence, because `sqlcmd` prints no number for an error at
+sign-in (measured with a refused login on a local server). The first is lost: on a local engine
+the file ran with stand-in users, and its two real `CREATE USER` forms have run nowhere.
 
 **Not measured until Azure.** That Azure SQL runs the statement. That a new database there has no
 trigger, no module and only the rows the file expects. That go-sqlcmd signs in through the
@@ -421,35 +423,39 @@ twice the cap: the logs go off. The alert is refused: it is left out, one of fou
   its second package fails here instead of at the first open on Azure.
   `Unit/Tools/SeederCommandTests`: `migrate`'s line for a refused login names both ways to sign
   in.
-- `infra/test_scripts.py` and `infra/test_deploy.py`, 243 tests: the two PowerShell scripts run
+- `infra/test_scripts.py` and `infra/test_deploy.py`, 256 tests: the two PowerShell scripts run
   for real against a stand-in for the Azure CLI and a stand-in for `sqlcmd`; the users file is
-  read as text, to keep each guard where it is; the compiled templates are read (the two
-  identities and the one each resource carries, no database credential anywhere, only the `api`
-  container and the job handed a connection string, the workspace and its cap, the four alerts,
-  the role's nine actions, every rule of the policy); `deploy.py`'s decisions against invented
-  answers. While they were written, single changes were made to each file under test and the
-  suite had to fail: 32 changes to the template and 108 to the scripts, the users file and
-  `deploy.py`, none left uncaught.
+  read as text, to keep each guard, every `WHERE` and every `IF` where it is; the compiled
+  templates are read (the two identities and the one each resource carries, no database
+  credential anywhere, only the `api` container and the job handed a connection string, the
+  workspace and its cap, the four alerts, the role's nine actions, every rule of the policy);
+  `deploy.py`'s decisions against invented answers. While they were written, single changes were
+  made to the scripts, the users file and `deploy.py`, and the suite had to fail: 108, none left
+  uncaught. That count had not tried enough: a review loosened conditions of the users file by
+  one word each, and of thirteen such changes ten left the tests green. Every condition of the
+  file is pinned now. With the changes made for the later fixes that is 32 more, and all 32 fail.
 
 **Measured**, beyond the Context table.
 
-- The compiled template: 20 resources, 19 parameters of which 7 secure and 2 required, 10 outputs,
+- The compiled template: 20 resources, 19 parameters of which 7 secure and 2 required, 8 outputs,
   none secure; 14 resources without the app and 9 more with it. `bicep build` and `bicep lint`
   exit 0 with nothing on standard error for both templates; an unused parameter puts a warning
   there.
 - The users file on a local SQL Server 17 with go-sqlcmd 1.10.0, with three substitutions (the
   database's name, a user made from a disabled SQL login whose ID is the 16 bytes asked for, and
   the user type that goes with it): it commits on a clean database and a second run changes
-  nothing; the other kind of ID replaces both users and the first kind replaces them back; ten
-  single oddities are each refused with the offending name printed.
+  nothing; the other kind of ID replaces both users and the first kind replaces them back;
+  thirteen single oddities are each refused with the offending name printed, among them a grant
+  to `public` on a table, a `DENY` for `public` and `CONTROL` for the migrator.
 - The runner's tool checks against the real programs: go-sqlcmd passes, the ODBC `sqlcmd` is
   refused as the default tool and accepted on its own road, and a program validly signed by
   someone else is refused.
 - The last-resort migration's command line, with `Active Directory Default`, against a server name
   that does not resolve: the tool reads the string, tries once and exits 1 with the last answer on
   its last line. No token was asked for.
-- The runbook: its 38 PowerShell blocks parse; every Azure CLI command and flag, every script
-  parameter and every `deploy.py` option it names is in that tool's own help.
+- The runbook: its 41 PowerShell blocks parse; every Azure CLI command and flag, every script
+  parameter and every `deploy.py` option it names is in that tool's own help; the functions that
+  list the identities and create the sign-in probe ran against a stand-in for the CLI.
 
 **Not measured:** everything listed under "Not measured until Azure" in the three sections above;
 the automatic put-back on a real failure; that the policy refuses a second replica; the meters

@@ -1430,9 +1430,14 @@ user type that goes with it. Everything else is the file as it is.
   changed.
 - With only the first check off: `Msg 50004`, exit 1, everything rolled back. A trigger that
   grants `CONTROL` and removes itself is caught by the permission list.
-- Ten single oddities (a view, a leftover user, a role, the app in `db_owner` or `db_ddladmin`,
-  `guest` allowed to connect, a grant, a `DENY`, a schema owned by the migrator, a right name with
-  a wrong ID): each refused, with its name printed.
+- Thirteen single oddities (a view, a leftover user, a role, the app in `db_owner` or
+  `db_ddladmin`, `guest` allowed to connect, a grant to a user, a `DENY` for a user, a schema owned
+  by the migrator, a grant to `public` on a table, a `DENY` for `public`, `CONTROL` for the
+  migrator, a right name with a wrong ID): each refused, with its name printed.
+- A value made of an ID, a quote and a statement, passed to `sqlcmd` as the runner never passes
+  it: the statement ran, the lists named the user it created and the run was refused, and that
+  user was still there afterwards, because it was made before the transaction began. The file
+  does not keep such text out; the runner does, by parsing each ID.
 - After all 16 migrations a database holds 0 triggers and 0 modules, and none of the lists has an
   unexpected row.
 - Without `-b`, `sqlcmd` exits 0 when the file stops on an error.
