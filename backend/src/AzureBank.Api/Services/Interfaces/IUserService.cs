@@ -14,10 +14,11 @@ public interface IUserService
 
     /// <summary>
     /// Looks up a user by AzureTag for transfer recipient verification.
-    /// Returns masked display name for privacy.
+    /// Returns masked display name for privacy. Only a user of the caller's own demo copy is
+    /// found; outside the demo no user belongs to a copy and every user finds every other.
     /// </summary>
     /// <param name="azureTag">The AzureTag to look up</param>
-    /// <param name="currentUserId">Current user ID (to exclude from results)</param>
+    /// <param name="currentUserId">Current user ID (to exclude from results; its demo copy bounds them)</param>
     /// <param name="cancellationToken">Cancels the work: the request's token, which its deadline or the caller hanging up cancels (ADR-0058).</param>
     Task<RecipientLookupResponse> GetUserByAzureTagAsync(
         string azureTag, Guid currentUserId, CancellationToken cancellationToken = default);

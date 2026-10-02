@@ -301,6 +301,24 @@ public class UserServiceTests : IDisposable
         result.DisplayName.Should().BeEmpty();
     }
 
+    /// <summary>
+    /// A copy's users are deleted when its time is over, and the API does not look the caller up
+    /// when it accepts a token: until that token expires, a caller whose row is gone still reaches
+    /// the lookup. It has no copy to read, and that must not wave it through into the others.
+    /// </summary>
+    [Fact]
+    public async Task GetUserByAzureTagAsync_ACallerWhoseOwnRowIsGone_CannotResolveACopysUser()
+    {
+        await AddUserAsync("jane_c3d4", copy: Guid.NewGuid(), "Jane", "Smith");
+
+        var foreign = await _sut.GetUserByAzureTagAsync("jane_c3d4", Guid.NewGuid());
+        var unknown = await _sut.GetUserByAzureTagAsync("jane_zzzz", Guid.NewGuid());
+
+        foreign.Exists.Should().BeFalse("a caller with no row belongs to no copy");
+        foreign.DisplayName.Should().BeEmpty();
+        foreign.Should().BeEquivalentTo(unknown, options => options.Excluding(answer => answer.AzureTag));
+    }
+
     #endregion
 
     #region RenameAzureTagAsync Tests
