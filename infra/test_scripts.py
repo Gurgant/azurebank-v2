@@ -1386,8 +1386,7 @@ class TemplateTests(unittest.TestCase):
     def test_no_output_is_a_secret(self):
         self.assertEqual({name: entry['type'] for name, entry in self.main['outputs'].items()},
                          dict.fromkeys(['sqlServerFqdn', 'sqlServerName', 'deploymentClientId',
-                                        'deploymentPrincipalId', 'appIdentityClientId', 'appIdentityPrincipalId',
-                                        'migrateIdentityClientId', 'migrateIdentityPrincipalId',
+                                        'deploymentPrincipalId', 'appIdentityClientId', 'migrateIdentityClientId',
                                         'logWorkspaceCustomerId', 'appUrl'], 'string'))
 
     def test_every_secret_reaches_a_container_by_reference_only(self):

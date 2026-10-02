@@ -492,12 +492,10 @@ output sqlServerFqdn string = sql.properties.fullyQualifiedDomainName
 output sqlServerName string = sql.name
 output deploymentClientId string = deployIdentity.properties.clientId
 output deploymentPrincipalId string = deployIdentity.properties.principalId
-// Client IDs name an identity in a connection string and, by default, in the database user;
-// principal (object) IDs are what the users script binds a user to when it is asked for that kind.
+// The client ID names an identity in a connection string and, by default, in its database user.
+// No script reads these: the users script asks `az identity show` for the IDs it needs.
 output appIdentityClientId string = appIdentity.properties.clientId
-output appIdentityPrincipalId string = appIdentity.properties.principalId
 output migrateIdentityClientId string = migrateIdentity.properties.clientId
-output migrateIdentityPrincipalId string = migrateIdentity.properties.principalId
 // The ID a log query is sent to. Empty when no logs are kept.
 output logWorkspaceCustomerId string = keepLogs ? logs!.properties.customerId : ''
 output appUrl string = deployApp ? 'https://${app!.properties.configuration!.ingress!.fqdn}' : ''
