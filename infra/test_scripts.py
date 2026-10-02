@@ -1,8 +1,10 @@
-"""Offline tests of the two PowerShell scripts and of the two templates.
+"""Offline tests of the two PowerShell scripts, of the users file and of the two templates.
 
-The scripts run for real, in PowerShell 7, against a stand-in for the Azure CLI: they touch neither
-Azure nor the real parameter folder. The templates are compiled by the Bicep CLI and the compiled
-JSON is read. What Azure itself answers is checked on the first deployment (README.md).
+The scripts run for real, in PowerShell 7, against a stand-in for the Azure CLI and a stand-in for
+sqlcmd: they touch neither Azure, nor a database, nor the real parameter folder. The users file is
+read as text: what a SQL Server does with it is checked on a real engine (README.md). The
+templates are compiled by the Bicep CLI and the compiled JSON is read. What Azure itself answers
+is checked on the first deployment (README.md).
 
 On a developer's machine a missing tool skips its tests; in CI a missing tool is an error.
 """
@@ -33,11 +35,21 @@ def tool(name):
 PWSH = tool('pwsh')
 BICEP = tool('bicep')
 
+# The four IDs of the two database identities, as `az identity show` gives them.
+IDS = {'azurebank-app': {'clientId': '11111111-aaaa-4bbb-8ccc-000000000001',
+                         'principalId': '22222222-aaaa-4bbb-8ccc-000000000002'},
+       'azurebank-migrate': {'clientId': '33333333-aaaa-4bbb-8ccc-000000000003',
+                             'principalId': '44444444-aaaa-4bbb-8ccc-000000000004'}}
+
 FAKE_AZ = textwrap.dedent('''
     import json, os, sys
     args = sys.argv[1:]
     with open(os.environ['FAKE_AZ_LOG'], 'a', encoding='utf-8') as log:
         log.write(json.dumps(args) + '\\n')
+    with open(os.environ['FAKE_SEQUENCE'], 'a', encoding='utf-8') as sequence:
+        verb = args[:4] if args[:3] == ['sql', 'server', 'firewall-rule'] else args[:2]
+        handed = ' (with a value in SQLCMDPASSWORD)' if 'SQLCMDPASSWORD' in os.environ else ''
+        sequence.write('az ' + ' '.join(verb) + handed + '\\n')
     state = os.environ.get('FAKE_AZ_STATE', 'empty')
     live = json.loads(os.environ.get('FAKE_AZ_LIVE', '{}'))
     url = args[args.index('--url') + 1] if '--url' in args else ''
@@ -49,8 +61,6 @@ FAKE_AZ = textwrap.dedent('''
         fail('ERROR: the network is down')
     if args[:2] == ['account', 'show']:
         out({'id': '00000000-0000-0000-0000-000000000000'})
-    if args[:2] == ['account', 'get-access-token']:
-        out({'accessToken': 'not-a-token'})
     if args[:3] == ['ad', 'signed-in-user', 'show']:
         account = {'id': '11111111-1111-1111-1111-111111111111', 'userPrincipalName': 'owner@example.invalid',
                    'mail': None if state == 'no-mailbox' else 'owner.mailbox@example.invalid'}
@@ -80,6 +90,8 @@ FAKE_AZ = textwrap.dedent('''
         out({'properties': {'template': {'containers': [
             {'name': 'bff', 'image': 'ghcr.io/gurgant/azurebank-bff:' + live['tag']},
             {'name': 'api', 'image': 'ghcr.io/gurgant/azurebank-api:' + live['tag']}]}}})
+    if args[:2] == ['identity', 'show']:
+        out(json.loads(os.environ['FAKE_AZ_IDS'])[args[args.index('--name') + 1]])
     if args[:3] == ['sql', 'server', 'list']:
         out([{'name': 'azurebank-test', 'fullyQualifiedDomainName': 'azurebank-test.invalid'}])
     if args[:3] == ['sql', 'server', 'firewall-rule']:
@@ -105,66 +117,111 @@ FAKE_AZ = textwrap.dedent('''
     sys.stderr.write('fake az: unexpected call ' + ' '.join(args)); sys.exit(2)
 ''')
 
-# sql-principals.ps1 reaches the database through its function Open-Database and nowhere else.
-# PowerShell looks a command name up among the aliases before the functions, so the alias this
-# harness defines puts a stand-in behind that name, and the script itself runs unchanged.
-# STAND_IN_DATABASE says how the stand-in behaves; it logs each opening and the statement it is given.
-STAND_IN_DATABASE = textwrap.dedent('''
-    param([string]$Script, [string]$ParameterFile)
-
-    class Refusal : System.Exception {
-        [int]$Number
-        Refusal([int]$number, [string]$message) : base($message) { $this.Number = $number }
-    }
-
-    $global:StandInOpenings = 0
-    function Open-StandInDatabase([string]$Token) {
-        $modes = $env:STAND_IN_DATABASE -split ','
-        $global:StandInOpenings++
-        Add-Content -LiteralPath $env:STAND_IN_LOG -Value "open with $Token"
-        if ($modes -contains 'refused' -and $global:StandInOpenings -eq 1) {
-            throw [Refusal]::new(40615, "Cannot open server 'azurebank-test' requested by the login. " +
-                "Client with IP address '203.0.113.7' is not allowed to access the server.")
-        }
-        if ($modes -contains 'login-failed') {
-            throw [Refusal]::new(18456, "Login failed for the token. Client with IP address '203.0.113.7'.")
-        }
-        # The real parameter collection, on a command that is connected to nothing.
-        $command = [pscustomobject]@{
-            CommandText = ''; CommandTimeout = 0
-            Parameters  = [System.Data.SqlClient.SqlCommand]::new().Parameters
-        }
-        $command | Add-Member -MemberType ScriptMethod -Name ExecuteReader -Value {
-            $modes = $env:STAND_IN_DATABASE -split ','
-            $bound = [ordered]@{}
-            foreach ($parameter in $this.Parameters) {
-                $bound[$parameter.ParameterName] = [ordered]@{
-                    type = [string]$parameter.SqlDbType; size = $parameter.Size; value = $parameter.Value
-                }
-            }
-            [ordered]@{ text = $this.CommandText; timeout = $this.CommandTimeout; parameters = $bound } |
-                ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $env:STAND_IN_STATEMENT
-            if ($modes -contains 'statement-fails') { throw 'The statement was refused by the stand-in.' }
-            $table = [System.Data.DataTable]::new()
-            $null = $table.Columns.Add('user')
-            $null = $table.Columns.Add('roles')
-            $appRoles = if ($modes -contains 'wrong-roles') { 'db_owner' } else { 'db_datareader, db_datawriter' }
-            $null = $table.Rows.Add('azurebank_app', $appRoles)
-            $null = $table.Rows.Add('azurebank_migrator', 'db_datareader, db_datawriter, db_ddladmin')
-            , $table.CreateDataReader()
-        }
-        $connection = [pscustomobject]@{ Command = $command }
-        $connection | Add-Member -MemberType ScriptMethod -Name CreateCommand -Value { $this.Command }
-        $connection | Add-Member -MemberType ScriptMethod -Name Dispose -Value {
-            Add-Content -LiteralPath $env:STAND_IN_LOG -Value 'dispose'
-        }
-        $connection
-    }
-    Set-Alias -Name Open-Database -Value Open-StandInDatabase
-
-    & $Script -ParameterFile $ParameterFile
-''')
+# What stands where sqlcmd is. FAKE_SQLCMD says how it behaves, as words separated by commas:
+#   odbc, old, no-azcli         what --version and -? answer
+#   refused:N                   the first N runs are refused by the server's firewall
+#   login-failed, tampered, silent, wrong-roles, fails-after-the-refusals
+#                               what a run that reaches the database does instead of succeeding
+#   entra-only, let-in          what the one SQL sign-in of -ProveSqlSignInRefused is answered
+# It logs every start: its arguments, and which of the names sqlcmd would read are in its environment.
 ADDRESS = '203.0.113.7'
+FIREWALL = ("mssql: login error: Cannot open server 'azurebank-test' requested by the login. Client with IP "
+            f"address '{ADDRESS}' is not allowed to access the server. To enable access, use the Azure "
+            "Management Portal or run sp_set_firewall_rule on the master database to create a firewall rule "
+            "for this IP address or address range. It may take up to five minutes for this change to take effect.")
+VARIABLES = ['AppClientId', 'AppObjectId', 'MigratorClientId', 'MigratorObjectId', 'IdKind', 'CreateForm']
+BOTH_USERS = ['azurebank_app: db_datareader, db_datawriter; ID as asked: 1',
+              'azurebank_migrator: db_datareader, db_datawriter, db_ddladmin; ID as asked: 1']
+CONSTANTS = {'VARIABLES': VARIABLES, 'ADDRESS': ADDRESS, 'FIREWALL': FIREWALL, 'BOTH_USERS': BOTH_USERS}
+FAKE_SQLCMD = ''.join(f'{name} = {value!r}\n' for name, value in CONSTANTS.items()) + textwrap.dedent('''
+    import json, os, sys
+    args = sys.argv[1:]
+    modes = os.environ.get('FAKE_SQLCMD', '').split(',')
+    log = os.environ['FAKE_SQLCMD_LOG']
+    earlier = [json.loads(line) for line in open(log, encoding='utf-8')] if os.path.exists(log) else []
+    def record(kind):
+        entry = {'kind': kind, 'args': args,
+                 'variables': {name: os.environ.get(name) for name in VARIABLES + ['SQLCMDUSER', 'SQLCMDINI']},
+                 'a value is in SQLCMDPASSWORD': 'SQLCMDPASSWORD' in os.environ}
+        with open(log, 'a', encoding='utf-8') as target:
+            target.write(json.dumps(entry) + '\\n')
+        with open(os.environ['FAKE_SEQUENCE'], 'a', encoding='utf-8') as sequence:
+            sequence.write('sqlcmd ' + kind + '\\n')
+    def end(code, *lines):
+        print('\\n'.join(lines)); sys.exit(code)
+    if args == ['--version']:
+        record('version')
+        if 'odbc' in modes:
+            end(1, "Sqlcmd: Error: '-' or '/' does not have an associated argument.", "Enter '-?' for help.")
+        end(0, 'sqlcmd: Install/Create/Query SQL Server, Azure SQL, and Tools', '',
+            'Version: v' + ('1.8.0' if 'old' in modes else '1.10.0'), '')
+    if args == ['-?']:
+        record('help')
+        if 'odbc' in modes:
+            end(0, 'Microsoft (R) SQL Server Command Line Tool', 'usage: Sqlcmd            [-U login id]',
+                '  [-X[1] disable commands, startup script, environment variables [and exit]]',
+                '  [-G use Azure Active Directory for authentication]')
+        methods = ['ActiveDirectoryDefault', 'ActiveDirectoryIntegrated', 'ActiveDirectoryManagedIdentity',
+                   'ActiveDirectoryAzCli', 'SqlPassword']
+        if 'no-azcli' in modes:
+            methods.remove('ActiveDirectoryAzCli')
+        end(0, '   --authentication-method', '   One of: ' + ', '.join(methods[:2]) + ', ',
+            '   ' + ', '.join(methods[2:]) + ' ', '-b,--exit-on-error')
+    if '-Q' in args:
+        record('sign-in')
+        name = args[args.index('-U') + 1]
+        if 'let-in' in modes:
+            end(0, '1')
+        reason = ' Reason: Azure Active Directory only authentication is enabled.' if 'entra-only' in modes else ''
+        end(1, f"mssql: login error: Login failed for user '{name}'.{reason} Client with IP address '{ADDRESS}'.")
+    record('run')
+    runs = len([entry for entry in earlier if entry['kind'] == 'run'])
+    refusals = ([int(mode.split(':')[1]) for mode in modes if mode.startswith('refused:')] or [0])[0]
+    if runs < refusals:
+        # FAKE_SQLCMD_NAMES: what the refusal names in place of an address.
+        refusal = FIREWALL.replace(ADDRESS, os.environ.get('FAKE_SQLCMD_NAMES', ADDRESS))
+        end(1, refusal, refusal)
+    if 'login-failed' in modes:
+        end(1, "mssql: login error: Login failed for user '<token-identified principal>'. "
+               f"Client with IP address '{ADDRESS}'.")
+    if 'tampered' in modes:
+        end(1, 'Code found: [planted]', 'Msg 50003, Level 16, State 1, Server azurebank-test, Line 65',
+            'Code found in the database (a trigger or a module). Nothing was run. Treat the database as tampered with.')
+    if 'fails-after-the-refusals' in modes:
+        end(1, 'Unknown user: [someone] SQL_USER', 'Msg 50004, Level 16, State 1, Server azurebank-test, Line 196',
+            'Not committed: unknown user; ')
+    if 'silent' in modes:
+        end(0)
+    if 'wrong-roles' in modes:
+        end(0, 'azurebank_app: db_datareader, db_datawriter, db_owner; ID as asked: 1', BOTH_USERS[1])
+    end(0, *BOTH_USERS)
+''')
+
+# sql-principals.ps1 reads the tool's signature through its function Get-ToolSignature and nowhere
+# else. PowerShell looks a command name up among the aliases before the functions, so the alias
+# this harness defines puts a stand-in behind that name, and the script itself runs unchanged.
+# STAND_IN_SIGNATURE says what the stand-in answers; the script's arguments come as JSON, so that
+# they reach it by name.
+STAND_IN_SIGNATURE = textwrap.dedent('''
+    param([string]$Script)
+
+    function Get-StandInSignature([string]$Path) {
+        Add-Content -LiteralPath $env:STAND_IN_LOG -Value $Path
+        # The subject of the certificate that signs go-sqlcmd 1.10.0, as read on 2026-10-02.
+        $microsoft = 'CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US'
+        switch ($env:STAND_IN_SIGNATURE) {
+            'unsigned' { @{ Status = 'NotSigned'; Subject = '' } }
+            'altered' { @{ Status = 'HashMismatch'; Subject = $microsoft } }
+            'someone-else' { @{ Status = 'Valid'; Subject = 'CN=Microsoft Corporation Tools, O=Someone Else, C=US' } }
+            'not-checked' { $null }
+            default { @{ Status = 'Valid'; Subject = $microsoft } }
+        }
+    }
+    Set-Alias -Name Get-ToolSignature -Value Get-StandInSignature
+
+    $named = $env:STAND_IN_ARGUMENTS | ConvertFrom-Json -AsHashtable
+    & $Script @named
+''')
 
 LIVE = {
     'tag': 'b' * 40,
@@ -188,25 +245,34 @@ class ScriptCase(unittest.TestCase):
     def setUp(self):
         self.temp = pathlib.Path(tempfile.mkdtemp(prefix='azurebank-scripts-test-'))
         self.addCleanup(shutil.rmtree, self.temp, ignore_errors=True)
-        shim = self.temp / 'shim'
-        shim.mkdir()
-        (shim / 'fake_az.py').write_text(FAKE_AZ, encoding='utf-8')
-        if os.name == 'nt':
-            (shim / 'az.cmd').write_text(f'@"{sys.executable}" "%~dp0fake_az.py" %*\r\n', encoding='utf-8')
-        else:
-            az = shim / 'az'
-            az.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$(dirname "$0")/fake_az.py" "$@"\n', encoding='utf-8')
-            az.chmod(0o755)
-        self.shim = shim
+        self.shim = self.stand_in('shim', 'az', FAKE_AZ).parent
         self.folder = self.temp / 'private'
         self.log = self.temp / 'az.log'
+        self.sequence = self.temp / 'sequence.log'
         self.rules = self.temp / 'rules.json'
         self.rules.write_text(json.dumps(['AllowAzureServices']), encoding='utf-8')
 
+    def stand_in(self, folder, name, source):
+        """A program of that name in that folder, which runs `source` in Python. Returns its path."""
+        directory = self.temp / folder
+        directory.mkdir(exist_ok=True)
+        (directory / f'fake_{name}.py').write_text(source, encoding='utf-8')
+        if os.name == 'nt':
+            program = directory / f'{name}.cmd'
+            program.write_text(f'@"{sys.executable}" "%~dp0fake_{name}.py" %*\r\n', encoding='utf-8')
+        else:
+            program = directory / name
+            program.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$(dirname "$0")/fake_{name}.py" "$@"\n',
+                               encoding='utf-8')
+            program.chmod(0o755)
+        return program
+
     def run_script(self, script, *args, state='empty', **environment):
         env = dict(os.environ, FAKE_AZ_STATE=state, FAKE_AZ_LIVE=json.dumps(LIVE), FAKE_AZ_LOG=str(self.log),
-                   FAKE_AZ_RULES=str(self.rules), PATH=str(self.shim) + os.pathsep + os.environ['PATH'])
-        env.pop('AZUREBANK_ALERT_EMAIL', None)
+                   FAKE_AZ_RULES=str(self.rules), FAKE_AZ_IDS=json.dumps(IDS), FAKE_SEQUENCE=str(self.sequence),
+                   PATH=str(self.shim) + os.pathsep + os.environ['PATH'])
+        for name in ('AZUREBANK_ALERT_EMAIL', 'SQLCMDUSER', 'SQLCMDPASSWORD', 'SQLCMDINI', *VARIABLES):
+            env.pop(name, None)
         env.update(environment)
         return subprocess.run([PWSH, '-NoProfile', '-NonInteractive', '-File', str(HERE / script), *args],
                               capture_output=True, text=True, env=env, timeout=180)
@@ -448,59 +514,263 @@ class SecretsScriptTests(ScriptCase):
 
 
 class UsersCase(ScriptCase):
-    PASSWORDS = {'appSqlPassword': 'AppPassword0000000000000000000000000000000000000A',
-                 'migratorSqlPassword': 'MigratorPassword00000000000000000000000000000000B'}
+    """sql-principals.ps1 with a stand-in for sqlcmd at a path of its own, outside PATH."""
+
     BY_HAND = (f'az sql server firewall-rule delete --resource-group azurebank-demo '
                f'--server azurebank-test --name {RULE}')
+    SWEEP = ['sql server', 'sql server firewall-rule list']
+    READS = ['identity show', 'identity show']
+    LAST = ['sql server firewall-rule list']
 
     def setUp(self):
         super().setUp()
-        self.folder.mkdir()
-        self.file = self.folder / 'parameters.json'
-        self.file.write_text(json.dumps(
-            {'parameters': {name: {'value': value} for name, value in self.PASSWORDS.items()}}), encoding='utf-8')
+        self.tool = self.stand_in('tool', 'sqlcmd', FAKE_SQLCMD)
+        self.tool_log = self.temp / 'sqlcmd.log'
+        self.harness = self.temp / 'with-a-stand-in-signature.ps1'
+        self.harness.write_text(STAND_IN_SIGNATURE, encoding='utf-8')
+        self.signature_log = self.temp / 'signature.log'
+
+    def users(self, tool='', signature='microsoft', state='empty', environment=None, **arguments):
+        """Run the script through the harness. Keyword arguments are the script's own parameters."""
+        named = {'SqlcmdPath': str(self.tool), 'RetrySeconds': 1, **arguments}
+        return self.run_script(self.harness, '-Script', str(HERE / 'sql-principals.ps1'), state=state,
+                               STAND_IN_ARGUMENTS=json.dumps(named), STAND_IN_SIGNATURE=signature,
+                               STAND_IN_LOG=str(self.signature_log), FAKE_SQLCMD=tool,
+                               FAKE_SQLCMD_LOG=str(self.tool_log), **(environment or {}))
 
     def verbs(self):
         return [' '.join(call[:4]) if call[:3] == ['sql', 'server', 'firewall-rule'] else ' '.join(call[:2])
                 for call in self.calls()]
 
+    def started(self, kind=None):
+        """Every start of the stand-in sqlcmd, or those of one kind: version, help, run, sign-in."""
+        if not self.tool_log.exists():
+            return []
+        entries = [json.loads(line) for line in self.tool_log.read_text(encoding='utf-8').splitlines()]
+        return [entry for entry in entries if kind in (None, entry['kind'])]
+
+    def in_order(self):
+        return self.sequence.read_text(encoding='utf-8').splitlines() if self.sequence.exists() else []
+
     def rules_left(self):
         return json.loads(self.rules.read_text(encoding='utf-8'))
 
-    def assert_no_password_left_the_file(self, result):
+    def assert_no_id_or_address_was_said(self, result):
         self.assertEqual(result.stdout, '', 'standard output must stay empty')
-        for value in self.PASSWORDS.values():
-            self.assertNotIn(value, result.stderr + self.log.read_text(encoding='utf-8'))
+        for value in [ADDRESS, *(value for identity in IDS.values() for value in identity.values())]:
+            self.assertNotIn(value, result.stderr)
 
 
 @unittest.skipUnless(PWSH, 'PowerShell 7 (pwsh) is not installed')
-class UsersScriptTests(UsersCase):
-    """sql-principals.ps1 up to the connection: the stand-in server name does not resolve, so no
-    database is ever reached, and every run ends non-zero for that reason alone. What these prove
-    is the order of the calls and what is said, never the exit code of a run that got further."""
+class UsersToolTests(UsersCase):
+    """What sql-principals.ps1 asks of the tool before it asks anything of Azure."""
 
-    def users(self, **options):
-        return self.run_script('sql-principals.ps1', '-ParameterFile', str(self.file), '-ConnectTimeout', '1',
-                               **options)
+    def assert_refused_before_azure(self, result, *said):
+        self.assertNotEqual(result.returncode, 0)
+        for text in said:
+            self.assertIn(text, self.said(result))
+        self.assertEqual(self.calls(), [], 'Azure is asked nothing')
+        self.assertEqual(self.started('run'), [])
+        self.assertEqual(result.stdout, '')
+
+    def test_the_tool_is_started_by_the_path_it_is_given_and_never_through_path(self):
+        # A sqlcmd that PATH would find first. It must never be started.
+        elsewhere = self.temp / 'on-path.log'
+        self.stand_in('shim', 'sqlcmd', f'open({str(elsewhere)!r}, "a").write("started\\n")\n')
+        result = self.users()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(elsewhere.exists(), 'the sqlcmd on PATH was started')
+        self.assertEqual([entry['kind'] for entry in self.started()], ['help', 'version', 'run'])
+        self.assertEqual(self.signature_log.read_text(encoding='utf-8-sig').splitlines(), [str(self.tool)])
+        script = (HERE / 'sql-principals.ps1').read_text(encoding='utf-8')
+        self.assertIn(r"[string]$SqlcmdPath = 'C:\Program Files\sqlcmd\sqlcmd.exe'", script)
+
+    def test_a_path_with_no_program_stops_the_run_before_azure_is_asked_anything(self):
+        result = self.users(SqlcmdPath=str(self.temp / 'nothing-here' / 'sqlcmd.exe'))
+        self.assert_refused_before_azure(result, 'There is no sqlcmd at', 'winget install --id Microsoft.Sqlcmd -e')
+        self.assertEqual(self.started(), [])
+
+    def test_the_odbc_sqlcmd_is_refused_as_the_tool(self):
+        result = self.users(tool='odbc')
+        self.assert_refused_before_azure(result, 'is not go-sqlcmd 1.10.0 or later', 'the older ODBC sqlcmd')
+
+    def test_a_go_sqlcmd_older_than_1_10_is_refused(self):
+        result = self.users(tool='old')
+        self.assert_refused_before_azure(result, 'is not go-sqlcmd 1.10.0 or later')
+
+    def test_a_tool_whose_help_does_not_name_the_method_is_refused_and_the_other_method_is_offered(self):
+        result = self.users(tool='no-azcli')
+        self.assert_refused_before_azure(result, 'does not name ActiveDirectoryAzCli',
+                                         '-AuthenticationMethod ActiveDirectoryDefault')
+        result = self.users(tool='no-azcli', AuthenticationMethod='ActiveDirectoryDefault')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        (run,) = self.started('run')
+        self.assertEqual(run['args'][run['args'].index('--authentication-method') + 1], 'ActiveDirectoryDefault')
+
+    def test_a_tool_that_microsoft_did_not_sign_is_refused(self):
+        for signature, said in (('unsigned', 'status NotSigned, signer not Microsoft'),
+                                ('altered', 'status HashMismatch, signer Microsoft'),
+                                ('someone-else', 'status Valid, signer not Microsoft')):
+            with self.subTest(signature=signature):
+                result = self.users(signature=signature)
+                self.assert_refused_before_azure(result, f'is not a valid Microsoft one ({said})')
+                self.assertEqual(self.started(), [], 'a program that is not trusted is not even asked its version')
+
+    def test_where_a_signature_cannot_be_checked_the_run_says_so_and_goes_on(self):
+        result = self.users(signature='not-checked')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('is not checked on this system', result.stderr)
+
+    @unittest.skipUnless(os.name == 'nt', 'Authenticode is the Windows half')
+    def test_on_windows_the_real_check_refuses_a_program_that_is_not_signed(self):
+        result = self.run_script('sql-principals.ps1', '-SqlcmdPath', str(self.tool),
+                                 FAKE_SQLCMD_LOG=str(self.tool_log))
+        self.assert_refused_before_azure(result)
+        # Measured on Windows 11: a .cmd file reads UnknownError, a program without a signature NotSigned.
+        self.assertRegex(self.said(result),
+                         r'is not a valid Microsoft one \(status (UnknownError|NotSigned), signer not Microsoft\)')
+        self.assertEqual(self.started(), [])
+
+    @unittest.skipIf(os.name == 'nt', 'elsewhere there is no Authenticode to read')
+    def test_off_windows_the_real_check_says_it_checked_nothing(self):
+        result = self.run_script('sql-principals.ps1', '-SqlcmdPath', str(self.tool),
+                                 FAKE_SQLCMD_LOG=str(self.tool_log))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('is not checked on this system', result.stderr)
+
+    def test_the_two_switches_that_do_not_go_together_are_refused_before_anything(self):
+        result = self.users(CreateForm='ExternalProvider', IdKind='ObjectId')
+        self.assert_refused_before_azure(result, 'goes with -IdKind ClientId only')
+        self.assertEqual(self.started(), [])
+
+    def test_the_odbc_road_is_taken_only_when_asked_and_runs_with_x1(self):
+        result = self.users(tool='odbc', OdbcSignInName='owner@example.invalid')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([entry['kind'] for entry in self.started()], ['help', 'run'])
+        (run,) = self.started('run')
+        self.assertEqual(run['args'][:run['args'].index('-i')],
+                         ['-S', 'tcp:azurebank-test.invalid,1433', '-d', 'AzureBank', '-l', '30', '-b', '-N',
+                          '-G', '-U', 'owner@example.invalid', '-X1'])
+        self.assertNotIn('--authentication-method', run['args'])
+        self.assertNotIn('owner@example.invalid', result.stderr)
+
+    def test_the_odbc_road_refuses_a_tool_that_is_not_the_odbc_one_and_a_name_that_is_not_a_sign_in_name(self):
+        result = self.users(OdbcSignInName='owner@example.invalid')
+        self.assert_refused_before_azure(result, 'is not the ODBC sqlcmd')
+        result = self.users(tool='odbc', OdbcSignInName='owner; x')
+        self.assert_refused_before_azure(result, 'the sign-in name of the account')
+
+
+@unittest.skipUnless(PWSH, 'PowerShell 7 (pwsh) is not installed')
+class UsersRunTests(UsersCase):
+    """sql-principals.ps1 from its first line to its last. The stand-in sqlcmd answers as the
+    server would, so here an exit code means something: what reaches sqlcmd, the life of the
+    temporary firewall rule, and what a failure leads to. What SQL Server does with the file is
+    checked on a real server (README.md)."""
+
+    def test_the_users_file_is_run_with_b_and_the_six_values_and_both_users_are_reported(self):
+        result = self.users()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        (run,) = self.started('run')
+        self.assertEqual(run['args'], [
+            '-S', 'tcp:azurebank-test.invalid,1433', '-d', 'AzureBank', '-l', '30', '-b', '-N', 'true',
+            '--authentication-method', 'ActiveDirectoryAzCli', '-i', str(HERE / 'sql-principals.sql'), '-v',
+            'AppClientId=11111111-aaaa-4bbb-8ccc-000000000001', 'AppObjectId=22222222-aaaa-4bbb-8ccc-000000000002',
+            'MigratorClientId=33333333-aaaa-4bbb-8ccc-000000000003',
+            'MigratorObjectId=44444444-aaaa-4bbb-8ccc-000000000004', 'IdKind=ClientId', 'CreateForm=Sid'])
+        self.assertEqual(self.verbs(), self.SWEEP + self.READS + self.LAST)
+        for line in BOTH_USERS:
+            self.assertIn(line, result.stderr)
+        self.assertIn('Firewall rules now: AllowAzureServices.', result.stderr)
+        self.assertEqual(self.rules_left(), ['AllowAzureServices'])
+        self.assert_no_id_or_address_was_said(result)
+        # No token is asked of the CLI, and nothing here holds a password.
+        self.assertNotIn('account get-access-token', self.verbs())
+        self.assertFalse(run['a value is in SQLCMDPASSWORD'])
+
+    def test_b_is_on_every_command_line_that_reaches_the_server(self):
+        # Without it sqlcmd exits 0 when the file stops on an error.
+        result = self.users(tool='refused:1,entra-only', ProveSqlSignInRefused=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        reaching = self.started('run') + self.started('sign-in')
+        self.assertEqual(len(reaching), 3)
+        for entry in reaching:
+            self.assertIn('-b', entry['args'], entry['kind'])
+            self.assertNotIn('-C', entry['args'], 'the certificate is checked')
+            self.assertIn('-N', entry['args'])
+
+    def test_the_switches_reach_the_file_as_its_two_variables(self):
+        result = self.users(IdKind='ObjectId')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.started('run')[0]['args'][-2:], ['IdKind=ObjectId', 'CreateForm=Sid'])
+        self.tool_log.unlink()
+        result = self.users(CreateForm='ExternalProvider')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.started('run')[0]['args'][-2:], ['IdKind=ClientId', 'CreateForm=ExternalProvider'])
+
+    def test_the_variables_the_runner_passes_are_the_ones_the_file_takes(self):
+        self.assertEqual(self.users().returncode, 0)
+        passed = [argument.split('=')[0] for argument in self.started('run')[0]['args'][-6:]]
+        sql = (HERE / 'sql-principals.sql').read_text(encoding='utf-8')
+        self.assertEqual(passed, VARIABLES)
+        self.assertEqual(sorted(set(re.findall(r'\$\((\w+)\)', sql))), sorted(VARIABLES))
+
+    def test_an_id_followed_by_a_quote_and_a_statement_never_reaches_sqlcmd(self):
+        injected = "11111111-aaaa-4bbb-8ccc-000000000001'; ALTER ROLE db_owner ADD MEMBER [someone]; --"
+        for field in ('clientId', 'principalId'):
+            for identity in IDS:
+                with self.subTest(identity=identity, field=field):
+                    self.tool_log.unlink(missing_ok=True)
+                    ids = json.loads(json.dumps(IDS))
+                    ids[identity][field] = injected
+                    result = self.users(environment={'FAKE_AZ_IDS': json.dumps(ids)})
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('is not an ID. Nothing was run.', self.said(result))
+                    self.assertEqual(self.started('run'), [])
+                    self.assertNotIn('ALTER ROLE', self.tool_log.read_text(encoding='utf-8'))
+                    self.assertEqual(self.verbs()[-1], 'sql server firewall-rule list', 'the list is still read')
+
+    def test_an_id_followed_by_a_newline_reaches_sqlcmd_as_the_id_alone(self):
+        # A pattern with ^ and $ lets this one through as it is. Parsed and printed again, it is the ID.
+        ids = json.loads(json.dumps(IDS))
+        ids['azurebank-app']['clientId'] = '11111111-AAAA-4BBB-8CCC-000000000001\n'
+        ids['azurebank-migrate']['principalId'] = ' 44444444-aaaa-4bbb-8ccc-000000000004\n'
+        result = self.users(environment={'FAKE_AZ_IDS': json.dumps(ids)})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        arguments = self.started('run')[0]['args']
+        self.assertIn('AppClientId=11111111-aaaa-4bbb-8ccc-000000000001', arguments)
+        self.assertIn('MigratorObjectId=44444444-aaaa-4bbb-8ccc-000000000004', arguments)
+        self.assertEqual([argument for argument in arguments if re.search(r'\s', argument)], [])
+
+    def test_an_id_that_is_all_zeros_or_missing_is_not_an_id(self):
+        for value in ('00000000-0000-0000-0000-000000000000', '', None):
+            with self.subTest(value=value):
+                self.tool_log.unlink(missing_ok=True)
+                ids = json.loads(json.dumps(IDS))
+                ids['azurebank-migrate']['clientId'] = value
+                result = self.users(environment={'FAKE_AZ_IDS': json.dumps(ids)})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.started('run'), [])
+
+    def test_what_sqlcmd_would_read_from_the_environment_is_cleared_first(self):
+        # sqlcmd takes a scripting variable from the environment, and a user name, a password and
+        # a start-up script too.
+        planted = {name: "x'; DROP USER [azurebank_app]; --" for name in VARIABLES}
+        planted.update(SQLCMDUSER='someone', SQLCMDPASSWORD='not-a-real-value', SQLCMDINI='C:\\\\start.sql')
+        result = self.users(environment=planted)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for entry in self.started():
+            self.assertEqual(set(entry['variables'].values()), {None}, entry['kind'])
+            self.assertFalse(entry['a value is in SQLCMDPASSWORD'], entry['kind'])
 
     def test_a_rule_left_by_an_earlier_run_is_deleted_before_anything_else(self):
         self.rules.write_text(json.dumps(['AllowAzureServices', RULE]), encoding='utf-8')
         result = self.users()
-        self.assertNotEqual(result.returncode, 0, 'the stand-in server cannot be reached')
-        self.assertEqual(self.verbs(), ['sql server', 'sql server firewall-rule list', 'sql server firewall-rule delete',
-                                        'account get-access-token', 'sql server firewall-rule list'])
-        self.assertEqual(json.loads(self.rules.read_text(encoding='utf-8')), ['AllowAzureServices'])
-        self.assertIn('Firewall rules now: AllowAzureServices.', result.stderr)
-        self.assert_no_password_left_the_file(result)
-
-    def test_without_a_leftover_nothing_is_deleted_and_the_list_is_read_at_the_end(self):
-        result = self.users()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(self.verbs(), ['sql server', 'sql server firewall-rule list', 'account get-access-token',
-                                        'sql server firewall-rule list'])
-        self.assertIn('Could not connect to the database', result.stderr)
-        self.assertIn('Firewall rules now: AllowAzureServices.', result.stderr)
-        self.assert_no_password_left_the_file(result)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.verbs(), self.SWEEP + ['sql server firewall-rule delete'] + self.READS + self.LAST)
+        self.assertLess(self.in_order().index('az sql server firewall-rule delete'), self.in_order().index('sqlcmd run'))
+        self.assertEqual(self.rules_left(), ['AllowAzureServices'])
+        self.assertIn('was left by an earlier run', result.stderr)
 
     def test_a_leftover_rule_that_cannot_be_deleted_stops_the_run_and_prints_the_command(self):
         self.rules.write_text(json.dumps(['AllowAzureServices', RULE]), encoding='utf-8')
@@ -508,9 +778,9 @@ class UsersScriptTests(UsersCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('it may still be there', result.stderr)
         self.assertIn(self.BY_HAND, result.stderr)
-        verbs = self.verbs()
-        self.assertNotIn('account get-access-token', verbs, 'nothing else is done with the rule in place')
-        self.assertEqual(verbs[-1], 'sql server firewall-rule list', 'the list is still read')
+        self.assertNotIn('identity show', self.verbs(), 'nothing else is done with the rule in place')
+        self.assertEqual(self.started('run'), [])
+        self.assertEqual(self.verbs()[-1], 'sql server firewall-rule list', 'the list is still read')
         self.assertIn(f'Firewall rules now: AllowAzureServices, {RULE}.', result.stderr)
         self.assertIn(f'The temporary rule {RULE} is still there.', self.said(result))
 
@@ -520,85 +790,98 @@ class UsersScriptTests(UsersCase):
         self.assertIn('could not be read back', result.stderr)
         self.assertNotIn('Firewall rules now', result.stderr)
 
-    def test_without_a_parameter_file_azure_is_asked_nothing(self):
-        self.file.unlink()
-        result = self.users()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(self.calls(), [])
-
-    def test_the_sql_takes_its_passwords_as_bound_parameters_only(self):
-        sql = (HERE / 'sql-principals.sql').read_text(encoding='utf-8')
-        runner = (HERE / 'sql-principals.ps1').read_text(encoding='utf-8')
-        for name in ('@AppPassword', '@MigratorPassword'):
-            self.assertIn(name, sql)
-            self.assertIn(f"Parameters.Add('{name}'", runner)
-        self.assertNotIn('$(', sql, 'no client-side substitution')
-        self.assertIn("DB_NAME() <> N'AzureBank'", sql)
-
-
-@unittest.skipUnless(PWSH, 'PowerShell 7 (pwsh) is not installed')
-class UsersRunTests(UsersCase):
-    """sql-principals.ps1 from its first line to its last, with a stand-in where the database is
-    (STAND_IN_DATABASE above). These are the runs that get past the connection, so here an exit
-    code means something: the life of the temporary firewall rule, and what a failed delete leads
-    to. What SQL Server does with the statement is checked on a real server (README.md)."""
-
-    def setUp(self):
-        super().setUp()
-        self.harness = self.temp / 'with-a-stand-in-database.ps1'
-        self.harness.write_text(STAND_IN_DATABASE, encoding='utf-8')
-        self.statement = self.temp / 'statement.json'
-        self.openings = self.temp / 'database.log'
-
-    def users(self, database, **options):
-        return self.run_script(self.harness, '-Script', str(HERE / 'sql-principals.ps1'),
-                               '-ParameterFile', str(self.file), STAND_IN_DATABASE=database,
-                               STAND_IN_STATEMENT=str(self.statement), STAND_IN_LOG=str(self.openings), **options)
-
-    def opened(self):
-        return self.openings.read_text(encoding='utf-8-sig').splitlines()
-
     def test_a_refused_address_is_allowed_for_the_run_and_the_rule_is_gone_at_the_end(self):
-        result = self.users('refused')
+        result = self.users(tool='refused:1')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.verbs(), ['sql server', 'sql server firewall-rule list', 'account get-access-token',
-                                        'sql server firewall-rule create', 'sql server firewall-rule delete',
-                                        'sql server firewall-rule list'])
+        self.assertEqual(self.in_order(), [
+            'sqlcmd help', 'sqlcmd version', 'az sql server', 'az sql server firewall-rule list',
+            'az identity show', 'az identity show', 'sqlcmd run', 'az sql server firewall-rule create',
+            'sqlcmd run', 'az sql server firewall-rule delete', 'az sql server firewall-rule list'])
         create = next(call for call in self.calls() if call[:4] == ['sql', 'server', 'firewall-rule', 'create'])
         self.assertEqual([create[create.index(flag) + 1]
                           for flag in ('--name', '--start-ip-address', '--end-ip-address')], [RULE, ADDRESS, ADDRESS])
         self.assertEqual(self.rules_left(), ['AllowAzureServices'])
-        self.assertEqual(self.opened(), ['open with not-a-token', 'open with not-a-token', 'dispose'])
-        self.assertIn('azurebank_app: db_datareader, db_datawriter', result.stderr)
-        self.assertIn('azurebank_migrator: db_datareader, db_datawriter, db_ddladmin', result.stderr)
+        self.assertEqual(self.started('run')[0]['args'], self.started('run')[1]['args'])
+        for line in BOTH_USERS:
+            self.assertIn(line, result.stderr)
         self.assertIn('Firewall rules now: AllowAzureServices.', result.stderr)
-        self.assertNotIn(ADDRESS, result.stderr, 'the report holds no address')
-        self.assert_no_password_left_the_file(result)
+        self.assert_no_id_or_address_was_said(result)
 
-    def test_an_address_that_is_already_allowed_adds_no_rule_and_deletes_none(self):
-        result = self.users('open')
+    def test_only_the_firewalls_own_refusal_is_waited_out(self):
+        result = self.users(tool='refused:3')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.verbs(), ['sql server', 'sql server firewall-rule list', 'account get-access-token',
-                                        'sql server firewall-rule list'])
-        self.assertEqual(self.opened(), ['open with not-a-token', 'dispose'])
+        self.assertEqual(len(self.started('run')), 4, 'the rule takes a while: refused, refused, refused, let in')
+        self.assertEqual(self.verbs().count('sql server firewall-rule create'), 1)
+        self.assertEqual(self.rules_left(), ['AllowAzureServices'])
 
-    def test_the_statement_is_the_sql_file_with_both_passwords_bound_as_parameters(self):
-        result = self.users('open')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        statement = json.loads(self.statement.read_text(encoding='utf-8-sig'))
-        self.assertEqual(statement['text'].replace('\r\n', '\n'),
-                         (HERE / 'sql-principals.sql').read_text(encoding='utf-8'))
-        self.assertEqual(statement['parameters'], {
-            '@AppPassword': {'type': 'NVarChar', 'size': 4000, 'value': self.PASSWORDS['appSqlPassword']},
-            '@MigratorPassword': {'type': 'NVarChar', 'size': 4000, 'value': self.PASSWORDS['migratorSqlPassword']}})
-        for value in self.PASSWORDS.values():
-            self.assertNotIn(value, statement['text'])
-        self.assert_no_password_left_the_file(result)
+    def test_a_failure_after_the_rule_is_in_ends_the_run_at_once(self):
+        result = self.users(tool='refused:1,fails-after-the-refusals', WaitSeconds=5)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(self.started('run')), 2, 'an error of the file is not tried again')
+        self.assertNotIn('still refused', result.stderr)
+        self.assertIn('Msg 50004', result.stderr)
+        self.assertIn('Unknown user: [someone] SQL_USER', result.stderr)
+        self.assertIn('sqlcmd exited 1', self.said(result))
+        self.assertEqual(self.verbs()[-2:], ['sql server firewall-rule delete', 'sql server firewall-rule list'])
+        self.assertEqual(self.rules_left(), ['AllowAzureServices'])
+
+    def test_a_server_that_keeps_refusing_ends_the_run_at_the_deadline_and_the_rule_is_removed(self):
+        # Twelve refusals are more than two seconds of waiting can see the end of.
+        result = self.users(tool='refused:12', WaitSeconds=2)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('still refused this address 2 seconds after the rule was added', self.said(result))
+        self.assertIn(len(self.started('run')), (3, 4, 5))
+        self.assertEqual(self.verbs()[-2:], ['sql server firewall-rule delete', 'sql server firewall-rule list'])
+        self.assertEqual(self.rules_left(), ['AllowAzureServices'])
+        self.assertNotIn(ADDRESS, result.stderr)
+
+    def test_a_refusal_that_names_no_ipv4_address_opens_nothing_and_prints_the_command_to_run_by_hand(self):
+        # What reaches az is an address parsed and printed again, or nothing: not an IPv6 address,
+        # not one a parser reads as another (a leading zero is octal), not an address and more.
+        for named in ('2001:db8::7', '010.0.113.7', '203.0.113.7 ; x', 'unknown'):
+            with self.subTest(named=named):
+                self.log.unlink(missing_ok=True)
+                self.tool_log.unlink(missing_ok=True)
+                result = self.users(tool='refused:1', environment={'FAKE_SQLCMD_NAMES': named})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn('sql server firewall-rule create', self.verbs())
+                self.assertEqual(len(self.started('run')), 1)
+                self.assertIn('The address to allow could not be read from the refusal', self.said(result))
+                # By hand, under a name of its own: the sweep of the next run would delete the rule otherwise.
+                self.assertIn(f'--name {RULE}-by-hand --start-ip-address <address> --end-ip-address <address>',
+                              result.stderr)
+                self.assertIn(f'firewall-rule delete --resource-group azurebank-demo --server azurebank-test '
+                              f'--name {RULE}-by-hand', result.stderr)
+                self.assertEqual(self.verbs()[-1], 'sql server firewall-rule list')
+
+    def test_any_other_failure_opens_no_firewall_and_is_reported_without_an_address(self):
+        result = self.users(tool='login-failed')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(self.started('run')), 1)
+        self.assertIn("Client with IP address '<address>'.", result.stderr)
+        self.assertNotIn(ADDRESS, result.stderr)
+        self.assertNotIn('sql server firewall-rule create', self.verbs())
+        self.assertEqual(self.rules_left(), ['AllowAzureServices'])
+
+    def test_a_database_the_file_refuses_stops_the_run_and_nothing_is_tried_again(self):
+        result = self.users(tool='tampered')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(self.started('run')), 1)
+        self.assertIn('Msg 50003', result.stderr)
+        self.assertIn('Code found: [planted]', result.stderr)
+        self.assertIn('run nothing else as administrator in this database', self.said(result))
+
+    def test_an_exit_of_zero_without_both_users_is_not_a_pass(self):
+        for behaviour in ('silent', 'wrong-roles'):
+            with self.subTest(behaviour=behaviour):
+                result = self.users(tool=behaviour)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('that is not a pass', self.said(result))
 
     def test_a_delete_that_fails_at_the_end_exits_non_zero_though_the_users_were_made(self):
-        result = self.users('refused', state='delete-fails')
+        result = self.users(tool='refused:1', state='delete-fails')
         self.assertNotEqual(result.returncode, 0, 'a rule left behind is never a success')
-        self.assertIn('azurebank_migrator: db_datareader, db_datawriter, db_ddladmin', result.stderr)
+        self.assertIn(BOTH_USERS[1], result.stderr)
         self.assertIn('it may still be there', result.stderr)
         self.assertIn(self.BY_HAND, result.stderr)
         self.assertEqual(self.verbs()[-2:], ['sql server firewall-rule delete', 'sql server firewall-rule list'])
@@ -607,38 +890,166 @@ class UsersRunTests(UsersCase):
         self.assertNotIn(ADDRESS, result.stderr)
 
     def test_a_delete_that_reports_a_failure_exits_non_zero_even_when_the_list_is_clean(self):
-        result = self.users('refused', state='delete-says-it-failed')
+        result = self.users(tool='refused:1', state='delete-says-it-failed')
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.rules_left(), ['AllowAzureServices'])
         self.assertIn('Firewall rules now: AllowAzureServices.', result.stderr)
         self.assertIn(self.BY_HAND, result.stderr)
         self.assertIn('run the delete by hand to be sure', self.said(result))
 
-    def test_a_statement_that_fails_still_removes_the_rule(self):
-        result = self.users('refused,statement-fails')
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('The statement was refused by the stand-in.', self.said(result))
-        self.assertEqual(self.verbs()[-2:], ['sql server firewall-rule delete', 'sql server firewall-rule list'])
-        self.assertEqual(self.rules_left(), ['AllowAzureServices'])
-        self.assertEqual(self.opened()[-1], 'dispose')
-        self.assertIn('Firewall rules now: AllowAzureServices.', result.stderr)
+    def test_the_sql_sign_in_is_tried_while_the_firewall_is_open_and_passes_only_on_the_entra_only_reason(self):
+        result = self.users(tool='refused:1,entra-only', ProveSqlSignInRefused=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        order = self.in_order()
+        self.assertEqual(order[-5:], ['az sql server firewall-rule create', 'sqlcmd run', 'sqlcmd sign-in',
+                                      'az sql server firewall-rule delete', 'az sql server firewall-rule list'])
+        (attempt,) = self.started('sign-in')
+        self.assertEqual(attempt['args'][:9], ['-S', 'tcp:azurebank-test.invalid,1433', '-d', 'AzureBank', '-l', '30',
+                                               '-b', '-N', 'true'])
+        self.assertEqual(attempt['args'][9:12], ['--authentication-method', 'SqlPassword', '-U'])
+        self.assertRegex(attempt['args'][12], r'^nobody_[0-9a-f]{12}$')
+        self.assertEqual(attempt['args'][13:], ['-Q', 'SELECT 1'])
+        # The made-up value travels in the tool's own variable, for that one start and no other:
+        # the two az calls after it, in the order above, were not handed it.
+        self.assertTrue(attempt['a value is in SQLCMDPASSWORD'])
+        self.assertNotIn('-P', attempt['args'])
+        self.assertEqual([entry['a value is in SQLCMDPASSWORD'] for entry in self.started('run')], [False, False])
+        self.assertIn('Proved: a SQL sign-in is refused', result.stderr)
+        self.assertIn('Reason: Azure Active Directory only authentication is enabled.', result.stderr)
+        self.assert_no_id_or_address_was_said(result)
 
-    def test_roles_other_than_the_expected_ones_stop_the_run_and_the_rule_is_still_removed(self):
-        result = self.users('refused,wrong-roles')
+    def test_a_refusal_for_any_other_reason_proves_nothing_and_the_run_says_so(self):
+        result = self.users(tool='refused:1', ProveSqlSignInRefused=True)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('azurebank_app should hold [db_datareader, db_datawriter] and holds [db_owner].',
-                      self.said(result))
+        self.assertIn('Not proven', result.stderr)
+        self.assertIn('was asked for and not proven', self.said(result))
+        self.assertIn(BOTH_USERS[0], result.stderr, 'the users were made all the same')
         self.assertEqual(self.rules_left(), ['AllowAzureServices'])
+        self.assertNotIn('Proved', result.stderr)
 
-    def test_only_the_firewalls_own_refusal_opens_the_firewall_and_any_other_is_reported_without_an_address(self):
-        result = self.users('login-failed')
+    def test_a_sql_sign_in_that_is_let_in_is_a_failure(self):
+        result = self.users(tool='let-in', ProveSqlSignInRefused=True)
         self.assertNotEqual(result.returncode, 0)
-        said = self.said(result)
-        self.assertIn('Could not connect to the database', said)
-        self.assertIn("Client with IP address '<address>'.", said)
-        self.assertNotIn(ADDRESS, result.stderr)
-        self.assertNotIn('sql server firewall-rule create', self.verbs())
-        self.assertEqual(self.rules_left(), ['AllowAzureServices'])
+        self.assertIn('was let in', self.said(result))
+
+    def test_without_the_switch_no_sql_sign_in_is_tried(self):
+        self.assertEqual(self.users(tool='entra-only').returncode, 0)
+        self.assertEqual(self.started('sign-in'), [])
+
+
+class UsersFileTests(unittest.TestCase):
+    """sql-principals.sql, read as text. No engine runs here: these keep each guard where it is, in
+    the order that makes it a guard. What the guards do is run on a real engine (README.md)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sql = (HERE / 'sql-principals.sql').read_text(encoding='utf-8').replace('\r\n', '\n')
+        # The statements alone: a comment may name what a statement must not do.
+        cls.code = '\n'.join(line for line in cls.sql.split('\n') if not line.lstrip().startswith('--'))
+        cls.changing = re.compile(r'\b(DROP|CREATE|ALTER|EXEC|GRANT|DENY|REVOKE|INSERT|UPDATE|DELETE)\b')
+
+    def at(self, text, after=0):
+        position = self.code.find(text, after)
+        self.assertNotEqual(position, -1, f'not in the file: {text}')
+        return position
+
+    def test_it_is_one_batch_and_sqlcmd_only_fills_in_six_values(self):
+        lines = [line.strip() for line in self.code.split('\n')]
+        self.assertEqual([line for line in lines if line.upper() == 'GO' or line.startswith((':', '!!'))], [])
+        self.assertEqual(re.findall(r'\$\((\w+)\)', self.code),
+                         ['AppClientId', 'AppObjectId', 'MigratorClientId', 'MigratorObjectId', 'IdKind', 'CreateForm'])
+        # Each lands in a typed variable, and the text sqlcmd put in is used nowhere else.
+        for line in self.code.split('\n'):
+            if '$(' in line:
+                self.assertRegex(line, r"^DECLARE @\w+ (uniqueidentifier = '\$\(\w+\)'|nvarchar\(20\) = N'\$\(\w+\)');$")
+        for word in ('password', 'pwd', 'token'):
+            self.assertNotIn(word, self.code.lower())
+
+    def test_it_refuses_any_database_but_azurebank_before_it_reads_a_value(self):
+        self.assertLess(self.at("IF DB_NAME() <> N'AzureBank'\n    THROW 50000,"), self.at('$('))
+        self.assertLess(self.at('SET XACT_ABORT ON;'), self.at('IF DB_NAME()'))
+
+    def test_it_refuses_a_database_that_holds_code_before_any_statement_that_could_fire_a_trigger(self):
+        begin, refusal = self.at('BEGIN TRANSACTION;'), self.at('THROW 50003,')
+        self.assertLess(begin, refusal)
+        before = self.code[begin + len('BEGIN TRANSACTION;'):refusal]
+        # Every trigger and every other module: one SELECT, and the refusal hangs on its answer alone.
+        self.assertEqual(before.strip().split('\n'), [
+            "SET @found = (SELECT STRING_AGG(CONVERT(nvarchar(max), ISNULL(QUOTENAME(code.name), N'(no name)')), N', ')",
+            '              FROM (SELECT name FROM sys.triggers',
+            '                    UNION ALL',
+            '                    SELECT OBJECT_NAME(object_id) FROM sys.sql_modules',
+            '                    WHERE object_id NOT IN (SELECT object_id FROM sys.triggers)) AS code);',
+            'IF @found IS NOT NULL',
+            'BEGIN',
+            "    PRINT N'Code found: ' + LEFT(@found, 3500);"])
+        self.assertEqual(self.changing.findall(self.code[:begin]), [], 'and nothing changes before it')
+        # The same question is asked again before the commit.
+        self.assertEqual(self.code.count('\n'.join(before.strip().split('\n')[:6])), 2)
+
+    def test_everything_that_can_hold_a_right_is_listed_before_the_commit(self):
+        last_change = max(match.start() for match in self.changing.finditer(self.code))
+        refusal, commit = self.at('THROW 50004, @bad, 1;'), self.at('COMMIT TRANSACTION;')
+        self.assertLess(last_change, refusal)
+        self.assertLess(refusal, commit)
+        self.assertEqual(self.code.count('COMMIT'), 1)
+        lists = self.code[last_change:refusal]
+        self.assertEqual(re.findall(r"SET @bad \+= N'([^']+)';", lists),
+                         ['code; ', 'unknown user; ', 'unknown role; ', 'unknown role member; ',
+                          'our role memberships are not five; ', 'unknown permission; ', 'schema owned by a user; '])
+        for view in ('sys.triggers', 'sys.sql_modules', 'sys.database_principals', 'sys.database_role_members',
+                     'sys.database_permissions', 'sys.schemas'):
+            self.assertIn(f'FROM {view}', lists)
+        self.assertIn("IF @bad <> N''\nBEGIN\n    SET @bad = N'Not committed: ' + @bad;\n    THROW 50004, @bad, 1;\nEND",
+                      self.code)
+
+    def test_every_user_is_compared_by_name_and_by_stored_id_together(self):
+        self.assertIn(
+            "WHERE principal_id > 4 AND type <> 'R'\n"
+            "                AND NOT (type = 'E' AND ((name = N'azurebank_app' AND sid = @AppSid)\n"
+            "                                      OR (name = N'azurebank_migrator' AND sid = @MigratorSid))));",
+            self.code)
+        # The stored ID is built from a typed value, in the byte order the server stores.
+        for user, prefix in (('App', 'App'), ('Migrator', 'Migrator')):
+            self.assertIn(f"DECLARE @{user}Sid varbinary(16) = CONVERT(varbinary(16), "
+                          f"IIF(@IdKind = N'ObjectId', @{prefix}ObjectId, @{prefix}ClientId));", self.code)
+
+    def test_every_role_membership_is_compared_db_owner_included(self):
+        self.assertIn(
+            "WHERE NOT ((m.member_principal_id = 1 AND USER_NAME(m.role_principal_id) = N'db_owner')\n"
+            "                      OR (USER_NAME(m.member_principal_id) = N'azurebank_app'\n"
+            "                          AND USER_NAME(m.role_principal_id) IN (N'db_datareader', N'db_datawriter'))\n"
+            "                      OR (USER_NAME(m.member_principal_id) = N'azurebank_migrator'\n"
+            "                          AND USER_NAME(m.role_principal_id) IN (N'db_datareader', N'db_datawriter', "
+            "N'db_ddladmin'))));", self.code)
+        self.assertIn('IF (SELECT COUNT(*) FROM sys.database_role_members WHERE member_principal_id > 4) <> 5',
+                      self.code)
+
+    def test_the_roles_it_gives_are_the_five_and_no_other(self):
+        self.assertEqual(sorted(re.findall(r'ALTER ROLE \[(\w+)\] ADD MEMBER \[(\w+)\];', self.code)),
+                         [('db_datareader', 'azurebank_app'), ('db_datareader', 'azurebank_migrator'),
+                          ('db_datawriter', 'azurebank_app'), ('db_datawriter', 'azurebank_migrator'),
+                          ('db_ddladmin', 'azurebank_migrator')])
+        self.assertEqual(self.code.count('ALTER ROLE'), 5)
+        self.assertEqual(self.code.count('GRANT'), 0)
+
+    def test_both_forms_of_create_user_are_built_from_typed_values_only(self):
+        for user, variable in (('azurebank_app', 'App'), ('azurebank_migrator', 'Migrator')):
+            self.assertIn(f"N'CREATE USER [{user}] WITH SID = ' + CONVERT(nvarchar(34), @{variable}Sid, 1) "
+                          "+ N', TYPE = E;',", self.code)
+            self.assertIn(f"N'CREATE USER [{user}] FROM EXTERNAL PROVIDER WITH OBJECT_ID = ''' + "
+                          f"CONVERT(nvarchar(36), @{variable}ObjectId) + N''';');", self.code)
+        self.assertEqual(self.code.count('CREATE USER'), 4)
+        self.assertEqual(self.code.count('EXEC (@statement);'), 2)
+
+    def test_what_the_runner_waits_for_is_printed_after_the_commit_and_holds_no_id(self):
+        after = self.code[self.at('COMMIT TRANSACTION;'):]
+        self.assertEqual(self.changing.findall(after), [], 'nothing changes after the commit')
+        self.assertEqual(after.count("; ID as asked: ' + @asked;"), 2)
+        self.assertNotIn('ID as asked', self.code[:self.at('COMMIT TRANSACTION;')])
+        for line in self.code.split('\n'):
+            if 'PRINT' in line:
+                self.assertNotRegex(line, r'@\w*(Sid|ClientId|ObjectId)\b')
 
 
 @unittest.skipUnless(PWSH, 'PowerShell 7 (pwsh) is not installed')
