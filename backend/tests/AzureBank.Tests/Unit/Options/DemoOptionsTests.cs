@@ -131,6 +131,83 @@ public class DemoOptionsTests
         Validated(largest).Succeeded.Should().BeTrue(because: Validated(largest).FailureMessage);
     }
 
+    [Theory]
+    [InlineData(
+        "Demo:CopyLifetimeHours", "169", "Demo:Pool:TargetFree", "50",
+        "Demo:CopyLifetimeHours must be between 1 and 168, and is 169.")]
+    [InlineData(
+        "Demo:Pool:TargetFree", "10", "Demo:Pool:LowMark", "11",
+        "Demo:Pool:LowMark must be between 0 and Demo:Pool:TargetFree (10), and is 11.")]
+    [InlineData(
+        "Demo:Pool:TargetFree", "50", "Demo:Pool:MaxClaimsPerDay", "49",
+        "Demo:Pool:MaxClaimsPerDay must be between Demo:Pool:TargetFree (50) and 10000, and is 49.")]
+    public void ARefusal_SaysTheRange_AndTheValueItFound(
+        string firstKey, string firstValue, string secondKey, string secondValue, string expected)
+    {
+        var result = Validated(Bound((firstKey, firstValue), (secondKey, secondValue)));
+
+        result.FailureMessage.Should().Be(expected);
+    }
+
+    [Fact]
+    public void WhenSeveralSettingsAreWrong_OneRefusalNamesThemAll()
+    {
+        // An operator who fixes one setting and starts again should not meet the next one.
+        var result = Validated(Bound(
+            ("Demo:CopyLifetimeHours", "0"),
+            ("Demo:Pool:MaxFreeAgeHours", "721"),
+            ("Demo:Copy:MaxWrites", "9")));
+
+        result.Failures.Should().HaveCount(3);
+        result.FailureMessage.Should()
+            .Contain("Demo:CopyLifetimeHours").And.Contain("Demo:Pool:MaxFreeAgeHours").And.Contain("Demo:Copy:MaxWrites");
+    }
+
+    /// <summary>
+    /// Code that sets a whole section to null is refused with a message that names that section and
+    /// no other, where reading it would throw a <see cref="NullReferenceException"/> that names
+    /// nothing.
+    /// </summary>
+    /// <remarks>
+    /// Set in code, because configuration does not get there: a JSON <c>"Pool": null</c> leaves the
+    /// section as it was created (the control at the end).
+    /// </remarks>
+    [Theory]
+    [InlineData("Pool")]
+    [InlineData("Claim")]
+    [InlineData("Copy")]
+    public void ASectionSetToNull_IsRefusedByName(string section)
+    {
+        var options = new DemoOptions();
+        switch (section)
+        {
+            case "Pool": options.Pool = null!; break;
+            case "Claim": options.Claim = null!; break;
+            default: options.Copy = null!; break;
+        }
+
+        var validating = () => Validated(options);
+
+        var result = validating.Should().NotThrow().Subject;
+        result.Failed.Should().BeTrue();
+        result.FailureMessage.Should().Be(
+            $"Demo:{section} must not be null.", "the two sections that are in place are not named");
+
+        // CONTROL: the same section set to null in JSON binds to the defaults, and is accepted.
+        using var json = new MemoryStream(System.Text.Encoding.UTF8.GetBytes($$"""{ "Demo": { "{{section}}": null } }"""));
+        var bound = new ConfigurationBuilder().AddJsonStream(json).Build()
+            .GetSection(DemoOptions.SectionName).Get<DemoOptions>() ?? new DemoOptions();
+        Validated(bound).Succeeded.Should().BeTrue();
+    }
+
+    [Fact]
+    public void WhenSeveralSectionsAreNull_OneRefusalNamesEachOfThem()
+    {
+        var result = Validated(new DemoOptions { Pool = null!, Copy = null! });
+
+        result.Failures.Should().Equal("Demo:Pool must not be null.", "Demo:Copy must not be null.");
+    }
+
     // ── The Seeder's own root ────────────────────────────────────────────────────────────────────
 
     /*

@@ -80,6 +80,14 @@ public static class ServiceCollectionExtensions
         // Register orchestrator
         services.AddScoped<SeederOrchestrator>();
 
+        // The demo's settings, validated with the PIN pepper above before any command runs. This
+        // CLI never starts the host, so .ValidateOnStart() fires only when the start-up validator
+        // is run by hand.
+        services.AddOptions<DemoOptions>()
+            .Bind(configuration.GetSection(DemoOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<DemoOptions>, DemoOptionsValidator>();
+
         // The demo pool: what `seed-pool` and `recycle` run.
         services.AddScoped<DemoCopyBuilder>();
         services.AddScoped<DemoCopyRecycler>();
