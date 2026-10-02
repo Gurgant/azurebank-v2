@@ -328,6 +328,22 @@ class AzTests(unittest.TestCase):
         self.assertNotRegex(message, r'[0-9a-f]{8}-[0-9a-f]{4}-')
 
     @patch('deploy.subprocess.run')
+    def test_a_failure_shows_no_address(self, run):
+        run.return_value = subprocess.CompletedProcess(
+            [], 1, stdout='', stderr="Bad Request: the caller at 203.0.113.7 was refused; retry from 10.0.0.12:443.")
+        with self.assertRaises(deploy.AzError) as raised:
+            deploy.az('rest', '--method', 'GET')
+        self.assertEqual(str(raised.exception),
+                         'Bad Request: the caller at <address> was refused; retry from <address>:443.')
+
+    def test_what_is_hidden_is_an_id_and_an_address_and_nothing_that_only_looks_alike(self):
+        self.assertEqual(deploy.redact(' api-version 2025-01-01, 0.25 vCPU, sdk:10.0, 1.2.3 '),
+                         'api-version 2025-01-01, 0.25 vCPU, sdk:10.0, 1.2.3')
+        self.assertEqual(deploy.redact('at 198.51.100.254, id AAAAAAAA-1111-4222-8333-444444444444'),
+                         'at <address>, id <id>')
+        self.assertEqual(deploy.redact(None), '')
+
+    @patch('deploy.subprocess.run')
     def test_an_empty_answer_is_an_empty_object(self, run):
         run.return_value = subprocess.CompletedProcess([], 0, stdout='  ', stderr='')
         self.assertEqual(deploy.az('rest'), {})
@@ -1282,6 +1298,17 @@ class GateTests(DeployCase):
         self.azure.drift_app_on_patch = lambda template: template['scale'].update(maxReplicas=5)
         with self.assertRaisesRegex(deploy.ShapeError, 'after the put-back'):
             self.deploy()
+
+    def test_a_diagnosis_shows_no_address(self):
+        # A replica's state is Azure's own text, and it may name where the replica runs.
+        self.azure.fate['d'] = 'never'
+        self.azure.replicas[0]['properties']['containers'][0]['runningStateDetails'] = (
+            'Readiness probe failed: dial tcp 10.250.0.47:8080: connection refused')
+        with self.assertRaisesRegex(RuntimeError, f'put back to {OLD}'):
+            self.deploy()
+        self.assertIn('Waiting (Readiness probe failed: dial tcp <address>:8080: connection refused)',
+                      self.printed())
+        self.assertNotIn('10.250.0.47', self.printed())
 
     def test_a_diagnosis_azure_refuses_does_not_hide_the_failure(self):
         self.azure.fate['d'] = 'never'

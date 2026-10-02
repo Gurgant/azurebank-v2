@@ -71,6 +71,7 @@ FAILED = {'Failed', 'Stopped', 'Degraded'}
 FINISHED = FAILED | {'Succeeded'}
 STATUSES = ACTIVE | FINISHED | {'Unknown'}
 GUID = re.compile(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}')
+IPV4 = re.compile(r'\b\d{1,3}(?:\.\d{1,3}){3}\b')
 # The shape of an execution's name. A name of any other shape is never printed.
 EXECUTION_NAME = re.compile(r'[A-Za-z0-9-]{1,100}')
 # What the tools image exits with (backend/tools/AzureBank.Seeder/Commands/ExitCodes.cs).
@@ -119,7 +120,10 @@ class SmokeUnproven(RuntimeError):
 
 
 def redact(text):
-    return GUID.sub('<id>', text or '').strip()[:2000]
+    """What Azure wrote, as a log that anybody can read may show it: an ID becomes <id>, and what
+    is shaped like an IPv4 address becomes <address>. The name of a host is not looked for: no
+    answer printed here is expected to hold the database server's."""
+    return IPV4.sub('<address>', GUID.sub('<id>', text or '')).strip()[:2000]
 
 
 def say(message):
