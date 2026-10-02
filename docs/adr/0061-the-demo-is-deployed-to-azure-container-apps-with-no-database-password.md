@@ -140,11 +140,13 @@ otherwise.
 - From API version `2026-07-01` an execution of a job carries its container's exit code and a
   reason (<https://learn.microsoft.com/en-us/rest/api/resource-manager/containerapps/jobs-executions/list>).
 - Container Apps *express* has no sidecar containers, no jobs, no Azure Monitor logging and no
-  workload profiles, and its FAQ says that a template which creates a new environment creates a
-  standard one by default
+  workload profiles. Its FAQ says that a template which creates a new environment creates a
+  standard one by default, and that an environment with no running app or job and no recent
+  activity may be archived
   (<https://learn.microsoft.com/en-us/azure/container-apps/express-overview> and
   <https://learn.microsoft.com/en-us/azure/container-apps/express-faq>, both 2026-09-21; read on
-  2026-10-03). This subscription did otherwise: see the table above.
+  2026-10-03). On the first point this subscription did otherwise: see the table above. The
+  runbook reads the environment's mode at the start of every session.
 - The log of a workflow run in a public repository can be read by anyone signed in to GitHub
   (<https://docs.github.com/en/actions/how-tos/monitor-workflows/use-workflow-run-logs>), and
   GitHub does not promise that a masked value is always hidden

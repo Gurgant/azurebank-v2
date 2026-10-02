@@ -322,6 +322,7 @@ az sql server ad-only-auth get --resource-group $group --name $server --query az
 az monitor log-analytics workspace show --resource-group $group --workspace-name azurebank-logs --query workspaceCapping
 az containerapp job list --resource-group $group --query '[].name' --output tsv
 Show-Identities
+Assert-EnvironmentMode
 ```
 
 Expected, each time:
@@ -338,6 +339,10 @@ Expected, each time:
 - **Identities:** before the app exists, nothing is listed. Afterwards `azurebank: azurebank-app`
   and `azurebank-migrate: azurebank-migrate`, and nothing else: each database identity on exactly
   one resource.
+- **The environment's mode:** `WorkloadProfiles`, or the line that the answer names no mode and
+  the logs go to `azure-monitor`; anything else is a stop. Microsoft's FAQ for Container Apps
+  express (read on 2026-10-03) says that an environment with no running app or job and no recent
+  activity may be archived, and between the two sessions this one has neither.
 
 #### 2. The resource group and the foundation (operator, **writes**; the database's daily charge starts here)
 
@@ -685,7 +690,7 @@ value.
 
 #### 13. Look before writing (operator)
 
-The reads of step 1, and the two `gh api` reads of step 11.
+The reads of step 1, `Assert-EnvironmentMode` among them, and the two `gh api` reads of step 11.
 
 #### 14. The images (operator, **writes**; then the owner, in the browser, **cannot be undone**)
 
@@ -864,7 +869,7 @@ was accepted there is a difference to understand, not a step to work around.
 
 | If | Then |
 | --- | --- |
-| The environment is refused with `ExpressEnvironmentFeatureNotSupported`, or `Assert-EnvironmentMode` throws: a mode other than `WorkloadProfiles`, or no mode with the logs not on `azure-monitor` | Stop. The template names the mode because a request that names none was refused that way; if it is refused all the same, that line was lost or is not honoured |
+| The environment is refused with `ExpressEnvironmentFeatureNotSupported`, or `Assert-EnvironmentMode` throws, here or at the start of a later session: a mode other than `WorkloadProfiles`, or no mode with the logs not on `azure-monitor` | Stop. The template names the mode because a request that names none was refused that way; if it is refused all the same, that line was lost or is not honoured |
 | The deployment is refused on the **policy definition** | Run it again with the policy off (`Invoke-Template 'foundation' @('denyPolicy=false')`), pass the same override on every later run, and write down that the shape then rests on `deploy.py`'s own check alone. The trial's definition was accepted, but it was an earlier one: four of this rule's conditions have never been sent |
 | It is refused on the **custom role** or on the **SQL server**; or the **second run** is refused, or its what-if shows the administrator changed or removed | Stop. There is one shape of the server in this folder and no other is written down: sent by hand it was accepted, twice. And there is no fallback that keeps the deployment identity away from the secrets |
 | It is refused on the **workspace**, the destination, the diagnostic setting or the cap | `./infra/secrets.ps1 -Action New -LogsOff`, run again, and say so: nothing is kept then. If a workspace or a setting was created on the way, [Switching the logs off](#switching-the-logs-off) |
@@ -1383,10 +1388,11 @@ try {
   another `-ImageTag`.
 - The server is not changed by a later run: step 3 is where that is seen for the template. The
   `administrators` block is never edited in place.
-- The environment's mode is read again (`Assert-EnvironmentMode`) at the start of a session that
-  changes the infrastructure. Microsoft's FAQ says that an environment whose features Express
-  supports may be moved to it after a notice; this one has jobs, a second container and Azure
-  Monitor logs, which Express does not have (read on 2026-10-03).
+- The environment's mode is read again (`Assert-EnvironmentMode`) at the start of every session,
+  with the reads of step 1. Microsoft's FAQ says that an environment whose features Express
+  supports may be moved to it after a notice, and that one with no running app or job and no
+  recent activity may be archived; this one has jobs, a second container and Azure Monitor logs,
+  which Express does not have (read on 2026-10-03).
 - If the policy or the alert on the workspace was left out because Azure refused it, the override
   that left it out is passed again: `Invoke-Template 'change' @('denyPolicy=false')`. The file
   does not remember it ([If Azure says no](#if-azure-says-no)).
