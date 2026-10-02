@@ -905,6 +905,66 @@ describe('withdraw — the server says it went through', () => {
     expect(keys).toHaveLength(1);
   });
 
+  it('a press outside the dialog leaves the check view on screen too, and the form that "try again" brings back closes as before', async () => {
+    // DepositDialog's case, in the dialog whose footer and PIN step are built differently: a
+    // press that lands on the backdrop must not take "We couldn't confirm your withdrawal" away
+    // unread, with a Withdraw tile behind it to press again.
+    const closed = vi.fn();
+    const keys: (string | null)[] = [];
+    server.use(
+      http.post('*/api/transactions/withdraw', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        return problem({
+          status: 409,
+          errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN',
+          detail: 'Could not confirm.',
+        });
+      }),
+    );
+    renderWithdraw(makeTestStore(), closed);
+    const backdrop = () => {
+      const element = document.querySelector<HTMLElement>('.fui-DialogSurface__backdrop');
+      if (!element) throw new Error('the dialog has no backdrop to press');
+      return element;
+    };
+
+    // The control: over the form a press outside closes the dialog, so the press does arrive.
+    await userEvent.click(backdrop());
+    expect(closed).toHaveBeenCalledTimes(1);
+
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    await answerDrawn(keys);
+    expect(screen.getByText("We couldn't confirm your withdrawal")).toBeInTheDocument();
+    expect(screen.queryByText(COPY.withdrawalWentThrough)).not.toBeInTheDocument();
+    // This view lands no focus. A visitor's Tab puts it on the first action: their own place.
+    const checkTransactions = screen.getByRole('button', { name: 'Check recent transactions' });
+    checkTransactions.focus();
+
+    await userEvent.click(backdrop());
+    expect(closed).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('dialog', { name: 'Withdraw Money' })).toBeInTheDocument();
+    expect(screen.getByText("We couldn't confirm your withdrawal")).toBeInTheDocument();
+    expect(screen.getByText(/retrying blindly could withdraw twice/)).toBeInTheDocument();
+    // Nor does the press take the visitor's place: from `body` Escape reaches no dialog.
+    expect(checkTransactions).toHaveFocus();
+
+    // The exits nobody presses by accident are open: the view is not a trap.
+    await userEvent.keyboard('{Escape}');
+    expect(closed).toHaveBeenCalledTimes(2);
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(closed).toHaveBeenCalledTimes(3);
+
+    // Only this view is kept. "Try again" brings the form back, and a press outside the form
+    // closes the dialog as it did before the send.
+    await userEvent.click(screen.getByRole('button', { name: /didn't go through/ }));
+    expect(screen.getByLabelText('Withdraw amount')).toBeInTheDocument();
+    await userEvent.click(backdrop());
+    expect(closed).toHaveBeenCalledTimes(4);
+    expect(keys).toHaveLength(1);
+  });
+
   it('takes focus from the dialog itself, where a press during the send had left it', async () => {
     // DepositDialog's case: a press on a disabled control while the send is out leaves focus on
     // the dialog's own surface (measured in Chromium, on Withdraw's footer too, where the second

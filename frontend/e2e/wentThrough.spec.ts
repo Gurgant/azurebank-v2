@@ -56,11 +56,31 @@ function wentThroughBody(path: string) {
 }
 
 /**
- * Answers every send to `path` in the browser with that 409, and keeps each one's key. The glob
- * ends at the path, so the mint beside it (`…/authorizations`) goes to the real API. With `held`,
- * the answer waits for it: the key is kept as the send arrives, the 409 goes out when it resolves.
+ * The API's 409 for a send whose record is gone, for `path`: the same code and no `applied` member
+ * at all, so nothing is proven and the page draws the check view. The sentence is the one the API
+ * has for that answer. Unlike the body above, this one was not read at the browser on a running
+ * stack: it is that body without its last member, with the other sentence.
  */
-async function answerThatItWentThrough(page: Page, path: string, held?: Promise<void>) {
+function notKnownBody(path: string) {
+  return JSON.stringify({
+    type: 'https://httpstatuses.com/409',
+    title: 'Conflict',
+    status: 409,
+    detail:
+      'A request with this idempotency key may have been executed: its record is no longer there, so the outcome is not known. Verify via GET /api/transactions before sending it again with a new key.',
+    instance: path,
+    errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN',
+    traceId: '0af7651916cd43dd8448eb211c80319c',
+  });
+}
+
+/**
+ * Answers every send to `path` in the browser with a 409 whose body is `body`, and keeps each one's
+ * key. The glob ends at the path, so the mint beside it (`…/authorizations`) goes to the real API.
+ * With `held`, the answer waits for it: the key is kept as the send arrives, the 409 goes out when
+ * it resolves.
+ */
+async function answerEverySend(page: Page, path: string, body: string, held?: Promise<void>) {
   const keys: string[] = [];
   await page.route(`**${path}`, async (route) => {
     keys.push(route.request().headers()['idempotency-key'] ?? '(missing)');
@@ -71,10 +91,15 @@ async function answerThatItWentThrough(page: Page, path: string, held?: Promise<
         'Content-Type': 'application/json; charset=utf-8',
         'Cache-Control': 'no-cache,no-store',
       },
-      body: wentThroughBody(path),
+      body,
     });
   });
   return keys;
+}
+
+/** Every send to `path` is answered that it went through: the 409 with `applied: true`. */
+function answerThatItWentThrough(page: Page, path: string, held?: Promise<void>) {
+  return answerEverySend(page, path, wentThroughBody(path), held);
 }
 
 /**
@@ -366,6 +391,68 @@ test.describe('a payment the server says went through', () => {
 
     // Not a trap: the exit nobody presses by accident closes it.
     await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    expect(keys).toHaveLength(1);
+  });
+
+  test('a second press where Deposit was leaves the check view on screen too', async ({ page }) => {
+    /*
+      The same double click when the answer proves nothing: a 409 with no `applied`, for which the
+      dialog draws the check view. That view is shorter than the form as well. Measured on the
+      running stack at this viewport: the second press landed on the backdrop and the dialog was
+      gone, "We couldn't confirm your deposit" unread, the visitor on the dashboard beside a
+      Deposit tile to press again. The press outside must leave this view where it is too.
+    */
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const keys = await answerEverySend(
+      page,
+      '/api/transactions/deposit',
+      notKnownBody('/api/transactions/deposit'),
+    );
+    const form = await openMoneyDialog(page, 'Deposit', /deposit money/i);
+    await form.getByRole('textbox', { name: 'Deposit amount' }).fill('1');
+    const deposit = form.getByRole('button', { name: 'Deposit €1.00' });
+    await expect(deposit).toBeEnabled();
+    const box = await deposit.boundingBox();
+    if (!box) throw new Error('the Deposit button has no box to press');
+    const where = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+
+    await page.mouse.click(where.x, where.y);
+    await expect.poll(() => keys.length).toBe(1);
+    const dialog = page.getByRole('dialog');
+    const words = dialog.getByText("We couldn't confirm your deposit");
+    await expect(words).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Close' })).toBeEnabled();
+
+    // What this test stages, as in the test above: the second press is on the backdrop.
+    await page.evaluate(() => {
+      const record = window as unknown as { pressedOn?: string };
+      record.pressedOn = undefined;
+      document.addEventListener(
+        'click',
+        (event) => {
+          record.pressedOn = (event.target as Element).className;
+        },
+        { capture: true, once: true },
+      );
+    });
+    await page.mouse.click(where.x, where.y);
+    const pressedOn = await page.evaluate(
+      () => (window as unknown as { pressedOn?: string }).pressedOn,
+    );
+    expect(pressedOn, 'the second press did not land on the backdrop').toContain(
+      'fui-DialogSurface__backdrop',
+    );
+
+    await expect(dialog, 'the press outside closed the check view').toBeVisible();
+    await expect(dialog).toHaveAccessibleName('Deposit Money');
+    await expect(words).toBeVisible();
+    await expect(dialog.getByText(/retrying blindly could deposit twice/)).toBeVisible();
+    expect(page.url()).toMatch(/\/dashboard(?:[?#]|$)/);
+    expect(keys).toHaveLength(1);
+
+    // Not a trap: the X closes it.
+    await dialog.getByRole('button', { name: 'Close' }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
     expect(keys).toHaveLength(1);
   });

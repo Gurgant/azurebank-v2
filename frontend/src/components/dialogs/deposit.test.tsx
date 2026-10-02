@@ -507,6 +507,69 @@ describe('deposit — the server says it went through', () => {
     expect(keys).toHaveLength(1);
   });
 
+  it('a press outside the dialog leaves the check view on screen too, and the form that "try again" brings back closes as before', async () => {
+    /*
+      The check view is shorter than the form as well. Measured in Chromium on the running stack,
+      the send answered 409 with no `applied`: the second press of a double click on Deposit
+      landed on the backdrop and closed the dialog. The visitor was left on the page behind it,
+      "We couldn't confirm your deposit" unread, beside a Deposit tile to press again: the second
+      deposit this view is there to prevent.
+    */
+    const closed = vi.fn();
+    const keys: (string | null)[] = [];
+    server.use(
+      http.post('*/api/transactions/deposit', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        return problem({
+          status: 409,
+          errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN',
+          detail: 'Could not confirm.',
+        });
+      }),
+    );
+    renderDeposit(closed);
+    const backdrop = () => {
+      const element = document.querySelector<HTMLElement>('.fui-DialogSurface__backdrop');
+      if (!element) throw new Error('the dialog has no backdrop to press');
+      return element;
+    };
+
+    // The control: over the form a press outside closes the dialog, so the press does arrive.
+    await userEvent.click(backdrop());
+    expect(closed).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    await answerDrawn(keys);
+    expect(screen.getByText("We couldn't confirm your deposit")).toBeInTheDocument();
+    expect(screen.queryByText(COPY.depositWentThrough)).not.toBeInTheDocument();
+    // This view lands no focus. A visitor's Tab puts it on the first action: their own place.
+    const checkTransactions = screen.getByRole('button', { name: 'Check recent transactions' });
+    checkTransactions.focus();
+
+    await userEvent.click(backdrop());
+    expect(closed).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('dialog', { name: 'Deposit Money' })).toBeInTheDocument();
+    expect(screen.getByText("We couldn't confirm your deposit")).toBeInTheDocument();
+    expect(screen.getByText(/retrying blindly could deposit twice/)).toBeInTheDocument();
+    // Nor does the press take the visitor's place: from `body` Escape reaches no dialog.
+    expect(checkTransactions).toHaveFocus();
+
+    // The exits nobody presses by accident are open: the view is not a trap.
+    await userEvent.keyboard('{Escape}');
+    expect(closed).toHaveBeenCalledTimes(2);
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(closed).toHaveBeenCalledTimes(3);
+
+    // Only this view is kept. "Try again" brings the form back, and a press outside the form
+    // closes the dialog as it did before the send.
+    await userEvent.click(screen.getByRole('button', { name: /didn't go through/ }));
+    expect(screen.getByLabelText('Deposit amount')).toBeInTheDocument();
+    await userEvent.click(backdrop());
+    expect(closed).toHaveBeenCalledTimes(4);
+    expect(keys).toHaveLength(1);
+  });
+
   it('takes focus from the dialog itself, where a press during the send had left it', async () => {
     /*
       The other half of a double click: the answer takes longer than the gap between the two
