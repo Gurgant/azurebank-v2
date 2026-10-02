@@ -1,0 +1,575 @@
+"""Offline tests of the two PowerShell scripts and of the two templates.
+
+The scripts run for real, in PowerShell 7, against a stand-in for the Azure CLI: they touch neither
+Azure nor the real parameter folder. The templates are compiled by the Bicep CLI and the compiled
+JSON is read. What Azure itself answers is checked on the first deployment (README.md).
+
+On a developer's machine a missing tool skips its tests; in CI a missing tool is an error.
+"""
+
+import json
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+import tempfile
+import textwrap
+import unittest
+
+HERE = pathlib.Path(__file__).resolve().parent
+TAG = 'a' * 40
+RULE = 'owner-while-creating-users'
+
+
+def tool(name):
+    path = shutil.which(name)
+    if not path and os.environ.get('CI') == 'true':
+        raise RuntimeError(f'{name} is not installed on this runner; in CI these tests may not be skipped.')
+    return path
+
+
+PWSH = tool('pwsh')
+BICEP = tool('bicep')
+
+FAKE_AZ = textwrap.dedent('''
+    import json, os, sys
+    args = sys.argv[1:]
+    with open(os.environ['FAKE_AZ_LOG'], 'a', encoding='utf-8') as log:
+        log.write(json.dumps(args) + '\\n')
+    state = os.environ.get('FAKE_AZ_STATE', 'empty')
+    live = json.loads(os.environ.get('FAKE_AZ_LIVE', '{}'))
+    url = args[args.index('--url') + 1] if '--url' in args else ''
+    def out(value):
+        print(json.dumps(value)); sys.exit(0)
+    def fail(text):
+        sys.stderr.write(text); sys.exit(1)
+    if state == 'broken':
+        fail('ERROR: the network is down')
+    if args[:2] == ['account', 'show']:
+        out({'id': '00000000-0000-0000-0000-000000000000'})
+    if args[:2] == ['account', 'get-access-token']:
+        out({'accessToken': 'not-a-token'})
+    if args[:3] == ['ad', 'signed-in-user', 'show']:
+        account = {'id': '11111111-1111-1111-1111-111111111111', 'userPrincipalName': 'owner@example.invalid',
+                   'mail': None if state == 'no-mailbox' else 'owner.mailbox@example.invalid'}
+        out(account)
+    if args[:2] == ['resource', 'list']:
+        if state == 'resources-unreadable':
+            fail('ERROR: the listing timed out')
+        out([] if state in ('empty', 'no-mailbox') else [
+            {'name': 'azurebank', 'type': 'Microsoft.App/containerApps'},
+            {'name': 'azurebank-migrate', 'type': 'Microsoft.App/jobs'},
+            {'name': 'azurebank-env', 'type': 'Microsoft.App/managedEnvironments'}])
+    if 'containerApps/azurebank/listSecrets' in url:
+        names = ['app-connection', 'jwt-secret', 'idempotency-hash-key', 'stepup-binding-key',
+                 'service-key', 'audit-chain-key', 'audit-anchor-key', 'pin-pepper']
+        if state == 'key-missing':
+            names.remove('pin-pepper')
+        out({'value': [{'name': n, 'value': live[n]} for n in names]})
+    if 'jobs/azurebank-migrate/listSecrets' in url:
+        out({'value': [{'name': 'migration-connection', 'value': live['migration-connection']}]})
+    if 'containerApps/azurebank?' in url:
+        out({'properties': {'template': {'containers': [
+            {'name': 'bff', 'image': 'ghcr.io/gurgant/azurebank-bff:' + live['tag']},
+            {'name': 'api', 'image': 'ghcr.io/gurgant/azurebank-api:' + live['tag']}]}}})
+    if args[:3] == ['sql', 'server', 'list']:
+        out([{'name': 'azurebank-test', 'fullyQualifiedDomainName': 'azurebank-test.invalid'}])
+    if args[:3] == ['sql', 'server', 'firewall-rule']:
+        rules_file = os.environ['FAKE_AZ_RULES']
+        with open(rules_file, encoding='utf-8') as source:
+            rules = json.load(source)
+        name = args[args.index('--name') + 1] if '--name' in args else None
+        if args[3] == 'list':
+            if state == 'list-fails-at-the-end' and len(open(os.environ['FAKE_AZ_LOG']).readlines()) > 3:
+                fail('ERROR: the network is down')
+            out([{'name': rule} for rule in rules])
+        if args[3] == 'delete':
+            if state == 'delete-fails':
+                fail('ERROR: the delete was refused')
+            rules = [rule for rule in rules if rule != name]
+        if args[3] == 'create':
+            rules.append(name)
+        with open(rules_file, 'w', encoding='utf-8') as target:
+            json.dump(rules, target)
+        out({})
+    sys.stderr.write('fake az: unexpected call ' + ' '.join(args)); sys.exit(2)
+''')
+
+LIVE = {
+    'tag': 'b' * 40,
+    'app-connection': 'Server=tcp:x.database.windows.net,1433;Database=AzureBank;User ID=azurebank_app;'
+                      'Password="LiveAppPassword0000000000000000000000000000000A";Encrypt=True',
+    'migration-connection': 'Server=tcp:x.database.windows.net,1433;Database=AzureBank;User ID=azurebank_migrator;'
+                            'Password="LiveMigratorPassword00000000000000000000000000B";Encrypt=True',
+    'jwt-secret': 'live-jwt', 'idempotency-hash-key': 'live-idem', 'stepup-binding-key': 'live-stepup',
+    'service-key': 'live-service', 'audit-chain-key': 'live-chain', 'audit-anchor-key': 'live-anchor',
+    'pin-pepper': 'live-pepper',
+}
+NINE = ['appSqlPassword', 'migratorSqlPassword', 'jwtSecret', 'idempotencyHashKey', 'stepUpBindingKey',
+        'serviceCredentialBffKey', 'auditChainKey', 'auditAnchorKey', 'securityPinPepper']
+# Identifiers and names, not secrets: they may appear in a call or in the report's last line.
+NOT_SECRET = ('imageTag', 'entraAdminObjectId', 'entraAdminLogin')
+
+
+class ScriptCase(unittest.TestCase):
+    """A temporary folder, a stand-in `az` first on PATH, and a log of every call made to it."""
+
+    def setUp(self):
+        self.temp = pathlib.Path(tempfile.mkdtemp(prefix='azurebank-scripts-test-'))
+        self.addCleanup(shutil.rmtree, self.temp, ignore_errors=True)
+        shim = self.temp / 'shim'
+        shim.mkdir()
+        (shim / 'fake_az.py').write_text(FAKE_AZ, encoding='utf-8')
+        if os.name == 'nt':
+            (shim / 'az.cmd').write_text(f'@"{sys.executable}" "%~dp0fake_az.py" %*\r\n', encoding='utf-8')
+        else:
+            az = shim / 'az'
+            az.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$(dirname "$0")/fake_az.py" "$@"\n', encoding='utf-8')
+            az.chmod(0o755)
+        self.shim = shim
+        self.folder = self.temp / 'private'
+        self.log = self.temp / 'az.log'
+        self.rules = self.temp / 'rules.json'
+        self.rules.write_text(json.dumps(['AllowAzureServices']), encoding='utf-8')
+
+    def run_script(self, script, *args, state='empty', **environment):
+        env = dict(os.environ, FAKE_AZ_STATE=state, FAKE_AZ_LIVE=json.dumps(LIVE), FAKE_AZ_LOG=str(self.log),
+                   FAKE_AZ_RULES=str(self.rules), PATH=str(self.shim) + os.pathsep + os.environ['PATH'])
+        env.pop('AZUREBANK_ALERT_EMAIL', None)
+        env.update(environment)
+        return subprocess.run([PWSH, '-NoProfile', '-NonInteractive', '-File', str(HERE / script), *args],
+                              capture_output=True, text=True, env=env, timeout=180)
+
+    def calls(self):
+        if not self.log.exists():
+            return []
+        return [json.loads(line) for line in self.log.read_text(encoding='utf-8').splitlines()]
+
+
+@unittest.skipUnless(PWSH, 'PowerShell 7 (pwsh) is not installed')
+class SecretsScriptTests(ScriptCase):
+    def secrets(self, *args, **options):
+        return self.run_script('secrets.ps1', *args, '-Directory', str(self.folder), **options)
+
+    def parameters(self):
+        document = json.loads((self.folder / 'parameters.json').read_text(encoding='utf-8'))
+        return {name: entry['value'] for name, entry in document['parameters'].items()}
+
+    def assert_nothing_leaked(self, result, values):
+        self.assertEqual(result.stdout, '', 'standard output must stay empty')
+        calls = self.log.read_text(encoding='utf-8') if self.log.exists() else ''
+        for name, value in values.items():
+            if isinstance(value, str) and len(value) >= 16 and name not in NOT_SECRET:
+                self.assertNotIn(value, result.stderr, f'{name} is in the report')
+                self.assertNotIn(value, calls, f'{name} went onto an az command line')
+
+    def test_foundation_file_holds_only_what_the_foundation_needs(self):
+        result = self.secrets('-Action', 'New')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        values = self.parameters()
+        self.assertEqual(sorted(values), ['deployApp', 'entraAdminLogin', 'entraAdminObjectId', 'sqlAdminPassword'])
+        self.assertIs(values['deployApp'], False)
+        self.assertRegex(values['sqlAdminPassword'], r'^[A-Za-z0-9]{48}$')
+        self.assert_nothing_leaked(result, values)
+
+    def test_a_foundation_file_never_asks_a_deployed_app_for_its_secrets(self):
+        result = self.secrets('-Action', 'New', state='deployed')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([call for call in self.calls() if 'rest' in call], [])
+        self.assertEqual(len(self.parameters()), 4)
+
+    @unittest.skipUnless(os.name == 'nt', 'the access list is the Windows half')
+    def test_the_folder_is_open_to_its_owner_only(self):
+        self.assertEqual(self.secrets('-Action', 'New').returncode, 0)
+        listing = subprocess.run(['icacls', str(self.folder)], capture_output=True, text=True).stdout
+        entries = [line for line in listing.splitlines() if ':(' in line]
+        self.assertEqual(len(entries), 1, listing)
+        self.assertIn('(F)', entries[0])
+
+    @unittest.skipIf(os.name == 'nt', 'the mode bits are the other half')
+    def test_the_folder_and_file_modes_are_owner_only(self):
+        self.assertEqual(self.secrets('-Action', 'New').returncode, 0)
+        self.assertEqual(self.folder.stat().st_mode & 0o777, 0o700)
+        self.assertEqual((self.folder / 'parameters.json').stat().st_mode & 0o777, 0o600)
+
+    def test_first_app_file_generates_nine_distinct_values_and_prints_none(self):
+        result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        values = self.parameters()
+        self.assertEqual(len(values), 15)
+        self.assertEqual(values['imageTag'], TAG)
+        self.assertIs(values['deployApp'], True)
+        secrets = [values[name] for name in NINE] + [values['sqlAdminPassword']]
+        self.assertEqual(len(set(secrets)), 10)
+        for name in ('appSqlPassword', 'migratorSqlPassword'):
+            self.assertRegex(values[name], r'^[A-Za-z0-9]{48}$')
+        for name in NINE:
+            self.assertIn(f'{name}: generated', result.stderr)
+        self.assert_nothing_leaked(result, values)
+
+    def test_the_alerts_write_to_the_accounts_own_mailbox_and_the_report_does_not_show_it(self):
+        result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.parameters()['alertEmail'], 'owner.mailbox@example.invalid')
+        self.assertIn("alertEmail: the signed-in account's own mailbox", result.stderr)
+        self.assertNotIn('owner.mailbox', result.stderr)
+
+    def test_the_variable_names_another_mailbox_and_the_report_does_not_show_it(self):
+        result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG,
+                              AZUREBANK_ALERT_EMAIL='alerts.elsewhere@example.invalid')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.parameters()['alertEmail'], 'alerts.elsewhere@example.invalid')
+        self.assertIn('alertEmail: from AZUREBANK_ALERT_EMAIL', result.stderr)
+        self.assertNotIn('alerts.elsewhere', result.stderr + self.log.read_text(encoding='utf-8'))
+
+    def test_an_account_without_a_mailbox_and_no_variable_stops_the_run(self):
+        result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG, state='no-mailbox')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('AZUREBANK_ALERT_EMAIL', result.stderr)
+        self.assertFalse((self.folder / 'parameters.json').exists())
+
+    def test_a_second_run_keeps_what_the_first_wrote(self):
+        self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG)
+        first = self.parameters()
+        result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG)
+        second = self.parameters()
+        self.assertEqual({n: second[n] for n in NINE}, {n: first[n] for n in NINE})
+        self.assertNotEqual(second['sqlAdminPassword'], first['sqlAdminPassword'])
+        self.assertIn('jwtSecret: kept from the earlier file', result.stderr)
+        self.assert_nothing_leaked(result, second)
+
+    def test_a_deployed_app_is_the_authority_and_its_images_are_left_alone(self):
+        result = self.secrets('-Action', 'New', '-DeployApp', state='deployed')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        values = self.parameters()
+        self.assertEqual(values['imageTag'], LIVE['tag'])
+        self.assertEqual(values['appSqlPassword'], 'LiveAppPassword0000000000000000000000000000000A')
+        self.assertEqual(values['migratorSqlPassword'], 'LiveMigratorPassword00000000000000000000000000B')
+        self.assertEqual(values['securityPinPepper'], 'live-pepper')
+        self.assertEqual(values['jwtSecret'], 'live-jwt')
+        self.assertNotIn('generated', result.stderr)
+        self.assert_nothing_leaked(result, values)
+
+    def test_another_image_tag_is_refused_once_the_app_exists(self):
+        result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG, state='deployed')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.folder / 'parameters.json').exists())
+        self.assertEqual(result.stdout, '')
+
+    def test_an_unreadable_azure_is_not_an_absent_secret(self):
+        result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG, state='broken')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.folder / 'parameters.json').exists())
+        self.assertEqual(result.stdout, '')
+
+    def test_a_resource_list_that_fails_is_not_an_empty_resource_group(self):
+        # Read as "no app yet", it would generate nine new secrets for an app that holds nine.
+        result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG, state='resources-unreadable')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('az resource list failed', result.stderr)
+        self.assertFalse((self.folder / 'parameters.json').exists())
+        self.assertNotIn('generated', result.stderr)
+
+    def test_a_deployed_app_missing_a_key_stops_the_run(self):
+        result = self.secrets('-Action', 'New', '-DeployApp', state='key-missing')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.folder / 'parameters.json').exists())
+        self.assertNotIn('generated', result.stderr)
+
+    def test_an_app_file_without_a_tag_is_refused(self):
+        result = self.secrets('-Action', 'New', '-DeployApp')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.folder / 'parameters.json').exists())
+
+    def test_remove_leaves_nothing(self):
+        self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG)
+        for name in ('what-if.json', 'budget.json'):
+            (self.folder / name).write_text('{}', encoding='utf-8')
+        result = self.secrets('-Action', 'Remove')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.folder.exists())
+        self.assertEqual(result.stdout, '')
+        self.assertEqual(self.calls()[-1][:3], ['ad', 'signed-in-user', 'show'], 'Remove asks Azure nothing')
+
+    def test_remove_deletes_its_three_files_by_name_and_nothing_else(self):
+        self.folder.mkdir()
+        for name in ('parameters.json', 'what-if.json', 'budget.json', 'keep-me.txt'):
+            (self.folder / name).write_text('{}', encoding='utf-8')
+        (self.folder / 'documents').mkdir()
+        (self.folder / 'documents' / 'thesis.txt').write_text('years of work', encoding='utf-8')
+        result = self.secrets('-Action', 'Remove')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(sorted(path.name for path in self.folder.iterdir()), ['documents', 'keep-me.txt'])
+        self.assertEqual((self.folder / 'documents' / 'thesis.txt').read_text(encoding='utf-8'), 'years of work')
+        self.assertIn('was left as it is', result.stderr)
+        self.assertEqual(self.calls(), [])
+
+    def test_remove_on_a_folder_that_does_not_exist_changes_nothing(self):
+        result = self.secrets('-Action', 'Remove')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.folder.exists())
+
+
+@unittest.skipUnless(PWSH, 'PowerShell 7 (pwsh) is not installed')
+class UsersScriptTests(ScriptCase):
+    """sql-principals.ps1 up to the connection: the stand-in server name does not resolve, so no
+    database is ever reached. What the SQL itself does is checked on a real server (README.md)."""
+
+    PASSWORDS = {'appSqlPassword': 'AppPassword0000000000000000000000000000000000000A',
+                 'migratorSqlPassword': 'MigratorPassword00000000000000000000000000000000B'}
+
+    def setUp(self):
+        super().setUp()
+        self.folder.mkdir()
+        self.file = self.folder / 'parameters.json'
+        self.file.write_text(json.dumps(
+            {'parameters': {name: {'value': value} for name, value in self.PASSWORDS.items()}}), encoding='utf-8')
+
+    def users(self, **options):
+        return self.run_script('sql-principals.ps1', '-ParameterFile', str(self.file), '-ConnectTimeout', '1',
+                               **options)
+
+    def verbs(self):
+        return [' '.join(call[:4]) if call[:3] == ['sql', 'server', 'firewall-rule'] else ' '.join(call[:2])
+                for call in self.calls()]
+
+    def assert_no_password_left_the_file(self, result):
+        self.assertEqual(result.stdout, '', 'standard output must stay empty')
+        for value in self.PASSWORDS.values():
+            self.assertNotIn(value, result.stderr + self.log.read_text(encoding='utf-8'))
+
+    def test_a_rule_left_by_an_earlier_run_is_deleted_before_anything_else(self):
+        self.rules.write_text(json.dumps(['AllowAzureServices', RULE]), encoding='utf-8')
+        result = self.users()
+        self.assertNotEqual(result.returncode, 0, 'the stand-in server cannot be reached')
+        self.assertEqual(self.verbs(), ['sql server', 'sql server firewall-rule list', 'sql server firewall-rule delete',
+                                        'account get-access-token', 'sql server firewall-rule list'])
+        self.assertEqual(json.loads(self.rules.read_text(encoding='utf-8')), ['AllowAzureServices'])
+        self.assertIn('Firewall rules now: AllowAzureServices.', result.stderr)
+        self.assert_no_password_left_the_file(result)
+
+    def test_without_a_leftover_nothing_is_deleted_and_the_list_is_read_at_the_end(self):
+        result = self.users()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.verbs(), ['sql server', 'sql server firewall-rule list', 'account get-access-token',
+                                        'sql server firewall-rule list'])
+        self.assertIn('Could not connect to the database', result.stderr)
+        self.assertIn('Firewall rules now: AllowAzureServices.', result.stderr)
+        self.assert_no_password_left_the_file(result)
+
+    def test_a_failed_delete_prints_the_command_and_exits_non_zero(self):
+        self.rules.write_text(json.dumps(['AllowAzureServices', RULE]), encoding='utf-8')
+        result = self.users(state='delete-fails')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('it may still be there', result.stderr)
+        self.assertIn(f'az sql server firewall-rule delete --resource-group azurebank-demo '
+                      f'--server azurebank-test --name {RULE}', result.stderr)
+        verbs = self.verbs()
+        self.assertNotIn('account get-access-token', verbs, 'nothing else is done with the rule in place')
+        self.assertEqual(verbs[-1], 'sql server firewall-rule list', 'the list is still read')
+        self.assertIn(f'Firewall rules now: AllowAzureServices, {RULE}.', result.stderr)
+
+    def test_a_rule_list_that_cannot_be_read_back_is_not_taken_for_a_clean_one(self):
+        result = self.users(state='list-fails-at-the-end')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('could not be read back', result.stderr)
+        self.assertNotIn('Firewall rules now', result.stderr)
+
+    def test_without_a_parameter_file_azure_is_asked_nothing(self):
+        self.file.unlink()
+        result = self.users()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.calls(), [])
+
+    def test_the_sql_takes_its_passwords_as_bound_parameters_only(self):
+        sql = (HERE / 'sql-principals.sql').read_text(encoding='utf-8')
+        runner = (HERE / 'sql-principals.ps1').read_text(encoding='utf-8')
+        for name in ('@AppPassword', '@MigratorPassword'):
+            self.assertIn(name, sql)
+            self.assertIn(f"Parameters.Add('{name}'", runner)
+        self.assertNotIn('$(', sql, 'no client-side substitution')
+        self.assertIn("DB_NAME() <> N'AzureBank'", sql)
+
+
+@unittest.skipUnless(PWSH, 'PowerShell 7 (pwsh) is not installed')
+class ParseTests(unittest.TestCase):
+    def test_both_scripts_parse_without_an_error(self):
+        for script in ('secrets.ps1', 'sql-principals.ps1'):
+            with self.subTest(script=script):
+                command = ('$errors = $null; $tokens = $null; '
+                           '$null = [System.Management.Automation.Language.Parser]::ParseFile($args[0], '
+                           '[ref]$tokens, [ref]$errors); '
+                           '$errors | ForEach-Object { [Console]::Error.WriteLine($_.ToString()) }; '
+                           '"{0} tokens, {1} errors" -f $tokens.Count, $errors.Count')
+                result = subprocess.run([PWSH, '-NoProfile', '-NonInteractive', '-Command',
+                                         f'& {{ {command} }} "{HERE / script}"'],
+                                        capture_output=True, text=True, timeout=120)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertRegex(result.stdout.strip(), r'^[1-9][0-9]* tokens, 0 errors$', result.stderr)
+
+
+NINE_ACTIONS = [
+    'Microsoft.App/containerApps/read', 'Microsoft.App/containerApps/write',
+    'Microsoft.App/containerApps/revisions/read', 'Microsoft.App/containerApps/revisions/replicas/read',
+    'Microsoft.App/jobs/read', 'Microsoft.App/jobs/write', 'Microsoft.App/jobs/start/action',
+    'Microsoft.App/jobs/executions/read', 'Microsoft.App/jobs/execution/read',
+]
+BEHIND_DEPLOY_APP = ['Microsoft.App/containerApps', 'Microsoft.App/jobs', 'Microsoft.Authorization/roleAssignments',
+                     'Microsoft.Authorization/roleAssignments', 'Microsoft.Insights/actionGroups',
+                     'Microsoft.Insights/metricAlerts']
+FOUNDATION = ['Microsoft.App/managedEnvironments', 'Microsoft.Authorization/locks',
+              'Microsoft.Authorization/roleDefinitions', 'Microsoft.ManagedIdentity/userAssignedIdentities',
+              'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials',
+              'Microsoft.Sql/servers', 'Microsoft.Sql/servers/administrators', 'Microsoft.Sql/servers/databases',
+              'Microsoft.Sql/servers/firewallRules']
+BEHIND_DENY_POLICY = ['Microsoft.Authorization/policyAssignments', 'Microsoft.Resources/deployments']
+
+
+@unittest.skipUnless(BICEP, 'the Bicep CLI is not installed')
+class TemplateTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.compiled = {}
+        for name in ('main', 'guardrails'):
+            for verb in (['build', '--stdout'], ['lint']):
+                result = subprocess.run([BICEP, verb[0], str(HERE / f'{name}.bicep'), *verb[1:]],
+                                        capture_output=True, text=True, timeout=300)
+                # Bicep prints a warning on standard error and still exits 0.
+                if result.returncode != 0 or result.stderr.strip():
+                    raise AssertionError(f'bicep {verb[0]} {name}.bicep: exit {result.returncode}\n{result.stderr}')
+                if verb[0] == 'build':
+                    cls.compiled[name] = json.loads(result.stdout)
+        cls.main = cls.compiled['main']
+        cls.resources = cls.main['resources']
+        assert isinstance(cls.resources, list), 'the tests read the compiled resources as a list'
+
+    def of_type(self, kind):
+        return [resource for resource in self.resources if resource['type'] == kind]
+
+    def conditions(self, condition):
+        return sorted(resource['type'] for resource in self.resources if resource.get('condition') == condition)
+
+    def test_the_app_and_all_that_needs_it_are_behind_deploy_app(self):
+        self.assertEqual(self.conditions("[parameters('deployApp')]"), sorted(BEHIND_DEPLOY_APP))
+
+    def test_the_foundation_is_created_whatever_deploy_app_says(self):
+        self.assertEqual(sorted(resource['type'] for resource in self.resources if 'condition' not in resource),
+                         sorted(FOUNDATION))
+
+    def test_the_policy_can_be_switched_off_and_nothing_else_hangs_on_that_switch(self):
+        self.assertEqual(self.conditions("[parameters('denyPolicy')]"), sorted(BEHIND_DENY_POLICY))
+        self.assertEqual(len(self.resources), len(BEHIND_DEPLOY_APP) + len(FOUNDATION) + len(BEHIND_DENY_POLICY))
+
+    def test_the_role_holds_exactly_the_nine_actions_and_no_data_action(self):
+        (role,) = self.of_type('Microsoft.Authorization/roleDefinitions')
+        (permissions,) = role['properties']['permissions']
+        self.assertEqual(permissions['actions'], NINE_ACTIONS)
+        self.assertEqual([permissions[key] for key in ('notActions', 'dataActions', 'notDataActions')], [[], [], []])
+        self.assertEqual(role['properties']['assignableScopes'], ['[resourceGroup().id]'])
+        for forbidden in ('listSecrets', 'delete', 'stop', '*'):
+            self.assertNotIn(forbidden.lower(), ' '.join(permissions['actions']).lower())
+
+    def test_the_role_is_assigned_on_the_app_and_on_the_job_and_nowhere_else(self):
+        scopes = sorted(resource['scope'] for resource in self.of_type('Microsoft.Authorization/roleAssignments'))
+        self.assertEqual(len(scopes), 2)
+        self.assertIn("resourceId('Microsoft.App/containerApps'", scopes[0])
+        self.assertIn("resourceId('Microsoft.App/jobs', 'azurebank-migrate')", scopes[1])
+
+    def test_the_lock_is_on_the_database_not_on_the_server(self):
+        (lock,) = self.of_type('Microsoft.Authorization/locks')
+        self.assertIn("resourceId('Microsoft.Sql/servers/databases'", lock['scope'])
+        self.assertEqual(lock['properties']['level'], 'CanNotDelete')
+
+    def test_the_administrator_is_its_own_resource(self):
+        (server,) = self.of_type('Microsoft.Sql/servers')
+        self.assertNotIn('administrators', server['properties'])
+        (administrator,) = self.of_type('Microsoft.Sql/servers/administrators')
+        self.assertTrue(administrator['name'].endswith("'ActiveDirectory')]"), administrator['name'])
+
+    def test_ten_parameters_are_secure_and_only_three_must_be_given(self):
+        parameters = self.main['parameters']
+        secure = sorted(name for name, entry in parameters.items() if entry['type'].lower() == 'securestring')
+        self.assertEqual(secure, sorted(NINE + ['sqlAdminPassword']))
+        required = sorted(name for name, entry in parameters.items() if 'defaultValue' not in entry)
+        self.assertEqual(required, ['entraAdminLogin', 'entraAdminObjectId', 'sqlAdminPassword'])
+        self.assertEqual((parameters['replicaTimeout']['minValue'], parameters['replicaTimeout']['maxValue']),
+                         (60, 840))
+        self.assertIs(parameters['deployApp']['defaultValue'], False)
+
+    def test_no_output_is_a_secret(self):
+        self.assertEqual({name: entry['type'] for name, entry in self.main['outputs'].items()},
+                         dict.fromkeys(['sqlServerFqdn', 'sqlServerName', 'deploymentClientId',
+                                        'deploymentPrincipalId', 'appUrl'], 'string'))
+
+    def test_every_secret_reaches_a_container_by_reference_only(self):
+        (app,) = self.of_type('Microsoft.App/containerApps')
+        (job,) = self.of_type('Microsoft.App/jobs')
+        self.assertEqual(len(app['properties']['configuration']['secrets']), 8)
+        self.assertEqual(len(job['properties']['configuration']['secrets']), 1)
+        text = json.dumps([app['properties']['template'], job['properties']['template']])
+        self.assertEqual(text.count('"secretRef"'), 10)
+        for name in NINE:
+            self.assertNotIn(f"parameters('{name}')", text, f'{name} is a plain value in a container')
+
+    def test_the_app_keeps_the_shape_the_deploy_script_and_the_policy_expect(self):
+        (app,) = self.of_type('Microsoft.App/containerApps')
+        configuration, template = app['properties']['configuration'], app['properties']['template']
+        self.assertEqual(configuration['activeRevisionsMode'], 'Single')
+        self.assertEqual({key: configuration['ingress'][key] for key in ('external', 'targetPort', 'allowInsecure')},
+                         {'external': True, 'targetPort': 8080, 'allowInsecure': False})
+        self.assertNotIn('additionalPortMappings', configuration['ingress'])
+        self.assertEqual(template['scale'], {'minReplicas': 0, 'maxReplicas': 1})
+        self.assertEqual([container['name'] for container in template['containers']], ['bff', 'api'])
+        (job,) = self.of_type('Microsoft.App/jobs')
+        configuration = job['properties']['configuration']
+        self.assertEqual((configuration['triggerType'], configuration['replicaRetryLimit'],
+                          configuration['manualTriggerConfig']['parallelism']), ('Manual', 0, 1))
+        self.assertEqual(job['properties']['template']['containers'][0]['args'], ['migrate'])
+
+    def test_the_policy_definition_sits_at_subscription_scope_and_denies(self):
+        (module,) = self.of_type('Microsoft.Resources/deployments')
+        self.assertEqual(module['subscriptionId'], '[subscription().subscriptionId]')
+        nested = module['properties']['template']
+        self.assertTrue(nested['$schema'].endswith('/subscriptionDeploymentTemplate.json#'), nested['$schema'])
+        self.assertEqual(nested['resources'], self.compiled['guardrails']['resources'])
+        (definition,) = nested['resources']
+        self.assertEqual(definition['type'], 'Microsoft.Authorization/policyDefinitions')
+        rule = definition['properties']['policyRule']
+        self.assertEqual(rule['then'], {'effect': 'deny'})
+        # A policy expression must reach Azure unevaluated: in a nested template it is written "[[".
+        self.assertIn("[[parameters('allowedJobTriggers')]", json.dumps(rule))
+        (assignment,) = self.of_type('Microsoft.Authorization/policyAssignments')
+        self.assertEqual(assignment['name'], 'azurebank-shape')
+        self.assertEqual(assignment['properties']['enforcementMode'], 'Default')
+
+    def test_three_alerts_notify_one_action_group_and_stop_nothing(self):
+        (alerts,) = self.of_type('Microsoft.Insights/metricAlerts')
+        self.assertEqual(alerts['copy']['count'], "[length(variables('alerts'))]")
+        rules = self.main['variables']['alerts']
+        self.assertEqual([(rule['metric'], rule['aggregation'], rule['window']) for rule in rules],
+                         [('Requests', 'Total', 'PT1H'), ('TxBytes', 'Total', 'P1D'), ('Replicas', 'Average', 'P1D')])
+        (group,) = self.of_type('Microsoft.Insights/actionGroups')
+        self.assertEqual(list(group['properties']), ['groupShortName', 'enabled', 'emailReceivers'])
+
+    @unittest.skipUnless(PWSH, 'PowerShell 7 (pwsh) is not installed')
+    def test_every_name_the_secrets_script_writes_is_a_parameter_and_none_is_missing(self):
+        case = SecretsScriptTests('parameters')
+        case.setUp()
+        try:
+            required = {name for name, entry in self.main['parameters'].items() if 'defaultValue' not in entry}
+            self.assertEqual(case.secrets('-Action', 'New').returncode, 0)
+            foundation = set(case.parameters())
+            self.assertLessEqual(foundation, set(self.main['parameters']))
+            self.assertLessEqual(required, foundation, 'the foundation file must give every required parameter')
+            self.assertEqual(case.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG).returncode, 0)
+            written = set(case.parameters())
+            self.assertLessEqual(written, set(self.main['parameters']))
+            # What the template's own guard asks for when deployApp is true.
+            self.assertLessEqual(set(NINE) | {'imageTag', 'alertEmail', 'deployApp'}, written)
+        finally:
+            case.doCleanups()
+
+
+if __name__ == '__main__':
+    unittest.main()
