@@ -49,6 +49,8 @@ $AppName = 'azurebank'
 $EnvironmentName = 'azurebank-env'
 $AlertGroupName = 'azurebank-owner'
 $Api = '2025-01-01'
+# The environment is read with the API version main.bicep creates it with.
+$EnvironmentApi = '2026-07-01'
 # Everything a session may leave in the folder. Remove deletes these and nothing else.
 $SessionFiles = 'parameters.json', 'what-if.json', 'budget.json'
 
@@ -132,7 +134,7 @@ if ($LogsOff) {
     $keepLogs = $false
     $report.Add('keepLogs: false, asked for with -LogsOff')
 } elseif (Deployed 'Microsoft.App/managedEnvironments' $EnvironmentName) {
-    $environment = Invoke-Az rest --method GET --url (Url "Microsoft.App/managedEnvironments/$EnvironmentName")
+    $environment = Invoke-Az rest --method GET --url (Url "Microsoft.App/managedEnvironments/$EnvironmentName" $EnvironmentApi)
     $logs = $environment['properties']['appLogsConfiguration']
     $destination = if ($logs -and $logs.ContainsKey('destination')) { $logs['destination'] } else { $null }
     if ($destination -eq 'azure-monitor') { $keepLogs = $true }

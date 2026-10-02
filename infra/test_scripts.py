@@ -418,6 +418,10 @@ class SecretsScriptTests(ScriptCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIs(self.parameters()['keepLogs'], expected)
                 self.assertIn('keepLogs: kept from the deployed resource', result.stderr)
+                # Read with the API version the template creates the environment with.
+                read = [call for call in self.calls() if 'managedEnvironments' in ' '.join(call)][-1]
+                self.assertTrue(read[read.index('--url') + 1].endswith(
+                    '/providers/Microsoft.App/managedEnvironments/azurebank-env?api-version=2026-07-01'), read)
 
     def test_logs_off_writes_false_whatever_is_deployed(self):
         for state in ('empty', 'foundation', 'deployed'):
@@ -1283,6 +1287,43 @@ class TemplateTests(unittest.TestCase):
         self.assertIs(self.main['parameters']['keepLogs']['defaultValue'], True)
         for key in ('sharedKey', 'listKeys', 'logAnalyticsConfiguration'):
             self.assertNotIn(key, json.dumps(self.main))
+
+    def test_the_environment_names_its_mode_on_an_api_version_that_has_the_property(self):
+        # A request that names no mode was taken as Express on the demo's subscription and refused
+        # (README.md, "Measured on Azure"). The property exists from this API version on.
+        (environment,) = self.of_type('Microsoft.App/managedEnvironments')
+        self.assertEqual(environment['apiVersion'], '2026-07-01')
+        self.assertEqual(environment['properties'].get('environmentMode'), 'WorkloadProfiles')
+        self.assertEqual(environment['properties']['workloadProfiles'],
+                         [{'name': 'Consumption', 'workloadProfileType': 'Consumption'}])
+        # The Bicep CLI has no types for that version: nothing but this test checks the names above.
+        self.assertEqual(sorted(environment['properties']),
+                         ['appLogsConfiguration', 'environmentMode', 'workloadProfiles'])
+        # And the script that reads the environment back asks with the same version.
+        self.assertIn(f"$EnvironmentApi = '{environment['apiVersion']}'",
+                      (HERE / 'secrets.ps1').read_text(encoding='utf-8'))
+
+    def test_one_warning_is_silenced_on_one_line_and_any_other_still_reaches_standard_error(self):
+        # setUpClass fails on anything Bicep writes to standard error. The template silences one
+        # code on one line (no types for the environment's API version). Both halves are seen
+        # firing here, on copies: without that line the warning is back, and with it an unused
+        # parameter is still reported, by build and by lint.
+        source = (HERE / 'main.bicep').read_text(encoding='utf-8')
+        self.assertEqual([line for line in source.splitlines() if line.lstrip().startswith('#')],
+                         ['#disable-next-line BCP081'])
+        mutants = {'BCP081': source.replace('#disable-next-line BCP081\n', ''),
+                   'no-unused-params': source + "\nparam nobodyReadsThis string = ''\n"}
+        self.assertNotIn('#disable', mutants['BCP081'])
+        for code, text in mutants.items():
+            for verb in (['build', '--stdout'], ['lint']):
+                with self.subTest(code=code, verb=verb[0]), tempfile.TemporaryDirectory() as folder:
+                    shutil.copy(HERE / 'guardrails.bicep', folder)
+                    copy = pathlib.Path(folder) / 'main.bicep'
+                    copy.write_text(text, encoding='utf-8')
+                    result = subprocess.run([BICEP, verb[0], str(copy), *verb[1:]],
+                                            capture_output=True, text=True, timeout=300)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn(f'Warning {code}', result.stderr)
 
     def test_the_environment_sends_console_and_system_logs_there_and_nothing_else(self):
         (environment,) = self.of_type('Microsoft.App/managedEnvironments')

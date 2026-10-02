@@ -46,10 +46,16 @@ param securityPinPepper string = ''
 var appInputsMissing = length(imageTag) != 40 || empty(alertEmail) || empty(jwtSecret) || empty(idempotencyHashKey) || empty(stepUpBindingKey) || empty(serviceCredentialBffKey) || empty(auditChainKey) || empty(auditAnchorKey) || empty(securityPinPepper)
 var appName = deployApp && appInputsMissing ? fail('deployApp=true needs a 40-character imageTag, alertEmail and all seven application secrets (run infra/secrets.ps1).') : 'azurebank'
 
-resource environment 'Microsoft.App/managedEnvironments@2025-01-01' = {
+// Bicep 0.47.16 has no types for this API version (BCP081): test_scripts.py checks the properties instead.
+#disable-next-line BCP081
+resource environment 'Microsoft.App/managedEnvironments@2026-07-01' = {
   name: 'azurebank-env'
   location: location
   properties: {
+    // Named, on an API version that has the property: a request that names no mode was taken as
+    // Express on this subscription and refused. Express has no Azure Monitor logs, no second
+    // container and no jobs (README.md, "Measured on Azure").
+    environmentMode: 'WorkloadProfiles'
     appLogsConfiguration: {
       // With 'azure-monitor' the diagnostic setting below says where the logs go, and no workspace
       // key is held by the environment.

@@ -44,7 +44,7 @@ One resource group, `azurebank-demo`, in Italy North. `main.bicep` is run with `
 
 | Resource | What it is |
 | --- | --- |
-| `azurebank-env` | A Container Apps environment with the Consumption profile only. What its containers print goes to Azure Monitor (`destination: 'azure-monitor'`), which holds no workspace key |
+| `azurebank-env` | A Container Apps environment in the mode `WorkloadProfiles`, which the template names, with the Consumption profile only. What its containers print goes to Azure Monitor (`destination: 'azure-monitor'`), which holds no workspace key |
 | `azurebank-logs` | A Log Analytics workspace: Analytics plan, kept 30 days, a daily cap of 0.05 GB, no access by shared key |
 | `to-azurebank-logs` | One diagnostic setting on the environment: console and system logs to that workspace. Not the ingress log, which would record every path with its query string and every caller's address |
 | `azurebank-<letters>` | A SQL logical server, TLS 1.2, that takes Microsoft Entra sign-ins only. The template gives it no SQL administrator login and no password: **no database password exists**, in any file, secret or parameter. Its one administrator is the owner's account |
@@ -58,6 +58,20 @@ One resource group, `azurebank-demo`, in Italy North. `main.bicep` is run with `
 | `AzureBank deploy <letters>` | A custom role of nine actions: read and write the app and a job, start a job, read its executions, read the app's revisions and replicas. It cannot list secrets, delete or stop |
 | the policy definition | "AzureBank: one small replica, manual jobs" (`guardrails.bicep`), written at subscription level because a custom definition cannot live in a resource group. It refuses nothing by itself |
 | `azurebank-shape` | That policy assigned to the resource group, effect Deny. It refuses, whoever asks: more than one replica, a minimum above zero, several active revisions, plain HTTP, more than two containers, an init container, a container above half a vCPU; and for a job, a trigger other than Manual, parallel runs, an init container, a container above half a vCPU |
+
+**Why the template names the environment's mode.** On this subscription a request for an
+environment that names no mode is taken as *Express*. Sent by hand on 2026-10-02, such a request
+(API version `2025-01-01`, the Consumption profile, logs to Azure Monitor) was refused with HTTP
+400 and the code `ExpressEnvironmentFeatureNotSupported`: "'Azure Monitor Log Destination' is not
+supported ... on express environments". Express has no Azure Monitor logging, no second container
+in an app and no jobs (Microsoft's page "Azure Container Apps express overview", dated 2026-09-21,
+read on 2026-10-03), and this design needs all three. That page's FAQ says a template that creates
+a new environment creates a standard one by default; that is not what this subscription did. So
+`main.bicep` says `environmentMode: 'WorkloadProfiles'`, on API version `2026-07-01`, which has the
+property. Sent that way the request was accepted, and the environment that came back held the logs
+destination, the Consumption profile and two jobs that ran. The Bicep CLI 0.47.16 has no types for
+that API version: one line of the template silences its warning (BCP081) for that one resource,
+and a test reads the compiled properties instead.
 
 **Inside the database**, created by `sql-principals.ps1`, not by the template: two users, each bound
 to one identity and with no password. `azurebank_app` reads and writes rows (`db_datareader`,
@@ -249,6 +263,16 @@ function Show-Executions([string]$Job) {
             '{0}: {1}, {2} s, exit code [{3}]' -f $_.name, $_.properties.status, $took, $codes
         }
 }
+
+# The environment's mode, read with the API version that has the property. Anything but
+# WorkloadProfiles throws: an Express environment takes neither a second container nor a job.
+function Assert-EnvironmentMode {
+    $scope = az group show --name $group --query id --output tsv
+    $mode = (az rest --method get --url "https://management.azure.com$scope/providers/Microsoft.App/managedEnvironments/azurebank-env?api-version=2026-07-01" |
+        ConvertFrom-Json).properties.environmentMode
+    if ($mode -ne 'WorkloadProfiles') { throw "The environment's mode reads '$mode', not WorkloadProfiles. Stop: deploy nothing into it." }
+    "The environment's mode: $mode"
+}
 ```
 
 The template is compiled first and the deployment is given the JSON, because `az` looks for a
@@ -309,6 +333,16 @@ holds no secret; it stays in the protected folder because the administrator's si
 shaped like an e-mail address. If the deployment is refused, the next step is in
 [If Azure says no](#if-azure-says-no).
 
+Then, before anything else is done with the environment, its mode is read back:
+
+```powershell
+Assert-EnvironmentMode                       # WorkloadProfiles, or it throws
+```
+
+**`Express`, or no mode at all, is a stop.** An Express environment takes neither the app's second
+container nor the migrate job. Nothing more is deployed into it, and what was read goes to the
+owner.
+
 #### 3. The same deployment, a second time (operator, **writes** nothing if Azure accepts it)
 
 The server is created without a SQL administrator through a block that this API version documents
@@ -335,6 +369,7 @@ These are the expected values, not observed ones.
 | Claim | Read | Expected |
 | --- | --- | --- |
 | Consumption only | `az containerapp env show -n azurebank-env -g $group --query properties.workloadProfiles` | one entry, `Consumption` |
+| Not Express | `Assert-EnvironmentMode` | `WorkloadProfiles` |
 | Logs on | `az containerapp env show -n azurebank-env -g $group --query properties.appLogsConfiguration`; `az monitor log-analytics workspace show -g $group -n azurebank-logs`; `az monitor diagnostic-settings list --resource <the environment's id>` | destination `azure-monitor`; one workspace, cap exactly 0.05, retention 30, `disableLocalAuth` true; one setting with two categories. With the logs off instead: destination `none`, no setting, no workspace. Anything in between is a defect |
 | The database | `az sql db show -g $group -s $server -n AzureBank` | `Basic`, capacity 5, 2147483648 bytes, `Local` |
 | The server | `az sql server firewall-rule list`; `az sql server ad-admin list`; `az sql server ad-only-auth get`; `az sql server show --query minimalTlsVersion` | one rule; one administrator; `true`; `1.2` |
