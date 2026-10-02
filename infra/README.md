@@ -43,7 +43,7 @@ One resource group, `azurebank-demo`, in Italy North. `main.bicep` is run twice:
 | `AllowAzureServices` | The firewall rule `0.0.0.0`: see [Who can reach the database server](#who-can-reach-the-database-server) |
 | `azurebank-deploy` | A managed identity with one federated credential: GitHub may sign in as it only from the environment `demo` of `Gurgant/azurebank-v2`. Until the second run it holds no role on anything |
 | `AzureBank deploy <letters>` | A custom role of nine actions: read and write the app and a job, start a job, read its executions, read the app's revisions and replicas. It cannot list secrets, delete or stop |
-| `azurebank-shape` | A policy assignment on the resource group, effect Deny (definition in `guardrails.bicep`, written at subscription level because a custom definition cannot live in a resource group). It refuses, whoever asks: more than one replica, a minimum above zero, several active revisions, plain HTTP, more than two containers, a container above half a vCPU; and for a job, a trigger other than Manual, parallel runs, a container above half a vCPU |
+| `azurebank-shape` | A policy assignment on the resource group, effect Deny (definition in `guardrails.bicep`, written at subscription level because a custom definition cannot live in a resource group). It refuses, whoever asks: more than one replica, a minimum above zero, several active revisions, plain HTTP, more than two containers, an init container, a container above half a vCPU; and for a job, a trigger other than Manual, parallel runs, an init container, a container above half a vCPU |
 
 **With `deployApp=true`**
 
@@ -190,7 +190,7 @@ Read back what was created. These are the expected values, not observed ones:
 | The database | `az sql db show -g $group -s <server> -n AzureBank` | `Basic`, capacity 5, 2147483648 bytes, `Local` |
 | The server | `az sql server firewall-rule list`; `az sql server ad-admin list`; `az sql server show --query minimalTlsVersion` | one rule; one administrator; `1.2` |
 | One federated credential | `az identity federated-credential list --identity-name azurebank-deploy -g $group` | one: the GitHub issuer, the subject ending `:environment:demo`, the audience `api://AzureADTokenExchange` |
-| The role, unassigned | `az role definition list --custom-role-only true`; `az role assignment list --assignee <principal id> --all` | nine actions, no data action; no assignment yet |
+| The role, unassigned | `az role definition list --custom-role-only true -g $group`; `az role assignment list --assignee <principal id> --all` | nine actions, no data action; no assignment yet. The role can be assigned in this resource group only, so it is listed through the group: whether a listing of the whole subscription shows it is not measured |
 | The lock | `az lock list -g $group` | one, `CanNotDelete`, on the database |
 | The policy | `az policy assignment list -g $group` | `azurebank-shape`, enforcement `Default` |
 
@@ -198,14 +198,15 @@ Read back what was created. These are the expected values, not observed ones:
 
 `az consumption budget create` cannot set a notification (its help lists no such argument), so a
 budget that warns is one REST call with a body file. The body holds the address the e-mails go to,
-taken from the variable `AZUREBANK_ALERT_EMAIL`; the file is written into the session's folder and
-removed with it. Whether a credit offer accepts a budget at all is not measured, and neither is
-this body: a refusal here changes nothing else.
+taken from the variable `AZUREBANK_ALERT_EMAIL`. Step 2 removed the session's folder, so
+`secrets.ps1 -Action New` makes it again, open to its owner only, before the file is written into
+it; both go in the `finally`. Whether a credit offer accepts a budget at all is not measured, and
+neither is this body: a refusal here changes nothing else.
 
 ```powershell
 if (-not $env:AZUREBANK_ALERT_EMAIL) { throw 'Set AZUREBANK_ALERT_EMAIL first.' }
 try {
-    $null = New-Item -ItemType Directory -Path $folder -Force
+    ./infra/secrets.ps1 -Action New          # for the folder: only its owner can open it
     $notify = { param($percent, $kind) @{ enabled = $true; operator = 'GreaterThanOrEqualTo'; threshold = $percent
                                            thresholdType = $kind; contactEmails = @($env:AZUREBANK_ALERT_EMAIL) } }
     @{ properties = @{ category = 'Cost'; amount = 20; timeGrain = 'Monthly'
@@ -252,8 +253,9 @@ az account show --query id --output tsv | gh secret set AZURE_SUBSCRIPTION_ID --
 gh secret list --env demo --repo Gurgant/azurebank-v2
 ```
 
-The workflow's first step fails, without printing anything, if one of the three is missing or is
-not the shape of an identifier (a stray space or newline).
+The workflow's first step fails if one of the three is missing or is not the shape of an
+identifier (a stray space or newline). It prints one error line that names the secret, never its
+value.
 
 ### 6. The images (operator, **writes**; then the owner, in the browser, **cannot be undone**)
 
@@ -374,8 +376,8 @@ written once: an image that is already published is left as it is, and only the 
 1. checks that the three images can be pulled without signing in, then signs in to Azure as the
    deployment identity;
 2. reads the app and the job, prints what runs now (the three image references and the two revision
-   names), and stops if their shape has drifted: scale, revision mode, ingress, the two containers,
-   the job's trigger, parallelism and retry limit;
+   names), and stops if their shape has drifted: scale, revision mode, ingress, the two containers
+   and no init container, the job's trigger, parallelism and retry limit;
 3. tries to list the app's secrets and goes on only if Azure refuses;
 4. moves the tools image on the migrate job, starts the migration once, and waits for that exact
    execution. A failed migration stops here: the app is not touched;
@@ -392,8 +394,11 @@ written once: an image that is already published is left as it is, and only the 
 
 **If step 5 or step 7 fails, the app is put back** on the template it had at step 2, under a new
 revision, and the run still fails, saying "put back to `<tag>`; the schema stays where the
-migration left it". A sign-in that is only rate limited (429) or unanswered proves nothing either
-way: the run fails as *unproven* and the new revision is left in place.
+migration left it". The sign-in is tried up to four times and the last try decides. If the last
+try is rate limited (429) or gets no answer (the connection refused, reset, closed or timed out),
+nothing is proved either way: the run fails as *unproven* and the new revision is left in place.
+While the page or `/health/ready` gets no answer, they are asked again every five seconds for five
+minutes; still nothing then is a failure, and the app is put back.
 
 Every deployment ends the sessions held in the replica's memory, and so does every scale to zero.
 
@@ -422,7 +427,8 @@ stopped. The deployment identity cannot stop or start the app.
 | "The migration did not succeed" | The job runs the new tools image; some migrations may be applied; the app still runs the old images | Read the execution's log stream in the portal while a run is alive: start the deployment again and watch. `migrate` is safe to run again |
 | "the new revision never became ready", then "put back to ..." | The run printed the revision's state and each container's state and restart count, then put the app back | Read those lines; fix; deploy again |
 | "Smoke test failed", then "put back to ..." | The page, the readiness answer or the sign-in answer was wrong on the new revision | The same |
-| "Smoke test unproven" | Only 429 or no answer in four tries, 65 s apart after a 429. Sign-ins are limited to 10 a minute, and behind the ingress every visitor may share that limit. The new revision is serving | Deploy again later, or check a sign-in by hand |
+| "Smoke test unproven" | The last of four sign-in tries was a 429 or got no answer (the wait is 65 s after a 429, 20 s otherwise). An earlier try may have got another answer: only the last one decides. Sign-ins are limited to 10 a minute, and behind the ingress every visitor may share that limit. The new revision is serving and was not put back | Deploy again later, or check a sign-in by hand |
+| "Azure refused or failed a request", "The Azure CLI gave no answer in 180 s" | One request to Azure failed after the run had started. The script does not ask twice, and it puts nothing back: no check had failed. The app may already be on the new images, unchecked | Look at the app's latest and latest ready revision; deploy again, or go back by hand, below |
 | "was still active after 180 s" | The old revision did not go inactive, so the smoke test was not run and nothing was put back | Look at the app's revisions in the portal; deploy again |
 | "The put-back ... did not succeed. The app may be serving a broken revision" | Both the deployment and the way back failed | Go back by hand, below |
 
@@ -487,7 +493,9 @@ identity can:
 - run any image in the job, with the schema-changing login in its environment.
 
 The policy refuses: a second replica, a minimum above zero, several active revisions, plain HTTP, a
-third container, a container above half a vCPU, a scheduled or parallel job.
+third container, any init container, a container above half a vCPU; and for a job, a trigger other
+than Manual, parallel runs under any trigger, any init container, a container above half a vCPU. It
+does not limit how many containers a job has.
 
 So the boundary is **who can run a job in the environment `demo`**: its branch rule (`main` only),
 its required reviewer, and whoever holds a GitHub token that can edit the environment or merge to
@@ -547,13 +555,21 @@ try {
 
 ## Removing everything
 
-In this order. The role definition and the policy definition outlive the resource group.
+In this order. The role definition and the policy definition are not inside the resource group
+and are not deleted with it. The role can be assigned in this group only, so it is removed first,
+through the group, while the group still exists: its two assignments, then the definition. Whether
+it could still be found once the group is gone is not measured. None of these commands has been
+run yet.
 
 ```powershell
-az lock list --resource-group azurebank-demo --query '[].id' --output tsv | ForEach-Object { az lock delete --ids $_ }
-az group delete --name azurebank-demo
-az role definition list --custom-role-only true --output json | ConvertFrom-Json |
-    Where-Object roleName -like 'AzureBank deploy *' | ForEach-Object { az role definition delete --name $_.name }
+$group = 'azurebank-demo'
+az lock list --resource-group $group --query '[].id' --output tsv | ForEach-Object { az lock delete --ids $_ }
+$principal = az identity show --resource-group $group --name azurebank-deploy --query principalId --output tsv
+az role assignment list --assignee $principal --all --query '[].id' --output tsv | ForEach-Object { az role assignment delete --ids $_ }
+az role definition list --custom-role-only true --resource-group $group --output json | ConvertFrom-Json |
+    Where-Object roleName -like 'AzureBank deploy *' |
+    ForEach-Object { az role definition delete --name $_.name --resource-group $group }
+az group delete --name $group
 az policy definition list --output json | ConvertFrom-Json |
     Where-Object { $_.policyType -eq 'Custom' -and $_.displayName -eq 'AzureBank: one small replica, manual jobs' } |
     ForEach-Object { az policy definition delete --name $_.name }
@@ -616,12 +632,16 @@ Each line is checked at the step named, on the first deployment.
 | As the identity: GET and PATCH of the app and of the job succeed with these nine actions and no right on the environment; the listing of secrets is refused with `AuthorizationFailed` | step 8 |
 | On Azure, as on the local stack: the app becomes ready on an empty database, before the first migration | steps 7 and 8 |
 | The automatic put-back on a real failure. Its trigger is proved by unit tests only; its request and its wait are the ones `--app-only` uses | step 8 proves `--app-only` |
+| What the app reads just after the put-back request. If its state still says `Failed`, left by the deployment that failed, `deploy.py` reports a put-back that did not succeed although it may have | a real put-back; not provoked |
+| A request to Azure that fails once in the middle of a run. Nothing is asked twice: the run stops, and nothing is put back | not provoked |
 | The raw log of a workflow run holds none of the three identifiers and not the app's address | step 8 |
 | Whether a finished migration's log can still be read | step 8 |
 | Cold start against the probes (1 s delay, 3 s period, 10 failures; 4 s timeout on readiness) | after step 8 |
 | The meters after 48 hours: the three environment meters and the Dedicated one at 0 | after step 8 |
 | That the identity is refused a scale change, a delete or a stop. One refusal is provoked on every deployment (the secrets listing); the policy's refusal is provoked as the owner | not provoked |
-| `deploy.yml` and `ci.yml` under actionlint | the first run of the CI job `infra` |
+| The role as a listing through the resource group shows it, and every command under [Removing everything](#removing-everything) | step 2; the day it is removed |
+| `sql-principals.ps1` against a real database. Offline it runs from its first line to its last with a stand-in where the database is; the statement itself ran on a local SQL Server through another runner | step 7 |
+| Every workflow file under actionlint, `contract-tests.yml` and the older jobs of `ci.yml` included: it is not installed where this was written, and the job lints the whole folder. The tests' PowerShell and Bicep halves on Linux | the first run of the CI job `infra` |
 
 ## Checking these files
 
@@ -632,6 +652,9 @@ python -m unittest discover -s infra -p "test_*.py"
 ```
 
 `test_deploy.py` tests the deployment script's decisions against invented answers: time is a
-counter and no process is started. `test_scripts.py` runs the two PowerShell scripts for real
-against a stand-in for the Azure CLI, and reads the compiled templates. The CI job `infra` runs
-the same three checks and actionlint on the workflows.
+counter and no process is started. A few of its tests open a real connection to a server of their
+own on `127.0.0.1`, to see what a dropped connection really raises. `test_scripts.py` runs the two
+PowerShell scripts for real against a stand-in for the Azure CLI, the users script also with a
+stand-in where the database is, and reads the compiled templates: the role's nine actions, the
+federated credential's subject, every rule of the policy. The CI job `infra` runs the same three
+checks and actionlint on the workflows.
