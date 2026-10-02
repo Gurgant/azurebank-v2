@@ -95,7 +95,7 @@ describe('WentThroughView', () => {
     expect(outside).toHaveFocus();
   });
 
-  it('is announced by that focus alone: no live region around the sentence, no description on the buttons', () => {
+  it('leaves the reading to that focus alone: no live region around the sentence, no description on the buttons', () => {
     render();
 
     // A region that mounts already filled is not read; one that was, plus the focus, reads twice.

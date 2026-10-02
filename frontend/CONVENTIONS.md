@@ -70,7 +70,7 @@ has put it somewhere else meanwhile. ADR-0059 has the reasons.
 is disabled during the send and the browser hands its focus to `body`, so the view appears with
 nothing focused, and a view that mounts with its words already in it is not announced. The sentence
 is a `<Text as="p">` with `tabIndex={-1}` and the ref of `useFocusWhenLost(active)`, which focuses
-it when the view appears and focus is on `body`: it is read because focus is on it, before the
+it when the view appears and focus is on `body`: the landing is there so that it is read before the
 actions, and one Tab reaches the first of them. **Not a live region, an alert or a status as well,
 and no `aria-describedby` on a button:** beside the landing those would say the sentence a second
 time, and a description would say it again at the Tab. The went-through view of the four money
