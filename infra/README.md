@@ -733,7 +733,7 @@ and bring the refusal's text to the owner.
 
 | If | Then |
 | --- | --- |
-| The deployment is refused on the **policy definition** | Run it again with the policy off (`Invoke-Template 'foundation' @('denyPolicy=false')`), and write down that the shape then rests on `deploy.py`'s own check alone |
+| The deployment is refused on the **policy definition** | Run it again with the policy off (`Invoke-Template 'foundation' @('denyPolicy=false')`), pass the same override on every later run, and write down that the shape then rests on `deploy.py`'s own check alone |
 | It is refused on the **custom role**, or the offer refuses a **SQL server** at all | Stop: there is no fallback that keeps the deployment identity away from the secrets |
 | It is refused on the **workspace**, the destination, the diagnostic setting or the cap | `./infra/secrets.ps1 -Action New -LogsOff`, run again, and say so: nothing is kept then. If a workspace or a setting was created on the way, [Switching the logs off](#switching-the-logs-off) |
 | The server is refused **because it has no administrator login** | The second shape below. Nothing exists yet to delete |
@@ -755,6 +755,36 @@ The template in this folder holds the first shape only. The other two are edits 
 **A shape is only ever changed by deleting the still-empty server, and only in the first session.**
 `az sql server ad-only-auth disable` is never run. Once the first migration has run, any change of
 shape is "stop".
+
+The second and the third shape take one more parameter, `sqlAdminPassword`, declared `@secure()`
+in the edited template. `secrets.ps1` does not write it: the template in this folder has no such
+parameter, and a parameter the template does not have fails the deployment. So the value is added
+to the session's file, in the protected folder and never on a command line, by these lines
+between `secrets.ps1 -Action New` and `Invoke-Template`, inside the same `try`:
+
+```powershell
+$file = "$folder\parameters.json"
+$letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+$value = -join (1..48 | ForEach-Object { $letters[[System.Security.Cryptography.RandomNumberGenerator]::GetInt32($letters.Length)] })
+$document = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json -AsHashtable
+$document.parameters['sqlAdminPassword'] = @{ value = $value }
+$document | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $file
+Remove-Variable value, document
+```
+
+It is made there, printed nowhere, and goes with the file in the `finally`. With the second shape
+only the run that creates the server adds it: every later run leaves these lines out, and the
+template then sends no password. With the third shape every run adds a new one, so if that shape
+is the one that stays, the lines move into `secrets.ps1`, with a test. Three tests in
+`test_scripts.py` describe the first shape and change with the template: the server's properties,
+"no database credential is anywhere", and the seven secure parameters.
+
+**Two switches are not remembered.** The parameter file keeps what the environment does with its
+logs, read from Azure. It does not keep `denyPolicy=false` or `logVolumeAlert=false`: a policy or
+an alert that is absent cannot be told from one a run that stopped halfway never got to create,
+and a guard must not be switched off by that. If either was left out because Azure refused it,
+pass the same override on every later run of the template; without it the run asks Azure again
+for what it refused. The what-if shows it first: a policy assignment, or a fourth alert, to create.
 
 **The users (step 6)**
 
@@ -796,7 +826,7 @@ shape is "stop".
 
 | If | Then |
 | --- | --- |
-| The alert on the workspace is refused | `Invoke-Template 'app' @('logVolumeAlert=false')`, and say so. It is one of four rules |
+| The alert on the workspace is refused | `Invoke-Template 'app' @('logVolumeAlert=false')`, the same override on every later run, and say so. It is one of four rules |
 | The policy accepts two replicas | Put 1 back at once and stop: the policy does not work |
 | A deployment as the identity is refused naming `userAssignedIdentities/assign/action` | **Stop.** No role is created: a right on the two database identities would let the deployment identity attach the schema-changing one to the app that faces the internet. The deployment from the owner's terminal keeps working meanwhile |
 | The raw log of a run holds the server's name, the app's address, one of the five IDs or an address | Stop: the mask or the print is a defect |
@@ -1244,6 +1274,9 @@ try {
 - Images move through the `deploy` workflow only: once the app exists, `secrets.ps1` refuses
   another `-ImageTag`.
 - The server's shape is not changed by a later run: see [If Azure says no](#if-azure-says-no).
+- If the policy or the alert on the workspace was left out because Azure refused it, the override
+  that left it out is passed again: `Invoke-Template 'change' @('denyPolicy=false')`. The file
+  does not remember it ([If Azure says no](#if-azure-says-no)).
 - A job with another trigger needs it added to the parameter `allowedJobTriggers`, or the policy
   refuses it.
 - After an identity was deleted and made again, run `./infra/sql-principals.ps1`: the user it left
