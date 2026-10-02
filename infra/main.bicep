@@ -3,7 +3,7 @@ targetScope = 'resourceGroup'
 param location string = 'italynorth'
 @description('Full commit SHA shared by the three public GHCR images. Needed only when deployApp is true.')
 param imageTag string = ''
-@description('False creates what needs no image: the environment, SQL, the deployment identity and its role. True adds the app, the migrate job and the two role assignments.')
+@description('False creates what needs no image: the environment, SQL, the three identities and the deployment role. True adds the app, the migrate job and the two role assignments.')
 param deployApp bool = false
 param entraAdminObjectId string
 param entraAdminLogin string
@@ -21,15 +21,7 @@ param allowedJobTriggers array = [
   'Manual'
 ]
 
-@description('Set on every run to a fresh random value that is stored nowhere: nothing signs in with it.')
-@secure()
-param sqlAdminPassword string
-
-// The nine values below are needed only when deployApp is true; infra/secrets.ps1 supplies them.
-@secure()
-param appSqlPassword string = ''
-@secure()
-param migratorSqlPassword string = ''
+// The seven values below are needed only when deployApp is true; infra/secrets.ps1 supplies them.
 @secure()
 param jwtSecret string = ''
 @secure()
@@ -45,8 +37,8 @@ param auditAnchorKey string = ''
 @secure()
 param securityPinPepper string = ''
 
-var appInputsMissing = length(imageTag) != 40 || empty(alertEmail) || empty(appSqlPassword) || empty(migratorSqlPassword) || empty(jwtSecret) || empty(idempotencyHashKey) || empty(stepUpBindingKey) || empty(serviceCredentialBffKey) || empty(auditChainKey) || empty(auditAnchorKey) || empty(securityPinPepper)
-var appName = deployApp && appInputsMissing ? fail('deployApp=true needs a 40-character imageTag, alertEmail and all nine application secrets (run infra/secrets.ps1).') : 'azurebank'
+var appInputsMissing = length(imageTag) != 40 || empty(alertEmail) || empty(jwtSecret) || empty(idempotencyHashKey) || empty(stepUpBindingKey) || empty(serviceCredentialBffKey) || empty(auditChainKey) || empty(auditAnchorKey) || empty(securityPinPepper)
+var appName = deployApp && appInputsMissing ? fail('deployApp=true needs a 40-character imageTag, alertEmail and all seven application secrets (run infra/secrets.ps1).') : 'azurebank'
 
 resource environment 'Microsoft.App/managedEnvironments@2025-01-01' = {
   name: 'azurebank-env'
@@ -64,28 +56,25 @@ resource environment 'Microsoft.App/managedEnvironments@2025-01-01' = {
   }
 }
 
+// Microsoft Entra sign-ins only. The server is created without a SQL administrator, so its
+// sign-in, which every Azure customer can reach (the firewall rule below), has no password to
+// guess. The administrators block is what creates a server that way; this API version reads it
+// at creation only.
 resource sql 'Microsoft.Sql/servers@2023-08-01' = {
   name: 'azurebank-${uniqueString(resourceGroup().id)}'
   location: location
   properties: {
     version: '12.0'
-    administratorLogin: 'azurebank_sql_admin'
-    administratorLoginPassword: sqlAdminPassword
     minimalTlsVersion: '1.2'
     publicNetworkAccess: 'Enabled'
-  }
-}
-
-// Its own resource, not the server's administrators property: that one is read at creation only,
-// and a later run of this template would be ignored or refused.
-resource entraAdmin 'Microsoft.Sql/servers/administrators@2023-08-01' = {
-  parent: sql
-  name: 'ActiveDirectory'
-  properties: {
-    administratorType: 'ActiveDirectory'
-    login: entraAdminLogin
-    sid: entraAdminObjectId
-    tenantId: subscription().tenantId
+    administrators: {
+      administratorType: 'ActiveDirectory'
+      principalType: 'User'
+      login: entraAdminLogin
+      sid: entraAdminObjectId
+      tenantId: subscription().tenantId
+      azureADOnlyAuthentication: true
+    }
   }
 }
 
@@ -141,13 +130,35 @@ resource githubFederation 'Microsoft.ManagedIdentity/userAssignedIdentities/fede
   }
 }
 
+// What the app and the migrate job sign in to the database as. Neither has a role on any Azure
+// resource: each is only a user inside the database, created by infra/sql-principals.ps1.
+resource appIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: 'azurebank-app'
+  location: location
+}
+
+resource migrateIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: 'azurebank-migrate'
+  location: location
+}
+
+// Each string names the identity to ask a token for and holds no credential. The two are secrets
+// all the same, referenced by the api container and by the job only: an identity can be used by
+// every container of the app, and the bff, which faces the internet, is told neither the client
+// ID nor the server's name. A secret also stays out of every read of the app and of an execution.
 // The connection limits (connect timeout, retries, pool size) are the hosts' own defaults (ADR-0058): none is set here.
-var appConnection = 'Server=tcp:${sql.properties.fullyQualifiedDomainName},1433;Database=AzureBank;User ID=azurebank_app;Password="${replace(appSqlPassword, '"', '""')}";Encrypt=True;TrustServerCertificate=False'
-var migrationConnection = 'Server=tcp:${sql.properties.fullyQualifiedDomainName},1433;Database=AzureBank;User ID=azurebank_migrator;Password="${replace(migratorSqlPassword, '"', '""')}";Encrypt=True;TrustServerCertificate=False'
+var appConnection = 'Server=tcp:${sql.properties.fullyQualifiedDomainName},1433;Database=AzureBank;Authentication=Active Directory Managed Identity;User ID=${appIdentity.properties.clientId};Encrypt=True;TrustServerCertificate=False'
+var migrationConnection = 'Server=tcp:${sql.properties.fullyQualifiedDomainName},1433;Database=AzureBank;Authentication=Active Directory Managed Identity;User ID=${migrateIdentity.properties.clientId};Encrypt=True;TrustServerCertificate=False'
 
 resource app 'Microsoft.App/containerApps@2025-01-01' = if (deployApp) {
   name: appName
   location: location
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${appIdentity.id}': {}
+    }
+  }
   properties: {
     environmentId: environment.id
     workloadProfileName: 'Consumption'
@@ -235,6 +246,12 @@ resource app 'Microsoft.App/containerApps@2025-01-01' = if (deployApp) {
 resource migrate 'Microsoft.App/jobs@2025-01-01' = if (deployApp) {
   name: 'azurebank-migrate'
   location: location
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${migrateIdentity.id}': {}
+    }
+  }
   properties: {
     environmentId: environment.id
     workloadProfileName: 'Consumption'
@@ -274,7 +291,8 @@ resource migrate 'Microsoft.App/jobs@2025-01-01' = if (deployApp) {
 // What a deployment needs: read and write the app and the job, start the job, read its executions,
 // read the app's revisions and replicas (why a revision is not ready). It cannot list secrets,
 // delete, stop, or touch the environment or the resource group. It CAN write the whole app and the
-// whole job, so it can run any image with the secrets in its environment: see the README.
+// whole job, so it can run any image with the secrets in its environment and with the database
+// identity attached to it: see the README.
 var deployRoleName = guid(resourceGroup().id, 'azurebank-deploy')
 // The form every role assignment stores, whatever scope the definition was written at.
 var deployRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', deployRoleName)
@@ -425,4 +443,10 @@ output sqlServerFqdn string = sql.properties.fullyQualifiedDomainName
 output sqlServerName string = sql.name
 output deploymentClientId string = deployIdentity.properties.clientId
 output deploymentPrincipalId string = deployIdentity.properties.principalId
+// Client IDs name an identity in a connection string and, by default, in the database user;
+// principal (object) IDs are what the users script binds a user to when it is asked for that kind.
+output appIdentityClientId string = appIdentity.properties.clientId
+output appIdentityPrincipalId string = appIdentity.properties.principalId
+output migrateIdentityClientId string = migrateIdentity.properties.clientId
+output migrateIdentityPrincipalId string = migrateIdentity.properties.principalId
 output appUrl string = deployApp ? 'https://${app!.properties.configuration!.ingress!.fqdn}' : ''

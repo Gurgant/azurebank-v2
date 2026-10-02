@@ -601,12 +601,18 @@ NINE_ACTIONS = [
 BEHIND_DEPLOY_APP = ['Microsoft.App/containerApps', 'Microsoft.App/jobs', 'Microsoft.Authorization/roleAssignments',
                      'Microsoft.Authorization/roleAssignments', 'Microsoft.Insights/actionGroups',
                      'Microsoft.Insights/metricAlerts']
+IDENTITIES = 'Microsoft.ManagedIdentity/userAssignedIdentities'
 FOUNDATION = ['Microsoft.App/managedEnvironments', 'Microsoft.Authorization/locks',
-              'Microsoft.Authorization/roleDefinitions', 'Microsoft.ManagedIdentity/userAssignedIdentities',
+              'Microsoft.Authorization/roleDefinitions', IDENTITIES, IDENTITIES, IDENTITIES,
               'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials',
-              'Microsoft.Sql/servers', 'Microsoft.Sql/servers/administrators', 'Microsoft.Sql/servers/databases',
-              'Microsoft.Sql/servers/firewallRules']
+              'Microsoft.Sql/servers', 'Microsoft.Sql/servers/databases', 'Microsoft.Sql/servers/firewallRules']
 BEHIND_DENY_POLICY = ['Microsoft.Authorization/policyAssignments', 'Microsoft.Resources/deployments']
+# The application secrets the template takes. No database credential is among them.
+SEVEN = ['jwtSecret', 'idempotencyHashKey', 'stepUpBindingKey', 'serviceCredentialBffKey', 'auditChainKey',
+         'auditAnchorKey', 'securityPinPepper']
+SECRETS_OF_THE_APP = ['app-connection', 'audit-anchor-key', 'audit-chain-key', 'idempotency-hash-key', 'jwt-secret',
+                      'pin-pepper', 'service-key', 'stepup-binding-key']
+SERVER = "resourceId('Microsoft.Sql/servers', format('azurebank-{0}', uniqueString(resourceGroup().id)))"
 # Everything the Deny policy refuses, as Azure receives it. A rule that is dropped or loosened
 # fails the comparison below; so does a new one, until it is written here too.
 APP, JOB = 'Microsoft.App/containerApps', 'Microsoft.App/jobs'
@@ -631,6 +637,15 @@ REFUSED_ON_A_JOB = [
     {'count': {'field': f'{JOB}/template.containers[*]',
                'where': {'field': f'{JOB}/template.containers[*].resources.cpu', 'greater': 0.5}}, 'greater': 0},
 ]
+
+
+def connection_of(identity):
+    """A connection string as the compiled template builds it: the server, the identity to ask a
+    token for, and nothing else. A credential or a limit added to it changes this text."""
+    return ("[format('Server=tcp:{0},1433;Database=AzureBank;Authentication=Active Directory Managed Identity;"
+            "User ID={1};Encrypt=True;TrustServerCertificate=False', "
+            f"reference({SERVER}, '2023-08-01').fullyQualifiedDomainName, "
+            f"reference(resourceId('{IDENTITIES}', '{identity}'), '2023-01-31').clientId)]")
 
 
 def as_azure_receives_it(node, variables):
@@ -700,36 +715,73 @@ class TemplateTests(unittest.TestCase):
             self.assertNotIn(forbidden.lower(), ' '.join(permissions['actions']).lower())
 
     def test_github_may_sign_in_from_the_environment_demo_of_this_repository_and_from_nowhere_else(self):
-        (identity,) = self.of_type('Microsoft.ManagedIdentity/userAssignedIdentities')
-        self.assertEqual(identity['name'], 'azurebank-deploy')
+        self.assertEqual(sorted(identity['name'] for identity in self.of_type(IDENTITIES)),
+                         ['azurebank-app', 'azurebank-deploy', 'azurebank-migrate'])
+        # One federated credential, on the deployment identity: nothing outside Azure can sign in
+        # as either database identity.
         (credential,) = self.of_type('Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials')
+        self.assertEqual(credential['name'], "[format('{0}/{1}', 'azurebank-deploy', 'github-demo')]")
         self.assertEqual(credential['properties'], {'issuer': 'https://token.actions.githubusercontent.com',
                                                     'subject': 'repo:Gurgant/azurebank-v2:environment:demo',
                                                     'audiences': ['api://AzureADTokenExchange']})
 
     def test_the_role_is_assigned_on_the_app_and_on_the_job_and_nowhere_else(self):
-        scopes = sorted(resource['scope'] for resource in self.of_type('Microsoft.Authorization/roleAssignments'))
+        assignments = self.of_type('Microsoft.Authorization/roleAssignments')
+        scopes = sorted(resource['scope'] for resource in assignments)
         self.assertEqual(len(scopes), 2)
         self.assertIn("resourceId('Microsoft.App/containerApps'", scopes[0])
         self.assertIn("resourceId('Microsoft.App/jobs', 'azurebank-migrate')", scopes[1])
+        # Both go to the deployment identity: the two database identities hold no role on anything in Azure.
+        self.assertEqual({resource['properties']['principalId'] for resource in assignments},
+                         {f"[reference(resourceId('{IDENTITIES}', 'azurebank-deploy'), '2023-01-31').principalId]"})
 
     def test_the_lock_is_on_the_database_not_on_the_server(self):
         (lock,) = self.of_type('Microsoft.Authorization/locks')
         self.assertIn("resourceId('Microsoft.Sql/servers/databases'", lock['scope'])
         self.assertEqual(lock['properties']['level'], 'CanNotDelete')
 
-    def test_the_administrator_is_its_own_resource(self):
+    def test_the_server_takes_entra_sign_ins_only_and_has_no_sql_administrator(self):
         (server,) = self.of_type('Microsoft.Sql/servers')
-        self.assertNotIn('administrators', server['properties'])
-        (administrator,) = self.of_type('Microsoft.Sql/servers/administrators')
-        self.assertTrue(administrator['name'].endswith("'ActiveDirectory')]"), administrator['name'])
+        self.assertEqual(server['properties'].get('administrators'), {
+            'administratorType': 'ActiveDirectory', 'principalType': 'User',
+            'login': "[parameters('entraAdminLogin')]", 'sid': "[parameters('entraAdminObjectId')]",
+            'tenantId': '[subscription().tenantId]', 'azureADOnlyAuthentication': True})
+        self.assertEqual(sorted(server['properties']),
+                         ['administrators', 'minimalTlsVersion', 'publicNetworkAccess', 'version'])
+        # Nothing else on the server sets its administrator or its sign-in mode a second time.
+        self.assertEqual(sorted(resource['type'] for resource in self.resources
+                                if resource['type'].startswith('Microsoft.Sql/servers/')),
+                         ['Microsoft.Sql/servers/databases', 'Microsoft.Sql/servers/firewallRules'])
 
-    def test_ten_parameters_are_secure_and_only_three_must_be_given(self):
+    def test_no_database_credential_is_anywhere_in_the_template(self):
+        # The words themselves, descriptions included: a search of the compiled template for
+        # "password" finds nothing, so a hit is always something to look at.
+        text = json.dumps(self.main).lower()
+        for word in ('password', 'pwd', 'administratorlogin'):
+            self.assertNotIn(word, text)
+
+    def test_the_app_and_the_job_each_carry_their_own_database_identity_and_no_other(self):
+        (app,) = self.of_type('Microsoft.App/containerApps')
+        (job,) = self.of_type('Microsoft.App/jobs')
+        for resource, name in ((app, 'azurebank-app'), (job, 'azurebank-migrate')):
+            self.assertEqual(resource.get('identity'), {'type': 'UserAssigned', 'userAssignedIdentities': {
+                f"[format('{{0}}', resourceId('{IDENTITIES}', '{name}'))]": {}}}, resource['type'])
+
+    def test_each_connection_string_names_its_own_identity_and_holds_no_credential(self):
+        (app,) = self.of_type('Microsoft.App/containerApps')
+        (job,) = self.of_type('Microsoft.App/jobs')
+        for resource, secret, identity in ((app, 'app-connection', 'azurebank-app'),
+                                           (job, 'migration-connection', 'azurebank-migrate')):
+            (value,) = [entry['value'] for entry in resource['properties']['configuration']['secrets']
+                        if entry['name'] == secret]
+            self.assertEqual(value, connection_of(identity), secret)
+
+    def test_seven_parameters_are_secure_and_only_two_must_be_given(self):
         parameters = self.main['parameters']
         secure = sorted(name for name, entry in parameters.items() if entry['type'].lower() == 'securestring')
-        self.assertEqual(secure, sorted(NINE + ['sqlAdminPassword']))
+        self.assertEqual(secure, sorted(SEVEN))
         required = sorted(name for name, entry in parameters.items() if 'defaultValue' not in entry)
-        self.assertEqual(required, ['entraAdminLogin', 'entraAdminObjectId', 'sqlAdminPassword'])
+        self.assertEqual(required, ['entraAdminLogin', 'entraAdminObjectId'])
         self.assertEqual((parameters['replicaTimeout']['minValue'], parameters['replicaTimeout']['maxValue']),
                          (60, 840))
         self.assertIs(parameters['deployApp']['defaultValue'], False)
@@ -737,7 +789,8 @@ class TemplateTests(unittest.TestCase):
     def test_no_output_is_a_secret(self):
         self.assertEqual({name: entry['type'] for name, entry in self.main['outputs'].items()},
                          dict.fromkeys(['sqlServerFqdn', 'sqlServerName', 'deploymentClientId',
-                                        'deploymentPrincipalId', 'appUrl'], 'string'))
+                                        'deploymentPrincipalId', 'appIdentityClientId', 'appIdentityPrincipalId',
+                                        'migrateIdentityClientId', 'migrateIdentityPrincipalId', 'appUrl'], 'string'))
 
     def test_every_secret_reaches_a_container_by_reference_only(self):
         (app,) = self.of_type('Microsoft.App/containerApps')
@@ -746,8 +799,21 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(len(job['properties']['configuration']['secrets']), 1)
         text = json.dumps([app['properties']['template'], job['properties']['template']])
         self.assertEqual(text.count('"secretRef"'), 10)
-        for name in NINE:
+        for name in SEVEN:
             self.assertNotIn(f"parameters('{name}')", text, f'{name} is a plain value in a container')
+
+    def test_only_the_api_container_and_the_job_are_handed_a_connection_string(self):
+        (app,) = self.of_type('Microsoft.App/containerApps')
+        (job,) = self.of_type('Microsoft.App/jobs')
+        handed = {container['name']: sorted(entry['secretRef'] for entry in container['env'] if 'secretRef' in entry)
+                  for container in app['properties']['template']['containers']}
+        # The bff faces the internet and can use the app's identity like any container of the app:
+        # it is told neither which identity nor which server.
+        self.assertEqual(handed, {'bff': ['service-key'], 'api': SECRETS_OF_THE_APP})
+        (migrate,) = job['properties']['template']['containers']
+        self.assertEqual([entry.get('secretRef') for entry in migrate['env']], ['migration-connection'])
+        # Nor does either reach a container as a plain value: nothing in a container is read from another resource.
+        self.assertNotIn('reference(', json.dumps([app['properties']['template'], job['properties']['template']]))
 
     def test_the_app_keeps_the_shape_the_deploy_script_and_the_policy_expect(self):
         (app,) = self.of_type('Microsoft.App/containerApps')
@@ -826,7 +892,7 @@ class TemplateTests(unittest.TestCase):
             written = set(case.parameters())
             self.assertLessEqual(written, set(self.main['parameters']))
             # What the template's own guard asks for when deployApp is true.
-            self.assertLessEqual(set(NINE) | {'imageTag', 'alertEmail', 'deployApp'}, written)
+            self.assertLessEqual(set(SEVEN) | {'imageTag', 'alertEmail', 'deployApp'}, written)
         finally:
             case.doCleanups()
 
