@@ -225,14 +225,17 @@ function Invoke-Template([string]$Name, [string[]]$Override = @()) {
     }
 }
 
-# Which identity each app and each job in the group carries. Names only.
+# Which identity each app and each job in the group carries, read from the resources themselves.
+# Names only: an identity's ID holds the subscription, and the entry under it two more IDs.
 function Show-Identities {
-    $apps = az containerapp list --resource-group $group --output json | ConvertFrom-Json
-    $jobs = az containerapp job list --resource-group $group --output json | ConvertFrom-Json
-    foreach ($resource in @($apps) + @($jobs)) {
-        $attached = $resource.identity.userAssignedIdentities
-        $names = if ($attached) { $attached.PSObject.Properties.Name | ForEach-Object { ($_ -split '/')[-1] } }
-        '{0}: {1}' -f $resource.name, (@($names) -join ', ')
+    $scope = az group show --name $group --query id --output tsv
+    foreach ($kind in 'containerApps', 'jobs') {
+        (az rest --method get --url "https://management.azure.com$scope/providers/Microsoft.App/${kind}?api-version=2025-01-01" |
+            ConvertFrom-Json).value | ForEach-Object {
+                $attached = $_.identity.userAssignedIdentities
+                $names = if ($attached) { $attached.PSObject.Properties.Name | ForEach-Object { ($_ -split '/')[-1] } }
+                '{0}: {1}' -f $_.name, (@($names) -join ', ')
+            }
     }
 }
 
@@ -336,6 +339,7 @@ These are the expected values, not observed ones.
 | The database | `az sql db show -g $group -s $server -n AzureBank` | `Basic`, capacity 5, 2147483648 bytes, `Local` |
 | The server | `az sql server firewall-rule list`; `az sql server ad-admin list`; `az sql server ad-only-auth get`; `az sql server show --query minimalTlsVersion` | one rule; one administrator; `true`; `1.2` |
 | Three identities | `az identity list -g $group --query '[].name'`; `Show-Identities` | `azurebank-app`, `azurebank-deploy`, `azurebank-migrate`; attached to nothing yet |
+| The same, asked of the identity | `az identity list-resources -g $group -n azurebank-app`, and for `azurebank-migrate`. Tried once: nobody has seen this call answer | No resource yet; after step 15, exactly one each. If the call does not answer, it is dropped and `Show-Identities` stands alone |
 | One federated credential | `az identity federated-credential list --identity-name azurebank-deploy -g $group` | one: the GitHub issuer, the subject ending `:environment:demo`, the audience `api://AzureADTokenExchange` |
 | The role, unassigned | `az role definition list --custom-role-only true -g $group`; `az role assignment list --assignee <principal id> --all` | nine actions, no data action; no assignment yet. The role can be assigned in this resource group only, so it is listed through the group: whether a listing of the whole subscription shows it is not measured |
 | The lock | `az lock list -g $group` | one, `CanNotDelete`, on the database |
@@ -618,8 +622,14 @@ Then read back (expected values), and make two things happen on purpose:
    Remove-Item "$env:TEMP\scale.json"
    ```
 
-2. **An alert e-mail must arrive.** The owner opens the action group `azurebank-owner` in the
-   portal, presses Test, and reads the mailbox.
+2. **An alert e-mail must arrive.** One test notification, to the address the action group already
+   holds; the owner reads the mailbox. The portal's Test button on the action group does the same.
+
+   ```powershell
+   $to = az monitor action-group show --name azurebank-owner --resource-group $group --query 'emailReceivers[0].emailAddress' --output tsv
+   az monitor action-group test-notifications create --action-group-name azurebank-owner --resource-group $group `
+       --alert-type metricstaticthreshold --add-action email owner $to usecommonalertschema --output none
+   ```
 
 #### 16. The first deployment, as the owner (operator, **writes**: every table is created)
 
@@ -656,14 +666,21 @@ line of the smoke test. Then count, in the raw log, what must not be there:
 ```powershell
 $log = gh run view '<the run id>' --repo Gurgant/azurebank-v2 --log
 $fqdn = az sql server list --resource-group $group --query '[0].fullyQualifiedDomainName' --output tsv
-$ids = 'azurebank-app', 'azurebank-migrate' | ForEach-Object { az identity show --resource-group $group --name $_ --query clientId --output tsv }
-'server name: {0}' -f @($log | Select-String -SimpleMatch $fqdn).Count
-'client IDs: {0}' -f @($log | Select-String -SimpleMatch $ids).Count
+$site = az containerapp show --name azurebank --resource-group $group --query properties.configuration.ingress.fqdn --output tsv
+$clients = 'azurebank-deploy', 'azurebank-app', 'azurebank-migrate' |
+    ForEach-Object { az identity show --resource-group $group --name $_ --query clientId --output tsv }
+$account = @(az account show --query tenantId --output tsv) + @(az account show --query id --output tsv)
+"the server's name: {0}" -f @($log | Select-String -SimpleMatch $fqdn).Count
+"the app's address: {0}" -f @($log | Select-String -SimpleMatch $site).Count
+'the three client IDs: {0}' -f @($log | Select-String -SimpleMatch $clients).Count
+'the tenant and the subscription: {0}' -f @($log | Select-String -SimpleMatch $account).Count
 'IPv4-shaped: {0}' -f @($log | Select-String '\b\d{1,3}(\.\d{1,3}){3}\b').Count
 ```
 
-Expected: 0, 0, and for the last a number whose every line is then read: a version number has the
-same shape. A server name, an ID or an address in that log is a defect, and a stop.
+Expected: 0 four times, and for the last a number whose every line is then read: a version
+number has the same shape. The three identifiers GitHub holds as secrets are the deployment
+identity's client ID, the tenant and the subscription; the other two client IDs are the database
+identities'. A name, an ID or an address in that log is a defect, and a stop.
 
 If Azure refuses the workflow's change of the job or of the app and names
 `userAssignedIdentities/assign/action`, the run stops with one sentence and Azure's words. **No
@@ -782,7 +799,7 @@ shape is "stop".
 | The alert on the workspace is refused | `Invoke-Template 'app' @('logVolumeAlert=false')`, and say so. It is one of four rules |
 | The policy accepts two replicas | Put 1 back at once and stop: the policy does not work |
 | A deployment as the identity is refused naming `userAssignedIdentities/assign/action` | **Stop.** No role is created: a right on the two database identities would let the deployment identity attach the schema-changing one to the app that faces the internet. The deployment from the owner's terminal keeps working meanwhile |
-| The raw log of a run holds the server's name, a client ID or an address | Stop: the mask or the print is a defect |
+| The raw log of a run holds the server's name, the app's address, one of the five IDs or an address | Stop: the mask or the print is a defect |
 | The last-resort road cannot sign in | It is written here as unproven, and its first half (run the job again and read its log) stands alone |
 
 ## Deploy a commit
@@ -1355,7 +1372,7 @@ line is checked at the step named, on the first deployment.
 | The automatic put-back on a real failure. Its trigger is proved by unit tests only; its request and its wait are the ones `--app-only` uses | step 18 proves `--app-only` |
 | What the app reads just after the put-back request. If its state still says `Failed`, left by the deployment that failed, `deploy.py` reports a put-back that did not succeed although it may have | a real put-back; not provoked |
 | A request to Azure that fails once in the middle of a run. Nothing is asked twice: the run stops, and nothing is put back | not provoked |
-| The raw log of a workflow run holds none of the three identifiers, not the app's address, not the server's name, no client ID of a database identity and no address | step 17 |
+| The raw log of a workflow run holds none of the three identifiers, not the app's address, not the server's name, no client ID of a database identity and no address: step 17 counts each | step 17 |
 | `migrate` from a checkout, signed in as the owner with `Active Directory Default` | step 19 |
 | Cold start against the probes (1 s delay, 3 s period, 10 failures; 4 s timeout on readiness), and the first database request after it | after step 16 |
 | The meters after 48 hours: the three environment meters and the Dedicated one at 0; whether the free 5 GB of logs apply to this offer; whether the cost view returns a row at all | after steps 2 and 20 |
