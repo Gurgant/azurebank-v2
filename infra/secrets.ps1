@@ -6,14 +6,20 @@
 .DESCRIPTION
   -Action New writes parameters.json into a folder only the current user can open, outside the
   repository: %LOCALAPPDATA%\AzureBank\deploy on Windows, ~/.azurebank-deploy elsewhere.
-    * Without -DeployApp: what the foundation needs (the Microsoft Entra administrator, a new SQL
-      administrator password, deployApp=false).
-    * With -DeployApp: also the image tag, the address the alerts write to, and the nine
-      application secrets. Each secret comes from the first place that has it: the deployed app
-      and job, then a file left by a run that stopped, then the system's random generator.
-    * The SQL administrator password is new on every run and is kept nowhere: nothing signs in with it.
-    * The alerts write to AZUREBANK_ALERT_EMAIL if that variable is set, else to the signed-in
-      account's own mailbox.
+    * Without -DeployApp: what the foundation needs (the Microsoft Entra administrator and
+      deployApp=false). That file holds no secret; it stays in the folder because the
+      administrator's sign-in name is shaped like an e-mail address.
+    * With -DeployApp: also the image tag, the address the alerts write to, and the seven
+      application secrets. Each secret comes from the first place that has it: the deployed app,
+      then a file left by a run that stopped, then the system's random generator.
+    * No database password is written, because none exists: the app and the migrate job sign in
+      as managed identities.
+    * The alerts write to -AlertEmail; without it to AZUREBANK_ALERT_EMAIL; without that to the
+      address the deployed alerts already write to; and only then to the signed-in account's own
+      mailbox.
+    * keepLogs is what the deployed environment does now: true if it sends its logs to Azure
+      Monitor, false if it sends them nowhere. -LogsOff writes false whatever is deployed. With no
+      environment yet and no -LogsOff the template's own default applies.
     * "Could not read" is never taken for "absent": a failed az call, or a deployed app without
       one of its secrets, stops the script and no file is written.
     * Once the app exists its images move through the deploy workflow only: another -ImageTag is
@@ -22,8 +28,8 @@
   -Action Remove deletes parameters.json, what-if.json and budget.json by name, then the folder if
   nothing else is in it. It never deletes anything else, whatever -Directory says.
 
-  Nothing is written to standard output, and no value is ever printed or put on a command line:
-  the report on standard error names each value and says where it came from.
+  Nothing is written to standard output, and no secret is ever printed or put on a command line:
+  the report on standard error names each value and says where it came from, never what it is.
 #>
 [CmdletBinding()]
 param(
@@ -31,6 +37,8 @@ param(
     [string]$ResourceGroup = 'azurebank-demo',
     [switch]$DeployApp,
     [string]$ImageTag = '',
+    [string]$AlertEmail = '',
+    [switch]$LogsOff,
     [string]$Directory = ''
 )
 
@@ -38,24 +46,13 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $AppName = 'azurebank'
-$JobName = 'azurebank-migrate'
+$EnvironmentName = 'azurebank-env'
+$AlertGroupName = 'azurebank-owner'
 $Api = '2025-01-01'
 # Everything a session may leave in the folder. Remove deletes these and nothing else.
 $SessionFiles = 'parameters.json', 'what-if.json', 'budget.json'
 
 function Say([string]$Message) { [Console]::Error.WriteLine($Message) }
-
-function New-Password {
-    # Letters and digits only: no quoting anywhere, and all three classes SQL asks for.
-    $alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-    do {
-        $chars = for ($i = 0; $i -lt 48; $i++) {
-            $alphabet[[System.Security.Cryptography.RandomNumberGenerator]::GetInt32($alphabet.Length)]
-        }
-        $value = -join $chars
-    } until ($value -cmatch '[A-Z]' -and $value -cmatch '[a-z]' -and $value -match '[0-9]')
-    $value
-}
 
 function New-Key([int]$Bytes) {
     [Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes($Bytes))
@@ -110,30 +107,52 @@ if ($Action -eq 'Remove') {
     return
 }
 
+$mailbox = '^[^@\s]+@[^@\s]+\.[^@\s]+$'
 if ($DeployApp -and $ImageTag -and $ImageTag -cnotmatch '^[0-9a-f]{40}$') { throw 'ImageTag must be a full lowercase commit SHA.' }
+if ($AlertEmail -and $AlertEmail -notmatch $mailbox) { throw '-AlertEmail is not an e-mail address. Nothing was written.' }
 
 Protect-Directory $Directory
 
 $subscription = (Invoke-Az account show)['id']
-$arm = 'https://management.azure.com/subscriptions/{0}/resourceGroups/{1}/providers/Microsoft.App/{2}?api-version={3}'
-function Url([string]$Path) { $arm -f $subscription, $ResourceGroup, $Path, $Api }
+$arm = 'https://management.azure.com/subscriptions/{0}/resourceGroups/{1}/providers/{2}?api-version={3}'
+function Url([string]$Path, [string]$Version = $Api) { $arm -f $subscription, $ResourceGroup, $Path, $Version }
 $resources = @(Invoke-Az resource list --resource-group $ResourceGroup)
-$appExists = @($resources | Where-Object { $_['type'] -eq 'Microsoft.App/containerApps' -and $_['name'] -eq $AppName }).Count -eq 1
-$jobExists = @($resources | Where-Object { $_['type'] -eq 'Microsoft.App/jobs' -and $_['name'] -eq $JobName }).Count -eq 1
+# Azure does not promise the case of a type name.
+function Deployed([string]$Type, [string]$Name) {
+    @($resources | Where-Object { $_['type'] -ieq $Type -and $_['name'] -eq $Name }).Count -eq 1
+}
+$appExists = Deployed 'Microsoft.App/containerApps' $AppName
 
-# What already exists, in order of authority: the deployed app and job, then a file left by a run that stopped.
+$report = [System.Collections.Generic.List[string]]::new()
+
+# What the environment does with its logs now is kept: a later run must not bring back a workspace
+# that was switched off, nor switch off one that is in use.
+$keepLogs = $null
+if ($LogsOff) {
+    $keepLogs = $false
+    $report.Add('keepLogs: false, asked for with -LogsOff')
+} elseif (Deployed 'Microsoft.App/managedEnvironments' $EnvironmentName) {
+    $environment = Invoke-Az rest --method GET --url (Url "Microsoft.App/managedEnvironments/$EnvironmentName")
+    $logs = $environment['properties']['appLogsConfiguration']
+    $destination = if ($logs -and $logs.ContainsKey('destination')) { $logs['destination'] } else { $null }
+    if ($destination -eq 'azure-monitor') { $keepLogs = $true }
+    elseif (-not $destination -or $destination -eq 'none') { $keepLogs = $false }
+    else { throw "The deployed environment sends its logs to '$destination', which this template never sets. Nothing was written." }
+    $report.Add('keepLogs: kept from the deployed resource')
+} else {
+    $report.Add("keepLogs: not written, the template's default applies")
+}
+
+# What already exists, in order of authority: the deployed app, then a file left by a run that stopped.
 $live = @{}
 if ($DeployApp -and $appExists) {
-    foreach ($s in (Invoke-Az rest --method POST --url (Url "containerApps/$AppName/listSecrets"))['value']) { $live[$s['name']] = $s['value'] }
+    foreach ($s in (Invoke-Az rest --method POST --url (Url "Microsoft.App/containerApps/$AppName/listSecrets"))['value']) { $live[$s['name']] = $s['value'] }
     # Once the app exists its images move only through the deploy workflow, which migrates first.
-    $app = Invoke-Az rest --method GET --url (Url "containerApps/$AppName")
+    $app = Invoke-Az rest --method GET --url (Url "Microsoft.App/containerApps/$AppName")
     $bff = @($app['properties']['template']['containers'] | Where-Object { $_['name'] -eq 'bff' })[0]['image']
     $liveTag = ($bff -split ':')[-1]
     if ($ImageTag -and $ImageTag -ne $liveTag) { throw 'The app is deployed: its images move through the deploy workflow, not through this file. Nothing was written.' }
     $ImageTag = $liveTag
-}
-if ($DeployApp -and $jobExists) {
-    foreach ($s in (Invoke-Az rest --method POST --url (Url "jobs/$JobName/listSecrets"))['value']) { $live[$s['name']] = $s['value'] }
 }
 $previous = @{}
 if (Test-Path -LiteralPath $File) {
@@ -141,21 +160,15 @@ if (Test-Path -LiteralPath $File) {
     foreach ($name in $old['parameters'].Keys) { $previous[$name] = $old['parameters'][$name]['value'] }
 }
 
-function PasswordIn([string]$ConnectionString) {
-    if ($ConnectionString -cmatch 'Password="([A-Za-z0-9]+)"') { $Matches[1] } else { $null }
-}
-
-# parameter -> the secret that holds it once deployed, on which resource, and how a new one is made
+# parameter -> the secret of the app that holds it once deployed, and how a new one is made
 $plan = [ordered]@{
-    appSqlPassword          = @{ Secret = 'app-connection';       On = $appExists; Password = $true; New = { New-Password } }
-    migratorSqlPassword     = @{ Secret = 'migration-connection'; On = $jobExists; Password = $true; New = { New-Password } }
-    jwtSecret               = @{ Secret = 'jwt-secret';           On = $appExists; New = { New-Key 64 } }
-    idempotencyHashKey      = @{ Secret = 'idempotency-hash-key'; On = $appExists; New = { New-Key 32 } }
-    stepUpBindingKey        = @{ Secret = 'stepup-binding-key';   On = $appExists; New = { New-Key 32 } }
-    serviceCredentialBffKey = @{ Secret = 'service-key';          On = $appExists; New = { New-Key 48 } }
-    auditChainKey           = @{ Secret = 'audit-chain-key';      On = $appExists; New = { New-Key 32 } }
-    auditAnchorKey          = @{ Secret = 'audit-anchor-key';     On = $appExists; New = { New-Key 32 } }
-    securityPinPepper       = @{ Secret = 'pin-pepper';           On = $appExists; New = { New-Key 48 } }
+    jwtSecret               = @{ Secret = 'jwt-secret';           New = { New-Key 64 } }
+    idempotencyHashKey      = @{ Secret = 'idempotency-hash-key'; New = { New-Key 32 } }
+    stepUpBindingKey        = @{ Secret = 'stepup-binding-key';   New = { New-Key 32 } }
+    serviceCredentialBffKey = @{ Secret = 'service-key';          New = { New-Key 48 } }
+    auditChainKey           = @{ Secret = 'audit-chain-key';      New = { New-Key 32 } }
+    auditAnchorKey          = @{ Secret = 'audit-anchor-key';     New = { New-Key 32 } }
+    securityPinPepper       = @{ Secret = 'pin-pepper';           New = { New-Key 48 } }
 }
 
 $me = Invoke-Az ad signed-in-user show
@@ -163,35 +176,43 @@ $parameters = [ordered]@{
     entraAdminObjectId = @{ value = $me['id'] }
     entraAdminLogin    = @{ value = $me['userPrincipalName'] }
     deployApp          = @{ value = [bool]$DeployApp }
-    sqlAdminPassword   = @{ value = New-Password }
 }
-$report = [System.Collections.Generic.List[string]]::new()
-$report.Add('sqlAdminPassword: new on every run, kept nowhere')
+if ($null -ne $keepLogs) { $parameters['keepLogs'] = @{ value = $keepLogs } }
 
 if ($DeployApp) {
     if ($ImageTag -cnotmatch '^[0-9a-f]{40}$') { throw 'Pass -ImageTag with the full SHA of the commit whose three images are published. Nothing was written.' }
     $parameters['imageTag'] = @{ value = $ImageTag }
 
-    # Where the three alerts write. The report says which source, never the address.
-    $alertEmail = $env:AZUREBANK_ALERT_EMAIL
-    $alertSource = 'from AZUREBANK_ALERT_EMAIL'
-    if (-not $alertEmail) {
-        $alertEmail = if ($me.ContainsKey('mail')) { $me['mail'] } else { $null }
-        $alertSource = "the signed-in account's own mailbox"
+    # Where the four alerts write. The report says which source, never the address.
+    $address = $AlertEmail
+    $source = 'from -AlertEmail'
+    if (-not $address) {
+        $address = $env:AZUREBANK_ALERT_EMAIL
+        $source = 'from AZUREBANK_ALERT_EMAIL'
     }
-    if (-not $alertEmail -or $alertEmail -notmatch '^[^@\s]+@[^@\s]+\.[^@\s]+$') {
-        throw 'No usable address for the alerts: the signed-in account has no mailbox. Set AZUREBANK_ALERT_EMAIL and run again. Nothing was written.'
+    if (-not $address -and (Deployed 'Microsoft.Insights/actionGroups' $AlertGroupName)) {
+        $group = Invoke-Az rest --method GET --url (Url "Microsoft.Insights/actionGroups/$AlertGroupName" '2023-01-01')
+        $receivers = @($group['properties']['emailReceivers'])
+        if ($receivers.Count -ne 1) { throw "The deployed alerts write to $($receivers.Count) addresses, not one. Pass -AlertEmail. Nothing was written." }
+        $address = $receivers[0]['emailAddress']
+        $source = 'kept from the deployed resource'
     }
-    $parameters['alertEmail'] = @{ value = $alertEmail }
-    $report.Add("alertEmail: $alertSource")
+    if (-not $address) {
+        $address = if ($me.ContainsKey('mail')) { $me['mail'] } else { $null }
+        $source = "the signed-in account's own mailbox"
+    }
+    if (-not $address -or $address -notmatch $mailbox) {
+        throw 'No usable address for the alerts: the signed-in account has no mailbox. Pass -AlertEmail or set AZUREBANK_ALERT_EMAIL. Nothing was written.'
+    }
+    $parameters['alertEmail'] = @{ value = $address }
+    $report.Add("alertEmail: $source")
 
     foreach ($name in $plan.Keys) {
         $entry = $plan[$name]
         $value = $live[$entry.Secret]
-        if ($value -and $entry.ContainsKey('Password')) { $value = PasswordIn $value }
         $source = 'kept from the deployed resource'
-        if (-not $value -and $entry.On) {
-            # A deployed resource without its secret is not a case to paper over with a new value.
+        if (-not $value -and $appExists) {
+            # A deployed app without one of its secrets is not a case to paper over with a new value.
             throw "$name could not be read from the deployed resource. Nothing was written."
         }
         if (-not $value -and $previous.ContainsKey($name) -and $previous[$name]) { $value = $previous[$name]; $source = 'kept from the earlier file' }
