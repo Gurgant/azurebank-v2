@@ -1,37 +1,52 @@
 targetScope = 'resourceGroup'
 
 param location string = 'italynorth'
-@description('Full commit SHA shared by all three public GHCR images.')
-@minLength(40)
-@maxLength(40)
-param imageTag string
+@description('Full commit SHA shared by the three public GHCR images. Needed only when deployApp is true.')
+param imageTag string = ''
+@description('False creates what needs no image: the environment, SQL, the deployment identity and its role. True adds the app, the migrate job and the two role assignments.')
 param deployApp bool = false
 param entraAdminObjectId string
 param entraAdminLogin string
-@minValue(1)
-@maxValue(1800)
+@description('Seconds a migrate run may take. Kept under 15 minutes.')
+@minValue(60)
+@maxValue(840)
 param replicaTimeout int = 600
 
+@description('Where the three notify-only alerts send their e-mail. Needed only when deployApp is true; never committed.')
+param alertEmail string = ''
+@description('False leaves the Deny policy out: the fallback if this subscription refuses a custom policy definition.')
+param denyPolicy bool = true
+@description('Trigger types the Deny policy lets a job have. The pool job adds Schedule.')
+param allowedJobTriggers array = [
+  'Manual'
+]
+
+@description('Set on every run to a fresh random value that is stored nowhere: nothing signs in with it.')
 @secure()
 param sqlAdminPassword string
+
+// The nine values below are needed only when deployApp is true; infra/secrets.ps1 supplies them.
 @secure()
-param appSqlPassword string
+param appSqlPassword string = ''
 @secure()
-param migratorSqlPassword string
+param migratorSqlPassword string = ''
 @secure()
-param jwtSecret string
+param jwtSecret string = ''
 @secure()
-param idempotencyHashKey string
+param idempotencyHashKey string = ''
 @secure()
-param stepUpBindingKey string
+param stepUpBindingKey string = ''
 @secure()
-param serviceCredentialBffKey string
+param serviceCredentialBffKey string = ''
 @secure()
-param auditChainKey string
+param auditChainKey string = ''
 @secure()
-param auditAnchorKey string
+param auditAnchorKey string = ''
 @secure()
-param securityPinPepper string
+param securityPinPepper string = ''
+
+var appInputsMissing = length(imageTag) != 40 || empty(alertEmail) || empty(appSqlPassword) || empty(migratorSqlPassword) || empty(jwtSecret) || empty(idempotencyHashKey) || empty(stepUpBindingKey) || empty(serviceCredentialBffKey) || empty(auditChainKey) || empty(auditAnchorKey) || empty(securityPinPepper)
+var appName = deployApp && appInputsMissing ? fail('deployApp=true needs a 40-character imageTag, alertEmail and all nine application secrets (run infra/secrets.ps1).') : 'azurebank'
 
 resource environment 'Microsoft.App/managedEnvironments@2025-01-01' = {
   name: 'azurebank-env'
@@ -58,13 +73,19 @@ resource sql 'Microsoft.Sql/servers@2023-08-01' = {
     administratorLoginPassword: sqlAdminPassword
     minimalTlsVersion: '1.2'
     publicNetworkAccess: 'Enabled'
-    administrators: {
-      administratorType: 'ActiveDirectory'
-      azureADOnlyAuthentication: false
-      login: entraAdminLogin
-      sid: entraAdminObjectId
-      tenantId: subscription().tenantId
-    }
+  }
+}
+
+// Its own resource, not the server's administrators property: that one is read at creation only,
+// and a later run of this template would be ignored or refused.
+resource entraAdmin 'Microsoft.Sql/servers/administrators@2023-08-01' = {
+  parent: sql
+  name: 'ActiveDirectory'
+  properties: {
+    administratorType: 'ActiveDirectory'
+    login: entraAdminLogin
+    sid: entraAdminObjectId
+    tenantId: subscription().tenantId
   }
 }
 
@@ -79,6 +100,18 @@ resource database 'Microsoft.Sql/servers/databases@2023-08-01' = {
   }
   properties: {
     maxSizeBytes: 2147483648
+    requestedBackupStorageRedundancy: 'Local'
+  }
+}
+
+// On the database, not on the server: a lock on the server is inherited by its firewall rules, and
+// the users script could then no longer remove the temporary rule it adds.
+resource databaseLock 'Microsoft.Authorization/locks@2020-05-01' = {
+  scope: database
+  name: 'keep-the-database'
+  properties: {
+    level: 'CanNotDelete'
+    notes: 'Remove this lock before deleting the database on purpose.'
   }
 }
 
@@ -108,13 +141,12 @@ resource githubFederation 'Microsoft.ManagedIdentity/userAssignedIdentities/fede
   }
 }
 
-// Quote passwords for SqlClient; SQL bootstrap uses the restricted format in README.md.
+// The connection limits (connect timeout, retries, pool size) are the hosts' own defaults (ADR-0058): none is set here.
 var appConnection = 'Server=tcp:${sql.properties.fullyQualifiedDomainName},1433;Database=AzureBank;User ID=azurebank_app;Password="${replace(appSqlPassword, '"', '""')}";Encrypt=True;TrustServerCertificate=False'
-// Enforce the ADR-0058 job budget even if the future tools host does not supply defaults.
-var migrationConnection = 'Server=tcp:${sql.properties.fullyQualifiedDomainName},1433;Database=AzureBank;User ID=azurebank_migrator;Password="${replace(migratorSqlPassword, '"', '""')}";Encrypt=True;TrustServerCertificate=False;Connect Timeout=10;ConnectRetryCount=0;Max Pool Size=5;Pool Blocking Period=NeverBlock'
+var migrationConnection = 'Server=tcp:${sql.properties.fullyQualifiedDomainName},1433;Database=AzureBank;User ID=azurebank_migrator;Password="${replace(migratorSqlPassword, '"', '""')}";Encrypt=True;TrustServerCertificate=False'
 
 resource app 'Microsoft.App/containerApps@2025-01-01' = if (deployApp) {
-  name: 'azurebank'
+  name: appName
   location: location
   properties: {
     environmentId: environment.id
@@ -154,9 +186,10 @@ resource app 'Microsoft.App/containerApps@2025-01-01' = if (deployApp) {
             { name: 'ServiceCredential__BffKey', secretRef: 'service-key' }
           ]
           probes: [for probe in [
-            { type: 'Startup', path: '/health/live' }
-            { type: 'Liveness', path: '/health/live' }
-            { type: 'Readiness', path: '/health/ready' }
+            { type: 'Startup', path: '/health/live', timeout: 1 }
+            { type: 'Liveness', path: '/health/live', timeout: 1 }
+            // Above the 3 s the BFF itself gives the API before it answers Degraded.
+            { type: 'Readiness', path: '/health/ready', timeout: 4 }
           ]: {
             type: probe.type
             httpGet: {
@@ -165,6 +198,7 @@ resource app 'Microsoft.App/containerApps@2025-01-01' = if (deployApp) {
               scheme: 'HTTP'
             }
             periodSeconds: 3
+            timeoutSeconds: probe.timeout
             initialDelaySeconds: 1
             failureThreshold: 10
           }]
@@ -237,30 +271,158 @@ resource migrate 'Microsoft.App/jobs@2025-01-01' = if (deployApp) {
   }
 }
 
-// Built-in role IDs are public constants, not subscription or identity IDs.
-var appRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '358470bc-b998-42bd-ab17-a7e34c199c0f')
-var jobRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4e3d2b60-56ae-4dc6-a233-09c8e5a82e68')
+// What a deployment needs: read and write the app and the job, start the job, read its executions,
+// read the app's revisions and replicas (why a revision is not ready). It cannot list secrets,
+// delete, stop, or touch the environment or the resource group. It CAN write the whole app and the
+// whole job, so it can run any image with the secrets in its environment: see the README.
+var deployRoleName = guid(resourceGroup().id, 'azurebank-deploy')
+// The form every role assignment stores, whatever scope the definition was written at.
+var deployRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', deployRoleName)
+
+resource deployRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' = {
+  name: deployRoleName
+  properties: {
+    roleName: 'AzureBank deploy ${uniqueString(resourceGroup().id)}'
+    description: 'Move the images of the AzureBank app and of its migrate job, and start that job.'
+    type: 'CustomRole'
+    assignableScopes: [
+      resourceGroup().id
+    ]
+    permissions: [
+      {
+        actions: [
+          'Microsoft.App/containerApps/read'
+          'Microsoft.App/containerApps/write'
+          'Microsoft.App/containerApps/revisions/read'
+          'Microsoft.App/containerApps/revisions/replicas/read'
+          'Microsoft.App/jobs/read'
+          'Microsoft.App/jobs/write'
+          'Microsoft.App/jobs/start/action'
+          'Microsoft.App/jobs/executions/read'
+          'Microsoft.App/jobs/execution/read'
+        ]
+        notActions: []
+        dataActions: []
+        notDataActions: []
+      }
+    ]
+  }
+}
 
 resource appRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployApp) {
-  name: guid(app.id, deployIdentity.id, appRoleId)
+  name: guid(app.id, deployIdentity.id, deployRoleId)
   scope: app
   properties: {
     principalId: deployIdentity.properties.principalId
     principalType: 'ServicePrincipal'
-    roleDefinitionId: appRoleId
+    roleDefinitionId: deployRoleId
   }
+  dependsOn: [
+    deployRole
+  ]
 }
 
 resource jobRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployApp) {
-  name: guid(migrate.id, deployIdentity.id, jobRoleId)
+  name: guid(migrate.id, deployIdentity.id, deployRoleId)
   scope: migrate
   properties: {
     principalId: deployIdentity.properties.principalId
     principalType: 'ServicePrincipal'
-    roleDefinitionId: jobRoleId
+    roleDefinitionId: deployRoleId
+  }
+  dependsOn: [
+    deployRole
+  ]
+}
+
+// The shape the app and its jobs must keep, refused by the platform whoever asks: the deployment
+// identity cannot change a policy.
+module shape 'guardrails.bicep' = if (denyPolicy) {
+  name: 'azurebank-shape-definition'
+  scope: subscription()
+  params: {
+    definitionName: guid(resourceGroup().id, 'azurebank-shape')
   }
 }
 
+resource shapeAssignment 'Microsoft.Authorization/policyAssignments@2025-03-01' = if (denyPolicy) {
+  name: 'azurebank-shape'
+  properties: {
+    displayName: 'AzureBank: one small replica, manual jobs'
+    policyDefinitionId: shape!.outputs.definitionId
+    enforcementMode: 'Default'
+    parameters: {
+      allowedJobTriggers: {
+        value: allowedJobTriggers
+      }
+    }
+  }
+}
+
+// Notify only: nothing here stops the app. One e-mail receiver, three rules on the app, one per
+// meter that traffic can move: requests, bytes out, replica time.
+resource owner 'Microsoft.Insights/actionGroups@2023-01-01' = if (deployApp) {
+  name: 'azurebank-owner'
+  location: 'global'
+  properties: {
+    groupShortName: 'azurebank'
+    enabled: true
+    emailReceivers: [
+      {
+        name: 'owner'
+        emailAddress: alertEmail
+        useCommonAlertSchema: true
+      }
+    ]
+  }
+}
+
+var alerts = [
+  // 66,667 requests is one day of the free monthly grant (2 million / 30), here in one hour.
+  { name: 'azurebank-requests', metric: 'Requests', aggregation: 'Total', threshold: 66667, window: 'PT1H', every: 'PT15M', text: 'More than 66,667 requests in one hour.' }
+  // 3.3 GiB is one day of the free 100 GB a month.
+  { name: 'azurebank-bytes-out', metric: 'TxBytes', aggregation: 'Total', threshold: 3543348019, window: 'P1D', every: 'PT1H', text: 'More than 3.3 GiB sent in one day.' }
+  // 0.093 is 66.7 free replica-hours a month, as a daily average of the replica count.
+  { name: 'azurebank-replica-time', metric: 'Replicas', aggregation: 'Average', threshold: json('0.093'), window: 'P1D', every: 'PT1H', text: 'The replica ran more than 2.2 hours in one day.' }
+]
+
+resource notify 'Microsoft.Insights/metricAlerts@2018-03-01' = [for alert in alerts: if (deployApp) {
+  name: alert.name
+  location: 'global'
+  properties: {
+    description: alert.text
+    severity: 2
+    enabled: true
+    scopes: [
+      app.id
+    ]
+    evaluationFrequency: alert.every
+    windowSize: alert.window
+    autoMitigate: true
+    criteria: {
+      'odata.type': 'Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria'
+      allOf: [
+        {
+          name: 'threshold'
+          criterionType: 'StaticThresholdCriterion'
+          metricNamespace: 'Microsoft.App/containerApps'
+          metricName: alert.metric
+          operator: 'GreaterThan'
+          threshold: alert.threshold
+          timeAggregation: alert.aggregation
+        }
+      ]
+    }
+    actions: [
+      {
+        actionGroupId: owner.id
+      }
+    ]
+  }
+}]
+
 output sqlServerFqdn string = sql.properties.fullyQualifiedDomainName
+output sqlServerName string = sql.name
 output deploymentClientId string = deployIdentity.properties.clientId
+output deploymentPrincipalId string = deployIdentity.properties.principalId
 output appUrl string = deployApp ? 'https://${app!.properties.configuration!.ingress!.fqdn}' : ''

@@ -1,8 +1,9 @@
-# Only the placeholder example belongs in Git.
+# What a session may leave beside the templates. The parameter file itself is written outside the
+# repository by secrets.ps1; these rules are the second line.
 *.bicepparam
-!main.example.bicepparam
+parameters.json
 *.parameters.json
 main.json
-main.example.json
-.local/
+guardrails.json
+what-if.json
 __pycache__/
