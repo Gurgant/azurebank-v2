@@ -7,9 +7,13 @@ using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
 using Xunit.Abstractions;
+using PoolRunSummary = seeder::AzureBank.Seeder.Pool.PoolRunSummary;
 using RecyclerControl = seeder::AzureBank.Seeder.Pool.RecyclerControl;
 
 namespace AzureBank.Tests.Integration;
@@ -32,8 +36,10 @@ namespace AzureBank.Tests.Integration;
 /// paired with the run in which the same copy IS deleted, so the silence means something.
 /// </para>
 /// <para>
-/// Time is moved by back-dating rows (a claim, a seed instant, a grant's expiry), never by a fake
-/// clock: the recycler runs from the Seeder's own container, as the job does.
+/// Time is moved by back-dating rows (a claim, a seed instant, a grant's expiry), not by a fake
+/// clock: the recycler runs from the Seeder's own container, as the job does. The exception is
+/// the two tests about WHEN a run reads the time. Time has to pass in the middle of those runs,
+/// so that container is given a clock the test moves, and nothing else of it is changed.
 /// </para>
 /// </remarks>
 [Trait("Category", "SqlServer")]
@@ -164,15 +170,15 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
         var deletes = sent.Commands.Where(c => c.Text.Contains("DELETE", StringComparison.Ordinal)).ToList();
         deletes.Should().OnlyContain(c => c.TimeoutSeconds == 120);
 
-        // SET-BASED: one DELETE per table, whatever the copy holds. The two sweeps come first; then
-        // thirty ledger rows, four accounts and three users leave in three statements. A delete
+        // SET-BASED: one DELETE per table, whatever the copy holds. Thirty ledger rows, four
+        // accounts and three users leave in three statements; the two sweeps come after. A delete
         // that loaded the rows and removed them one by one would send a statement for each, and
         // the copy of a visitor who went on writing holds a few hundred.
         var deletedFrom = TablesDeletedFrom(sent);
         output.WriteLine("deletes: " + string.Join(", ", deletedFrom));
         deletedFrom.Should().BeEquivalentTo(
-            new[] { "IdempotencyRecords", "RefreshTokens", "StepUpAuthorizations", "IdempotencyRecords", "Transactions", "Accounts", "AspNetUsers" },
-            "the run sends seven DELETE statements: the two sweeps, and one for each table the recycler empties of a copy");
+            new[] { "StepUpAuthorizations", "IdempotencyRecords", "Transactions", "Accounts", "AspNetUsers", "IdempotencyRecords", "RefreshTokens" },
+            "the run sends seven DELETE statements: one for each table the recycler empties of a copy, and the two sweeps");
 
         // Nothing of the three users is left, in any table that held their rows.
         (await database.RowsOfAsync(copy.UserIds)).Should().OnlyContain(table => table.Value == 0);
@@ -291,6 +297,8 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
     public async Task ACopyThatCannotBeDeleted_IsCountedAndSkipped_AndTheRunGoesOn()
     {
         await using var database = await DemoPoolDatabase.CreateAsync();
+        var log = new RecordingLoggerProvider();
+        database.Log = log;
         var copies = await ThreeExpiredOneStaleOneFreshAsync(database);
         var poisoned = copies[1];
         var poison = FailingCommandInterceptor.OnDeleteNaming(await database.IdsOfAsync(poisoned));
@@ -302,6 +310,9 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
         var failure = summary.Failures.Should().ContainSingle().Which;
         failure.CopyId.Should().Be(poisoned.Id, "the copy that failed is named, so an operator can look at it");
         failure.Message.Should().Contain(FailingCommandInterceptor.Message);
+        log.Lines.Should().Contain(
+            line => line.Level == LogLevel.Error && line.Message.Contains(poisoned.Id.ToString(), StringComparison.Ordinal),
+            "the run writes down the copy it could not delete, by its id: the summary line carries counts only");
 
         (summary.DeletedExpired, summary.DeleteFailed, summary.DeletedStaleFree).Should().Be(
             (2, 1, 1), "the other two expired copies and the stale free one are deleted all the same");
@@ -341,7 +352,142 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
             .Should().Be(2, "the top-up comes before every delete");
     }
 
+    [SqlServerFact]
+    public async Task AFaultThatPasses_InTheMiddleOfADelete_IsRunAgain_AndTheCopyIsDeletedOnce()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copy = (await database.BuildCopiesAsync(3))[0];
+        await database.MarkClaimedAsync(copy.Id, ADayAndAnHourAgo);
+
+        // The first statement that names the accounts is the ledger's delete: the third of the
+        // copy's five, so two have already run in the transaction that is lost with it.
+        var fault = new TransientFailureInterceptor("[Accounts]");
+        var summary = await database.RecycleAsync(interceptors: fault);
+
+        fault.Fired.Should().BeTrue("the fault must actually have been injected, else the test proves nothing");
+        summary.Failures.Should().BeEmpty("a fault the database recovers from is not the copy's failure");
+        (summary.DeletedExpired, summary.DeleteFailed).Should().Be((1, 0), "the delete was run again, whole");
+        ATombstone(await database.CopyAsync(copy.Id), "the second attempt deleted the copy");
+        (await database.RowsOfAsync(copy.UserIds)).Should().OnlyContain(table => table.Value == 0);
+    }
+
+    [SqlServerFact]
+    public async Task WhenRetriesRunOutOnADelete_TheFailureSaysWhatTheDatabaseSaid()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copy = (await database.BuildCopiesAsync(3))[0];
+        await database.MarkClaimedAsync(copy.Id, ADayAndAnHourAgo);
+
+        // The same fault on a run that is given no retry: the strategy reports that it ran out,
+        // with the fault inside it.
+        var fault = new TransientFailureInterceptor("[Accounts]");
+        var summary = await database.RecycleAsync(settings: new() { ["Database:MaxRetryCount"] = "0" }, interceptors: fault);
+
+        fault.Fired.Should().BeTrue("the fault must actually have been injected, else the test proves nothing");
+        var failure = summary.Failures.Should().ContainSingle().Which;
+        failure.CopyId.Should().Be(copy.Id);
+        failure.Message.Should().Be(
+            "Injected transient fault on: [Accounts]",
+            "the root cause: 'the maximum number of retries was exceeded' is all an operator would read otherwise");
+        (summary.DeletedExpired, summary.DeleteFailed, summary.ExitCode).Should().Be((0, 1, 14));
+        StillWhole(await database.CopyAsync(copy.Id), "its delete rolled back whole");
+    }
+
+    [SqlServerFact]
+    public async Task ARunThatIsStopped_Ends_AndBlamesNoCopy()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var log = new RecordingLoggerProvider();
+        database.Log = log;
+        var copy = (await database.BuildCopiesAsync(3))[0];
+        await database.MarkClaimedAsync(copy.Id, ADayAndAnHourAgo);
+
+        // The job is stopped while the run is inside the copy's delete.
+        using var stop = new CancellationTokenSource();
+        var (run, hold) = await ARunParkedBeforeItReadsACopysGrantsAsync(database, stop.Token);
+        await stop.CancelAsync();
+        hold.Release();
+
+        await FluentActions.Awaiting(() => run).Should().ThrowAsync<OperationCanceledException>(
+            "a run that is stopped ends: it prints no summary, and the next run starts from the rows as they are");
+        log.Lines.Should().NotContain(
+            line => line.Level == LogLevel.Error && line.Message.Contains(copy.Id.ToString(), StringComparison.Ordinal),
+            "being stopped is nothing the copy did: it is not written down as a copy that could not be deleted");
+        StillWhole(await database.CopyAsync(copy.Id), "the delete that was under way rolled back whole");
+    }
+
+    [SqlServerFact]
+    public async Task ARunThatIsStopped_WhileADeleteWaitsOnTheServer_Ends_AndBlamesNoCopy()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var log = new RecordingLoggerProvider();
+        database.Log = log;
+        var copy = (await database.BuildCopiesAsync(3))[0];
+        await database.MarkClaimedAsync(copy.Id, ADayAndAnHourAgo);
+
+        // Another session holds the owner's accounts, so the copy's delete is sent and then waits
+        // for them. The job is stopped while it waits: the stop reaches a statement that is
+        // already with the database.
+        using var stop = new CancellationTokenSource();
+        Exception ended;
+        await using (var held = await database.HoldAsync(
+            "UPDATE [Accounts] SET [Name] = [Name] WHERE [UserId] = @owner", new SqlParameter("@owner", copy.Owner.Id)))
+        {
+            var run = database.RecycleAsync(stop: stop.Token);
+            await held.AStatementWaitsAsync();
+            await stop.CancelAsync();
+
+            ended = (await FluentActions.Awaiting(() => run).Should().ThrowAsync<Exception>(
+                "a run that is stopped ends: it prints no summary, and the next run starts from the rows as they are")).Which;
+        }
+
+        log.Lines.Should().NotContain(
+            line => line.Level == LogLevel.Error && line.Message.Contains(copy.Id.ToString(), StringComparison.Ordinal),
+            "being stopped is nothing the copy did, whichever way the stop comes back: it is not written down as a copy that could not be deleted");
+
+        // Measured on SQL Server 17.0 (LocalDB): SqlException, error 0, "Operation cancelled by
+        // user." Were it a cancellation, this test would be the one above over again.
+        ended.GetBaseException().Should().BeOfType<SqlException>(
+            "ARRANGE: a stop that reaches a statement on the server comes back as the database's own error, not as a cancellation");
+        StillWhole(await database.CopyAsync(copy.Id), "the delete that was under way rolled back whole");
+    }
+
+    [SqlServerFact]
+    public async Task ACopyThatCannotBeDeleted_IsTriedOnceInARun_EvenPastTheBackstop()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copy = (await database.BuildCopiesAsync(3))[0];
+
+        // Past its lifetime and past the backstop: two rules name this copy, and it is still one copy.
+        await database.MarkClaimedAsync(copy.Id, DateTime.UtcNow.AddHours(-100));
+        var poison = FailingCommandInterceptor.OnDeleteNaming(await database.IdsOfAsync(copy));
+
+        var summary = await database.RecycleAsync(interceptors: poison);
+
+        poison.Failures.Should().Be(
+            1, "its delete is sent once: a second try in the same run would fail the same way and count the copy twice");
+        summary.Failures.Should().ContainSingle().Which.CopyId.Should().Be(copy.Id);
+        (summary.DeletedExpired, summary.DeletedHardStop, summary.DeleteFailed, summary.ExitCode).Should().Be((0, 0, 1, 14));
+        StillWhole(await database.CopyAsync(copy.Id), "its delete rolled back whole");
+    }
+
     // ── A copy in use ────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Starts a run and parks it just before it reads a copy's grants: it has counted what it
+    /// found, its top-up is done, and it is inside the transaction that deletes the first copy
+    /// whose time is over. What a test does before it releases the run has committed by the time
+    /// the run reads.
+    /// </summary>
+    private static async Task<(Task<PoolRunSummary> Run, HoldingReadInterceptor Hold)> ARunParkedBeforeItReadsACopysGrantsAsync(
+        DemoPoolDatabase database, CancellationToken stop = default, Dictionary<string, string?>? settings = null)
+    {
+        var hold = new HoldingReadInterceptor("[RevokedAt] IS NULL");
+        var run = database.RecycleAsync(settings, stop: stop, interceptors: hold);
+        (await Task.WhenAny(hold.Held, run)).Should().BeSameAs(
+            hold.Held, "the run must be parked before its read of the grants, or the order below is not the one under test");
+        return (run, hold);
+    }
 
     [SqlServerFact]
     public async Task ACopyWithALiveGrant_IsSkipped_AndDeletedOnceTheGrantIsRevoked()
@@ -370,6 +516,30 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
 
         (deleted.DeletedExpired, deleted.DeletedHardStop, deleted.Claimed).Should().Be((1, 0, 0));
         ATombstone(await database.CopyAsync(copy.Id), "no grant is live any more");
+    }
+
+    [SqlServerFact]
+    public async Task AGrantThatHasExpired_KeepsNoCopy_EvenWhenTheSweepHasNotTakenIt()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copy = (await database.BuildCopiesAsync(3))[0];
+        await database.MarkClaimedAsync(copy.Id, ADayAndAnHourAgo);
+
+        // A grant that nobody revoked and that has expired. The sweep that removes such grants
+        // comes after the copies, so this one is there when the copy's grants are read.
+        await using (var db = database.NewContext())
+        {
+            db.RefreshTokens.Add(AGrant(copy.Owner.Id, expiresAt: DateTime.UtcNow.AddMinutes(-1)));
+            await db.SaveChangesAsync();
+        }
+
+        var summary = await database.RecycleAsync();
+
+        summary.Failures.Should().BeEmpty();
+        (summary.SweptGrants, summary.DeletedExpired).Should().Be(
+            (0, 1), "a session that has ended is not a session: what keeps a copy is a grant that is neither revoked nor expired");
+        ATombstone(await database.CopyAsync(copy.Id), "the expired grant left with its user");
+        (await database.RowsOfAsync(copy.UserIds)).Should().OnlyContain(table => table.Value == 0);
     }
 
     /// <summary>
@@ -571,6 +741,29 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
     }
 
     [SqlServerFact]
+    public async Task WhenAStaleCopysDeleteIsRunAgain_AndAVisitorHasClaimedItSince_TheCopyIsNotCountedAsDeleted()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copies = await database.BuildCopiesAsync(2);
+        var stale = copies[0];
+        await database.BackdateSeedAsync(stale.Id, DateTime.UtcNow.AddHours(-45));
+
+        // The delete of the stale copy reaches its commit, the commit fails and nothing of it
+        // lands: the copy is free again. A visitor claims it before the delete is run again.
+        var failed = new FailedCommitInterceptor(
+            () => database.MarkClaimedAsync(stale.Id, DateTime.UtcNow), "DELETE", "[DemoCopies]");
+        var summary = await database.RecycleAsync(interceptors: failed);
+
+        failed.Fired.Should().BeTrue("the commit must actually have failed, else the test proves nothing");
+        summary.Failures.Should().BeEmpty("losing the copy to a visitor is not a failure");
+        (summary.DeletedStaleFree, summary.DeleteFailed).Should().Be(
+            (0, 0), "a run reports what its last attempt at a copy did: the first got as far as its commit, and the second found the copy taken");
+        var claimed = await database.CopyAsync(stale.Id);
+        StillWhole(claimed, "the visitor has it");
+        claimed!.Row.ClaimedAt.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromMinutes(1), "the claim that stands is the visitor's");
+    }
+
+    [SqlServerFact]
     public async Task AStaleFreeCopyAVisitorClaimsFirst_IsSkipped()
     {
         await using var database = await DemoPoolDatabase.CreateAsync();
@@ -686,13 +879,15 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
             db.RefreshTokens.Add(expiredGrant);
             await db.SaveChangesAsync();
             db.RefreshTokens.Add(liveGrant);
-            db.IdempotencyRecords.AddRange(ARecord(owner, expiresAt: now - hour), ARecord(owner, expiresAt: now + hour));
+            db.IdempotencyRecords.AddRange(
+                ARecord(owner, expiresAt: now - hour), ARecord(owner, expiresAt: now - hour), ARecord(owner, expiresAt: now + hour));
             await db.SaveChangesAsync();
         }
 
         var summary = await database.RecycleAsync();
 
-        (summary.SweptGrants, summary.SweptIdempotency, summary.DeleteFailed).Should().Be((1, 1, 0));
+        (summary.SweptGrants, summary.SweptIdempotency, summary.DeleteFailed).Should().Be(
+            (1, 2, 0), "one expired grant and two expired records: each sweep is counted under its own name");
         await using (var db = database.NewContext())
         {
             var grant = (await db.RefreshTokens.AsNoTracking().ToListAsync()).Should().ContainSingle().Which;
@@ -702,6 +897,151 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
         }
 
         StillWhole(await database.CopyAsync(copy.Id), "a copy claimed today is in use");
+    }
+
+    [SqlServerFact]
+    public async Task AnExpiredRecordOfAnOperationThatNeverStoredItsAnswer_IsWrittenDown_BeforeItIsSwept()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var log = new RecordingLoggerProvider();
+        database.Log = log;
+        var copy = (await database.BuildCopiesAsync(3))[0];
+        await database.MarkClaimedAsync(copy.Id, DateTime.UtcNow);
+        var owner = copy.Owner.Id;
+
+        // Three records of one user. The first committed its operation and never stored the
+        // answer, and has expired: the API's own clean-up writes a Warning for such a record
+        // before it removes it. The second stored its answer. The third is still inside its day.
+        var hour = TimeSpan.FromHours(1);
+        var now = DateTime.UtcNow;
+        var unanswered = ARecord(owner, expiresAt: now - hour, IdempotencyStatus.Executed);
+        var answered = ARecord(owner, expiresAt: now - hour);
+        var underWay = ARecord(owner, expiresAt: now + hour, IdempotencyStatus.Executed);
+        await using (var db = database.NewContext())
+        {
+            db.IdempotencyRecords.AddRange(unanswered, answered, underWay);
+            await db.SaveChangesAsync();
+        }
+
+        var summary = await database.RecycleAsync();
+
+        summary.SweptIdempotency.Should().Be(2, "ARRANGE: both expired records are swept");
+        var written = log.Lines
+            .Where(line => new[] { unanswered, answered, underWay }.Any(
+                record => line.Message.Contains(record.Key.ToString(), StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+        var warning = written.Should().ContainSingle(
+            "the record that is removed without ever having been answered is the one a run writes down, as the API's clean-up does").Which;
+        warning.Level.Should().Be(LogLevel.Warning);
+        warning.Message.Should().Contain(unanswered.Key.ToString()).And.Contain(owner.ToString()).And.Contain(unanswered.Endpoint);
+    }
+
+    [SqlServerFact]
+    public async Task WhenASweepFails_TheRunFails_AndTheCopiesWhoseTimeIsOverAreDeletedAllTheSame()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copies = await database.BuildCopiesAsync(3);
+        var (expired, stale) = (copies[0], copies[1]);
+        await database.MarkClaimedAsync(expired.Id, ADayAndAnHourAgo);
+        await database.BackdateSeedAsync(stale.Id, DateTime.UtcNow.AddHours(-45));
+
+        // The sweep of expired idempotency records is refused. That is no copy's failure, so no
+        // exit code of the pool's names it: the run ends as a failed one, with no summary.
+        var refused = FailingCommandInterceptor.OnText("DELETE", "[IdempotencyRecords]", "[ExpiresAt]");
+        var act = () => database.RecycleAsync(interceptors: refused);
+
+        (await act.Should().ThrowAsync<Exception>("a sweep that fails is not passed over in silence: the process would exit 1"))
+            .Which.GetBaseException().Message.Should().Be(FailingCommandInterceptor.Message);
+        refused.Failures.Should().Be(1, "the failure must actually have been injected, and into the sweep alone");
+
+        // But the sweeps are housekeeping the API does as well, and they come last: what only a
+        // run does was done before the sweep was reached.
+        ATombstone(await database.CopyAsync(expired.Id), "the copy whose time was over is deleted before the sweeps");
+        (await database.CopyAsync(stale.Id)).Should().BeNull("and so is the free copy that was too old to hand out");
+        var freshSince = DateTime.UtcNow.AddHours(-44);
+        (await database.CopiesAsync()).Count(c => c.Row.ClaimedAt is null && c.Row.CreatedAt > freshSince)
+            .Should().Be(2, "and the pool was topped up first of all");
+    }
+
+    // ── When a run reads the time ────────────────────────────────────────────────────────────────
+
+    [SqlServerFact]
+    public async Task ACopyWhoseTimeEndsWhileTheTopUpRuns_IsDeletedByTheSameRun()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copies = await database.BuildCopiesAsync(2);
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var started = clock.GetUtcNow().UtcDateTime;
+
+        // Ten minutes short of 24 hours and 5 minutes: when the run starts, the copy's time is not
+        // over yet. The other copy is free, one of a target of two, so the run has a copy to build.
+        await database.MarkClaimedAsync(copies[0].Id, started.AddHours(-24).AddMinutes(-5).AddMinutes(10));
+        database.AlsoRegister = services => services.AddSingleton<TimeProvider>(clock);
+
+        // The run is parked at the first read of its top-up, and half an hour passes there: a
+        // top-up of fifty copies on a small database is not instant.
+        var hold = new HoldingReadInterceptor("[AspNetRoles]");
+        var run = database.RecycleAsync(interceptors: hold);
+        (await Task.WhenAny(hold.Held, run)).Should().BeSameAs(
+            hold.Held, "the run must be parked inside its top-up, or the order below is not the one under test");
+        clock.Advance(TimeSpan.FromMinutes(30));
+        hold.Release();
+        var summary = await run;
+
+        (summary.Seeded, summary.DeletedExpired).Should().Be(
+            (1, 1), "the copies whose time is over are chosen as of the end of the top-up, not as of the start of the run");
+        var tombstone = await database.CopyAsync(copies[0].Id);
+        ATombstone(tombstone, "its time ended while the top-up ran");
+        tombstone!.Row.DeletedAt.Should().Be(started.AddMinutes(30), "the record carries the instant of the delete");
+    }
+
+    [SqlServerFact]
+    public async Task TimeThatPassesInsideARun_IsSeenByEachDeleteAfterIt_ByTheSweeps_AndByTheLastCount()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copies = await database.BuildCopiesAsync(5);
+        var (first, second, ageing, inUse) = (copies[0], copies[1], copies[2], copies[4]);
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var started = clock.GetUtcNow().UtcDateTime;
+
+        // Two copies whose time is over, the first claimed before the second, so the first is
+        // deleted first. In the second a session is running that has ten minutes left. A third
+        // copy was claimed just now, and a session in it has ten minutes left as well.
+        await database.MarkClaimedAsync(first.Id, started.AddHours(-26));
+        await database.MarkClaimedAsync(second.Id, started.AddHours(-25));
+        await database.MarkClaimedAsync(inUse.Id, started);
+        await using (var db = database.NewContext())
+        {
+            db.RefreshTokens.AddRange(
+                AGrant(second.Owner.Id, expiresAt: started.AddMinutes(10)),
+                AGrant(inUse.Owner.Id, expiresAt: started.AddMinutes(10)));
+            await db.SaveChangesAsync();
+        }
+
+        // And of the two free copies, one has ten minutes left before it is too old to hand out.
+        await database.BackdateSeedAsync(ageing.Id, started.AddHours(-44).AddMinutes(10));
+        database.AlsoRegister = services => services.AddSingleton<TimeProvider>(clock);
+
+        // The run is parked inside the first copy's delete, and half an hour passes there.
+        var (run, hold) = await ARunParkedBeforeItReadsACopysGrantsAsync(database);
+        clock.Advance(TimeSpan.FromMinutes(30));
+        hold.Release();
+        var summary = await run;
+
+        summary.Failures.Should().BeEmpty();
+        summary.DeletedExpired.Should().Be(
+            2, "the second copy's session is judged when its own delete begins, and by then it has ended");
+        ATombstone(await database.CopyAsync(second.Id), "no session was running in it any more");
+        (await database.CopyAsync(first.Id))!.Row.DeletedAt.Should().Be(started, "the first copy's delete began before the half hour");
+        (await database.CopyAsync(second.Id))!.Row.DeletedAt.Should().Be(started.AddMinutes(30), "and the second's after it");
+
+        summary.SweptGrants.Should().Be(
+            1, "the sweeps take what has expired by the time they run: the grant of the copy in use, since the second copy's left with its user");
+        StillWhole(await database.CopyAsync(inUse.Id), "a copy claimed today is in use, whatever became of its session");
+
+        (summary.FreeAtStart, summary.DeletedStaleFree, summary.Free).Should().Be(
+            (2, 0, 1), "what the run LEFT is counted at its end: the copy that grew too old meanwhile is no longer one to hand out");
+        StillWhole(await database.CopyAsync(ageing.Id), "it was not too old when the run chose the copies to delete: the next run takes it");
     }
 
     private static RefreshToken AGrant(Guid userId, DateTime expiresAt) => new()
@@ -715,14 +1055,14 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
         UserAgent = "pool-test",
     };
 
-    private static IdempotencyRecord ARecord(Guid userId, DateTime expiresAt) => new()
+    private static IdempotencyRecord ARecord(Guid userId, DateTime expiresAt, IdempotencyStatus status = IdempotencyStatus.Completed) => new()
     {
         UserId = userId,
         Endpoint = "POST /api/transactions/deposit",
         Key = Guid.NewGuid(),
         ClaimId = Guid.NewGuid(),
         RequestHash = new string('a', 64),
-        Status = IdempotencyStatus.Completed,
+        Status = status,
         CreatedAt = expiresAt.AddHours(-24),
         ExpiresAt = expiresAt,
     };
@@ -785,6 +1125,8 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
 
         refused.Failures.Should().Be(3, "the top-up gives up after three failures in a row");
         (summary.Seeded, summary.BuildFailed, summary.Free, summary.ExitCode).Should().Be((0, 3, 0, 12));
+        summary.Failures.Select(failure => failure.CopyId).Distinct().Should().HaveCount(
+            3, "a copy the top-up could not build is named in the run's summary, like one that could not be deleted");
         summary.ToLine().Should().EndWith("result=TopUpIncomplete");
     }
 
@@ -830,6 +1172,30 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
     }
 
     [SqlServerFact]
+    public async Task ACopyAVisitorClaimsWhileTheRunWorks_DoesNotMakeTheCeilingASignal()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copies = await database.BuildCopiesAsync(6);
+        await database.MarkClaimedAsync(copies[0].Id, ADayAndAnHourAgo);
+        await database.MarkClaimedAsync(copies[1].Id, DateTime.UtcNow.AddHours(-1));
+        await database.MarkClaimedAsync(copies[2].Id, DateTime.UtcNow.AddHours(-2));
+
+        // Two claims in the rolling day against a ceiling of 4: room for 2 of the target of 3. But
+        // the run finds three free copies, so it has nothing to build and the ceiling holds
+        // nothing back. While it is deleting the copy whose time is over, a visitor claims one.
+        var (run, hold) = await ARunParkedBeforeItReadsACopysGrantsAsync(
+            database, settings: new() { ["Demo:Pool:TargetFree"] = "3", ["Demo:Pool:MaxClaimsPerDay"] = "4" });
+        await database.MarkClaimedAsync(copies[3].Id, DateTime.UtcNow);
+        hold.Release();
+        var summary = await run;
+
+        (summary.Target, summary.FreeAtStart, summary.Seeded, summary.Free).Should().Be(
+            (2, 3, 0, 2), "ARRANGE: the pool was full when the run counted it, and one copy short when it ended");
+        (summary.Ceiling, summary.ExitCode).Should().Be(
+            (false, 0), "the ceiling is a signal when it limited the top-up, and the top-up had nothing to build: a claim made afterwards is the next run's to see");
+    }
+
+    [SqlServerFact]
     public async Task TheSummary_CountsTheDaysClaims_AndTheClientsAtTheirCap()
     {
         await using var database = await DemoPoolDatabase.CreateAsync();
@@ -850,23 +1216,125 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
     }
 
     [SqlServerFact]
+    public async Task WhatARunFound_IsCountedBeforeItDeletesAnything()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copies = await database.BuildCopiesAsync(4);
+        var busy = Enumerable.Repeat((byte)0xA1, 32).ToArray();
+
+        // Two claims by one client three hours ago: the client is at a cap of 2, and under a
+        // lifetime of 2 hours both copies' time is over.
+        await database.MarkClaimedAsync(copies[0].Id, DateTime.UtcNow.AddHours(-3), busy);
+        await database.MarkClaimedAsync(copies[1].Id, DateTime.UtcNow.AddHours(-3), busy);
+
+        var summary = await database.RecycleAsync(
+            settings: new() { ["Demo:CopyLifetimeHours"] = "2", ["Demo:Claim:MaxPerClientPerDay"] = "2" });
+
+        (summary.DeletedExpired, summary.Claimed, summary.Tombstones).Should().Be(
+            (2, 0, 2), "ARRANGE: the run deleted both copies, and a record no longer says which client claimed it");
+        (summary.Claims24h, summary.ClientsAtCap).Should().Be(
+            (2, 1), "the day's claims and the clients at their cap are what the run found, before it deleted anything");
+    }
+
+    [SqlServerFact]
     public async Task ATombstone_IsNeverTakenAgain_AndIsNotAPoolRowAnyMore()
     {
         await using var database = await DemoPoolDatabase.CreateAsync();
         var copy = (await database.BuildCopiesAsync(3))[0];
-        // Past the lifetime AND past the backstop, so both deletes would pick it again if either
-        // forgot that it is already deleted.
+        // Past the lifetime AND past the backstop, and seeded longer ago than a free copy is kept:
+        // every rule that picks a copy would pick it again if it forgot that it is already deleted.
         await database.MarkClaimedAsync(copy.Id, DateTime.UtcNow.AddHours(-100));
+        await database.BackdateSeedAsync(copy.Id, DateTime.UtcNow.AddHours(-101));
 
         var first = await database.RecycleAsync();
         (first.DeletedExpired, first.DeletedHardStop, first.Tombstones, first.RowsAtStart).Should().Be((1, 0, 1, 3));
         var tombstone = (await database.CopyAsync(copy.Id))!.Row;
 
-        var second = await database.RecycleAsync();
+        var sent = new CommandTimeoutRecordingInterceptor();
+        var second = await database.RecycleAsync(interceptors: sent);
 
         (second.DeletedExpired, second.DeletedHardStop, second.DeleteFailed, second.Tombstones, second.RowsAtStart, second.Claimed)
             .Should().Be((0, 0, 0, 1, 2, 0), "a tombstone is a record: it is counted as one and as nothing else");
         (await database.CopyAsync(copy.Id))!.Row.Should().BeEquivalentTo(tombstone, "the record is not rewritten");
+
+        // And it costs a run nothing. The records are kept for ever, about 150 more each day at the
+        // ceiling: a run that opened a transaction for each would spend its time on them.
+        TablesDeletedFrom(sent).Should().BeEquivalentTo(
+            new[] { "IdempotencyRecords", "RefreshTokens" }, "the two sweeps are the only deletes of a run that has no copy to delete");
+        sent.Commands.Should().NotContain(
+            command => command.Text.Contains("UPDATE", StringComparison.Ordinal) && command.Text.Contains("[DemoCopies]", StringComparison.Ordinal),
+            "no statement tries to take a record, as a claimed copy or as a free one");
+    }
+
+    [SqlServerFact]
+    public async Task WhenAnotherRunDeletesACopyFirst_ThisRunCountsNothing_AndLeavesTheRecordAsItIs()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copy = (await database.BuildCopiesAsync(3))[0];
+        await database.MarkClaimedAsync(copy.Id, ADayAndAnHourAgo);
+
+        // Two runs at once, a scheduled one and one started by hand. This one has chosen the copy
+        // and is on its way to it; the other deletes it first.
+        var (run, hold) = await ARunParkedBeforeItReadsACopysGrantsAsync(database);
+        var other = await database.RecycleAsync();
+        other.DeletedExpired.Should().Be(1, "ARRANGE: the other run deleted the copy while this one waited");
+        var record = (await database.CopyAsync(copy.Id))!.Row;
+
+        hold.Release();
+        var summary = await run;
+
+        summary.Failures.Should().BeEmpty("finding nothing left to delete is not a failure");
+        (summary.DeletedExpired, summary.DeletedHardStop, summary.DeleteFailed, summary.Tombstones).Should().Be(
+            (0, 0, 0, 1), "a copy is deleted once, and counted by the run that deleted it");
+        (await database.CopyAsync(copy.Id))!.Row.Should().BeEquivalentTo(record, "the record is written once");
+    }
+
+    [SqlServerFact]
+    public async Task WhenTheAnswerToAClaimedCopysDeleteIsLost_TheCopyIsCountedOnce_AndIsNotAFailure()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copy = (await database.BuildCopiesAsync(3))[0];
+        await database.MarkClaimedAsync(copy.Id, ADayAndAnHourAgo);
+
+        // The delete commits, and the answer never arrives. The last statement of that delete is
+        // the one that makes the pool row a record.
+        var lost = new LostCommitAnswerInterceptor("UPDATE", "[DemoCopies]", "[DeletedAt]");
+        var summary = await database.RecycleAsync(interceptors: lost);
+
+        lost.Fired.Should().BeTrue("the answer must actually have been lost, else the test proves nothing");
+        summary.Failures.Should().BeEmpty();
+        (summary.DeletedExpired, summary.DeleteFailed, summary.Tombstones).Should().Be(
+            (1, 0, 1),
+            "the copy is gone, so it is counted: a recycler that ran the delete again would find the record written and report that it left alone a copy it had deleted");
+        ATombstone(await database.CopyAsync(copy.Id), "the delete landed");
+    }
+
+    [SqlServerFact]
+    public async Task WhenAClaimedCopysDeleteIsRunAgain_AndASessionHasBegunSince_TheCopyIsNotCountedAsDeleted()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copy = (await database.BuildCopiesAsync(3))[0];
+        await database.MarkClaimedAsync(copy.Id, ADayAndAnHourAgo);
+
+        // The delete reaches its commit, the commit fails and nothing of it lands: the copy is
+        // whole again. A session begins in it before the delete is run again.
+        var failed = new FailedCommitInterceptor(
+            async () =>
+            {
+                await using var db = database.NewContext();
+                db.RefreshTokens.Add(AGrant(copy.Owner.Id, expiresAt: DateTime.UtcNow.AddHours(1)));
+                await db.SaveChangesAsync();
+            },
+            "UPDATE",
+            "[DemoCopies]",
+            "[DeletedAt]");
+        var summary = await database.RecycleAsync(interceptors: failed);
+
+        failed.Fired.Should().BeTrue("the commit must actually have failed, else the test proves nothing");
+        summary.Failures.Should().BeEmpty("a copy in use is not a failure");
+        (summary.DeletedExpired, summary.DeletedHardStop, summary.DeleteFailed, summary.Claimed).Should().Be(
+            (0, 0, 0, 1), "a run reports what its last attempt at a copy did: the first got as far as its commit, and the second found a live grant");
+        StillWhole(await database.CopyAsync(copy.Id), "the grant is live");
     }
 
     // ── What a run writes down ───────────────────────────────────────────────────────────────────
