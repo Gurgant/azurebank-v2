@@ -163,10 +163,10 @@ the template sets it:
 - A request to `/api/...` with no session: one warning of about half a kilobyte, **whether the rate
   limiter lets it through or rejects it**. On a build of the BFF from source, 400 such requests in
   0.9 s wrote 400 lines, 209,200 bytes; on the built image the two warnings are 538 and 510 bytes.
-  The rate limiter therefore does not bound the log. Computed, not measured: with the 244 bytes
-  a line of the trial added, such a warning is billed about 768 bytes, and a day's cap is about
-  65,100 such requests: eleven minutes at 100 a second. (By console bytes alone it was about
-  95,600 and sixteen minutes.)
+  The rate limiter therefore does not bound the log. Computed, not measured: the two warnings of
+  the built image average 524 bytes; with the 244 bytes a line of the trial added, such a warning
+  is billed about 768 bytes, and a day's cap is about 65,100 such requests: eleven minutes at 100
+  a second. By the 524 console bytes alone it would be about 95,400 and sixteen minutes.
 - During a database outage a failed sign-in writes about 28.7 KB of console text: at most about
   1,740 of them fill the day, and fewer once each of its lines carries that overhead (how many
   lines the text is was not kept). The sign-in limiter allows ten a minute, so that takes at most

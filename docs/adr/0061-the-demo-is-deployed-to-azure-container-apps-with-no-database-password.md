@@ -360,8 +360,9 @@ certainty and gives a stranger nothing to fill. The workspace is a meter:
 - The app's own rate limiter does not bound the log: a rejected request writes a warning too.
   Computed from what the trial's lines were billed (about 244 bytes a line on top of the text): a
   day's cap is about 65,100 such requests, and past the free amount each million costs about
-  $2.30 on the log meter on top of $0.40 on the request meter, nearly seven times faster. By
-  console bytes alone the two numbers were 95,600 and $1.56.
+  $2.30 on the log meter on top of $0.40 on the request meter, nearly seven times faster. By the
+  built image's console bytes alone (524 a warning) the two numbers would be about 95,400 and
+  $1.57.
 - A stranger can fill the day's cap on purpose, and the log is then dark until its reset.
 
 The request line went and the warnings stayed for that reason: the request line was written for
