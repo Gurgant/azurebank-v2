@@ -573,6 +573,33 @@ describe('deposit — the server says it went through', () => {
     expect(keys).toHaveLength(1);
   });
 
+  it('a press outside the dialog still closes the success receipt: the guard is not on it', async () => {
+    /*
+      Pins what was left as it was. The receipt is shorter than the form too. Measured in Chromium
+      on the running stack with a real deposit: when the 201 came before the second press of a
+      double click, that press landed on the backdrop and the receipt was gone 53 ms after it
+      had appeared; one request, one deposit. Keeping the receipt open would be a decision of its
+      own. This test fails if the guard comes to cover the receipt without one.
+    */
+    const closed = vi.fn();
+    renderDeposit(closed);
+    const backdrop = () => {
+      const element = document.querySelector<HTMLElement>('.fui-DialogSurface__backdrop');
+      if (!element) throw new Error('the dialog has no backdrop to press');
+      return element;
+    };
+
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    expect(await screen.findByText('Deposit Successful!')).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Deposit Complete' })).toBeInTheDocument();
+    expect(screen.queryByText(COPY.depositWentThrough)).not.toBeInTheDocument();
+    expect(closed).not.toHaveBeenCalled();
+
+    await userEvent.click(backdrop());
+    expect(closed).toHaveBeenCalledTimes(1);
+  });
+
   it('takes focus from the dialog itself, where a press during the send had left it', async () => {
     /*
       The other half of a double click: the answer takes longer than the gap between the two

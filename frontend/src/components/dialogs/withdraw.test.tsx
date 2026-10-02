@@ -967,6 +967,30 @@ describe('withdraw — the server says it went through', () => {
     expect(keys).toHaveLength(1);
   });
 
+  it('a press outside the dialog still closes the success receipt: the guard is not on it', async () => {
+    // DepositDialog's case, where it was measured in a browser; on this dialog's receipt it was
+    // not. The receipt is left as it was, and this fails if the guard comes to cover it.
+    const closed = vi.fn();
+    server.use(http.post('*/api/transactions/withdraw', () => withdrawSuccessBody(1150.5)));
+    renderWithdraw(makeTestStore(), closed);
+    const backdrop = () => {
+      const element = document.querySelector<HTMLElement>('.fui-DialogSurface__backdrop');
+      if (!element) throw new Error('the dialog has no backdrop to press');
+      return element;
+    };
+
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    expect(await screen.findByText('Withdrawal Successful!')).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Withdrawal Complete' })).toBeInTheDocument();
+    expect(screen.queryByText(COPY.withdrawalWentThrough)).not.toBeInTheDocument();
+    expect(closed).not.toHaveBeenCalled();
+
+    await userEvent.click(backdrop());
+    expect(closed).toHaveBeenCalledTimes(1);
+  });
+
   it('takes focus from the dialog itself, where a press during the send had left it', async () => {
     // DepositDialog's case: a press on a disabled control while the send is out leaves focus on
     // the dialog's own surface (measured in Chromium, on Withdraw's footer too, where the second
