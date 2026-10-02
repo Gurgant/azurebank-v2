@@ -719,18 +719,23 @@ Test files are under `frontend/src/`, browser specs under `frontend/e2e/`.
       the disabled "Back". Each dialog stayed and showed its sentence, but focus was on the dialog
       itself and not on the sentence. The same was then made on purpose, a deposit's answer held for
       400 ms in the browser: the second press, on the disabled button, moved focus to the dialog
-      (`role="dialog"`, `tabindex="-1"`), and it was still there with the view on screen. A press on
-      a disabled control gives focus to the nearest ancestor that can hold it, and the landing
-      looked for focus on `body` alone. Since then the sentence takes focus from a container that
-      holds it as it does from `body` (`useFocusWhenLost`). In the fourth run the held answer ended
-      with focus on the sentence. Its two double clicks came after their answers (77 and 72 ms; the
-      second presses 245 and 284 ms after the first): on "Deposit" the second press was on the
-      backdrop, and the dialog stayed with focus on the sentence; on "Withdraw" the place the button
-      had been is still inside the shorter dialog, on no control, and the press moved focus from the
-      sentence, which had it 244 and 272 ms after the first press, to the dialog itself. The dialog
-      stayed. Measured on the deposit's view after such a press: Tab reached Close, Shift+Tab then
-      "View History", and Escape closed the dialog. That is not changed: the landing is made once,
-      when the view appears.
+      (`role="dialog"`, `tabindex="-1"`), and it was still there with the view on screen. That is
+      where focus went, measured, and not why: to the dialog's `div` after the press on the disabled
+      button there, and to the same `div` in that run's double click on the deposit, whose second
+      press was on a `<div>` that is no control. (Until 2026-10-02 this note gave a rule in its
+      place, that a press on a disabled control gives focus to the nearest ancestor that can hold
+      it. No run tested that.) The landing looked for focus on `body` alone. Since then the sentence
+      takes focus from a container that holds it as it does from `body` (`useFocusWhenLost`). In the
+      fourth run the held answer ended with focus on the sentence. Its two double clicks came after
+      their answers (77 and 72 ms; the second presses 245 and 284 ms after the first): on "Deposit"
+      the second press was on the backdrop, and the dialog stayed with focus on the sentence; on
+      "Withdraw" the place the button had been is still inside the shorter dialog, on no control,
+      and the press moved focus from the sentence to the dialog itself. The sentence had it 106 and
+      147 ms after the first press on the page's clock, the stamp the page put on its own snapshots;
+      those reached the driver at 244 and 272 ms, which this note gave until 2026-10-02 as when the
+      sentence had focus. The dialog stayed. Measured on the deposit's view after such a press: Tab
+      reached Close, Shift+Tab then "View History", and Escape closed the dialog. That is not
+      changed: the landing is made once, when the view appears.
     - Not guarded, and measured once each on the deposit dialog, the send answered by the browser or
       by the API with nothing held: the same double click over the check view (a 409 with no
       `applied`, answered in 16 ms) and over the success receipt of a real deposit (a 201 after 50
