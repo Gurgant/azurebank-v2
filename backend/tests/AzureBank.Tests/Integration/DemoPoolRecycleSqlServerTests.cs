@@ -874,11 +874,15 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
         // A live grant that names an expired one: the link has to be cleared before the delete, or
         // the self-reference refuses it.
         liveGrant.ReplacedByTokenId = expiredGrant.Id;
+
+        // And a grant that was revoked and has not expired: a session its user signed out of.
+        var revokedGrant = AGrant(owner, expiresAt: now + hour);
+        revokedGrant.RevokedAt = now;
         await using (var db = database.NewContext())
         {
             db.RefreshTokens.Add(expiredGrant);
             await db.SaveChangesAsync();
-            db.RefreshTokens.Add(liveGrant);
+            db.RefreshTokens.AddRange(liveGrant, revokedGrant);
             db.IdempotencyRecords.AddRange(
                 ARecord(owner, expiresAt: now - hour), ARecord(owner, expiresAt: now - hour), ARecord(owner, expiresAt: now + hour));
             await db.SaveChangesAsync();
@@ -890,9 +894,11 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
             (1, 2, 0), "one expired grant and two expired records: each sweep is counted under its own name");
         await using (var db = database.NewContext())
         {
-            var grant = (await db.RefreshTokens.AsNoTracking().ToListAsync()).Should().ContainSingle().Which;
-            grant.Id.Should().Be(liveGrant.Id);
-            grant.ReplacedByTokenId.Should().BeNull("the link to the swept grant was cleared");
+            var grants = await db.RefreshTokens.AsNoTracking().ToListAsync();
+            grants.Select(grant => grant.Id).Should().BeEquivalentTo(
+                new[] { liveGrant.Id, revokedGrant.Id },
+                "a grant is swept when it has expired, as the API's clean-up does it: not when it is revoked, and not while it is live");
+            grants.Single(grant => grant.Id == liveGrant.Id).ReplacedByTokenId.Should().BeNull("the link to the swept grant was cleared");
             (await db.IdempotencyRecords.AsNoTracking().SingleAsync()).ExpiresAt.Should().BeAfter(now);
         }
 
