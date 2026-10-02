@@ -1418,6 +1418,7 @@ line is checked at the step named, on the first deployment.
 | The raw log of a workflow run holds none of the three identifiers, not the app's address, not the server's name, no client ID of a database identity and no address: step 17 counts each | step 17 |
 | `migrate` from a checkout, signed in as the owner with `Active Directory Default` | step 19 |
 | Cold start against the probes (1 s delay, 3 s period, 10 failures; 4 s timeout on readiness), and the first database request after it | after step 16 |
+| What the `Replicas` metric reports while the app is scaled to zero: 0, or nothing. If nothing, a day's average is 1 on any day the app ran at all, the alert on replica time fires on any use, and that rule has to count another way | the first days after step 16 |
 | The meters after 48 hours: the three environment meters and the Dedicated one at 0; whether the free 5 GB of logs apply to this offer; whether the cost view returns a row at all | after steps 2 and 20 |
 | What the workspace bills for a line; how far the cap overshoots; whether an environment set to `none` still feeds a setting that exists | after step 20; the last two are not provoked |
 | How long a managed identity's token stays valid for the database | not found in the pages read |

@@ -447,7 +447,9 @@ var alerts = [
   { name: 'azurebank-requests', onLogs: false, metric: 'Requests', aggregation: 'Total', threshold: 66667, window: 'PT1H', every: 'PT15M', text: 'More than 66,667 requests in one hour.' }
   // 3.3 GiB is one day of the free 100 GB a month.
   { name: 'azurebank-bytes-out', onLogs: false, metric: 'TxBytes', aggregation: 'Total', threshold: 3543348019, window: 'P1D', every: 'PT1H', text: 'More than 3.3 GiB sent in one day.' }
-  // 0.093 is 66.7 free replica-hours a month, as a daily average of the replica count.
+  // 0.093 is 66.7 free replica-hours a month, as a daily average of the replica count. It assumes
+  // the metric reports 0 while the app is scaled to zero, which nobody has seen: if it reports
+  // nothing then, the average is 1 on any day of use and this rule fires every such day.
   { name: 'azurebank-replica-time', onLogs: false, metric: 'Replicas', aggregation: 'Average', threshold: json('0.093'), window: 'P1D', every: 'PT1H', text: 'The replica ran more than 2.2 hours in one day.' }
   // 50,000 lines of about half a kilobyte are half of the workspace's daily cap, here in one hour.
   // It warns of volume; nothing warns that the cap itself was reached.
