@@ -7,7 +7,11 @@ namespace AzureBank.Seeder.Pool;
 public sealed record PoolCopyFailure(Guid CopyId, int? ErrorNumber, string Message);
 
 /// <summary>What one run of <c>seed-pool</c> or <c>recycle</c> found and did.</summary>
-/// <remarks>NOT WRITTEN YET: the counts exist so the tests compile; the line is empty.</remarks>
+/// <remarks>
+/// Two instants. What the run FOUND is read before it changes anything: the pool rows, the free
+/// copies, the day's claims, the clients at their cap, the users outside every copy. What it LEFT
+/// is read at its end: the free copies, the claimed ones, the records of deleted copies.
+/// </remarks>
 public sealed record PoolRunSummary
 {
     /// <summary>Pool rows that are not records of a deleted copy, before the run changed anything.</summary>
@@ -37,10 +41,13 @@ public sealed record PoolRunSummary
     /// <summary>Copies this run tried to build and could not.</summary>
     public int BuildFailed { get; init; }
 
-    /// <summary>Claimed copies deleted because their time was over.</summary>
+    /// <summary>Claimed copies deleted because their time was over and no session was running in them.</summary>
     public int DeletedExpired { get; init; }
 
-    /// <summary>Claimed copies deleted past the backstop, whatever their grants.</summary>
+    /// <summary>
+    /// Claimed copies deleted past the backstop while a grant of theirs was still live. Above 0 it
+    /// says sign-in went on being accepted past a copy's end.
+    /// </summary>
     public int DeletedHardStop { get; init; }
 
     /// <summary>Free copies deleted because they were too old to hand out.</summary>
@@ -71,5 +78,15 @@ public sealed record PoolRunSummary
     public IReadOnlyList<PoolCopyFailure> Failures { get; init; } = [];
 
     /// <summary>The run as one line for the job's log.</summary>
-    public string ToLine() => string.Empty;
+    /// <remarks>
+    /// Every count, whatever the code: the code names one signal, and a run can carry several.
+    /// Counts and a name only, never an id or an address, and always in this order, so the line
+    /// can be searched and compared from one run to the next.
+    /// </remarks>
+    public string ToLine() =>
+        $"pool: free={Free} was={FreeAtStart} claimed={Claimed} claims24h={Claims24h} clientsAtCap={ClientsAtCap} seeded={Seeded} "
+        + $"deleted(expired={DeletedExpired} hardStop={DeletedHardStop} staleFree={DeletedStaleFree} failed={DeleteFailed}) "
+        + $"swept(idempotency={SweptIdempotency} grants={SweptGrants}) "
+        + $"tombstones={Tombstones} foreignUsers={ForeignUsers} ceiling={(Ceiling ? "yes" : "no")} "
+        + $"result={PoolExitCodes.Name(ExitCode)}";
 }

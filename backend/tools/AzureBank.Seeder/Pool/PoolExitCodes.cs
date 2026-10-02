@@ -2,13 +2,27 @@ namespace AzureBank.Seeder.Pool;
 
 /// <summary>The exit code a pool run ends with, as a function of what it counted.</summary>
 /// <remarks>
-/// NOT ALL WRITTEN YET: <see cref="ForSeedPool"/> is; <see cref="From"/> answers 0 and
-/// <see cref="Name"/> answers nothing, so their tests compile and fail.
+/// <para>
+/// A code from 10 to 15 is a SIGNAL: the run finished and has a summary, and the code says which
+/// of its counts somebody should read. 10, 11 and 15 mean "done, and the pool was short"; 12, 13
+/// and 14 need a look. A run that did not finish has no summary and no code from here.
+/// </para>
+/// <para>
+/// One run can earn several. It exits with the first that applies of 13, 14, 12, 15, 11, 10: what
+/// needs a look before what was only short. The summary line carries every count whatever the
+/// code.
+/// </para>
 /// </remarks>
 public static class PoolExitCodes
 {
     /// <summary>Nothing below applies.</summary>
     public const int PoolOk = 0;
+
+    /// <summary>The run found fewer free copies than the low mark, and at least one.</summary>
+    public const int PoolLow = 10;
+
+    /// <summary>The run found no free copy: visitors may have been turned away.</summary>
+    public const int PoolEmpty = 11;
 
     /// <summary>A copy could not be built, and the pool ended below its target.</summary>
     public const int TopUpIncomplete = 12;
@@ -16,8 +30,52 @@ public static class PoolExitCodes
     /// <summary>A user that belongs to no copy exists.</summary>
     public const int ForeignUsers = 13;
 
+    /// <summary>At least one copy could not be deleted.</summary>
+    public const int DeleteFailed = 14;
+
+    /// <summary>The day's claims held the top-up below the pool's target.</summary>
+    public const int ClaimCeiling = 15;
+
     /// <summary>The code <c>recycle</c> exits with.</summary>
-    public static int From(PoolRunSummary summary, int lowMark) => 0;
+    /// <remarks>
+    /// "Low" and "empty" are about the pool the run FOUND, since that is what visitors met, and
+    /// only on a database that already held copies: the first fill of an empty database finds no
+    /// free copy and has turned nobody away.
+    /// </remarks>
+    public static int From(PoolRunSummary summary, int lowMark)
+    {
+        if (summary.ForeignUsers > 0)
+        {
+            return ForeignUsers;
+        }
+
+        if (summary.DeleteFailed > 0)
+        {
+            return DeleteFailed;
+        }
+
+        if (TheTopUpCameUpShort(summary))
+        {
+            return TopUpIncomplete;
+        }
+
+        if (summary.Ceiling)
+        {
+            return ClaimCeiling;
+        }
+
+        if (summary.RowsAtStart == 0)
+        {
+            return PoolOk;
+        }
+
+        if (summary.FreeAtStart == 0)
+        {
+            return PoolEmpty;
+        }
+
+        return summary.FreeAtStart < lowMark ? PoolLow : PoolOk;
+    }
 
     /// <summary>The code <c>seed-pool</c> exits with.</summary>
     /// <remarks>
@@ -33,9 +91,26 @@ public static class PoolExitCodes
             return ForeignUsers;
         }
 
-        return summary.BuildFailed > 0 && summary.Free < summary.Target ? TopUpIncomplete : PoolOk;
+        return TheTopUpCameUpShort(summary) ? TopUpIncomplete : PoolOk;
     }
 
-    /// <summary>The name a code is printed with.</summary>
-    public static string Name(int exitCode) => string.Empty;
+    /// <summary>The name a code is printed with: the last word of the summary line.</summary>
+    /// <remarks>A code this class does not decide is printed as its number.</remarks>
+    public static string Name(int exitCode) => exitCode switch
+    {
+        PoolOk => nameof(PoolOk),
+        PoolLow => nameof(PoolLow),
+        PoolEmpty => nameof(PoolEmpty),
+        TopUpIncomplete => nameof(TopUpIncomplete),
+        ForeignUsers => nameof(ForeignUsers),
+        DeleteFailed => nameof(DeleteFailed),
+        ClaimCeiling => nameof(ClaimCeiling),
+        _ => exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture),
+    };
+
+    // Both halves: a copy that failed AND a pool that ended short. A copy that failed while the
+    // target was still reached cost nothing; a pool that is short with no failure lost a copy to
+    // a visitor while the run counted.
+    private static bool TheTopUpCameUpShort(PoolRunSummary summary) =>
+        summary.BuildFailed > 0 && summary.Free < summary.Target;
 }

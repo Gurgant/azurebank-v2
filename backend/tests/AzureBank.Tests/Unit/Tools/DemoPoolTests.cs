@@ -450,6 +450,17 @@ public class DemoPoolTests
         PoolExitCodes.Name(code).Should().Be(name);
     }
 
+    [Theory]
+    [InlineData(1, "1")]
+    [InlineData(9, "9")]
+    [InlineData(16, "16")]
+    public void ACodeThePoolDoesNotDecide_IsPrintedAsItsNumber(int code, string printed)
+    {
+        // No summary ends with one of these. A name that came back empty would end the line at
+        // "result=", which reads as a line cut short.
+        PoolExitCodes.Name(code).Should().Be(printed);
+    }
+
     // ── The summary line ─────────────────────────────────────────────────────────────────────────
 
     [Fact]
