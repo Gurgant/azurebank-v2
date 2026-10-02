@@ -80,12 +80,15 @@ the deposit and withdrawal dialogs, where the action carries a `key` so that it 
 the send button renamed under a focus that never left it. In a dialog the view is shorter than the
 form it replaces, so the second press of a double click on the send button lands on the backdrop:
 the dialog tells its shell (`keepOnOutsidePress`), and a press outside then closes nothing, while
-the X and Escape still do. After a key press the browser draws the app's focus ring around the
+the X and Escape still do. The check view is kept the same way: it is shorter than the form too,
+and behind it is the tile that opens the dialog for a second payment. The receipt of a send that
+succeeded is not kept. After a key press the browser draws the app's focus ring around the
 sentence; after a click it draws none. Three limits, known:
 
 - when another dialog holds focus as the answer arrives, or the visitor moved focus to a control
   during the wait, the landing does not run, and nothing brings the sentence to a screen reader;
-- the check view ("We couldn't confirm …") lands no focus: it still appears with focus on `body`;
+- the check view ("We couldn't confirm …") lands no focus: it still appears with focus on `body`,
+  and from there Escape reaches its dialog only after a Tab has brought focus into it;
 - a landing does not depend on the screen reader, but what each one says on a focused paragraph
   does. ADR-0059's Validation says what was heard and what was not.
 

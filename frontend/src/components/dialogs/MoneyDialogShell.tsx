@@ -25,12 +25,17 @@ import { useMoneyDialogStyles } from './moneyDialogStyles';
  * than closing the surface directly, so the guard applies to the keyboard too.
  *
  * **A press outside the dialog does not close it while `keepOnOutsidePress` is set.** The caller
- * sets it while the dialog shows how a send ended in place of the form that sent it. That view is
- * shorter than the form, so the dialog shrinks under the pointer, and the second press of a double
- * click on the send button lands on the backdrop: measured in Chromium on the running stack, the
- * dialog was gone a tenth of a second after its sentence appeared, before anybody could read it.
- * The press changes nothing then: it closes nothing, and it leaves focus where it was. The X and
- * Escape still close the dialog, since nobody presses those by accident.
+ * sets it while the form that sent is replaced by words the visitor must read: that the payment
+ * went through and its receipt cannot be shown, or that it could not be confirmed and is to be
+ * checked first. Either view is shorter than the form, so the dialog shrinks under the pointer,
+ * and the second press of a double click on the send button lands on the backdrop. Measured in
+ * Chromium on the running stack, on each: the dialog was gone before anybody could read it, on
+ * the first a tenth of a second after its sentence appeared, on the second with the tile that
+ * opens the dialog again in front of the visitor. The press changes nothing then: it closes
+ * nothing, and it leaves focus where it was. The X still closes the dialog, and so does Escape
+ * from wherever in the dialog focus is, since nobody presses those by accident. The receipt of a
+ * send that succeeded is not kept, and neither is the form: a press outside closes those as it
+ * did. (Until 2026-10-02 only the first of the two views was kept.)
  */
 
 export interface MoneyDialogShellProps {
@@ -44,7 +49,10 @@ export interface MoneyDialogShellProps {
   onClose: () => void;
   /** True while an idempotency key is live. Bars every exit, and looks barred. */
   closeDisabled?: boolean;
-  /** True while the dialog shows how a send ended: a press on the backdrop then closes nothing. */
+  /**
+   * True while the went-through view or the check view stands in place of the form: a press on the
+   * backdrop then closes nothing.
+   */
   keepOnOutsidePress?: boolean;
   children: ReactNode;
 }
@@ -78,7 +86,8 @@ export function MoneyDialogShell({
         // The press that closes nothing must take nothing either. A mouse press on the backdrop
         // moves focus to `body`, and from there Escape reaches no dialog: measured in Chromium,
         // the view stayed and Escape no longer closed it. Refusing the press's default keeps focus
-        // where it was, on the sentence.
+        // where it was: on the went-through sentence, or on whatever the visitor had reached in
+        // the check view, which lands no focus of its own.
         backdrop={
           keepOnOutsidePress ? { onMouseDown: (event) => event.preventDefault() } : undefined
         }

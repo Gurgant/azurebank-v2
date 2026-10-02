@@ -603,8 +603,10 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
       tone="debit"
       onClose={requestClose}
       closeDisabled={keyLive}
-      // As in DepositDialog: a press outside the dialog does not take the sentence away unread.
-      keepOnOutsidePress={wentThrough}
+      // As in DepositDialog: a press outside the dialog takes away neither the went-through
+      // sentence nor the check view's words unread. `verifyRequired` is true under both views,
+      // and under nothing else.
+      keepOnOutsidePress={verifyRequired}
     >
       {/* Success */}
       {success && (

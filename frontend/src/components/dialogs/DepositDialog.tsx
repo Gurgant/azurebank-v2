@@ -276,9 +276,12 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
       tone="credit"
       onClose={requestClose}
       closeDisabled={keyLive}
-      // The went-through view is shorter than the form: the second press of a double click on
-      // Deposit lands outside the dialog, and must not take the sentence away unread.
-      keepOnOutsidePress={wentThrough}
+      // The went-through view and the check view are both shorter than the form: the second
+      // press of a double click on Deposit lands outside the dialog, and must not take their
+      // words away unread. Behind a check view closed that way is the Deposit tile, to press for
+      // a second deposit. `verifyRequired` is true under both views, since the hook sets it with
+      // `wentThrough`, and under nothing else: the receipt and the form close as they did.
+      keepOnOutsidePress={verifyRequired}
     >
       {/* Success */}
       {success && (
