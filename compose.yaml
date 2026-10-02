@@ -6,6 +6,8 @@
 # generates, spelled as environment variables:
 #   SQL_SA_PASSWORD, JWT_SECRET, IDEMPOTENCY_HASH_KEY, STEPUP_BINDING_KEY, SERVICE_KEY,
 #   AUDIT_CHAIN_KEY, AUDIT_ANCHOR_KEY, PIN_PEPPER
+# The three connection strings below put SQL_SA_PASSWORD in single quotes, so it may hold `;` or
+# `=`; a password that holds a single quote is not supported by this file.
 # The database starts empty, and two one-shot containers of the tools image fill it before the API
 # starts: `migrate` creates the database and brings it to the latest migration, then `seed` adds the
 # demo users and their history (ADR-0060; backend/tools/AzureBank.Seeder/README.md has their
@@ -56,7 +58,7 @@ services:
       sqlserver:
         condition: service_healthy
     environment:
-      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=AzureBank;User Id=sa;Password=${SQL_SA_PASSWORD:?set SQL_SA_PASSWORD};TrustServerCertificate=true"
+      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=AzureBank;User Id=sa;Password='${SQL_SA_PASSWORD:?set SQL_SA_PASSWORD}';TrustServerCertificate=true"
 
   # Exits 0 once the demo data is there: it fills an empty database and leaves a seeded one alone.
   # The pepper is the API's, or the seeded PINs would not verify.
@@ -67,7 +69,7 @@ services:
       migrate:
         condition: service_completed_successfully
     environment:
-      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=AzureBank;User Id=sa;Password=${SQL_SA_PASSWORD:?set SQL_SA_PASSWORD};TrustServerCertificate=true"
+      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=AzureBank;User Id=sa;Password='${SQL_SA_PASSWORD:?set SQL_SA_PASSWORD}';TrustServerCertificate=true"
       Security__PinPepper: ${PIN_PEPPER:?set PIN_PEPPER}
 
   bff:
@@ -99,7 +101,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://127.0.0.1:5068
-      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=AzureBank;User Id=sa;Password=${SQL_SA_PASSWORD:?set SQL_SA_PASSWORD};TrustServerCertificate=true"
+      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=AzureBank;User Id=sa;Password='${SQL_SA_PASSWORD:?set SQL_SA_PASSWORD}';TrustServerCertificate=true"
       Jwt__Secret: ${JWT_SECRET:?set JWT_SECRET}
       Idempotency__HashKey: ${IDEMPOTENCY_HASH_KEY:?set IDEMPOTENCY_HASH_KEY}
       StepUp__BindingKey: ${STEPUP_BINDING_KEY:?set STEPUP_BINDING_KEY}
