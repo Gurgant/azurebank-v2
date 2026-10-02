@@ -1,24 +1,32 @@
 # AzureBank on Azure Container Apps
 
-How the demo is created, deployed, stopped and removed. Everything here is run by hand: the
-templates from a terminal, the deployment from one workflow. Commands are PowerShell 7.
+How the demo is created, deployed, read, stopped and removed. Everything here is run by hand: the
+templates and the scripts from a terminal, the deployment from one workflow. Commands are
+PowerShell 7.
 
 **State of this document.** The templates compile and the scripts are tested offline against
 stand-ins. The facts marked *measured* were read on 2026-10-02, from Azure or GitHub with read-only
-commands or on a local stack of this code. Nothing in this folder has been deployed yet. What only
-a deployment can show is listed under [Not measured yet](#not-measured-yet), and every expected
-value below is marked as expected.
+commands, on a local stack of this code, or on a local SQL Server. Nothing in this folder has been
+deployed yet: the resource group does not exist. What only a deployment can show is listed under
+[Not measured yet](#not-measured-yet), every expected value below is marked as expected, and every
+"if Azure refuses" has its next step written down before the first run
+([If Azure says no](#if-azure-says-no)).
 
 - [What this creates](#what-this-creates)
 - [What it costs, and what bounds it](#what-it-costs-and-what-bounds-it)
 - [What you need](#what-you-need)
 - [Create it once](#create-it-once)
+- [If Azure says no](#if-azure-says-no)
 - [Deploy a commit](#deploy-a-commit)
+- [Reading the logs](#reading-the-logs)
+- [Switching the logs off](#switching-the-logs-off)
 - [Stop the app by hand](#stop-the-app-by-hand)
 - [When something fails](#when-something-fails)
+- [If something was stolen](#if-something-was-stolen)
 - [Where each secret lives](#where-each-secret-lives)
-- [What the deployment identity can do](#what-the-deployment-identity-can-do)
+- [What each identity can do](#what-each-identity-can-do)
 - [Who can reach the database server](#who-can-reach-the-database-server)
+- [What only the owner does](#what-only-the-owner-does)
 - [Before renaming or transferring the repository](#before-renaming-or-transferring-the-repository)
 - [Changing the infrastructure later](#changing-the-infrastructure-later)
 - [Removing everything](#removing-everything)
@@ -28,43 +36,53 @@ value below is marked as expected.
 
 ## What this creates
 
-One resource group, `azurebank-demo`, in Italy North. `main.bicep` is run twice: once with
-`deployApp=false` (the foundation, which needs no image) and once with `deployApp=true`.
+One resource group, `azurebank-demo`, in Italy North. `main.bicep` is run with `deployApp=false`
+(the foundation, which needs no image) and later with `deployApp=true`.
 
-**The foundation**
+**The foundation: fourteen things**
 
 | Resource | What it is |
 | --- | --- |
-| `azurebank-env` | A Container Apps environment with the Consumption profile only. Logs go nowhere (`destination: 'none'`): there is no Log Analytics workspace |
-| `azurebank-<letters>` | A SQL logical server, TLS 1.2. Its SQL administrator password is random, new at every run of the template and kept nowhere: nothing signs in with it |
-| the server's Microsoft Entra administrator | The owner's account, as its own resource so that a later run can set it again |
+| `azurebank-env` | A Container Apps environment with the Consumption profile only. What its containers print goes to Azure Monitor (`destination: 'azure-monitor'`), which holds no workspace key |
+| `azurebank-logs` | A Log Analytics workspace: Analytics plan, kept 30 days, a daily cap of 0.05 GB, no access by shared key |
+| `to-azurebank-logs` | One diagnostic setting on the environment: console and system logs to that workspace. Not the ingress log, which would record every path with its query string and every caller's address |
+| `azurebank-<letters>` | A SQL logical server, TLS 1.2, that takes Microsoft Entra sign-ins only. The template gives it no SQL administrator login and no password: **no database password exists**, in any file, secret or parameter. Its one administrator is the owner's account |
 | `AzureBank` | The database: Basic, 5 DTU, 2 GB, locally redundant backups |
 | `keep-the-database` | A lock (cannot delete) on the database. On the database and not on the server, so that the temporary firewall rule below can still be removed |
 | `AllowAzureServices` | The firewall rule `0.0.0.0`: see [Who can reach the database server](#who-can-reach-the-database-server) |
-| `azurebank-deploy` | A managed identity with one federated credential: GitHub may sign in as it only from the environment `demo` of `Gurgant/azurebank-v2`. Until the second run it holds no role on anything |
+| `azurebank-deploy` | A managed identity with one federated credential (the next row). Until the app exists it holds no role on anything |
+| `github-demo` | The federated credential: GitHub may sign in as `azurebank-deploy` only from the environment `demo` of `Gurgant/azurebank-v2` |
+| `azurebank-app` | The managed identity the app signs in to the database as. It has no role on any Azure resource: it is only a user inside the database |
+| `azurebank-migrate` | The same for the migration job, with the right to change the schema |
 | `AzureBank deploy <letters>` | A custom role of nine actions: read and write the app and a job, start a job, read its executions, read the app's revisions and replicas. It cannot list secrets, delete or stop |
-| `azurebank-shape` | A policy assignment on the resource group, effect Deny (definition in `guardrails.bicep`, written at subscription level because a custom definition cannot live in a resource group). It refuses, whoever asks: more than one replica, a minimum above zero, several active revisions, plain HTTP, more than two containers, an init container, a container above half a vCPU; and for a job, a trigger other than Manual, parallel runs, an init container, a container above half a vCPU |
+| the policy definition | "AzureBank: one small replica, manual jobs" (`guardrails.bicep`), written at subscription level because a custom definition cannot live in a resource group. It refuses nothing by itself |
+| `azurebank-shape` | That policy assigned to the resource group, effect Deny. It refuses, whoever asks: more than one replica, a minimum above zero, several active revisions, plain HTTP, more than two containers, an init container, a container above half a vCPU; and for a job, a trigger other than Manual, parallel runs, an init container, a container above half a vCPU |
 
-**With `deployApp=true`**
+**Inside the database**, created by `sql-principals.ps1`, not by the template: two users, each bound
+to one identity and with no password. `azurebank_app` reads and writes rows (`db_datareader`,
+`db_datawriter`); `azurebank_migrator` does the same and may change the schema (`db_ddladmin`).
+
+**With `deployApp=true`: nine more**
 
 | Resource | What it is |
 | --- | --- |
-| `azurebank` | The app: the BFF (0.25 vCPU, 0.5 GiB) and the API (0.5 vCPU, 1 GiB) in one replica, zero to one replica, single revision. HTTPS ingress to the BFF's port 8080. The API listens on `127.0.0.1:5068` only: nothing outside the replica can reach it. Three probes, on the BFF. Eight secrets, each reaching a container by reference |
-| `azurebank-migrate` | A manual job: the tools image with the argument `migrate`, no retry, 600 s, its own secret (the schema-changing login) |
+| `azurebank` | The app: the BFF (0.25 vCPU, 0.5 GiB) and the API (0.5 vCPU, 1 GiB) in one replica, zero to one replica, single revision, with the identity `azurebank-app` attached. HTTPS ingress to the BFF's port 8080. The API listens on `127.0.0.1:5068` only: nothing outside the replica can reach it. Three probes, on the BFF. Eight secrets, each reaching a container by reference: seven application keys and the connection string, which holds a server name and a client ID and no password. The BFF does not keep its one line per request (`Serilog__MinimumLevel__Override__Serilog=Warning`); its warnings and its 5xx lines stay |
+| `azurebank-migrate` | A manual job: the tools image with the argument `migrate`, no retry, 600 s, the identity `azurebank-migrate` attached, one secret (its own connection string, no password) |
 | two role assignments | The custom role, to the deployment identity, on the app and on the job and nowhere else. From here the workflow can change the app |
-| `azurebank-owner` | An action group with one e-mail receiver |
-| three alert rules | E-mail only, on the app: more than 66,667 requests in an hour; more than 3.3 GiB sent in a day; the replica running more than about 2.2 hours in a day (an average replica count above 0.093) |
+| `azurebank-owner` | An action group with one e-mail receiver, given as a parameter |
+| four alert rules | E-mail only. On the app: more than 66,667 requests in an hour; more than 3.3 GiB sent in a day; the replica running more than about 2.2 hours in a day (an average replica count above 0.093). On the workspace: more than 50,000 log lines in an hour |
 
-The environment variables of the two containers are the ones `compose.yaml` sets. The connection
-limits are the hosts' own defaults (ADR-0058); the template sets none.
+The environment variables of the two containers are the ones `compose.yaml` sets, plus the one
+Serilog setting on the BFF. The connection limits are the hosts' own defaults (ADR-0058); the
+template sets none.
 
 Three container images, public in GHCR, tagged with the full commit SHA: `azurebank-api`,
 `azurebank-bff`, `azurebank-tools`.
 
 ## What it costs, and what bounds it
 
-Prices are from the Azure Retail Prices API for Italy North, in USD, read on 2026-10-02. The
-free amounts of Container Apps are the ones its pricing page documents; they are not in that API.
+Prices are from the Azure Retail Prices API for Italy North, in USD, read on 2026-10-02. The free
+amounts of Container Apps and of Log Analytics are the ones their pricing pages document.
 
 | Meter | Price | Free each month |
 | --- | --- | --- |
@@ -73,11 +91,25 @@ free amounts of Container Apps are the ones its pricing page documents; they are
 | Container Apps, memory while active | $0.000004 a GiB-second | 360,000 GiB-seconds |
 | Container Apps, requests | $0.40 a million | 2 million |
 | Data out to the internet | $0.087 a GB | the first 100 GB |
+| Log Analytics, Analytics logs ingested | $2.99 a GB | the first 5 GB of the billing account. **Not confirmed for this credit offer** |
+| Metric alert rules | $0.10 a month each | the first 10; four are used |
 | Environment management, private endpoint, planned maintenance; Dedicated plan | $0.13 an hour each; $0.10 an hour | none: this template uses none of them, and they must read 0 |
 
 **Expected each month:** the database, $4.83 to $4.99. The app costs nothing while it stays inside
 the free amounts: 0.75 vCPU and 1.5 GiB use both up together after 66.7 hours of a running replica.
 Past that, a replica-hour is $0.1134.
+
+**The logs: $0 expected.** A cap of 0.05 GB a day is 1.50 to 1.55 GB a month, under the free 5 GB.
+Three things are not certain:
+
+- **Whether the free 5 GB apply to this offer.** No page read says so. If they do not, the logs cost
+  up to 1.55 GB at $2.99, **$4.63 a month**, with the cap filled every day. A cost line settles it
+  (the rule is below).
+- **The cap is not a hard bound.** The workspace stops taking lines some time after the cap is
+  reached. Microsoft's page says the excess "can be particularly large if the workspace is
+  receiving high rates of data", and that it is billed. How large: not stated.
+- **What a line costs.** The numbers below are console bytes, measured locally; what the workspace
+  bills for a line is read after the first deployment.
 
 **What bounds the spending, meter by meter.** The demo's subscription is a credit offer with a
 spending limit: no bill is possible, and when the credit (86 at the time of writing) is used up the
@@ -88,27 +120,55 @@ whole subscription is disabled, the database included.
 | vCPU and memory | one replica, by the template and by the Deny policy | 36 days of a replica that is never idle |
 | Requests | **nothing** | 217 million requests: 25 days at 100 a second, 2.5 days at 1,000 |
 | Data out | **nothing** | 1,089 GB: 30 hours at 10 MB a second |
+| Logs | the daily cap, **less what gets past it** | not computable: the excess is not stated |
 
 Requests are counted at the ingress whatever the app answers. The BFF's own rate limiter does not
 bound them: the page's files are served before it, the two health paths are excluded from it, and a
 refused request is still a request. Any request at least every five minutes keeps the replica up.
 
-**What warns:** the three alert rules, by e-mail. **What stops the app:** the owner, by hand
-([Stop the app by hand](#stop-the-app-by-hand)). Nothing stops it automatically.
+**What a stranger can write into the log.** Measured locally, with the BFF's request line off as
+the template sets it:
+
+- A page or a file of the page, existing or not: nothing (on the built image, three pages, one
+  real file and two missing ones wrote 0 lines).
+- A request to `/api/...` with no session: one warning of about half a kilobyte, **whether the rate
+  limiter lets it through or rejects it**. On a build of the BFF from source, 400 such requests in
+  0.9 s wrote 400 lines, 209,200 bytes; on the built image the two warnings are 538 and 510 bytes.
+  The rate limiter therefore does not bound the log. A day's cap is about 95,600 such requests:
+  sixteen minutes at 100 a second.
+- During a database outage a failed sign-in writes about 28.7 KB: about 1,740 of them fill the day.
+  The sign-in limiter allows ten a minute, so that takes about three hours.
+
+Past the free 5 GB, or without them, such a request costs $1.56 a million on the log meter on top
+of $0.40 on the request meter: the credit goes about five times faster, for whatever gets past the
+cap. A stranger can also fill the day's cap on purpose: the log is then dark until its reset, and a
+migration run on that day leaves a verdict and no text.
+
+**What warns:** the four alert rules, by e-mail. Nothing warns that the cap itself was reached: the
+alert Microsoft documents for that is a log search rule, $0.50 a month or more, and is not used.
+**What stops the app:** the owner, by hand ([Stop the app by hand](#stop-the-app-by-hand)).
+**What stops the logs:** the owner, by rule ([Switching the logs off](#switching-the-logs-off)).
+Nothing stops either automatically.
 
 ## What you need
 
-- The Azure CLI and the Bicep CLI (measured here: 2.90.0 and 0.47.16), PowerShell 7, Python 3.12 or
-  later, Docker, the GitHub CLI.
+- The Azure CLI with no extension (measured here: 2.90.0, `az extension list` empty), the Bicep CLI
+  on `PATH` (0.47.16), PowerShell 7, Python 3.12 or later, Docker, the GitHub CLI, the .NET SDK 10.
+- Microsoft's `sqlcmd` (go-sqlcmd) 1.10.0 or later, at `C:\Program Files\sqlcmd\sqlcmd.exe` unless
+  `-SqlcmdPath` says otherwise. `winget install --id Microsoft.Sqlcmd -e` puts it there. The users
+  script starts it by that path and checks it first: the older ODBC `sqlcmd` answers to the same
+  name, and a terminal opened before the install still finds only that one.
 - Owner of the subscription, and the account that will be the database's Microsoft Entra
   administrator: `secrets.ps1` takes both from `az login`.
 - Admin of the repository, for the environment `demo`, its secrets and the three packages.
 - The resource providers `Microsoft.App`, `Microsoft.Sql`, `microsoft.insights`,
-  `Microsoft.ManagedIdentity`, `Microsoft.Authorization` registered (measured: all five are).
+  `Microsoft.ManagedIdentity`, `Microsoft.Authorization`, `Microsoft.OperationalInsights` registered
+  (measured: all six are).
 
 Two people act below. **The owner** signs in, clicks in GitHub's settings, approves a deployment
 and reads the mailbox. **The operator** types the commands in a terminal where the owner has run
-`az login` and `gh auth login`; it can be the owner.
+`az login` and `gh auth login`; it can be the owner. Every step that writes is run on the owner's
+word, given for that step.
 
 Rules for every command in this file:
 
@@ -117,56 +177,122 @@ Rules for every command in this file:
 - Never `--debug`, and no deployment debug setting that stores request content.
 - No `( ) & |` inside an argument to `az`: on Windows `az` is a `.cmd` file and `cmd.exe` reads
   them. Filter JSON in PowerShell instead of with `--query`.
+- `$env:AZURE_EXTENSION_USE_DYNAMIC_INSTALL = 'no'` in the terminal: a command that lives in an
+  extension is then refused instead of installing the extension. Nothing here needs one.
+- Never `az account get-access-token`, and never `az sql server ad-only-auth disable`.
 
 ## Create it once
+
+Two sessions. The first needs no image and can run before the workflow is on `main`. The second
+needs the workflow on `main`, and the GitHub environment in place before that.
 
 Every step that writes is marked **writes**. Run from the repository root.
 
 ```powershell
+$env:AZURE_EXTENSION_USE_DYNAMIC_INSTALL = 'no'
 $group  = 'azurebank-demo'
 $folder = Join-Path $env:LOCALAPPDATA 'AzureBank\deploy'   # where secrets.ps1 writes
 
-# The type of each resource a what-if would change, never its name or the subscription.
+# What a what-if would change: the change and the type of each resource, and for a resource it
+# would modify, the properties that differ. Never a name, a value or the subscription.
 function Show-WhatIf([string]$File) {
     (Get-Content -LiteralPath $File -Raw | ConvertFrom-Json).changes | ForEach-Object {
         $parts = ($_.resourceId -split '/providers/')[-1] -split '/'
         $type = @($parts[0]) + @(for ($i = 1; $i -lt $parts.Count; $i += 2) { $parts[$i] })
-        '{0,-12} {1}' -f $_.changeType, ($type -join '/')
+        $paths = if ($_.changeType -eq 'Modify') { ': ' + (@($_.delta.path) -join ', ') } else { '' }
+        '{0,-12} {1}{2}' -f $_.changeType, ($type -join '/'), $paths
     }
 }
 
-# One run of the template: what-if into the protected folder, its change types, then the deployment.
-# The answer of the deployment is one word; without --query az prints the parameters back.
-function Invoke-Template([string]$Name) {
-    az deployment group what-if --resource-group $group --template-file infra/main.bicep `
-        --parameters "@$folder\parameters.json" --no-pretty-print --only-show-errors > "$folder\what-if.json"
-    if ($LASTEXITCODE -ne 0) { throw 'The what-if failed.' }
-    Show-WhatIf "$folder\what-if.json"
-    if ((Read-Host 'Deploy this? (yes/no)') -ne 'yes') { return }
-    az deployment group create --name $Name --resource-group $group --template-file infra/main.bicep `
-        --parameters "@$folder\parameters.json" --query properties.provisioningState --output tsv
+# One run of the template: compiled by the Bicep CLI on PATH, a what-if into the protected folder,
+# its changes, then the deployment. The answer of the deployment is one word; without --query az
+# prints the parameters back. $Override takes parameters such as 'denyPolicy=false'.
+function Invoke-Template([string]$Name, [string[]]$Override = @()) {
+    $template = "$folder\main.json"
+    try {
+        bicep build infra/main.bicep --outfile $template
+        if ($LASTEXITCODE -ne 0) { throw 'The template did not compile.' }
+        az deployment group what-if --resource-group $group --template-file $template `
+            --parameters "@$folder\parameters.json" @Override --no-pretty-print --only-show-errors > "$folder\what-if.json"
+        if ($LASTEXITCODE -ne 0) { throw 'The what-if failed.' }
+        Show-WhatIf "$folder\what-if.json"
+        if ((Read-Host 'Deploy this? (yes/no)') -ne 'yes') { return }
+        az deployment group create --name $Name --resource-group $group --template-file $template `
+            --parameters "@$folder\parameters.json" @Override --query properties.provisioningState --output tsv
+    } finally {
+        Remove-Item -LiteralPath $template -ErrorAction Ignore
+    }
+}
+
+# Which identity each app and each job in the group carries. Names only.
+function Show-Identities {
+    $apps = az containerapp list --resource-group $group --output json | ConvertFrom-Json
+    $jobs = az containerapp job list --resource-group $group --output json | ConvertFrom-Json
+    foreach ($resource in @($apps) + @($jobs)) {
+        $attached = $resource.identity.userAssignedIdentities
+        $names = if ($attached) { $attached.PSObject.Properties.Name | ForEach-Object { ($_ -split '/')[-1] } }
+        '{0}: {1}' -f $resource.name, (@($names) -join ', ')
+    }
+}
+
+# The executions of a job, read with the API version that carries each container's exit code.
+function Show-Executions([string]$Job) {
+    $id = az containerapp job show --name $Job --resource-group $group --query id --output tsv
+    (az rest --method get --url "https://management.azure.com$id/executions?api-version=2026-07-01" |
+        ConvertFrom-Json).value | ForEach-Object {
+            $codes = @($_.properties.detailedStatus.replicas.containers.code) -join ','
+            $took = if ($_.properties.endTime) { [int]($_.properties.endTime - $_.properties.startTime).TotalSeconds } else { '?' }
+            '{0}: {1}, {2} s, exit code [{3}]' -f $_.name, $_.properties.status, $took, $codes
+        }
 }
 ```
 
-### 1. Look before writing (operator)
+The template is compiled first and the deployment is given the JSON, because `az` looks for a
+Bicep of its own and has none on this machine (measured: `az bicep version` answers that none is
+found). What is deployed is then what the tests compiled.
+
+### First session: before any image exists
+
+#### 1. Look before writing (operator)
 
 ```powershell
 az account show --query name --output tsv
 az group exists --name $group
-az sql server list --resource-group $group --query '[].name' --output tsv |
-    ForEach-Object { az sql server firewall-rule list --resource-group $group --server $_ --query '[].name' --output tsv }
 ```
 
-Start every later session the same way. The firewall rules must be `AllowAzureServices` and nothing
-else: a rule named `owner-while-creating-users` is the leftover of a run that died, and the users
-script deletes it first.
+Before the first run: the subscription's name, and `false`. Start every later session with these
+reads instead:
 
-### 2. The resource group and the foundation (operator, **writes**; the database's daily charge starts here)
+```powershell
+$server = az sql server list --resource-group $group --query '[0].name' --output tsv
+az sql server firewall-rule list --resource-group $group --server $server --query '[].name' --output tsv
+az sql server ad-only-auth get --resource-group $group --name $server --query azureAdOnlyAuthentication
+az monitor log-analytics workspace show --resource-group $group --workspace-name azurebank-logs --query workspaceCapping
+az containerapp job list --resource-group $group --query '[].name' --output tsv
+Show-Identities
+```
+
+Expected, each time:
+
+- **Firewall rules:** `AllowAzureServices` and nothing else. A rule named
+  `owner-while-creating-users` is the leftover of a run that died; the users script deletes it
+  first. Any other rule was made by hand and is deleted by hand.
+- **Entra-only:** `true`.
+- **The log's cap:** `dailyQuotaGb` 0.05, with what it is doing now (`dataIngestionStatus`) and its
+  next reset (`quotaNextResetTime`). `OverQuota` means the log has been dark since the cap was
+  reached.
+- **Jobs:** none before the app exists; afterwards exactly `azurebank-migrate`. A job named
+  `azurebank-probe` is the leftover of step 7: delete it.
+- **Identities:** before the app exists, nothing is listed. Afterwards `azurebank: azurebank-app`
+  and `azurebank-migrate: azurebank-migrate`, and nothing else: each database identity on exactly
+  one resource.
+
+#### 2. The resource group and the foundation (operator, **writes**; the database's daily charge starts here)
 
 ```powershell
 az group create --name $group --location italynorth --query properties.provisioningState --output tsv
 try {
-    ./infra/secrets.ps1 -Action New          # four parameters; one secret, the SQL administrator password
+    ./infra/secrets.ps1 -Action New          # three parameters and no secret
     Invoke-Template 'foundation'
 } finally {
     ./infra/secrets.ps1 -Action Remove
@@ -174,34 +300,56 @@ try {
 Test-Path $folder                            # False
 ```
 
-Expected in the what-if: eleven resources to create and nothing to change or delete. If the
-deployment is refused on the **policy definition**, run it again with the policy off
-(add `denyPolicy=false` after the parameter file: `--parameters "@$folder\parameters.json" denyPolicy=false`)
-and write down that the shape then rests on `deploy.py`'s own check alone. If it is refused on the
-**custom role** or on the **SQL server**, stop: there is no fallback that keeps the deployment
-identity away from the secrets.
+Expected in the what-if: fourteen resources to create and nothing to change or delete. The file
+holds no secret; it stays in the protected folder because the administrator's sign-in name is
+shaped like an e-mail address. If the deployment is refused, the next step is in
+[If Azure says no](#if-azure-says-no).
 
-Read back what was created. These are the expected values, not observed ones:
+#### 3. The same deployment, a second time (operator, **writes** nothing if Azure accepts it)
+
+The server is created without a SQL administrator through a block that this API version documents
+for creation only. Whether a later run of the template disturbs the server has to be seen once,
+now, while the database is empty and the server can still be deleted.
+
+```powershell
+try {
+    ./infra/secrets.ps1 -Action New          # four parameters: keepLogs is now read from the environment
+    Invoke-Template 'foundation'
+} finally {
+    ./infra/secrets.ps1 -Action Remove
+}
+```
+
+It passes if the what-if shows nothing to create and nothing to delete, if a `Modify` on
+`Microsoft.Sql/servers` names no property under `properties.administrators`, and if the deployment
+then answers `Succeeded`.
+
+#### 4. Read back what was created (operator)
+
+These are the expected values, not observed ones.
 
 | Claim | Read | Expected |
 | --- | --- | --- |
 | Consumption only | `az containerapp env show -n azurebank-env -g $group --query properties.workloadProfiles` | one entry, `Consumption` |
-| Logs go nowhere | `az containerapp env show -n azurebank-env -g $group --query properties.appLogsConfiguration`; `az resource list -g $group --query '[].type'` | no destination, or `none`; no `Microsoft.OperationalInsights` type |
-| The database | `az sql db show -g $group -s <server> -n AzureBank` | `Basic`, capacity 5, 2147483648 bytes, `Local` |
-| The server | `az sql server firewall-rule list`; `az sql server ad-admin list`; `az sql server show --query minimalTlsVersion` | one rule; one administrator; `1.2` |
+| Logs on | `az containerapp env show -n azurebank-env -g $group --query properties.appLogsConfiguration`; `az monitor log-analytics workspace show -g $group -n azurebank-logs`; `az monitor diagnostic-settings list --resource <the environment's id>` | destination `azure-monitor`; one workspace, cap exactly 0.05, retention 30, `disableLocalAuth` true; one setting with two categories. With the logs off instead: destination `none`, no setting, no workspace. Anything in between is a defect |
+| The database | `az sql db show -g $group -s $server -n AzureBank` | `Basic`, capacity 5, 2147483648 bytes, `Local` |
+| The server | `az sql server firewall-rule list`; `az sql server ad-admin list`; `az sql server ad-only-auth get`; `az sql server show --query minimalTlsVersion` | one rule; one administrator; `true`; `1.2` |
+| Three identities | `az identity list -g $group --query '[].name'`; `Show-Identities` | `azurebank-app`, `azurebank-deploy`, `azurebank-migrate`; attached to nothing yet |
 | One federated credential | `az identity federated-credential list --identity-name azurebank-deploy -g $group` | one: the GitHub issuer, the subject ending `:environment:demo`, the audience `api://AzureADTokenExchange` |
 | The role, unassigned | `az role definition list --custom-role-only true -g $group`; `az role assignment list --assignee <principal id> --all` | nine actions, no data action; no assignment yet. The role can be assigned in this resource group only, so it is listed through the group: whether a listing of the whole subscription shows it is not measured |
 | The lock | `az lock list -g $group` | one, `CanNotDelete`, on the database |
 | The policy | `az policy assignment list -g $group` | `azurebank-shape`, enforcement `Default` |
 
-### 3. A budget, if the offer allows one (operator, **writes**; optional)
+A value that differs is a defect in the template: fix it before going on.
+
+#### 5. A budget, if the offer allows one (operator, **writes**; optional)
 
 `az consumption budget create` cannot set a notification (its help lists no such argument), so a
 budget that warns is one REST call with a body file. The body holds the address the e-mails go to,
-taken from the variable `AZUREBANK_ALERT_EMAIL`. Step 2 removed the session's folder, so
-`secrets.ps1 -Action New` makes it again, open to its owner only, before the file is written into
-it; both go in the `finally`. Whether a credit offer accepts a budget at all is not measured, and
-neither is this body: a refusal here changes nothing else.
+taken from the variable `AZUREBANK_ALERT_EMAIL`. `secrets.ps1 -Action New` makes the session's
+folder again, open to its owner only, before the file is written into it; both go in the
+`finally`. Whether a credit offer accepts a budget at all is not measured, and neither is this
+body: a refusal here changes nothing else.
 
 ```powershell
 if (-not $env:AZUREBANK_ALERT_EMAIL) { throw 'Set AZUREBANK_ALERT_EMAIL first.' }
@@ -222,7 +370,154 @@ try {
 }
 ```
 
-### 4. The GitHub environment (owner in the browser, **writes**; then the operator reads it back)
+#### 6. The two database users (operator, **writes**)
+
+```powershell
+./infra/sql-principals.ps1
+./infra/sql-principals.ps1                   # again: nothing may change
+```
+
+`sql-principals.ps1` holds no token and no password. It checks the tool (its version, on Windows
+its Microsoft signature, and that its `-?` names the sign-in method), reads the IDs of the two
+identities with `az identity show`, parses each as a GUID, and starts `sqlcmd`, which signs in as
+the server's Microsoft Entra administrator through the `az login` session. The server lets in
+Azure services only, so the first try is refused; the script allows the address the server named
+in that refusal (a firewall rule called `owner-while-creating-users`), tries again until the rule
+works, deletes the rule and reads the rule list back. It writes its report on standard error, with
+no address and no ID in it.
+
+All the SQL is in `sql-principals.sql`: one transaction that
+
+1. refuses to run in a database that holds a trigger or any other module (the app's migrations
+   create none: measured, 16 migrations, 0 triggers, 0 modules);
+2. creates each user with `CREATE USER ... WITH SID = <the identity's client ID>, TYPE = E`, the
+   one form that asks the directory nothing, and adds the five role memberships. A user whose
+   identity was deleted and made again is replaced;
+3. before it commits, compares every user, role, role membership, permission and schema owner with
+   what it expects, prints the name of anything else, and keeps nothing unless the lists are clean.
+
+Each run must end with these two lines and with the rule list:
+
+```text
+azurebank_app: db_datareader, db_datawriter; ID as asked: 1
+azurebank_migrator: db_datareader, db_datawriter, db_ddladmin; ID as asked: 1
+Firewall rules now: AllowAzureServices.
+```
+
+An exit code of 0 without both lines is not a pass, and the script says so. These are the final
+users, not throwaway ones.
+
+**The rule that goes with this file: run nothing else as administrator in this database.** The
+file runs as the owner of the database, and so does a trigger that one of its statements fires.
+The migrator may create such a trigger. The first check stops the file before any statement that
+could fire one, and the lists before the commit undo what a trigger created in between did. That
+is a guard, not a proof that a database is clean: a trigger that ran inside some other statement
+of an administrator could have done what no list looks at. After `Msg 50003` (code found) run
+nothing else there: the safe repair is a new database, because any statement an administrator runs
+can fire a trigger.
+
+#### 7. A sign-in as each identity, before any image exists (operator, **writes** a job and deletes it)
+
+Nothing local can show that a managed identity signs in: a workstation has none, and the local
+engine refuses `TYPE = E`. So the first session makes it happen on Azure with a throwaway manual
+job, `azurebank-probe`: 0.5 vCPU, the image `mcr.microsoft.com/dotnet/sdk:10.0`, and a program of
+about thirty lines on Microsoft.Data.SqlClient 6.1.1, the driver the app ships. The program is a
+throwaway of that session and is not kept in this folder. What it has to do:
+
+- open the connection string the template gives the app, with `Connect Timeout=30` added so that a
+  slow first token is measured and not cut;
+- print the milliseconds the open took, `USER_NAME()`, and `IS_ROLEMEMBER` for the three roles;
+- on a failure, print the exception's number, class and inner type name;
+- exit 0 for the roles expected, 3 for no token, 4 for a refused login, 5 for other roles.
+
+| Start | The job carries | It asks a token for | Must end |
+| --- | --- | --- | --- |
+| 1 | `azurebank-app` only | the app's client ID | exit 0: reader and writer, not `db_ddladmin` |
+| 2 | `azurebank-app` only | the migrator's client ID | exit 3, no token: the isolation the design rests on |
+| 3 | `azurebank-migrate` only | the migrator's client ID | exit 0: the three roles |
+
+Then the replace branch of the users file is seen working, and the probe's refusal is seen firing.
+Call the kind of ID that passed start 1 K. Here K is the client ID, the default; if start 1 needed
+the other kind, the two switches below change places:
+
+```powershell
+./infra/sql-principals.ps1 -IdKind ObjectId  # the other kind: both users are replaced
+# start the probe as the app: it must now end with exit 4
+./infra/sql-principals.ps1 -IdKind ClientId  # K again: replaced back
+# start the probe as the app: exit 0
+```
+
+The commands around the job:
+
+```powershell
+az containerapp job start --name azurebank-probe --resource-group $group --output none
+Show-Executions azurebank-probe
+az containerapp job delete --name azurebank-probe --resource-group $group --yes
+az containerapp job list --resource-group $group --query '[].name' --output tsv   # nothing
+```
+
+`Show-Executions` reads each execution's status, its length and each container's exit code from
+Azure itself, with the API version `deploy.py` uses for the migration's verdict. Nobody has seen
+those fields filled in Italy North yet: if the exit code is absent there, a verdict is a status
+and two times.
+
+#### 8. A SQL-password sign-in must be refused (operator, **writes** only the temporary firewall rule)
+
+```powershell
+./infra/sql-principals.ps1 -ProveSqlSignInRefused
+```
+
+After the users file has run once more (nothing changes), and while the firewall still lets this
+machine in, the script tries one SQL sign-in with a name and a value made up on the spot, which
+exist nowhere. The value travels in the tool's own environment variable for that one start, never
+on a command line. It passes only if the server's refusal says
+`Azure Active Directory only authentication is enabled`:
+
+```text
+Proved: a SQL sign-in is refused, and the server says it is because Microsoft Entra-only authentication is on.
+```
+
+Any other refusal is "not proven", and the script exits non-zero after saying the users are fine.
+If the made-up sign-in is let in, Entra-only is not what the server enforces.
+
+#### 9. What the second session will add (operator; a what-if, answered "no")
+
+```powershell
+$sha = git rev-parse origin/main
+try {
+    ./infra/secrets.ps1 -Action New -DeployApp -ImageTag $sha   # seven "generated", thrown away below
+    Invoke-Template 'app'                                       # answer "no"
+} finally {
+    ./infra/secrets.ps1 -Action Remove
+}
+```
+
+Expected in the what-if: nine resources to create (the app, the job, two role assignments, the
+action group, four alerts), nothing deleted, no policy violation.
+
+`secrets.ps1` takes the address the alerts write to from `-AlertEmail`; without it from the
+variable `AZUREBANK_ALERT_EMAIL`; without that from the address the deployed alerts already use;
+and only then from the signed-in account's own mailbox. Its report names which, never the address.
+Example: `-AlertEmail owner@example.invalid`.
+
+#### 10. End of the first session (operator)
+
+Once 90 minutes have passed since step 2 (a new diagnostic setting may deliver nothing before
+that), look for the probe's lines: in the portal, the workspace `azurebank-logs`, Logs, the query
+`ContainerAppConsoleLogs | where JobName == 'azurebank-probe' | project TimeGenerated, Log`. If the
+session ends first, this is the first step of the second one. It does not settle the lines of a
+run that lasts seconds, because the probe restores and compiles: the first deployments do.
+
+Then the reads of step 1 (one firewall rule, no job, nothing attached), `Test-Path $folder`
+(`False`), and:
+
+```powershell
+az logout
+```
+
+### Between the sessions: GitHub
+
+#### 11. The GitHub environment (owner in the browser, **writes**; then the operator reads it back)
 
 Settings, Environments, New environment, **`demo`** (lower case: Azure matches the name exactly).
 Deployment branches and tags: Selected, `main`. Required reviewers: the owner, so that every
@@ -235,11 +530,11 @@ gh api repos/Gurgant/azurebank-v2/environments/demo/deployment-branch-policies -
 
 Expected: `demo`, a `required_reviewers` rule, and exactly `main`.
 
-**This step comes before step 7 and before the workflow file is on `main`.** A workflow that names
-an environment that does not exist creates it with no rule at all, and step 7 is what gives the
-identity its two role assignments. Read the environment back again just before step 7.
+**This step comes before the workflow file is on `main` and before step 15.** A workflow that names
+an environment that does not exist creates it with no rule at all, and step 15 is what gives the
+deployment identity its two role assignments. Read the environment back again just before step 15.
 
-### 5. The three Azure identifiers, as secrets of `demo` (operator, **writes**)
+#### 12. The three Azure identifiers, as secrets of `demo` (operator, **writes**)
 
 They are identifiers, not secrets. They are stored as secrets of the environment so that the log of
 a public repository never prints them and only a job in `demo` can read them. Through a pipe: no
@@ -257,7 +552,13 @@ The workflow's first step fails if one of the three is missing or is not the sha
 identifier (a stray space or newline). It prints one error line that names the secret, never its
 value.
 
-### 6. The images (operator, **writes**; then the owner, in the browser, **cannot be undone**)
+### Second session: with the workflow on `main`
+
+#### 13. Look before writing (operator)
+
+The reads of step 1, and the two `gh api` reads of step 11.
+
+#### 14. The images (operator, **writes**; then the owner, in the browser, **cannot be undone**)
 
 ```powershell
 gh workflow run deploy.yml --ref main -f action=build-push
@@ -279,12 +580,11 @@ $empty = New-Item -ItemType Directory -Path (Join-Path $env:TEMP "docker-$PID")
 Three times `exit 0`. Measured today, before any package exists: the registry answers `denied` to
 an anonymous request for a package that is private or absent.
 
-### 7. The database users and the app (operator, **writes**)
+#### 15. The app (operator, **writes**)
 
 ```powershell
 try {
-    ./infra/secrets.ps1 -Action New -DeployApp -ImageTag $sha   # nine "generated" on the first run
-    ./infra/sql-principals.ps1                                  # azurebank_app and azurebank_migrator
+    ./infra/secrets.ps1 -Action New -DeployApp -ImageTag $sha   # seven "generated" on the first run
     Invoke-Template 'app'
 } finally {
     ./infra/secrets.ps1 -Action Remove
@@ -292,18 +592,8 @@ try {
 Test-Path $folder                                               # False
 ```
 
-`secrets.ps1` takes the address the alerts write to from `AZUREBANK_ALERT_EMAIL` if that variable
-is set, else from the signed-in account's own mailbox. Its report names which, never the address.
-
-`sql-principals.ps1` signs in as the Microsoft Entra administrator with a token from `az`, allows
-this machine's address for the length of the run (a firewall rule named `owner-while-creating-users`,
-with the address the server itself reports), runs `sql-principals.sql` with the two passwords as
-bound parameters, removes the rule and reads the rule list back. It can be run any number of
-times: the users are created if absent and altered if present.
-
-Expected in the what-if: eight resources to create (the app, the job, two role assignments, the
-action group, three alerts); the SQL server may show as modified, because its administrator
-password is new at every run.
+Expected in the what-if: the nine resources of step 9. No database user is touched and no password
+is set: the users of step 6 are the ones the app signs in as.
 
 Then read back (expected values), and make two things happen on purpose:
 
@@ -312,9 +602,10 @@ Then read back (expected values), and make two things happen on purpose:
 | Zero to one replica, one revision | `az containerapp show -n azurebank -g $group --query properties.template.scale`; `--query properties.configuration.activeRevisionsMode` | 0, 1; `Single` |
 | The API is not exposed | `--query properties.configuration.ingress` | external, target port 8080, `allowInsecure` false, no additional port mapping |
 | Secrets by name only | `az containerapp secret list -n azurebank -g $group --query '[].name'`; `az containerapp job secret list -n azurebank-migrate -g $group --query '[].name'` | eight names; one name |
+| One database identity each | `Show-Identities` | `azurebank: azurebank-app`; `azurebank-migrate: azurebank-migrate` |
 | The job | `az containerapp job show -n azurebank-migrate -g $group --query properties.configuration` | `Manual`, retry limit 0, timeout 600, parallelism 1 |
-| Roles on the app and the job only | `az role assignment list --assignee <principal id> --all` | exactly two rows, the custom role, scopes ending `/containerApps/azurebank` and `/jobs/azurebank-migrate` |
-| The alerts | `az monitor metrics alert list -g $group`; `az monitor action-group show -n azurebank-owner -g $group` | three rules, enabled, on the app; one e-mail receiver |
+| Roles on the app and the job only | `az role assignment list --assignee <principal id of azurebank-deploy> --all`; the same for the two database identities | exactly two rows, the custom role, scopes ending `/containerApps/azurebank` and `/jobs/azurebank-migrate`; no row for `azurebank-app` or `azurebank-migrate` |
+| The alerts | `az monitor metrics alert list -g $group`; `az monitor action-group show -n azurebank-owner -g $group` | four rules, enabled, three on the app and one on the workspace; one e-mail receiver |
 
 1. **The policy must refuse.** As the owner, ask for two replicas. The request must fail with
    `RequestDisallowedByPolicy`. If it is accepted, put 1 back at once: the policy does not work.
@@ -329,10 +620,7 @@ Then read back (expected values), and make two things happen on purpose:
 2. **An alert e-mail must arrive.** The owner opens the action group `azurebank-owner` in the
    portal, presses Test, and reads the mailbox.
 
-### 8. The first deployment (operator, **writes**; the owner watches and approves)
-
-First as the owner, from this machine: the first migration creates every table, and its log can be
-watched only while it runs (the portal, the job `azurebank-migrate`, its execution, Log stream).
+#### 16. The first deployment, as the owner (operator, **writes**: every table is created)
 
 ```powershell
 $env:AZURE_SUBSCRIPTION_ID = az account show --query id --output tsv
@@ -341,22 +629,160 @@ $env:IMAGE_TAG             = $sha
 python infra/deploy.py
 ```
 
-Then the same road as the deployment identity, twice (the second run proves that a migration with
-nothing to do and a new revision of the same images both work):
+Nobody has to watch the portal. When the migration ends, either way, the run prints its verdict:
+
+```text
+Verdict: execution <name>: Succeeded, started <time>, ended <time> (<n> s), exit code 0 (done), no reason given.
+```
+
+What the migration printed is kept in the workspace. Read it once, when the lines are due (minutes
+after the run; up to 90 minutes after a workspace is new):
+
+```powershell
+python infra/deploy.py --job-log
+```
+
+#### 17. The same road as the deployment identity, twice (operator, **writes**; the owner approves each run)
 
 ```powershell
 gh workflow run deploy.yml --ref main -f action=deploy
 ```
 
-In the log of the workflow run, look for "the listing was refused", the line of the smoke test,
-and no Azure identifier and no address of the app.
+The second run proves that a migration with nothing to do and a new revision of the same images
+both work. In the log of each run, look for "the listing was refused", the verdict line and the
+line of the smoke test. Then count, in the raw log, what must not be there:
 
-Then the road back, once, so that it is not first tried on a bad day:
+```powershell
+$log = gh run view '<the run id>' --repo Gurgant/azurebank-v2 --log
+$fqdn = az sql server list --resource-group $group --query '[0].fullyQualifiedDomainName' --output tsv
+$ids = 'azurebank-app', 'azurebank-migrate' | ForEach-Object { az identity show --resource-group $group --name $_ --query clientId --output tsv }
+'server name: {0}' -f @($log | Select-String -SimpleMatch $fqdn).Count
+'client IDs: {0}' -f @($log | Select-String -SimpleMatch $ids).Count
+'IPv4-shaped: {0}' -f @($log | Select-String '\b\d{1,3}(\.\d{1,3}){3}\b').Count
+```
+
+Expected: 0, 0, and for the last a number whose every line is then read: a version number has the
+same shape. A server name, an ID or an address in that log is a defect, and a stop.
+
+If Azure refuses the workflow's change of the job or of the app and names
+`userAssignedIdentities/assign/action`, the run stops with one sentence and Azure's words. **No
+role is added for it**: see [If Azure says no](#if-azure-says-no).
+
+#### 18. The road back, once (operator, **writes**)
+
+So that it is not first tried on a bad day:
 
 ```powershell
 python infra/deploy.py --app-only
+```
+
+#### 19. The last-resort migration road, once (operator, **writes** only the temporary firewall rule)
+
+[A migration nobody can read](#a-migration-nobody-can-read), with nothing left to migrate.
+
+#### 20. From outside, and the end (operator)
+
+```powershell
+$site = az containerapp show --name azurebank --resource-group $group --query properties.configuration.ingress.fqdn --output tsv
+curl.exe --silent --head "http://$site/"                                    # a redirect to https
+curl.exe --silent "https://$site/health/ready"                              # Healthy
+curl.exe --silent --output NUL --write-out '%{http_code}' --request POST "https://$site/api/auth/login"   # 404
+curl.exe --silent --max-time 10 "https://${site}:5068/"                     # no connection
 az logout
 ```
+
+### Afterwards
+
+- **48 hours after step 2, and again after the second session: the cost, by meter** (the portal's
+  Cost analysis, grouped by meter). The check passes only if the same answer shows the database's
+  own row: "no rows" is "not run", not "0". The three environment meters and the Dedicated one must
+  read 0. **Any cost on the log ingestion meter switches the logs off.** Whether the free 5 GB
+  apply is settled the first time a cost row covers 35 MB or more of ingestion; until then the
+  worst case stays in the numbers above.
+- **After the second session, in the workspace's Logs page:** the billed size of a line
+  (`ContainerAppConsoleLogs | summarize avg(_BilledSize)`); the day's billable volume
+  (`Usage | where IsBillable | summarize sum(Quantity) by bin(TimeGenerated, 1d)`, in MB; the
+  `Usage` table is not billed); and the count, as a number only, of console lines that contain `@`.
+  The alert's threshold and the "about 95,600" above are then worked again from the billed size.
+  Neither query has been run yet.
+
+## If Azure says no
+
+Each row is decided now, so that nothing is decided on the day. "Stop" means: change nothing more
+and bring the refusal's text to the owner.
+
+**The foundation and its second run (steps 2 and 3)**
+
+| If | Then |
+| --- | --- |
+| The deployment is refused on the **policy definition** | Run it again with the policy off (`Invoke-Template 'foundation' @('denyPolicy=false')`), and write down that the shape then rests on `deploy.py`'s own check alone |
+| It is refused on the **custom role**, or the offer refuses a **SQL server** at all | Stop: there is no fallback that keeps the deployment identity away from the secrets |
+| It is refused on the **workspace**, the destination, the diagnostic setting or the cap | `./infra/secrets.ps1 -Action New -LogsOff`, run again, and say so: nothing is kept then. If a workspace or a setting was created on the way, [Switching the logs off](#switching-the-logs-off) |
+| The server is refused **because it has no administrator login** | The second shape below. Nothing exists yet to delete |
+| The **second run** is refused, or its what-if shows the administrator changed or removed | The one exit: remove the lock, delete the server (the database is empty and goes with it), deploy the second shape, and run that twice, the second time with an empty password |
+| The second shape is refused on its Entra-only switch | The server is then the third shape. Nothing is deleted, and the pull request says so. The two identities sign in under all three shapes |
+| A read in step 4 differs | A defect in the template: fix it before going on |
+
+The template in this folder holds the first shape only. The other two are edits of `main.bicep`:
+
+1. **First shape (this folder):** the `administrators` block with `azureADOnlyAuthentication: true`
+   and no `administratorLogin`.
+2. **Second shape:** `administratorLogin: 'azurebank_sql_admin'` with a password passed only by the
+   run that creates the server and empty afterwards, the administrator as a child resource
+   (`administrators/ActiveDirectory`), and Entra-only as a child resource
+   (`azureADOnlyAuthentications/Default`).
+3. **Third shape:** a server with a SQL administrator whose random password is new at every run and
+   kept nowhere, the Microsoft Entra administrator as a child resource, and no Entra-only.
+
+**A shape is only ever changed by deleting the still-empty server, and only in the first session.**
+`az sql server ad-only-auth disable` is never run. Once the first migration has run, any change of
+shape is "stop".
+
+**The users (step 6)**
+
+| If | Then |
+| --- | --- |
+| The tool's `-?` does not name `ActiveDirectoryAzCli`, or the sign-in with it fails | `./infra/sql-principals.ps1 -AuthenticationMethod ActiveDirectoryDefault` |
+| That fails too | The older ODBC `sqlcmd`, which signs in through a window: `-SqlcmdPath '<its path>' -OdbcSignInName '<the account's sign-in name>'`. It runs with `-X1`, so that it starts no operating-system command |
+| The tool's signature is not a valid Microsoft one | Stop: this program is handed the administrator's sign-in |
+| The address cannot be read from the server's refusal | The script stops and prints the two commands to allow the address by hand under another name and to delete that rule afterwards |
+| `Msg 50003` or `Msg 50004` on a database nobody has touched | Azure's baseline differs from the local engine's: read the names the file printed, correct the file's expected lists, run again. A defect, not a choice |
+| The server refuses `WITH SID ..., TYPE = E` | `./infra/sql-principals.ps1 -CreateForm ExternalProvider`: `CREATE USER ... FROM EXTERNAL PROVIDER WITH OBJECT_ID`, which looks the identity up by its object ID, never by a name. The users keep their two names and the stored ID is still compared |
+| That form is refused as well (error 33134, or a directory role is asked for) | The password design on the third shape: the lock and the still-empty server are deleted, and the pull request says which refusal forced it. That design is not in this folder any more |
+| The second run changes something | A defect in the file: fix it before going on |
+
+**The sign-in (steps 7 and 8)**
+
+| If | Then |
+| --- | --- |
+| Start 1 ends with exit 4 (the login is refused) | `./infra/sql-principals.ps1 -IdKind ObjectId` and the probe again. The kind that passes becomes the script's default, and the pull request says which |
+| Both kinds are refused | The next row of the users table: `-CreateForm ExternalProvider` |
+| Start 2 gets a token | Stop: the isolation between the two identities does not hold |
+| The open took more than 10,000 ms | Nothing changes by itself. The number is recorded and the app's connect timeout stays 10 s: the first sign-in after a cold start may then answer one 503 with `Retry-After: 10`, and the smoke test tries four times. A larger value is the owner's decision, through `Database:ConnectTimeoutSeconds`, with ADR-0058's table worked again: that timeout also bounds each COMMIT |
+| Exit 3 on an identity that is attached, three times | Stop: that is not a timeout |
+| The probe cannot be built or started | Skip it. Step 16 is then the first proof, and the pull request says the sign-in was not seen before the merge |
+| With the other kind of ID the probe still passes | Both IDs open the door: record it and keep K |
+| With K again the probe fails | A defect in the file's replace branch: fix it before going on |
+| The made-up SQL sign-in is refused without the Entra-only reason | "Not proven". `az sql server ad-only-auth get` then stands alone, and the pull request says the refusal was not provoked. A second try with a real SQL user made for the purpose and dropped at once is the owner's decision; no script here does it |
+| The made-up SQL sign-in is let in | Entra-only is not on: the exit of the second run, above |
+
+**The logs (steps 10 and after)**
+
+| If | Then |
+| --- | --- |
+| No line of the probe is in the workspace once it is due | Set `disableLocalAuth: false` in the template, deploy, run the probe once more, read again when due. Still none: [Switching the logs off](#switching-the-logs-off) |
+| The lines of a migration that lasts seconds never arrive | The logs stay on, because the app's lines are the other half: a short run may then leave a verdict and no text |
+| Azure reports no exit code for an execution | The verdict line is a status and two times. "Failed" is still a verdict |
+
+**The app and the deployments (steps 15 to 19)**
+
+| If | Then |
+| --- | --- |
+| The alert on the workspace is refused | `Invoke-Template 'app' @('logVolumeAlert=false')`, and say so. It is one of four rules |
+| The policy accepts two replicas | Put 1 back at once and stop: the policy does not work |
+| A deployment as the identity is refused naming `userAssignedIdentities/assign/action` | **Stop.** No role is created: a right on the two database identities would let the deployment identity attach the schema-changing one to the app that faces the internet. The deployment from the owner's terminal keeps working meanwhile |
+| The raw log of a run holds the server's name, a client ID or an address | Stop: the mask or the print is a defect |
+| The last-resort road cannot sign in | It is written here as unproven, and its first half (run the job again and read its log) stands alone |
 
 ## Deploy a commit
 
@@ -377,10 +803,14 @@ written once: an image that is already published is left as it is, and only the 
    deployment identity;
 2. reads the app and the job, prints what runs now (the three image references and the two revision
    names), and stops if their shape has drifted: scale, revision mode, ingress, the two containers
-   and no init container, the job's trigger, parallelism and retry limit;
+   and no init container, the job's trigger, parallelism and retry limit, and on each the one
+   database identity it must carry and no other. A drift in the identity names the field and the
+   ending it should have, never what was found;
 3. tries to list the app's secrets and goes on only if Azure refuses;
 4. moves the tools image on the migrate job, starts the migration once, and waits for that exact
-   execution. A failed migration stops here: the app is not touched;
+   execution. When it ends, either way, it prints the verdict: the execution's name, status, start,
+   end, length, exit code and a one-word reason. A failed migration stops here: the app is not
+   touched;
 5. moves both app images in one request and waits up to 15 minutes for the new revision to be ready;
 6. waits until the revision that ran before is inactive, so that the answers below come from the
    new code;
@@ -390,7 +820,13 @@ written once: an image that is already published is left as it is, and only the 
    answer means the BFF reached the API with its key and the API asked the database. It writes
    nothing. Measured on a local stack of this code: that request answers 401 with that code when
    the schema is there, and 500 on a database with no table while `/health/ready` still says
-   `Healthy`. The sign-in is the one check that fails when a migration did not run.
+   `Healthy`. The sign-in is the one check that fails when a migration did not run, and with
+   identities it is also the one that fails when the app cannot sign in to the database.
+
+**The workflow prints the migration's verdict and never its text.** The log of a public repository
+is public, and that text can name the server, an address or a value from a database error. Inside
+GitHub Actions the verdict's reason is printed only if it is one plain word, and Azure's own
+message is not printed at all. The same line is on the run's summary page.
 
 **If step 5 or step 7 fails, the app is put back** on the template it had at step 2, under a new
 revision, and the run still fails, saying "put back to `<tag>`; the schema stays where the
@@ -400,12 +836,97 @@ nothing is proved either way: the run fails as *unproven* and the new revision i
 While the page or `/health/ready` gets no answer, they are asked again every five seconds for five
 minutes; still nothing then is a failure, and the app is put back.
 
+No request a deployment sends carries an identity: a change is a location and a template.
+
 Every deployment ends the sessions held in the replica's memory, and so does every scale to zero.
+
+## Reading the logs
+
+From a terminal where the owner has run `az login`, with the two variables of step 16 set:
+
+```powershell
+python infra/deploy.py --job-log                  # the latest migration: its verdict, then what it printed
+python infra/deploy.py --job-log '<execution>'    # a named one
+python infra/deploy.py --app-log 30               # what the app's two containers printed in the last 30 minutes
+```
+
+`--app-log` takes 1 to 1440 minutes. Both commands show at most 5,000 lines, and both are refused
+inside GitHub Actions. The other way in is the portal: the workspace `azurebank-logs`, Logs.
+
+- **The cap comes first.** Each command starts by saying what the daily cap is doing: its value,
+  `dataIngestionStatus`, and the next reset. `OverQuota` means the workspace has taken no line
+  since the cap was reached and takes none until the reset, at an hour Azure picks.
+- **An empty answer is not proof that nothing was printed.** A line takes minutes to arrive, a new
+  workspace up to 90 minutes, a run that lasts seconds may leave none, and a capped workspace
+  takes none.
+- **Telling two failures of the migration apart by the run's length**, which is on the verdict
+  line: a login refused because the database has no user for the identity ends after about four
+  seconds; an identity that gets no token is waited for the whole 60 s. Neither has been seen on
+  Azure: the first is what a wrong password does locally, the second was read in the driver's
+  code and run against an exception built in that shape.
+- **What the text can hold.** The SQL server's name and the database's. A caller's address: the
+  rate limiter's warning names it. A value from a database error: on a local stack, registrations
+  racing for one address printed that address four times in two lines of the API's console, whole,
+  and a handle the same way. The rule that keeps people's identifiers out of the logs (ADR-0017)
+  covers the application's own messages, not the text of a database error.
+- **Who can read it.** The owner, and a Global Administrator of the directory, who can give
+  themselves access. The deployment identity cannot: it has no right on the workspace.
+- **Never paste the text of `--job-log` or `--app-log` into a pull request, an issue or a chat.**
+- **It is a debugging record, not an audit trail.** Whoever wants to act unseen can fill the cap
+  first. Who changed the app is read in the subscription's activity log, which the cap does not
+  touch.
+
+## Switching the logs off
+
+By rule, on the owner's word, when one of these is true:
+
+- any cost shows on the log ingestion meter;
+- a day's billable volume in the `Usage` table is above twice the cap (100 MB), read after any
+  alert;
+- no line ever reaches the workspace;
+- the offer refuses the workspace after part of it exists.
+
+Three deletions and a read. `keepLogs=false` alone deletes nothing: the template never removes a
+workspace or a setting that exists.
+
+```powershell
+# 1. The diagnostic setting, and the alert on the workspace if the app exists.
+$environment = az containerapp env show --name azurebank-env --resource-group $group --query id --output tsv
+az monitor diagnostic-settings delete --name to-azurebank-logs --resource $environment
+az monitor metrics alert delete --name azurebank-log-volume --resource-group $group
+
+# 2. The environment sends its logs nowhere. Add -DeployApp if the app exists.
+try {
+    ./infra/secrets.ps1 -Action New -LogsOff
+    Invoke-Template 'logs-off'
+} finally {
+    ./infra/secrets.ps1 -Action Remove
+}
+
+# 3. The workspace and what it holds. Without --force Azure keeps the name and the data for 14 days,
+#    and a workspace created again under that name is the old one.
+az monitor log-analytics workspace delete --resource-group $group --workspace-name azurebank-logs --force --yes
+
+# 4. Read back.
+az containerapp env show --name azurebank-env --resource-group $group --query properties.appLogsConfiguration
+az monitor diagnostic-settings list --resource $environment --query '[].name' --output tsv
+az resource list --resource-group $group --resource-type Microsoft.OperationalInsights/workspaces --query '[].name' --output tsv
+```
+
+Expected at the end: no destination, or `none`; no setting; no workspace. From then on
+`secrets.ps1` reads the environment and keeps `keepLogs=false` on every later run, and the two log
+commands say that the logs are switched off. A deployment still prints its verdict.
+
+To switch them on again, run the template as under
+[Changing the infrastructure later](#changing-the-infrastructure-later), with
+`Invoke-Template 'logs-on' @('keepLogs=true')`. It creates a new, empty workspace.
+
+None of these commands has been run yet.
 
 ## Stop the app by hand
 
 The portal: the app `azurebank`, **Stop**. From a terminal (the core CLI has no
-`az containerapp stop`; measured in `az containerapp -h`):
+`az containerapp stop`; measured: the command is not recognised):
 
 ```powershell
 $app = az containerapp show --name azurebank --resource-group azurebank-demo --query id --output tsv
@@ -421,16 +942,19 @@ stopped. The deployment identity cannot stop or start the app.
 | --- | --- | --- |
 | `build-push`: "The registry gave no clear answer" | The registry did not say "no such manifest". For a package that has never been published it may answer `denied`, the same as for a private one | First publication only: run again with `-f first_publication=true`. Otherwise read the answer printed below the error and run again |
 | `deploy`: an image "is not published, or its package is not public" | The check before the Azure sign-in | Run `build-push` at this commit; make the package public |
-| "is not in the shape this script deploys onto" | Something changed the app or the job outside the template. Nothing was changed by this run | Run the template again ([Changing the infrastructure later](#changing-the-infrastructure-later)) |
+| "is not in the shape this script deploys onto" | Something changed the app or the job outside the template: its scale, its ingress, its containers, or the identity it carries. Nothing was changed by this run | Run the template again ([Changing the infrastructure later](#changing-the-infrastructure-later)). If it is the identity, read [If something was stolen](#if-something-was-stolen) first |
 | "This identity can list the secrets" | The identity holds more than the custom role. Nothing was changed | Look at its role assignments: there must be exactly two |
+| "Azure asked for a right on a database identity" | Azure wants `assign/action` on the attached identity before it changes the job or the app. The request changed nothing and was not tried again | Stop. No role is added: [If Azure says no](#if-azure-says-no) |
 | "Execution ... is Running: a migration may still be running" | An execution blocks every later deployment until it ends, and the deployment identity cannot stop it | The owner: `az containerapp job stop --name azurebank-migrate --resource-group azurebank-demo --job-execution-name <name>` |
-| "The migration did not succeed" | The job runs the new tools image; some migrations may be applied; the app still runs the old images | Read the execution's log stream in the portal while a run is alive: start the deployment again and watch. `migrate` is safe to run again |
-| "the new revision never became ready", then "put back to ..." | The run printed the revision's state and each container's state and restart count, then put the app back | Read those lines; fix; deploy again |
-| "Smoke test failed", then "put back to ..." | The page, the readiness answer or the sign-in answer was wrong on the new revision | The same |
+| "The migration did not succeed", after its verdict | The job runs the new tools image; some migrations may be applied; the app still runs the old images. Exit code 1: failed after it reached for the server, and running it again is safe. Exit code 2: refused before any connection, and the configuration must change | `python infra/deploy.py --job-log` from a terminal, when the lines are due. If there is no text: [A migration nobody can read](#a-migration-nobody-can-read) |
+| "the new revision never became ready", then "put back to ..." | The run printed the revision's state and each container's state and restart count, then put the app back | Read those lines, then `python infra/deploy.py --app-log 30`; fix; deploy again |
+| "Smoke test failed", then "put back to ..." | The page, the readiness answer or the sign-in answer was wrong on the new revision. A sign-in that answers 500 or 503 where 401 was expected can be the database sign-in: no user for the identity, or no token | The same |
 | "Smoke test unproven" | The last of four sign-in tries was a 429 or got no answer (the wait is 65 s after a 429, 20 s otherwise). An earlier try may have got another answer: only the last one decides. Sign-ins are limited to 10 a minute, and behind the ingress every visitor may share that limit. The new revision is serving and was not put back | Deploy again later, or check a sign-in by hand |
 | "Azure refused or failed a request", "The Azure CLI gave no answer in 180 s" | One request to Azure failed after the run had started. The script does not ask twice, and it puts nothing back: no check had failed. The app may already be on the new images, unchecked | Look at the app's latest and latest ready revision; deploy again, or go back by hand, below |
 | "was still active after 180 s" | The old revision did not go inactive, so the smoke test was not run and nothing was put back | Look at the app's revisions in the portal; deploy again |
 | "The put-back ... did not succeed. The app may be serving a broken revision" | Both the deployment and the way back failed | Go back by hand, below |
+| "There is no log workspace azurebank-logs in this resource group" | The logs are switched off: nothing is kept | The verdict line is all there is |
+| The first request after the app was idle answers 503 with `Retry-After: 10` | The replica started from zero and its first sign-in to the database, token included, did not fit in the 10 s connect timeout. Expected to be possible; not measured | Ask again. If it happens every time, it is the row of the probe's 10,000 ms in [If Azure says no](#if-azure-says-no) |
 
 **Going back by hand.** As the owner, from a terminal, to any commit whose images are published:
 
@@ -451,51 +975,153 @@ can put older images on a newer schema, and that works only if the migrations in
 schema usable by the older code. Beyond that there is only a point-in-time restore into a second
 database, which is a second daily charge while both exist.
 
-**A migration failure nobody can read.** With logs set to none, a finished execution may leave no
-log. The last resort is the owner running the same tools image on this machine, where its output
-is on the screen: the image `ghcr.io/gurgant/azurebank-tools:<sha>` with the argument `migrate`
-and the one variable `ConnectionStrings__DefaultConnection` in an environment file inside the
-protected folder, while this machine's address is allowed on the server.
+### A migration nobody can read
+
+A failed migration whose text is not in the workspace: the cap was reached, or the run was too
+short to leave a line.
+
+1. Read the cap (`python infra/deploy.py --job-log` says it first). If the workspace is taking
+   lines, start the job again as the owner
+   (`az containerapp job start --name azurebank-migrate --resource-group azurebank-demo`):
+   `migrate` is safe to run again, and this time its lines are read.
+2. Otherwise run `migrate` from this machine, from the checkout at the deployed commit, signed in
+   as the owner.
+
+```powershell
+git switch --detach '<the deployed SHA>'
+./infra/sql-principals.ps1                   # first: it stops, and so do you, if the database holds any code
+$server = az sql server list --resource-group $group --query '[0].name' --output tsv
+$fqdn   = az sql server list --resource-group $group --query '[0].fullyQualifiedDomainName' --output tsv
+$env:ConnectionStrings__DefaultConnection = "Server=tcp:$fqdn,1433;Database=AzureBank;Authentication=Active Directory Default;Encrypt=True;TrustServerCertificate=False"
+try {
+    # The first try is refused by the firewall, and its last line names this machine's address.
+    dotnet run --project backend/tools/AzureBank.Seeder --configuration Release -- migrate --wait-seconds 0
+    $address = Read-Host 'The address the server named'
+    az sql server firewall-rule create --resource-group $group --server $server --name owner-migrating-by-hand `
+        --start-ip-address $address --end-ip-address $address --output none
+    # A new rule can take minutes to work: migrate waits for it.
+    dotnet run --project backend/tools/AzureBank.Seeder --configuration Release -- migrate --wait-seconds 300
+} finally {
+    az sql server firewall-rule delete --resource-group $group --server $server --name owner-migrating-by-hand
+    Remove-Item Env:ConnectionStrings__DefaultConnection
+    az sql server firewall-rule list --resource-group $group --server $server --query '[].name' --output tsv
+}
+```
+
+Three things to know about this road:
+
+- **It signs in as the administrator**, with more rights than the migrator, and it is the one
+  exception to "run nothing else as administrator in this database". That is why the users script
+  runs first: its first check refuses a database that holds a trigger or a module.
+- **It is the source at that commit, not the image.** The image has no `az` inside, so
+  `Active Directory Default` has nothing to sign in with there, and a managed identity does not
+  exist off Azure.
+- **It has not been run.** With `Active Directory Default` the driver walks several credentials
+  and is expected to take the `az login` session. Step 19 tries it once with nothing to migrate.
+
+## If something was stolen
+
+There are no passwords to change. If code may have run as one of the two database identities (a
+deployment nobody ordered, an image nobody built, an identity on a resource it does not belong
+to), the steps are these, in this order. They have not been rehearsed.
+
+1. **Delete the app and the job.** With them go the app's secrets and the two places an identity
+   can be used from.
+
+   ```powershell
+   az containerapp delete --name azurebank --resource-group $group --yes
+   az containerapp job delete --name azurebank-migrate --resource-group $group --yes
+   ```
+
+2. **Delete the two identities**, so that the template makes them again with new IDs.
+
+   ```powershell
+   az identity delete --name azurebank-app --resource-group $group
+   az identity delete --name azurebank-migrate --resource-group $group
+   ```
+
+3. **Run the template with the app**, on a commit whose images are known. With no app deployed,
+   `secrets.ps1` generates the seven application secrets anew.
+
+   ```powershell
+   try {
+       ./infra/secrets.ps1 -Action New -DeployApp -ImageTag '<a known commit>'
+       Invoke-Template 'after-a-theft'
+   } finally {
+       ./infra/secrets.ps1 -Action Remove
+   }
+   ```
+
+4. **Run the users script and read what it prints.** It drops each user, whose stored ID now
+   matches no identity, and creates it again. Dropping the user is what refuses a token taken
+   earlier at its next sign-in (reasoned, not seen). A token is valid for a time the documentation
+   read does not state, and the platform caches tokens for about a day. If the script stops with
+   `Msg 50003` or `Msg 50004`, the database itself was changed: run nothing else there.
+
+   ```powershell
+   ./infra/sql-principals.ps1
+   ```
+
+5. **Look at who could run a job in `demo`** ([What each identity can do](#what-each-identity-can-do)),
+   then deploy.
+
+While an intruder can still run code in the app or in the job, a new token is one request away:
+that is why step 1 comes first.
 
 ## Where each secret lives
 
 | Secret | Lives in | Who can read it |
 | --- | --- | --- |
-| JWT secret, idempotency key, step-up key, service key, audit chain key, audit anchor key, PIN pepper, the app's connection string | The secrets of the app `azurebank` | The owner, by listing. The deployment identity cannot list them, and can still reach them by running code: see the next section |
-| The migration connection string | The secret of the job `azurebank-migrate` | The same |
-| The two SQL users' passwords | Nowhere else: the database holds their hashes | Nobody |
-| The SQL administrator password | Nowhere. New at every run of the template, used by nothing | Nobody; the Microsoft Entra administrator can reset it |
-| `parameters.json` | `%LOCALAPPDATA%\AzureBank\deploy` (elsewhere `~/.azurebank-deploy`), open to its owner only, for the minutes of a session | Removed in `finally` |
+| JWT secret, idempotency key, step-up key, service key, audit chain key, audit anchor key, PIN pepper | The secrets of the app `azurebank` | The owner, by listing. The deployment identity cannot list them, and can still reach them by running code: see [What each identity can do](#what-each-identity-can-do) |
+| The app's connection string | A secret of the app, referenced by the `api` container only | The same. It holds the server's name and a client ID, and no password |
+| The migration connection string | The secret of the job `azurebank-migrate` | The same. No password |
+| A database password | **Nowhere: none exists.** The server takes Microsoft Entra sign-ins only | Nobody |
+| `parameters.json` | `%LOCALAPPDATA%\AzureBank\deploy` (elsewhere `~/.azurebank-deploy`), open to its owner only, for the minutes of a session. Without `-DeployApp` it holds no secret | Removed in `finally` |
 | In GitHub | The three Azure identifiers, as secrets of the environment `demo`. No application secret | A job in `demo` |
 
-`secrets.ps1 -Action New` never generates a value twice: each of the nine application secrets
-comes from the deployed app or job if they exist, else from a file left by a run that stopped,
-else from the system's random generator. A failed read is never taken for an absent value: the
-script stops and writes nothing. `-Action Remove` deletes `parameters.json`, `what-if.json` and
-`budget.json` by name, then the folder if it is empty, and nothing else.
+The two connection strings are secrets although they hold no password. An identity can be used by
+every container of the app, and the BFF, which faces the internet, is told neither the client ID
+nor the server's name. A secret also stays out of every read of the app and of an execution, which
+a plain setting would not.
 
-Rotating a secret is not in these files.
+`secrets.ps1 -Action New` never generates a value twice: each of the seven application secrets
+comes from the deployed app if it exists, else from a file left by a run that stopped, else from
+the system's random generator. A failed read is never taken for an absent value: the script stops
+and writes nothing. `-Action Remove` deletes `parameters.json`, `what-if.json` and `budget.json`
+by name, then the folder if it is empty, and nothing else.
 
-## What the deployment identity can do
+Rotating an application secret is not in these files, short of
+[If something was stolen](#if-something-was-stolen).
 
-The custom role lets it read and write the app and the job, start the job, and read executions,
-revisions and replicas. It cannot list secrets, delete or stop anything, or touch the environment,
-the database, the identity or any role. The Deny policy on the resource group is the one guard it
-cannot change.
+## What each identity can do
+
+**The deployment identity, `azurebank-deploy`.** The custom role lets it read and write the app
+and the job, start the job, and read executions, revisions and replicas. It cannot list secrets,
+delete or stop anything, or touch the environment, the database server, the workspace, any
+identity or any role. It cannot read the logs. It has no user in the database. The Deny policy on
+the resource group is the one guard it cannot change.
 
 Writing the app is more than moving an image. Within what the policy allows, whoever acts as this
 identity can:
 
 - run any public image, with any command, with every secret of the app in its environment, so the
   secrets can leave in one request;
+- run that code as the app's database identity: read and write every row;
 - overwrite a secret with a value of their choice;
 - change the ingress: another target port, more port mappings, address rules;
-- run any image in the job, with the schema-changing login in its environment.
+- run any image in the job, as the schema-changing identity. So, by running code in the job, it
+  can do everything the migrator can do, and **it can leave code in the database that runs as
+  whoever next changes users there**: the users file refuses to run on such a database.
+
+It is not expected to be able to attach an identity to a resource: Azure asks for a right on the
+identity itself (`assign/action`), which this role does not hold and which is never given to it.
+That refusal has not been provoked.
 
 The policy refuses: a second replica, a minimum above zero, several active revisions, plain HTTP, a
 third container, any init container, a container above half a vCPU; and for a job, a trigger other
 than Manual, parallel runs under any trigger, any init container, a container above half a vCPU. It
-does not limit how many containers a job has.
+does not limit how many containers a job has, and it has no rule about identities: the provider
+publishes no policy alias for the identity block of an app or of a job (measured: 0 of 1,058).
 
 So the boundary is **who can run a job in the environment `demo`**: its branch rule (`main` only),
 its required reviewer, and whoever holds a GitHub token that can edit the environment or merge to
@@ -508,18 +1134,53 @@ stop someone who can edit the script; the policy does.
 Images are deployed by tag. `build-push` never overwrites a tag, but someone with push rights to
 the packages can; deploying by digest would close that and is not done here.
 
+**The app's identity, `azurebank-app`.** In the database it reads and writes every row and cannot
+change the schema. That includes the rows of the migrations history table, by which it could steer
+the next migration: a `DENY` on that table is not set. It holds no role on any Azure resource.
+**It is available to both containers of the app.** The BFF, which faces the internet, can
+therefore ask for a database token if it learns the client ID and the server's name; it is given
+neither. With passwords only the `api` container held the credential. The real fix is the API in
+an app of its own, and it is not done here.
+
+**The migration's identity, `azurebank-migrate`.** The same, and it may change the schema. It
+cannot create a user or make itself an owner directly (measured on a local engine: both refused).
+It can create a trigger, which is why the users file is guarded.
+
+**Who can act as either:** code running in any container of the app, in the job, in the probe job
+of the first session while it exists, or in any resource the owner attaches the identity to.
+
+**The owner's account.** It is the only administrator of the database and the only Owner of the
+subscription, and a university issues it. If that account is disabled, the app keeps running and
+only a Global Administrator of the directory can stop it. Owner and Contributor can switch
+Entra-only off; nothing here ever does.
+
 ## Who can reach the database server
 
 The firewall rule `AllowAzureServices` admits every address Azure owns: any customer's virtual
-machine, function or container app in any tenant, and GitHub's hosted runners. What holds the line
-is the passwords (two random 48-character passwords for the two users, a third for the SQL
-administrator that is thrown away at every run) and the Microsoft Entra administrator's own
-sign-in. Failed sign-ins are recorded nowhere: there is no auditing and no log destination, so
-guessing would be invisible. The three login names are in this repository.
+machine, function or container app in any tenant, and GitHub's hosted runners. The app's own
+outbound address cannot be pinned in a Consumption-only environment, so the rule cannot be
+narrower.
+
+What holds the line is the sign-in. The server refuses every password, so there is none to guess
+or to steal: what opens the database is a token for one of the two identities, or the
+administrator's own sign-in. Sign-in attempts are still recorded nowhere: there is no SQL auditing,
+and the workspace holds what the containers print, not what the server sees.
 
 The temporary rule `owner-while-creating-users` exists only while `sql-principals.ps1` runs. If the
 terminal is closed or the machine sleeps, it stays until the next run of the script, which deletes
 it first, or until someone reads the rule list: every session starts by reading it (step 1).
+
+## What only the owner does
+
+1. `az login` at the start of each session, and `gh auth login`: the browser and the second factor.
+2. The GitHub environment `demo`: `main` only, and the required reviewer (step 11).
+3. Each of the three packages to Public (step 14). It cannot be undone.
+4. The merge of the pull request that puts the workflow on `main`, and the required checks.
+5. The approval of each `deploy` run, if the reviewer is set.
+6. Reading the mailbox: the test e-mail of step 15, and every alert afterwards.
+7. Stopping the app when an alert says so. Nothing does it for him.
+8. The word for each step that writes, and for each deletion that a rule above allows: the lock
+   and the still-empty server in the first session, the workspace and its setting.
 
 ## Before renaming or transferring the repository
 
@@ -535,8 +1196,8 @@ The credential trusts the repository by name. After a rename or a transfer, whoe
 ## Changing the infrastructure later
 
 Edit the template, then run it the same way. Without `-ImageTag` the parameter file takes the tag
-the app runs now and the nine secrets it holds now, so the run leaves the images and the secrets
-alone:
+the app runs now, the seven secrets it holds now, the address its alerts write to now and what its
+environment does with its logs now, so the run leaves all four alone:
 
 ```powershell
 try {
@@ -549,21 +1210,26 @@ try {
 
 - Images move through the `deploy` workflow only: once the app exists, `secrets.ps1` refuses
   another `-ImageTag`.
-- Every run sets a new SQL administrator password. That is intended.
+- The server's shape is not changed by a later run: see [If Azure says no](#if-azure-says-no).
 - A job with another trigger needs it added to the parameter `allowedJobTriggers`, or the policy
   refuses it.
+- After an identity was deleted and made again, run `./infra/sql-principals.ps1`: the user it left
+  matches nothing and is replaced.
 
 ## Removing everything
 
 In this order. The role definition and the policy definition are not inside the resource group
 and are not deleted with it. The role can be assigned in this group only, so it is removed first,
 through the group, while the group still exists: its two assignments, then the definition. Whether
-it could still be found once the group is gone is not measured. None of these commands has been
-run yet.
+it could still be found once the group is gone is not measured. The workspace is deleted on its
+own, with `--force`, if what it holds must be gone at once: that a workspace deleted with its
+group is kept 14 days like one deleted alone is a reading, not something a page says. None of
+these commands has been run yet.
 
 ```powershell
 $group = 'azurebank-demo'
 az lock list --resource-group $group --query '[].id' --output tsv | ForEach-Object { az lock delete --ids $_ }
+az monitor log-analytics workspace delete --resource-group $group --workspace-name azurebank-logs --force --yes
 $principal = az identity show --resource-group $group --name azurebank-deploy --query principalId --output tsv
 az role assignment list --assignee $principal --all --query '[].id' --output tsv | ForEach-Object { az role assignment delete --ids $_ }
 az role definition list --custom-role-only true --resource-group $group --output json | ConvertFrom-Json |
@@ -578,19 +1244,29 @@ az consumption budget delete --budget-name azurebank-monthly
 ```
 
 Then, in GitHub's settings: the environment `demo`, the three packages, the workflow runs. The
-database's daily charge stops when the database is gone.
+database's daily charge stops when the database is gone. The three identities and the two database
+users go with the group. On this machine, if it is no longer wanted:
+`winget uninstall --id Microsoft.Sqlcmd`.
 
 ## What is not here
 
-- **Nothing stops the app automatically.** Three e-mails warn; the owner stops it.
+- **Nothing stops the app automatically, and nothing stops the logs.** Four e-mails warn; the
+  owner stops the app and says when the logs go off.
+- No alert that the log's cap was reached, and no SQL auditing: a sign-in attempt on the server
+  leaves no record.
+- One warning line per caller per window from the rate limiter, instead of one per request. It is
+  the change that would let the app's own limiter bound the log, and it touches the BFF's security
+  logging.
+- The API in an app of its own, so that only it can ask for a database token.
 - No alert on changes to the role assignments, the federated credential or the job.
 - No deployment by image digest; no rollback of the schema.
-- No log workspace: the only logs are the portal's live streams.
-- No rotation of secrets, no Key Vault, no private endpoint, no custom domain.
+- No rotation of application secrets, no Key Vault, no private endpoint, no custom domain.
 - No scheduled job and no demo data: the database a first deployment leaves has a schema and no
   rows. The app's registration endpoint is not closed by anything in this folder, and the app is
   reachable by anyone who has its address.
-- The log of the migration is not shown by the workflow.
+- The text of the migration is not shown by the workflow, on purpose.
+- The password design this folder first had: it is the last step down in
+  [If Azure says no](#if-azure-says-no) and would have to be brought back from the history.
 
 ## Not measured yet
 
@@ -603,45 +1279,85 @@ on 2026-10-02), not on Azure:
   `Retry-After: 60` and `"errorCode":"RATE_LIMIT_EXCEEDED"`.
 - Before any migration the app starts and `/health/ready` says `Healthy`; the sign-in answers 500
   on a database with no table and 503 with no database.
-- `sql-principals.sql`, with its passwords bound as the runner binds them: the first run creates
-  the two users, a second run changes nothing, a run with new passwords alters them (the old
-  password is then refused, the new one accepted); each run reports the same two role lists; a
-  password with a quote or of 20 characters is refused (50001), and so is another database (50000).
-- The API as `azurebank_app` (`db_datareader` and `db_datawriter` only): it starts, the smoke test
-  passes, a seeded user signs in, reads the accounts, and the statement that takes `sp_getapplock`
-  succeeds. The three real-stack test suites and a transfer were not run as that user.
-- The nine secrets in the shapes `secrets.ps1` generates are accepted by the API at start.
+- The API as a user that holds `db_datareader` and `db_datawriter` only (a SQL login there, since
+  no identity exists off Azure): it starts, the smoke test passes, a seeded user signs in, reads
+  the accounts, and the statement that takes `sp_getapplock` succeeds. The three real-stack test
+  suites and a transfer were not run as that user.
+- The seven application secrets in the shapes `secrets.ps1` generates are accepted by the API at
+  start.
+- The BFF's setting, on the built image and the same 31 requests: 26 request lines at Information
+  become 0; the 2 request lines of 5xx answers stay; the 11 warnings stay, kind by kind; the API's
+  own lines are untouched.
+- A lost registration race prints the duplicate value in the API's console: an e-mail address
+  four times in two lines, a handle the same way. The BFF's console holds neither.
 
-**Not measured.** Read-only commands, offline tests and a local stack cannot show any of this.
-Each line is checked at the step named, on the first deployment.
+**Measured on a local SQL Server** (17.0, LocalDB, with go-sqlcmd 1.10.0 and `-b`). The local
+engine refuses both real forms of `CREATE USER` in `sql-principals.sql` (`TYPE = E`: a syntax
+error; `FROM EXTERNAL PROVIDER`: not configured), so the file ran with three substitutions: the
+database's name, a user made from a disabled SQL login whose ID is the 16 bytes asked for, and the
+user type that goes with it. Everything else is the file as it is.
+
+- On a clean database it commits and exits 0; a second run changes nothing.
+- With the other kind of ID both users are replaced, and replaced back; a new app identity
+  replaces only that user.
+- As the migrator, directly: `CREATE USER` is refused (Msg 15247) and so is joining `db_owner`
+  (Msg 15151). A DDL trigger is accepted.
+- With both guards switched off, a trigger planted by the migrator makes the migrator an owner
+  when the file runs, and the file exits 0. With the file as it is: `Msg 50003`, exit 1, nothing
+  changed.
+- With only the first check off: `Msg 50004`, exit 1, everything rolled back. A trigger that
+  grants `CONTROL` and removes itself is caught by the permission list.
+- Ten single oddities (a view, a leftover user, a role, the app in `db_owner` or `db_ddladmin`,
+  `guest` allowed to connect, a grant, a `DENY`, a schema owned by the migrator, a right name with
+  a wrong ID): each refused, with its name printed.
+- After all 16 migrations a database holds 0 triggers and 0 modules, and none of the lists has an
+  unexpected row.
+- Without `-b`, `sqlcmd` exits 0 when the file stops on an error.
+
+**Measured on this machine, of the tools:** go-sqlcmd 1.10.0 passes the users script's three
+checks; the ODBC `sqlcmd` is refused as the default tool and accepted with `-OdbcSignInName`; a
+program validly signed by someone else is refused.
+
+**Not measured.** Read-only commands, offline tests and local stacks cannot show any of this. Each
+line is checked at the step named, on the first deployment.
 
 | What | Where it shows |
 | --- | --- |
-| The subscription's offer accepts a SQL server, a custom role, a custom policy definition, the lock, and the administrator as its own resource | step 2 |
-| How "logs: none" and the app's scale read back (a value Azure leaves out is read by `deploy.py` as its default) | steps 2 and 7 |
+| The subscription's offer accepts a SQL server, a custom role, a custom policy definition, the lock, three identities | step 2 |
+| A server with no SQL administrator is accepted with this API version, and a second run of the same template leaves it alone | steps 2 and 3 |
+| The offer accepts a workspace, the Azure Monitor destination, the diagnostic setting and a cap of 0.05; `disableLocalAuth` leaves the platform's own delivery alone | steps 2, 4 and 10 |
+| How the logs settings and the app's scale read back (a value Azure leaves out is read by `deploy.py` as its default) | steps 4 and 15 |
 | A what-if shows the policy definition, which is deployed at another scope | step 2 |
-| The offer accepts a budget | step 3 |
-| The temporary firewall rule can be deleted with the lock on the database in place | step 7 |
-| Azure SQL accepts `sql-principals.sql` as SQL Server 2022 does; `System.Data.SqlClient` signs in with the token; the server names this machine's address in its refusal (error 40615) | step 7 |
-| The API as `azurebank_app` under the three real-stack test suites, and a transfer as that user | before step 7, on a local SQL Server |
-| The three alert rules are accepted with these metric names (`Requests`, `TxBytes`, `Replicas`), and a test e-mail arrives | step 7 |
-| Our own template passes the Deny policy; the policy refuses a second replica on a PATCH | step 7 |
-| What the registry answers the workflow's token for a package that does not exist yet (anonymously, measured: `denied`); the digest line | step 6 |
-| The smoke test's answers through the Azure ingress, and whether every visitor shares one sign-in limit behind it | step 8 |
-| Real answer shapes: the job start, the execution states, the revision's `active` flag, a replica's container states | step 8 |
-| As the identity: GET and PATCH of the app and of the job succeed with these nine actions and no right on the environment; the listing of secrets is refused with `AuthorizationFailed` | step 8 |
-| On Azure, as on the local stack: the app becomes ready on an empty database, before the first migration | steps 7 and 8 |
-| The automatic put-back on a real failure. Its trigger is proved by unit tests only; its request and its wait are the ones `--app-only` uses | step 8 proves `--app-only` |
+| The offer accepts a budget | step 5 |
+| go-sqlcmd signs in as the owner through the `az login` session; the server names this machine's address in its refusal, in the words the script looks for | step 6 |
+| The temporary firewall rule can be deleted with the lock on the database in place | step 6 |
+| Azure SQL runs `CREATE USER ... WITH SID, TYPE = E`; a new database there has no trigger, no module and only the baseline rows the file expects; dropping and creating a user inside the transaction works there | step 6 |
+| A user made from the client ID can sign in from a job; or whether it has to be the object ID | step 7 |
+| A job that carries only the app's identity gets no token for the migrator's | step 7 |
+| The first token on a cold replica, in milliseconds, and what the driver throws when no token comes | step 7 |
+| The server names Entra-only in its refusal of a SQL sign-in for a name that does not exist | step 8 |
+| The API as `azurebank_app` under the three real-stack test suites, and a transfer as that user | before step 15, on a local SQL Server |
+| The four alert rules are accepted with these metric names (`Requests`, `TxBytes`, `Replicas`, `Ingestion Volume`), the fourth on a workspace and at no cost, and a test e-mail arrives | step 15 |
+| Our own template passes the Deny policy; the policy refuses a second replica on a PATCH | step 15 |
+| What the registry answers the workflow's token for a package that does not exist yet (anonymously, measured: `denied`); the digest line | step 14 |
+| The smoke test's answers through the Azure ingress, and whether every visitor shares one sign-in limit behind it | step 16 |
+| Real answer shapes: the job start, the execution states, an execution's exit code and reason, the revision's `active` flag, a replica's container states | steps 7 and 16 |
+| The columns the two log commands read (`JobName`, `ContainerAppName`, `ContainerName`, `Log`), and that the lines of a run that lasts seconds reach the table | steps 16 and 17 |
+| As the deployment identity: GET and PATCH of the app and of the job succeed with these nine actions, no right on the environment and no right on the attached identity; the listing of secrets is refused with `AuthorizationFailed` | step 17 |
+| On Azure, as on the local stack: the app becomes ready on an empty database, before the first migration | steps 15 and 16 |
+| The automatic put-back on a real failure. Its trigger is proved by unit tests only; its request and its wait are the ones `--app-only` uses | step 18 proves `--app-only` |
 | What the app reads just after the put-back request. If its state still says `Failed`, left by the deployment that failed, `deploy.py` reports a put-back that did not succeed although it may have | a real put-back; not provoked |
 | A request to Azure that fails once in the middle of a run. Nothing is asked twice: the run stops, and nothing is put back | not provoked |
-| The raw log of a workflow run holds none of the three identifiers and not the app's address | step 8 |
-| Whether a finished migration's log can still be read | step 8 |
-| Cold start against the probes (1 s delay, 3 s period, 10 failures; 4 s timeout on readiness) | after step 8 |
-| The meters after 48 hours: the three environment meters and the Dedicated one at 0 | after step 8 |
+| The raw log of a workflow run holds none of the three identifiers, not the app's address, not the server's name, no client ID of a database identity and no address | step 17 |
+| `migrate` from a checkout, signed in as the owner with `Active Directory Default` | step 19 |
+| Cold start against the probes (1 s delay, 3 s period, 10 failures; 4 s timeout on readiness), and the first database request after it | after step 16 |
+| The meters after 48 hours: the three environment meters and the Dedicated one at 0; whether the free 5 GB of logs apply to this offer; whether the cost view returns a row at all | after steps 2 and 20 |
+| What the workspace bills for a line; how far the cap overshoots; whether an environment set to `none` still feeds a setting that exists | after step 20; the last two are not provoked |
+| How long a managed identity's token stays valid for the database | not found in the pages read |
 | That the identity is refused a scale change, a delete or a stop. One refusal is provoked on every deployment (the secrets listing); the policy's refusal is provoked as the owner | not provoked |
-| The role as a listing through the resource group shows it, and every command under [Removing everything](#removing-everything) | step 2; the day it is removed |
-| `sql-principals.ps1` against a real database. Offline it runs from its first line to its last with a stand-in where the database is; the statement itself ran on a local SQL Server through another runner | step 7 |
-| Every workflow file under actionlint, `contract-tests.yml` and the older jobs of `ci.yml` included: it is not installed where this was written, and the job lints the whole folder. The tests' PowerShell and Bicep halves on Linux | the first run of the CI job `infra` |
+| The role as a listing through the resource group shows it; every command under [Switching the logs off](#switching-the-logs-off), [If something was stolen](#if-something-was-stolen) and [Removing everything](#removing-everything) | step 4; the day they are needed |
+| `sql-principals.ps1` against a real database. Offline it runs from its first line to its last with a stand-in where `sqlcmd` is | step 6 |
+| The tests' PowerShell half on Linux: the folder's and the file's modes, the signature check that says it checked nothing | the CI job `infra` |
 
 ## Checking these files
 
@@ -654,7 +1370,9 @@ python -m unittest discover -s infra -p "test_*.py"
 `test_deploy.py` tests the deployment script's decisions against invented answers: time is a
 counter and no process is started. A few of its tests open a real connection to a server of their
 own on `127.0.0.1`, to see what a dropped connection really raises. `test_scripts.py` runs the two
-PowerShell scripts for real against a stand-in for the Azure CLI, the users script also with a
-stand-in where the database is, and reads the compiled templates: the role's nine actions, the
-federated credential's subject, every rule of the policy. The CI job `infra` runs the same three
+PowerShell scripts for real against a stand-in for the Azure CLI and a stand-in for `sqlcmd`,
+reads `sql-principals.sql` as text (the order of its guards; what a server does with them is
+above), and reads the compiled templates: the role's nine actions, the federated credential's
+subject, every rule of the policy, the two identities and the one each resource carries, that no
+database credential is anywhere, the workspace and its cap. The CI job `infra` runs the same three
 checks and actionlint on the workflows.
