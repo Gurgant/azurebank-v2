@@ -2,7 +2,8 @@
 
 How the demo is created, deployed, read, stopped and removed. Everything here is run by hand: the
 templates and the scripts from a terminal, the deployment from one workflow. Commands are
-PowerShell 7.
+PowerShell 7. Why it is built this way, what was weighed and what was left as it is:
+[ADR-0061](../docs/adr/0061-the-demo-is-deployed-to-azure-container-apps-with-no-database-password.md).
 
 **State of this document.** The templates compile and the scripts are tested offline against
 stand-ins. The facts marked *measured* were read on 2026-10-02, from Azure or GitHub with read-only
