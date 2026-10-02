@@ -1,70 +1,115 @@
-name: Deploy AzureBank draft
+name: Deploy
+
+# Run by hand, from main only (infra/README.md):
+#   build-push  builds the three images of this commit and pushes them to GHCR, tagged with its SHA.
+#               A tag is written once: an image that is already there is left as it is.
+#   deploy      runs the database migration, then moves the app to those images, then checks the
+#               address. If the check fails, the app is put back on the images it ran before.
+# The infrastructure itself is never created or changed from here.
 
 on:
   workflow_dispatch:
     inputs:
       action:
-        description: Build images, or migrate and deploy the selected commit
+        description: build-push publishes this commit's images; deploy migrates and moves the app to them
         required: true
         type: choice
         options:
           - build-push
           - deploy
+      first_publication:
+        description: >-
+          build-push only: tick it when the packages have never been published and the registry
+          answers "denied" instead of "manifest unknown"
+        required: false
+        type: boolean
+        default: false
+
+# Nothing by default: each job names what it needs.
+permissions: {}
 
 jobs:
   build-push:
+    name: Build and push the images
     if: inputs.action == 'build-push'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Two runs at one commit must not race each other to the same tag.
+    concurrency:
+      group: azurebank-build-push
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
     steps:
+      - name: Refuse any branch but main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Images are published from main only."
+          exit 1
       - name: Checkout
         uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Sign in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push commit images
+      - name: Build and push the three images of this commit
         env:
           IMAGE_TAG: ${{ github.sha }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FIRST_PUBLICATION: ${{ inputs.first_publication }}
         shell: bash
         run: |
           set -euo pipefail
-          for service in api bff; do
-            case "$service" in
-              api) dockerfile=backend/src/AzureBank.Api/Dockerfile ;;
-              bff) dockerfile=backend/src/AzureBank.Bff/Dockerfile ;;
-            esac
-            docker build --platform linux/amd64 --file "$dockerfile" \
-              --tag "ghcr.io/gurgant/azurebank-$service:$IMAGE_TAG" .
-            docker push "ghcr.io/gurgant/azurebank-$service:$IMAGE_TAG"
-          done
-          # The tools change is separate. Agree its path before first deployment.
-          tools_files=()
-          for candidate in backend/tools/Dockerfile backend/tools/AzureBank.Tools/Dockerfile; do
-            if [[ -f "$candidate" ]]; then tools_files+=("$candidate"); fi
-          done
-          if (( ${#tools_files[@]} > 1 )); then
-            echo 'Multiple tools Dockerfiles found; choose the canonical path.' >&2
-            exit 1
-          elif (( ${#tools_files[@]} == 1 )); then
-            docker build --platform linux/amd64 --file "${tools_files[0]}" \
-              --tag "ghcr.io/gurgant/azurebank-tools:$IMAGE_TAG" .
-            docker push "ghcr.io/gurgant/azurebank-tools:$IMAGE_TAG"
-          else
-            echo '::warning::Tools Dockerfile absent; build-push skips tools. Deploy requires its image.'
-          fi
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
+          trap 'docker logout ghcr.io' EXIT
+
+          # A tag is written once. The builds are not reproducible (the base images move), and a
+          # replica that starts from zero pulls whatever the tag names then: a second push would
+          # change what runs with no migration and no check. So the registry is asked first, and
+          # only its own "there is no such manifest" counts as absent. Any other failure stops the
+          # run: a network error must not be read as "absent".
+          publish() {
+            local image="ghcr.io/gurgant/azurebank-$1:$IMAGE_TAG" answer digest
+            if answer="$(docker manifest inspect "$image" 2>&1)"; then
+              echo "$image is already published: left as it is."
+            elif grep -qiE 'manifest unknown|no such manifest' <<<"$answer"; then
+              docker build --platform linux/amd64 --file "$2" --tag "$image" .
+              docker push "$image"
+            elif [[ "$FIRST_PUBLICATION" == 'true' ]] && grep -qiE 'denied|name unknown' <<<"$answer"; then
+              # A package that does not exist yet is answered like a private one. The push below is
+              # refused if the package exists out of this workflow's reach, so nothing is overwritten.
+              echo "The registry does not say whether $image exists; first_publication is ticked: publishing."
+              docker build --platform linux/amd64 --file "$2" --tag "$image" .
+              docker push "$image"
+            else
+              echo "::error::The registry gave no clear answer about $image: nothing was built or pushed."
+              printf '%s\n' "$answer" >&2
+              exit 1
+            fi
+            digest="$(docker buildx imagetools inspect "$image" --format '{{.Manifest.Digest}}')"
+            echo "$image is $digest"
+            echo "| \`azurebank-$1\` | \`$digest\` |" >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          {
+            echo "### Images at \`$IMAGE_TAG\`"
+            echo
+            echo '| Package | Digest |'
+            echo '| --- | --- |'
+          } >> "$GITHUB_STEP_SUMMARY"
+          publish api backend/src/AzureBank.Api/Dockerfile
+          publish bff backend/src/AzureBank.Bff/Dockerfile
+          publish tools backend/tools/AzureBank.Seeder/Dockerfile
 
   deploy:
+    name: Migrate and deploy
     if: inputs.action == 'deploy'
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    # The tools image 5, the migration 16, the new revision 15, the old one going inactive 3, the
+    # smoke test with its waits 10, a put-back 15, and the steps around them.
+    timeout-minutes: 70
+    # The deployment identity trusts this environment and nothing else; the environment allows
+    # main only, and holds the three Azure identifiers as its secrets.
     environment: demo
     concurrency:
       group: azurebank-demo-deploy
@@ -72,29 +117,57 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      IMAGE_TAG: ${{ github.sha }}
+      AZURE_RESOURCE_GROUP: azurebank-demo
+      # deploy.py tries to list the app's secrets as the deployment identity and goes on only if
+      # Azure refuses.
+      EXPECT_SECRETS_REFUSED: '1'
     steps:
+      - name: Check that the three Azure identifiers are set
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          wrong=0
+          for name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::The secret $name of the environment demo is missing or empty."
+              wrong=1
+            elif [[ ! "${!name}" =~ ^[0-9a-fA-F-]{36}$ ]]; then
+              echo "::error::The secret $name of the environment demo is not an identifier: a stray space or newline?"
+              wrong=1
+            fi
+          done
+          exit "$wrong"
       - name: Checkout
         uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Check all three images are publicly pullable
-        env:
-          IMAGE_TAG: ${{ github.sha }}
+      - name: Check that the three images can be pulled without signing in
         shell: bash
         run: |
           set -euo pipefail
           for service in api bff tools; do
-            docker manifest inspect "ghcr.io/gurgant/azurebank-$service:$IMAGE_TAG" > /dev/null
+            image="ghcr.io/gurgant/azurebank-$service:$IMAGE_TAG"
+            if ! docker manifest inspect "$image" > /dev/null; then
+              echo "::error::$image is not published, or its package is not public: run build-push at this commit and make the package public."
+              exit 1
+            fi
+            echo "$image is public."
           done
-      - name: Sign in to Azure with OIDC
-        uses: azure/login@v2
+      # A full commit, not a tag: this is the one job that can sign in to Azure. It is the commit
+      # v3.1.0 points at, and the one exception to the major-tag convention of ci.yml.
+      - name: Sign in to Azure
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      - name: Migrate, update both containers, and smoke test
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Migrate, move the app, smoke test
         env:
-          IMAGE_TAG: ${{ github.sha }}
-          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: python3 infra/deploy.py
