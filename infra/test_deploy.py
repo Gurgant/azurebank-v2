@@ -9,8 +9,15 @@ import contextlib
 import copy
 import datetime
 from email.message import Message
+import http.client
 import io
+import json
+import os
+import re
+import socket
+import struct
 import subprocess
+import threading
 import unittest
 from unittest.mock import MagicMock, patch
 import urllib.error
@@ -84,6 +91,10 @@ def resource(names):
             },
         },
     }
+
+
+def raise_(error):
+    raise error
 
 
 def execution(name, status, started=None):
@@ -287,6 +298,20 @@ class AzTests(unittest.TestCase):
         self.assertTrue(command[command.index('--body') + 1].startswith('@'))
         self.assertEqual(command[1:4], ['rest', '--method', 'PATCH'])
 
+    @patch('deploy.subprocess.run')
+    def test_a_timeout_names_the_request_and_never_the_command_line(self, run):
+        # Python's own text for a timeout is the whole command, and the URL on it holds the subscription.
+        run.side_effect = lambda command, **options: raise_(
+            subprocess.TimeoutExpired(command, options['timeout']))
+        with self.assertRaises(deploy.AzError) as raised:
+            deploy.rest('GET', f'{APP_ID}/revisions/{BEFORE}')
+        message = str(raised.exception)
+        self.assertIn('no answer in 180 s', message)
+        self.assertIn(f'GET /containerApps/azurebank/revisions/{BEFORE}', message)
+        for hidden in (SUBSCRIPTION, 'subscriptions', 'management.azure.com'):
+            self.assertNotIn(hidden, message)
+        self.assertIn(SUBSCRIPTION, ' '.join(run.call_args.args[0]), 'the command line did hold it')
+
 
 class PatchTests(unittest.TestCase):
     def test_both_images_change_together_without_mutating_source_or_secrets(self):
@@ -449,8 +474,10 @@ class DeploymentTests(DeployCase):
         self.smoke.assert_not_called()
 
     def test_invalid_sha_fails_before_azure(self):
-        with self.assertRaises(ValueError):
-            deploy.deploy(SUBSCRIPTION, GROUP, 'main')
+        # A branch name, a short SHA, upper case, a digest: only the tag build-push writes is taken.
+        for tag in ('main', 'a' * 7, 'a' * 39, 'a' * 41, 'A' * 40, 'sha256:' + 'a' * 40, 'a' * 40 + '\n'):
+            with self.subTest(tag=tag), self.assertRaises(ValueError):
+                deploy.deploy(SUBSCRIPTION, GROUP, tag)
         self.assertEqual(self.azure.calls, [])
 
     def test_a_job_timeout_over_fourteen_minutes_is_refused_before_any_change(self):
@@ -519,21 +546,26 @@ APP_DRIFTS = {
             additionalPortMappings=[{'external': True, 'targetPort': 5068}]),
     'template.containers': lambda a: app_part(a, 'template', 'containers').append(
         container('extra', 'ghcr.io/someone/else:latest')),
+    'template.initContainers': lambda a: app_part(a, 'template').update(
+        initContainers=[container('first', 'ghcr.io/someone/else:latest')]),
 }
 JOB_DRIFTS = {
     'configuration.triggerType': lambda a: job_configuration(a).update(triggerType='Schedule'),
     'configuration.manualTriggerConfig.parallelism':
         lambda a: job_configuration(a)['manualTriggerConfig'].update(parallelism=3),
     'configuration.replicaRetryLimit': lambda a: job_configuration(a).update(replicaRetryLimit=2),
+    'template.initContainers': lambda a: a.jobs['azurebank-migrate']['properties']['template'].update(
+        initContainers=[container('first', 'ghcr.io/someone/else:latest')]),
 }
 
 
 class ShapeTests(DeployCase):
-    def refused_before_any_change(self, field, drift):
+    def refused_before_any_change(self, field, drift, what):
         drift(self.azure)
         with self.assertRaises(deploy.ShapeError) as raised:
             self.deploy()
         self.assertIn(field, str(raised.exception))
+        self.assertTrue(str(raised.exception).startswith(what + ' is not in the shape'), str(raised.exception))
         self.assertEqual(self.azure.writes(), [], 'nothing may be changed on a drifted resource')
         self.migration.assert_not_called()
         self.smoke.assert_not_called()
@@ -542,13 +574,26 @@ class ShapeTests(DeployCase):
         app_part(self.azure, 'template', 'scale').update(minReplicas=None)
         del app_part(self.azure, 'configuration', 'ingress')['allowInsecure']
         app_part(self.azure, 'configuration', 'ingress').update(additionalPortMappings=None)
+        app_part(self.azure, 'template').update(initContainers=None)
         job_configuration(self.azure).update(replicaRetryLimit=None)
+        self.azure.jobs['azurebank-migrate']['properties']['template'].update(initContainers=[])
         self.deploy()
         self.assertEqual(self.steps()[-1], 'smoke')
 
+    def test_an_init_container_is_named_and_its_definition_is_not_printed(self):
+        app_part(self.azure, 'template').update(initContainers=[
+            {'name': 'first', 'image': 'ghcr.io/someone/else:latest',
+             'env': [{'name': 'TOKEN', 'value': 'a-plain-value'}]}])
+        with self.assertRaises(deploy.ShapeError) as raised:
+            self.deploy()
+        self.assertIn("template.initContainers is ['first']", str(raised.exception))
+        self.assertNotIn('a-plain-value', str(raised.exception) + self.printed())
+        self.assertEqual(self.azure.writes(), [])
+
     def test_an_app_without_ingress_is_refused_before_any_change(self):
         self.refused_before_any_change(
-            'configuration.ingress.external', lambda a: app_part(a, 'configuration').update(ingress=None))
+            'configuration.ingress.external', lambda a: app_part(a, 'configuration').update(ingress=None),
+            'The app')
 
     def test_the_app_is_read_again_after_it_moved_and_a_drift_stops_the_run(self):
         self.azure.drift_app_on_patch = lambda template: template['scale'].update(maxReplicas=5)
@@ -566,15 +611,17 @@ class ShapeTests(DeployCase):
         self.assertEqual(self.azure.app_patches(), [])
 
 
-def _drift_test(field, drift):
+def _drift_test(field, drift, what):
     def test(self):
-        self.refused_before_any_change(field, drift)
+        self.refused_before_any_change(field, drift, what)
     return test
 
 
-for _field, _drift in {**APP_DRIFTS, **JOB_DRIFTS}.items():
-    _name = _field.replace('.', '_')
-    setattr(ShapeTests, f'test_a_drift_in_{_name}_is_refused_before_any_change', _drift_test(_field, _drift))
+for _what, _drifts in (('The app', APP_DRIFTS), ('The job azurebank-migrate', JOB_DRIFTS)):
+    for _field, _drift in _drifts.items():
+        _name = f"{_what.split()[1]}_{_field.replace('.', '_')}"
+        setattr(ShapeTests, f'test_a_drift_in_the_{_name}_is_refused_before_any_change',
+                _drift_test(_field, _drift, _what))
 
 
 REFUSED_LISTING = subprocess.CompletedProcess(
@@ -620,6 +667,14 @@ class SecretsListingTests(DeployCase):
             [], 1, stdout='', stderr='ERROR: Connection reset by peer')
         with self.assertRaisesRegex(RuntimeError, 'Could not prove'):
             self.deploy(expect_secrets_refused=True)
+        self.assertEqual(self.azure.writes(), [])
+
+    def test_a_listing_that_times_out_proves_nothing_and_names_no_identifier(self):
+        self.run.side_effect = lambda command, **options: raise_(subprocess.TimeoutExpired(command, 180))
+        with self.assertRaisesRegex(RuntimeError, 'Could not prove') as raised:
+            self.deploy(expect_secrets_refused=True)
+        self.assertIn('POST /containerApps/azurebank/listSecrets', str(raised.exception))
+        self.assertNotIn(SUBSCRIPTION, str(raised.exception) + self.printed())
         self.assertEqual(self.azure.writes(), [])
 
     def test_the_owner_is_not_asked_to_be_refused(self):
@@ -823,6 +878,20 @@ class MainTests(Offline):
             self.run_main([])
         self.assertEqual(raised.exception.code, 'Smoke test unproven.')
 
+    def test_a_cli_that_never_answers_exits_non_zero_without_the_subscription(self):
+        commands = []
+
+        def never_answers(command, **options):
+            commands.append(' '.join(command))
+            raise subprocess.TimeoutExpired(command, options['timeout'])
+
+        self.start(patch('deploy.subprocess.run', never_answers))
+        with self.assertRaises(SystemExit) as raised:
+            self.run_main([])
+        self.assertIn('no answer in 180 s (GET /containerApps/azurebank)', str(raised.exception.code))
+        self.assertIn(SUBSCRIPTION, commands[0], 'the command line did hold it')
+        self.assertNotIn(SUBSCRIPTION, str(raised.exception.code) + self.printed())
+
 
 SPA = ('<!doctype html><title>AzureBank</title><div id="root"></div>'
        '<script type="module" src="/assets/index-hash.js"></script>')
@@ -851,24 +920,34 @@ NO_DATABASE = (503, 'application/json',
                '"instance":"/api/auth/login","errorCode":"SERVICE_UNAVAILABLE",'
                '"traceId":"3b7bc662e57734de951062361ab2d548","retryAfterSeconds":10}')
 SITE = 'https://example.invalid'
+# What a connection that is dropped raises, as urllib and http.client raise it. None of them is a
+# urllib.error.URLError: each was an uncaught exception before the smoke test took it for silence.
+DROPPED = (
+    ConnectionResetError(104, 'Connection reset by peer'),
+    ConnectionAbortedError(10053, 'An established connection was aborted'),
+    ConnectionRefusedError(111, 'Connection refused'),
+    http.client.RemoteDisconnected('Remote end closed connection without response'),
+    http.client.IncompleteRead(b'<!doctype'),
+    http.client.BadStatusLine('not HTTP'),
+    TimeoutError('timed out'),
+)
 
 
 class Site:
-    """Stands in for `deploy.fetch`: the page, the readiness answer, and the sign-in answers in order
-    (the last one repeats)."""
+    """Stands in for `deploy.fetch`: the page, the readiness answer, and the sign-in answers. Each is
+    one answer or a list of answers in order (the last one repeats); an exception is raised."""
 
     def __init__(self, *sign_in, page=(200, 'text/html', SPA), ready=(200, 'text/plain', 'Healthy')):
-        self.page, self.ready, self.sign_in = page, ready, list(sign_in)
+        self.answers = {'/': page if isinstance(page, list) else [page],
+                        '/health/ready': ready if isinstance(ready, list) else [ready],
+                        '/bff/auth/login': list(sign_in)}
         self.requests = []
 
     def fetch(self, opener, url, body=None):
         path = urllib.parse.urlsplit(url).path
         self.requests.append((path, body))
-        if path == '/':
-            return self.page
-        if path == '/health/ready':
-            return self.ready
-        answer = self.sign_in.pop(0) if len(self.sign_in) > 1 else self.sign_in[0]
+        answers = self.answers[path]
+        answer = answers.pop(0) if len(answers) > 1 else answers[0]
         if isinstance(answer, Exception):
             raise answer
         return answer
@@ -967,6 +1046,49 @@ class SmokeTests(Offline):
             deploy.smoke(SITE)
         self.assertEqual(self.clock.sleeps, [20, 20, 20])
 
+    def test_a_dropped_connection_on_the_sign_in_is_no_answer_and_is_tried_again(self):
+        for dropped in DROPPED:
+            with self.subTest(dropped=type(dropped).__name__):
+                self.clock.sleeps.clear()
+                site = self.site(dropped)
+                with self.assertRaisesRegex(deploy.SmokeUnproven, 'no answer'):
+                    deploy.smoke(SITE)
+                self.assertEqual(len(site.sign_ins()), 4)
+                self.assertEqual(self.clock.sleeps, [20, 20, 20])
+
+    def test_a_dropped_sign_in_then_the_refusal_passes(self):
+        site = self.site(http.client.RemoteDisconnected('Remote end closed connection without response'),
+                         ConnectionResetError(104, 'Connection reset by peer'), REFUSED)
+        deploy.smoke(SITE)
+        self.assertEqual(len(site.sign_ins()), 3)
+
+    def test_a_dropped_connection_on_the_page_is_asked_again_until_the_deadline(self):
+        for dropped in DROPPED:
+            with self.subTest(dropped=type(dropped).__name__):
+                began = self.clock.now
+                site = self.site(REFUSED, page=dropped)
+                with self.assertRaisesRegex(deploy.SmokeFailed, f'/ -> no answer .{type(dropped).__name__}'):
+                    deploy.smoke(SITE)
+                self.assertGreaterEqual(self.clock.now - began, 300)
+                self.assertGreater(len(site.requests), 60)
+                self.assertEqual(site.sign_ins(), [])
+
+    def test_a_dropped_connection_on_the_readiness_answer_is_asked_again_until_the_deadline(self):
+        site = self.site(REFUSED, ready=ConnectionResetError(104, 'Connection reset by peer'))
+        with self.assertRaisesRegex(deploy.SmokeFailed,
+                                    '/ -> 200, /health/ready -> no answer .ConnectionResetError'):
+            deploy.smoke(SITE)
+        self.assertGreaterEqual(self.clock.now, 300)
+        self.assertEqual(site.sign_ins(), [])
+
+    def test_a_page_that_answers_after_dropped_connections_passes(self):
+        reset = ConnectionResetError(104, 'Connection reset by peer')
+        site = self.site(REFUSED, page=[reset, reset, (200, 'text/html', SPA)],
+                         ready=[http.client.RemoteDisconnected('closed'), (200, 'text/plain', 'Healthy')])
+        deploy.smoke(SITE)
+        self.assertEqual(self.clock.sleeps, [5, 5, 5])
+        self.assertEqual(len(site.sign_ins()), 1)
+
     def test_the_verdict_is_the_last_try(self):
         failure = (500, 'application/problem+json', '{"errorCode":"INTERNAL_ERROR"}')
         self.site(LIMITED, LIMITED, LIMITED, failure)
@@ -991,6 +1113,151 @@ class SmokeTests(Offline):
         self.assertIsNone(deploy.NoRedirect().redirect_request(None, None, 302, '', {}, SITE))
 
 
+def http_answer(status, content_type, body, *headers):
+    lines = [f'HTTP/1.1 {status} Answer', f'Content-Type: {content_type}',
+             f'Content-Length: {len(body.encode())}', 'Connection: close', *headers]
+    return '\r\n'.join(lines).encode() + b'\r\n\r\n' + body.encode()
+
+
+HANG_UP, RESET = 'hang up', 'reset'
+GOOD_PAGE = http_answer(200, 'text/html', SPA)
+GOOD_READY = http_answer(200, 'text/plain', 'Healthy')
+GOOD_REFUSAL = http_answer(401, 'application/json; charset=utf-8', REFUSED[2])
+
+
+class LocalSite:
+    """A real server on 127.0.0.1, for what only a real connection can do: hang up, reset, answer
+    something that is not HTTP, redirect. Each path answers with bytes, HANG_UP or RESET, or with a
+    list of those in order (the last one repeats). A path nobody named hangs up."""
+
+    def __init__(self, routes):
+        self.routes = {path: answers if isinstance(answers, list) else [answers]
+                       for path, answers in routes.items()}
+        self.requests = []
+        self.closing = False
+        self.listener = socket.create_server(('127.0.0.1', 0))
+        self.url = f'http://127.0.0.1:{self.listener.getsockname()[1]}'
+        self.thread = threading.Thread(target=self.serve, daemon=True)
+        self.thread.start()
+
+    def close(self):
+        # A connection of our own wakes the thread that waits in accept(); closing the listener
+        # from here would not, everywhere.
+        self.closing = True
+        with contextlib.suppress(OSError), socket.create_connection(self.listener.getsockname(), 5):
+            pass
+        self.thread.join(5)
+        self.listener.close()
+
+    def paths(self):
+        return [path for _, path, _, _ in self.requests]
+
+    def serve(self):
+        while True:
+            try:
+                connection, _ = self.listener.accept()
+            except OSError:
+                return
+            with connection:
+                if self.closing:
+                    return
+                connection.settimeout(5)
+                try:
+                    head, body = self.read_request(connection)
+                except OSError:
+                    continue
+                method, path = head.split(' ')[:2]
+                self.requests.append((method, path, head.lower(), body))
+                answers = self.routes.get(path, [HANG_UP])
+                answer = answers.pop(0) if len(answers) > 1 else answers[0]
+                if answer == RESET:
+                    # Closing with a zero linger sends a reset in place of an orderly end.
+                    connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
+                                          struct.pack('hh' if os.name == 'nt' else 'ii', 1, 0))
+                elif answer != HANG_UP:
+                    connection.sendall(answer)
+
+    @staticmethod
+    def read_request(connection):
+        """The whole request: closing on unread bytes would turn an answer into a reset."""
+        data = b''
+        while b'\r\n\r\n' not in data:
+            chunk = connection.recv(65536)
+            if not chunk:
+                raise OSError('the client went away')
+            data += chunk
+        head, _, body = data.partition(b'\r\n\r\n')
+        length = re.search(rb'(?im)^content-length: *(\d+)', head)
+        while length and len(body) < int(length.group(1)):
+            chunk = connection.recv(65536)
+            if not chunk:
+                raise OSError('the client went away')
+            body += chunk
+        return head.decode(), body.decode()
+
+
+class RealConnectionTests(Offline):
+    """`deploy.smoke` with the real `deploy.fetch`, against a server on this machine. Time is still
+    a counter. What these prove that a stand-in for `fetch` cannot: which exceptions urllib really
+    raises when a connection is dropped, and that every one of them ends in a verdict."""
+
+    def site(self, routes=None):
+        site = LocalSite({'/': GOOD_PAGE, '/health/ready': GOOD_READY, '/bff/auth/login': GOOD_REFUSAL,
+                          **(routes or {})})
+        self.addCleanup(site.close)
+        return site
+
+    def test_the_three_requests_as_they_are_really_sent_pass(self):
+        site = self.site()
+        deploy.smoke(site.url)
+        self.assertEqual([(method, path) for method, path, _, _ in site.requests],
+                         [('GET', '/'), ('GET', '/health/ready'), ('POST', '/bff/auth/login')])
+        _, _, head, body = site.requests[-1]
+        self.assertIn('content-type: application/json', head)
+        self.assertNotIn('cookie:', head)
+        self.assertEqual(json.loads(body), deploy.SMOKE_LOGIN)
+
+    def test_a_sign_in_the_server_hangs_up_on_is_unproven_not_a_crash(self):
+        site = self.site({'/bff/auth/login': HANG_UP})
+        with self.assertRaisesRegex(deploy.SmokeUnproven, 'no answer'):
+            deploy.smoke(site.url)
+        self.assertEqual(site.paths().count('/bff/auth/login'), 4)
+        self.assertEqual(self.clock.sleeps, [20, 20, 20])
+
+    def test_a_sign_in_the_server_resets_is_unproven_not_a_crash(self):
+        site = self.site({'/bff/auth/login': RESET})
+        with self.assertRaisesRegex(deploy.SmokeUnproven, 'no answer'):
+            deploy.smoke(site.url)
+        self.assertEqual(site.paths().count('/bff/auth/login'), 4)
+
+    def test_a_sign_in_answered_with_something_that_is_not_http_is_unproven_not_a_crash(self):
+        site = self.site({'/bff/auth/login': b'this is not HTTP\r\n\r\n'})
+        with self.assertRaisesRegex(deploy.SmokeUnproven, 'no answer'):
+            deploy.smoke(site.url)
+        self.assertEqual(site.paths().count('/bff/auth/login'), 4)
+
+    def test_a_page_the_server_hangs_up_on_fails_at_the_deadline_not_at_the_first_drop(self):
+        for drop in (HANG_UP, RESET):
+            with self.subTest(drop=drop):
+                site = self.site({'/': drop})
+                with self.assertRaisesRegex(deploy.SmokeFailed, '/ -> no answer'):
+                    deploy.smoke(site.url, timeout=30)
+                self.assertEqual(site.paths(), ['/'] * 7)
+
+    def test_two_dropped_connections_then_the_page_pass(self):
+        site = self.site({'/': [HANG_UP, RESET, GOOD_PAGE]})
+        deploy.smoke(site.url)
+        self.assertEqual(site.paths(), ['/', '/', '/', '/health/ready', '/bff/auth/login'])
+
+    def test_a_redirect_is_an_answer_and_is_not_followed(self):
+        site = self.site({'/': http_answer(302, 'text/plain', '', 'Location: /elsewhere'),
+                          '/elsewhere': GOOD_PAGE})
+        with self.assertRaisesRegex(deploy.SmokeFailed, '/ -> 302'):
+            deploy.smoke(site.url, timeout=30)
+        self.assertNotIn('/elsewhere', site.paths())
+        self.assertNotIn('/bff/auth/login', site.paths())
+
+
 class SmokeInTheGateTests(Offline):
     """The real smoke test inside the real deploy: what a rate limit and a wrong answer lead to."""
 
@@ -1011,6 +1278,19 @@ class SmokeInTheGateTests(Offline):
         with self.assertRaisesRegex(RuntimeError, f'put back to {OLD}'):
             deploy.deploy(SUBSCRIPTION, GROUP, NEW)
         self.assertEqual(len(self.azure.app_patches()), 2)
+
+    def test_a_page_that_stops_answering_after_the_app_moved_puts_the_app_back(self):
+        self.start(patch('deploy.fetch', Site(REFUSED, page=ConnectionResetError(104, 'reset')).fetch))
+        with self.assertRaisesRegex(RuntimeError, f'no answer.*put back to {OLD}'):
+            deploy.deploy(SUBSCRIPTION, GROUP, NEW)
+        self.assertEqual(len(self.azure.app_patches()), 2)
+
+    def test_a_sign_in_whose_connection_is_dropped_leaves_the_new_revision_and_exits_unproven(self):
+        dropped = http.client.RemoteDisconnected('Remote end closed connection without response')
+        self.start(patch('deploy.fetch', Site(dropped).fetch))
+        with self.assertRaisesRegex(deploy.SmokeUnproven, 'no answer'):
+            deploy.deploy(SUBSCRIPTION, GROUP, NEW)
+        self.assertEqual(len(self.azure.app_patches()), 1)
 
     def test_in_actions_the_smoke_line_comes_after_the_mask(self):
         self.start(patch('deploy.fetch', Site(REFUSED).fetch))

@@ -24,6 +24,7 @@ asks it to.
 import argparse
 import copy
 import datetime
+import http.client
 import json
 import os
 import re
@@ -39,6 +40,7 @@ import uuid
 API_VERSION = '2025-01-01'
 # The resolved path, so the same script also runs where az is a .cmd file.
 AZ = shutil.which('az') or 'az'
+AZ_TIMEOUT = 180
 APP = 'azurebank'
 MIGRATE_JOB = 'azurebank-migrate'
 # Job name -> container name. Every job runs the tools image and moves with the commit: the
@@ -61,6 +63,10 @@ SIGN_IN_TRIES = 4
 # AuthPermitLimit): after a 429 only a full window can free a permit.
 WAIT_AFTER_429 = 65
 WAIT_BETWEEN_TRIES = 20
+# What "no answer" is, for the smoke test: a connection refused, reset, closed before the answer
+# or timed out, a name that does not resolve, a TLS failure (all OSError, urllib's own URLError
+# included); an answer that is not HTTP or stops short (HTTPException); bytes that are not text.
+NO_ANSWER = (OSError, http.client.HTTPException, UnicodeError)
 
 
 class AzError(RuntimeError):
@@ -92,11 +98,22 @@ def say(message):
     print(f'{stamp} {message}', flush=True)
 
 
-def az(*args):
-    result = subprocess.run(
-        [AZ, *args, '--only-show-errors', '--output', 'json'],
-        capture_output=True, text=True, timeout=180,
-    )
+def short(resource_id):
+    """The part of a resource ID that names the resource: no subscription, no resource group."""
+    return resource_id.split('/providers/Microsoft.App', 1)[-1]
+
+
+def run_az(arguments, what):
+    """Run the Azure CLI. A timeout is reported by `what`, never by the command line: the URL on
+    it holds the subscription, and Python's own message for a timeout prints all of it."""
+    try:
+        return subprocess.run([AZ, *arguments], capture_output=True, text=True, timeout=AZ_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise AzError(f'The Azure CLI gave no answer in {AZ_TIMEOUT} s ({what}).') from None
+
+
+def az(*args, what=None):
+    result = run_az([*args, '--only-show-errors', '--output', 'json'], what or f'az {args[0]}')
     if result.returncode != 0:
         # The requests carry no secret (a template, never a configuration), and the answer to a
         # refusal names the action and the scope: the one thing a failed run must show.
@@ -107,13 +124,14 @@ def az(*args):
 def rest(method, resource_id, body=None):
     url = f'https://management.azure.com{resource_id}?api-version={API_VERSION}'
     args = ['rest', '--method', method, '--url', url]
+    what = f'{method} {short(resource_id)}'
     if body is None:
-        return az(*args)
+        return az(*args, what=what)
     with tempfile.TemporaryDirectory() as directory:
         path = os.path.join(directory, 'request.json')
         with open(path, 'w', encoding='utf-8') as request:
             json.dump(body, request)
-        return az(*args, '--body', f'@{path}')
+        return az(*args, '--body', f'@{path}', what=what)
 
 
 def images(resource):
@@ -155,12 +173,21 @@ def app_drift(app):
         ('configuration.ingress.additionalPortMappings', ingress.get('additionalPortMappings'),
          not ingress.get('additionalPortMappings')),
         ('template.containers', names, names == ['api', 'bff']),
+        ('template.initContainers', init_names(template), not template.get('initContainers')),
     ]
     return [f'{field} is {value!r}' for field, value, wanted in checks if not wanted]
 
 
+def init_names(template):
+    """Names only: a container's definition may hold a plain value nobody should print."""
+    return [str(c.get('name')) if isinstance(c, dict) else '?'
+            for c in template.get('initContainers') or []]
+
+
 def job_drift(job):
-    configuration = (job.get('properties') or {}).get('configuration') or {}
+    properties = job.get('properties') or {}
+    configuration = properties.get('configuration') or {}
+    template = properties.get('template') or {}
     manual = configuration.get('manualTriggerConfig') or {}
     trigger = configuration.get('triggerType')
     checks = [
@@ -169,6 +196,7 @@ def job_drift(job):
          manual.get('parallelism') in (None, 1)),
         ('configuration.replicaRetryLimit', configuration.get('replicaRetryLimit'),
          configuration.get('replicaRetryLimit') in (None, 0)),
+        ('template.initContainers', init_names(template), not template.get('initContainers')),
     ]
     return [f'{field} is {value!r}' for field, value, wanted in checks if not wanted]
 
@@ -190,10 +218,12 @@ def prove_secrets_are_refused(app_id):
     answered, the values would never reach this process's output.
     """
     url = f'https://management.azure.com{app_id}/listSecrets?api-version={API_VERSION}'
-    result = subprocess.run(
-        [AZ, 'rest', '--method', 'POST', '--url', url, '--only-show-errors', '--output', 'none'],
-        capture_output=True, text=True, timeout=180,
-    )
+    try:
+        result = run_az(['rest', '--method', 'POST', '--url', url, '--only-show-errors',
+                         '--output', 'none'], f'POST {short(app_id)}/listSecrets')
+    except AzError as error:
+        raise RuntimeError('Could not prove that this identity is refused the secrets of the app. '
+                           f'Nothing was changed. {error}') from None
     if result.returncode == 0:
         raise RuntimeError('This identity can list the secrets of the app: it was expected to be '
                            'refused. Nothing was changed. Look at its role assignments.')
@@ -275,7 +305,7 @@ def diagnose(app_id):
                     f"({redact(str(container.get('runningStateDetails')))[:300]}), "
                     f"ready {container.get('ready')}, started {container.get('started')}, "
                     f"restarts {container.get('restartCount')}.")
-    except (AzError, KeyError, AttributeError, TypeError, subprocess.TimeoutExpired) as error:
+    except (AzError, KeyError, AttributeError, TypeError) as error:
         say(f'Could not read why: {error}')
 
 
@@ -398,23 +428,31 @@ def is_the_refusal(status, content_type, body):
     return isinstance(answer, dict) and answer.get('errorCode') == 'INVALID_CREDENTIALS'
 
 
+def told(answer, text=False):
+    """An answer as a failure message shows it: the status, and the text when it says why."""
+    status, _, body = answer
+    return f'{status} {body[:80]!r}' if text or status == 'no answer' else str(status)
+
+
 def smoke(url, timeout=300):
     opener = urllib.request.build_opener(NoRedirect)
     deadline = time.monotonic() + timeout
-    page = ready = None
     while True:
+        page = ready = ('not asked', None, '')
         try:
             page = fetch(opener, url + '/')
             ready = fetch(opener, url + '/health/ready')
             # "Healthy" and not just 200: the BFF answers 200 "Degraded" when the API is down.
             if is_spa(*page) and ready[0] == 200 and ready[2].strip() == 'Healthy':
                 break
-        except (urllib.error.URLError, TimeoutError, UnicodeError) as error:
-            ready = ('no answer', None, str(error))
+        except NO_ANSWER as error:
+            # A dropped connection is one more wrong answer of this loop, never the end of the run.
+            silence = ('no answer', None, f'{type(error).__name__}: {error}')
+            page, ready = (silence, ready) if page[0] == 'not asked' else (page, silence)
         if time.monotonic() >= deadline:
             raise SmokeFailed('Smoke test failed: the page or the readiness answer was wrong '
-                              f'after {timeout} s (/ -> {page and page[0]}, /health/ready -> '
-                              f'{ready and ready[0]} {(ready[2] if ready else "")[:40]!r}).')
+                              f'after {timeout} s (/ -> {told(page)}, /health/ready -> '
+                              f'{told(ready, text=True)}).')
         time.sleep(5)
 
     # One sign-in that must be refused. Three verdicts: the refusal passes; any other definite
@@ -425,7 +463,7 @@ def smoke(url, timeout=300):
             time.sleep(WAIT_AFTER_429 if answer and answer[0] == 429 else WAIT_BETWEEN_TRIES)
         try:
             answer = fetch(opener, url + SMOKE_PATH, SMOKE_LOGIN)
-        except (urllib.error.URLError, TimeoutError, UnicodeError):
+        except NO_ANSWER:
             answer = None
             continue
         if is_the_refusal(*answer):
@@ -484,7 +522,7 @@ def put_back(app_id, app):
         latest = rest('GET', app_id)['properties'].get('latestRevisionName')
         rest('PATCH', app_id, {'location': app['location'], 'properties': {'template': template}})
         restored = wait_revision(app_id, before, latest)
-    except (AzError, RevisionFailed, KeyError, subprocess.TimeoutExpired) as error:
+    except (AzError, RevisionFailed, KeyError) as error:
         raise RuntimeError(f'The put-back to {label} did not succeed ({error}). The app may be '
                            'serving a broken revision: look at it now (infra/README.md, "When '
                            'something fails").') from error
@@ -579,7 +617,7 @@ def main(arguments=None):
         raise SystemExit(f'Azure refused or failed a request: {error}')
     except KeyError as error:
         raise SystemExit(f'An answer from Azure lacked {error}.')
-    except (RuntimeError, ValueError, subprocess.TimeoutExpired) as error:
+    except (RuntimeError, ValueError) as error:
         raise SystemExit(str(error))
 
 
