@@ -49,6 +49,18 @@ public class ApplicationUserConfiguration : IEntityTypeConfiguration<Application
         builder.Property(e => e.CreatedAt)
             .IsRequired();
 
+        // The demo copy a user belongs to; null for every user outside the demo. NO ACTION, so the
+        // database refuses to delete a copy's row while a user still points at it: the users go
+        // first. The pool row itself has no key back to its owner (see DemoCopyConfiguration).
+        builder.HasOne<DemoCopy>()
+            .WithMany()
+            .HasForeignKey(e => e.DemoCopyId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        // "The users of this copy" is the read every statement about a copy starts from. Filtered,
+        // so outside the demo, where the column is null on every user, the index holds no row.
+        builder.HasIndex(e => e.DemoCopyId)
+            .HasFilter("[DemoCopyId] IS NOT NULL");
 
         builder.HasMany(e => e.Accounts)
             .WithOne(a => a.User)

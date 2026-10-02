@@ -54,10 +54,10 @@ public class ApplicationUser : IdentityUser<Guid>
     /// The demo copy this user belongs to. Null for every user outside the demo.
     /// </summary>
     /// <remarks>
-    /// NOT A COLUMN YET. <c>[NotMapped]</c> keeps the model as it is, so the tests of the pool
-    /// compile against the property before the migration that maps it exists.
+    /// The owner and the two contacts of a copy carry the same id, a foreign key to
+    /// <see cref="DemoCopy"/>. This column, and no name pattern or age, is what says which users
+    /// are a copy's.
     /// </remarks>
-    [NotMapped]
     public Guid? DemoCopyId { get; set; }
 
     [Required]

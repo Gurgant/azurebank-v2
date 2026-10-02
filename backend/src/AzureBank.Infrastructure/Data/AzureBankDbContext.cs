@@ -81,6 +81,12 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
     /// </summary>
     public DbSet<SubscriberNotice> SubscriberNotices => Set<SubscriberNotice>();
 
+    /// <summary>
+    /// The demo's prepared copies, one row each: free, claimed, or the record of a claimed copy
+    /// whose users were deleted. No row outside the demo.
+    /// </summary>
+    public DbSet<DemoCopy> DemoCopies => Set<DemoCopy>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

@@ -3,12 +3,15 @@ using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace AzureBank.Tests.Integration;
 
 /// <summary>
 /// The pool's table as the database enforces it: its columns, the two rules a row must keep, the
-/// indexes the claim and the daily count read, and the key from a user to its copy.
+/// indexes the claim and the daily count read, and the key from a user to its copy. And the
+/// migration that adds them, taken back.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -255,6 +258,61 @@ public sealed class DemoCopySchemaSqlServerTests
         {
             (await db.Users.CountAsync(u => u.DemoCopyId == copy)).Should().Be(1);
             (await db.Users.CountAsync(u => u.DemoCopyId == null)).Should().Be(1);
+        }
+    }
+
+    /// <summary>
+    /// The migration can be taken back. A deployment returned to the release before the pool gets
+    /// the schema that release knows, and keeps every user it had, the users of a copy included.
+    /// </summary>
+    /// <remarks>
+    /// Taken back with a user still pointing at a copy, which is the case a wrong order fails on:
+    /// the table cannot be dropped while the key names it, nor the column while the index does.
+    /// The migration before this one is read from the assembly, not written here, so the test
+    /// follows the migration if it is ever generated again under another stamp.
+    /// </remarks>
+    [SqlServerFact]
+    public async Task TakingTheMigrationBack_RemovesEverythingItAdded_AndKeepsEveryUser()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copy = Guid.CreateVersion7();
+        (await InsertCopyAsync(database, id: copy)).Should().Be(1);
+        await using (var db = database.NewContext())
+        {
+            db.Users.AddRange(AUser(copy), AUser(copy: null));
+            await db.SaveChangesAsync();
+        }
+
+        // The table, the user's column, its index, its key; then the users. Read from the
+        // catalogue: once the column is gone the model can no longer query a user.
+        const string whatTheMigrationAdded =
+            "SELECT (SELECT COUNT(*) FROM sys.tables WHERE name = 'DemoCopies'), "
+            + "(SELECT COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('AspNetUsers') AND name = 'DemoCopyId'), "
+            + "(SELECT COUNT(*) FROM sys.indexes WHERE object_id = OBJECT_ID('AspNetUsers') AND name = 'IX_AspNetUsers_DemoCopyId'), "
+            + "(SELECT COUNT(*) FROM sys.foreign_keys WHERE name = 'FK_AspNetUsers_DemoCopies_DemoCopyId'), "
+            + "(SELECT COUNT(*) FROM [AspNetUsers])";
+
+        // CONTROL: all four are there to be removed.
+        (await RowsAsync(database, whatTheMigrationAdded)).Single().Should().Equal(1, 1, 1, 1, 2);
+
+        await using (var db = database.NewContext())
+        {
+            var migrations = db.Database.GetMigrations().ToList();
+            var thisOne = migrations.FindIndex(m => m.EndsWith("_AddDemoCopies", StringComparison.Ordinal));
+            thisOne.Should().BeGreaterThan(0, "ARRANGE: the migration exists and is not the first");
+
+            await db.GetService<IMigrator>().MigrateAsync(migrations[thisOne - 1]);
+        }
+
+        (await RowsAsync(database, whatTheMigrationAdded)).Single().Should().Equal(0, 0, 0, 0, 2);
+
+        // And forward again, as the next deployment would: the pool is empty and no user is in a copy.
+        await using (var db = database.NewContext())
+        {
+            await db.Database.MigrateAsync();
+
+            (await db.DemoCopies.CountAsync()).Should().Be(0);
+            (await db.Users.CountAsync(u => u.DemoCopyId == null)).Should().Be(2);
         }
     }
 }
