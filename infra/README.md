@@ -1071,8 +1071,9 @@ inside GitHub Actions. The other way in is the portal: the workspace `azurebank-
   line: a login refused because the database has no user for the identity ends after about four
   seconds; an identity that gets no token is waited for the whole 60 s. Neither has been seen
   from `migrate` on Azure. The trial's own program got the two answers `migrate` would get: with
-  no user for the identity, error 18456, class 14, after 41 to 52 ms; with no token, an error
-  numbered 0, class 20, around `Azure.Identity.AuthenticationFailedException`, after 40 to 71 ms.
+  the right identity signing in to `master`, where it had no user, error 18456, class 14, after 41
+  to 52 ms; with no token, an error numbered 0, class 20, around
+  `Azure.Identity.AuthenticationFailedException`, after 40 to 71 ms.
   The token's failure is quick each time: it is `migrate`'s own wait that makes that run long.
 - **What the text can hold.** The SQL server's name and the database's. A caller's address: the
   rate limiter's warning names it. A value from a database error: on a local stack, registrations
@@ -1158,7 +1159,7 @@ stopped. The deployment identity cannot stop or start the app.
 | "Execution ... is Running: a migration may still be running" | An execution blocks every later deployment until it ends, and the deployment identity cannot stop it | The owner: `az containerapp job stop --name azurebank-migrate --resource-group azurebank-demo --job-execution-name <name>` |
 | "The migration did not succeed", after its verdict | The job runs the new tools image; some migrations may be applied; the app still runs the old images. Exit code 1: failed after it reached for the server, and running it again is safe. Exit code 2: refused before any connection, and the configuration must change | `python infra/deploy.py --job-log` from a terminal, when the lines are due. If there is no text: [A migration nobody can read](#a-migration-nobody-can-read) |
 | "the new revision never became ready", then "put back to ..." | The run printed the revision's state and each container's state and restart count, then put the app back | Read those lines, then `python infra/deploy.py --app-log 30`; fix; deploy again |
-| "Smoke test failed", then "put back to ..." | The page, the readiness answer or the sign-in answer was wrong on the new revision. A sign-in that answers 500 or 503 where 401 was expected can be the database sign-in. With no user for the identity the driver gets error 18456, class 14, which the API answers with 500; with no token it gets an error of class 20, which the API answers with 503 (the two errors: [Measured on Azure](#measured-on-azure); the two answers: read in the API's handler, not seen) | The same |
+| "Smoke test failed", then "put back to ..." | The page, the readiness answer or the sign-in answer was wrong on the new revision. A sign-in that answers 500 or 503 where 401 was expected can be the database sign-in. With no user for the identity the driver gets error 18456, class 14, which the API answers with 500; with no token it gets an error of class 20, which the API answers with 503 (the two errors: [Measured on Azure](#measured-on-azure), the first in `master`, where the identity had no user; the two answers: read in the API's handler, not seen) | The same |
 | "Smoke test unproven" | The last of four sign-in tries was a 429 or got no answer (the wait is 65 s after a 429, 20 s otherwise). An earlier try may have got another answer: only the last one decides. Sign-ins are limited to 10 a minute, and behind the ingress every visitor may share that limit. The new revision is serving and was not put back | Deploy again later, or check a sign-in by hand |
 | "Azure refused or failed a request", "The Azure CLI gave no answer in 180 s" | One request to Azure failed after the run had started. The script does not ask twice, and it puts nothing back: no check had failed. The app may already be on the new images, unchecked | Look at the app's latest and latest ready revision; deploy again, or go back by hand, below |
 | "was still active after 180 s" | The old revision did not go inactive, so the smoke test was not run and nothing was put back | Look at the app's revisions in the portal; deploy again |
@@ -1578,12 +1579,19 @@ and a connect timeout of 10 s.
 - **A token that cannot be had**, for an identity the job does not carry or for one that does not
   exist: a `SqlException` with number 0 and **class 20**, around an
   `Azure.Identity.AuthenticationFailedException`, after 40 to 71 ms (four tries). Read in the API,
-  not run there: its handler answers a class of 20 or above as the 503 of a database that cannot
-  be reached (`backend/src/AzureBank.Api/Handlers/ServiceUnavailableExceptionHandler.cs`, line
-  362, in `IsUnreachable`: `sql.Class >= 20`).
-- **A database with no user for the identity**: error 18456, class 14, "Login failed for user
-  '<token-identified principal>'", after 41 to 52 ms (two tries). Read in the same handler: that
-  number is not in its list (line 208) and the class is below 20, so the answer is a 500.
+  not run there: its handler
+  (`backend/src/AzureBank.Api/Handlers/ServiceUnavailableExceptionHandler.cs`) answers what
+  `IsUnreachable` takes as the 503 of a database that cannot be reached, and that takes a class of
+  20 or above (`sql.Class >= 20`). Its first test, EF Core's own transient list
+  (`IsTransientToEf`), does not take this error: EF Core SqlServer 10.0.1's detector, called on
+  this machine with an error of that number and class, answered false (and true for 4060, 40613
+  and 1205, three numbers that list holds).
+- **The right identity signing in to `master`, where it had no user**: error 18456, class 14,
+  "Login failed for user '<token-identified principal>'", after 41 to 52 ms (two tries). The trial
+  did not try a database of its own with no user for the identity; for the app's database this is
+  the error expected. Read in the same handler: that number is in neither its own list
+  (`UnreachableNumbers`) nor EF Core's (the detector answered false for it as well), and the class
+  is below 20, so the answer is a 500.
 - An execution read through API version `2026-07-01` carried its status and its container's exit
   code: `Succeeded` and 0 for three runs (45, 44 and 29 s long), `Failed` and 7 for a run made to
   exit 7. The reasons were `CompletionsReached` and `BackoffLimitExceeded`. The failed one carried

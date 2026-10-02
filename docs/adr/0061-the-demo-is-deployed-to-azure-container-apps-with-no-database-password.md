@@ -69,7 +69,7 @@ otherwise.
 | The same program, as the identity that only reads and writes | `CREATE TABLE` refused (error 262), `ALTER TABLE` refused (1088); an application lock, a locked read and an update allowed |
 | The same, as the identity that may change the schema | Thirteen kinds of statement that migrations use: allowed. `CREATE USER`: refused (15247) |
 | A token asked for an identity the job does not carry, and for one that does not exist | A `SqlException` with number 0 and **class 20**, around `Azure.Identity.AuthenticationFailedException`, after 40 to 71 ms |
-| The right identity, where the database has no user for it | Error 18456, class 14, after 41 to 52 ms |
+| The right identity, signing in to `master`, where it had no user | Error 18456, class 14, after 41 to 52 ms |
 | An execution of a job, read through API `2026-07-01` | Its status and its container's exit code were filled: `Succeeded` and 0, `Failed` and 7 |
 | An environment whose request names no mode, on API `2025-01-01` | **Refused: HTTP 400, `ExpressEnvironmentFeatureNotSupported`.** With `environmentMode: 'WorkloadProfiles'` on API `2026-07-01`: accepted, sent by hand between two recorded runs, so that answer is a note made at the time and not part of the record. Recorded afterwards: the environment, read back with the logs destination and the Consumption profile, and two jobs that ran in it. No recorded read shows its mode |
 | A workspace with a daily cap of 0.05 GB and key access off, and one diagnostic setting | Accepted, and read back with that cap |
@@ -264,10 +264,11 @@ same request a second time leaves the server alone. A user created from the clie
 and the client ID is what the server stores. The first open on a cold replica took 3,810 ms
 against the 10 s connect timeout, once. When no token comes the driver throws a `SqlException` of
 class 20, which the API's handler answers as the 503 of a database it cannot reach; with no user
-for the identity it throws error 18456, class 14, which that handler leaves a 500 (the two errors
-were measured; the two answers were read in `ServiceUnavailableExceptionHandler.cs`, not run). A
-job carrying one identity gets no token for the other. The server names Entra-only in its refusal
-of a SQL sign-in.
+for the identity it throws error 18456, class 14 (measured in `master`, where the identity had no
+user), which that handler leaves a 500. The two errors were measured; the two answers were read in
+`ServiceUnavailableExceptionHandler.cs`, not run, and EF Core's transient list, which that handler
+asks first, was called on its own and takes neither error. A job carrying one identity gets no
+token for the other. The server names Entra-only in its refusal of a SQL sign-in.
 
 **Not measured.** The same things done by these files: the template's own second run, and the two
 users the script makes. That a request for a token which names no identity gets none. Whether a
