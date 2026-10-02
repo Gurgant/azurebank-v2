@@ -133,7 +133,7 @@ FIREWALL = ("mssql: login error: Cannot open server 'azurebank-test' requested b
             f"address '{ADDRESS}' is not allowed to access the server. To enable access, use the Azure "
             "Management Portal or run sp_set_firewall_rule on the master database to create a firewall rule "
             "for this IP address or address range. It may take up to five minutes for this change to take effect.")
-VARIABLES = ['AppClientId', 'AppObjectId', 'MigratorClientId', 'MigratorObjectId', 'IdKind', 'CreateForm']
+VARIABLES = ['AppClientId', 'AppObjectId', 'MigratorClientId', 'MigratorObjectId', 'CreateForm']
 BOTH_USERS = ['azurebank_app: db_datareader, db_datawriter; ID as asked: 1',
               'azurebank_migrator: db_datareader, db_datawriter, db_ddladmin; ID as asked: 1']
 CONSTANTS = {'VARIABLES': VARIABLES, 'ADDRESS': ADDRESS, 'FIREWALL': FIREWALL, 'BOTH_USERS': BOTH_USERS}
@@ -648,10 +648,16 @@ class UsersToolTests(UsersCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('is not checked on this system', result.stderr)
 
-    def test_the_two_switches_that_do_not_go_together_are_refused_before_anything(self):
-        result = self.users(CreateForm='ExternalProvider', IdKind='ObjectId')
-        self.assert_refused_before_azure(result, 'goes with -IdKind ClientId only')
+    def test_there_is_no_switch_for_the_object_id_and_asking_for_one_runs_nothing(self):
+        # A user carries its identity's client ID and nothing else (README.md, "Measured on Azure").
+        # Started as an operator starts it: PowerShell refuses the name before the script's first line.
+        result = self.run_script('sql-principals.ps1', '-SqlcmdPath', str(self.tool), '-IdKind', 'ObjectId',
+                                 FAKE_SQLCMD_LOG=str(self.tool_log))
+        self.assert_refused_before_azure(result, "A parameter cannot be found that matches parameter name 'IdKind'")
         self.assertEqual(self.started(), [])
+        script = (HERE / 'sql-principals.ps1').read_text(encoding='utf-8')
+        self.assertNotIn('IdKind', script)
+        self.assertNotIn('IdKind', (HERE / 'sql-principals.sql').read_text(encoding='utf-8'))
 
     def test_the_odbc_road_is_taken_only_when_asked_and_runs_with_x1(self):
         result = self.users(tool='odbc', OdbcSignInName='owner@example.invalid')
@@ -678,7 +684,7 @@ class UsersRunTests(UsersCase):
     temporary firewall rule, and what a failure leads to. What SQL Server does with the file is
     checked on a real server (README.md)."""
 
-    def test_the_users_file_is_run_with_b_and_the_six_values_and_both_users_are_reported(self):
+    def test_the_users_file_is_run_with_b_and_the_five_values_and_both_users_are_reported(self):
         result = self.users()
         self.assertEqual(result.returncode, 0, result.stderr)
         (run,) = self.started('run')
@@ -687,7 +693,7 @@ class UsersRunTests(UsersCase):
             '--authentication-method', 'ActiveDirectoryAzCli', '-i', str(HERE / 'sql-principals.sql'), '-v',
             'AppClientId=11111111-aaaa-4bbb-8ccc-000000000001', 'AppObjectId=22222222-aaaa-4bbb-8ccc-000000000002',
             'MigratorClientId=33333333-aaaa-4bbb-8ccc-000000000003',
-            'MigratorObjectId=44444444-aaaa-4bbb-8ccc-000000000004', 'IdKind=ClientId', 'CreateForm=Sid'])
+            'MigratorObjectId=44444444-aaaa-4bbb-8ccc-000000000004', 'CreateForm=Sid'])
         self.assertEqual(self.verbs(), self.SWEEP + self.READS + self.LAST)
         for line in BOTH_USERS:
             self.assertIn(line, result.stderr)
@@ -709,18 +715,21 @@ class UsersRunTests(UsersCase):
             self.assertNotIn('-C', entry['args'], 'the certificate is checked')
             self.assertIn('-N', entry['args'])
 
-    def test_the_switches_reach_the_file_as_its_two_variables(self):
-        result = self.users(IdKind='ObjectId')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.started('run')[0]['args'][-2:], ['IdKind=ObjectId', 'CreateForm=Sid'])
-        self.tool_log.unlink()
+    def test_the_switch_for_the_second_form_reaches_the_file_as_its_variable(self):
         result = self.users(CreateForm='ExternalProvider')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.started('run')[0]['args'][-2:], ['IdKind=ClientId', 'CreateForm=ExternalProvider'])
+        self.assertEqual(self.started('run')[0]['args'][-2:],
+                         ['MigratorObjectId=44444444-aaaa-4bbb-8ccc-000000000004', 'CreateForm=ExternalProvider'])
+        self.tool_log.unlink()
+        result = self.run_script('sql-principals.ps1', '-SqlcmdPath', str(self.tool), '-CreateForm', 'ByName',
+                                 FAKE_SQLCMD_LOG=str(self.tool_log))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('does not belong to the set "Sid,ExternalProvider"', self.said(result))
+        self.assertEqual(self.started(), [], 'a form the script does not know runs nothing')
 
     def test_the_variables_the_runner_passes_are_the_ones_the_file_takes(self):
         self.assertEqual(self.users().returncode, 0)
-        passed = [argument.split('=')[0] for argument in self.started('run')[0]['args'][-6:]]
+        passed = [argument.split('=')[0] for argument in self.started('run')[0]['args'][-5:]]
         sql = (HERE / 'sql-principals.sql').read_text(encoding='utf-8')
         self.assertEqual(passed, VARIABLES)
         self.assertEqual(sorted(set(re.findall(r'\$\((\w+)\)', sql))), sorted(VARIABLES))
@@ -973,11 +982,11 @@ class UsersFileTests(unittest.TestCase):
         self.assertNotEqual(position, -1, f'not in the file: {text}')
         return position
 
-    def test_it_is_one_batch_and_sqlcmd_only_fills_in_six_values(self):
+    def test_it_is_one_batch_and_sqlcmd_only_fills_in_five_values(self):
         lines = [line.strip() for line in self.code.split('\n')]
         self.assertEqual([line for line in lines if line.upper() == 'GO' or line.startswith((':', '!!'))], [])
         self.assertEqual(re.findall(r'\$\((\w+)\)', self.code),
-                         ['AppClientId', 'AppObjectId', 'MigratorClientId', 'MigratorObjectId', 'IdKind', 'CreateForm'])
+                         ['AppClientId', 'AppObjectId', 'MigratorClientId', 'MigratorObjectId', 'CreateForm'])
         # Each lands in a typed variable, and the text sqlcmd put in is used nowhere else.
         for line in self.code.split('\n'):
             if '$(' in line:
@@ -1029,10 +1038,14 @@ class UsersFileTests(unittest.TestCase):
             "                AND NOT (type = 'E' AND ((name = N'azurebank_app' AND sid = @AppSid)\n"
             "                                      OR (name = N'azurebank_migrator' AND sid = @MigratorSid))));",
             self.code)
-        # The stored ID is built from a typed value, in the byte order the server stores.
-        for user, prefix in (('App', 'App'), ('Migrator', 'Migrator')):
-            self.assertIn(f"DECLARE @{user}Sid varbinary(16) = CONVERT(varbinary(16), "
-                          f"IIF(@IdKind = N'ObjectId', @{prefix}ObjectId, @{prefix}ClientId));", self.code)
+        # The stored ID is the client ID, built from a typed value, in the byte order the server
+        # stores. The object ID never becomes a stored ID: it only names the identity in the second form.
+        for user in ('App', 'Migrator'):
+            self.assertIn(f'DECLARE @{user}Sid varbinary(16) = CONVERT(varbinary(16), @{user}ClientId);', self.code)
+            self.assertEqual(len(re.findall(rf'@{user}ObjectId\b', self.code)), 3,
+                             'declared, compared with the other identity\'s, and named in the second form')
+        self.assertEqual(re.findall(r'CONVERT\(varbinary\(16\), ([^)]+)\)', self.code),
+                         ['@AppClientId', '@MigratorClientId'])
 
     def test_every_role_membership_is_compared_db_owner_included(self):
         self.assertIn(
@@ -1090,7 +1103,7 @@ class UsersFileTests(unittest.TestCase):
         found, absent = '@found IS NOT NULL', 'NOT EXISTS (SELECT 1 FROM sys.database_role_members'
         self.assertEqual(re.findall(r'^IF (.+)$', self.code, re.M), [
             "DB_NAME() <> N'AzureBank'",
-            "@IdKind NOT IN (N'ClientId', N'ObjectId') OR @CreateForm NOT IN (N'Sid', N'ExternalProvider')",
+            "@CreateForm NOT IN (N'Sid', N'ExternalProvider')",
             '@AppClientId = @MigratorClientId OR @AppObjectId = @MigratorObjectId',
             found,
             'EXISTS (SELECT 1 FROM sys.database_principals', 'EXISTS (SELECT 1 FROM sys.database_principals',
@@ -1100,7 +1113,7 @@ class UsersFileTests(unittest.TestCase):
             '(SELECT COUNT(*) FROM sys.database_role_members WHERE member_principal_id > 4) <> 5',
             found, found,
             "@bad <> N''"])
-        self.assertIn("   OR (@CreateForm = N'ExternalProvider' AND @IdKind <> N'ClientId')\n    THROW 50002,", self.code)
+        self.assertIn("IF @CreateForm NOT IN (N'Sid', N'ExternalProvider')\n    THROW 50002,", self.code)
 
     def test_each_list_that_finds_something_says_so_in_the_refusal_and_prints_the_names(self):
         for word, heading in (('code', 'Code found'), ('unknown user', 'Unknown user'),

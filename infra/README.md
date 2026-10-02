@@ -79,8 +79,9 @@ that API version: one line of the template silences its warning (BCP081) for tha
 and a test reads the compiled properties instead.
 
 **Inside the database**, created by `sql-principals.ps1`, not by the template: two users, each bound
-to one identity and with no password. `azurebank_app` reads and writes rows (`db_datareader`,
-`db_datawriter`); `azurebank_migrator` does the same and may change the schema (`db_ddladmin`).
+to one identity, by its client ID, and with no password. `azurebank_app` reads and writes rows
+(`db_datareader`, `db_datawriter`); `azurebank_migrator` does the same and may change the schema
+(`db_ddladmin`).
 
 **With `deployApp=true`: nine more**
 
@@ -436,8 +437,10 @@ All the SQL is in `sql-principals.sql`: one transaction that
 1. refuses to run in a database that holds a trigger or any other module (the app's migrations
    create none: measured, 16 migrations, 0 triggers, 0 modules);
 2. creates each user with `CREATE USER ... WITH SID = <the identity's client ID>, TYPE = E`, the
-   one form that asks the directory nothing, and adds the five role memberships. A user whose
-   identity was deleted and made again is replaced;
+   one form that asks the directory nothing, and adds the five role memberships. The ID is the
+   client ID and no other: it is what Azure SQL itself stores for an identity it looks up, and a
+   user made from it signed in ([Measured on Azure](#measured-on-azure)). A user whose identity
+   was deleted and made again is replaced;
 3. before it commits, compares every user, role, role membership, permission and schema owner with
    what it expects, prints the name of anything else, and keeps nothing unless the lists are clean.
 
@@ -483,19 +486,9 @@ itself, which `dotnet run` builds and starts. What it has to do:
 | 2 | `azurebank-app` only | the migrator's client ID | exit 3, no token: the isolation the design rests on |
 | 3 | `azurebank-migrate` only | the migrator's client ID | exit 0: the three roles |
 
-Then the replace branch of the users file is seen working, and the probe's refusal is seen firing.
-Call the kind of ID that passed start 1 K. Here K is the client ID, the default; if start 1 needed
-the other kind, the two switches below change places:
-
-```powershell
-./infra/sql-principals.ps1 -IdKind ObjectId  # the other kind: both users are replaced
-# start the probe as the app: it must now end with exit 4
-./infra/sql-principals.ps1 -IdKind ClientId  # K again: replaced back
-# start the probe as the app: exit 0
-```
-
 The job is one request, sent again whenever the identity it carries or the one it asks for
-changes. Nothing in it is a secret, and none of it has been sent yet:
+changes. Nothing in it is a secret. In the trial a request of this shape, for a job of its own,
+was accepted on this API version; this one has not been sent:
 
 ```powershell
 # Creates the probe job or replaces it: the one identity it carries, and the identity its program
@@ -555,8 +548,6 @@ Set-Probe azurebank-migrate azurebank-migrate $program;  Start-Probe   # start 3
 az containerapp job delete --name azurebank-probe --resource-group $group --yes
 az containerapp job list --resource-group $group --query '[].name' --output tsv   # nothing
 ```
-
-"Start the probe as the app", in the round trip above, is the first of those three lines.
 
 `Show-Executions` reads each execution's status, its length and each container's exit code from
 Azure itself, with the API version `deploy.py` uses for the migration's verdict. Nobody has seen
@@ -824,57 +815,21 @@ az logout
 ## If Azure says no
 
 Each row is decided now, so that nothing is decided on the day. "Stop" means: change nothing more
-and bring the refusal's text to the owner.
+and bring the refusal's text to the owner. What Azure accepted when the same requests were sent by
+hand is under [Measured on Azure](#measured-on-azure): a refusal of something that was accepted
+there is a difference to understand, not a step to work around.
 
 **The foundation and its second run (steps 2 and 3)**
 
 | If | Then |
 | --- | --- |
-| The deployment is refused on the **policy definition** | Run it again with the policy off (`Invoke-Template 'foundation' @('denyPolicy=false')`), pass the same override on every later run, and write down that the shape then rests on `deploy.py`'s own check alone |
-| It is refused on the **custom role**, or the offer refuses a **SQL server** at all | Stop: there is no fallback that keeps the deployment identity away from the secrets |
+| The environment is refused with `ExpressEnvironmentFeatureNotSupported`, or its mode does not read back as `WorkloadProfiles` | Stop. The template names the mode because a request that names none was refused that way; if it is refused all the same, that line was lost or is not honoured |
+| The deployment is refused on the **policy definition** | Run it again with the policy off (`Invoke-Template 'foundation' @('denyPolicy=false')`), pass the same override on every later run, and write down that the shape then rests on `deploy.py`'s own check alone. The trial's definition was accepted, but it was an earlier one: four of this rule's conditions have never been sent |
+| It is refused on the **custom role** or on the **SQL server**; or the **second run** is refused, or its what-if shows the administrator changed or removed | Stop. There is one shape of the server in this folder and no other is written down: sent by hand it was accepted, twice. And there is no fallback that keeps the deployment identity away from the secrets |
 | It is refused on the **workspace**, the destination, the diagnostic setting or the cap | `./infra/secrets.ps1 -Action New -LogsOff`, run again, and say so: nothing is kept then. If a workspace or a setting was created on the way, [Switching the logs off](#switching-the-logs-off) |
-| The server is refused **because it has no administrator login** | The second shape below. Nothing exists yet to delete |
-| The **second run** is refused, or its what-if shows the administrator changed or removed | The one exit: remove the lock, delete the server (the database is empty and goes with it), deploy the second shape, and run that twice, the second time with an empty password |
-| The second shape is refused on its Entra-only switch | The server is then the third shape. Nothing is deleted, and the pull request says so. The two identities sign in under all three shapes |
 | A read in step 4 differs | A defect in the template: fix it before going on |
 
-The template in this folder holds the first shape only. The other two are edits of `main.bicep`:
-
-1. **First shape (this folder):** the `administrators` block with `azureADOnlyAuthentication: true`
-   and no `administratorLogin`.
-2. **Second shape:** `administratorLogin: 'azurebank_sql_admin'` with a password passed only by the
-   run that creates the server and empty afterwards, the administrator as a child resource
-   (`administrators/ActiveDirectory`), and Entra-only as a child resource
-   (`azureADOnlyAuthentications/Default`).
-3. **Third shape:** a server with a SQL administrator whose random password is new at every run and
-   kept nowhere, the Microsoft Entra administrator as a child resource, and no Entra-only.
-
-**A shape is only ever changed by deleting the still-empty server, and only in the first session.**
-`az sql server ad-only-auth disable` is never run. Once the first migration has run, any change of
-shape is "stop".
-
-The second and the third shape take one more parameter, `sqlAdminPassword`, declared `@secure()`
-in the edited template. `secrets.ps1` does not write it: the template in this folder has no such
-parameter, and a parameter the template does not have fails the deployment. So the value is added
-to the session's file, in the protected folder and never on a command line, by these lines
-between `secrets.ps1 -Action New` and `Invoke-Template`, inside the same `try`:
-
-```powershell
-$file = "$folder\parameters.json"
-$letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-$value = -join (1..48 | ForEach-Object { $letters[[System.Security.Cryptography.RandomNumberGenerator]::GetInt32($letters.Length)] })
-$document = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json -AsHashtable
-$document.parameters['sqlAdminPassword'] = @{ value = $value }
-$document | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $file
-Remove-Variable value, document
-```
-
-It is made there, printed nowhere, and goes with the file in the `finally`. With the second shape
-only the run that creates the server adds it: every later run leaves these lines out, and the
-template then sends no password. With the third shape every run adds a new one, so if that shape
-is the one that stays, the lines move into `secrets.ps1`, with a test. Three tests in
-`test_scripts.py` describe the first shape and change with the template: the server's properties,
-"no database credential is anywhere", and the seven secure parameters.
+`az sql server ad-only-auth disable` is never run, whatever is refused.
 
 **Two switches are not remembered.** The parameter file keeps what the environment does with its
 logs, read from Azure. It does not keep `denyPolicy=false` or `logVolumeAlert=false`: a policy or
@@ -887,35 +842,32 @@ for what it refused. The what-if shows it first: a policy assignment, or a fourt
 
 | If | Then |
 | --- | --- |
-| The tool's `-?` does not name `ActiveDirectoryAzCli`, or the sign-in with it fails | `./infra/sql-principals.ps1 -AuthenticationMethod ActiveDirectoryDefault` |
+| The tool's `-?` does not name `ActiveDirectoryAzCli`, or the sign-in with it fails | `./infra/sql-principals.ps1 -AuthenticationMethod ActiveDirectoryDefault`. In the trial go-sqlcmd 1.10.0 signed in with `ActiveDirectoryAzCli` |
 | That fails too | The older ODBC `sqlcmd`, which signs in through a window: `-SqlcmdPath '<its path>' -OdbcSignInName '<the account's sign-in name>'`. It runs with `-X1`, so that it starts no operating-system command |
 | The tool's signature is not a valid Microsoft one | Stop: this program is handed the administrator's sign-in |
 | The address cannot be read from the server's refusal | The script stops and prints the two commands to allow the address by hand under another name and to delete that rule afterwards |
 | `Msg 50003` or `Msg 50004` on a database nobody has touched | Azure's baseline differs from the local engine's: read the names the file printed, correct the file's expected lists, run again. A defect, not a choice |
-| The server refuses `WITH SID ..., TYPE = E` | `./infra/sql-principals.ps1 -CreateForm ExternalProvider`: `CREATE USER ... FROM EXTERNAL PROVIDER WITH OBJECT_ID`, which looks the identity up by its object ID, never by a name. The users keep their two names and the stored ID is still compared |
-| That form is refused as well (error 33134, or a directory role is asked for) | The password design on the third shape: the lock and the still-empty server are deleted, and the pull request says which refusal forced it. That design is not in this folder any more |
+| The server refuses `WITH SID ..., TYPE = E` | `./infra/sql-principals.ps1 -CreateForm ExternalProvider`: `CREATE USER ... FROM EXTERNAL PROVIDER WITH OBJECT_ID`, which looks the identity up by its object ID, never by a name. The users keep their two names and the stored ID is still compared. In the trial the first form was accepted, and so was a look-up by the identity's name; this second form itself was not sent |
+| That form is refused as well | Stop |
 | The second run changes something | A defect in the file: fix it before going on |
 
 **The sign-in (steps 7 and 8)**
 
 | If | Then |
 | --- | --- |
-| Start 1 ends with exit 4 (the login is refused) | `./infra/sql-principals.ps1 -IdKind ObjectId` and the probe again. The kind that passes becomes the script's default, and the pull request says which |
-| Both kinds are refused | The next row of the users table: `-CreateForm ExternalProvider` |
+| Start 1 ends with exit 4 (the login is refused) | Stop. In the trial a user made from the client ID signed in, so here the user and the identity do not match: read the two lines the users script printed, run it once more, start the probe job again, and bring a second refusal to the owner |
 | Start 2 gets a token | Stop: the isolation between the two identities does not hold |
-| The open took more than 10,000 ms | Nothing changes by itself. The number is recorded and the app's connect timeout stays 10 s: the first sign-in after a cold start may then answer one 503 with `Retry-After: 10`, and the smoke test tries four times. A larger value is the owner's decision, through `Database:ConnectTimeoutSeconds`, with ADR-0058's table worked again: that timeout also bounds each COMMIT |
+| The open took more than 10,000 ms | Nothing changes by itself. The number is recorded and the app's connect timeout stays 10 s: the first sign-in after a cold start may then answer one 503 with `Retry-After: 10`, and the smoke test tries four times. A larger value is the owner's decision, through `Database:ConnectTimeoutSeconds`, with ADR-0058's table worked again: that timeout also bounds each COMMIT. In the trial it took 3,810 ms, once |
 | Exit 3 on an identity that is attached, three times | Stop: that is not a timeout |
-| The probe cannot be built or started | Skip it. Step 16 is then the first proof, and the pull request says the sign-in was not seen before the merge |
-| With the other kind of ID the probe still passes | Both IDs open the door: record it and keep K |
-| With K again the probe fails | A defect in the file's replace branch: fix it before going on |
+| The probe job cannot be built or started | Skip it. Step 16 is then the first sign-in of these two users, and the pull request says so |
 | The made-up SQL sign-in is refused without the Entra-only reason | "Not proven". `az sql server ad-only-auth get` then stands alone, and the pull request says the refusal was not provoked. A second try with a real SQL user made for the purpose and dropped at once is the owner's decision; no script here does it |
-| The made-up SQL sign-in is let in | Entra-only is not on: the exit of the second run, above |
+| The made-up SQL sign-in is let in | Stop: Entra-only is not on |
 
 **The logs (steps 10 and after)**
 
 | If | Then |
 | --- | --- |
-| No line of the probe is in the workspace once it is due | Set `disableLocalAuth: false` in the template, deploy, run the probe once more, read again when due. Still none: [Switching the logs off](#switching-the-logs-off) |
+| No line of the probe job is in the workspace once it is due | Set `disableLocalAuth: false` in the template, deploy, run the probe job once more, read again when due. Still none: [Switching the logs off](#switching-the-logs-off). In the trial the lines arrived with key access off |
 | The lines of a migration that lasts seconds never arrive | The logs stay on, because the app's lines are the other half: a short run may then leave a verdict and no text |
 | Azure reports no exit code for an execution | The verdict line is a status and two times. "Failed" is still a verdict |
 
@@ -923,7 +875,7 @@ for what it refused. The what-if shows it first: a policy assignment, or a fourt
 
 | If | Then |
 | --- | --- |
-| The alert on the workspace is refused | `Invoke-Template 'app' @('logVolumeAlert=false')`, the same override on every later run, and say so. It is one of four rules |
+| The alert on the workspace is refused | `Invoke-Template 'app' @('logVolumeAlert=false')`, the same override on every later run, and say so. It is one of four rules, and no request for it has ever been sent |
 | The policy accepts two replicas | Put 1 back at once and stop: the policy does not work |
 | A deployment as the identity is refused naming `userAssignedIdentities/assign/action` | **Stop.** No role is created: a right on the two database identities would let the deployment identity attach the schema-changing one to the app that faces the internet. The deployment from the owner's terminal keeps working meanwhile |
 | The raw log of a run holds the server's name, the app's address, one of the five IDs or an address | Stop: the mask or the print is a defect |
@@ -975,7 +927,8 @@ message is not printed at all. The same line is on the run's summary page. Aroun
 execution's name and its status are printed only in the shape expected, and in whatever else the
 run prints of Azure's words (a refusal, a revision's error, a replica's state) an ID is replaced
 by `<id>` and anything shaped like an IPv4 address by `<address>`. The name of a host is not
-looked for.
+looked for. The text could not be printed in time anyway: in the trial a line could be read six to
+eight minutes after it was written, and the verdict as soon as the run had ended.
 
 **If step 5 or step 7 fails, the app is put back** on the template it had at step 2, under a new
 revision, and the run still fails, saying "put back to `<tag>`; the schema stays where the
@@ -1005,14 +958,17 @@ inside GitHub Actions. The other way in is the portal: the workspace `azurebank-
 - **The cap comes first.** Each command starts by saying what the daily cap is doing: its value,
   `dataIngestionStatus`, and the next reset. `OverQuota` means the workspace has taken no line
   since the cap was reached and takes none until the reset, at an hour Azure picks.
-- **An empty answer is not proof that nothing was printed.** A line takes minutes to arrive, a new
-  workspace up to 90 minutes, a run that lasts seconds may leave none, and a capped workspace
-  takes none.
+- **An empty answer is not proof that nothing was printed.** A line takes minutes to arrive (in
+  the trial six to eight, 486 s at the most), Microsoft's page allows a new diagnostic setting up
+  to 90 minutes, and a capped workspace takes none. The trial's three runs that lasted seconds
+  each kept their line: three runs, not a promise.
 - **Telling two failures of the migration apart by the run's length**, which is on the verdict
   line: a login refused because the database has no user for the identity ends after about four
-  seconds; an identity that gets no token is waited for the whole 60 s. Neither has been seen on
-  Azure: the first is what a wrong password does locally, the second was read in the driver's
-  code and run against an exception built in that shape.
+  seconds; an identity that gets no token is waited for the whole 60 s. Neither has been seen
+  from `migrate` on Azure. The trial's own program got the two answers `migrate` would get: with
+  no user for the identity, error 18456, class 14, after 41 to 52 ms; with no token, an error
+  numbered 0, class 20, around `Azure.Identity.AuthenticationFailedException`, after 40 to 71 ms.
+  The token's failure is quick each time: it is `migrate`'s own wait that makes that run long.
 - **What the text can hold.** The SQL server's name and the database's. A caller's address: the
   rate limiter's warning names it. A value from a database error: on a local stack, registrations
   racing for one address printed that address four times in two lines of the API's console, whole,
@@ -1097,13 +1053,13 @@ stopped. The deployment identity cannot stop or start the app.
 | "Execution ... is Running: a migration may still be running" | An execution blocks every later deployment until it ends, and the deployment identity cannot stop it | The owner: `az containerapp job stop --name azurebank-migrate --resource-group azurebank-demo --job-execution-name <name>` |
 | "The migration did not succeed", after its verdict | The job runs the new tools image; some migrations may be applied; the app still runs the old images. Exit code 1: failed after it reached for the server, and running it again is safe. Exit code 2: refused before any connection, and the configuration must change | `python infra/deploy.py --job-log` from a terminal, when the lines are due. If there is no text: [A migration nobody can read](#a-migration-nobody-can-read) |
 | "the new revision never became ready", then "put back to ..." | The run printed the revision's state and each container's state and restart count, then put the app back | Read those lines, then `python infra/deploy.py --app-log 30`; fix; deploy again |
-| "Smoke test failed", then "put back to ..." | The page, the readiness answer or the sign-in answer was wrong on the new revision. A sign-in that answers 500 or 503 where 401 was expected can be the database sign-in: no user for the identity, or no token | The same |
+| "Smoke test failed", then "put back to ..." | The page, the readiness answer or the sign-in answer was wrong on the new revision. A sign-in that answers 500 or 503 where 401 was expected can be the database sign-in. With no user for the identity the driver gets error 18456, class 14, which the API answers with 500; with no token it gets an error of class 20, which the API answers with 503 (the two errors: [Measured on Azure](#measured-on-azure); the two answers: read in the API's handler, not seen) | The same |
 | "Smoke test unproven" | The last of four sign-in tries was a 429 or got no answer (the wait is 65 s after a 429, 20 s otherwise). An earlier try may have got another answer: only the last one decides. Sign-ins are limited to 10 a minute, and behind the ingress every visitor may share that limit. The new revision is serving and was not put back | Deploy again later, or check a sign-in by hand |
 | "Azure refused or failed a request", "The Azure CLI gave no answer in 180 s" | One request to Azure failed after the run had started. The script does not ask twice, and it puts nothing back: no check had failed. The app may already be on the new images, unchecked | Look at the app's latest and latest ready revision; deploy again, or go back by hand, below |
 | "was still active after 180 s" | The old revision did not go inactive, so the smoke test was not run and nothing was put back | Look at the app's revisions in the portal; deploy again |
 | "The put-back ... did not succeed. The app may be serving a broken revision" | Both the deployment and the way back failed | Go back by hand, below |
 | "There is no log workspace azurebank-logs in this resource group" | The logs are switched off: nothing is kept | The verdict line is all there is |
-| The first request after the app was idle answers 503 with `Retry-After: 10` | The replica started from zero and its first sign-in to the database, token included, did not fit in the 10 s connect timeout. Expected to be possible; not measured | Ask again. If it happens every time, it is the row of the probe's 10,000 ms in [If Azure says no](#if-azure-says-no) |
+| The first request after the app was idle answers 503 with `Retry-After: 10` | The replica started from zero and its first sign-in to the database, token included, did not fit in the 10 s connect timeout. Possible; in the trial the first open of a process on a cold replica took 3,810 ms, measured once | Ask again. If it happens every time, it is the row of the probe's 10,000 ms in [If Azure says no](#if-azure-says-no) |
 
 **Going back by hand.** As the owner, from a terminal, to any commit whose images are published:
 
@@ -1295,8 +1251,10 @@ Images are deployed by tag. `build-push` never overwrites a tag, but someone wit
 the packages can; deploying by digest would close that and is not done here.
 
 **The app's identity, `azurebank-app`.** In the database it reads and writes every row and cannot
-change the schema. That includes the rows of the migrations history table, by which it could steer
-the next migration: a `DENY` on that table is not set. It holds no role on any Azure resource.
+change the schema (in the trial, a user with these two roles was refused `CREATE TABLE` with error
+262 and `ALTER TABLE` with 1088). That includes the rows of the migrations history table, by which
+it could steer the next migration: a `DENY` on that table is not set. It holds no role on any
+Azure resource.
 **It is available to both containers of the app.** Code running in the BFF, which faces the
 internet, can therefore ask for a database token. Between that code and the database stands only
 what the BFF is not handed: the server's name and the identity's client ID. Both are identifiers,
@@ -1307,11 +1265,14 @@ passwords only the `api` container held the credential. The real fix is the API 
 own, and it is not done here.
 
 **The migration's identity, `azurebank-migrate`.** The same, and it may change the schema. It
-cannot create a user or make itself an owner directly (measured on a local engine: both refused).
-It can create a trigger, which is why the users file is guarded.
+cannot create a user or make itself an owner directly (measured on a local engine: both refused;
+on Azure SQL, in the trial: `CREATE USER` refused with error 15247, and thirteen kinds of
+statement that migrations use allowed). It can create a trigger, which is why the users file is
+guarded.
 
 **Who can act as either:** code running in any container of the app, in the job, in the probe job
-of the first session while it exists, or in any resource the owner attaches the identity to.
+of the first session while it exists, or in any resource the owner attaches the identity to. In
+the trial a job that carried one identity got no token for the other, tried both ways.
 
 **The owner's account.** It is the only administrator of the database and the only Owner of the
 subscription, and a university issues it. If that account is disabled, the app keeps running and
@@ -1325,14 +1286,18 @@ machine, function or container app in any tenant, and GitHub's hosted runners. T
 outbound address cannot be pinned in a Consumption-only environment, so the rule cannot be
 narrower.
 
-What holds the line is the sign-in. The server refuses every password, so there is none to guess
-or to steal: what opens the database is a token for one of the two identities, or the
+What holds the line is the sign-in. The server refuses every password (in the trial a
+SQL-password sign-in was refused, with Entra-only authentication named as the reason), so there is
+none to guess or to steal: what opens the database is a token for one of the two identities, or the
 administrator's own sign-in. Sign-in attempts are still recorded nowhere: there is no SQL auditing,
 and the workspace holds what the containers print, not what the server sees.
 
 The temporary rule `owner-while-creating-users` exists only while `sql-principals.ps1` runs. If the
 terminal is closed or the machine sleeps, it stays until the next run of the script, which deletes
-it first, or until someone reads the rule list: every session starts by reading it (step 1).
+it first, or until someone reads the rule list: every session starts by reading it (step 1). A
+rule neither starts nor ends at once. In the trial a new rule let this machine in after 19 s
+(twice), and about 20 s after a rule had been deleted and read back as gone, the server still
+accepted a new connection from the same address.
 
 ## What only the owner does
 
@@ -1343,8 +1308,8 @@ it first, or until someone reads the rule list: every session starts by reading 
 5. The approval of each `deploy` run, if the reviewer is set.
 6. Reading the mailbox: the test e-mail of step 15, and every alert afterwards.
 7. Stopping the app when an alert says so. Nothing does it for him.
-8. The word for each step that writes, and for each deletion that a rule above allows: the lock
-   and the still-empty server in the first session, the workspace and its setting.
+8. The word for each step that writes, and for each deletion that a rule above allows: the
+   workspace and its setting.
 
 ## Before renaming or transferring the repository
 
@@ -1374,7 +1339,12 @@ try {
 
 - Images move through the `deploy` workflow only: once the app exists, `secrets.ps1` refuses
   another `-ImageTag`.
-- The server's shape is not changed by a later run: see [If Azure says no](#if-azure-says-no).
+- The server is not changed by a later run: step 3 is where that is seen for the template. The
+  `administrators` block is never edited in place.
+- The environment's mode is read again (`Assert-EnvironmentMode`) at the start of a session that
+  changes the infrastructure. Microsoft's FAQ says that an environment whose features Express
+  supports may be moved to it after a notice; this one has jobs, a second container and Azure
+  Monitor logs, which Express does not have (read on 2026-10-03).
 - If the policy or the alert on the workspace was left out because Azure refused it, the override
   that left it out is passed again: `Invoke-Template 'change' @('denyPolicy=false')`. The file
   does not remember it ([If Azure says no](#if-azure-says-no)).
@@ -1388,10 +1358,12 @@ try {
 In this order. The role definition and the policy definition are not inside the resource group
 and are not deleted with it. The role can be assigned in this group only, so it is removed first,
 through the group, while the group still exists: its two assignments, then the definition. Whether
-it could still be found once the group is gone is not measured. The workspace is deleted on its
+it could still be found once the group is gone is not measured: the trial deleted its role first,
+as here, and then found it neither by its ID nor in the lists. The workspace is deleted on its
 own, with `--force`, if what it holds must be gone at once: that a workspace deleted with its
-group is kept 14 days like one deleted alone is a reading, not something a page says. None of
-these commands has been run yet.
+group is kept 14 days like one deleted alone is a reading, not something a page says. The trial
+made its own deletions through `az rest`, in this order (the database, the workspace for good,
+then the group, which took 27 minutes to go). None of the commands below has been run yet.
 
 ```powershell
 $group = 'azurebank-demo'
@@ -1432,8 +1404,10 @@ users go with the group. On this machine, if it is no longer wanted:
   rows. The app's registration endpoint is not closed by anything in this folder, and the app is
   reachable by anyone who has its address.
 - The text of the migration is not shown by the workflow, on purpose.
-- The password design this folder first had: it is the last step down in
-  [If Azure says no](#if-azure-says-no) and would have to be brought back from the history.
+- The password design this folder first had, the other two shapes of the SQL server and the
+  switch that bound a user to its identity's object ID. They were written as steps down in case
+  Azure refused the first shape or stored the other ID. In the trial it did neither, and none is
+  a step of this runbook any more. They are in the history.
 
 ## Measured on Azure
 

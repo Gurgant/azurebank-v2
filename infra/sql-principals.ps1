@@ -19,7 +19,9 @@
   The identities
     * Their IDs are read with az identity show. Each is parsed as a GUID, and what goes to sqlcmd
       is the parsed value printed again, never the text that was read.
-    * The names of the six sqlcmd variables are removed from this process's environment first:
+    * Each user carries its identity's client ID. That is the ID Azure SQL itself stores when it
+      looks an identity up in the directory, and a user made from it signs in (measured, README.md).
+    * The names of the five sqlcmd variables are removed from this process's environment first:
       sqlcmd takes a variable from there too.
   The firewall
     * The server lets in Azure services only, so this machine's address is allowed by a rule named
@@ -35,7 +37,6 @@
 
   Switches for what Azure may answer on the first deployment (README.md):
     -AuthenticationMethod   ActiveDirectoryDefault, if the tool cannot use the Azure CLI session.
-    -IdKind ObjectId        binds each user to its identity's object ID instead of its client ID.
     -CreateForm ExternalProvider
                             creates each user FROM EXTERNAL PROVIDER WITH OBJECT_ID, if the server
                             refuses the form that asks the directory nothing.
@@ -52,7 +53,6 @@ param(
     [string]$ResourceGroup = 'azurebank-demo',
     [string]$SqlcmdPath = 'C:\Program Files\sqlcmd\sqlcmd.exe',
     [ValidateSet('ActiveDirectoryAzCli', 'ActiveDirectoryDefault')][string]$AuthenticationMethod = 'ActiveDirectoryAzCli',
-    [ValidateSet('ClientId', 'ObjectId')][string]$IdKind = 'ClientId',
     [ValidateSet('Sid', 'ExternalProvider')][string]$CreateForm = 'Sid',
     [switch]$ProveSqlSignInRefused,
     [string]$OdbcSignInName = '',
@@ -69,7 +69,7 @@ $Users = [ordered]@{
     azurebank_app      = 'db_datareader, db_datawriter'
     azurebank_migrator = 'db_datareader, db_datawriter, db_ddladmin'
 }
-$Variables = 'AppClientId', 'AppObjectId', 'MigratorClientId', 'MigratorObjectId', 'IdKind', 'CreateForm'
+$Variables = 'AppClientId', 'AppObjectId', 'MigratorClientId', 'MigratorObjectId', 'CreateForm'
 $OnlyEntra = 'Azure Active Directory only authentication is enabled'
 # The server's refusal of an address it does not let in (its error 40615), known by its sentence:
 # sqlcmd prints an error at sign-in as text, without the number it prints for an error in a batch.
@@ -109,9 +109,6 @@ function ConvertTo-Id([string]$Text, [string]$What) {
     $parsed.ToString('D')
 }
 
-if ($CreateForm -eq 'ExternalProvider' -and $IdKind -ne 'ClientId') {
-    throw 'A user created FROM EXTERNAL PROVIDER carries the client ID: -CreateForm ExternalProvider goes with -IdKind ClientId only.'
-}
 if ($OdbcSignInName -and $OdbcSignInName -notmatch '^[^\s@]+@[^\s@]+$') { throw '-OdbcSignInName is the sign-in name of the account, as in name@domain.' }
 
 # sqlcmd reads these from the environment as well as from -v, and reads a user name, a password
@@ -201,7 +198,7 @@ try {
         if ($script:deleteFailed) { throw 'The rule left by an earlier run is still there. Nothing else was done.' }
     }
 
-    $ids = @{ IdKind = $IdKind; CreateForm = $CreateForm }
+    $ids = @{ CreateForm = $CreateForm }
     foreach ($identity in @('App', 'azurebank-app'), @('Migrator', 'azurebank-migrate')) {
         $read = Invoke-Az identity show --resource-group $ResourceGroup --name $identity[1]
         $ids["$($identity[0])ClientId"] = ConvertTo-Id ([string]$read['clientId']) "The client ID of $($identity[1])"

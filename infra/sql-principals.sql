@@ -24,7 +24,7 @@ SET QUOTED_IDENTIFIER ON;
 IF DB_NAME() <> N'AzureBank'
     THROW 50000, 'Connect to the AzureBank database, not to master.', 1;
 
--- sqlcmd puts the six values in as text before the server reads the file. They are identifiers,
+-- sqlcmd puts the five values in as text before the server reads the file. They are identifiers,
 -- not secrets. The uniqueidentifier type stops a typing mistake and nothing more: what keeps
 -- other text out is the runner, which parses each ID and passes on what it parsed. This file
 -- cannot do it: a value that carried a statement would run here, before the transaction below
@@ -33,22 +33,20 @@ DECLARE @AppClientId uniqueidentifier = '$(AppClientId)';
 DECLARE @AppObjectId uniqueidentifier = '$(AppObjectId)';
 DECLARE @MigratorClientId uniqueidentifier = '$(MigratorClientId)';
 DECLARE @MigratorObjectId uniqueidentifier = '$(MigratorObjectId)';
--- Which of an identity's two IDs its user carries: ClientId or ObjectId.
-DECLARE @IdKind nvarchar(20) = N'$(IdKind)';
 -- Sid: CREATE USER ... WITH SID, TYPE = E, which asks the directory nothing.
 -- ExternalProvider: CREATE USER ... FROM EXTERNAL PROVIDER WITH OBJECT_ID, which looks the
 -- identity up by its object ID, never by its name; the user it makes carries the client ID.
 DECLARE @CreateForm nvarchar(20) = N'$(CreateForm)';
 
-IF @IdKind NOT IN (N'ClientId', N'ObjectId') OR @CreateForm NOT IN (N'Sid', N'ExternalProvider')
-   OR (@CreateForm = N'ExternalProvider' AND @IdKind <> N'ClientId')
-    THROW 50002, 'IdKind is ClientId or ObjectId, CreateForm is Sid or ExternalProvider, and ExternalProvider goes with ClientId only.', 1;
+IF @CreateForm NOT IN (N'Sid', N'ExternalProvider')
+    THROW 50002, 'CreateForm is Sid or ExternalProvider.', 1;
 IF @AppClientId = @MigratorClientId OR @AppObjectId = @MigratorObjectId
     THROW 50001, 'The app and the migrate job must be two different identities.', 1;
 
--- The ID each user must carry, in the byte order the server stores.
-DECLARE @AppSid varbinary(16) = CONVERT(varbinary(16), IIF(@IdKind = N'ObjectId', @AppObjectId, @AppClientId));
-DECLARE @MigratorSid varbinary(16) = CONVERT(varbinary(16), IIF(@IdKind = N'ObjectId', @MigratorObjectId, @MigratorClientId));
+-- The ID each user must carry: its identity's client ID, in the byte order the server stores.
+-- The object ID is used for one thing only, to name the identity in the second form of CREATE USER.
+DECLARE @AppSid varbinary(16) = CONVERT(varbinary(16), @AppClientId);
+DECLARE @MigratorSid varbinary(16) = CONVERT(varbinary(16), @MigratorClientId);
 DECLARE @statement nvarchar(max);
 DECLARE @found nvarchar(max);
 DECLARE @bad nvarchar(2000) = N'';
