@@ -73,10 +73,14 @@ in an app and no jobs (Microsoft's page "Azure Container Apps express overview",
 read on 2026-10-03), and this design needs all three. That page's FAQ says a template that creates
 a new environment creates a standard one by default; that is not what this subscription did. So
 `main.bicep` says `environmentMode: 'WorkloadProfiles'`, on API version `2026-07-01`, which has the
-property. Sent that way the request was accepted, and the environment that came back held the logs
-destination, the Consumption profile and two jobs that ran. The Bicep CLI 0.47.16 has no types for
-that API version: one line of the template silences its warning (BCP081) for that one resource,
-and a test reads the compiled properties instead.
+property. Sent that way the request was accepted, but neither the request nor its answer is in
+the trial's record: it was sent by hand between two of the trial's recorded runs, and its answer
+was noted at the time. What the record holds is what came after: an environment in the region,
+where there had been none, read back with the logs destination and the Consumption profile, and
+two jobs that ran in it. No recorded read shows the property `environmentMode` coming back, which
+is why `Assert-EnvironmentMode` below does not rest on it alone. The Bicep CLI 0.47.16 has no
+types for that API version: one line of the template silences its warning (BCP081) for that one
+resource, and a test reads the compiled properties instead.
 
 **Inside the database**, created by `sql-principals.ps1`, not by the template: two users, each bound
 to one identity, by its client ID, and with no password. `azurebank_app` reads and writes rows
@@ -278,14 +282,19 @@ function Show-Executions([string]$Job) {
         }
 }
 
-# The environment's mode, read with the API version that has the property. Anything but
-# WorkloadProfiles throws: an Express environment takes neither a second container nor a job.
+# The environment's mode, read with the API version that has the property. WorkloadProfiles
+# passes and any other mode throws: an Express environment takes neither a second container nor a
+# job. No recorded read has shown the property coming back, so an answer without it passes only if
+# the logs go to azure-monitor, the destination Express refused in the trial.
 function Assert-EnvironmentMode {
     $scope = az group show --name $group --query id --output tsv
-    $mode = (az rest --method get --url "https://management.azure.com$scope/providers/Microsoft.App/managedEnvironments/azurebank-env?api-version=2026-07-01" |
-        ConvertFrom-Json).properties.environmentMode
-    if ($mode -ne 'WorkloadProfiles') { throw "The environment's mode reads '$mode', not WorkloadProfiles. Stop: deploy nothing into it." }
-    "The environment's mode: $mode"
+    $properties = (az rest --method get --url "https://management.azure.com$scope/providers/Microsoft.App/managedEnvironments/azurebank-env?api-version=2026-07-01" |
+        ConvertFrom-Json).properties
+    $mode = $properties.environmentMode
+    if ($mode -eq 'WorkloadProfiles') { return "The environment's mode: $mode" }
+    if ($mode) { throw "The environment's mode reads '$mode', not WorkloadProfiles. Stop: deploy nothing into it." }
+    if ($properties.appLogsConfiguration.destination -ne 'azure-monitor') { throw 'The answer names no mode, and the logs do not go to azure-monitor. Stop: deploy nothing into it.' }
+    'The answer names no mode; the logs go to azure-monitor, which an Express environment was refused.'
 }
 ```
 
@@ -353,9 +362,11 @@ Then, before anything else is done with the environment, its mode is read back:
 Assert-EnvironmentMode                       # WorkloadProfiles, or it throws
 ```
 
-**`Express`, or no mode at all, is a stop.** An Express environment takes neither the app's second
-container nor the migrate job. Nothing more is deployed into it, and what was read goes to the
-owner.
+**A mode other than `WorkloadProfiles` is a stop, and so is an answer with no mode whose logs do
+not go to `azure-monitor`.** An Express environment takes neither the app's second container nor
+the migrate job. Nothing more is deployed into it, and what was read goes to the owner. An answer
+with no mode and the logs on `azure-monitor` passes, and the function says so: Express refused
+that destination in the trial.
 
 #### 3. The same deployment, a second time (operator, **writes** nothing if Azure accepts it)
 
@@ -385,7 +396,7 @@ These are the expected values, not observed ones.
 | Claim | Read | Expected |
 | --- | --- | --- |
 | Consumption only | `az containerapp env show -n azurebank-env -g $group --query properties.workloadProfiles` | one entry, `Consumption` |
-| Not Express | `Assert-EnvironmentMode` | `WorkloadProfiles` |
+| Not Express | `Assert-EnvironmentMode` | `WorkloadProfiles`, or the line that the answer names no mode and the logs go to `azure-monitor` |
 | Logs on | `az containerapp env show -n azurebank-env -g $group --query properties.appLogsConfiguration`; `az monitor log-analytics workspace show -g $group -n azurebank-logs`; `az monitor diagnostic-settings list --resource <the environment's id>` | destination `azure-monitor`; one workspace, cap exactly 0.05, retention 30, `disableLocalAuth` true; one setting with two categories. With the logs off instead: destination `none`, no setting, no workspace. Anything in between is a defect |
 | The database | `az sql db show -g $group -s $server -n AzureBank` | `Basic`, capacity 5, 2147483648 bytes, `Local` |
 | The server | `az sql server firewall-rule list`; `az sql server ad-admin list`; `az sql server ad-only-auth get`; `az sql server show --query minimalTlsVersion` | one rule; one administrator; `true`; `1.2` |
@@ -852,7 +863,7 @@ there is a difference to understand, not a step to work around.
 
 | If | Then |
 | --- | --- |
-| The environment is refused with `ExpressEnvironmentFeatureNotSupported`, or its mode does not read back as `WorkloadProfiles` | Stop. The template names the mode because a request that names none was refused that way; if it is refused all the same, that line was lost or is not honoured |
+| The environment is refused with `ExpressEnvironmentFeatureNotSupported`, or `Assert-EnvironmentMode` throws: a mode other than `WorkloadProfiles`, or no mode with the logs not on `azure-monitor` | Stop. The template names the mode because a request that names none was refused that way; if it is refused all the same, that line was lost or is not honoured |
 | The deployment is refused on the **policy definition** | Run it again with the policy off (`Invoke-Template 'foundation' @('denyPolicy=false')`), pass the same override on every later run, and write down that the shape then rests on `deploy.py`'s own check alone. The trial's definition was accepted, but it was an earlier one: four of this rule's conditions have never been sent |
 | It is refused on the **custom role** or on the **SQL server**; or the **second run** is refused, or its what-if shows the administrator changed or removed | Stop. There is one shape of the server in this folder and no other is written down: sent by hand it was accepted, twice. And there is no fallback that keeps the deployment identity away from the secrets |
 | It is refused on the **workspace**, the destination, the diagnostic setting or the cap | `./infra/secrets.ps1 -Action New -LogsOff`, run again, and say so: nothing is kept then. If a workspace or a setting was created on the way, [Switching the logs off](#switching-the-logs-off) |
@@ -1513,8 +1524,12 @@ and a connect timeout of 10 s.
 
 - An environment whose request named no mode (API version `2025-01-01`, the Consumption profile,
   logs to Azure Monitor): refused, HTTP 400, `ExpressEnvironmentFeatureNotSupported`. With
-  `environmentMode: 'WorkloadProfiles'` on API version `2026-07-01`: accepted. The offer allows
-  one such environment in the region (0 of 1 before it, 1 of 1 with it).
+  `environmentMode: 'WorkloadProfiles'` on API version `2026-07-01`: accepted, sent by hand
+  between two recorded runs, so that answer is a note made at the time and not part of the
+  record. The record shows the environment afterwards, read back with the logs destination
+  `azure-monitor` and the Consumption profile, and two jobs that ran in it; it does not show the
+  mode read back. The offer allows one environment in the region (0 of 1 before it, 1 of 1 with
+  it).
 - A workspace on the pay-per-GB plan, kept 30 days, with a daily cap of 0.05 GB and key access
   off: accepted, and read back with that cap (API version `2025-02-01`; `main.bicep` uses
   `2023-09-01`). One diagnostic setting, console and system logs to that workspace: accepted.
