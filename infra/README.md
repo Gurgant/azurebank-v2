@@ -1450,12 +1450,12 @@ line says so. One run each, unless a line says otherwise.
 
 - A server that takes Microsoft Entra sign-ins only, created with the `administrators` block and
   no SQL administrator login (API version `2023-08-01`, the properties `main.bicep` sends):
-  accepted, ready after 57 s, and read back as Entra-only. The service gave it an administrator
-  name of its own making, for which nobody has a password.
+  accepted, the operation done after 57 s, and read back as Entra-only. The service gave it an
+  administrator name of its own making, for which nobody has a password.
 - The same request a second time: accepted, done at once, and the server read back exactly as
   before. The administrator and the Entra-only switch, sent once more as child resources: both
   accepted.
-- The database, Basic, 5 DTU, 2 GB, local backups: online after 56 s.
+- The database, Basic, 5 DTU, 2 GB, local backups: the operation done after 56 s, and online.
 - go-sqlcmd signed in as the owner through the `az login` session (`ActiveDirectoryAzCli`): it was
   `dbo`, a member of `db_owner`, and the server said it takes Entra sign-ins only. The first try
   was refused for this machine's address, and a firewall rule for that address let it in after

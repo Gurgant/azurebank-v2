@@ -57,7 +57,7 @@ on Azure" has each line in full. One run per row unless it says otherwise.
 
 | What was sent | What happened |
 |---|---|
-| A SQL server with the `administrators` block, Entra-only, and no SQL administrator login, on API `2023-08-01` | Accepted, ready after 57 s, read back as Entra-only. **The same request a second time: accepted, and the server read back exactly as before.** The administrator and the Entra-only switch sent again as child resources: accepted |
+| A SQL server with the `administrators` block, Entra-only, and no SQL administrator login, on API `2023-08-01` | Accepted, the operation done after 57 s, read back as Entra-only. **The same request a second time: accepted, and the server read back exactly as before.** The administrator and the Entra-only switch sent again as child resources: accepted |
 | go-sqlcmd as the owner, through the `az login` session | Signed in, as `dbo`. The first try was refused for the caller's address, and a firewall rule for it let the next one in after 19 s |
 | A SQL-password sign-in for a login that does not exist | Refused, with "Reason: Azure Active Directory only authentication is enabled." |
 | `CREATE USER [<the identity's name>] FROM EXTERNAL PROVIDER`, by the owner, who holds no directory role | Accepted. **The ID the server stored is the identity's client ID** |
