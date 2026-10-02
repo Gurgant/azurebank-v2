@@ -106,8 +106,9 @@ resource environmentLogs 'Microsoft.Insights/diagnosticSettings@2021-05-01-previ
 
 // Microsoft Entra sign-ins only. The server is created without a SQL administrator, so its
 // sign-in, which every Azure customer can reach (the firewall rule below), has no password to
-// guess. The administrators block is what creates a server that way; this API version reads it
-// at creation only.
+// guess. The administrators block is what creates a server that way. The reference says this API
+// version reads it at creation only; sent by hand a second time, the same request was accepted
+// and the server read back as before (README.md, "Measured on Azure").
 resource sql 'Microsoft.Sql/servers@2023-08-01' = {
   name: 'azurebank-${uniqueString(resourceGroup().id)}'
   location: location
@@ -457,8 +458,9 @@ var alerts = [
   // the metric reports 0 while the app is scaled to zero, which nobody has seen: if it reports
   // nothing then, the average is 1 on any day of use and this rule fires every such day.
   { name: 'azurebank-replica-time', onLogs: false, metric: 'Replicas', aggregation: 'Average', threshold: json('0.093'), window: 'P1D', every: 'PT1H', text: 'The replica ran more than 2.2 hours in one day.' }
-  // 50,000 lines of about half a kilobyte are half of the workspace's daily cap, here in one hour.
-  // It warns of volume; nothing warns that the cap itself was reached.
+  // 50,000 lines in one hour. At the 438 bytes that a line of a job was billed (README.md,
+  // "Measured on Azure") that is 22 MB of the 50 MB daily cap; at the 768 computed for one of the
+  // app's warnings, 38 MB. It warns of volume; nothing warns that the cap itself was reached.
   { name: 'azurebank-log-volume', onLogs: true, metric: 'Ingestion Volume', aggregation: 'Count', threshold: 50000, window: 'PT1H', every: 'PT15M', text: 'More than 50,000 log lines in one hour.' }
 ]
 
@@ -501,7 +503,7 @@ output sqlServerFqdn string = sql.properties.fullyQualifiedDomainName
 output sqlServerName string = sql.name
 output deploymentClientId string = deployIdentity.properties.clientId
 output deploymentPrincipalId string = deployIdentity.properties.principalId
-// The client ID names an identity in a connection string and, by default, in its database user.
+// The client ID names an identity in a connection string and in its database user.
 // No script reads these: the users script asks `az identity show` for the IDs it needs.
 output appIdentityClientId string = appIdentity.properties.clientId
 output migrateIdentityClientId string = migrateIdentity.properties.clientId

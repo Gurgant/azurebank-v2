@@ -133,7 +133,8 @@ the end of this page are the template's; only Accepted has ever been used. *(202
 had two exceptions while PR-1 was being written, two parts of ADR-0057 decided before they were
 built: its §5.3 session stamp and the renewal-rate detector of its §6. Both were built the same
 day, each as its own commit of PR-1.)* *(2026-10-02: ADR-0061 is shipped as templates and scripts;
-nothing in it has run on Azure yet, and the record says so.)*
+none of them has run on Azure yet, and the record says so. 2026-10-03: it also says what a
+throwaway trial measured there by hand.)*
 
 <details>
 <summary>What changed in each decision after it was accepted — 46 records</summary>

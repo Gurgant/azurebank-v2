@@ -133,9 +133,12 @@ and then migrated an empty database):
 - **With a managed identity, "refused" and "no token" end differently.** A refused login means the
   database has no user for the identity: three Warnings, then `the login was refused three times`,
   seconds after the start. An identity that gets no token (it is not attached to the container,
-  or the string names another client ID) is not an answer from SQL Server: on an Azure SQL name it
-  is waited for, and the run ends when the wait is over. Neither has been produced on Azure. The
-  first is what a wrong password does locally; the second was read in SqlClient 6.1.1.
+  or the string names another client ID) is waited for, and the run ends when the wait is over:
+  SqlClient reports it as an error numbered 0 of class 20, which the wait takes for a server that
+  did not answer. `migrate` has produced neither on Azure. A throwaway program on SqlClient 6.1.1
+  got both answers there on 2026-10-02: 18456, class 14, for the missing user, and number 0,
+  class 20, around `Azure.Identity.AuthenticationFailedException`, for the missing token
+  ([infra/README.md](../../../infra/README.md), "Measured on Azure").
 - **On an Azure SQL name an answer the wait has no rule for is waited for too**, also one that
   waiting cannot change: the run then ends when the wait is over, with that answer in its last
   line. Off Azure such an answer goes to EF at once. What the wait has a rule for still ends the
