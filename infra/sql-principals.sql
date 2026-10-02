@@ -26,7 +26,9 @@ IF DB_NAME() <> N'AzureBank'
 
 -- sqlcmd puts the six values in as text before the server reads the file. They are identifiers,
 -- not secrets. The uniqueidentifier type stops a typing mistake and nothing more: what keeps
--- other text out is the runner, which parses each ID and passes on what it parsed.
+-- other text out is the runner, which parses each ID and passes on what it parsed. This file
+-- cannot do it: a value that carried a statement would run here, before the transaction below
+-- begins, and the lists before the commit would name what it left without undoing it.
 DECLARE @AppClientId uniqueidentifier = '$(AppClientId)';
 DECLARE @AppObjectId uniqueidentifier = '$(AppObjectId)';
 DECLARE @MigratorClientId uniqueidentifier = '$(MigratorClientId)';
