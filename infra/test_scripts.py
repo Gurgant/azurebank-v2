@@ -607,6 +607,7 @@ FOUNDATION = ['Microsoft.App/managedEnvironments', 'Microsoft.Authorization/lock
               'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials',
               'Microsoft.Sql/servers', 'Microsoft.Sql/servers/databases', 'Microsoft.Sql/servers/firewallRules']
 BEHIND_DENY_POLICY = ['Microsoft.Authorization/policyAssignments', 'Microsoft.Resources/deployments']
+BEHIND_KEEP_LOGS = ['Microsoft.Insights/diagnosticSettings', 'Microsoft.OperationalInsights/workspaces']
 # The application secrets the template takes. No database credential is among them.
 SEVEN = ['jwtSecret', 'idempotencyHashKey', 'stepUpBindingKey', 'serviceCredentialBffKey', 'auditChainKey',
          'auditAnchorKey', 'securityPinPepper']
@@ -703,7 +704,41 @@ class TemplateTests(unittest.TestCase):
 
     def test_the_policy_can_be_switched_off_and_nothing_else_hangs_on_that_switch(self):
         self.assertEqual(self.conditions("[parameters('denyPolicy')]"), sorted(BEHIND_DENY_POLICY))
-        self.assertEqual(len(self.resources), len(BEHIND_DEPLOY_APP) + len(FOUNDATION) + len(BEHIND_DENY_POLICY))
+        self.assertEqual(len(self.resources), len(BEHIND_DEPLOY_APP) + len(FOUNDATION) + len(BEHIND_DENY_POLICY)
+                         + len(BEHIND_KEEP_LOGS))
+
+    def test_the_logs_go_to_one_capped_workspace_that_takes_no_key(self):
+        self.assertEqual(self.conditions("[parameters('keepLogs')]"), sorted(BEHIND_KEEP_LOGS))
+        (workspace,) = self.of_type('Microsoft.OperationalInsights/workspaces')
+        self.assertEqual(workspace['name'], 'azurebank-logs')
+        self.assertEqual(workspace['properties'], {
+            'sku': {'name': 'PerGB2018'}, 'retentionInDays': 30,
+            'workspaceCapping': {'dailyQuotaGb': "[json(parameters('logDailyCapGb'))]"},
+            'features': {'disableLocalAuth': True}})
+        # Text: the property is a whole number to Bicep, and a fraction of a GB has to pass through json().
+        cap = self.main['parameters']['logDailyCapGb']
+        self.assertEqual((cap['type'], cap['defaultValue']), ('string', '0.05'))
+        self.assertIs(self.main['parameters']['keepLogs']['defaultValue'], True)
+        for key in ('sharedKey', 'listKeys', 'logAnalyticsConfiguration'):
+            self.assertNotIn(key, json.dumps(self.main))
+
+    def test_the_environment_sends_console_and_system_logs_there_and_nothing_else(self):
+        (environment,) = self.of_type('Microsoft.App/managedEnvironments')
+        self.assertEqual(environment['properties']['appLogsConfiguration'],
+                         {'destination': "[if(parameters('keepLogs'), 'azure-monitor', 'none')]"})
+        (setting,) = self.of_type('Microsoft.Insights/diagnosticSettings')
+        self.assertEqual((setting['name'], setting['scope']),
+                         ('to-azurebank-logs', "[resourceId('Microsoft.App/managedEnvironments', 'azurebank-env')]"))
+        # No ingress (HTTP) category, no category group, no metrics: two categories, by name.
+        self.assertEqual(setting['properties'], {
+            'workspaceId': "[resourceId('Microsoft.OperationalInsights/workspaces', 'azurebank-logs')]",
+            'logs': [{'category': 'ContainerAppConsoleLogs', 'enabled': True},
+                     {'category': 'ContainerAppSystemLogs', 'enabled': True}]})
+
+    def test_the_bff_does_not_keep_its_line_per_request(self):
+        (app,) = self.of_type('Microsoft.App/containerApps')
+        (bff,) = [container for container in app['properties']['template']['containers'] if container['name'] == 'bff']
+        self.assertIn({'name': 'Serilog__MinimumLevel__Override__Serilog', 'value': 'Warning'}, bff['env'])
 
     def test_the_role_holds_exactly_the_nine_actions_and_no_data_action(self):
         (role,) = self.of_type('Microsoft.Authorization/roleDefinitions')
@@ -790,7 +825,8 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual({name: entry['type'] for name, entry in self.main['outputs'].items()},
                          dict.fromkeys(['sqlServerFqdn', 'sqlServerName', 'deploymentClientId',
                                         'deploymentPrincipalId', 'appIdentityClientId', 'appIdentityPrincipalId',
-                                        'migrateIdentityClientId', 'migrateIdentityPrincipalId', 'appUrl'], 'string'))
+                                        'migrateIdentityClientId', 'migrateIdentityPrincipalId',
+                                        'logWorkspaceCustomerId', 'appUrl'], 'string'))
 
     def test_every_secret_reaches_a_container_by_reference_only(self):
         (app,) = self.of_type('Microsoft.App/containerApps')

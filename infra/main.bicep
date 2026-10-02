@@ -3,7 +3,7 @@ targetScope = 'resourceGroup'
 param location string = 'italynorth'
 @description('Full commit SHA shared by the three public GHCR images. Needed only when deployApp is true.')
 param imageTag string = ''
-@description('False creates what needs no image: the environment, SQL, the three identities and the deployment role. True adds the app, the migrate job and the two role assignments.')
+@description('False creates what needs no image: the environment, the log workspace, SQL, the three identities and the deployment role. True adds the app, the migrate job and the two role assignments.')
 param deployApp bool = false
 param entraAdminObjectId string
 param entraAdminLogin string
@@ -20,6 +20,10 @@ param denyPolicy bool = true
 param allowedJobTriggers array = [
   'Manual'
 ]
+@description('False keeps no logs: no workspace, no diagnostic setting, and what the containers print goes nowhere. It deletes neither a workspace nor a setting that already exists.')
+param keepLogs bool = true
+@description('Daily cap of the log workspace, in GB. Text, because the property is typed as a whole number: a fraction has to pass through json().')
+param logDailyCapGb string = '0.05'
 
 // The seven values below are needed only when deployApp is true; infra/secrets.ps1 supplies them.
 @secure()
@@ -45,13 +49,49 @@ resource environment 'Microsoft.App/managedEnvironments@2025-01-01' = {
   location: location
   properties: {
     appLogsConfiguration: {
-      destination: 'none'
+      // With 'azure-monitor' the diagnostic setting below says where the logs go, and no workspace
+      // key is held by the environment.
+      destination: keepLogs ? 'azure-monitor' : 'none'
     }
     workloadProfiles: [
       {
         name: 'Consumption'
         workloadProfileType: 'Consumption'
       }
+    ]
+  }
+}
+
+// What the app and the job print, kept 30 days. The daily cap is the one bound on this meter, and
+// not a hard one: the workspace stops taking lines some time after the cap is reached, and what
+// got through by then is billed. No shared key: nothing here sends or reads with one.
+resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (keepLogs) {
+  name: 'azurebank-logs'
+  location: location
+  properties: {
+    sku: {
+      name: 'PerGB2018'
+    }
+    retentionInDays: 30
+    workspaceCapping: {
+      dailyQuotaGb: json(logDailyCapGb)
+    }
+    features: {
+      disableLocalAuth: true
+    }
+  }
+}
+
+// Console and system logs. The ingress (HTTP) category is left out: it would record every path
+// with its query string, and every caller's address.
+resource environmentLogs 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (keepLogs) {
+  scope: environment
+  name: 'to-azurebank-logs'
+  properties: {
+    workspaceId: logs.id
+    logs: [
+      { category: 'ContainerAppConsoleLogs', enabled: true }
+      { category: 'ContainerAppSystemLogs', enabled: true }
     ]
   }
 }
@@ -195,6 +235,10 @@ resource app 'Microsoft.App/containerApps@2025-01-01' = if (deployApp) {
             { name: 'BackendApi__BaseUrl', value: 'http://localhost:5068' }
             { name: 'ReverseProxy__Clusters__backend-api__Destinations__primary__Address', value: 'http://localhost:5068' }
             { name: 'ServiceCredential__BffKey', secretRef: 'service-key' }
+            // Serilog's one line per request, written at Information for every page, file and call,
+            // is not kept: it is most of what a day writes and the cheapest way to fill the log's
+            // daily cap. Every warning stays, and so does the request line of a 5xx (an Error).
+            { name: 'Serilog__MinimumLevel__Override__Serilog', value: 'Warning' }
           ]
           probes: [for probe in [
             { type: 'Startup', path: '/health/live', timeout: 1 }
@@ -449,4 +493,6 @@ output appIdentityClientId string = appIdentity.properties.clientId
 output appIdentityPrincipalId string = appIdentity.properties.principalId
 output migrateIdentityClientId string = migrateIdentity.properties.clientId
 output migrateIdentityPrincipalId string = migrateIdentity.properties.principalId
+// The ID a log query is sent to. Empty when no logs are kept.
+output logWorkspaceCustomerId string = keepLogs ? logs!.properties.customerId : ''
 output appUrl string = deployApp ? 'https://${app!.properties.configuration!.ingress!.fqdn}' : ''
