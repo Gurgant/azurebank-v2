@@ -21,9 +21,10 @@ alternative record is running the same experiment again.
 
 ## If you read four, read these
 
-Fifty-nine decisions is more than anyone reads cold. These four carry the architecture; the rest
+Sixty decisions is more than anyone reads cold. These four carry the architecture; the rest
 is detail hanging off them. *(It said fifty until 2026-09-24, fifty-six until 2026-09-28,
-fifty-seven until 2026-09-29, and fifty-eight until 2026-10-01.)*
+fifty-seven until 2026-09-29, fifty-eight until 2026-10-01, and fifty-nine until ADR-0060, the
+same day.)*
 
 | | Why this one |
 |---|---|
@@ -44,6 +45,7 @@ fifty-seven until 2026-09-29, and fifty-eight until 2026-10-01.)*
 - [ADR-0054](0054-the-bff-serves-the-built-spa-under-a-csp-measured-against-it.md) the BFF serves the built SPA under a CSP measured against it
 - [ADR-0055](0055-the-api-serves-one-client-the-bff.md) the API serves one client, the BFF
 - [ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md) the API gives up cleanly when the database is down: a 503 before the BFF stops waiting, and never in the middle of a commit
+- [ADR-0060](0060-migrations-run-as-a-one-shot-container-before-the-app.md) migrations run as a one-shot container before the app: `migrate` waits for the database, never creates one on Azure SQL, and refuses a database ahead of the build
 
 **Money** — how a money move is applied once, bounded and numbered.
 
@@ -141,7 +143,7 @@ day, each as its own commit of PR-1.)*
 | [0008](0008-step-up-authentication.md) | 2026-08-12 (sketches and the Validation corrections, ADR-0040; no PR named) · 2026-08-13, ADR-0041 · 2026-08-18 (re-measured live) · 2026-09-04, ADR-0041 (naming `76b737c` and `d74603c`) · 2026-09-06, ADR-0049 · 2026-09-15 (the rule's new home) · 2026-09-17 (no ADR or PR named) · 2026-09-28, ADR-0057 | All five C# blocks diverge from the source, four of them naming a type never built; "Level 2" is two mechanisms; changing a PIN costs the current one (ADR-0040) — until it did, a session could replace the PIN, leaving this gate and ADR-0010's attempt-limiting both inoperative; the correction rule it quotes moved to `engineering-practices.md`; the Protected Operations table is the decision, not the state — transfers left the BFF gate, three gated paths became one (`/full-number`), every `/api` request reads the level, and *Delete account · Level 2* gained its mechanism on ADR-0042's rail. PINs are Argon2id but passwords never were: "same as passwords" struck. "Only the BFF may rotate refresh tokens" became "renew with a grant": the grant no longer rotates, and the proxied revoke and logout are short-circuited too. |
 | [0009](0009-idempotency-monetary-operations.md) | *undated* — ADR-0018 · *undated* — ADR-0022 · 2026-09-21, ADR-0056 · 2026-09-30, ADR-0058 | The loopback dev CORS policy and the exposed replay-header dependency are gone with ADR-0018; the client half of the protocol is specified in ADR-0022. The keyed-digest reason — "the withdraw body contains a 6-digit PIN" — lost its only instance when the withdrawal joined the step-up rail; the digest stays keyed on the surviving reason: every monetary body is low-entropy and mostly known. A money request's 503 may say `applied: false`, and only when it holds the claim it made and started no commit; storing an answer and releasing a claim get 3 s each, and an empty success is never stored for replay. `ProcessingStaleAfter` went from 10 minutes to 2. |
 | [0010](0010-pin-attempt-limiting.md) | 2026-08-06 (no PR named) · 2026-09-15, ADR-0040 · *undated* — ADR-0012 | The BFF `SecurityOptions` declarations the Context cites are deleted; the live values are the API's `ValidationRules`, unchanged. ADR-0040 found a PIN could be replaced with no proof of the current one — nothing guessed, so this limiting never engaged — and closed it; the password/login lockout follow-up is resolved in ADR-0012. |
-| [0011](0011-pin-hash-pepper.md) | 2026-09-17 (no ADR or PR named) | The password profile Context set aside, and the Validation test that it is never peppered, are deleted; the account-password path stays Identity's and out of scope. |
+| [0011](0011-pin-hash-pepper.md) | 2026-09-17 (no ADR or PR named) · 2026-10-01, ADR-0060 | The password profile Context set aside, and the Validation test that it is never peppered, are deleted; the account-password path stays Identity's and out of scope. The Seeder validates the pepper at the start of `seed` and `reset`, not in `Program.cs` ahead of the command line. |
 | [0013](0013-registration-user-enumeration.md) | 2026-09-03, ADR-0045 · 2026-09-17, ADR-0037 (naming #94) | "No email infrastructure" narrowed to "no relay"; the conclusion and the deferral of Option 3 stand. Atomic registration's "remains a tracked follow-up" struck as delivered by ADR-0037; the neutral 409 still holds inside its transaction. |
 | [0014](0014-recipient-lookup-enumeration.md) | 2026-09-15 (residual, measured; no ADR named) | The anti-harvest limit is the BFF's and the API has none: 21 lookups sent straight to the API answered 200 ×21 where the BFF answered 429 at the 21st. |
 | [0015](0015-decouple-username-renameable-handle.md) | 2026-08-10 (no ADR or PR named) · 2026-08-10, ADR-0039 · *undated* — ADR-0039 | The stale-handle residual split: the token claim stays open and harmless; the session half closed (the rename is BFF-owned and `/me` reads through); the concurrent-rename clause is no longer permanent, and its two reasons for rejecting a per-session lock were wrong. |
@@ -180,11 +182,11 @@ day, each as its own commit of PR-1.)*
 | [0054](0054-the-bff-serves-the-built-spa-under-a-csp-measured-against-it.md) | 2026-09-25 (no ADR or PR named) | HSTS is no longer left to the edge: the BFF sends it in every environment but Development, over http too, because `UseHsts` skips any request that is not https. |
 | [0055](0055-the-api-serves-one-client-the-bff.md) | 2026-09-28, ADR-0057 | D4 extended: the token endpoints also want loopback and the BFF's marker, and a half-applied key rotation reaches the browser as a 503; D7's private network between two hosts struck, since the API is a loopback sidecar; the address allow-list rejection annotated, and the mutual-TLS rejection, whose pointer to D7 now lands on a struck clause; "the API reached over a network" added to what would change this. |
 | [0057](0057-the-bffs-refresh-token-is-one-reusable-grant-per-session.md) | 2026-09-30, ADR-0058 · 2026-10-01, ADR-0059 | §4.3: a tripwire's or an unknown grant's row that cannot reach the database answers 503, not 500, and refresh, revoke and logout run without the request deadline. §8: `BackendApi:TimeoutSeconds` is 55 s, not 100, and the proxy's activity timeout as well; the renewal's, the revoke's, `/me`'s, the stamp poll's and the health probe's shorter waits stay as they were. The SPA retries a read's 503 once, after the answer's `retryAfterSeconds` and within two minutes, not up to 3 attempts on RTK's own back-off. |
-| [0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md) | 2026-10-01, ADR-0059 | Consequences: the SPA retries a read's 503 once, after its `retryAfterSeconds`, not up to 3 attempts, and it reads `applied` and the retry wait. |
+| [0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md) | 2026-10-01, ADR-0059 · 2026-10-01, ADR-0060 | Consequences: the SPA retries a read's 503 once, after its `retryAfterSeconds`, not up to 3 attempts, and it reads `applied` and the retry wait. The second precondition is met: a deployment migrates through the Seeder's `migrate`, which has the limits, and the design-time factory applies them to the string it reads; the first says where `migrate` fits in the count. |
 
 </details>
 
-The next free number is **0060**.
+The next free number is **0061**.
 
 <details>
 <summary>Full list in numeric order</summary>
@@ -251,6 +253,7 @@ The next free number is **0060**.
 | [ADR-0057](0057-the-bffs-refresh-token-is-one-reusable-grant-per-session.md) | The BFF's refresh token is one reusable grant per session | Accepted | 2026-09-28 |
 | [ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md) | The API gives up cleanly when the database is down | Accepted | 2026-09-29 |
 | [ADR-0059](0059-the-spa-tells-the-visitor-when-the-service-is-slow-or-down.md) | The SPA tells the visitor when the service is slow or down | Accepted | 2026-10-01 |
+| [ADR-0060](0060-migrations-run-as-a-one-shot-container-before-the-app.md) | Migrations run as a one-shot container before the app | Accepted | 2026-10-01 |
 
 </details>
 

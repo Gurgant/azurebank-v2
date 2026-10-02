@@ -9,14 +9,17 @@ namespace AzureBank.Seeder.Seeders;
 public class SeederOrchestrator
 {
     private readonly IEnumerable<ISeeder> _seeders;
+    private readonly RunCancellation _run;
     private readonly ILogger<SeederOrchestrator> _logger;
 
     public SeederOrchestrator(
         IEnumerable<ISeeder> seeders,
+        RunCancellation run,
         ILogger<SeederOrchestrator> logger)
     {
         // Order seeders by their Order property (ascending)
         _seeders = seeders.OrderBy(s => s.Order);
+        _run = run;
         _logger = logger;
     }
 
@@ -26,6 +29,9 @@ public class SeederOrchestrator
     /// <param name="cancellationToken">Cancellation token</param>
     public async Task SeedAllAsync(CancellationToken cancellationToken = default)
     {
+        // The seeders' calls into Identity take no token; this is how they get this run's.
+        _run.Token = cancellationToken;
+
         _logger.LogInformation("Starting database seeding...");
 
         var seederList = _seeders.ToList();
@@ -33,11 +39,9 @@ public class SeederOrchestrator
 
         foreach (var seeder in seederList)
         {
-            if (cancellationToken.IsCancellationRequested)
-            {
-                _logger.LogWarning("Seeding cancelled");
-                break;
-            }
+            // A cancelled run throws. It used to leave the loop and reach the "completed
+            // successfully" line below, with some seeders never run.
+            cancellationToken.ThrowIfCancellationRequested();
 
             _logger.LogInformation("Running {Seeder} (Order: {Order})...", seeder.Name, seeder.Order);
 
@@ -46,9 +50,10 @@ public class SeederOrchestrator
                 await seeder.SeedAsync(cancellationToken);
                 _logger.LogInformation("Completed {Seeder}", seeder.Name);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _logger.LogError(ex, "Failed to execute {Seeder}", seeder.Name);
+                // Which seeder it was; the exception itself is logged once, by the command.
+                _logger.LogError("Failed to execute {Seeder}", seeder.Name);
                 throw;
             }
         }

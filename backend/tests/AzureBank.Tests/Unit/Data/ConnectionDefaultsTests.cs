@@ -144,9 +144,17 @@ public class ConnectionDefaultsTests
     {
         // The seeder's jobs share the database's 30 logins with the API: 2 x 12 + 5 = 29. Its pool
         // is image configuration (its appsettings.json), read here through the seeder's own
-        // registration, so no Database__ variable is needed where it runs.
+        // registration, so no Database__ variable is needed where it runs. The file ships no
+        // connection string (the environment supplies it), so one is added here as the environment
+        // would: the pool is read off the string a connection would be opened with.
         var path = Path.Combine(RepoRoot(), "backend", "tools", "AzureBank.Seeder", "appsettings.json");
-        var configuration = new ConfigurationBuilder().AddJsonFile(path, optional: false).Build();
+        var configuration = new ConfigurationBuilder()
+            .AddJsonFile(path, optional: false)
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:DefaultConnection"] = BareConnectionString,
+            })
+            .Build();
 
         using var all = new AssertionScope();
         configuration["Database:MaxPoolSize"].Should().Be("5", $"the seeder's pool is set in {path}");

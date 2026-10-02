@@ -20,6 +20,7 @@ RUN dotnet publish backend/src/AzureBank.Api/AzureBank.Api.csproj -c Release --n
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app
 COPY --from=build /app ./
+LABEL org.opencontainers.image.source="https://github.com/Gurgant/azurebank-v2"
 USER $APP_UID
 EXPOSE 8080
 ENTRYPOINT ["dotnet", "AzureBank.Api.dll"]

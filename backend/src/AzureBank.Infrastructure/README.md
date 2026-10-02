@@ -377,8 +377,11 @@ services.AddDbContext<AzureBankDbContext>((serviceProvider, options) =>
 2026-09-30 it said 3 and 30 s unless set, which the code's defaults were until ADR-0058 made them 4
 and 10 s, and it showed the raw connection string going to `UseSqlServer`.)*
 
-`DesignTimeDbContextFactory` below builds its own options and applies none of this: a `dotnet ef`
-run opens with SqlClient's defaults (ADR-0058's second precondition).
+`DesignTimeDbContextFactory` below builds its own options, with the same connection limits and
+retry budget for the string it reads from the API's settings. A `dotnet ef … --connection` run
+sets its string after the factory has run, so it keeps the budget and opens with that string's own
+limits. *(Until 2026-10-01 the factory applied none of this, which was ADR-0058's second
+precondition; ADR-0060.)*
 
 ---
 
@@ -389,21 +392,44 @@ For EF Core CLI tools to work without running the application:
 ```csharp
 public class DesignTimeDbContextFactory : IDesignTimeDbContextFactory<AzureBankDbContext>
 {
-    public AzureBankDbContext CreateDbContext(string[] args)
+    public AzureBankDbContext CreateDbContext(string[] args) => Create(Directory.GetCurrentDirectory());
+
+    internal static AzureBankDbContext Create(string currentDirectory)
     {
-        var configuration = new ConfigurationBuilder()
-            .SetBasePath(Directory.GetCurrentDirectory())
-            .AddJsonFile("appsettings.json")
-            .AddJsonFile("appsettings.Development.json", optional: true)
-            .Build();
+        var builder = new ConfigurationBuilder();
+
+        // The API's settings, when the tool runs inside the repository; nothing otherwise.
+        var apiDirectory = Path.GetFullPath(Path.Combine(currentDirectory, "..", "AzureBank.Api"));
+        if (Directory.Exists(apiDirectory))
+        {
+            builder.SetBasePath(apiDirectory)
+                .AddJsonFile("appsettings.json", optional: true)
+                .AddJsonFile("appsettings.Development.json", optional: true);
+        }
+
+        var configuration = builder.Build();
+        var database = configuration.GetSection(DatabaseOptions.SectionName).Get<DatabaseOptions>()
+            ?? new DatabaseOptions();
 
         var optionsBuilder = new DbContextOptionsBuilder<AzureBankDbContext>();
-        optionsBuilder.UseSqlServer(configuration.GetConnectionString("DefaultConnection"));
+        optionsBuilder.UseSqlServer(
+            SqlConnectionDefaults.Apply(
+                configuration.GetConnectionString(DatabaseOptions.ConnectionStringName), database),
+            sqlOptions =>
+            {
+                sqlOptions.EnableRetryOnFailure(database.MaxRetryCount, database.MaxRetryDelay, errorNumbersToAdd: null);
+                sqlOptions.MigrationsAssembly(typeof(AzureBankDbContext).Assembly.FullName);
+            });
 
         return new AzureBankDbContext(optionsBuilder.Options);
     }
 }
 ```
+
+*(Until 2026-10-01 this sample read `appsettings.json` from the current directory and handed the
+raw string to `UseSqlServer`. The code read it from `../AzureBank.Api` and required the file. No
+environment variable is read: a deployment migrates through the Seeder's `migrate` command,
+ADR-0060.)*
 
 ---
 

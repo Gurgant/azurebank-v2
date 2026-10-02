@@ -149,10 +149,15 @@ values pass a central sanitizer whose contract is pinned by tests.
 runs them as Production against SQL Server in a container: the `__Host-` session cookie, the SPA
 served under its CSP, and an API with no address of its own, reached by the BFF over loopback as a
 Container Apps sidecar would be. Its header lists the eight secrets it requires — none has a
-default — and the one seed command. The database is published on 127.0.0.1:14330, not 1433: a
-SQL Server installed on the host usually holds 1433, publishing over it does not fail, and the
-seed then reaches the host's instance instead. Measured on 2026-09-25: the e2e suite, 24 of 24,
-against the two containers. Sign in from a Chromium browser, as that run does: the `__Host-`
+default. The database starts empty, and two one-shot containers of the tools image prepare it
+before the API starts: `migrate` creates it and applies the migrations, then `seed` adds the demo
+users and their history (ADR-0060; `backend/tools/AzureBank.Seeder/README.md` has their variables
+and exit codes). Both run again on every `up` and change nothing the second time. *(Until
+2026-10-01 the header had one seed command, run from the host: `reset --confirm`, which drops the
+database first.)* The database is published on 127.0.0.1:14330, not 1433, for tools on the host: a
+SQL Server installed on the host usually holds 1433, publishing over it does not fail, and a tool
+aimed at it then reaches the host's instance instead. Measured on 2026-09-25: the e2e suite, 24 of
+24, against the two containers. Sign in from a Chromium browser, as that run does: the `__Host-`
 cookie is Secure, Chromium keeps it on `http://localhost`, and Safari keeps no Secure cookie over
 http even there, which is why the development profile's cookie is neither (the BFF's `Program.cs`).
 

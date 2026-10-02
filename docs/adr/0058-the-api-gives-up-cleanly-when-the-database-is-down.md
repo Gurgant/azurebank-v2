@@ -15,7 +15,8 @@ the retry budget quoted in [ADR-0021](0021-refresh-token-rotation-bff-remint.md)
 ## Preconditions
 
 Two things this decision rests on that no code in the repository enforces. Break either one and
-the sums under "The numbers" stop adding up.
+the sums under "The numbers" stop adding up. *(2026-10-01, ADR-0060: the second is met, and is
+struck below; the first remains.)*
 
 1. **One replica of the app, plus a second only while a revision replaces it.** The API's pool of
    12 is sized so that two API processes and one job at 5 open at most 2 × 12 + 5 = 29 connections,
@@ -26,14 +27,22 @@ the sums under "The numbers" stop adding up.
    Any other process that opens the database through `AddInfrastructure` (the notice-relay
    Function of ADR-0051, not deployed, and `backend/tools/AzureBank.AuditVerifier`) gets a pool of
    up to 12 unless its settings say otherwise; one that runs beside the app sets
-   `Database:MaxPoolSize` so the sum stays within 30.
-2. **A migration run gets the same connection limits in its own change.** `dotnet ef` builds its
+   `Database:MaxPoolSize` so the sum stays within 30. *(2026-10-01, ADR-0060: the Seeder's
+   `migrate` is such a job, at 5. A deployment runs it to its end before it moves the app, so it
+   runs beside one API process, not two: 12 + 5, or 12 + 5 + 5 with a second job at 5 beside it.
+   Two jobs at 5 beside two API processes would be 34.)*
+2. ~~**A migration run gets the same connection limits in its own change.** `dotnet ef` builds its
    context from `DesignTimeDbContextFactory`, which sets its own options and applies no
    `SqlConnectionDefaults`, so a migration run that way still opens with SqlClient's defaults
    (15 s to connect, one connect retry, a pool of 100, pool blocking `Auto`). The seeder's
    `reset`, which migrates through `AddInfrastructure`, has them. A deployment that migrates
    through `dotnet ef`, or a bundle built from it, applies `SqlConnectionDefaults` in that factory
-   first.
+   first.~~ *(2026-10-01, ADR-0060: met. A deployment migrates through the Seeder's `migrate`
+   command, which opens through `AddInfrastructure` and so has the limits and the retry budget.
+   `DesignTimeDbContextFactory` now applies `SqlConnectionDefaults` and the retry budget to the
+   string it reads from the API's settings. What remains: `dotnet ef … --connection` sets its
+   string after the factory has run, so that run retries with the budget and still opens with its
+   own string's values, which are SqlClient's defaults unless the string sets them.)*
 
 ## Context
 
@@ -408,7 +417,8 @@ sending it) observes a token. Three ways to put a deadline on that were weighed:
 - A COMMIT slower than the 10 s connect timeout fails where it used to wait 15, and its outcome is
   unknown: a 503 without `applied`, then the replayed 201, `IN_FLIGHT` or `RESULT_UNKNOWN` on the
   same key. Commit latency measured on the deployed tier would change the 10.
-- Two preconditions live outside the code, in this record.
+- ~~Two preconditions live~~ One precondition lives outside the code, in this record.
+  *(2026-10-01, ADR-0060: the second was met.)*
 
 **Neutral**
 

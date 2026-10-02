@@ -94,6 +94,13 @@ public class TransactionSeeder : ISeeder
         new(JohnChecking, JaneSavings, Ago(0, 12), 25.00m, "Coffee and cake"),
     ];
 
+    /// <summary>
+    /// How many rows the demo ledger has: one for each movement and two for each transfer, which is
+    /// what <see cref="BuildLedger"/> writes. <c>seed</c> and <c>reset</c> ask for this many
+    /// afterwards.
+    /// </summary>
+    internal static int DemoLedgerRowCount => Movements.Length + (2 * Transfers.Length);
+
     /// <summary>A row to insert, the instant it happened, and the other half of its transfer.</summary>
     private sealed record LedgerRow(Transaction Row, DateTime OccurredAt, Transaction? Pair);
 

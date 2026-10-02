@@ -6,13 +6,14 @@
 # generates, spelled as environment variables:
 #   SQL_SA_PASSWORD, JWT_SECRET, IDEMPOTENCY_HASH_KEY, STEPUP_BINDING_KEY, SERVICE_KEY,
 #   AUDIT_CHAIN_KEY, AUDIT_ANCHOR_KEY, PIN_PEPPER
-# The database starts empty; seed it once from the host, against the published port. The seed runs
-# in your shell, which does not read .env: with the values there, load them first, or the seeder
-# gets an empty pepper and refuses to start (measured 2026-09-25):
-#   set -a; . ./.env; set +a
-#   ConnectionStrings__DefaultConnection="Server=127.0.0.1,14330;Database=AzureBank;User Id=sa;Password=$SQL_SA_PASSWORD;TrustServerCertificate=true" \
-#   Security__PinPepper="$PIN_PEPPER" DOTNET_ENVIRONMENT=Development \
-#   dotnet run --project backend/tools/AzureBank.Seeder -- reset --confirm
+# The three connection strings below put SQL_SA_PASSWORD in single quotes, so it may hold `;` or
+# `=`; a password that holds a single quote is not supported by this file.
+# The database starts empty, and two one-shot containers of the tools image fill it before the API
+# starts: `migrate` creates the database and brings it to the latest migration, then `seed` adds the
+# demo users and their history (ADR-0060; backend/tools/AzureBank.Seeder/README.md has their
+# variables and exit codes). Both run again on every `up` and change nothing the second time. One
+# alone: `docker compose run --rm migrate`. (Until 2026-10-01 this header had the seed run from the
+# host, with a command that drops the database first.)
 # Then open http://localhost:5000.
 #
 # The API has no address of its own: it shares the BFF's network namespace and listens on
@@ -20,6 +21,13 @@
 # and nothing else can (ADR-0055). The same shape as a Container Apps sidecar.
 
 name: azurebank
+
+x-tools: &tools
+  build:
+    context: .
+    dockerfile: backend/tools/AzureBank.Seeder/Dockerfile
+  # One image for both one-shots, named like the other two: <project>-tools.
+  image: ${COMPOSE_PROJECT_NAME}-tools
 
 services:
   sqlserver:
@@ -39,6 +47,30 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+
+  # Exits 0 once the database is at the latest migration. It waits up to 60 s for SQL Server to
+  # accept a connection, so a server that is healthy and still starting its databases is covered.
+  # It gets the connection string and no other secret.
+  migrate:
+    <<: *tools
+    command: ["migrate"]
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    environment:
+      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=AzureBank;User Id=sa;Password='${SQL_SA_PASSWORD:?set SQL_SA_PASSWORD}';TrustServerCertificate=true"
+
+  # Exits 0 once the demo data is there: it fills an empty database and leaves a seeded one alone.
+  # The pepper is the API's, or the seeded PINs would not verify.
+  seed:
+    <<: *tools
+    command: ["seed"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=AzureBank;User Id=sa;Password='${SQL_SA_PASSWORD:?set SQL_SA_PASSWORD}';TrustServerCertificate=true"
+      Security__PinPepper: ${PIN_PEPPER:?set PIN_PEPPER}
 
   bff:
     build:
@@ -61,12 +93,15 @@ services:
     depends_on:
       sqlserver:
         condition: service_healthy
+      # The API starts on a migrated and seeded database, or not at all.
+      seed:
+        condition: service_completed_successfully
       bff:
         condition: service_started
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://127.0.0.1:5068
-      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=AzureBank;User Id=sa;Password=${SQL_SA_PASSWORD:?set SQL_SA_PASSWORD};TrustServerCertificate=true"
+      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=AzureBank;User Id=sa;Password='${SQL_SA_PASSWORD:?set SQL_SA_PASSWORD}';TrustServerCertificate=true"
       Jwt__Secret: ${JWT_SECRET:?set JWT_SECRET}
       Idempotency__HashKey: ${IDEMPOTENCY_HASH_KEY:?set IDEMPOTENCY_HASH_KEY}
       StepUp__BindingKey: ${STEPUP_BINDING_KEY:?set STEPUP_BINDING_KEY}

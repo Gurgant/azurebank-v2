@@ -66,9 +66,12 @@ the summary until the next reload.
 ## Local development
 
 **The seeder needs `DOTNET_ENVIRONMENT=Development`.** It is a console Generic Host, so it defaults
-to Production, its user-secrets do not load, and it dies with `PinPepper must be ≥32 chars` — a
-message that points at configuration rather than at the missing environment variable. Note that
+to Production, its user-secrets do not load, and it exits 2 with `reset refused: there is no
+connection string. Set ConnectionStrings__DefaultConnection.` — a message that points at
+configuration rather than at the missing environment variable. Note that
 `ASPNETCORE_ENVIRONMENT` does **not** work here; the Generic Host reads the `DOTNET_` prefix.
+*(Until 2026-10-01 it died with an unhandled `PinPepper must be ≥32 chars` exception, before it
+read its command line.)*
 
 **Run the API on the `https` profile (7215).** The BFF's proxy cluster points there, so starting the
 API on `http`/5068 produces a BFF that builds, starts, and fails every proxied call.
@@ -377,7 +380,11 @@ So the `HostAbortedException` is that probe rather than a failure, and
 That factory reads
 `appsettings.json`, where `DefaultConnection` is `""`, plus the git-ignored
 `appsettings.Development.json`, and never user-secrets. It also resolves `../AzureBank.Api` from
-the current directory, which is why the `cd` above is part of the recipe. `migrations list` takes
+the current directory, which is why the `cd` above is part of the recipe. *(Since 2026-10-01 the
+factory no longer throws when that folder is not there: it builds a context with no connection
+string, and applies the hosts' connection limits and retry budget to a string it does read. The
+recipe is unchanged, and `--connection` is still what supplies the string; ADR-0060.)*
+`migrations list` takes
 the same `--connection` and then marks each migration `(Pending)` against the real database, so the
 diagnosis is one command rather than a comparison.
 

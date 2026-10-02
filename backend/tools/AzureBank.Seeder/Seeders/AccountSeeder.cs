@@ -17,6 +17,20 @@ public class AccountSeeder : ISeeder
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly ILogger<AccountSeeder> _logger;
 
+    private const string JohnSavings = "AB-1234-5678-90";
+    private const string JohnChecking = "AB-1234-5678-91";
+    private const string JaneSavings = "AB-2345-6789-01";
+    private const string MikeInvestment = "AB-3456-7890-12";
+    private const string AdminChecking = "AB-0000-0000-01";
+
+    /// <summary>
+    /// The numbers of the five demo accounts. They are what says "the demo data is here" after the
+    /// app has been used: nothing in the app changes an account's number or removes its row
+    /// (closing an account marks it deleted), while a user's handle can be renamed.
+    /// </summary>
+    internal static readonly string[] DemoAccountNumbers =
+        [JohnSavings, JohnChecking, JaneSavings, MikeInvestment, AdminChecking];
+
     public string Name => "AccountSeeder";
     public int Order => 3; // After UserSeeder
 
@@ -73,7 +87,7 @@ public class AccountSeeder : ISeeder
             accounts.Add(new Account
             {
                 UserId = john.Id,
-                AccountNumber = "AB-1234-5678-90",
+                AccountNumber = JohnSavings,
                 Name = "Main Savings",
                 Type = AccountType.Savings,
                 Balance = 12450.00m,
@@ -84,7 +98,7 @@ public class AccountSeeder : ISeeder
             accounts.Add(new Account
             {
                 UserId = john.Id,
-                AccountNumber = "AB-1234-5678-91",
+                AccountNumber = JohnChecking,
                 Name = "Checking",
                 Type = AccountType.Checking,
                 Balance = 2300.00m,
@@ -101,7 +115,7 @@ public class AccountSeeder : ISeeder
             accounts.Add(new Account
             {
                 UserId = jane.Id,
-                AccountNumber = "AB-2345-6789-01",
+                AccountNumber = JaneSavings,
                 Name = "Personal Savings",
                 Type = AccountType.Savings,
                 Balance = 8500.00m,
@@ -118,7 +132,7 @@ public class AccountSeeder : ISeeder
             accounts.Add(new Account
             {
                 UserId = mike.Id,
-                AccountNumber = "AB-3456-7890-12",
+                AccountNumber = MikeInvestment,
                 Name = "Investment Account",
                 Type = AccountType.Investment,
                 Balance = 25000.00m,
@@ -135,7 +149,7 @@ public class AccountSeeder : ISeeder
             accounts.Add(new Account
             {
                 UserId = admin.Id,
-                AccountNumber = "AB-0000-0000-01",
+                AccountNumber = AdminChecking,
                 Name = "Admin Account",
                 Type = AccountType.Checking,
                 Balance = 50000.00m,

@@ -312,7 +312,7 @@ AzureBank.Backend/
 | [**AzureBank.Tests**](tests/AzureBank.Tests/README.md)                 | Test Project  | Unit, integration, and architecture tests                          |
 | **AzureBank.Bff.Tests**                                                | Test Project  | BFF gateway integration tests — the second "Test run for" line of the gate |
 | **AzureBank.AuditVerifier**                                            | Console Tool  | `verify`, `anchor`, `evidence`, `export` and `notify` over the audit trail |
-| **AzureBank.Seeder**                                                   | Console Tool  | `reset` / `seed` for the local LocalDB demo world                  |
+| [**AzureBank.Seeder**](tools/AzureBank.Seeder/README.md)               | Console Tool  | `migrate`, `seed` and `reset`; also what the tools image runs      |
 
 ---
 
@@ -561,7 +561,8 @@ reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
 ### Test Infrastructure
 
 - **`AZUREBANK_TEST_SQLSERVER`**: the tests that need a real database connect to the SQL Server it
-  names — LocalDB locally, a service container in CI — and skip without it. There is no
+  names — LocalDB locally, a service container in CI — and skip without it. They also skip when it
+  names an Azure SQL server: several of them create and drop databases there. There is no
   Testcontainers harness: the packages were referenced and never used, and were removed on
   2026-08-10 (`ac0a2f9`).
 - **CustomWebApplicationFactory**: Creates isolated API instance for each test

@@ -13,17 +13,14 @@ namespace AzureBank.Tests.Fixtures;
 /// </para>
 /// <para>
 /// It reads <see cref="SqlServerFactAttribute.ConnectionString"/> rather than the variable itself,
-/// so the two gates cannot drift apart: change the variable in one place and both follow.
+/// and asks <see cref="SqlServerFactAttribute.SkipReason"/> rather than deciding again, so the two
+/// gates cannot drift apart: change the variable or the rule in one place and both follow.
 /// </para>
 /// </remarks>
 public sealed class SqlServerTheoryAttribute : TheoryAttribute
 {
     public SqlServerTheoryAttribute()
     {
-        if (string.IsNullOrWhiteSpace(SqlServerFactAttribute.ConnectionString))
-        {
-            Skip = "Requires SQL Server - set "
-                + $"{SqlServerFactAttribute.ConnectionStringVariable} to a connection string to run.";
-        }
+        Skip = SqlServerFactAttribute.SkipReason(SqlServerFactAttribute.ConnectionString);
     }
 }

@@ -91,8 +91,13 @@ uncalled)*.
   retained map, and all pepper values distinct. The API validates with
   `ValidateOnStart`; the **Seeder** (a CLI that never starts the host, so
   `ValidateOnStart` alone would not fire) invokes the startup validator explicitly
-  in `Program.cs` so **both `seed` and `reset` fail fast before any DB work**. The
-  Seeder shares the same active pepper (else seeded PINs cannot be verified).
+  ~~in `Program.cs`~~ so **both `seed` and `reset` fail fast before any DB work**.
+  *(2026-10-01, ADR-0060: at the start of `seed` and of `reset`, which answer a
+  missing or short pepper with a sentence and exit code 2 before any connection is
+  opened. In `Program.cs` the validator ran ahead of the command line, so with no
+  pepper `--help` crashed too, and `migrate`, which needs no pepper, could not have
+  run.)* The Seeder shares the same active pepper (else seeded PINs cannot be
+  verified).
 - **Rehash-on-use migration**: `IPasswordHasher.PinNeedsRehash` reports whether a
   stored hash predates the active key. On a **successful** verify, `PinService`
   re-hashes the PIN with the active pepper and persists it — in the service's

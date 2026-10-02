@@ -10,7 +10,7 @@
 
 ## Overview
 
-`AzureBank.Tests` contains all automated tests for the solution including unit tests, integration tests, and architecture tests. The project uses xUnit. Tests that need a real database are gated on the `AZUREBANK_TEST_SQLSERVER` environment variable and connect to whatever server it names — LocalDB locally, a service container in CI. There is no Testcontainers harness: the packages were referenced but no code ever used them, and the badge and fixture this file used to advertise did not exist.
+`AzureBank.Tests` contains all automated tests for the solution including unit tests, integration tests, and architecture tests. The project uses xUnit. Tests that need a real database are gated on the `AZUREBANK_TEST_SQLSERVER` environment variable and connect to whatever server it names — LocalDB locally, a service container in CI — except an Azure SQL server name, on which they skip: several of them create and drop databases on that server. There is no Testcontainers harness: the packages were referenced but no code ever used them, and the badge and fixture this file used to advertise did not exist.
 
 **Parent Solution**: [AzureBank Backend](../../README.md)
 
@@ -276,7 +276,8 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 #### SqlServerFactAttribute
 
 There is no container fixture. A test that needs a real database is marked `[SqlServerFact]`, which
-SKIPS unless `AZUREBANK_TEST_SQLSERVER` names a server — LocalDB locally, a service container in CI:
+SKIPS unless `AZUREBANK_TEST_SQLSERVER` names a server — LocalDB locally, a service container in CI.
+It skips on an Azure SQL server name too (`SqlServerFactAttribute.SkipReason`):
 
 ```csharp
 [Trait("Category", "SqlServer")]
