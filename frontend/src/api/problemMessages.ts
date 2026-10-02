@@ -126,3 +126,20 @@ export const SAVE_OUTCOME_UNKNOWN =
 /** Opening an account on an outage: it may exist, and trying again blind could open a second. */
 export const ACCOUNT_OUTCOME_UNKNOWN =
   "The service is temporarily unavailable, and we can't tell yet whether your account was opened. Check your accounts before trying again.";
+
+/*
+  A money send the API says was committed, when it could not return the receipt: 409
+  `IDEMPOTENCY_RESULT_UNKNOWN` with `applied: true` (ADR-0009). Said under the flow's own success
+  title, beside one way on to the history. One sentence per flow, the same but for the noun.
+*/
+
+/** A transfer, to another person or between the visitor's own accounts. */
+export const TRANSFER_WENT_THROUGH =
+  "Your transfer went through, but we couldn't show its receipt.";
+
+/** A deposit. */
+export const DEPOSIT_WENT_THROUGH = "Your deposit went through, but we couldn't show its receipt.";
+
+/** A withdrawal. */
+export const WITHDRAWAL_WENT_THROUGH =
+  "Your withdrawal went through, but we couldn't show its receipt.";

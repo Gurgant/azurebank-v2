@@ -14,10 +14,11 @@ import { Controller, useForm, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { colors } from '../theme/tokens';
 import { isServiceOutage, type ApiProblem } from '../api/problemBaseQuery';
-import type { MoneyPhase } from '../api/moneyProblem';
+import { isProvenCommit, type MoneyPhase } from '../api/moneyProblem';
 import { useTransferWizardStyles } from './transferWizardStyles';
 import { ConfirmDialog } from '../components/shared/ConfirmDialog';
 import { ResultUnknownView } from '../components/shared/ResultUnknownView';
+import { WentThroughView } from '../components/shared/WentThroughView';
 import { PageHeader } from '../components/layout/PageHeader';
 import {
   useGetAccountsQuery,
@@ -48,6 +49,7 @@ import {
   CONNECTION_FAILED,
   NO_DOUBLE_CHARGE,
   SERVICE_UNAVAILABLE,
+  TRANSFER_WENT_THROUGH,
   TRY_AGAIN,
 } from '../api/problemMessages';
 
@@ -232,6 +234,7 @@ export function TransferPage() {
     nothingChanged,
     error,
     verifyRequired,
+    wentThrough,
     keyLive,
     onBodyEdit,
     requestLeave,
@@ -584,10 +587,27 @@ export function TransferPage() {
   /**
    * What the PIN step does about a refusal, shared by the mint and the send so the two cannot drift.
    * The banner itself is the wizard's; this owns only the PIN box and the lock. `phase` is which of
-   * the two failed: the last arm is the mint's alone.
+   * the two failed: the first arm is the send's alone, the last the mint's.
    */
   function handleRefusal(refusal: ApiProblem | null, phase: MoneyPhase) {
-    if (refusal?.errorCode === 'INVALID_PIN') {
+    if (phase === 'send' && isProvenCommit(refusal)) {
+      /*
+        The server said the transfer was committed: the page shows the went-through view, and
+        nothing on it sends again. So the page's own copies of the PIN and of the authorisation
+        are let go as the success path lets them go, a few lines above: the transfer they were for
+        is done. Not every copy: the two mutation hooks keep their last arguments and answer, the
+        PIN and the authorisation among them, until this page unmounts, after a success too. Read
+        from the wizard's ref, like every arm here, so it is this answer and not the one before it.
+
+        Only the send. A mint carries no key, so the same answer to it proves nothing and brings
+        no view: emptying the boxes there would leave the visitor on the PIN step with nothing
+        typed and nothing said. WithdrawDialog's arm has the same condition.
+      */
+      setPin('');
+      enteredPin.current = '';
+      lastAuthorization.current = null;
+      setAuthorizationHeld(false);
+    } else if (refusal?.errorCode === 'INVALID_PIN') {
       setPin('');
       enteredPin.current = '';
       setPinError(true);
@@ -753,6 +773,25 @@ export function TransferPage() {
           </div>
         </div>
       </div>
+    );
+  }
+
+  /*
+    ===== The server said it went through, and could not return the receipt =====
+
+    Before the check view, and the order matters: `wentThrough` is set together with
+    `verifyRequired`, so tested second it would never be reached, and the page would offer "It
+    didn't go through" over a transfer the server has called committed. The receipt's title and
+    its two ways on; `requestLeave` goes through because that answer dropped the key.
+  */
+  if (wentThrough) {
+    return (
+      <WentThroughView
+        title="Transfer Complete"
+        sentence={TRANSFER_WENT_THROUGH}
+        onViewHistory={() => requestLeave('/history')}
+        onDone={() => requestLeave('/dashboard')}
+      />
     );
   }
 

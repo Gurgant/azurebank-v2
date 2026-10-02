@@ -1,12 +1,13 @@
 import { Route, Routes } from 'react-router-dom';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
 import { problem } from '../../mocks/problem';
 import { mockState } from '../../mocks/state';
 import { renderWithProviders } from '../../test/renderWithProviders';
+import { COPY, committedAnswerLost, emulateFocusFixup } from '../../test/outage';
 import { DepositDialog } from './DepositDialog';
 
 /**
@@ -22,12 +23,12 @@ function seedAccount() {
   return { id: MAIN.id, name: 'Main Account', accountNumber: 'AB-****-****-90', balance: 1250.5 };
 }
 
-function renderDeposit() {
+function renderDeposit(onClose: () => void = () => {}) {
   return renderWithProviders(
     <Routes>
       <Route
         path="/"
-        element={<DepositDialog isOpen onClose={() => {}} accounts={[seedAccount()]} />}
+        element={<DepositDialog isOpen onClose={onClose} accounts={[seedAccount()]} />}
       />
       <Route path="/transactions/:id" element={<div>TX DETAIL PAGE</div>} />
       <Route path="/history" element={<div>HISTORY PAGE</div>} />
@@ -368,5 +369,304 @@ describe('deposit (T3 — idempotent mutation)', () => {
     await userEvent.keyboard('{Escape}');
     expect(closed).toBe(false);
     expect(screen.getByText('Deposit Money')).toBeInTheDocument(); // still open
+  });
+});
+
+/**
+ * The dialog has drawn what it made of the answer: the one send reached the server, and Close,
+ * barred while the key was live, is back. True of every outcome that drops the key, so a test can
+ * then say which view is on screen instead of waiting for the one it hopes for.
+ */
+async function answerDrawn(keys: unknown[]) {
+  await waitFor(() => expect(keys).toHaveLength(1));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled());
+}
+
+/**
+ * A deposit the server says went through, when its receipt cannot be shown: the API's 409
+ * `IDEMPOTENCY_RESULT_UNKNOWN` carrying `applied: true` (ADR-0009). Until that member existed the
+ * dialog drew the check view for it, and "It didn't go through — try again" followed by Deposit
+ * was a second deposit under a new key: measured on the running app, two deposits of one amount.
+ */
+describe('deposit — the server says it went through', () => {
+  // The Deposit button is disabled during the send, and a browser hands its focus to `body`.
+  let stopFocusFixup: () => void;
+  beforeEach(() => {
+    stopFocusFixup = emulateFocusFixup();
+  });
+  afterEach(() => {
+    stopFocusFixup();
+  });
+
+  /** What each button is called: its label when it has no text of its own (the shell's X). */
+  const names = (buttons: HTMLElement[]) =>
+    buttons.map((button) => button.getAttribute('aria-label') ?? button.textContent);
+
+  it('says the deposit went through, under the receipt’s title, and offers the history and nothing that could send again', async () => {
+    const keys: (string | null)[] = [];
+    server.use(
+      http.post('*/api/transactions/deposit', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        return committedAnswerLost('/api/transactions/deposit');
+      }),
+    );
+    renderDeposit();
+
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    const depositButton = screen.getByRole('button', { name: 'Deposit €100.00' });
+    await userEvent.click(depositButton);
+
+    // The check view is what the dialog drew for this answer before it read `applied`.
+    await answerDrawn(keys);
+    expect(screen.queryByText("We couldn't confirm your deposit")).not.toBeInTheDocument();
+    const sentence = screen.getByText(COPY.depositWentThrough);
+    // The receipt's title, which is also the dialog's accessible name.
+    const dialog = screen.getByRole('dialog', { name: 'Deposit Complete' });
+
+    // The shell's X, and the one action. No Deposit, no "try again", no check view.
+    expect(names(within(dialog).getAllByRole('button'))).toEqual(['Close', 'View History']);
+    expect(within(dialog).getByRole('button', { name: 'Close' })).toBeEnabled();
+    expect(screen.queryByText(/didn't go through/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/may or may not/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Deposit amount')).not.toBeInTheDocument();
+
+    // Said once, by focus: no alert and no status bar with words in the dialog, the sentence in
+    // no live region, and focus on the sentence itself.
+    const spoken = Array.from(
+      dialog.querySelectorAll<HTMLElement>('[role="alert"], [role="status"]'),
+    ).filter((region) => region.textContent?.trim());
+    expect(spoken.map((region) => region.textContent)).toEqual([]);
+    expect(sentence.closest('[role="alert"], [role="status"], [aria-live]')).toBeNull();
+    await waitFor(() => expect(sentence).toHaveFocus());
+    // It takes focus without joining the Tab order: a paragraph is not a stop between the
+    // dialog's X and its one action.
+    expect(sentence).toHaveAttribute('tabindex', '-1');
+
+    /*
+      A NEW node, not the Deposit button with other words. Both are the footer's only button, so
+      without a key of its own React would keep the node — and the focus that never left it: a
+      second press of "Deposit" would land on "View History", and the sentence would never be
+      reached.
+    */
+    const viewHistory = within(dialog).getByRole('button', { name: 'View History' });
+    expect(viewHistory).not.toBe(depositButton);
+    expect(depositButton).not.toBeInTheDocument();
+    expect(viewHistory).not.toHaveAttribute('aria-describedby');
+
+    expect(keys).toHaveLength(1);
+    await userEvent.click(viewHistory);
+    expect(await screen.findByText('HISTORY PAGE')).toBeInTheDocument();
+    expect(keys).toHaveLength(1);
+  });
+
+  it('a press outside the dialog leaves the sentence on screen, and Close and Escape still close it', async () => {
+    /*
+      The view is shorter than the form it replaces, so the dialog shrinks under the pointer.
+      Measured in Chromium on the running stack: the second press of a double click on Deposit
+      landed on the backdrop and closed the dialog a tenth of a second after the sentence had
+      appeared. The visitor was left on the page behind it, told nothing.
+    */
+    const closed = vi.fn();
+    const keys: (string | null)[] = [];
+    server.use(
+      http.post('*/api/transactions/deposit', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        return committedAnswerLost('/api/transactions/deposit');
+      }),
+    );
+    renderDeposit(closed);
+    const backdrop = () => {
+      const element = document.querySelector<HTMLElement>('.fui-DialogSurface__backdrop');
+      if (!element) throw new Error('the dialog has no backdrop to press');
+      return element;
+    };
+
+    // The control: over the form a press outside closes the dialog, so the press does arrive.
+    await userEvent.click(backdrop());
+    expect(closed).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    await answerDrawn(keys);
+    const sentence = screen.getByText(COPY.depositWentThrough);
+    await waitFor(() => expect(sentence).toHaveFocus());
+
+    await userEvent.click(backdrop());
+    expect(closed).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('dialog', { name: 'Deposit Complete' })).toBeInTheDocument();
+    expect(screen.getByText(COPY.depositWentThrough)).toBeInTheDocument();
+    // Nor does the press take focus out of the dialog: from `body` Escape reaches no dialog.
+    expect(sentence).toHaveFocus();
+
+    // The exits nobody presses by accident are open: the view is not a trap. Escape as a
+    // visitor presses it, wherever focus is, not aimed at the dialog.
+    await userEvent.keyboard('{Escape}');
+    expect(closed).toHaveBeenCalledTimes(2);
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(closed).toHaveBeenCalledTimes(3);
+    expect(keys).toHaveLength(1);
+  });
+
+  it('a press outside the dialog leaves the check view on screen too, and the form that "try again" brings back closes as before', async () => {
+    /*
+      The check view is shorter than the form as well. Measured in Chromium on the running stack,
+      the send answered 409 with no `applied`: the second press of a double click on Deposit
+      landed on the backdrop and closed the dialog. Recorded after it: no dialog, the dashboard's
+      address, focus on `body`, no alert. So "We couldn't confirm your deposit" went unread, and
+      the dashboard has the Deposit tile (read in its code, not recorded by that run) to press
+      again: the second deposit this view is there to prevent.
+    */
+    const closed = vi.fn();
+    const keys: (string | null)[] = [];
+    server.use(
+      http.post('*/api/transactions/deposit', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        return problem({
+          status: 409,
+          errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN',
+          detail: 'Could not confirm.',
+        });
+      }),
+    );
+    renderDeposit(closed);
+    const backdrop = () => {
+      const element = document.querySelector<HTMLElement>('.fui-DialogSurface__backdrop');
+      if (!element) throw new Error('the dialog has no backdrop to press');
+      return element;
+    };
+
+    // The control: over the form a press outside closes the dialog, so the press does arrive.
+    await userEvent.click(backdrop());
+    expect(closed).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    await answerDrawn(keys);
+    expect(screen.getByText("We couldn't confirm your deposit")).toBeInTheDocument();
+    expect(screen.queryByText(COPY.depositWentThrough)).not.toBeInTheDocument();
+    // This view lands no focus. The test puts it on an action, as a visitor who has reached one
+    // has: their own place. (In Chromium, Tab from `body` after a press on the backdrop went to
+    // Close, measured; jsdom is not asked where a Tab goes.)
+    const checkTransactions = screen.getByRole('button', { name: 'Check recent transactions' });
+    checkTransactions.focus();
+
+    await userEvent.click(backdrop());
+    expect(closed).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('dialog', { name: 'Deposit Money' })).toBeInTheDocument();
+    expect(screen.getByText("We couldn't confirm your deposit")).toBeInTheDocument();
+    expect(screen.getByText(/retrying blindly could deposit twice/)).toBeInTheDocument();
+    // Nor does the press take the visitor's place: from `body` Escape reaches no dialog.
+    expect(checkTransactions).toHaveFocus();
+
+    // The exits nobody presses by accident are open: the view is not a trap.
+    await userEvent.keyboard('{Escape}');
+    expect(closed).toHaveBeenCalledTimes(2);
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(closed).toHaveBeenCalledTimes(3);
+
+    // Only this view is kept. "Try again" brings the form back, and a press outside the form
+    // closes the dialog as it did before the send.
+    await userEvent.click(screen.getByRole('button', { name: /didn't go through/ }));
+    expect(screen.getByLabelText('Deposit amount')).toBeInTheDocument();
+    await userEvent.click(backdrop());
+    expect(closed).toHaveBeenCalledTimes(4);
+    expect(keys).toHaveLength(1);
+  });
+
+  it('a press outside the dialog still closes the success receipt: the guard is not on it', async () => {
+    /*
+      Pins what was left as it was. The receipt is shorter than the form too. Measured in Chromium
+      on the running stack with a real deposit: when the 201 came before the second press of a
+      double click, that press landed on the backdrop and the receipt was gone 53 ms after it
+      had appeared; one request, one deposit. Keeping the receipt open would be a decision of its
+      own. This test fails if the guard comes to cover the receipt without one.
+    */
+    const closed = vi.fn();
+    renderDeposit(closed);
+    const backdrop = () => {
+      const element = document.querySelector<HTMLElement>('.fui-DialogSurface__backdrop');
+      if (!element) throw new Error('the dialog has no backdrop to press');
+      return element;
+    };
+
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    expect(await screen.findByText('Deposit Successful!')).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Deposit Complete' })).toBeInTheDocument();
+    expect(screen.queryByText(COPY.depositWentThrough)).not.toBeInTheDocument();
+    expect(closed).not.toHaveBeenCalled();
+
+    await userEvent.click(backdrop());
+    expect(closed).toHaveBeenCalledTimes(1);
+  });
+
+  it('takes focus from the dialog itself, where a press during the send had left it', async () => {
+    /*
+      The other half of a double click: the answer takes longer than the gap between the two
+      presses. Measured in Chromium on the running stack: the second press came on the disabled
+      Deposit button while the send was still out, focus went to the dialog's own `div`, and the
+      view then appeared with focus still there and its sentence unfocused. jsdom moves no focus
+      for a press on a disabled control, so the test puts focus where it was measured to go.
+    */
+    const keys: (string | null)[] = [];
+    let answer = () => {};
+    const held = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    server.use(
+      http.post('*/api/transactions/deposit', async ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        await held;
+        return committedAnswerLost('/api/transactions/deposit');
+      }),
+    );
+    renderDeposit();
+
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    await waitFor(() => expect(keys).toHaveLength(1));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled());
+
+    const dialog = screen.getByRole('dialog', { name: 'Deposit Money' });
+    dialog.focus();
+    expect(dialog).toHaveFocus();
+
+    answer();
+    await answerDrawn(keys);
+    expect(screen.getByRole('dialog', { name: 'Deposit Complete' })).toBe(dialog);
+    await waitFor(() => expect(screen.getByText(COPY.depositWentThrough)).toHaveFocus());
+    expect(keys).toHaveLength(1);
+  });
+
+  it('a 409 whose body cannot be trusted shows the check view, not "Deposit failed"', async () => {
+    /*
+      A wrong-typed member makes the whole body untrusted, so this 409 names no code the SPA can
+      read. It may have been the answer above, or IN_FLIGHT: a deposit that may have landed. The
+      dialog said "Deposit failed. Please try again." and the next press was a new key.
+    */
+    const keys: (string | null)[] = [];
+    server.use(
+      http.post('*/api/transactions/deposit', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        return problem({
+          status: 409,
+          errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN',
+          extensions: { applied: 'true' },
+        });
+      }),
+    );
+    renderDeposit();
+
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+
+    await answerDrawn(keys);
+    expect(screen.queryByText(/Deposit failed/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByText("We couldn't confirm your deposit")).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Deposit/ })).not.toBeInTheDocument();
+    // Not proven either: this is the check view, not the went-through one.
+    expect(screen.queryByText(COPY.depositWentThrough)).not.toBeInTheDocument();
+    expect(keys).toHaveLength(1);
   });
 });

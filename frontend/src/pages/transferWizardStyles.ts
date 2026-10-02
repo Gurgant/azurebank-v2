@@ -205,4 +205,31 @@ export const useTransferWizardStyles = makeStyles({
   stateTitle: { fontSize: '20px', fontWeight: 700, color: colors.neutral[800] },
   stateBody: { fontSize: '15px', color: colors.neutral[500], lineHeight: '1.5' },
   successAmount: { fontSize: '32px', fontWeight: 700, color: colors.neutral[800] },
+  /*
+    The one sentence of a view that says how a send ended. `stateTitle`'s size, weight and colour,
+    and what a title that fits on one line never needed: the sentence is longer than its room at
+    every width, and Fluent's `Text` sets `text-align: start` and a 20 px line height, so its
+    wrapped lines would sit left-aligned and tight under a centred icon. No margin: it is rendered
+    as a `<p>`, and the view's gap spaces it. The same values as `moneyDialogStyles`.
+
+    It takes focus when the view appears, and the browser matches `:focus-visible` on it when the
+    visitor's last action was a key. On the two transfer pages that is the usual case, not the
+    keyboard visitor's alone: the sixth digit of the PIN is the send, so when that send is the
+    one answered, whoever typed the PIN sees a ring around the sentence. This rule makes it the
+    ring the app draws on a container that was given focus (`index.css`); without it the browser
+    draws its own default there. `e2e/wentThrough.spec.ts` holds both halves, on a transfer page
+    with the PIN typed.
+  */
+  outcomeSentence: {
+    fontSize: '20px',
+    fontWeight: 700,
+    color: colors.neutral[800],
+    textAlign: 'center',
+    lineHeight: '1.3',
+    margin: 0,
+    ':focus-visible': {
+      outline: `2px solid ${tokens.colorStrokeFocus2}`,
+      outlineOffset: '2px',
+    },
+  },
 });

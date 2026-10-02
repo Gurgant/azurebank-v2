@@ -67,7 +67,49 @@ design — see Notes).
   its response is stored: a short retry then hits the replay.
 - Same key after the operation committed but its response was provably
   lost (record stuck `Executed` past the staleness window) → **409
-  `IDEMPOTENCY_RESULT_UNKNOWN`** ("verify via GET /api/transactions").
+  `IDEMPOTENCY_RESULT_UNKNOWN`** ~~("verify via GET /api/transactions")~~.
+  *(Amended 2026-10-01: this answer carries **`applied: true`**. The record was read from the
+  database as `Executed`, a state that reaches the database only with the commit that moves the
+  money, so the operation is committed and this answer only cannot return its result. A client
+  must not send it again under a new key, and the sentence that said "verify … before retrying
+  with a new key" now says: "The operation sent with this idempotency key was applied, but this
+  request cannot return its result. Do not send it again with a new key: look for it with GET
+  /api/transactions." The same code carries `applied: true` when a retried attempt reloads the
+  record under its key and finds it `Executed` or `Completed` (the transfer retry under
+  Post-merge hardening), under the request hash the attempt claimed the key with. `Completed`
+  there means another request with the same key and bytes took a stale claim over, committed and
+  stored its answer: the payment under this key went through, and the same key sent again would
+  be replayed that answer. The code carries **no** `applied` when that reload finds no row, or
+  finds a record claimed with another body: nothing is proven about this request, and its
+  sentence says "may have been executed". The reload is by key, and a key can come to hold
+  another body's record: the request's claim is taken over as stale by an instance whose clock is
+  a minute or more ahead, the request that took it is refused before any write and releases it,
+  and with no record left there is no hash to refuse another body on. The attempt keeps the hash
+  it claimed with and compares it after the reload, so "the same bytes" is checked there and not
+  assumed; `Processing` under another hash is refused the same way, not re-armed. The SPA cannot
+  send another body under a key it holds. `applied` is absent, never `false`, on every other
+  409, and the document declares it on the four money 409s with `true` as its only value.)*
+  *(What the flag stands on: the flip to `Executed` reaches the database only with the business
+  commit, and a rollback takes it back. Since the same date tests hold both halves on SQL Server.
+  A refusal thrown after the flip was written leaves no `Executed` record:
+  `ExternalTransfer_RefusedAfterItsFirstSaveRan_LeavesNoExecutedRecord`, its internal twin, and
+  `WhenTheConsumeMatchesZeroRows_TheWithdrawalIsRolledBackToo`. A commit refused as it starts is
+  run again and reads `Processing`:
+  `ExternalTransfer_CommitRefusedAsItStarts_RunsAgainAndMovesTheMoneyOnce`, its internal twin, and
+  `AWithdrawalWhoseCommitIsRefusedAsItStarts_RunsAgainAndMovesTheMoneyOnce`. And
+  `ProvenCommitSourceTests` counts the saves in each file of the money path, because a save on
+  the request's context between the flip and the business commit would write `Executed` with no
+  money moved. The reload's comparison of the request hash is held without SQL Server, by
+  `ARecordClaimedAgainWithOtherBytes_RefusesToRun_AndDoesNotSayTheOperationWasApplied`, for a
+  record `Executed`, `Completed` and `Processing`. Not in the answer: the transaction's id, since the record holds no link to a
+  ledger row. With one a client could show the movement; without it the client is told that it
+  exists. Nor a promise that `GET /api/transactions` lists it: a movement on an account closed
+  afterwards is not listed. Still withheld for two minutes: a committed send whose answer was
+  lost answers `IDEMPOTENCY_IN_FLIGHT`, without `applied`, until the claim is
+  `ProcessingStaleAfter` old, because until then its stored answer may still come. The age is
+  judged on the answering instance's clock against the claiming instance's `CreatedAt`: a clock
+  ahead says `applied: true` sooner, never wrongly, since the record is `Executed` in the
+  database either way.)*
 - *(Added 2026-09-30, [ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md).)*
   The database cannot be reached, or the request ran past its deadline → **503
   `SERVICE_UNAVAILABLE`** with `retryAfterSeconds` and `Retry-After`. It carries **`applied:
@@ -144,12 +186,18 @@ design — see Notes).
 | Situation | Record state | Behavior |
 |---|---|---|
 | Validation/business error (400/401/404/422), rollback | `Processing` | Fenced delete → **key stays reusable** (fixing the payload and retrying the same key works; errors are never replayed) |
-| Post-commit exception (e.g. response mapping crash) | `Executed` | Record kept → retries get 409 `IDEMPOTENCY_RESULT_UNKNOWN` |
+| Post-commit exception (e.g. response mapping crash) | `Executed` | Record kept → retries get 409 `IDEMPOTENCY_RESULT_UNKNOWN`, with `applied: true` (2026-10-01, note below) |
 | Crash before commit | stale `Processing` | Provably nothing committed → **safe takeover** after `ProcessingStaleAfter` (~~10 min~~ 2 min, see the note below): fenced delete + fresh claim |
-| Crash after commit, before response stored | `Executed` | 409: `IN_FLIGHT` while the claim is fresh (response may still land), `RESULT_UNKNOWN` once stale; swept at TTL with a Warning log (reconciliation signal) |
+| Crash after commit, before response stored | `Executed` | 409: `IN_FLIGHT` while the claim is fresh (response may still land), `RESULT_UNKNOWN` once stale, with `applied: true` (2026-10-01, note below); swept at TTL with a Warning log (reconciliation signal) |
 | Commit ack lost, resilient strategy re-runs the commit | fence mismatch | The re-run updates `WHERE ClaimId = <old>` → 0 rows → aborts. **No in-request double execution** |
 | Stale claimant resumes after a takeover | fence mismatch | Its business commit carries the flip with the old `ClaimId` → aborts atomically |
-| Response persist fails after a 2xx | `Executed` | The 2xx is still sent (the operation DID succeed — client-first, deviation from review recommendation of 500); retries get `RESULT_UNKNOWN`, never a corrupt replay |
+| Response persist fails after a 2xx | `Executed` | The 2xx is still sent (the operation DID succeed — client-first, deviation from review recommendation of 500); retries get `RESULT_UNKNOWN`, with `applied: true` (2026-10-01, note below), never a corrupt replay |
+
+*(Amended 2026-10-01: each of the three rows that answer `RESULT_UNKNOWN` is a record read
+`Executed` from the database, so each carries `applied: true` (the note on the wire contract
+above). The table has no row for the one answer of that code that does not: a retried attempt
+whose reload finds the record gone, or replaced by one claimed with another body, under
+Post-merge hardening below.)*
 
 *(Amended 2026-09-30, ADR-0058: `ProcessingStaleAfter` is **2 minutes**, down from 10. A request
 now gives up at its 40-second deadline, lets no commit start after it, and gives the release of its
@@ -210,6 +258,10 @@ guesswork into a provable state machine.
   deterministically, on EF InMemory (smoke) and real SQL Server (proof).
 - Honest crash semantics: clients are never told "not executed" when the
   truth is unknown.
+  *(2026-10-01: nor "executed" when that is not proven. Until this date the answer written when
+  the record had vanished said "was executed"; it says "may have been executed" now, and a test
+  builds that case with nothing committed:
+  `ExternalTransfer_RecordGoneWhenTheRetryReloadsIt_Answers409WithoutApplied_AndNothingMoved`.)*
 - Business errors don't burn keys; clients keep one key per logical
   operation attempt.
 
@@ -258,7 +310,13 @@ tracing. It surfaced a set of bounded issues, resolved as follows.
   re-applied (Case A), or an already-committed transfer re-executed after a lost
   commit ack (Case B). Fixed by resetting the tracked work **and** re-reading the
   idempotency record from database truth at the top of every attempt (→ 409
-  `RESULT_UNKNOWN` when already `Executed`/`Completed`). The regression test injects
+  `RESULT_UNKNOWN` when already `Executed`/`Completed`). *(Amended 2026-10-01: with `applied:
+  true`, since that is the record as the database holds it, when its request hash is the one the
+  attempt claimed with. The arm this paragraph did not mention, a reload that finds no row,
+  answers the same code without `applied`: the claim was deleted under the request, and neither a
+  commit nor its absence is proven. So does a reload that finds a record claimed with another
+  body, whatever its state: the request's own claim is gone there too.)*
+  The regression test injects
   a one-shot transient on a *retrying* context — it fails on pre-fix code (double
   debit / 500) and passes after (single execution).
 - **Money scale.** Amounts are validated to ≤ 2 decimals (columns are
@@ -268,6 +326,8 @@ tracing. It surfaced a set of bounded issues, resolved as follows.
 - **Hash-amplification DoS + PIN disk-spool.** The 413 body guard above.
 - **Stored-response cap.** A > 64 KB 2xx is not persisted for replay (a retry then
   gets 409 `RESULT_UNKNOWN`); bounds the stored row and the replay buffer.
+  *(2026-10-01: `IN_FLIGHT` while the claim is fresh, then `RESULT_UNKNOWN` with `applied: true`,
+  the record being `Executed`.)*
 - **`IsDuplicateKey` narrowing.** Only an InMemory duplicate-PK `ArgumentException`
   (matched by message) is treated as a lost claim race; any other `ArgumentException`
   now propagates instead of being masked as a false 409.

@@ -1,6 +1,7 @@
 import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, vi } from 'vitest';
+import { problem } from '../mocks/problem';
 
 /**
  * What a visitor reads while a request is slow or the service is down, typed out here and NOT
@@ -32,7 +33,27 @@ export const COPY = {
   loaded: 'Loaded.',
   keepPageOpen: 'Still trying… Keep this page open.',
   signOutFailed: "We couldn't sign you out. You're still signed in.",
+  transferWentThrough: "Your transfer went through, but we couldn't show its receipt.",
+  depositWentThrough: "Your deposit went through, but we couldn't show its receipt.",
+  withdrawalWentThrough: "Your withdrawal went through, but we couldn't show its receipt.",
 } as const;
+
+/**
+ * The API's 409 for a money send that was committed and whose answer was lost, once the claim is
+ * past its stale age (ADR-0009): `IDEMPOTENCY_RESULT_UNKNOWN` with `applied: true`, the one answer
+ * that says the payment went through. `instance` is the request's path. `application/json`, as the
+ * API sends this 409 (the mock's default for a problem is `application/problem+json`).
+ */
+export const committedAnswerLost = (instance: string) =>
+  problem({
+    status: 409,
+    errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN',
+    detail:
+      'The operation sent with this idempotency key was applied, but this request cannot return its result. Do not send it again with a new key: look for it with GET /api/transactions.',
+    instance,
+    extensions: { applied: true },
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+  });
 
 /**
  * The browser's focus fixup, which jsdom does not run. Measured in headless Chromium 151 on

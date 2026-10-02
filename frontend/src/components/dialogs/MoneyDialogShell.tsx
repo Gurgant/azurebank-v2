@@ -23,6 +23,20 @@ import { useMoneyDialogStyles } from './moneyDialogStyles';
  * `modalType="modal"` is likewise not decoration: it is what makes Fluent trap focus and bind
  * Escape. `onOpenChange` routes BOTH of those back through the caller's own close handler rather
  * than closing the surface directly, so the guard applies to the keyboard too.
+ *
+ * **A press outside the dialog does not close it while `keepOnOutsidePress` is set.** The caller
+ * sets it while the form that sent is replaced by words the visitor must read: that the payment
+ * went through and its receipt cannot be shown, or that it could not be confirmed and is to be
+ * checked first. Either view is shorter than the form, so the dialog shrinks under the pointer,
+ * and the second press of a double click on the send button lands on the backdrop. Measured in
+ * Chromium on the running stack, on each: the dialog was gone before anybody could read it, on
+ * the first a tenth of a second after its sentence appeared. On the second, what was recorded
+ * after the press is no dialog, the dashboard's address, focus on `body` and no alert; that the
+ * dashboard has the tile that opens the dialog again is read in its code. The press changes
+ * nothing then: it closes nothing, and it leaves focus where it was. The X still closes the
+ * dialog, and so does Escape from wherever in the dialog focus is, since nobody presses those by
+ * accident. The receipt of a send that succeeded is not kept, and neither is the form: a press
+ * outside closes those as it did.
  */
 
 export interface MoneyDialogShellProps {
@@ -36,6 +50,11 @@ export interface MoneyDialogShellProps {
   onClose: () => void;
   /** True while an idempotency key is live. Bars every exit, and looks barred. */
   closeDisabled?: boolean;
+  /**
+   * True while the went-through view or the check view stands in place of the form: a press on the
+   * backdrop then closes nothing.
+   */
+  keepOnOutsidePress?: boolean;
   children: ReactNode;
 }
 
@@ -46,6 +65,7 @@ export function MoneyDialogShell({
   tone,
   onClose,
   closeDisabled = false,
+  keepOnOutsidePress = false,
   children,
 }: MoneyDialogShellProps) {
   const styles = useMoneyDialogStyles();
@@ -55,12 +75,24 @@ export function MoneyDialogShell({
       open={open}
       modalType="modal"
       onOpenChange={(_event, data) => {
-        if (!data.open) {
-          onClose();
-        }
+        if (data.open) return;
+        if (keepOnOutsidePress && data.type === 'backdropClick') return;
+        onClose();
       }}
     >
-      <DialogSurface className={styles.surface} aria-label={title} aria-describedby={undefined}>
+      <DialogSurface
+        className={styles.surface}
+        aria-label={title}
+        aria-describedby={undefined}
+        // The press that closes nothing must take nothing either. A mouse press on the backdrop
+        // moves focus to `body`, and from there Escape reaches no dialog: measured in Chromium,
+        // the view stayed and Escape no longer closed it. Refusing the press's default keeps focus
+        // where it was: on the went-through sentence, or on whatever the visitor had reached in
+        // the check view, which lands no focus of its own.
+        backdrop={
+          keepOnOutsidePress ? { onMouseDown: (event) => event.preventDefault() } : undefined
+        }
+      >
         <div className={styles.header}>
           <div className={styles.headerTitle}>
             <div

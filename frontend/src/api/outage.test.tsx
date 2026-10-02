@@ -4,7 +4,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { server } from '../mocks/server';
 import { problem, serviceUnavailable } from '../mocks/problem';
 import { makeTestStore, renderWithProviders } from '../test/renderWithProviders';
-import { COPY, advance, advanceUntil, never, track, installFakeClock } from '../test/outage';
+import {
+  COPY,
+  advance,
+  advanceUntil,
+  committedAnswerLost,
+  never,
+  track,
+  installFakeClock,
+} from '../test/outage';
 import { apiSlice } from '../features/api/apiSlice';
 import { AccountsPage } from '../pages/AccountsPage';
 import { CONNECTION_FAILED } from './problemMessages';
@@ -184,6 +192,33 @@ describe('the answer reaches the caller whole', () => {
       );
     expect(refused).toMatchObject({ status: 503, detail: COPY.unavailable });
     expect(refused).not.toHaveProperty('applied');
+  });
+
+  it('`applied: true` on a 409 reaches the caller', async () => {
+    // The member is carried for any status, so the 409 that says a payment went through (ADR-0009)
+    // arrives whole. What reads it is the idempotency hook.
+    server.use(http.post('*/api/transfers', () => committedAnswerLost('/api/transfers')));
+    const store = makeTestStore();
+
+    await expect(
+      store
+        .dispatch(
+          apiSlice.endpoints.transfer.initiate({
+            idempotencyKey: crypto.randomUUID(),
+            body: {
+              fromAccountId: '11111111-2222-4333-8444-555555555555',
+              recipientAzureTag: 'friend',
+              amount: 5,
+            },
+            stepUpAuthorizationId: crypto.randomUUID(),
+          }),
+        )
+        .unwrap(),
+    ).rejects.toMatchObject({
+      status: 409,
+      errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN',
+      applied: true,
+    });
   });
 });
 

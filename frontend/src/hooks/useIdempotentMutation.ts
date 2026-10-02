@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { isProvenCommit, isUnconfirmedSend } from '../api/moneyProblem';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import type { IdempotentArg } from '../features/api/apiSlice';
 
@@ -59,12 +60,24 @@ function shouldKeepKey(problem: ApiProblem): boolean {
  * `IDEMPOTENCY_RESULT_UNKNOWN` drops the key and latches `verifyRequired`: submit
  * refuses to mint a new key until the owning flow's explicit "it didn't go through —
  * try again" action calls `resetIntent` (after the verify-transactions dialog, ADR-0022).
- * A rejection with no HTTP status latches the same way (see the catch below).
+ * A rejection with no HTTP status, and a 409 that named no code, latch the same way (see the
+ * catch below).
+ *
+ * When that 409 says `applied: true` the payment is known to have gone through (ADR-0009), and
+ * `wentThrough` says so beside the latch, for the flow to say it and to offer no "it didn't go
+ * through" action. Whatever the flow offers, `resetIntent` does nothing then: this instance never
+ * mints another key. (Until 2026-10-01 the member was not read, and `resetIntent` re-armed the
+ * send after every `IDEMPOTENCY_RESULT_UNKNOWN`.)
  */
 export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger<TBody, TResult>) {
   const keyRef = useRef<string | null>(null);
   const verifyRequiredRef = useRef(false);
   const [verifyRequired, setVerifyRequired] = useState(false);
+  // The API said the payment under this key was committed. Set only with the latch, never without
+  // it, and never cleared: a new payment needs a new mount. The ref is what `resetIntent` reads,
+  // so a call made in the same tick as the answer is refused too.
+  const wentThroughRef = useRef(false);
+  const [wentThrough, setWentThrough] = useState(false);
   // Reactive mirror of "a key is currently held" (keyRef.current !== null). The owning flow
   // reads this to block dismissal while ANY key is live — not just while awaiting: the key is
   // KEPT after an IN_FLIGHT / network / parse / 5xx failure too, and abandoning it then
@@ -90,6 +103,12 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
   }, [keyRetained]);
 
   const resetIntent = useCallback(() => {
+    /*
+      Over a payment the server has called committed, "start over" is a second payment under a new
+      key. A flow is not to offer it there, and this lock holds when one does: the button is dead,
+      the latch stays, and `submit` keeps refusing.
+    */
+    if (wentThroughRef.current) return;
     keyRef.current = null;
     verifyRequiredRef.current = false;
     setVerifyRequired(false);
@@ -129,13 +148,24 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
           schema — the server acted — or an abort. Either way the request may have landed, which
           is exactly what RESULT_UNKNOWN says, so it gets the same latch. Dropping the key quietly
           instead let the flow say "failed, try again", and the next press sent a second key.
+
+          A 409 that named no code is the same doubt from the other side: the body could not be
+          read, and the only 409s a money send answers are IN_FLIGHT and RESULT_UNKNOWN. It used to
+          take the plain drop below, with no latch.
+
+          `isUnconfirmedSend` is those two and RESULT_UNKNOWN, in one place for every reader.
         */
-        const noStatus = (problem as Partial<ApiProblem> | undefined)?.status === undefined;
-        if (noStatus || problem.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN') {
+        if (isUnconfirmedSend(problem)) {
           keyRef.current = null;
           verifyRequiredRef.current = true;
           setVerifyRequired(true);
           setKeyRetained(false);
+          // Only RESULT_UNKNOWN with the boolean `true`: the key and the latch are the same with
+          // or without it, and what it changes is what the flow may say and offer.
+          if (isProvenCommit(problem)) {
+            wentThroughRef.current = true;
+            setWentThrough(true);
+          }
         } else if (!shouldKeepKey(problem)) {
           keyRef.current = null;
           setKeyRetained(false);
@@ -172,5 +202,5 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
     setKeyRetained(false);
   }, []);
 
-  return { submit, resetIntent, verifyRequired, keyRetained, requireVerify };
+  return { submit, resetIntent, verifyRequired, wentThrough, keyRetained, requireVerify };
 }

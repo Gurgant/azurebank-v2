@@ -80,7 +80,9 @@ function Wizard({ trigger }: { trigger: IdempotentTrigger<Body, Result> }) {
       {/* Exposed so the retained-key test can state WHICH half of `keyLive` is carrying it. */}
       <p>submitting:{String(wizard.isSubmitting)}</p>
       <p>verifyRequired:{String(wizard.verifyRequired)}</p>
+      <p>wentThrough:{String(wizard.wentThrough)}</p>
       <button onClick={() => void wizard.run({} as Body)}>send</button>
+      <button onClick={wizard.startOver}>start over</button>
       <Link to="/history">go to history</Link>
       <Link to="/login">forced logout</Link>
       {wizard.exitPrompt && (
@@ -307,6 +309,77 @@ describe('leaving a money wizard with a live key', () => {
     await act(async () => {
       await router.navigate(-1);
     });
+
+    expect(await screen.findByText('history')).toBeInTheDocument();
+    expect(screen.queryByText('Leave without finishing?')).toBeNull();
+  });
+});
+
+/**
+ * The same real hook, after the answer that says the payment went through: the API's 409
+ * `IDEMPOTENCY_RESULT_UNKNOWN` carrying `applied: true` (ADR-0009), in the shape `toApiProblem`
+ * hands on. The wizard is what the two transfer pages read, so what they can show and offer is
+ * decided here: it says so, its "start over" re-arms nothing, and the way out is open.
+ */
+describe('a money wizard told that the payment went through', () => {
+  const COMMITTED = { status: 409, errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN', applied: true };
+  const UNKNOWN = { status: 409, errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN' };
+
+  /** Rejects every send with `problem`, counting the sends that reach it. */
+  function countingTrigger(problem: unknown) {
+    const sent = { count: 0 };
+    const trigger: IdempotentTrigger<Body, Result> = () => {
+      sent.count += 1;
+      return { unwrap: () => Promise.reject(problem) };
+    };
+    return { trigger, sent };
+  }
+
+  /**
+   * Send once and let the answer be drawn. The trigger is called before `run` first yields, so a
+   * count read after a click on "send" is never read too soon.
+   */
+  async function sendOnce(problem: unknown) {
+    const { trigger, sent } = countingTrigger(problem);
+    const router = mount(trigger, ['/transfer']);
+    await userEvent.click(screen.getByRole('button', { name: 'send' }));
+    await waitFor(() => expect(screen.getByText('verifyRequired:true')).toBeInTheDocument());
+    expect(screen.getByText('submitting:false')).toBeInTheDocument();
+    expect(sent.count).toBe(1);
+    return { router, sent };
+  }
+
+  it('says so, and start over re-arms nothing: no second send leaves the page', async () => {
+    const { sent } = await sendOnce(COMMITTED);
+    expect(screen.getByText('wentThrough:true')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'start over' }));
+    expect(screen.getByText('verifyRequired:true')).toBeInTheDocument();
+    expect(screen.getByText('wentThrough:true')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'send' }));
+    expect(sent.count).toBe(1);
+  });
+
+  it('does not say so without applied, and there start over re-arms the send', async () => {
+    // The control for the test above: the same presses, and the second send does go out. Without
+    // it, "no second send" would also pass against a harness that could never send twice.
+    const { sent } = await sendOnce(UNKNOWN);
+    expect(screen.getByText('wentThrough:false')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'start over' }));
+    expect(screen.getByText('verifyRequired:false')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'send' }));
+    expect(sent.count).toBe(2);
+    expect(screen.getByText('wentThrough:false')).toBeInTheDocument();
+  });
+
+  it('holds no key afterwards, so the way to the history is not held', async () => {
+    await sendOnce(COMMITTED);
+    expect(screen.getByText('keyLive:false')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('link', { name: 'go to history' }));
 
     expect(await screen.findByText('history')).toBeInTheDocument();
     expect(screen.queryByText('Leave without finishing?')).toBeNull();

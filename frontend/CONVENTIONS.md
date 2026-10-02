@@ -66,6 +66,36 @@ as the recipient check's does, keeps a slot of its own there. Stop and Retry arm
 which puts focus on the control the failed wait comes back with (the bar's Retry) unless the visitor
 has put it somewhere else meanwhile. ADR-0059 has the reasons.
 
+**A view that says how a money send ended lands lost focus on its sentence.** The control that sent
+is disabled during the send and the browser hands its focus to `body`, so the view appears with
+nothing focused, and a view that mounts with its words already in it is not announced. The sentence
+is a `<Text as="p">` with `tabIndex={-1}` and the ref of `useFocusWhenLost(active)`, which focuses
+it when the view appears and focus is on `body` or on a container around the sentence (the dialog
+itself, where a press on a disabled control leaves it): the landing is there so that it is read
+before the actions, and one Tab reaches the first of them. **Not a live region, an alert or a status
+as well, and no `aria-describedby` on a button:** beside the landing those would say the sentence a
+second time, and a description would say it again at the Tab. The went-through view of the four
+money flows is built this way: `WentThroughView` on the two transfer pages, and the same block in
+the deposit and withdrawal dialogs, where the action carries a `key` so that it is a new node, not
+the send button renamed under a focus that never left it. In a dialog the view is shorter than the
+form it replaces, so the second press of a double click on the send button lands on the backdrop:
+the dialog tells its shell (`keepOnOutsidePress`), and a press outside then closes nothing, while
+the X and Escape still do. The check view is kept the same way: it is shorter than the form too,
+and behind it is the tile that opens the dialog for a second payment. The receipt of a send that
+succeeded is not kept. After a key press the browser draws the app's focus ring around the
+sentence; after a click it draws none. Three limits, known:
+
+- when another dialog holds focus as the answer arrives, or the visitor moved focus to a control
+  during the wait, the landing does not run, and nothing brings the sentence to a screen reader;
+- the check view ("We couldn't confirm …") lands no focus, so focus stays where the send left it.
+  Measured: on `body` after one press on the send button, and from there Escape reaches the
+  dialog only after a Tab has brought focus into it; on the dialog itself after the second press
+  of a double click on "Withdraw", and from there Escape closes it at once;
+- a landing does not depend on the screen reader, but what each one says on a focused paragraph
+  does. NVDA said the sentence once in each of the four flows, and the title only where it is a
+  dialog's name: on the two transfer pages, where it is the page's heading, it was not spoken.
+  ADR-0059's Validation has the rest of what was heard, and what was not.
+
 ## Money and formatting
 
 **Amounts are always positive; direction lives in `type`.** A negative amount in the UI layer means

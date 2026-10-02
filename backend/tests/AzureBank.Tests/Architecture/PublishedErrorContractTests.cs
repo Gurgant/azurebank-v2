@@ -211,8 +211,11 @@ public class PublishedErrorContractTests
         required.Should().NotContain("retryAfterSeconds", "most refusals carry none");
     }
 
+    // Until 2026-10-01 this was Applied_is_declared_on_the_four_money_503s_and_nowhere_else. It reads
+    // 503 schemas only, and since that date the four money 409s declare `applied` too (as true: the
+    // tests below), so "nowhere else" had stopped being what it checks.
     [Fact]
-    public void Applied_is_declared_on_the_four_money_503s_and_nowhere_else()
+    public void Applied_is_declared_on_the_503s_of_the_four_money_operations_only()
     {
         var document = Document();
 
@@ -227,6 +230,193 @@ public class PublishedErrorContractTests
         declaring.Should().BeEquivalentTo(
             MoneyOperations,
             "only a keyed money operation knows whether its claim was its own and no commit started");
+    }
+
+    /// <summary>The schema a 409 declares, or null when the operation declares no 409 with a body.</summary>
+    private static JsonElement? ConflictSchema(JsonElement operation) => ResponseSchema(operation, "409");
+
+    private static JsonElement? ResponseSchema(JsonElement operation, string status)
+    {
+        if (!operation.TryGetProperty("responses", out var responses)
+            || !responses.TryGetProperty(status, out var response)
+            || !response.TryGetProperty("content", out var content))
+        {
+            return null;
+        }
+
+        foreach (var mediaType in content.EnumerateObject())
+        {
+            if (mediaType.Value.TryGetProperty("schema", out var schema))
+            {
+                return schema;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>The schema of one property, through <c>$ref</c> and <c>allOf</c>, or null when it is not declared.</summary>
+    private static JsonElement? PropertyOf(JsonElement document, JsonElement schema, string name)
+    {
+        if (schema.TryGetProperty("$ref", out var reference))
+        {
+            var component = reference.GetString()!.Split('/')[^1];
+            schema = document.GetProperty("components").GetProperty("schemas").GetProperty(component);
+        }
+
+        if (schema.TryGetProperty("properties", out var properties)
+            && properties.TryGetProperty(name, out var property))
+        {
+            return property;
+        }
+
+        if (schema.TryGetProperty("allOf", out var parts))
+        {
+            foreach (var part in parts.EnumerateArray())
+            {
+                if (PropertyOf(document, part, name) is { } found)
+                {
+                    return found;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>The values a property's <c>enum</c> allows, as JSON text; empty when it declares none.</summary>
+    private static string[] EnumOf(JsonElement property) =>
+        property.TryGetProperty("enum", out var values)
+            ? values.EnumerateArray().Select(v => v.GetRawText()).ToArray()
+            : [];
+
+    [Fact]
+    public void Applied_is_declared_as_true_on_the_409s_of_the_four_money_operations_and_on_no_other_409()
+    {
+        // The 409 IDEMPOTENCY_RESULT_UNKNOWN says `applied: true` when the API read the key's record
+        // from the database as executed. Only the four keyed money operations hold such a record.
+        // The member is true or absent: `false` on a 409 would say "nothing moved" where nothing is
+        // known, so the declared values are exactly [true], as the 503's are exactly [false].
+        var document = Document();
+        var conflicts = Operations(document)
+            .Select(o => (o.Operation, Schema: ConflictSchema(o.Value)))
+            .Where(o => o.Schema is not null)
+            .Select(o => (o.Operation, Schema: o.Schema!.Value))
+            .ToList();
+
+        conflicts.Select(o => o.Operation).Should().Contain(MoneyOperations);
+        conflicts.Should().HaveCountGreaterThan(
+            MoneyOperations.Length,
+            "other operations answer a 409 of their own; without one in the scan, 'no other 409' proves nothing");
+
+        foreach (var (operation, value) in Operations(document).Where(o => MoneyOperations.Contains(o.Operation)))
+        {
+            var outage = OutageSchema(value);
+            outage.Should().NotBeNull("{0} declares the outage 503", operation);
+            var applied = PropertyOf(document, outage!.Value, "applied");
+            applied.Should().NotBeNull("{0}: the money 503 declares applied", operation);
+            EnumOf(applied!.Value).Should().Equal(new[] { "false" }, "{0}: a 503 never says true", operation);
+        }
+
+        var declaring = conflicts
+            .Where(o => PropertiesOf(document, o.Schema).Contains("applied"))
+            .Select(o => o.Operation)
+            .ToList();
+
+        declaring.Should().BeEquivalentTo(
+            MoneyOperations,
+            "the four money 409s say whether the operation was applied, and no other 409 holds a claim to say it about");
+
+        foreach (var (operation, schema) in conflicts.Where(o => MoneyOperations.Contains(o.Operation)))
+        {
+            var applied = PropertyOf(document, schema, "applied")!.Value;
+            applied.GetProperty("type").ToString().Should().Contain("boolean", "{0}", operation);
+            EnumOf(applied).Should().Equal(
+                new[] { "true" }, "{0}: on a 409, applied is true or absent, never false", operation);
+        }
+    }
+
+    [Fact]
+    public void The_money_409_describes_both_codes_and_what_applied_true_means()
+    {
+        var document = Document();
+        var described = 0;
+
+        foreach (var (operation, value) in Operations(document).Where(o => MoneyOperations.Contains(o.Operation)))
+        {
+            var description = value.GetProperty("responses").GetProperty("409").GetProperty("description").GetString();
+            described++;
+
+            description.Should().Contain("IDEMPOTENCY_IN_FLIGHT", "{0}", operation);
+            description.Should().Contain("IDEMPOTENCY_RESULT_UNKNOWN", "{0}", operation);
+            description.Should().Contain(
+                "applied: true", "{0}: a client must be told what the member means", operation);
+            description.Should().Contain(
+                "do not send it again",
+                "{0}: the old text ended in 'verify', which for a committed operation invites a second payment",
+                operation);
+        }
+
+        described.Should().Be(MoneyOperations.Length, "all four money operations were read");
+    }
+
+    /// <summary>Every schema a response declares: one for each media type that carries one.</summary>
+    private static IEnumerable<JsonElement> SchemasOf(JsonElement response)
+    {
+        if (!response.TryGetProperty("content", out var content))
+        {
+            yield break;
+        }
+
+        foreach (var mediaType in content.EnumerateObject())
+        {
+            if (mediaType.Value.TryGetProperty("schema", out var schema))
+            {
+                yield return schema;
+            }
+        }
+    }
+
+    [Fact]
+    public void Applied_is_declared_on_no_response_but_the_409_and_the_503_of_the_four_money_operations()
+    {
+        // The two tests above read 409 and 503 schemas. A money operation's 422 and 413 are built
+        // by the same helper as its 409, one argument apart, and neither ever carries the member:
+        // declared there it would be published for answers that never send it, and nothing that
+        // reads only 409s and 503s would notice.
+        //
+        // Every media type of every response is read here. The readers above stop at the first
+        // one a response declares, and a response can declare two (eight 404s did on 2026-10-01):
+        // a member published under the second is published all the same. The declared values are
+        // read with it, so a second media type cannot say false on a 409 or true on a 503 either.
+        var document = Document();
+        var declaring = new HashSet<string>(StringComparer.Ordinal);
+        var scanned = 0;
+
+        foreach (var (operation, value) in Operations(document))
+        {
+            if (!value.TryGetProperty("responses", out var responses)) continue;
+
+            foreach (var response in responses.EnumerateObject())
+            {
+                scanned++;
+                foreach (var schema in SchemasOf(response.Value))
+                {
+                    if (PropertyOf(document, schema, "applied") is { } applied)
+                    {
+                        declaring.Add($"{operation} {response.Name} [{string.Join(", ", EnumOf(applied))}]");
+                    }
+                }
+            }
+        }
+
+        scanned.Should().BeGreaterThan(MinimumResponsesScanned, because:
+            "a scan that reads nothing would report that no other response declares it");
+
+        declaring.Should().BeEquivalentTo(
+            MoneyOperations.SelectMany(o => new[] { $"{o} 409 [true]", $"{o} 503 [false]" }),
+            "applied is sent as true on the 409 and as false on the 503 of a keyed money operation, "
+            + "and on nothing else, whichever media type declares the response");
     }
 
     [Fact]

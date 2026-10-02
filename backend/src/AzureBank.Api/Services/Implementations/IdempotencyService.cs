@@ -166,7 +166,10 @@ public class IdempotencyService : IIdempotencyService
                     // Either way: never re-execute, never guess a response.
                     if (existing.CreatedAt + _options.ProcessingStaleAfter <= now)
                     {
-                        throw IdempotencyException.ResultUnknown();
+                        // Read from the database just now as Executed, a state written only
+                        // with the business commit, and under the same request hash: the
+                        // operation was applied, and the answer says so.
+                        throw IdempotencyException.ResultUnknownApplied();
                     }
                     throw IdempotencyException.InFlight();
 

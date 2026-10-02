@@ -9,8 +9,10 @@ import {
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
+import { isUnconfirmedSend } from '../../api/moneyProblem';
 import { useDepositMutation } from '../../features/api/apiSlice';
 import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
+import { useFocusWhenLost } from '../../hooks/useFocusWhenLost';
 import { formatCurrency } from '../../utils/format';
 import { WaitHint } from '../feedback';
 import { MoneyDialogShell } from './MoneyDialogShell';
@@ -26,6 +28,7 @@ import { DescriptionField } from '../form/DescriptionField';
 import {
   CONNECTION_FAILED,
   DEPOSIT_OUTCOME_UNKNOWN,
+  DEPOSIT_WENT_THROUGH,
   SERVICE_UNAVAILABLE_NOTHING_CHANGED,
 } from '../../api/problemMessages';
 
@@ -77,7 +80,9 @@ const QUICK_AMOUNTS = [50, 100, 200, 500];
  * (IN_FLIGHT / network / 5xx) so Retry re-sends the SAME key + body, and a body edit rotates it
  * while NO key is held (an edited body with the old key is a 422 KEY_REUSE); with one RETAINED,
  * the edit latches verify-first instead, as WithdrawDialog's does. A replayed 2xx surfaces
- * a polite note (D4); RESULT_UNKNOWN latches a verify-first flow (§2.3). No step-up —
+ * a polite note (D4); RESULT_UNKNOWN latches a verify-first flow (§2.3), or, when the answer
+ * says `applied: true`, the went-through view, which offers the history and nothing that sends
+ * (ADR-0009; until 2026-10-01 this named the verify-first flow only). No step-up —
  * deposit is auth level 1. The shell is a Fluent Dialog now: focus trap, Escape and
  * aria-modal come from the platform, and BOTH dismissal paths (Esc/backdrop and the X)
  * funnel through the keyLive guard.
@@ -87,8 +92,15 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
   const navigate = useNavigate();
 
   const [depositTrigger] = useDepositMutation();
-  const { submit, resetIntent, verifyRequired, keyRetained, requireVerify } =
+  const { submit, resetIntent, verifyRequired, wentThrough, keyRetained, requireVerify } =
     useIdempotentMutation(depositTrigger);
+  /*
+    The went-through sentence takes the focus the send lost. The Deposit button was disabled for
+    the send and the browser handed its focus to `body`; a view drawn then is not read by a screen
+    reader, and the dialog has no description of its own (`MoneyDialogShell` clears it). The dialog
+    was mounted long before, so the landing is on the flag, not on the mount.
+  */
+  const wentThroughSentence = useFocusWhenLost<HTMLParagraphElement>(wentThrough);
 
   const schema = useMemo(() => depositFormSchema(), []);
   const { control, handleSubmit, setValue, getValues, watch, formState } = useForm<
@@ -200,14 +212,13 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
     } catch (caught) {
       const problem = caught as ApiProblem;
       // D17 / §2.3: route on errorCode, never a blanket toast. RESULT_UNKNOWN is
-      // handled by the hook (latches verifyRequired) — we just render that view. So is a
-      // rejection with no HTTP status (an answer whose body failed its schema): the deposit may
-      // have landed, and "Deposit failed" under the verify view would say it had not.
-      if (
-        problem.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN' ||
-        (problem as Partial<ApiProblem>).status === undefined
-      ) {
-        // hook set verifyRequired; the verify view renders below.
+      // handled by the hook (latches verifyRequired) — we just render that view. So are a
+      // rejection with no HTTP status (an answer whose body failed its schema) and a 409 that
+      // named no code: the deposit may have landed, and "Deposit failed" under the verify view
+      // would say it had not. The hook's own test, so the two cannot disagree.
+      if (isUnconfirmedSend(problem)) {
+        // hook set verifyRequired, and wentThrough when the server said it was committed; the
+        // went-through view or the verify view renders below.
       } else if (problem.errorCode === 'IDEMPOTENCY_IN_FLIGHT') {
         setInFlight(true);
       } else if (problem.errorCode === 'VALIDATION_ERROR') {
@@ -260,11 +271,22 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
   return (
     <MoneyDialogShell
       open={isOpen}
-      title={success ? 'Deposit Complete' : 'Deposit Money'}
+      title={success || wentThrough ? 'Deposit Complete' : 'Deposit Money'}
       icon={<ArrowDownload24Regular />}
       tone="credit"
       onClose={requestClose}
       closeDisabled={keyLive}
+      // The went-through view and the check view are both shorter than the form: the second
+      // press of a double click on Deposit lands outside the dialog, and must not take their
+      // words away unread. A check view closed that way leaves the visitor on the dashboard,
+      // which has the Deposit tile to press for a second deposit (the tile is read in the
+      // dashboard's code; the run that measured the closing recorded no dialog and focus on
+      // `body`). `verifyRequired` is true under both views and under nothing else, so the receipt
+      // and the form close as they did. The hook latches it in two places: on the answer, where
+      // `wentThrough` is set with it when the payment is proven, and in `requireVerify`, which
+      // this dialog calls when the body is edited while a key is retained. The check view that
+      // edit brings up is kept the same way.
+      keepOnOutsidePress={verifyRequired}
     >
       {/* Success */}
       {success && (
@@ -294,8 +316,27 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
         </div>
       )}
 
+      {/* The server said the deposit was committed and could not return its receipt (409
+          RESULT_UNKNOWN with `applied: true`, ADR-0009). Before the check view, and instead of
+          it: the hook sets `verifyRequired` with `wentThrough`, and "it didn't go through" over a
+          committed deposit is how a second one is made. The receipt's title and icon, and one
+          sentence in place of the amount and the balance the answer does not carry. A paragraph
+          that takes focus, in no alert or status: the landing is there so that a screen reader
+          reads it, and one landing is meant to be one reading. What was heard is in ADR-0059's
+          Validation. */}
+      {!success && wentThrough && (
+        <div className={styles.centeredView}>
+          <div className={styles.successIcon}>
+            <CheckmarkCircle24Filled style={{ width: '48px', height: '48px' }} />
+          </div>
+          <Text as="p" className={styles.outcomeSentence} ref={wentThroughSentence} tabIndex={-1}>
+            {DEPOSIT_WENT_THROUGH}
+          </Text>
+        </div>
+      )}
+
       {/* RESULT_UNKNOWN — verify-first (§2.3) */}
-      {!success && verifyRequired && (
+      {!success && verifyRequired && !wentThrough && (
         <div className={styles.centeredView}>
           <div className={styles.warningIcon}>
             <Warning24Regular style={{ width: '40px', height: '40px' }} />
@@ -441,6 +482,23 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
               Done
             </Button>
           </>
+        ) : wentThrough ? (
+          /*
+            The one action, and the shell's X beside it: nothing here can send again. It carries a
+            `key` because the form's arm below is a bare button in this same slot: without one
+            React would keep that node and only change its words, under a focus that never left
+            it, so a second press meant for "Deposit" would land on "View History" and the
+            sentence would never be reached.
+          */
+          <Button
+            key="view-history"
+            appearance="primary"
+            size="large"
+            style={{ width: '100%', height: '48px' }}
+            onClick={() => void navigate('/history')}
+          >
+            View History
+          </Button>
         ) : verifyRequired ? (
           <>
             <Button

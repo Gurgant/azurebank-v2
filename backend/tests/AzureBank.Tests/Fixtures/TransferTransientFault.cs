@@ -55,6 +55,17 @@ public sealed class TransferTransientFault(TransferFaultMode mode)
 
     public TransferFaultMode Mode => mode;
 
+    /// <summary>
+    /// Called once, synchronously, at the instant the command fault fires and before it is thrown:
+    /// the faulted batch has not been sent, so nothing it would write is locked yet. For a test
+    /// that changes the database under the request between its failed attempt and its re-run.
+    /// </summary>
+    /// <remarks>
+    /// Whatever it does must go through a connection of its own. A context from the factory carries
+    /// this same interceptor and would re-enter it.
+    /// </remarks>
+    public Action? BeforeCommandFault { get; set; }
+
     /// <summary>Arm the fault. Call AFTER funding, right before the transfer.</summary>
     public void Arm() => Interlocked.Exchange(ref _armed, 1);
 
@@ -121,6 +132,7 @@ public sealed class TransferCommandFaultInterceptor(TransferTransientFault fault
     {
         if (fault.ShouldFailCommandOnce(command.CommandText))
         {
+            fault.BeforeCommandFault?.Invoke();
             throw new TimeoutException(
                 "Injected one-shot transient fault at the transfer's first SaveChanges (test).");
         }

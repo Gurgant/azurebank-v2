@@ -316,8 +316,12 @@ internal static class ConcurrencyRetry
     /// </para>
     /// </remarks>
     /// <exception cref="IdempotencyException">
-    /// Result unknown: a prior attempt committed, or the claim row vanished under us, so this
-    /// operation must not be executed again. The middleware surfaces it as 409 RESULT_UNKNOWN.
+    /// Result unknown, 409 RESULT_UNKNOWN on the wire: this operation must not be executed again.
+    /// Two cases, and they are said differently. A record reloaded as committed, under the request
+    /// hash this request claimed with, carries <c>applied: true</c>; a claim row that vanished
+    /// under us, or that was replaced by a record claimed with another body, carries no
+    /// <c>applied</c>, because nothing is proven there. (Until 2026-10-01 this named them as one
+    /// answer: "a prior attempt committed, or the claim row vanished under us".)
     /// </exception>
     public static async Task PrepareIdempotentAttemptAsync(
         AzureBankDbContext context, Account[] accounts, CancellationToken cancellationToken)
@@ -330,18 +334,49 @@ internal static class ConcurrencyRetry
             return;
         }
 
+        // The body this request claimed the key with. Kept before the reload, which overwrites the
+        // tracked value with whatever record holds the key now.
+        var claimedHash = entry.Entity.RequestHash;
+
         // Fresh database truth for this claim. ReloadAsync also refreshes the tracked ORIGINAL
         // values, so the flip re-applied below emits a fenced UPDATE (WHERE ClaimId = <db value>)
         // that rides this attempt's commit.
         await entry.ReloadAsync(cancellationToken);
 
-        if (entry.State == EntityState.Detached
-            || entry.Entity.Status is IdempotencyStatus.Executed or IdempotencyStatus.Completed)
+        // Every refusal below is a refusal to execute again. What differs is what can be SAID, and
+        // the order of the tests is the point: after a reload that finds no row, entry.Entity
+        // still holds this request's own pending flip to Executed, so a test of the status made
+        // first would answer "applied" for a row that is gone.
+        if (entry.State == EntityState.Detached)
         {
-            // Detached: the row was deleted under us (stale takeover/cleanup) -- we cannot prove
-            // nothing committed. Executed/Completed: a prior attempt already committed this
-            // operation. Either way, refuse to execute again.
+            // The row was deleted under us (stale takeover/cleanup): what entry.Entity says is
+            // this request's own pending flip, not the database. We cannot prove that nothing
+            // committed, and we cannot prove that something did.
             throw IdempotencyException.ResultUnknown();
+        }
+
+        if (entry.Entity.RequestHash != claimedHash)
+        {
+            // A record is there and it is not this request's. The reload is by key, and the key
+            // was claimed again with another body: this request's claim was taken over as stale
+            // and released by a request that was refused, and with no record left there was no
+            // hash to refuse the other body on. What that record says is about those bytes.
+            // Executed or Completed there is not this request's payment, and Processing there is
+            // not this request's claim to re-arm. This request's own record is gone, so it is the
+            // case above: nothing is proven either way.
+            throw IdempotencyException.ResultUnknown();
+        }
+
+        if (entry.Entity.Status is IdempotencyStatus.Executed or IdempotencyStatus.Completed)
+        {
+            // Read from the database just now, under the hash this request claimed with: a commit
+            // of these bytes under this key landed. The record under the key is not always this
+            // request's claim. It is Executed after an earlier attempt of this request whose
+            // acknowledgement was lost, and it is Executed or Completed after another request
+            // with the same key and bytes took a stale claim over and committed (Completed once
+            // that request stored its answer). "The same bytes" is the comparison above, not an
+            // assumption.
+            throw IdempotencyException.ResultUnknownApplied();
         }
 
         // Processing: nothing committed yet. Re-arm the pending Executed flip so it travels

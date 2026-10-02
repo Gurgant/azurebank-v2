@@ -41,12 +41,26 @@ of ADR-0009, written into the repository so the pointers have somewhere real to 
 3. **DROP the key** on `2xx`, on business `4xx`, on `401 INVALID_PIN`, on `422
    IDEMPOTENCY_KEY_REUSE`, and on `400 KEY_MISSING`/`KEY_INVALID`. The server has answered
    definitively; the intent is finished or was never admissible.
+   *(2026-10-01: one 4xx left this list. A 409 on a money send whose body names no code the SPA
+   can read latches the check as `RESULT_UNKNOWN` does. It was dropped with no latch, and the
+   next send was a new key, over a 409 that may have been `IN_FLIGHT`. The code it is routed on,
+   `HTTP_409`, is one the SPA derives from the status when the body names none: decision 5 stands
+   for every answer that names its own code, and this is the safe direction, a latch and never a
+   retry.)*
 
 4. **`409 IDEMPOTENCY_RESULT_UNKNOWN` drops the key *and* latches `verifyRequired`.** Submit
-   refuses to mint a new key until the **owning flow** — never the generic hook — has refetched
-   recent transactions and the user has explicitly said it did not go through, which calls
-   `resetIntent`. Arming a new key automatically here resubmits money the server may already have
-   moved, which is the exact outcome the whole protocol exists to prevent.
+   refuses to mint a new key until the **owning flow** — never the generic hook — ~~has refetched
+   recent transactions and~~ the user has explicitly said it did not go through, which calls
+   `resetIntent`. *(2026-10-01: no flow ever refetched anything; what the owning flow does is
+   offer that action. Since this date the four money mutations invalidate, on this code, the tags
+   their success invalidates, so the balances and the lists are read again and a cached history
+   with no reader is dropped. And when the 409 says `applied: true` (ADR-0009's note of the same
+   date) the commit is proven: the key is dropped and the latch set as before, but the flow says
+   the payment went through and offers the history and no "it didn't go through" (the two
+   transfer pages also offer the receipt's "Done"), and `resetIntent` does nothing then, so no new
+   key can exist in that page or dialog.)* Arming a new key automatically here resubmits money
+   the server may already have moved, which is the exact outcome the whole protocol exists to
+   prevent.
 
 5. **Routing is on `errorCode`, never on HTTP status.** Two opposite 409s (`IN_FLIGHT` versus
    `RESULT_UNKNOWN`) demand opposite behaviour; status-based handling collapses them into one and
@@ -124,8 +138,15 @@ replay. Two transports is the smaller cost.
   the safe answer for both, which means a genuinely-lost request occupies its key until TTL
   expiry. Correctness over availability, deliberately.
 - **`RESULT_UNKNOWN` puts a verification burden on the user.** The flow asks them to look at their
-  own transactions and decide. There is no server endpoint that answers "did key X land?", and
+  own transactions and decide. ~~There is no server endpoint that answers "did key X land?"~~, and
   inventing a client-side guess would be worse than asking.
+  *(2026-10-01: there is still no endpoint to ask, but for a record read as committed the 409
+  itself answers, with `applied: true`, and the flow says the payment went through instead of
+  asking. The burden stays when the flag is absent, when the rejection had no HTTP status, when
+  a 409 named no code, and after an edit with a key held. One case of it is sharper than the
+  words on screen say: when the record has vanished, another request holding the key may be about
+  to commit, and "start over" there mints a new key. That case is unchanged by this date's
+  change; it is recorded here.)*
 - **The mutex bounds elevation to one retry.** A second 403 after a successful elevation surfaces
   as an error rather than looping. If that is ever seen in the wild it means the session level is
   not sticking, which is a BFF bug and must be diagnosed there, not papered over with more retries.
@@ -143,6 +164,10 @@ reaching a customer; a reviewer has something to check a diff against.
 adopt it rather than calling the endpoint directly; the flow component, not the hook, must own the
 `RESULT_UNKNOWN` verify step, which is a responsibility that is easy to forget when adding a
 surface.
+*(2026-10-01: the flow owns the went-through view as well, and must test `wentThrough` before
+`verifyRequired`, since the first is never set without the second. A surface that forgot it would
+draw the check view over a proven payment, with a "start over" that re-arms nothing: the wrong
+words, never a second payment.)*
 
 **Forbidden from here on**: minting keys in `baseQuery`, in an endpoint, or on form mount; keys in
 Redux or Web Storage; automatic retry of mutations; rebuilding a request after elevation instead
@@ -154,7 +179,11 @@ displaying an attempts counter; optimistic patching of any money-bearing cache e
 Pinned by `frontend/src/api/policies.test.tsx`, `frontend/src/mocks/idempotency.test.ts`,
 `frontend/src/mocks/stepup.test.ts`, `frontend/src/mocks/withdrawHandler.test.ts` and
 `frontend/src/features/auth/stepup-interceptor.test.tsx`. Deleting any of these tests is
-a reversal of this decision, not a test cleanup. The six behaviours they hold:
+a reversal of this decision, not a test cleanup. *(2026-10-01: the note under behaviour 6 is held
+as well by `frontend/src/hooks/useMoneyWizard.blocker.test.tsx`,
+`frontend/src/pages/transfer-went-through.test.tsx` and the went-through cases of
+`frontend/src/components/dialogs/deposit.test.tsx` and `withdraw.test.tsx`.)* The six behaviours
+they hold:
 
 1. The same key survives a 503 and a user-driven Retry; a new key appears only after a 422 plus an
    edit.
@@ -174,6 +203,13 @@ a reversal of this decision, not a test cleanup. The six behaviours they hold:
 5. Withdraw with a wrong PIN does **not** dispatch `sessionExpired`, and drops the key.
 6. `IN_FLIGHT` keeps the key across a Retry, while `RESULT_UNKNOWN` forces the verify dialog before
    any new key can exist.
+   *(2026-10-01: with `applied: true` no dialog is forced, and no new key can exist in that page
+   or dialog at all: `resetIntent` does nothing, and the view offers nothing that sends. In
+   `policies.test.tsx`: "RESULT_UNKNOWN that says applied: true is known to have gone through, and
+   still sends nothing more" and "after applied: true, resetIntent does nothing: no new key can
+   exist in this page or dialog"; and, for decision 3's note, "a 409 on a money send that names no
+   code asks for a check before any new key". In the wizard's test: "says so, and start over
+   re-arms nothing: no second send leaves the page".)*
 
 ## Related
 

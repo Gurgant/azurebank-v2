@@ -114,9 +114,16 @@ not happened.
    `CONNECTION_FAILED` instead of the runtime's error. `isServiceOutage(problem)`, a 503 or the
    65 s abort, is exported, and every surface that words an outage asks it **before** its
    `NETWORK` branch, because the abort is `NETWORK` too.
-   - `applied` is passed on to the caller, and read only as `applied === false`, only on the four
+   - `applied` is passed on to the caller, and ~~read only as `applied === false`~~, only on the four
      money sends: it changes the words, never the key (ADR-0058: "A client never drops the key on
      `applied: false`").
+     *(2026-10-01: it is also read as `applied === true`, only on a money send's 409
+     `IDEMPOTENCY_RESULT_UNKNOWN` (ADR-0009's note of this date). There it changes the words, the
+     actions offered and what the page keeps in memory (the page's own copies of the PIN and of
+     the held authorisation are cleared; RTK Query's mutation hooks keep their last arguments and
+     answer, those two among them, until the page or the dialog unmounts, as they do after a
+     success), never the key, which that code drops either way. The balances and the lists are
+     read again on that code with or without it (ADR-0022 decision 4's note).)*
    - A 503 whose `errorCode` no server wrote (`HTTP_503`) does not slide the SPA's copy of the
      session's inactivity clock. Both servers put `SERVICE_UNAVAILABLE` on every 503 they send, so
      this one came from in front of the BFF, which never saw the request; counting it would move
@@ -283,6 +290,9 @@ not happened.
 
 9. **A money send rejected with no HTTP status asks for a check before any new key, and so does
    an edit while a key is held.**
+   *(2026-10-01: and so does a 409 on a money send whose body names no code, which used to drop
+   the key with no check: [ADR-0022](0022-client-money-mutation-protocol.md) decision 3's note of
+   this date.)*
    - `problemBaseQuery` gives every answer and every transport failure a status, so what is left
      is a 2xx whose body failed its schema, where the server acted, or an abort. Either may have
      landed, which is what `RESULT_UNKNOWN` says, so `useIdempotentMutation` drops the key and
@@ -422,9 +432,27 @@ sooner than the first row says.
   made a few minutes before, from the server's data, is not built.
 - **Nothing answers "did key X land?" without sending it again:** "Check again" re-sends the same
   key, which executes if nothing was recorded. A read-only status by key is not built.
-- **`RESULT_UNKNOWN` also covers a commit that is proven** (a stale `Executed` claim, ADR-0009),
+- ~~**`RESULT_UNKNOWN` also covers a commit that is proven** (a stale `Executed` claim, ADR-0009),
   and the check view still offers "It didn't go through — start over" for it. Saying that it went
-  through needs the server to say so first: a small change of its own, after this one.
+  through needs the server to say so first: a small change of its own, after this one.~~
+  *(Closed 2026-10-01 for the stale claim. Before, measured that day on `5b50681`, on the compose
+  stack in headless Chromium: five payments were committed while their answer was neither stored
+  nor delivered (a deposit, a withdrawal, a move between the visitor's own accounts and two
+  transfers). The same key, sent once the record was 126.18 to 126.22 s old, got 409
+  `IDEMPOTENCY_RESULT_UNKNOWN` with no `applied` member each time, and the page said "We
+  couldn't confirm your transfer" (or deposit, or withdrawal) over "Check recent transactions"
+  and "It didn't go through — start over" ("— try again" in the two dialogs). On the deposit
+  that second button was pressed, and then "Deposit €8.47" again: a new key, a 201, and a second
+  deposit of €8.47 in the database. Since this date that answer says `applied: true` (ADR-0009),
+  and the flow draws the receipt's title, "Your deposit went through, but we couldn't show its
+  receipt." (or transfer, or withdrawal), "View History", and nothing that sends; the tests and
+  the measurements are under Validation. **Not closed:** for the first two minutes the same
+  commit is answered `IDEMPOTENCY_IN_FLIGHT` (measured on a transfer, at 15.5 and 60.6 s), and
+  the visitor learns that it went through only by checking again after that. In that run the
+  transfer page said "Still processing — check again to see whether it went through."; the page
+  for a move between the visitor's own accounts has the same words, and the two dialogs have
+  "Still processing — tap Deposit again to check." and its Withdraw twin (those three read in
+  the code, not measured in that run). None of the four says how long that is.)*
 - **Opening an account carries no key** (ADR-0058 residual risk 2): an outage can hide an account
   that was opened, which is why its words say to check first and the list is read again; a second
   attempt can still open a second, empty account. An optional key on that request is not built.
@@ -595,6 +623,182 @@ Test files are under `frontend/src/`, browser specs under `frontend/e2e/`.
   and a read's support code is spoken digit by digit. Not heard: the transfer pages' outage bars,
   `applied: false`, a failed PIN check, the start-up page, the PIN dialog and sign-in; JAWS,
   Narrator, VoiceOver on macOS and iOS, and TalkBack.
+- **Added 2026-10-01: the went-through view** (decision 3's note, and the residual closed above).
+  - Tests. The API's answer and its two arms: `IdempotencyServiceTests`,
+    `ConcurrencyRetryIdempotentAttemptTests` and `IdempotencyEndpointTests`, and on SQL Server
+    `RequestDeadlineSqlServerTests`, `TransferTransientRetrySqlServerTests` and
+    `WithdrawalStepUpSqlServerTests`; the document, `PublishedErrorContractTests`; what the flag
+    stands on, `ProvenCommitSourceTests` and the SQL Server tests ADR-0009's note names. The SPA,
+    under `frontend/src`: `api/policies.test.tsx` (the flag read as the boolean `true` only, the
+    latch, `resetIntent`, a 409 that names no code, the cache), `api/outage.test.tsx`,
+    `hooks/useMoneyWizard.blocker.test.tsx`, `components/shared/WentThroughView.test.tsx`,
+    `pages/transfer-went-through.test.tsx`, and `components/dialogs/deposit.test.tsx` and
+    `withdraw.test.tsx`.
+  - In a browser, `frontend/e2e/wentThrough.spec.ts`: Chromium on the build the BFF serves under its
+    CSP, each send answered by the browser with the 409 and `applied: true`, so no money moved; the
+    authorisations of the withdrawal and the transfer were minted for real. A deposit, a withdrawal
+    and a transfer each showed the receipt's title and the sentence with focus on it, "didn't go
+    through" nowhere on the page, "View History" one Tab away and leading to `/history`, and one key
+    sent. The dialogs' buttons were Close and "View History"; the transfer page's, "View History"
+    and "Done". A second press where "Deposit" had been, which with the view up is on the backdrop,
+    left the dialog and its sentence on screen with focus on the sentence, and Escape then closed
+    it. A second press made while the answer was held back, on the disabled button, left focus on
+    the dialog itself, and the sentence took it when the answer came. The whole browser suite, 45
+    tests with these, passed on the compose stack built from the change with its three fixes; with
+    44, before the last of these was written, it had passed there and on a stack run from source the
+    way CI's job runs it.
+  - Measured in that run, on the deposit dialog and on the transfer page, each in the light
+    theme, in the dark theme and at 375 × 812: the sentence took 2 lines in all six, centred, and
+    it and "View History" were whole in the viewport with no sideways scroll; axe, on the rules
+    tagged WCAG 2.0 A and AA, 2.1 AA and 2.2 AA, reported 0 violations in each; the sentence's
+    contrast, computed from its colours, was 13.34:1 on the page and 14.68:1 in the dialog in the
+    light theme and at 375, and 15.45:1 and 12.2:1 in the dark theme. axe's own figure agreed on
+    the page (13.33 and 15.45); in the dialog it could not decide the sentence's background,
+    since it looks through the modal to the page behind.
+  - The focus ring, in the same run: after a key press (Enter on Deposit; Enter on Withdraw; a
+    transfer's sixth PIN digit, which is its send) the sentence had the app's ring, 2 px solid at
+    a 2 px offset; after a click on Deposit or Withdraw it had none, with focus on it. On the
+    transfer page the ring was whole in the viewport, at 375 too; in the dialog that was not
+    measured.
+  - Heard, on 2026-10-02: NVDA 2026.2 with Chromium 151 in a window, on Windows, its speech logged
+    and matched to the moment each text was on the page, against the development build of this
+    change as it was first published, before the check view was kept on a press outside, answered
+    by the repository's mock handlers, each send answered by the browser with
+    the 409 and `applied: true`. Four flows: the deposit dialog, the withdrawal dialog, the
+    transfer page and the page for a move between the visitor's own accounts. Of 18 expected
+    texts NVDA spoke 16.
+    - The sentence, in all four: spoken once when the view appeared, 0.04 to 0.11 s after it was
+      on the page, and not again after the first Tab, in the 3 s counted after it.
+    - The title, in the two dialogs: spoken as the dialog's name, "Deposit Complete" and
+      "Withdrawal Complete", each followed by "dialog", 0.09 and 0.10 s after it was on the page.
+      After the name and before the sentence NVDA also said "button", "View History".
+    - The title, on the two transfer pages: not spoken (the 2 of the 18). "Transfer Complete" is
+      the page's heading there, and focus goes to the sentence, which is all NVDA said of the
+      view. Just before it NVDA named the document by the route's title, "Send Money · AzureBank"
+      on the transfer page and "Move Money · AzureBank" on the other.
+    - The actions: the first Tab was spoken as "View History", "button" in all four, and the
+      second, on the transfer pages, as "Done", "button". After "View History" in the dialogs NVDA
+      said "History page loaded"; after "Done" on the pages, "Home page loaded".
+    - The commits after that build change which of a dialog's views a press outside leaves open,
+      comments, tests and these records. The went-through view's markup is the same in them.
+  - Not heard: the check view, which lands no focus (on `5b50681`, measured, focus was on `body`
+    in every one), and to which one more answer is routed since this date, a 409 that names no
+    code; the view arriving while another dialog holds focus, or after the visitor moved focus to
+    a control during the wait, when the landing does not run; JAWS, Narrator, VoiceOver and
+    TalkBack.
+  - Not held by a test: that the page's own copies of the PIN and of the authorisation are let go
+    when that answer arrives (decision 3's note). Nothing on the view shows them; read in the
+    code.
+  - On the compose stack, in headless Chromium at 1280 × 900, the sequence the "before" above
+    measured was run on this change four times, twice that day and twice the day after: a payment
+    committed while its answer is neither stored nor delivered, then the page's own control pressed
+    once the record is past the stale age. First on the change as it stood before the three fixes
+    named below: a transfer, two deposits, a withdrawal, a move between the visitor's own accounts,
+    a transfer with two early presses, and a double click on a deposit and on a transfer. Then after
+    the first two fixes: a transfer, a withdrawal, a deposit, and the double click on a deposit. The
+    day after, before the third fix and again after it, each time built again from the head: a
+    transfer, a move between own accounts, a withdrawal, a deposit, and the double click on a
+    deposit and on a withdrawal. Twenty-four payments in all.
+    - The answer, all twenty-four times: the same key, sent when the record was 126.2 to 130.1
+      s old, got 409 `IDEMPOTENCY_RESULT_UNKNOWN` with `"applied":true` and the sentence ADR-0009's
+      note quotes; eight members in the order type, title, status, detail, instance, errorCode,
+      traceId, applied (the "before" had seven); `application/json; charset=utf-8` and
+      `no-cache,no-store`; read at the browser, through the BFF. Once its `traceId` is replaced
+      it is byte for byte the body `wentThrough.spec.ts` answers with. The two early presses, at
+      15.6 and 61.1 s, got `IDEMPOTENCY_IN_FLIGHT` with no `applied`, and the page said "Still
+      processing — check again to see whether it went through.", as in the "before".
+    - The page: a transfer page showed `<h1>` "Transfer Complete", the sentence, and two controls on
+      the whole page, "View History" and "Done"; a dialog was named "Deposit Complete" or
+      "Withdrawal Complete" and held the sentence, Close and "View History", the only controls on
+      the page neither disabled nor inert. No alert, no button matching "didn't go through", no PIN
+      box. After a single press focus was on the sentence, a `<p>` with `tabindex="-1"` in no alert,
+      status or live region; in the "before" it was on `body`. Where it was after a double click is
+      below. Behind a dialog the balance was the database's (the "before" still showed the one from
+      before the payment). "Done" and the navigation's "Home" led to the dashboard, whose balances
+      equalled the database's; "View History" led to `/history` with one read of its first page,
+      whose first row was the movement.
+    - The money: one movement per payment in the database after the loss, after the 409 and at
+      the end; one key in every send; no request to a money path after the view appeared. The
+      deposit that ended as two deposits in the "before" ended as one.
+    - The double click on a dialog's send button, and two of the fixes. Every one of them, in every
+      run, caused one request with the one key and ended as one movement. In the first run the
+      second press on "Deposit", 143 ms after the first, landed on the dialog's backdrop: the view
+      is shorter than the form, so the place the button had been was outside the dialog. The dialog
+      was gone at most 109 ms after its sentence had appeared, and the visitor was left on the
+      dashboard with focus on `body`, beside the refreshed balance and the new row of "Recent
+      activity", told nothing. On a transfer page the second press landed on the sentence and the
+      view stayed. Since then a press on the backdrop closes nothing while that view is up and
+      leaves focus where it was (`MoneyDialogShell`'s `keepOnOutsidePress`); the X and Escape close
+      the dialog. In the second run the same double click, 178 ms apart, left the dialog "Deposit
+      Complete" on screen with focus on the sentence. In that run's other deposit, Close closed the
+      dialog with no request, and the Deposit tile then opened a new, empty dialog whose submit was
+      disabled.
+    - In the third run the answer was slower than the double click: it reached the browser 225 ms
+      (deposit) and 192 ms (withdrawal) after the first press, and the second press, 130 and 131 ms
+      after the first, came while the send was still out, on an element that is no control and on
+      the disabled "Back". Each dialog stayed and showed its sentence, but focus was on the dialog
+      itself and not on the sentence. The same was then made on purpose, a deposit's answer held for
+      400 ms in the browser: the second press, on the disabled button, moved focus to the dialog
+      (`role="dialog"`, `tabindex="-1"`), and it was still there with the view on screen. That is
+      where focus went, measured, and not why: to the dialog's `div` after the press on the disabled
+      button there, and to the same `div` in that run's double click on the deposit, whose second
+      press was on a `<div>` that is no control. The landing looked for focus on `body` alone. Since
+      then the sentence takes focus from a container that holds it as it does from `body`
+      (`useFocusWhenLost`). In the fourth run the held answer ended with focus on the sentence. Its
+      two double clicks came after their answers (77 and 72 ms; the second presses 245 and 284 ms
+      after the first): on "Deposit" the second press was on the backdrop, and the dialog stayed
+      with focus on the sentence; on "Withdraw" the place the button had been is still inside the
+      shorter dialog, on no control, and the press moved focus from the sentence to the dialog
+      itself. The sentence had it 106 and 147 ms after the first press. Those two stamps are the
+      page's, its own `Date.now()` on each snapshot; their zero is the driver's, the time it noted
+      just before it sent the mouse down, on the same machine. The snapshots reached the driver at
+      244 and 272 ms. The dialog stayed. Measured on the deposit's view after such a press: Tab
+      reached Close, Shift+Tab then "View History", and Escape closed the dialog. That is not
+      changed: the landing is made once, when the view appears.
+    - The check view and the success receipt, which the change at first left as they were. Measured
+      then, once each on the deposit dialog, the send answered by the browser or by the API with
+      nothing held: the same double click over the check view (a 409 with no `applied`, answered in
+      16 ms) and over the success receipt of a real deposit (a 201 after 50 ms). The second press,
+      129 and 124 ms after the first, was on the backdrop and closed the dialog. What was recorded
+      1.5 s later, each time: no dialog, the dashboard's address, focus on `body`, no alert; one
+      request each, and one deposit, the real one. So the check view's words went unread. That the
+      dashboard has the tile that opens the dialog again, for a second deposit, is read in the
+      page's code; those runs did not record it. The same was not measured on `main`. Since then,
+      the fourth fix, the two dialogs keep the check view as they keep the went-through view: a
+      press on the backdrop closes nothing and leaves focus where it was (`keepOnOutsidePress`, set
+      while the check is latched). On a stack built again with that, the day after the first runs,
+      each run once, the send answered by the browser with a 409 that has no `applied`: the double
+      click on "Deposit", its second press on the backdrop 120 ms after the first, left the dialog
+      "Deposit Money" and "We couldn't confirm your deposit" on screen with focus on `body`, where
+      the send had left it; one request, and no deposit in the database. From `body` Escape did
+      nothing; a Tab put focus on Close, and Escape then closed the dialog. On "Withdraw" the
+      authorisation is minted first, and its answer came 470 ms after the first press: the second
+      press, 133 ms after the first, came before it, on the disabled button, and moved focus to the
+      dialog itself; the check view then appeared and stayed, and Escape closed it; one request to
+      the withdrawal's path, and no withdrawal. A press on the backdrop 1.12 s after the deposit's
+      check view had appeared, and one 0.81 s after the withdrawal's, left each on screen. The place
+      where "Withdraw" had been is inside that view, on "Check recent transactions": a second press
+      made 0.7 s after the first, after the view, pressed it and led to `/history`. The receipt is
+      as it was, and nothing guards it, which a test in each dialog's suite holds: a press on the
+      backdrop 1.07 s after it appeared closed the dialog. What a double click does to it depends on
+      which comes first, the answer or the second press, and both were measured on a real deposit.
+      When the 201 came after the second press, the press was on the disabled button, and the
+      receipt then appeared and stayed, with focus on the dialog: the 201 came 322 ms after the
+      first press on that stack, and 881 ms on a later stack, built from the same product, in the
+      first deposit sent to it. In the next deposit there the 201 came first: the receipt was on the
+      page 111 ms after the first press, the second press landed on the backdrop at 149 ms, and the
+      dialog was gone at 164 ms, 53 ms after the receipt appeared; one request, one deposit in the
+      database. The browser suite, 46 tests with the one that presses twice over the check view,
+      passed on that stack. That test and one in each dialog's suite failed before the change, the
+      browser one on a stack built without it.
+    - The other fix is the API's: a retried attempt compares the request hash after its reload
+      (ADR-0009's note). No browser run stages it; the runs after it show the transfers and the
+      withdrawals, which pass through it, answering as in the first.
+    - Not staged in a browser: the two answers a retried attempt gives, for a record reloaded as
+      committed and for a record that is gone. They are the SQL Server tests'. The loss is made
+      by holding the record's row from a second database session past the 3 s its store is
+      given, and by dropping the page's answer in the browser; neither is an outage. The images
+      are the Production ones under compose, on one machine.
 - Not measured in a browser: anything on Azure; any browser but Chromium; a database stopped for
   longer than a minute, and a write against a stuck BFF (the second row of "The numbers" and the
   last row's write); the start-up page of decision 10, since each session check got its 200; the

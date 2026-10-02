@@ -109,7 +109,10 @@ public sealed class ServiceUnavailableResponseTransformer : IOpenApiOperationTra
                         {
                             // false is the only value ServiceUnavailableExceptionHandler writes, so
                             // it is the only one published: a plain boolean would promise the
-                            // generated clients a true the API never sends.
+                            // generated clients a true that no 503 sends. (Until 2026-10-01 this
+                            // said "a true the API never sends". The API does send one since
+                            // then: on the 409 IDEMPOTENCY_RESULT_UNKNOWN of a keyed money
+                            // operation whose record was read as committed, never on a 503.)
                             Type = JsonSchemaType.Boolean,
                             Enum = [JsonValue.Create(false)],
                             Description =
