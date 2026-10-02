@@ -43,6 +43,9 @@ AZ = shutil.which('az') or 'az'
 AZ_TIMEOUT = 180
 APP = 'azurebank'
 MIGRATE_JOB = 'azurebank-migrate'
+# What each signs in to the database as: the one user-assigned identity it may carry.
+APP_IDENTITY = 'azurebank-app'
+MIGRATE_IDENTITY = 'azurebank-migrate'
 # Job name -> container name. Every job runs the tools image and moves with the commit: the
 # migrate job before the migration, the others only after it succeeded.
 JOBS = {MIGRATE_JOB: 'migrate'}
@@ -75,6 +78,10 @@ class AzError(RuntimeError):
 
 class ShapeError(RuntimeError):
     """The app or a job is not in the shape this script deploys onto."""
+
+
+class IdentityRightAsked(RuntimeError):
+    """Azure wants a right on an attached identity before it changes the resource: the run stops."""
 
 
 class RevisionFailed(RuntimeError):
@@ -146,7 +153,24 @@ def image_patch(resource, desired):
     for container in containers:
         container['image'] = desired[container['name']]
     template.pop('revisionSuffix', None)
+    # The location and the template, and nothing else: no configuration, and never an identity.
     return {'location': resource['location'], 'properties': {'template': template}}
+
+
+def patch(resource_id, body, what):
+    """PATCH a template. Azure may refuse it for a right on the identity attached to the resource,
+    though no body here names an identity. That refusal is not tried again and no role is added
+    for it: the run stops and the refusal goes to the owner as Azure wrote it."""
+    try:
+        return rest('PATCH', resource_id, body)
+    except AzError as error:
+        refusal = str(error).lower()
+        if 'linkedauthorizationfailed' in refusal and 'userassignedidentities/assign/action' in refusal:
+            raise IdentityRightAsked(
+                f'Azure asked for a right on a database identity before it would change {what}: '
+                'stop here. This request changed nothing, it was not tried again, and no role is '
+                f'to be added for it; the refusal goes to the owner as Azure wrote it: {error}') from None
+        raise
 
 
 # --- The shape this script deploys onto ---
@@ -175,7 +199,20 @@ def app_drift(app):
         ('template.containers', names, names == ['api', 'bff']),
         ('template.initContainers', init_names(template), not template.get('initContainers')),
     ]
-    return [f'{field} is {value!r}' for field, value, wanted in checks if not wanted]
+    return ([f'{field} is {value!r}' for field, value, wanted in checks if not wanted]
+            + identity_drift(app, APP_IDENTITY))
+
+
+def identity_drift(resource, name):
+    """The one user-assigned identity the template attaches, and no other. The field and the
+    ending it should have are named; what was found is not: an identity's ID holds the
+    subscription, and the entry under it holds the client and principal IDs."""
+    identity = resource.get('identity') or {}
+    attached = identity.get('userAssignedIdentities')
+    wanted = (str(identity.get('type')).lower() == 'userassigned'
+              and isinstance(attached, dict) and len(attached) == 1
+              and str(next(iter(attached))).lower().endswith(f'/userassignedidentities/{name}'))
+    return [] if wanted else [f'identity is not exactly one user-assigned identity ending in /{name}']
 
 
 def init_names(template):
@@ -198,7 +235,8 @@ def job_drift(job):
          configuration.get('replicaRetryLimit') in (None, 0)),
         ('template.initContainers', init_names(template), not template.get('initContainers')),
     ]
-    return [f'{field} is {value!r}' for field, value, wanted in checks if not wanted]
+    return ([f'{field} is {value!r}' for field, value, wanted in checks if not wanted]
+            + identity_drift(job, MIGRATE_IDENTITY))
 
 
 def assert_shape(what, drift, when):
@@ -572,7 +610,7 @@ def deploy(subscription, resource_group, tag, app_only=False, in_actions=False,
 
     def move_job(name):
         say(f'Moving {name} to {tag[:12]}.')
-        rest('PATCH', f'{prefix}/jobs/{name}', job_patches[name])
+        patch(f'{prefix}/jobs/{name}', job_patches[name], f'the job {name}')
         return wait_job(f'{prefix}/jobs/{name}', {JOBS[name]: tools})
 
     if not app_only:
@@ -588,7 +626,7 @@ def deploy(subscription, resource_group, tag, app_only=False, in_actions=False,
     else:
         say('Moving both app containers together; no job is touched and no migration runs.')
 
-    rest('PATCH', app_id, app_patch)
+    patch(app_id, app_patch, 'the app')
     try:
         moved = wait_revision(app_id, app_images, previous)
         assert_shape('The app', app_drift(moved), 'after its images moved')

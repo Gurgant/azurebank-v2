@@ -34,6 +34,7 @@ OLD = 'b' * 40
 NEW = 'a' * 40
 ADDRESS = 'azurebank.example.invalid'
 BEFORE = 'azurebank--before'
+IDENTITY_IDS = ('aaaaaaaa-1111-4222-8333-444444444444', 'bbbbbbbb-5555-4666-8777-888888888888')
 
 
 def container(name, image):
@@ -41,9 +42,17 @@ def container(name, image):
             'resources': {'cpu': 0.25, 'memory': '0.5Gi'}}
 
 
+def identity(name):
+    """The identity block as Azure returns it: the key holds the subscription, the entry two IDs."""
+    return {'type': 'UserAssigned', 'userAssignedIdentities': {
+        f'/subscriptions/{SUBSCRIPTION}/resourcegroups/{GROUP}/providers/Microsoft.ManagedIdentity'
+        f'/userAssignedIdentities/{name}': {'principalId': IDENTITY_IDS[0], 'clientId': IDENTITY_IDS[1]}}}
+
+
 def app_resource(tag=OLD):
     return {
         'location': 'italynorth',
+        'identity': identity('azurebank-app'),
         'properties': {
             'provisioningState': 'Succeeded',
             'latestRevisionName': BEFORE,
@@ -66,6 +75,7 @@ def app_resource(tag=OLD):
 def job_resource(name='migrate', tag=OLD):
     return {
         'location': 'italynorth',
+        'identity': identity('azurebank-migrate'),
         'properties': {
             'provisioningState': 'Succeeded',
             'configuration': {
@@ -138,6 +148,7 @@ class FakeAzure:
         self.drift_app_on_patch = None
         self.drift_job_on_patch = None
         self.refuse = None
+        self.refusal = 'Forbidden: AuthorizationFailed'
         self.calls = []
         self.events = []
         self.printed_before_first_write = None
@@ -154,7 +165,7 @@ class FakeAzure:
         if method != 'GET' and self.printed_before_first_write is None:
             self.printed_before_first_write = self.out.getvalue()
         if self.refuse and self.refuse(method, resource_id, body):
-            raise deploy.AzError('Forbidden: AuthorizationFailed')
+            raise deploy.AzError(self.refusal)
         if resource_id == APP_ID:
             return self.app_call(method, body)
         if resource_id.startswith(APP_ID + '/revisions/'):
@@ -622,6 +633,151 @@ for _what, _drifts in (('The app', APP_DRIFTS), ('The job azurebank-migrate', JO
         _name = f"{_what.split()[1]}_{_field.replace('.', '_')}"
         setattr(ShapeTests, f'test_a_drift_in_the_{_name}_is_refused_before_any_change',
                 _drift_test(_field, _drift, _what))
+
+
+def keys_of(node):
+    """Every key anywhere in a request body."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield key
+            yield from keys_of(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from keys_of(value)
+
+
+BOTH = {'type': 'UserAssigned', 'userAssignedIdentities': {
+    **identity('azurebank-app')['userAssignedIdentities'],
+    **identity('azurebank-migrate')['userAssignedIdentities']}}
+# what is wrong with the identity block -> the block, on the app and on the job
+WRONG_IDENTITIES = {
+    'missing': (None, None),
+    'system-assigned': ({'type': 'SystemAssigned', 'principalId': IDENTITY_IDS[0]},) * 2,
+    'both kinds': ({**identity('azurebank-app'), 'type': 'SystemAssigned, UserAssigned'},
+                   {**identity('azurebank-migrate'), 'type': 'SystemAssigned, UserAssigned'}),
+    "the other resource's": (identity('azurebank-migrate'), identity('azurebank-app')),
+    'two of them': (BOTH, BOTH),
+    'none attached': ({'type': 'UserAssigned', 'userAssignedIdentities': {}},) * 2,
+    'attached as a list': ({'type': 'UserAssigned', 'userAssignedIdentities': ['azurebank-app']},
+                           {'type': 'UserAssigned', 'userAssignedIdentities': ['azurebank-migrate']}),
+    'one whose name only ends the same': (identity('not-azurebank-app'),
+                                          identity('not-azurebank-migrate')),
+}
+# Azure's words when a write needs a right on an identity attached to the resource.
+LINKED = ("Forbidden({\"error\":{\"code\":\"LinkedAuthorizationFailed\",\"message\":\"The client "
+          "'<id>' with object id '<id>' has permission to perform action 'Microsoft.App/jobs/write' "
+          "on scope '/subscriptions/<id>/resourceGroups/group/providers/Microsoft.App/jobs/"
+          "azurebank-migrate'; however, it does not have permission to perform action(s) "
+          "'Microsoft.ManagedIdentity/userAssignedIdentities/assign/action' on the linked scope(s) "
+          "'/subscriptions/<id>/resourcegroups/group/providers/Microsoft.ManagedIdentity/"
+          "userAssignedIdentities/azurebank-migrate' (respectively) or the linked scope(s) are "
+          "invalid.\"}})")
+
+
+class IdentityTests(DeployCase):
+    """The app carries the identity azurebank-app and the job azurebank-migrate: each exactly one."""
+
+    def test_an_app_or_a_job_that_does_not_carry_exactly_its_own_identity_is_refused(self):
+        job = self.azure.jobs['azurebank-migrate']
+        for what, (on_app, on_job) in WRONG_IDENTITIES.items():
+            for resource, block, name, expected in (
+                    (self.azure.app, on_app, 'The app', 'azurebank-app'),
+                    (job, on_job, 'The job azurebank-migrate', 'azurebank-migrate')):
+                with self.subTest(what=what, on=name):
+                    right = resource['identity']
+                    resource['identity'] = block
+                    with self.assertRaises(deploy.ShapeError) as raised:
+                        self.deploy()
+                    resource['identity'] = right
+                    self.assertEqual(str(raised.exception), (
+                        f'{name} is not in the shape this script deploys onto (nothing was changed): '
+                        f'identity is not exactly one user-assigned identity ending in /{expected}. '
+                        'Put it right with the template (infra/README.md) before deploying.'))
+                    self.assertEqual(self.azure.writes(), [], 'nothing may be changed')
+        self.migration.assert_not_called()
+        self.smoke.assert_not_called()
+
+    def test_a_wrong_identity_is_named_by_its_field_and_what_was_found_is_never_printed(self):
+        # The ID of an identity holds the subscription, and its entry the client and principal IDs.
+        self.azure.app['identity'] = {'type': 'UserAssigned', 'userAssignedIdentities': {
+            '/subscriptions/SUBSCRIPTION-MARKER/resourcegroups/other/providers'
+            '/Microsoft.ManagedIdentity/userAssignedIdentities/someone-elses':
+                {'principalId': IDENTITY_IDS[0], 'clientId': IDENTITY_IDS[1]}}}
+        with self.assertRaises(deploy.ShapeError) as raised:
+            self.deploy(in_actions=True)
+        for hidden in ('SUBSCRIPTION-MARKER', 'someone-elses', 'other', *IDENTITY_IDS):
+            self.assertNotIn(hidden, str(raised.exception) + self.printed())
+
+    def test_the_identity_is_recognised_whatever_the_case_azure_returns_its_id_in(self):
+        for resource in (self.azure.app, self.azure.jobs['azurebank-migrate']):
+            (key, entry), = resource['identity']['userAssignedIdentities'].items()
+            resource['identity'] = {'type': 'userAssigned', 'userAssignedIdentities': {key.upper(): entry}}
+        self.deploy()
+        self.assertEqual(self.steps()[-1], 'smoke')
+
+    def test_the_app_only_road_checks_the_apps_identity_too(self):
+        self.azure.app['identity'] = None
+        with self.assertRaisesRegex(deploy.ShapeError, 'ending in /azurebank-app'):
+            self.deploy(app_only=True)
+        self.assertEqual(self.azure.writes(), [])
+
+
+class RequestTests(DeployCase):
+    """What a PATCH carries, and the one refusal that is never worked around."""
+
+    def test_no_request_ever_carries_an_identity(self):
+        # The deploy, and the put-back after it: three bodies, each a location and a template.
+        self.azure.fate['d'] = 'never'
+        with self.assertRaisesRegex(RuntimeError, 'put back'):
+            self.deploy()
+        bodies = [body for method, _, body in self.azure.calls if method == 'PATCH']
+        self.assertEqual(len(bodies), 3)
+        for body in bodies:
+            self.assertEqual((sorted(body), sorted(body['properties'])),
+                             (['location', 'properties'], ['template']))
+            self.assertEqual([key for key in keys_of(body) if 'identit' in key.lower()], [])
+        self.assertIn('identity', self.azure.app, 'the resource that was read did hold one')
+
+    def test_a_refusal_that_asks_for_a_right_on_the_identity_stops_the_run_and_is_not_tried_again(self):
+        self.azure.refusal = LINKED
+        for target, what, written in ((MIGRATE_ID, 'the job azurebank-migrate', 1), (APP_ID, 'the app', 2)):
+            with self.subTest(target=what):
+                self.azure.calls.clear()
+                self.azure.refuse = lambda method, resource_id, body: (
+                    method == 'PATCH' and resource_id == target)
+                with self.assertRaises(deploy.IdentityRightAsked) as raised:
+                    self.deploy()
+                message = str(raised.exception)
+                self.assertTrue(message.startswith('Azure asked for a right on a database identity '
+                                                   f'before it would change {what}: stop here.'), message)
+                self.assertIn('it was not tried again, and no role is to be added for it', message)
+                self.assertIn('userAssignedIdentities/assign/action', message)
+                writes = self.azure.writes()
+                self.assertEqual(writes.count(('PATCH', target)), 1)
+                self.assertEqual(len(writes), written, 'no retry, no put-back, nothing after it')
+        self.smoke.assert_not_called()
+
+    def test_any_other_refusal_of_a_request_stays_azures_own_error(self):
+        self.azure.refuse = lambda method, resource_id, body: method == 'PATCH'
+        for refusal in ('Forbidden: AuthorizationFailed',
+                        'Forbidden: LinkedAuthorizationFailed on a subnet join/action',
+                        "Forbidden: AuthorizationFailed for 'Microsoft.ManagedIdentity"
+                        "/userAssignedIdentities/assign/action'"):
+            with self.subTest(refusal=refusal):
+                self.azure.refusal = refusal
+                with self.assertRaises(deploy.AzError):
+                    self.deploy()
+
+    def test_that_refusal_ends_the_program_with_its_own_sentence(self):
+        self.azure.refusal = LINKED
+        self.azure.refuse = lambda method, resource_id, body: method == 'PATCH'
+        environment = {'AZURE_SUBSCRIPTION_ID': SUBSCRIPTION, 'AZURE_RESOURCE_GROUP': GROUP,
+                       'IMAGE_TAG': NEW}
+        with patch.dict(deploy.os.environ, environment, clear=True), \
+                self.assertRaises(SystemExit) as raised:
+            deploy.main([])
+        self.assertTrue(str(raised.exception.code).startswith(
+            'Azure asked for a right on a database identity'), raised.exception.code)
 
 
 REFUSED_LISTING = subprocess.CompletedProcess(
