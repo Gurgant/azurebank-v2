@@ -495,6 +495,102 @@ class MigrationTests(Offline):
         self.assertIn('--job-execution-name run', str(raised.exception))
 
 
+# What Azure could put in a name or a status and nobody has seen: a second line, and on it a
+# command that GitHub Actions would obey.
+STRANGE = 'x\n::add-mask::something'
+
+
+class MigrationLinesTests(Offline):
+    """Every line `deploy.run_migration` prints or raises may be public: an execution's name and
+    its status are shown only in the shape expected, as the verdict shows them."""
+
+    def assert_nothing_strange(self, text):
+        for unwanted in ('\n', '::', 'something'):
+            self.assertNotIn(unwanted, text)
+
+    def assert_every_line_is_ours(self):
+        for line in self.printed().splitlines():
+            self.assertRegex(line, r'^\d\d:\d\d:\d\dZ ', 'a line this script did not begin')
+            self.assert_nothing_strange(line)
+
+    def lines(self):
+        return [line.split(' ', 1)[1] for line in self.printed().splitlines()]
+
+    @patch('deploy.rest', return_value={'name': 'run'})
+    @patch('deploy.executions')
+    def test_a_name_and_each_status_are_printed_as_azure_gave_them_when_they_have_the_shape(
+            self, executions, start):
+        executions.side_effect = [[], [execution('run', 'Running')], [execution('run', 'Succeeded')]]
+        self.assertEqual(deploy.run_migration('/job', 600), 'run')
+        self.assertEqual(self.lines()[:3], ['Migration execution run started.',
+                                            'Migration execution run: Running.',
+                                            'Migration execution run: Succeeded.'])
+
+    @patch('deploy.rest', return_value={'name': STRANGE})
+    @patch('deploy.executions')
+    def test_a_name_with_another_shape_is_never_printed_and_the_run_goes_on(self, executions, start):
+        executions.side_effect = [[], [execution(STRANGE, 'Running')], [execution(STRANGE, 'Succeeded')]]
+        self.assertEqual(deploy.run_migration('/job', 600), STRANGE)
+        self.assert_every_line_is_ours()
+        self.assertEqual(self.lines()[:3], ['Migration execution whose name is withheld started.',
+                                            'Migration execution whose name is withheld: Running.',
+                                            'Migration execution whose name is withheld: Succeeded.'])
+
+    @patch('deploy.rest', return_value={'name': 'run'})
+    @patch('deploy.executions')
+    def test_a_status_with_another_shape_is_never_printed_and_is_waited_out(self, executions, start):
+        # Text on two lines, something that is not text, and a word this script does not know.
+        executions.side_effect = [[], [execution('run', STRANGE)], [execution('run', ['Succeeded'])],
+                                  [execution('run', 'Pending')], [execution('run', 'Succeeded')]]
+        self.assertEqual(deploy.run_migration('/job', 600), 'run')
+        self.assert_every_line_is_ours()
+        self.assertEqual(self.lines()[:5], ['Migration execution run started.',
+                                            'Migration execution run: status not reported.',
+                                            'Migration execution run: status not reported.',
+                                            'Migration execution run: status not reported.',
+                                            'Migration execution run: Succeeded.'])
+        self.assertNotIn('Pending', self.printed())
+
+    @patch('deploy.rest')
+    def test_an_execution_that_blocks_the_start_is_named_only_in_the_shape_expected(self, start):
+        recent = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        for blocking in (execution(STRANGE, 'Running'), execution('previous', STRANGE, recent),
+                         execution(STRANGE, {'state': STRANGE}, recent)):
+            with self.subTest(blocking=blocking), patch('deploy.executions', return_value=[blocking]):
+                with self.assertRaises(RuntimeError) as raised:
+                    deploy.run_migration(MIGRATE_ID, 600)
+                self.assert_nothing_strange(str(raised.exception))
+                self.assertIn('a migration may still be running', str(raised.exception))
+        self.assertIn('Execution whose name is withheld is in a state this script does not know: ',
+                      str(raised.exception))
+        self.assertIn('--job-execution-name <its name>', str(raised.exception))
+        start.assert_not_called()
+
+    @patch('deploy.rest', return_value={})
+    @patch('deploy.executions')
+    def test_several_new_executions_are_listed_without_a_name_of_another_shape(self, executions, start):
+        executions.side_effect = [[], [execution('one', 'Running'), execution(STRANGE, 'Running')]]
+        with self.assertRaises(RuntimeError) as raised:
+            deploy.run_migration('/job', 600)
+        self.assertIn('Several new executions appeared (one, a name withheld)', str(raised.exception))
+        self.assert_nothing_strange(str(raised.exception))
+
+    def test_a_failure_and_a_timeout_withhold_a_name_of_another_shape(self):
+        with patch('deploy.rest', return_value={'name': STRANGE}), \
+                patch('deploy.executions', side_effect=[[], [execution(STRANGE, 'Failed')]]):
+            with self.assertRaises(RuntimeError) as raised:
+                deploy.run_migration(MIGRATE_ID, 600)
+        self.assertIn('did not succeed (execution whose name is withheld: Failed)', str(raised.exception))
+        self.assert_nothing_strange(str(raised.exception))
+        with patch('deploy.rest', return_value={'name': STRANGE}), \
+                patch('deploy.executions', return_value=[]):
+            with self.assertRaises(RuntimeError) as raised:
+                deploy.run_migration(MIGRATE_ID, 600)
+        self.assertIn('Timed out waiting for execution whose name is withheld.', str(raised.exception))
+        self.assertIn('--job-execution-name <its name>', str(raised.exception))
+        self.assert_nothing_strange(str(raised.exception))
+
+
 VERDICT = ('Verdict: execution this-run: Succeeded, started 2026-10-02T18:00:03Z, '
            'ended 2026-10-02T18:00:09Z (6 s), exit code 0 (done), reason Completed.')
 

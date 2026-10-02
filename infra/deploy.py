@@ -71,6 +71,8 @@ FAILED = {'Failed', 'Stopped', 'Degraded'}
 FINISHED = FAILED | {'Succeeded'}
 STATUSES = ACTIVE | FINISHED | {'Unknown'}
 GUID = re.compile(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}')
+# The shape of an execution's name. A name of any other shape is never printed.
+EXECUTION_NAME = re.compile(r'[A-Za-z0-9-]{1,100}')
 # What the tools image exits with (backend/tools/AzureBank.Seeder/Commands/ExitCodes.cs).
 EXIT_CODES = {0: 'done', 1: 'failed after it reached for the server; running it again is safe',
               2: 'refused before any connection; the configuration must change'}
@@ -384,13 +386,34 @@ def started_within(execution, seconds, now=None):
     return (now - began).total_seconds() < seconds
 
 
+def named(name):
+    """An execution's name when it has the shape of one, else None. Every line of a deployment
+    may be public, and nobody has seen what Azure puts in a field it has never filled here."""
+    return name if isinstance(name, str) and EXECUTION_NAME.fullmatch(name) else None
+
+
+def told_name(name):
+    return f"execution {named(name) or 'whose name is withheld'}"
+
+
+def told_status(status, otherwise='status not reported'):
+    """A status as a line may show it: one of the states this script knows, or words instead."""
+    return status if isinstance(status, str) and status in STATUSES else otherwise
+
+
+def state_of(execution):
+    """An execution's status when it is text, else None: anything else is a state nobody named."""
+    status = execution['properties'].get('status')
+    return status if isinstance(status, str) else None
+
+
 def stop_hint(job_id, execution):
     """The deployment identity may start the job and read its executions; it may not stop one."""
     match = re.search(r'/resourceGroups/([^/]+)/providers/Microsoft\.App/jobs/([^/]+)$', job_id)
     group, job = match.groups() if match else ('<resource group>', '<job>')
     return ('The deployment identity cannot stop it, and it blocks every later deploy until it '
             f'ends or the owner stops it: az containerapp job stop --name {job} '
-            f'--resource-group {group} --job-execution-name {execution}')
+            f"--resource-group {group} --job-execution-name {named(execution) or '<its name>'}")
 
 
 def moment(text):
@@ -431,11 +454,7 @@ def verdict(name, properties, in_actions=False):
     for its shape before it is printed, because inside GitHub Actions the line is public and
     nobody has seen what Azure puts in a field it has never filled here. There, a reason that is
     not one plain word is withheld, and Azure's message is not printed at all."""
-    known = isinstance(name, str) and re.fullmatch(r'[A-Za-z0-9-]{1,100}', name)
-    status = properties.get('status')
-    reported = isinstance(status, str) and status in STATUSES
-    parts = [f"execution {name if known else 'whose name is withheld'}: "
-             f"{status if reported else 'status not reported'}"]
+    parts = [f"{told_name(name)}: {told_status(properties.get('status'))}"]
     began, ended = moment(properties.get('startTime')), moment(properties.get('endTime'))
     parts.append(f'started {stamp(began)}' if began else 'start not reported')
     if began and ended:
@@ -490,12 +509,14 @@ def report_verdict(job_id, name, known, in_actions):
 def run_migration(job_id, timeout, in_actions=False):
     before = executions(job_id)
     for execution in before:
-        status = execution['properties'].get('status')
+        status = state_of(execution)
         # A state that is neither running nor finished ("Unknown") blocks only while a run that
         # started then could still be alive.
         if status in ACTIVE or (status not in FINISHED and started_within(execution, timeout + 120)):
-            raise RuntimeError(f"Execution {execution['name']} is {status}: a migration may still "
-                               f"be running. {stop_hint(job_id, execution['name'])}")
+            state = told_status(status, 'in a state this script does not know')
+            raise RuntimeError(f"Execution {named(execution['name']) or 'whose name is withheld'} "
+                               f"is {state}: a migration may still be running. "
+                               f"{stop_hint(job_id, execution['name'])}")
     known = {execution['name'] for execution in before}
 
     name = rest('POST', job_id + '/start').get('name')
@@ -504,7 +525,8 @@ def run_migration(job_id, timeout, in_actions=False):
         # Never start twice: the first request may already have launched the run.
         fresh = [e['name'] for e in executions(job_id) if e['name'] not in known]
         if len(fresh) > 1:
-            raise RuntimeError(f'Several new executions appeared ({", ".join(fresh)}); inspect them.')
+            names = ', '.join(named(new) or 'a name withheld' for new in fresh)
+            raise RuntimeError(f'Several new executions appeared ({names}); inspect them.')
         name = fresh[0] if fresh else None
         if not name:
             time.sleep(5)
@@ -512,28 +534,31 @@ def run_migration(job_id, timeout, in_actions=False):
         raise RuntimeError('The start was accepted but no execution appeared; inspect the job '
                            'before deploying again.')
 
-    say(f'Migration execution {name} started.')
+    # The name and each status come from Azure and go into a log that may be public: both are
+    # printed only in the shape expected, as the verdict prints them.
+    label = told_name(name)
+    say(f'Migration {label} started.')
     deadline = time.monotonic() + timeout + 120
     seen = object()
     while time.monotonic() < deadline:
         match = [e for e in executions(job_id) if e['name'] == name]
-        status = match[0]['properties'].get('status') if match else None
+        status = state_of(match[0]) if match else None
         if status != seen:
-            say(f'Execution {name}: {status}.')
+            say(f'Migration {label}: {told_status(status)}.')
             seen = status
         if status == 'Succeeded':
             report_verdict(job_id, name, match[0], in_actions)
             return name
         if status in FAILED:
             report_verdict(job_id, name, match[0], in_actions)
-            raise RuntimeError(f'The migration did not succeed (execution {name}: {status}). The '
+            raise RuntimeError(f'The migration did not succeed ({label}: {status}). The '
                                'app was not touched. The job now runs the new tools image and some '
                                'migrations may be applied. What it printed is kept in the log '
                                'workspace and is never fetched here: read it from a terminal with '
                                "`python infra/deploy.py --job-log`, and the app's own lines with "
                                '`--app-log <minutes>`.')
         time.sleep(5)
-    raise RuntimeError(f'Timed out waiting for execution {name}. The app was not touched. '
+    raise RuntimeError(f'Timed out waiting for {label}. The app was not touched. '
                        f'{stop_hint(job_id, name)}')
 
 
