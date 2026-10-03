@@ -48,6 +48,13 @@ internal sealed record TopUpResult(int Seeded, IReadOnlyList<PoolCopyFailure> Fa
 /// an attempt that rolled back (see <see cref="BuildAttemptAsync"/>).
 /// </para>
 /// <para>
+/// A DUPLICATE IS THE EXCEPTION, in every environment: SQL Server's message for it quotes the value
+/// it refused, EF logs that message at Error, and the Error that reports a copy that could not be
+/// built repeats it. That value is a handle, an account number or a transaction number another copy
+/// holds, never an address: Identity refuses an address that is taken, by its code, before SQL
+/// Server sees it.
+/// </para>
+/// <para>
 /// No audit row is written: the Seeder holds no audit chain key, and the context refuses an audit
 /// row without one.
 /// </para>

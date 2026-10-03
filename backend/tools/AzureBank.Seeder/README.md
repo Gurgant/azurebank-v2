@@ -40,8 +40,8 @@ connection string and nothing under `Demo`.
 |---|---|---|---|
 | `migrate [--wait-seconds N]` | Waits up to N seconds (60; 0 to 600) for the database to accept a connection, then applies every pending migration; changes nothing when there is none. Off Azure it creates the database if the server has none by that name. On an Azure SQL server name it never creates one, and it goes on only once an open has succeeded | The connection string, with a login that may change the schema. **No pepper, no other secret** | Everywhere, a deployment included |
 | `seed` | Adds the two roles, the four demo users with their public password and PIN, their five accounts and a 26-row ledger, to a database that has none of them. A database that was seeded is left as it is, exit 0, whatever its users did since | The connection string and the PIN pepper, which must be the API's | Local runs and CI. **Refuses an Azure SQL server name, demo mode, and a database that holds the demo pool's rows** |
-| `reset [--confirm]` | Drops the database, migrates, seeds | The same as `seed` | Development and CI. **Refuses an Azure SQL server name and demo mode** |
-| `seed-pool [copies]` | Tops the demo pool up to N fresh free copies, 1 to 500; without N, to `Demo:Pool:TargetFree`. A copy is a demo user, two contacts, four accounts and a 26-row ledger, and none of its users has a password. Up to N, never by N: a pool that holds them already is left as it is. Deletes nothing | The connection string, the PIN pepper and its key id, which must be the API's, and `Demo__Enabled=true`. A login that reads and writes rows is enough | Where the demo runs, **an Azure SQL name included**. **Refused with the demo off** |
+| `reset [--confirm]` | Drops the database, migrates, seeds | The same as `seed` | Development and CI. **Refuses an Azure SQL server name, demo mode, and a database that holds the demo pool's rows** |
+| `seed-pool [copies]` | Tops the demo pool up to N fresh free copies, 1 to 500; without N, to `Demo:Pool:TargetFree`. A copy is a demo user, two contacts, four accounts and a 26-row ledger, and none of its users has a password. Up to N, never by N: a pool that holds them already is left as it is. No daily ceiling: that is `recycle`'s. Deletes nothing | The connection string, the PIN pepper and its key id, which must be the API's, and `Demo__Enabled=true`. A login that reads and writes rows is enough | Where the demo runs, **an Azure SQL name included**. **Refused with the demo off** |
 | `recycle` | Tops the pool up first, to `TargetFree` or to what the day's claims leave of `MaxClaimsPerDay`, whichever is lower; then deletes each claimed copy whose time is over and in which no session is live, and each free copy older than `MaxFreeAgeHours`; then removes the expired grants and idempotency records of anyone, as the API's own clean-ups do. Safe at any interval, and beside the API | The same as `seed-pool` | The same as `seed-pool`: the job a deployment schedules |
 
 ## Variables
@@ -52,7 +52,7 @@ connection string and nothing under `Demo`.
 | `Security__PinPepper` | `seed`, `reset`, `seed-pool`, `recycle` | 32 characters or more, equal to the API's (ADR-0011) |
 | `Security__PinPepperKeyId`, `Security__PreviousPinPeppers__<id>` | the same four | Optional: 1 and none. Where the API sets them, the same values: a PIN hash carries the key id of the pepper that made it, and the API verifies it only with the pepper it holds under that id. The order of a rotation is in `docs/runbooks/demo-pool.md` |
 | `Demo__Enabled` | `seed-pool` and `recycle`, which run only with `true`; `seed` and `reset`, which run only without it | Off by default |
-| `Demo__CopyLifetimeHours`, `Demo__Pool__TargetFree`, `Demo__Pool__LowMark`, `Demo__Pool__MaxFreeAgeHours`, `Demo__Pool__MaxClaimsPerDay`, `Demo__Claim__MaxPerClientPerDay` | `seed-pool`, `recycle`; `seed` and `reset` refuse a value out of range too | Optional: 24, 50, 20, 44, 150 and 10. The ranges are in ADR-0062, decision 3 |
+| `Demo__CopyLifetimeHours`, `Demo__Pool__TargetFree`, `Demo__Pool__LowMark`, `Demo__Pool__MaxFreeAgeHours`, `Demo__Pool__MaxClaimsPerDay`, `Demo__Claim__MaxPerClientPerDay`, `Demo__Copy__MaxWrites` | `seed-pool`, `recycle`; `seed` and `reset` refuse a value out of range or unreadable too | Optional: 24, 50, 20, 44, 150, 10 and 200. The ranges are in ADR-0062, decision 3; the last two belong to the claim and are only checked here. `recycle` deletes a claimed copy by `Demo__CopyLifetimeHours`: where the API reads it too, give the job the API's value, or a copy can be deleted before the API ends it |
 | `Database__MaxRetryCount`, `Database__MaxRetryDelay`, `Database__ConnectTimeoutSeconds`, `Database__ConnectRetryCount`, `Database__MaxPoolSize` | every command | Optional. 4, `00:00:10`, 10, 0 and 5 (ADR-0058; the pool of 5 is this tool's own). A keyword in the connection string wins. `migrate` refuses a connect timeout of 0, which means no limit, from either place |
 
 In Development (`DOTNET_ENVIRONMENT=Development`) the two required values come from the project's
@@ -71,10 +71,10 @@ file says "login", read: whatever the string signs in as.
 
 | Exit | Means |
 |---|---|
-| 0 | Done. Running it again is safe and changes nothing; for `recycle`, it does what has come due since |
+| 0 | Done. Running it again is safe and changes nothing; for `seed-pool` and `recycle`, it does what has come due since, such as building again the free copies that have grown too old to count |
 | 1 | Failed after the server was contacted, or cancelled, or the command line was wrong. Running it again is safe. It helps when the cause passes: the database was not reachable in time, another run held the lock, the run was stopped. It does not help until something else changes for: a refused login; a database this login cannot open; a database that is ahead of the build; a missing database on Azure SQL; a model change with no migration; an incomplete seed (run `reset`) |
-| 2 | Refused, and nothing was written. Before any connection was opened: a required variable is missing, too short, out of range or unreadable, the connection string names no database, `migrate` was given a connect timeout of 0, `seed` or `reset` was aimed at an Azure SQL server name or run in demo mode, or `seed-pool` or `recycle` was run with the demo off. After one count: `seed` on a database that holds the demo pool's rows |
-| 10 to 15 | `seed-pool` and `recycle` only: the run finished, and the code names the count to read on its line. 10 the pool was low, 11 it was empty, 15 the day's claims held the top-up back: done, with a signal. 12 a copy could not be built and the pool ended short, 13 a user outside every copy exists, 14 a copy could not be deleted: these need a look. `seed-pool` exits 12 or 13 only. What each means, and the SQL behind it: `docs/runbooks/demo-pool.md` |
+| 2 | Refused, and nothing was written. Before any connection was opened: a required variable is missing, too short or out of range, a variable holds a value that cannot be read as its type (named by its key, never by the value), the connection string names no database, `migrate` was given a connect timeout of 0, `seed` or `reset` was aimed at an Azure SQL server name or run in demo mode, or `seed-pool` or `recycle` was run with the demo off. After one count: `seed`, or `reset` after its prompt and before its drop, on a database that holds the demo pool's rows |
+| 10 to 15 | `seed-pool` and `recycle` only: the run finished, and the code names the count to read on its line. 10 the pool was low, 11 it was empty, 15 the day's claims held the top-up back: done, with a signal. 12 a copy could not be built and the pool ended short, 13 a user outside every copy exists, 14 a copy could not be deleted: these need a look. `seed-pool` exits 12 or 13 only, and 13 only when it wrote nothing: users, and not one pool row. What each means, and the SQL behind it: `docs/runbooks/demo-pool.md` |
 
 ## What a run prints
 
@@ -100,10 +100,11 @@ and then migrated an empty database):
   refused: …`, `seed failed: …`. A `failed:` line that reports an exception is followed by its
   stack. Errors can come before it: EF's own, and from `seed` and `reset` a `Failed to execute …`
   line that names the seeder. Whatever watches the log matches `failed:` and `refused:`.
-- `seed`, `reset`, `seed-pool` and `recycle` also print one Warning that is not theirs and not a
-  failure: ASP.NET Core's data protection, which Identity's token providers bring in, says where it
-  would keep its keys ("Storing keys in a directory … that may not be persisted outside of the
-  container").
+- `seed`, `reset`, `seed-pool` and `recycle`, once a run gets as far as Identity, also print one
+  Warning that is not theirs and not a failure: ASP.NET Core's data protection, which Identity's
+  token providers bring in, says where it would keep its keys ("Storing keys in a directory … that
+  may not be persisted outside of the container"). A refusal, and a run that fails before it
+  reaches Identity, print none.
 - `seed-pool` and `recycle` end with one line that carries every count, at Information when they
   exit 0 and at Warning when they end with a signal:
 
@@ -113,9 +114,14 @@ and then migrated an empty database):
 
   A run that did not finish prints no such line: it ends with a `failed:` line, or says it was
   cancelled. A copy that could not be built or deleted is an Error of its own, `Demo copy <id> could
-  not be built (error <number>)` or `… deleted …`, and the run goes on: its code says whether that
-  left the pool short (12) or a copy behind (14). A line names a copy by its id, never by the
-  address its visitor signs in with.
+  not be built (error <number>)` or `… deleted …`, with SQL Server's error number, or `null` when
+  the failure was not SQL Server's (Identity refusing a user, say), and the run goes on: its code
+  says whether that left the pool short (12) or a copy behind (14). The run's own lines name a copy
+  by its id, never by an address. A value SQL Server refused can be printed all the same: its
+  message for a duplicate quotes the value, and EF logs that message at Error, as does the run's
+  line that follows it. Such a value is a handle, an account number or a transaction number another
+  copy holds, never an address: Identity refuses an address that is taken, by its code, before
+  SQL Server sees it.
 
 ## Things to know
 
@@ -150,21 +156,36 @@ and then migrated an empty database):
   deletes a demo copy's, and only on a database that holds the demo pool, which `seed` refuses.
 - **`seed` refuses the public demo's database**, whose demo is the pool's private copies. With
   `Demo__Enabled=true` it opens nothing. With the flag off it counts the pool's rows first, and one,
-  the record of a deleted copy included, ends it with exit 2 before it writes anything: the one exit
-  2 that comes after a connection was opened.
+  the record of a deleted copy included, ends it with exit 2 before it writes anything: with
+  `reset`'s, below, the one exit 2 that comes after a connection was opened.
 - **`seed-pool` and `recycle` run on an Azure SQL name**, where `seed` and `reset` are refused: the
   demo's database is one. Their writes are copies whose users have no password and deletes keyed on
-  a copy, so a user outside every copy matches none of them; neither drops, creates or migrates a
-  database; and on a database with users and not one pool row both write nothing and exit 13.
-- **Give them a login that reads and writes rows and nothing more**: the app's, not the
-  migration's. Measured 2026-10-03 on the compose SQL Server and on LocalDB, a login with
-  `db_datareader` and `db_datawriter` alone ran `seed-pool` and `recycle` through a whole cycle
-  (roles, copies, a claimed copy and a stale one deleted, the sweeps), exit 0, and was refused
-  `CREATE TABLE` (262). On the compose server, the same login without `db_datawriter` made
-  `seed-pool` exit 12, every copy refused with 229 on `DemoCopies`.
+  a copy, so a user outside every copy matches none of them, apart from `recycle`'s two sweeps of
+  expired grants and idempotency records, which take anyone's, as the API's own clean-ups do;
+  neither drops, creates or migrates a database; and on a database with users and not one pool row
+  both write nothing and exit 13.
+- **Give them a login that reads and writes rows and nothing more**: where a deployment gives the
+  app and its migration database users of their own, the app's, never the migration's. Measured
+  2026-10-03 on the compose SQL Server and on LocalDB, a login with `db_datareader` and
+  `db_datawriter` alone ran `seed-pool` and `recycle` through a whole cycle (roles, copies, a
+  claimed copy and a stale one deleted, the sweeps), exit 0, and was refused `CREATE TABLE` (262).
+  On the compose server, the same login without `db_datawriter` made `seed-pool` exit 12, every
+  copy refused with 229 on `DemoCopies`.
 - **`seed-pool` exits 0 on a pool it found low or empty**: filling it is what it was run for. A
   one-shot that exits with anything else stops the stack that waits for it, so only 12 and 13 come
-  from it.
+  from it, and 13 only when it wrote nothing. A user outside every copy beside a pool is counted on
+  its line (`foreignUsers`), and `recycle` exits 13 for it.
+- **Two pool runs at once can build more than the target.** Each tops up from its own count: a
+  `seed-pool` started while a scheduled `recycle` builds, or two `recycle` runs that overlap, can
+  each build the copies the pool lacked, up to twice the target and up to twice what the day's
+  claims leave room for. Every copy is still whole, nothing is deleted twice, and the extra copies
+  are deleted when they grow too old to count. Measured on LocalDB with a run held in its top-up
+  while another ran whole: a target of 2, both exited 0, 4 free copies. Give the job a schedule
+  whose runs end before the next starts, and refill by hand between two runs.
+- **`reset` refuses the demo's database too**, with the flag off, as `seed` does: after its prompt
+  and before its drop it reads whether the pool's migration was applied and counts the pool's rows,
+  and one row, a record included, ends it with exit 2. A database that does not exist, or one
+  migrated before the pool's table, is reset as before.
 - **The Azure SQL rule goes by the server's name**: `.database.windows.net`,
   `.database.cloudapi.de`, `.database.usgovcloudapi.net`, `.database.chinacloudapi.cn` and
   `.database.fabric.microsoft.com`, the five SqlClient itself knows. An alias or an IP address in
