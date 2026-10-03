@@ -18,10 +18,18 @@ env:
   DOTNET_NOLOGO: true
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
 
+# Every job in the three workflows names its image, ubuntu-24.04. `ubuntu-latest` was that
+# image too (20260927.320.1, read in the jobs' logs on 2026-10-03), and GitHub moves the label
+# to Ubuntu 26.04 run by run from 2026-10-19 (actions/runner-images#14748), with no commit
+# here. Jobs take tools from the image and install none of them: python3, PowerShell 7 and
+# Bicep in the infrastructure job, python3, az and docker in the deploy workflow, the shared
+# libraries Chromium needs in the real-stack job. A new image is a change like any other: the
+# label moves on a branch whose run on that image is green, and deploy.yml, which no branch can
+# run, moves last.
 jobs:
   backend:
     name: Backend build + tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -106,7 +114,7 @@ jobs:
   # container (Category=SqlServer trait; they self-skip elsewhere).
   backend-sql:
     name: Backend concurrency proofs (SQL Server)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
 
     services:
@@ -180,7 +188,7 @@ jobs:
 
   frontend:
     name: Frontend build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -297,7 +305,7 @@ jobs:
   # ---------------------------------------------------------------------------------------
   frontend-tz:
     name: Frontend tests (TZ=${{ matrix.tz }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -357,7 +365,7 @@ jobs:
   # ---------------------------------------------------------------------------------------
   real-stack:
     name: Real-stack layers (contract + integration + e2e)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     services:
@@ -533,7 +541,7 @@ jobs:
       # nobody here can fix. Measured 2026-09-09: runs at 15:40, 16:06 and 16:22 passed, then main
       # itself failed at 17:31, before any branch was involved, and stayed failing on re-run.
       #
-      # ubuntu-latest already carries the shared libraries Chromium needs, so the browser binary is
+      # ubuntu-24.04 already carries the shared libraries Chromium needs, so the browser binary is
       # all this step has to fetch. The proof is not this step passing — it is the E2E step below
       # LAUNCHING a real browser: a missing library shows up there and nowhere else, so a green e2e
       # run is what says the dependencies were already present.
@@ -593,7 +601,7 @@ jobs:
 
   conformance:
     name: Runtime conformance (Schemathesis against the running API)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     # Its own SQL Server, its own seed: the run mints users, accounts and authorisations, and the
@@ -768,7 +776,7 @@ jobs:
   # and the workflows themselves. Nothing here signs in to Azure or reads a secret.
   infra:
     name: Infrastructure (templates, scripts, workflows)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout

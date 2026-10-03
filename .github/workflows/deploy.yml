@@ -32,7 +32,7 @@ jobs:
   build-push:
     name: Build and push the images
     if: inputs.action == 'build-push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     # Two runs at one commit must not race each other to the same tag.
     concurrency:
@@ -104,7 +104,7 @@ jobs:
   deploy:
     name: Migrate and deploy
     if: inputs.action == 'deploy'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The tools image 5, the migration 16, the new revision 15, the old one going inactive 3, the
     # smoke test with its waits 10, a put-back 15, and the steps around them.
     timeout-minutes: 70
