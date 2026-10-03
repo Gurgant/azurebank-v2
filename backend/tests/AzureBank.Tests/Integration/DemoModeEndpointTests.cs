@@ -439,6 +439,45 @@ public sealed class DemoModeEndpointTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task WithTheDemoOn_PastACopysEnd_ItsPasswordSignsNobodyIn_AndASessionOpenedBeforeStillRenews()
+    {
+        var copy = await HandMadeDemoCopy.CreateAsync(_demo);
+        using var client = _demo.CreateClient();
+        using var claimResponse = await DemoVisitor.ClaimAsync(client);
+        var claim = await DemoVisitor.ClaimedAsync(claimResponse);
+        using (var live = await DemoVisitor.TrySignInAsync(client, claim.Copy.Email, claim.Copy.Password))
+        {
+            live.StatusCode.Should().Be(HttpStatusCode.OK, "CONTROL: inside its 24 hours the copy's password signs in");
+        }
+
+        // The copy's 24 hours ended a minute ago. The session the claim opened is not an hour old.
+        using (var scope = _demo.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+            var row = await db.DemoCopies.SingleAsync(c => c.Id == copy.Id);
+            row.ClaimedAt = DateTime.UtcNow.AddHours(-24).AddMinutes(-1);
+            await db.SaveChangesAsync();
+        }
+
+        using var unknownEmail = await DemoVisitor.TrySignInAsync(client, "nobody@example.com", claim.Copy.Password);
+        using var signIn = await DemoVisitor.TrySignInAsync(client, claim.Copy.Email, claim.Copy.Password);
+        using var renewal = await client.PostAsJsonAsync(
+            "/api/auth/refresh", new RefreshRequest { RefreshToken = claim.Token.RefreshToken! }, DemoVisitor.Json);
+
+        using (new AssertionScope())
+        {
+            signIn.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "the copy is over, and its password signs nobody in");
+            (await ShapeOfAsync(signIn)).Should().Be(await ShapeOfAsync(unknownEmail), "answered as an email nobody has");
+
+            // CONTROL: green before this change, and meant to stay. The gate is on sign-in only: a
+            // session opened before the copy's end goes on being renewed until its own grant
+            // ends, and the pool's job waits for that before it deletes the copy.
+            renewal.StatusCode.Should().Be(
+                HttpStatusCode.OK, "renewing a session is not signing in ({0})", await renewal.Content.ReadAsStringAsync());
+        }
+    }
+
     // ── Registration ─────────────────────────────────────────────────────────────────────────────
 
     private const string RegisterPath = "/api/auth/register";
