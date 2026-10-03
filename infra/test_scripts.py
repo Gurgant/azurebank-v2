@@ -1033,10 +1033,11 @@ class UsersFileTests(unittest.TestCase):
                    'FROM sys.sql_modules AS m WHERE m.object_id NOT IN (SELECT object_id FROM sys.triggers) ')
         # Both code lists: the triggers whole, then the modules that are not triggers, less that one kind.
         self.assertEqual(flat.count(modules + left_out), 2)
-        # Nothing else is left out anywhere, and the schema is sys and no other.
-        self.assertEqual(flat.count('sys.all_objects'), 2)
-        self.assertEqual(flat.count('is_ms_shipped'), 2)
-        self.assertEqual(re.findall(r'schema_id = (\S+)', flat), ["SCHEMA_ID(N'sys')", "SCHEMA_ID(N'sys')"])
+        # Nothing else is left out anywhere, and the schema is sys and no other. The third time the
+        # pair is read is the permission list's, which has a test of its own.
+        self.assertEqual(flat.count('sys.all_objects'), 3)
+        self.assertEqual(flat.count('is_ms_shipped'), 3)
+        self.assertEqual(re.findall(r'schema_id = (\S+)', flat), ["SCHEMA_ID(N'sys')"] * 3)
         # The trigger half has no condition at all: every trigger, is_ms_shipped or not.
         self.assertEqual(flat.count('SELECT name FROM sys.triggers'), 2)
         self.assertEqual(flat.count('SELECT name FROM sys.triggers UNION ALL SELECT OBJECT_NAME(m.object_id)'), 2)
@@ -1114,11 +1115,15 @@ class UsersFileTests(unittest.TestCase):
             "AND USER_NAME(m.role_principal_id) IN (N'db_datareader', N'db_datawriter', N'db_ddladmin'))))",
             "member_principal_id > 4) <> 5 SET @bad += N'our role memberships are not five; '",
             # CONNECT for dbo and the two users, granted; and to public, granted, only what the
-            # engine gives it: system objects (their IDs are negative) and two database permissions.
+            # engine gives it: system objects (their IDs are negative) and two database permissions;
+            # and SELECT on an object that is in sys and marked is_ms_shipped, as on Azure SQL.
             "NOT (d.class = 0 AND d.type = 'CO' AND d.state = 'G' "
             "AND USER_NAME(d.grantee_principal_id) IN (N'dbo', N'azurebank_app', N'azurebank_migrator')) "
             "AND NOT (d.grantee_principal_id = 0 AND d.state = 'G' "
-            "AND ((d.class = 1 AND d.major_id < 0) OR (d.class = 0 AND d.type IN ('VWCK', 'VWCM')))))",
+            "AND ((d.class = 1 AND d.major_id < 0) OR (d.class = 0 AND d.type IN ('VWCK', 'VWCM')))) "
+            "AND NOT (d.grantee_principal_id = 0 AND d.state = 'G' AND d.class = 1 AND d.type = 'SL' "
+            "AND EXISTS (SELECT 1 FROM sys.all_objects AS o WHERE o.object_id = d.major_id "
+            "AND o.schema_id = SCHEMA_ID(N'sys') AND o.is_ms_shipped = 1)))",
             "p.type <> 'R' AND p.principal_id NOT IN (1, 2, 3, 4))",
             # After the commit: the roles of each user, and whether its stored ID is the one asked for.
             "member_principal_id = DATABASE_PRINCIPAL_ID(N'azurebank_app'))",
@@ -1153,6 +1158,29 @@ class UsersFileTests(unittest.TestCase):
         lists = self.code[self.at('ALTER ROLE [db_ddladmin] ADD MEMBER [azurebank_migrator];'):self.at("IF @bad <> N''")]
         self.assertEqual(lists.count('SET @found = (SELECT STRING_AGG('), 6)
         self.assertEqual(lists.count('IF @found IS NOT NULL'), 6)
+
+    def test_public_may_keep_select_on_an_object_of_microsofts_in_sys_and_nothing_wider(self):
+        # A new Azure SQL database granted public SELECT on the view sys.database_firewall_rules,
+        # whose ID is not negative, and a read-only query with the file's own conditions found that
+        # the permission list would refuse it. The list now keeps that grant and nothing wider:
+        # granted, SELECT, on an object, to public, and the object both in sys and marked
+        # is_ms_shipped, read as the code lists read it. One condition fewer and it would keep a
+        # DENY or a grant that may be passed on, another right on the object, a grant to one of
+        # the two users, a grant on a schema or on the database, or a grant on anyone's object.
+        flat = ' '.join(self.code.split())
+        start = flat.index('FROM sys.database_permissions AS d WHERE ')
+        conditions = flat[start:flat.index(';', start)]
+        self.assertEqual(conditions.count('AND NOT ('), 2, "the engine's grants to public, then this one")
+        kept = conditions[conditions.rindex('AND NOT ('):]
+        self.assertEqual(re.findall(r'd\.state (\S+ \S+)', kept), ["= 'G'"], 'granted: not denied, not passed on')
+        self.assertEqual(re.findall(r'd\.type (\S+ \S+)', kept), ["= 'SL'"], 'SELECT and no other permission')
+        self.assertEqual(re.findall(r'd\.class (\S+ \S+)', kept), ['= 1'], 'on an object, not a schema or the database')
+        self.assertEqual(re.findall(r'd\.grantee_principal_id (\S+ \S+)', kept), ['= 0'], 'to public, to nobody else')
+        self.assertTrue(kept.endswith("AND EXISTS (SELECT 1 FROM sys.all_objects AS o WHERE o.object_id = d.major_id "
+                                      "AND o.schema_id = SCHEMA_ID(N'sys') AND o.is_ms_shipped = 1)))"), kept)
+        self.assertEqual(re.findall(r'\bo\.(\w+)', kept), ['object_id', 'schema_id', 'is_ms_shipped'])
+        # The pair of conditions is the code lists', word for word.
+        self.assertEqual(flat.count("AND o.schema_id = SCHEMA_ID(N'sys') AND o.is_ms_shipped = 1)"), 3)
 
     def test_a_refused_permission_on_an_object_names_the_object_and_never_its_id(self):
         # A grant to public on a table was printed "GRANT SELECT (OBJECT_OR_COLUMN) to [public]"

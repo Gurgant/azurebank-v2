@@ -12,8 +12,9 @@
 --   1. refuses to run in a database that holds a trigger or any other module (the app's
 --      migrations create none; one kind of Microsoft's own is left out, under 1. below), and
 --   2. before it commits, compares every user, role, role member, permission and schema owner
---      with what it expects. One thing more or less and nothing is kept: the THROW rolls back
---      this transaction, and with it whatever a trigger did inside it.
+--      with what it expects (one kind of Microsoft's own grant is expected, under 3. below).
+--      One thing more or less and nothing is kept: the THROW rolls back this transaction, and
+--      with it whatever a trigger did inside it.
 -- That is a guard, not a proof that the database is clean: a trigger that ran in some other
 -- statement of an administrator could have done what no list here looks at. Run nothing but this
 -- file as administrator in this database (README.md).
@@ -180,7 +181,16 @@ IF (SELECT COUNT(*) FROM sys.database_role_members WHERE member_principal_id > 4
     SET @bad += N'our role memberships are not five; ';
 
 -- Expected: CONNECT for dbo and for the two users, and what the engine grants to public (two
--- database permissions about encryption key metadata, and its grants on system objects).
+-- database permissions about encryption key metadata, and its grants on system objects, whose IDs
+-- are negative). And one grant more, since 2026-10-03: SELECT, granted to public, neither denied
+-- nor with the right to grant it on, on an object that is in the schema sys and is marked
+-- is_ms_shipped, the two together, read as 1. reads them. A new Azure SQL database held one such
+-- row, SELECT for public on the view sys.database_firewall_rules, and a read-only query with this
+-- list's condition, before a run, found that the list would refuse it. It is safe to keep for
+-- what this file guards. It is a right to read and it creates no code, so nothing runs as the
+-- administrator that did not before; nobody can create an object in sys, so what it reads is
+-- Microsoft's. And it is public's, so the two users get from it what every user who can connect
+-- gets: Microsoft's page on that view gives read-only access to all of them.
 -- A permission on an object is printed with the object's schema and name, read from its ID; the
 -- ID itself is not printed. Its own "(no name)" keeps the rest of the line when no name is found.
 SET @found = (SELECT STRING_AGG(CONVERT(nvarchar(max), ISNULL(d.state_desc COLLATE DATABASE_DEFAULT + N' '
@@ -193,7 +203,11 @@ SET @found = (SELECT STRING_AGG(CONVERT(nvarchar(max), ISNULL(d.state_desc COLLA
               WHERE NOT (d.class = 0 AND d.type = 'CO' AND d.state = 'G'
                          AND USER_NAME(d.grantee_principal_id) IN (N'dbo', N'azurebank_app', N'azurebank_migrator'))
                 AND NOT (d.grantee_principal_id = 0 AND d.state = 'G'
-                         AND ((d.class = 1 AND d.major_id < 0) OR (d.class = 0 AND d.type IN ('VWCK', 'VWCM')))));
+                         AND ((d.class = 1 AND d.major_id < 0) OR (d.class = 0 AND d.type IN ('VWCK', 'VWCM'))))
+                AND NOT (d.grantee_principal_id = 0 AND d.state = 'G' AND d.class = 1 AND d.type = 'SL'
+                         AND EXISTS (SELECT 1 FROM sys.all_objects AS o
+                                     WHERE o.object_id = d.major_id
+                                       AND o.schema_id = SCHEMA_ID(N'sys') AND o.is_ms_shipped = 1)));
 IF @found IS NOT NULL
 BEGIN
     SET @bad += N'unknown permission; ';
