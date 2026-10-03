@@ -1750,7 +1750,12 @@ database (error 4060). Exit 3 needs a token refused on Azure. The helper functio
 for `az`: the requests they send are the ones written here, and no Azure answered them.
 `Assert-EnvironmentMode` passed `WorkloadProfiles`, and an answer with no mode whose logs go to
 `azure-monitor`; it threw on `Express`, `Archived` and `ConsumptionOnly`, on no mode with the
-logs off or elsewhere, and on no answer.
+logs off or elsewhere, and on no answer. On 2026-10-03 the tests also ran on Linux, in WSL
+(Ubuntu 24.04, Python 3.12, PowerShell 7.6.6 and Bicep 0.47.16), from an archive of the branch:
+all passed, among them the Linux half of two (the folder's and the file's modes, and the
+signature check that says it checked nothing), and the two that hold only on Windows were
+skipped. actionlint 1.7.12 with ShellCheck 0.11.0 read the run blocks of the three workflows and
+found nothing; an unquoted variable planted in a copy is reported.
 
 **Not measured.** The trial sent requests by hand; read-only commands, offline tests and local
 stacks cannot show the rest. Each line is checked at the step named, on the first deployment.
@@ -1788,7 +1793,6 @@ stacks cannot show the rest. Each line is checked at the step named, on the firs
 | How long a managed identity's token stays valid for the database | not found in the pages read |
 | That the identity is refused a scale change, a delete or a stop. One refusal is provoked on every deployment (the secrets listing); the policy's refusal is provoked as the owner | not provoked |
 | Every command under [Switching the logs off](#switching-the-logs-off), [If something was stolen](#if-something-was-stolen) and [Removing everything](#removing-everything). The trial made its own deletions with other commands | the day they are needed |
-| The tests' PowerShell half on Linux: the folder's and the file's modes, the signature check that says it checked nothing. The run blocks of the workflows under the shell linter, which only the CI job has | the CI job `infra` |
 
 ## Checking these files
 

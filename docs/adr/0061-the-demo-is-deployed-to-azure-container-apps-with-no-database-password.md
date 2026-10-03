@@ -518,7 +518,7 @@ twice the cap: the logs go off. The alert is refused: it is left out, one of fou
   its second package fails here instead of at the first open on Azure.
   `Unit/Tools/SeederCommandTests`: `migrate`'s line for a refused login names both ways to sign
   in.
-- `infra/test_scripts.py` and `infra/test_deploy.py`, 259 tests: the two PowerShell scripts run
+- `infra/test_scripts.py` and `infra/test_deploy.py`, 260 tests: the two PowerShell scripts run
   for real against a stand-in for the Azure CLI and a stand-in for `sqlcmd`; the users file is
   read as text, to keep each guard, every `WHERE` and every `IF` where it is; the compiled
   templates are read (the two identities and the one each resource carries, no database
