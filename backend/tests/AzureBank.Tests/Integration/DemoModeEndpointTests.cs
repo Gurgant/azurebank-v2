@@ -145,10 +145,12 @@ public sealed class DemoModeEndpointTests : IDisposable
     // CONTROL: green before this change. It pins what the host answers today, so that it is known:
     // the 404 above hides the endpoint, which is POST, and not its path. Another method on the path
     // never reaches the action, so no marker of the action's is read; it is answered 405 and told
-    // which method the path takes, with the demo off or on, as on every token endpoint.
+    // which method the path takes, with the demo off or on, as on the path of sign-in. What can
+    // turn it red in this code: a middleware that refuses, with the demo off, an endpoint that
+    // carries no marker (shown once: the six rows with the demo off then answer 404).
     [Theory]
     [MemberData(nameof(OtherMethods))]
-    public async Task AnotherMethodOnTheClaimsPath_Is405WhateverTheFlag_AsOnEveryTokenEndpoint(bool demoOn, string method)
+    public async Task AnotherMethodOnTheClaimsPath_Is405WhateverTheFlag_AsOnSignInsPath(bool demoOn, string method)
     {
         using var client = (demoOn ? _demo : _ordinary).CreateClient();
 
