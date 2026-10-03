@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using AzureBank.Api.Security;
 using AzureBank.Shared.Constants;
@@ -12,7 +14,8 @@ using Microsoft.Extensions.DependencyInjection;
 namespace AzureBank.Tests.Unit.Services;
 
 /// <summary>
-/// What a claim makes before it takes a copy, proved alone: the password it answers.
+/// What a claim makes before it takes a copy, proved alone: the password it answers, and the key
+/// it stores in place of its client's address.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -28,6 +31,11 @@ namespace AzureBank.Tests.Unit.Services;
 /// A THOUSAND AT A TIME where the claim is about every password. A draw of sixteen characters has
 /// no digit about once in twelve (<c>python -c "print((48/56)**16)"</c> prints 0.0848...), so a
 /// generator that never drew again would pass a test of one password eleven times in twelve.
+/// </para>
+/// <para>
+/// THE KEY IS HELD TWICE: by what it must do (one client, one key; another secret or another client,
+/// another key; no address inside it), and by one known answer worked out outside .NET, because
+/// the first is as true of a function that is no HMAC at all.
 /// </para>
 /// </remarks>
 public class DemoClaimPartsTests
@@ -123,5 +131,101 @@ public class DemoClaimPartsTests
         var used = AThousand().SelectMany(password => password).Where(c => c != '-').Distinct().ToArray();
 
         used.Should().BeEquivalentTo(TheFiftySix());
+    }
+
+    // ── The client's key ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>Test-only values, NOT real secrets.</summary>
+    private const string Secret = "unit-tests-only-demo-client-key-secret-0001";
+    private const string AnotherSecret = "unit-tests-only-demo-client-key-secret-0002";
+
+    /// <summary>An address reserved for documentation (RFC 5737).</summary>
+    private const string Address = "203.0.113.7";
+
+    [Fact]
+    public void TheSameSecretAndAddress_GiveTheSameKey_Of32Bytes()
+    {
+        var first = DemoClientKey.Of(Secret, Address);
+        var second = DemoClientKey.Of(Secret, Address);
+
+        using (new AssertionScope())
+        {
+            first.Should().HaveCount(32, "DemoCopy.ClientKey is 32 bytes, of fixed length");
+            second.Should().Equal(first, "one client has one key: its rows are found by it");
+        }
+    }
+
+    [Fact]
+    public void AnotherSecret_OrAnotherAddress_GivesAnotherKey()
+    {
+        var key = DemoClientKey.Of(Secret, Address);
+
+        using (new AssertionScope())
+        {
+            DemoClientKey.Of(AnotherSecret, Address).Should().NotEqual(
+                key, "the key depends on the secret: whoever lacks it cannot work out an address's key");
+            DemoClientKey.Of(Secret, "203.0.113.8").Should().NotEqual(key, "another client is another key");
+        }
+    }
+
+    [Theory]
+    [InlineData("203.0.113.7")]
+    [InlineData("2001:db8:85a3:8d3::/64")]
+    [InlineData("unknown")]
+    public void TheKey_IsNotTheBareHmacOfTheAddress_AndDoesNotContainIt(string address)
+    {
+        var addressBytes = Encoding.UTF8.GetBytes(address);
+
+        var key = DemoClientKey.Of(Secret, address);
+
+        key.Should().HaveCount(32, "an empty key differs from anything and contains nothing: first, there is a key");
+        key.Should().NotEqual(
+            HMACSHA256.HashData(Encoding.UTF8.GetBytes(Secret), addressBytes),
+            "the address is hashed under a label of this one use, so the key is no other use's hash of it");
+        key.AsSpan().IndexOf(addressBytes).Should().Be(-1, "what is stored does not hold the address");
+    }
+
+    [Fact]
+    public void TheKey_IsHmacSha256_OfTheLabelledAddress_UnderTheSecret()
+    {
+        /*
+          A KNOWN ANSWER, worked out outside .NET and pasted here. Two commands gave the same value:
+
+            python -c "import hmac, hashlib; print(hmac.new(b'unit-tests-only-demo-client-key-secret-0001', b'demo-claim:203.0.113.7', hashlib.sha256).hexdigest())"
+            printf 'demo-claim:203.0.113.7' | openssl dgst -sha256 -hmac 'unit-tests-only-demo-client-key-secret-0001'
+
+          Never recomputed here with HMACSHA256: a test that works out its own expectation agrees
+          with whatever the code does. This is what holds the label, the encoding and the hash. A
+          change to any of them gives every client a new key, and the rows a client was found by
+          are found by nobody.
+        */
+        var key = DemoClientKey.Of(Secret, Address);
+
+        Convert.ToHexStringLower(key).Should().Be("c26c7fb014dd27aaa16483844731fe12182c3f413780e1e1dd000713624301d3");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("    ")]
+    public void WithNoSecret_NoKeyIsMade(string? secret)
+    {
+        // HMAC accepts an empty key, and what it gives then is a hash anybody can compute: trying
+        // every address would turn a stored key back into the address it was made from.
+        var make = () => DemoClientKey.Of(secret!, Address);
+
+        make.Should().Throw<ArgumentException>().WithParameterName("secret");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void WithNoAddress_NoKeyIsMade(string? address)
+    {
+        // Left alone, the label would be hashed by itself, and every client with no address would
+        // be given one and the same key.
+        var make = () => DemoClientKey.Of(Secret, address!);
+
+        make.Should().Throw<ArgumentException>().WithParameterName("clientAddress");
     }
 }

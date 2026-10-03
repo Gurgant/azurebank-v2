@@ -538,6 +538,7 @@ public class DemoCopyBoundaryTests
         string[] files =
         [
             Path.Combine(api, "Security", "DemoPasswordGenerator.cs"),
+            Path.Combine(api, "Security", "DemoClientKey.cs"),
         ];
         foreach (var file in files)
         {
@@ -570,7 +571,7 @@ public class DemoCopyBoundaryTests
             }
         }
 
-        offenders.Should().BeEmpty("every random character of a copy's password comes from RandomNumberGenerator");
+        offenders.Should().BeEmpty("whatever a claim draws, it draws from RandomNumberGenerator");
     }
 
     [Fact]
