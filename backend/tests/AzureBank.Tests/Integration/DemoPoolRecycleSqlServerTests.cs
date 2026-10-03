@@ -2,7 +2,9 @@ extern alias seeder;
 
 using System.Net;
 using System.Text.RegularExpressions;
+using AzureBank.AuditVerifier.Commands;
 using AzureBank.Infrastructure.Data;
+using AzureBank.Shared.Constants;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
 using AzureBank.Tests.Fixtures;
@@ -205,6 +207,51 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
         // The two other copies were nobody's business.
         StillWhole(await database.CopyAsync(copies[1].Id), "a free copy is not touched");
         StillWhole(await database.CopyAsync(copies[2].Id), "a free copy is not touched");
+    }
+
+    /// <summary>
+    /// What a copy's delete costs the evidence verb. The pack is assembled from the ledger row a
+    /// number names, so a deleted copy's transfer has none, and the verb answers for it as for a
+    /// number nobody issued; the audit row that names the transfer, and the authorisation that paid
+    /// for it, stays as it was. TWIN: the same number, asked while the copy exists, is assembled.
+    /// </summary>
+    [SqlServerFact]
+    public async Task ADeletedCopysTransfer_HasNoEvidencePack_ThoughTheAuditRowThatNamesItStays()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copy = (await database.BuildCopiesAsync(3))[0];
+        await database.GiveOwnerAPasswordAsync(copy);
+        await database.MarkClaimedAsync(copy.Id, DateTime.UtcNow);
+        await UseAsAVisitorAsync(database, copy);
+
+        AuditEvent named;
+        string number;
+        await using (var db = database.NewContext())
+        {
+            named = await db.AuditEvents.AsNoTracking().SingleAsync(e => e.Event == SecurityEvents.MoneyTransferred);
+            number = await db.Transactions.Where(t => t.Id == named.SubjectId).Select(t => t.TransactionNumber).SingleAsync();
+        }
+
+        AuditDetails.ConsumedAuthorisationOf(named.Detail).Should().NotBeNull("ARRANGE: the audit row names the authorisation that paid");
+        var api = database.Api();
+        var (before, assembled) = await EvidenceCommand.RunAsync(api.Services, number, CancellationToken.None);
+        before.Should().Be(VerifyCommand.Intact, "ARRANGE: while the copy exists, its transfer has a pack");
+        assembled[0].Should().Be($"EVIDENCE PACK for {number}");
+
+        await database.BackdateClaimAsync(copy.Id, ADayAndAnHourAgo);
+        await database.ExpireGrantsAsync(copy.UserIds);
+        (await database.RecycleAsync()).DeletedExpired.Should().Be(1, "ARRANGE: the copy's time is over and it is deleted");
+
+        var (exitCode, lines) = await EvidenceCommand.RunAsync(api.Services, number, CancellationToken.None);
+
+        exitCode.Should().Be(VerifyCommand.UsageError, "the number names no ledger row any more");
+        lines[0].Should().Be(
+            $"NOT ASSEMBLED: no transaction is numbered {number}.", "the verb answers as for a number nobody issued");
+        await using (var db = database.NewContext())
+        {
+            (await db.AuditEvents.AsNoTracking().SingleAsync(e => e.Sequence == named.Sequence))
+                .Should().BeEquivalentTo(named, "the audit row that names the transfer and its authorisation stays as it was");
+        }
     }
 
     // ── Controls: the recycler's own delete, with one safeguard taken out ────────────────────────
@@ -1089,6 +1136,36 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
             "pool: free=2 was=0 claimed=0 claims24h=0 clientsAtCap=0 seeded=2 "
             + "deleted(expired=0 hardStop=0 staleFree=0 failed=0) swept(idempotency=0 grants=0) "
             + "tombstones=0 foreignUsers=0 ceiling=no result=PoolOk");
+    }
+
+    /// <summary>
+    /// A record is not a copy, so a pool whose every copy was deleted is read as a first fill: the
+    /// next run exits 0, not 11, although visitors may have been turned away since the run before.
+    /// The run that left no copy behind said so with its own code, 15 here: the day's one claim
+    /// held its top-up at 0.
+    /// </summary>
+    [SqlServerFact]
+    public async Task APoolLeftWithOnlyRecords_IsReadAsAFirstFill_AndExitsZero()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copy = (await database.BuildCopiesAsync(1))[0];
+        await database.MarkClaimedAsync(copy.Id, DateTime.UtcNow.AddHours(-2));
+
+        var emptied = await database.RecycleAsync(settings: new()
+        {
+            ["Demo:CopyLifetimeHours"] = "1",
+            ["Demo:Pool:TargetFree"] = "1",
+            ["Demo:Pool:MaxClaimsPerDay"] = "1",
+        });
+        output.WriteLine(emptied.ToLine());
+        (emptied.Seeded, emptied.DeletedExpired, emptied.Free, emptied.Claimed, emptied.Tombstones, emptied.ExitCode).Should().Be(
+            (0, 1, 0, 0, 1, 15), "ARRANGE: the copy is deleted, the ceiling built none, and only the copy's record is left");
+
+        var next = await database.RecycleAsync();
+        output.WriteLine(next.ToLine());
+
+        (next.RowsAtStart, next.FreeAtStart, next.Seeded, next.Tombstones, next.ExitCode).Should().Be(
+            (0, 0, 2, 1, 0), "a pool that holds only records is read as a first fill, not as visitors turned away");
     }
 
     [SqlServerFact]
