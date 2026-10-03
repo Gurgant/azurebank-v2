@@ -7,14 +7,16 @@
 no" holds what is done when Azure refuses a step. This record holds the reasons, what was
 measured, and what is known and left as it is.
 
-**None of the files this record describes has run on Azure.** The templates compile, the scripts
-are tested against stand-ins and, where a local engine can run them, for real. The resource group
-does not exist (`az group exists` answers `false`; the same command answers `true` for a group
-that is there). What did run on Azure, on 2026-10-02, is a throwaway trial: a resource group in
-the same subscription and region, created and deleted that day, in which requests of the shapes
-these files make were sent by hand: not by these files, and not every one of them. What it
-measured has a table of its own below. Every other sentence about what Azure does is marked as
-read or as not measured.
+**Until 2026-10-03 none of the files this record describes had run on Azure.** The templates
+compile, the scripts are tested against stand-ins and, where a local engine can run them, for
+real. On 2026-10-02 the resource group did not exist (`az group exists` answered `false`; the same
+command answers `true` for a group that is there). On 2026-10-03 the first deployment began, and
+of it this record holds only what its step 6 met, under
+[the second reopened choice](#2-how-the-two-database-users-are-created). What ran on Azure before,
+on 2026-10-02, is a throwaway trial: a resource group in the same subscription and region, created
+and deleted that day, in which requests of the shapes these files make were sent by hand: not by
+these files, and not every one of them. What it measured has a table of its own below. Every
+other sentence about what Azure does is marked as read or as not measured.
 
 ## Context
 
@@ -187,9 +189,11 @@ holds a role on any Azure resource. See [the first reopened choice](#1-how-the-a
 
 **5. The two database users are created by `infra/sql-principals.sql`, run by Microsoft's `sqlcmd`
 as the server's Microsoft Entra administrator, and the file guards itself.** It refuses a database
-that holds a trigger or a module, and before it commits it compares every user, role, membership,
-permission and schema owner with what it expects. **Nothing else is run as administrator in that
-database.** See [the second reopened choice](#2-how-the-two-database-users-are-created).
+that holds a trigger or a module (since 2026-10-03 one kind of module is left out, an object in the
+schema `sys` marked `is_ms_shipped`: see the second reopened choice), and before it commits it
+compares every user, role, membership, permission and schema owner with what it expects.
+**Nothing else is run as administrator in that database.** See
+[the second reopened choice](#2-how-the-two-database-users-are-created).
 
 **6. What the containers print goes to one private Log Analytics workspace, capped at 0.05 GB a
 day and kept 30 days, and the public workflow prints a migration's verdict and never its text.**
@@ -314,22 +318,42 @@ GUID and passes on what it parsed. The file cannot answer it: it builds each sta
 typed value, but text that `sqlcmd` put in would run above its transaction (measured). The third
 stays: the refusal is known by its sentence, because `sqlcmd` prints no number for an error at
 sign-in (measured with a refused login on a local server). The first is lost: on a local engine
-the file ran with stand-in users, and the file itself has run on no Azure SQL database.
+the file ran with stand-in users, and the file itself has run on one Azure SQL database, on
+2026-10-03, only as far as its first check.
 
 **Measured on Azure, by hand.** Azure SQL runs `CREATE USER ... WITH SID, TYPE = E`. go-sqlcmd
 signs in through the `az login` session, and the server's refusal of an address names that
 address.
 
-**Not measured.** The file itself on Azure SQL: that a new database there has no trigger, no
-module and only the rows the file expects, and that dropping and creating a user inside its
-transaction works there. Its second form, `FROM EXTERNAL PROVIDER WITH OBJECT_ID`: the trial
-looked the identity up by its name.
+**Met at the first deployment, on 2026-10-03.** Step 6 ran `sql-principals.ps1` against the
+database `AzureBank`, which step 2 had created that day. The file stopped at its first check:
+`Code found: [database_firewall_rules]`, Msg 50003. Nothing ran, and the temporary firewall rule
+was removed. A read-only query of the catalog, as the Entra administrator, found that one module
+and nothing else: the view `database_firewall_rules`, in the schema `sys`, marked
+`is_ms_shipped`, created on 2026-08-28, before the database. No trigger, and no principal above
+the engine's four but the fixed roles. The local engine has no such view, which is why the local
+runs never met it. So the first check, and the same list before the commit, now leave out a
+module only when it is both in `sys` and marked `is_ms_shipped`; every trigger still counts. Each
+condition alone says less. No object can be created in `sys`
+(<https://learn.microsoft.com/en-us/sql/relational-databases/security/authentication-access/ownership-and-user-schema-separation>,
+2024-05-09), but `is_ms_shipped` is not reserved to `sys`: on a local SQL Server a sysadmin marks
+a view in `dbo` with it, and change data capture in Azure SQL Database makes objects marked with
+it in the schema `cdc`
+(<https://learn.microsoft.com/en-us/azure/azure-sql/database/change-data-capture-overview>,
+2025-09-24). No Microsoft page read says that a user cannot set it on Azure SQL Database. Both
+pages were read on 2026-10-03. The file has not yet run past that check on Azure.
+
+**Not measured.** The file past its first check on Azure SQL: that a new database there holds
+only the rows the lists before the commit expect (no trigger, no module but that view, and no
+principal beyond the engine's were measured; role members, rights and schema owners were not),
+and that dropping and creating a user inside its transaction works there. Its second form,
+`FROM EXTERNAL PROVIDER WITH OBJECT_ID`: the trial looked the identity up by its name.
 
 **If Azure refuses.** The sign-in method fails: a second method, then the older ODBC `sqlcmd`
 with a sign-in window, the same file each time. The lists refuse a database nobody has touched:
-the file's expected rows are corrected, which is a defect and not a choice. The statement is
-refused: `FROM EXTERNAL PROVIDER WITH OBJECT_ID`, by ID and never by a name. That is refused too:
-a stop.
+the file's expected rows are corrected, which is a defect and not a choice (on 2026-10-03 it was
+the first check, above). The statement is refused: `FROM EXTERNAL PROVIDER WITH OBJECT_ID`, by
+ID and never by a name. That is refused too: a stop.
 
 ### 3. Where the logs go
 
@@ -507,7 +531,10 @@ twice the cap: the logs go off. The alert is refused: it is left out, one of fou
   one word each, and of thirteen such changes ten left the tests green. Every condition of the
   file is pinned now. With the changes made for the later fixes that is 32 more, and all 32 fail.
   So do the nineteen made on 2026-10-03: to the environment's mode and API version, to what was
-  left when the switch for the object ID went, and to how the verdict is read.
+  left when the switch for the object ID went, and to how the verdict is read. So do the four
+  made later that day to the first check's narrowing: its schema condition dropped, its
+  `is_ms_shipped` condition dropped, the exclusion applied to triggers too, and the exclusion
+  widened to every schema.
 
 **Measured**, beyond the Context table.
 
@@ -522,7 +549,9 @@ twice the cap: the logs go off. The alert is refused: it is left out, one of fou
   nothing; an identity made again replaces its own user and no other; thirteen single oddities
   are each refused with the offending name printed, among them a grant to `public` on a table, a
   `DENY` for `public` and `CONTROL` for the migrator. Run again on 2026-10-03, on the file
-  without the switch for the object ID.
+  without the switch for the object ID, and again that day after the first check was narrowed,
+  with two oddities more, a view and a trigger in `dbo` each marked `is_ms_shipped`: both refused
+  at the first check, and every earlier case answered as before.
 - The runner's tool checks against the real programs: go-sqlcmd passes, the ODBC `sqlcmd` is
   refused as the default tool and accepted on its own road, and a program validly signed by
   someone else is refused.
@@ -535,13 +564,13 @@ twice the cap: the logs go off. The alert is refused: it is left out, one of fou
   stand-in for the CLI. The sign-in probe's program ran against a local SQL Server and gave each
   of its exit codes but 3, which needs a token refused on Azure.
 
-**Not measured:** everything these files themselves do on Azure, since none has run there; what
-is listed under "Not measured" in the three sections above; the app with its two containers, its
-probes and its scale to zero; the deployment identity's nine actions against an app that carries
-an identity; the automatic put-back on a real failure; that the policy refuses a second replica;
-any alert firing; the meters after 48 hours; every command of the runbook's sections on switching
-the logs off, on a theft and on removal. The runbook's "Not measured yet" lists each with the
-step where it shows.
+**Not measured:** everything these files themselves do on Azure, but what step 6 of the first
+deployment met (under the second reopened choice); what is listed under "Not measured" in the
+three sections above; the app with its two containers, its probes and its scale to zero; the
+deployment identity's nine actions against an app that carries an identity; the automatic
+put-back on a real failure; that the policy refuses a second replica; any alert firing; the
+meters after 48 hours; every command of the runbook's sections on switching the logs off, on a
+theft and on removal. The runbook's "Not measured yet" lists each with the step where it shows.
 
 ## What would change this
 

@@ -134,7 +134,10 @@ had two exceptions while PR-1 was being written, two parts of ADR-0057 decided b
 built: its §5.3 session stamp and the renewal-rate detector of its §6. Both were built the same
 day, each as its own commit of PR-1.)*
 *(2026-10-02: ADR-0061 is shipped as templates and scripts; none of them has run on Azure yet,
-and the record says so. 2026-10-03: it also says what a throwaway trial measured there by hand.)*
+and the record says so. 2026-10-03: it also says what a throwaway trial measured there by hand.
+Later that day the first deployment's step 6 ran the users file, whose first check refused a view
+of Microsoft's in the new database; the record says what was found and how that check was
+narrowed.)*
 
 <details>
 <summary>What changed in each decision after it was accepted — 46 records</summary>

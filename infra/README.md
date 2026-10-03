@@ -6,17 +6,18 @@ PowerShell 7. Why it is built this way, what was weighed and what was left as it
 [ADR-0061](../docs/adr/0061-the-demo-is-deployed-to-azure-container-apps-with-no-database-password.md).
 
 **State of this document.** The templates compile and the scripts are tested offline against
-stand-ins. Nothing in this folder has run on Azure yet: the resource group does not exist. What
-did run there, on 2026-10-02, is a throwaway trial: a resource group in the same subscription and
-region, created and deleted that day, in which requests of the shapes this folder makes were sent
-by hand, with `az rest` and go-sqlcmd, and not by this folder's template or scripts. Not every
-request of this folder was among them. What the trial saw is under
-[Measured on Azure](#measured-on-azure). The other facts marked *measured* were read the same day,
-from Azure or GitHub with read-only commands, on a local stack of this code, or on a local SQL
-Server. What only the first deployment can show, the requests the trial did not send among it, is
-listed under [Not measured yet](#not-measured-yet), every expected value below is marked as
-expected, and what to do when Azure refuses a step is written down before the first run
-([If Azure says no](#if-azure-says-no)).
+stand-ins. Until 2026-10-03 nothing in this folder had run on Azure. That day the first
+deployment began, and of it this document so far records only what step 6 met
+([Measured on Azure](#measured-on-azure)). What ran there before, on 2026-10-02, is a throwaway
+trial: a resource group in the same subscription and region, created and deleted that day, in
+which requests of the shapes this folder makes were sent by hand, with `az rest` and go-sqlcmd,
+and not by this folder's template or scripts. Not every request of this folder was among them.
+What the trial saw is under [Measured on Azure](#measured-on-azure). The other facts marked
+*measured* were read the same day, from Azure or GitHub with read-only commands, on a local stack
+of this code, or on a local SQL Server. What only the first deployment can show, the requests the
+trial did not send among it, is listed under [Not measured yet](#not-measured-yet), every expected
+value below is marked as expected, and what to do when Azure refuses a step is written down
+before the first run ([If Azure says no](#if-azure-says-no)).
 
 - [What this creates](#what-this-creates)
 - [What it costs, and what bounds it](#what-it-costs-and-what-bounds-it)
@@ -468,7 +469,11 @@ no address and no ID in it.
 All the SQL is in `sql-principals.sql`: one transaction that
 
 1. refuses to run in a database that holds a trigger or any other module (the app's migrations
-   create none: measured, 16 migrations, 0 triggers, 0 modules);
+   create none: measured, 16 migrations, 0 triggers, 0 modules). One kind of module is left out:
+   an object in the schema `sys` that is marked `is_ms_shipped`, the two together. A new Azure
+   SQL database held one, the view `sys.database_firewall_rules`, which the local engine does not
+   have, and the first run of this step stopped on it
+   ([Measured on Azure](#measured-on-azure));
 2. creates each user with `CREATE USER ... WITH SID = <the identity's client ID>, TYPE = E`, the
    one form that asks the directory nothing, and adds the five role memberships. The ID is the
    client ID and no other: it is what Azure SQL itself stores for an identity it looks up, and a
@@ -495,7 +500,8 @@ could fire one, and the lists before the commit undo what a trigger created in b
 is a guard, not a proof that a database is clean: a trigger that ran inside some other statement
 of an administrator could have done what no list looks at. After `Msg 50003` (code found) run
 nothing else there: the safe repair is a new database, because any statement an administrator runs
-can fire a trigger.
+can fire a trigger. On a database nobody has touched, the row for it under
+[If Azure says no](#if-azure-says-no) applies instead: what was found there is Azure's own.
 
 #### 7. A sign-in as each identity, before any image exists (operator, **writes** a job and deletes it)
 
@@ -948,7 +954,7 @@ for what it refused. The what-if shows it first: a policy assignment, or a fourt
 | That fails too | The older ODBC `sqlcmd`, which signs in through a window: `-SqlcmdPath '<its path>' -OdbcSignInName '<the account's sign-in name>'`. It runs with `-X1`, so that it starts no operating-system command |
 | The tool's signature is not a valid Microsoft one | Stop: this program is handed the administrator's sign-in |
 | The address cannot be read from the server's refusal | The script stops and prints the two commands to allow the address by hand under another name and to delete that rule afterwards |
-| `Msg 50003` or `Msg 50004` on a database nobody has touched | Azure's baseline differs from the local engine's: read the names the file printed, correct the file's expected lists, run again. A defect, not a choice |
+| `Msg 50003` or `Msg 50004` on a database nobody has touched | Azure's baseline differs from the local engine's: read the names the file printed, correct the file's expected lists, run again. A defect, not a choice. It happened once, on 2026-10-03, at the first check ([Measured on Azure](#measured-on-azure)) |
 | The server refuses `WITH SID ..., TYPE = E` | `./infra/sql-principals.ps1 -CreateForm ExternalProvider`: `CREATE USER ... FROM EXTERNAL PROVIDER WITH OBJECT_ID`, which looks the identity up by its object ID, never by a name. The users keep their two names and the stored ID is still compared. In the trial the first form was accepted, and so was a look-up by the identity's name; this second form itself was not sent |
 | That form is refused as well | Stop |
 | The second run changes something | A defect in the file: fix it before going on |
@@ -1637,6 +1643,40 @@ and a connect timeout of 10 s.
 At the end the database, the workspace and then the resource group were deleted (the group took
 27 minutes to go), and the group, the role, the policy and the budget were each read back as gone.
 
+**The first deployment, step 6 (2026-10-03)**
+
+Not the trial: this folder's own script and file, on the database `AzureBank` that step 2 created
+that day.
+
+- `sql-principals.ps1` ran the users file, which stopped at its first check:
+  `Code found: [database_firewall_rules]`, `Msg 50003`. Nothing was run, and the temporary
+  firewall rule was removed.
+- A read-only query of the catalog, as the Microsoft Entra administrator, through a firewall rule
+  created and deleted in the same run, returned this and no other row. In `sys.sql_modules`: the
+  view `database_firewall_rules`, in the schema `sys`, `is_ms_shipped` 1, created on 2026-08-28,
+  before the database. In `sys.triggers`: nothing. Among the principals above the four the engine
+  makes: nothing but the fixed roles.
+- The local engine has no such view: on LocalDB 17.0 `OBJECT_ID` finds none, and none of the
+  local runs below listed it. Microsoft's page on it names Azure SQL Database and SQL database in
+  Fabric only
+  (<https://learn.microsoft.com/en-us/sql/relational-databases/system-catalog-views/sys-database-firewall-rules-azure-sql-database>,
+  2025-07-29).
+- So the first check, and the same list before the commit, now leave out a module that is in
+  `sys` and marked `is_ms_shipped`, the two together, and nothing else. Every trigger still
+  counts. Both conditions, because each alone says less. No object can be created in `sys`, says
+  Microsoft's page on schemas
+  (<https://learn.microsoft.com/en-us/sql/relational-databases/security/authentication-access/ownership-and-user-schema-separation>,
+  2024-05-09), and on LocalDB a sysadmin's `CREATE VIEW` in `sys` is refused (Msg 2760), and so
+  is moving a view there (Msg 2710). `is_ms_shipped` is not reserved to `sys`: on LocalDB a
+  sysadmin marks a view in `dbo` with it (`sys.sp_MS_marksystemobject`, which Microsoft does not
+  document), and Microsoft's page on change data capture in Azure SQL Database names objects
+  marked with it in the schema `cdc`
+  (<https://learn.microsoft.com/en-us/azure/azure-sql/database/change-data-capture-overview>,
+  2025-09-24). No page read says that a user cannot set it on Azure SQL Database. The pages were
+  read on 2026-10-03.
+- The file has not run past that check on Azure yet. What a new database there holds that the
+  lists before the commit could refuse is under [Not measured yet](#not-measured-yet).
+
 ## Not measured yet
 
 **Measured on a local stack of this code** (`compose.yaml`, Production images, SQL Server 2022,
@@ -1661,11 +1701,12 @@ on 2026-10-02), not on Azure:
   four times in two lines, a handle the same way. The BFF's console holds neither.
 
 **Measured on a local SQL Server** (17.0, LocalDB, with go-sqlcmd 1.10.0 and `-b`; run again on
-2026-10-03 on the file as it is now, without the switch for the object ID). The local engine
-refuses both real forms of `CREATE USER` in `sql-principals.sql` (`TYPE = E`: a syntax error;
-`FROM EXTERNAL PROVIDER`: not configured), so the file ran with three substitutions: the
-database's name, a user made from a disabled SQL login whose ID is the 16 bytes asked for, and the
-user type that goes with it. Everything else is the file as it is.
+2026-10-03 on the file without the switch for the object ID, and again that day after the first
+check was narrowed). The local engine refuses both real forms of `CREATE USER` in
+`sql-principals.sql` (`TYPE = E`: a syntax error; `FROM EXTERNAL PROVIDER`: not configured), so
+the file ran with three substitutions: the database's name, a user made from a disabled SQL login
+whose ID is the 16 bytes asked for, and the user type that goes with it. Everything else is the
+file as it is.
 
 - On a clean database it commits and exits 0; a second run changes nothing.
 - A new app identity replaces only that user. Asking for the second form of `CREATE USER` while
@@ -1681,12 +1722,17 @@ user type that goes with it. Everything else is the file as it is.
   `db_ddladmin`, `guest` allowed to connect, a grant to a user, a `DENY` for a user, a schema owned
   by the migrator, a grant to `public` on a table, a `DENY` for `public`, `CONTROL` for the
   migrator, a right name with a wrong ID): each refused, with its name printed.
+- Two more after the first check was narrowed: a view in `dbo` and a trigger on a table in `dbo`,
+  each marked `is_ms_shipped` by `sys.sp_MS_marksystemobject` as sysadmin. Each was refused at the
+  first check (`Msg 50003`) with its name printed. Every case of the run before the change gave
+  the same answer again.
 - A value made of an ID, a quote and a statement, passed to `sqlcmd` as the runner never passes
   it: the statement ran, the lists named the user it created and the run was refused, and that
   user was still there afterwards, because it was made before the transaction began. The file
   does not keep such text out; the runner does, by parsing each ID.
 - After all 16 migrations a database holds 0 triggers and 0 modules, and none of the lists has an
-  unexpected row. (Measured on 2026-10-02 and not repeated: the lists have not changed since.)
+  unexpected row. (Measured on 2026-10-02 and not repeated: since then only the two code lists
+  have changed, and they now leave one kind of module out, so they can only name less.)
 - Without `-b`, `sqlcmd` exits 0 when the file stops on an error.
 
 **Measured on this machine, of the tools:** go-sqlcmd 1.10.0 passes the users script's three
@@ -1711,11 +1757,11 @@ stacks cannot show the rest. Each line is checked at the step named, on the firs
 
 | What | Where it shows |
 | --- | --- |
-| **This folder's own files on Azure.** `main.bicep` as a deployment with its what-if (fourteen resources, then nine more), `secrets.ps1`, `sql-principals.ps1` with `sql-principals.sql`, `deploy.py`, and the workflow `deploy.yml`. None has run there | every step |
+| **This folder's own files on Azure.** `main.bicep` as a deployment with its what-if (fourteen resources, then nine more), `secrets.ps1`, `sql-principals.ps1` with `sql-principals.sql`, `deploy.py`, and the workflow `deploy.yml`. Until 2026-10-03 none had run there; of the first deployment this document records only what step 6 met ([Measured on Azure](#measured-on-azure)) | every step |
 | What the template sends and the trial did not: the lock on the database, the federated credential, the policy definition deployed at another scope with a what-if that shows it, the four conditions of the policy named above, the workspace on its own API version, the action group and the four alert rules | steps 2, 4 and 15 |
 | A second run of the template leaves the server alone (by hand: the same request, twice) | step 3 |
 | How the logs settings and the app's scale read back (a value Azure leaves out is read by `deploy.py` as its default) | steps 4 and 15 |
-| The users file on Azure SQL: a new database there has no trigger, no module and only the baseline rows the file expects; dropping and creating a user inside its transaction; its second form, `FROM EXTERNAL PROVIDER WITH OBJECT_ID` | step 6; the second form only if it is asked for |
+| The users file on Azure SQL past its first check. A new database there held no trigger, no module but the view that check now leaves out, and no principal above the engine's four but the fixed roles (measured, step 6). What the lists before the commit may still meet is not settled by the Microsoft pages read: a role member other than `dbo` in `db_owner`, a right of `public` on an object whose ID is not negative (that view, which every user who can connect may read, is one to look for), `guest` allowed to connect. Dropping and creating a user inside its transaction; its second form, `FROM EXTERNAL PROVIDER WITH OBJECT_ID` | step 6; the second form only if it is asked for |
 | The runner on Azure: the server's refusal as the script's own pattern reads it (the trial read the words "is not allowed to access the server" and an address in quotes, with a looser pattern), and the temporary firewall rule deleted with the lock on the database in place | step 6 |
 | The two users this folder makes, signing in from a job; the probe job's request accepted by the Deny policy; the SDK image building step 7's program inside half a vCPU (the trial's own program built there); that program's exit 3, which only a token refused on Azure can give | step 7 |
 | A container of the app that asks for a token and names no identity gets none (read on Microsoft's page: such a request is answered for a system-assigned identity, and the app has none) | not provoked |
