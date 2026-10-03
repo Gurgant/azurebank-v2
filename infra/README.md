@@ -7,17 +7,19 @@ PowerShell 7. Why it is built this way, what was weighed and what was left as it
 
 **State of this document.** The templates compile and the scripts are tested offline against
 stand-ins. Until 2026-10-03 nothing in this folder had run on Azure. That day the first
-deployment began, and of it this document so far records only what step 6 met
-([Measured on Azure](#measured-on-azure)). What ran there before, on 2026-10-02, is a throwaway
-trial: a resource group in the same subscription and region, created and deleted that day, in
-which requests of the shapes this folder makes were sent by hand, with `az rest` and go-sqlcmd,
-and not by this folder's template or scripts. Not every request of this folder was among them.
-What the trial saw is under [Measured on Azure](#measured-on-azure). The other facts marked
-*measured* were read the same day, from Azure or GitHub with read-only commands, on a local stack
-of this code, or on a local SQL Server. What only the first deployment can show, the requests the
-trial did not send among it, is listed under [Not measured yet](#not-measured-yet), every expected
-value below is marked as expected, and what to do when Azure refuses a step is written down
-before the first run ([If Azure says no](#if-azure-says-no)).
+deployment began. Steps 1 to 5 ran as written and read back what they should. Step 6 stopped at
+the users file's first check, on something of Azure's own that the file did not expect. That
+check was narrowed; the file has not run on Azure since, and the users are not
+made yet ([Measured on Azure](#measured-on-azure)). What ran there before, on 2026-10-02, is a
+throwaway trial: a resource group in the same subscription and region, created and deleted that
+day, in which requests of the shapes this folder makes were sent by hand, with `az rest` and
+go-sqlcmd, and not by this folder's template or scripts. Not every request of this folder was
+among them. What the trial saw is under [Measured on Azure](#measured-on-azure) as well. The other
+facts marked *measured* were read on those days, from Azure or GitHub with read-only commands, on
+a local stack of this code, or on a local SQL Server. What only the rest of the first deployment
+can show is listed under [Not measured yet](#not-measured-yet), every value below that no run has
+shown is marked as expected, and what to do when Azure refuses a step is written down before the
+step runs ([If Azure says no](#if-azure-says-no)).
 
 - [What this creates](#what-this-creates)
 - [What it costs, and what bounds it](#what-it-costs-and-what-bounds-it)
@@ -79,10 +81,12 @@ property. Sent that way the request was accepted, but neither the request nor it
 the trial's record: it was sent by hand between two of the trial's recorded runs, and its answer
 was noted at the time. What the record holds is what came after: an environment in the region,
 where there had been none, read back with the logs destination and the Consumption profile, and
-two jobs that ran in it. No recorded read shows the property `environmentMode` coming back, which
-is why `Assert-EnvironmentMode` below does not rest on it alone. The Bicep CLI 0.47.16 has no
-types for that API version: one line of the template silences its warning (BCP081) for that one
-resource, and a test reads the compiled properties instead.
+two jobs that ran in it. No read in the trial's record shows the property `environmentMode`
+coming back. The first deployment's environment, made by this template, read it back as
+`WorkloadProfiles` on 2026-10-03 (steps 2 to 4); `Assert-EnvironmentMode` below still does not
+rest on the property alone. The Bicep CLI 0.47.16 has no types for that API version: one line of
+the template silences its warning (BCP081) for that one resource, and a test reads the compiled
+properties instead.
 
 **Inside the database**, created by `sql-principals.ps1`, not by the template: two users, each bound
 to one identity, by its client ID, and with no password. `azurebank_app` reads and writes rows
@@ -286,8 +290,8 @@ function Show-Executions([string]$Job) {
 
 # The environment's mode, read with the API version that has the property. WorkloadProfiles
 # passes and any other mode throws: an Express environment takes neither a second container nor a
-# job. No recorded read has shown the property coming back, so an answer without it passes only if
-# the logs go to azure-monitor, the destination Express refused in the trial.
+# job. The first deployment's reads showed the property (2026-10-03); an answer without it still
+# passes only if the logs go to azure-monitor, the destination Express refused in the trial.
 function Assert-EnvironmentMode {
     $scope = az group show --name $group --query id --output tsv
     $properties = (az rest --method get --url "https://management.azure.com$scope/providers/Microsoft.App/managedEnvironments/azurebank-env?api-version=2026-07-01" |
@@ -358,10 +362,11 @@ try {
 Test-Path $folder                            # False
 ```
 
-Expected in the what-if: fourteen resources to create and nothing to change or delete. The file
-holds no secret; it stays in the protected folder because the administrator's sign-in name is
-shaped like an e-mail address. If the deployment is refused, the next step is in
-[If Azure says no](#if-azure-says-no).
+Expected in the what-if: fourteen resources to create and nothing to change or delete. On
+2026-10-03 it showed exactly that, and the deployment answered `Succeeded`
+([Measured on Azure](#measured-on-azure)). The file holds no secret; it stays in the protected
+folder because the administrator's sign-in name is shaped like an e-mail address. If the
+deployment is refused, the next step is in [If Azure says no](#if-azure-says-no).
 
 Then, before anything else is done with the environment, its mode is read back:
 
@@ -398,10 +403,14 @@ try {
 It passes if the what-if shows nothing to create and nothing to delete, if a `Modify` on
 `Microsoft.Sql/servers` names no property under `properties.administrators`, and if the deployment
 then answers `Succeeded`. If it does not pass: stop ([If Azure says no](#if-azure-says-no)).
+On 2026-10-03 it passed. Its what-if also named properties to modify on four resources; on the
+one read before and after, the environment, the three it named had not changed
+([Measured on Azure](#measured-on-azure)).
 
 #### 4. Read back what was created (operator)
 
-These are the expected values, not observed ones.
+These are the expected values. On 2026-10-03 every read gave them
+([Measured on Azure](#measured-on-azure)).
 
 | Claim | Read | Expected |
 | --- | --- | --- |
@@ -411,7 +420,7 @@ These are the expected values, not observed ones.
 | The database | `az sql db show -g $group -s $server -n AzureBank` | `Basic`, capacity 5, 2147483648 bytes, `Local` |
 | The server | `az sql server firewall-rule list`; `az sql server ad-admin list`; `az sql server ad-only-auth get`; `az sql server show --query minimalTlsVersion` | one rule; one administrator; `true`; `1.2` |
 | Three identities | `az identity list -g $group --query '[].name'`; `Show-Identities` | `azurebank-app`, `azurebank-deploy`, `azurebank-migrate`; attached to nothing yet |
-| The same, asked of the identity | `az identity list-resources -g $group -n azurebank-app`, and for `azurebank-migrate`. Tried once: nobody has seen this call answer | No resource yet; after step 15, exactly one each. If the call does not answer, it is dropped and `Show-Identities` stands alone |
+| The same, asked of the identity | `az identity list-resources -g $group -n azurebank-app`, and for `azurebank-migrate`. On 2026-10-03, before the app, it answered `[]` for both; after step 15 nobody has seen it answer | No resource yet; after step 15, exactly one each. If the call does not answer, it is dropped and `Show-Identities` stands alone |
 | One federated credential | `az identity federated-credential list --identity-name azurebank-deploy -g $group` | one: the GitHub issuer, the subject ending `:environment:demo`, the audience `api://AzureADTokenExchange` |
 | The role, unassigned | `az role definition list --custom-role-only true -g $group`; `az role assignment list --assignee <principal id> --all` | nine actions, no data action; no assignment yet. The role can be assigned in this resource group only, so it is listed through the group. In the trial a role of this shape was also found, by its ID and in the list of custom roles, when asked at the subscription |
 | The lock | `az lock list -g $group` | one, `CanNotDelete`, on the database |
@@ -428,7 +437,8 @@ folder again, open to its owner only, before the file is written into it; both g
 `finally`. The offer accepts a budget: in the trial one of this amount, with these four e-mail
 notifications to one mailbox, was created, read back and deleted. The body below is built
 to be the one that was accepted then (the same properties, operator, thresholds and a period of
-one year), under another name. A refusal here changes nothing else.
+one year), under another name. A refusal here changes nothing else. On 2026-10-03 this block
+created the budget, and it read back as sent ([Measured on Azure](#measured-on-azure)).
 
 ```powershell
 if (-not $env:AZUREBANK_ALERT_EMAIL) { throw 'Set AZUREBANK_ALERT_EMAIL first.' }
@@ -931,8 +941,8 @@ database's $0.161 a day), and the road to remove it all is
 | If | Then |
 | --- | --- |
 | The environment is refused with `ExpressEnvironmentFeatureNotSupported`, or `Assert-EnvironmentMode` throws, here or at the start of a later session: a mode other than `WorkloadProfiles`, or no mode with the logs not on `azure-monitor` | Stop. The template names the mode because a request that names none was refused that way; if it is refused all the same, that line was lost or is not honoured |
-| The deployment is refused on the **policy definition** | Run it again with the policy off (`Invoke-Template 'foundation' @('denyPolicy=false')`), pass the same override on every later run, and write down that the shape then rests on `deploy.py`'s own check alone. The trial's definition was accepted, but it was an earlier one: four of this rule's conditions have never been sent |
-| It is refused on the **custom role** or on the **SQL server**; or the **second run** is refused, or its what-if shows the administrator changed or removed | Stop. There is one shape of the server in this folder and no other is written down: sent by hand it was accepted, twice. And there is no fallback that keeps the deployment identity away from the secrets |
+| The deployment is refused on the **policy definition** | Run it again with the policy off (`Invoke-Template 'foundation' @('denyPolicy=false')`), pass the same override on every later run, and write down that the shape then rests on `deploy.py`'s own check alone. The trial's definition was an earlier one, without four of this rule's conditions; this rule, all of them in it, was accepted at step 2 on 2026-10-03 ([Measured on Azure](#measured-on-azure)) |
+| It is refused on the **custom role** or on the **SQL server**; or the **second run** is refused, or its what-if shows the administrator changed or removed | Stop. There is one shape of the server in this folder and no other is written down: sent by hand it was accepted, twice, and so it was from the template at steps 2 and 3 on 2026-10-03. And there is no fallback that keeps the deployment identity away from the secrets |
 | It is refused on the **workspace**, the destination, the diagnostic setting or the cap | `./infra/secrets.ps1 -Action New -LogsOff`, run again, and say so: nothing is kept then. If a workspace or a setting was created on the way, [Switching the logs off](#switching-the-logs-off) |
 | A read in step 4 differs | A defect in the template: fix it before going on |
 | Anything else is refused in either run: the lock, the federated credential, the database, a firewall rule, the policy assignment, the API version `2026-07-01` itself, or with an error no row here names | Stop |
@@ -1524,6 +1534,9 @@ users go with the group. On this machine, if it is no longer wanted:
 
 ## Measured on Azure
 
+Two parts: a trial on 2026-10-02, and, at the end of this section, the first deployment, begun on
+2026-10-03 with this folder's own files.
+
 On 2026-10-02, in a throwaway resource group in the same subscription and region (Italy North),
 created and deleted that day. Requests of the shapes this folder makes were sent by hand, with
 `az rest` and go-sqlcmd (its version was not recorded). Each line below comes from a run of the
@@ -1636,12 +1649,54 @@ and a connect timeout of 10 s.
   first try, within seconds of the assignment, and a job at 0.5 vCPU was accepted. The rule sent
   was an earlier one than this folder's: it had every condition of `guardrails.bicep` but four
   (an init container on an app, an init container on a job, parallel runs under a schedule
-  trigger and under an event trigger). Those four have never been sent.
+  trigger and under an event trigger). Those four were first sent in the definition step 2 of the
+  first deployment created on 2026-10-03; none of them has been seen refusing.
 - A budget on the subscription, 20 a month, with four e-mail notifications to one mailbox:
   accepted and read back. No e-mail was due in the seconds it existed.
 
 At the end the database, the workspace and then the resource group were deleted (the group took
 27 minutes to go), and the group, the role, the policy and the budget were each read back as gone.
+
+**The first deployment, steps 1 to 5 (2026-10-03)**
+
+Not the trial: this folder's template and scripts, from this branch, in the resource group
+`azurebank-demo`. The runbook's blocks and functions ran as written here, but for one change: the
+question before a deployment was answered by a variable, not typed. Each line is what the step
+printed. One run each.
+
+- Step 1, before any write: the Azure CLI 2.90.0 with no extension, the Bicep CLI 0.47.16,
+  go-sqlcmd 1.10.0. `az group exists` answered `false`. The subscription held no budget, no
+  Container Apps environment in Italy North, no custom role and no custom policy definition, and
+  the protected folder did not exist.
+- Step 2: the group was created. The what-if listed fourteen resources to create and nothing
+  else. The deployment answered `Succeeded`, the whole run 17 minutes, and the protected folder
+  was gone afterwards. The environment's mode read back `WorkloadProfiles`: the first read on
+  record that shows the property.
+- Step 3, the same template again, `keepLogs` now read from the deployed environment. The
+  what-if: nothing to create or delete; `NoChange` on the server, the database, the lock, the
+  firewall rule, the three identities, the federated credential, the role and the workspace; one
+  `Ignore` on a database; `Modify` on four resources, naming the policy definition's `version`
+  and `versions`, the environment's `peerAuthentication`, `peerTrafficConfiguration` and
+  `publicNetworkAccess`, the diagnostic setting's `logs` and `metrics`, and the policy
+  assignment's `definitionVersion`. The deployment answered `Succeeded`, the whole run under a
+  minute. The three properties named on the environment read the same before and after: public
+  network access enabled, peer traffic encryption off, mTLS off. The other three were not read
+  before and after.
+- Step 4, every read the table expects, and each gave the value expected: the Consumption profile
+  alone; the mode `WorkloadProfiles`; the logs to `azure-monitor`, one workspace with a cap of
+  0.05, kept 30 days, key access off, on the pay-per-GB plan and taking data (`RespectQuota`), and
+  one diagnostic setting with the console and the system logs; the database `Basic`, capacity 5,
+  2147483648 bytes, `Local` backups, online; the rule `AllowAzureServices` alone, one
+  administrator, Entra-only `true`, TLS 1.2; the three identities, attached to nothing, and
+  `az identity list-resources` answering `[]` for `azurebank-app` and for `azurebank-migrate`;
+  one federated credential, with the GitHub issuer, the subject ending `environment:demo` and the
+  audience `api://AzureADTokenExchange`; one custom role, nine actions and no data action, and no
+  role assignment for the deployment identity (the same command listed five for the owner); the
+  lock, `CanNotDelete`, on the database; the assignment `azurebank-shape`, enforcement `Default`;
+  no job.
+- Step 5: the budget `azurebank-monthly`, 20 a month, read back with its four notifications, each
+  to the one mailbox given: 30, 50 and 100 % of the actual cost and 30 % of the forecast. The
+  protected folder was gone afterwards.
 
 **The first deployment, step 6 (2026-10-03)**
 
@@ -1757,15 +1812,15 @@ signature check that says it checked nothing), and the two that hold only on Win
 skipped. actionlint 1.7.12 with ShellCheck 0.11.0 read the run blocks of the three workflows and
 found nothing; an unquoted variable planted in a copy is reported.
 
-**Not measured.** The trial sent requests by hand; read-only commands, offline tests and local
-stacks cannot show the rest. Each line is checked at the step named, on the first deployment.
+**Not measured.** The trial sent requests by hand, and the first deployment has run steps 1 to 5
+and met step 6's first check; read-only commands, offline tests and local stacks cannot show the
+rest. Each line is checked at the step named, in the rest of the first deployment.
 
 | What | Where it shows |
 | --- | --- |
-| **This folder's own files on Azure.** `main.bicep` as a deployment with its what-if (fourteen resources, then nine more), `secrets.ps1`, `sql-principals.ps1` with `sql-principals.sql`, `deploy.py`, and the workflow `deploy.yml`. Until 2026-10-03 none had run there; of the first deployment this document records only what step 6 met ([Measured on Azure](#measured-on-azure)) | every step |
-| What the template sends and the trial did not: the lock on the database, the federated credential, the policy definition deployed at another scope with a what-if that shows it, the four conditions of the policy named above, the workspace on its own API version, the action group and the four alert rules | steps 2, 4 and 15 |
-| A second run of the template leaves the server alone (by hand: the same request, twice) | step 3 |
-| How the logs settings and the app's scale read back (a value Azure leaves out is read by `deploy.py` as its default) | steps 4 and 15 |
+| **This folder's own files on Azure, past what steps 1 to 6 met** ([Measured on Azure](#measured-on-azure)): the users file past its first check, `main.bicep`'s second step (nine more resources) with its what-if, `secrets.ps1` writing the app's file, `deploy.py`, and the workflow `deploy.yml` | steps 6, 9 and 15 to 17 |
+| What the template sends and neither the trial nor steps 2 to 4 showed: the four conditions of the policy named above at work (the definition is deployed and assigned), the action group and the four alert rules | step 15 |
+| How the app's scale reads back (a value Azure leaves out is read by `deploy.py` as its default). The logs settings read back at steps 3 and 4 | step 15 |
 | The users file on Azure SQL past its first check. A new database there held no trigger, no module but the view that check now leaves out, and no principal above the engine's four but the fixed roles (measured, step 6). What the lists before the commit may still meet is not settled by the Microsoft pages read: a role member other than `dbo` in `db_owner`, a right of `public` on an object whose ID is not negative (that view, which every user who can connect may read, is one to look for), `guest` allowed to connect. Dropping and creating a user inside its transaction; its second form, `FROM EXTERNAL PROVIDER WITH OBJECT_ID` | step 6; the second form only if it is asked for |
 | The runner on Azure: the server's refusal as the script's own pattern reads it (the trial read the words "is not allowed to access the server" and an address in quotes, with a looser pattern), and the temporary firewall rule deleted with the lock on the database in place | step 6 |
 | The two users this folder makes, signing in from a job; the probe job's request accepted by the Deny policy; the SDK image building step 7's program inside half a vCPU (the trial's own program built there); that program's exit 3, which only a token refused on Azure can give | step 7 |
@@ -1793,6 +1848,7 @@ stacks cannot show the rest. Each line is checked at the step named, on the firs
 | How long a managed identity's token stays valid for the database | not found in the pages read |
 | That the identity is refused a scale change, a delete or a stop. One refusal is provoked on every deployment (the secrets listing); the policy's refusal is provoked as the owner | not provoked |
 | Every command under [Switching the logs off](#switching-the-logs-off), [If something was stolen](#if-something-was-stolen) and [Removing everything](#removing-everything). The trial made its own deletions with other commands | the day they are needed |
+| The CI job `infra` itself, on GitHub's runner and its versions of the tools. Its checks ran on this machine, on Windows and in WSL (above); the branch has not been pushed | the pull request's first run |
 
 ## Checking these files
 

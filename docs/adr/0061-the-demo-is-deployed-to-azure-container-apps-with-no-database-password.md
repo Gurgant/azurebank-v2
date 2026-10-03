@@ -10,8 +10,9 @@ measured, and what is known and left as it is.
 **Until 2026-10-03 none of the files this record describes had run on Azure.** The templates
 compile, the scripts are tested against stand-ins and, where a local engine can run them, for
 real. On 2026-10-02 the resource group did not exist (`az group exists` answered `false`; the same
-command answers `true` for a group that is there). On 2026-10-03 the first deployment began, and
-of it this record holds only what its step 6 met, under
+command answers `true` for a group that is there). On 2026-10-03 the first deployment began. Its
+steps 1 to 5 ran as the runbook writes them, and what they read back has a table of its own
+below; its step 6 stopped at the users file's first check, as told under
 [the second reopened choice](#2-how-the-two-database-users-are-created). What ran on Azure before,
 on 2026-10-02, is a throwaway trial: a resource group in the same subscription and region, created
 and deleted that day, in which requests of the shapes these files make were sent by hand: not by
@@ -158,6 +159,18 @@ paraphrased; the date in parentheses is the page's own.
 Prices are from the Azure Retail Prices API for Italy North, read the same day: the database
 $0.161 a day; log ingestion $2.99 a GB past the free 5 GB.
 
+**Measured on Azure on 2026-10-03, at the first deployment**, with these files, by the runbook's
+blocks as written (the question before a deployment answered by a variable, not typed). One run
+per row. The runbook's section "Measured on Azure" has each line in full.
+
+| Step | What happened |
+|---|---|
+| 1, before any write | The Azure CLI 2.90.0 with no extension, the Bicep CLI 0.47.16, go-sqlcmd 1.10.0. `az group exists` answered `false`; the subscription held no budget, no environment in Italy North, no custom role and no custom policy definition |
+| 2, the foundation | The what-if: fourteen resources to create and nothing else. `Succeeded`, the whole run 17 minutes. **The environment's mode read back `WorkloadProfiles`**, which no read of the trial had shown |
+| 3, the same template again | Nothing to create or delete, `NoChange` on the server; `Modify` named on the policy definition, the environment, the diagnostic setting and the policy assignment. `Succeeded`. The three properties it named on the environment read the same before and after; the other three resources were not read |
+| 4, read back | Every value the runbook expects: the Consumption profile alone; logs to `azure-monitor`, the workspace capped at 0.05 GB with key access off, one setting with the two categories; Basic, 5 DTU, 2 GB, local backups; one firewall rule, one administrator, Entra-only, TLS 1.2; three identities attached to nothing; one federated credential; the role of nine actions, not assigned; the lock on the database; the policy assignment |
+| 5, a budget | 20 a month, four e-mail notifications to one mailbox: created by the runbook's block and read back |
+
 ## Decision
 
 **1. One resource group in Italy North, created by one template that a person runs, in two
@@ -275,9 +288,10 @@ user), which that handler leaves a 500. The two errors were measured; the two an
 asks first, was called on its own and takes neither error. A job carrying one identity gets no
 token for the other. The server names Entra-only in its refusal of a SQL sign-in.
 
-**Not measured.** The same things done by these files: the template's own second run, and the two
-users the script makes. That a request for a token which names no identity gets none. Whether a
-change that touches no identity needs a right on the attached one.
+**Not measured.** The same things done by these files: the two users the script makes. (The
+template's own second run left the server alone on 2026-10-03: `NoChange` in its what-if, and the
+server read back as expected afterwards.) That a request for a token which names no identity gets
+none. Whether a change that touches no identity needs a right on the attached one.
 
 **If Azure refuses.** The server refused, or disturbed by a second run of the template: a stop.
 This record first listed two more shapes of the server as steps down; they are gone, because the
@@ -564,12 +578,12 @@ twice the cap: the logs go off. The alert is refused: it is left out, one of fou
   stand-in for the CLI. The sign-in probe's program ran against a local SQL Server and gave each
   of its exit codes but 3, which needs a token refused on Azure.
 
-**Not measured:** everything these files themselves do on Azure, but what step 6 of the first
-deployment met (under the second reopened choice); what is listed under "Not measured" in the
-three sections above; the app with its two containers, its probes and its scale to zero; the
-deployment identity's nine actions against an app that carries an identity; the automatic
-put-back on a real failure; that the policy refuses a second replica; any alert firing; the
-meters after 48 hours; every command of the runbook's sections on switching the logs off, on a
+**Not measured:** everything these files themselves do on Azure past the first deployment's steps
+1 to 5 and what its step 6 met (under the second reopened choice); what is listed under "Not
+measured" in the three sections above; the app with its two containers, its probes and its scale
+to zero; the deployment identity's nine actions against an app that carries an identity; the
+automatic put-back on a real failure; that the policy refuses a second replica; any alert firing;
+the meters after 48 hours; every command of the runbook's sections on switching the logs off, on a
 theft and on removal. The runbook's "Not measured yet" lists each with the step where it shows.
 
 ## What would change this

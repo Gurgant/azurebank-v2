@@ -137,7 +137,7 @@ day, each as its own commit of PR-1.)*
 and the record says so. 2026-10-03: it also says what a throwaway trial measured there by hand.
 Later that day the first deployment's step 6 ran the users file, whose first check refused a view
 of Microsoft's in the new database; the record says what was found and how that check was
-narrowed.)*
+narrowed. It now also has the deployment's steps 1 to 5, which ran before step 6.)*
 
 <details>
 <summary>What changed in each decision after it was accepted — 46 records</summary>
