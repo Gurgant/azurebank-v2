@@ -199,7 +199,7 @@ public static class ServiceCollectionExtensions
         services.AddOptions<PinHashingOptions>()
             .Bind(configuration.GetSection(PinHashingOptions.SectionName))
             .ValidateOnStart();
-        services.AddSingleton<IValidateOptions<PinHashingOptions>, PinHashingOptionsValidator>();
+        services.AddSingleton<IValidateOptions<PinHashingOptions>>(new PinHashingOptionsValidator(configuration));
 
         // Mappers (Mapperly source-generated, stateless - singleton is optimal)
         services.AddSingleton<AccountMapper>();
