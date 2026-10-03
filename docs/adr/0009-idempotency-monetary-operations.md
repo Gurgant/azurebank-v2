@@ -80,8 +80,10 @@ design — see Notes).
   there means another request with the same key and bytes took a stale claim over, committed and
   stored its answer: the payment under this key went through, and the same key sent again would
   be replayed that answer. The code carries **no** `applied` when that reload finds no row, or
-  finds a record claimed with another body: nothing is proven about this request, and its
-  sentence says "may have been executed". The reload is by key, and a key can come to hold
+  finds a record claimed with another body: nothing is proven about this request, ~~and its
+  sentence says "may have been executed"~~ (struck 2026-10-03: only the no-row answer says
+  that; the other has a sentence of its own, in the correction below). The reload is by key,
+  and a key can come to hold
   another body's record: the request's claim is taken over as stale by an instance whose clock is
   a minute or more ahead, the request that took it is refused before any write and releases it,
   and with no record left there is no hash to refuse another body on. The attempt keeps the hash

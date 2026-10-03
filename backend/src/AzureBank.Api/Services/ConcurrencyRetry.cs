@@ -319,10 +319,10 @@ internal static class ConcurrencyRetry
     /// Result unknown, 409 RESULT_UNKNOWN on the wire: this operation must not be executed again.
     /// A record reloaded as committed, under the request hash this request claimed with, carries
     /// <c>applied: true</c>; a claim row that vanished under us, or that was replaced by a record
-    /// claimed with another body, carries no
-    /// <c>applied</c>, because nothing is proven there. The detail distinguishes a missing row from
-    /// another request's record under the key. (Until 2026-10-01 this named them as one
-    /// answer: "a prior attempt committed, or the claim row vanished under us".)
+    /// claimed with another body, carries no <c>applied</c>, because nothing is proven there.
+    /// (Until 2026-10-01 this named the committed record and the vanished row as one answer:
+    /// "a prior attempt committed, or the claim row vanished under us".) The detail tells a
+    /// missing row from another request's record under the key.
     /// </exception>
     public static async Task PrepareIdempotentAttemptAsync(
         AzureBankDbContext context, Account[] accounts, CancellationToken cancellationToken)
