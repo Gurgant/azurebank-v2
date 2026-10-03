@@ -514,6 +514,75 @@ public class SeederCommandTests
     }
 
     [Theory]
+    [InlineData("seed")]
+    [InlineData("reset")]
+    [InlineData("seed-pool")]
+    [InlineData("recycle")]
+    public async Task APepperAndADemoSettingThatBothFail_AreRefusedTogether_InOneLine(string command)
+    {
+        // Each validator alone throws its own failure. Both together, the start-up validator throws
+        // the two inside one AggregateException: that used to reach the command's catch-all and end
+        // as exit 1 with a stack, the code that says "run it again".
+        var log = new RecordingLoggerProvider();
+        var opens = new OpenCountingInterceptor();
+        await using var provider = SeederHost.Build(
+            log,
+            opens,
+            onCommittedSettings: false,
+            (ConnectionKey, AbsentServer),
+            NoEfRetry,
+            TheFlagItRunsWith(command),
+            ("Demo:Pool:TargetFree", "0"));
+
+        var exitCode = await Run(command, provider);
+
+        using var all = new AssertionScope();
+        exitCode.Should().Be(2, "a configuration that cannot run is a refusal, whatever else is wrong with it");
+        Errors(log).Should().ContainSingle()
+            .Which.Should().Contain($"{command} refused: ")
+            .And.Contain("Security:PinPepper must be configured with at least 32 characters")
+            .And.Contain("Demo:Pool:TargetFree must be between 1 and 500, and is 0.")
+            .And.Contain("Nothing was opened")
+            .And.NotContain("   at ", "the refusal is a sentence, not a stack trace");
+        opens.Opens.Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData("seed", "Demo:Enabled", "Boolean")]
+    [InlineData("reset", "Demo:Enabled", "Boolean")]
+    [InlineData("seed-pool", "Demo:Pool:TargetFree", "Int32")]
+    [InlineData("recycle", "Demo:Enabled", "Boolean")]
+    [InlineData("recycle", "Security:PinPepperKeyId", "Int32")]
+    public async Task ASettingThatCannotBeRead_IsRefused_NamingItsKeyAndNotItsValue(string command, string key, string type)
+    {
+        // "yes" for a flag, a word for a number: the binder throws before any validator runs, with
+        // a message that quotes the value. The value is not printed: the key is what to fix.
+        const string Unreadable = "canary-value-7f3a";
+        var log = new RecordingLoggerProvider();
+        var opens = new OpenCountingInterceptor();
+        var settings = new List<(string Key, string? Value)> { (ConnectionKey, AbsentServer), (PepperKey, SeederHost.Pepper), NoEfRetry };
+        if (key != DemoKey)
+        {
+            settings.Add(TheFlagItRunsWith(command));
+        }
+
+        settings.Add((key, Unreadable));
+        await using var provider = SeederHost.Build(log, opens, onCommittedSettings: false, [.. settings]);
+
+        var exitCode = await Run(command, provider);
+
+        var output = string.Join('\n', log.Lines.Select(line => line.Message));
+        using var all = new AssertionScope();
+        exitCode.Should().Be(2, "an unreadable setting is a refusal, exit 2, as one out of range is");
+        Errors(log).Should().ContainSingle()
+            .Which.Should().Contain($"{command} refused: {key} holds a value that cannot be read as {type}.")
+            .And.Contain("Nothing was opened")
+            .And.NotContain("   at ", "the refusal is a sentence, not a stack trace");
+        output.Should().NotContain("canary", "the value is not printed, only the key that holds it");
+        opens.Opens.Should().Be(0);
+    }
+
+    [Theory]
     [InlineData("seed-pool")]
     [InlineData("recycle")]
     public async Task OnAnAzureSqlName_SeedPoolAndRecycle_AreNotRefused_AndReachForTheDatabase(string command)

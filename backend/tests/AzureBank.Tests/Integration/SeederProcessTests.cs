@@ -79,6 +79,26 @@ public sealed class SeederProcessTests
     }
 
     [Fact]
+    public async Task AFlagThatIsNotTrueOrFalse_ExitsTwo_NamingTheVariable_AndNotItsValue()
+    {
+        // A job whose flag was typed "yes" is a configuration to change, not a run to try again:
+        // exit 2, as for a flag that is off, and never the value it was given.
+        var (output, exitCode) = await SeederProcess.Run(
+            ["recycle"],
+            ("ConnectionStrings__DefaultConnection", AbsentServer),
+            ("Security__PinPepper", SeederHost.Pepper),
+            ("Database__MaxRetryCount", "0"),
+            ("Demo__Enabled", "canary-value-7f3a"));
+
+        using var all = new AssertionScope();
+        exitCode.Should().Be(2, SeederProcess.Shown(output));
+        output.Should().Contain("recycle refused: Demo:Enabled holds a value that cannot be read as Boolean.");
+        output.Should().Contain("Nothing was opened");
+        output.Should().NotContain("canary");
+        output.Should().NotContain("Unhandled exception");
+    }
+
+    [Fact]
     public async Task NoCommand_WithNoSecretAtAll_PrintsTheUsage_AndExitsOne()
     {
         var (output, exitCode) = await SeederProcess.Run([]);

@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using AzureBank.Infrastructure.Extensions;
 using AzureBank.Seeder.Pool;
 using AzureBank.Seeder.Seeders;
@@ -107,9 +108,19 @@ public static class ServiceCollectionExtensions
     /// <c>recycle</c> ask before they open anything: a false means exit 2.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The pepper's failures name keys and lengths only (<c>PinHashingOptionsValidator</c>), never a
     /// value. The demo's name a key and the number it holds (<c>DemoOptionsValidator</c>), which is
     /// no secret. So they are printed as they are, without the exception's stack.
+    /// </para>
+    /// <para>
+    /// THREE SHAPES OF ONE REFUSAL. One section that fails its validator throws its own failure.
+    /// Both together come as one <see cref="AggregateException"/> of the two. And a value the binder
+    /// cannot turn into its setting's type ("yes" for the flag, a word for a number) throws before
+    /// any validator runs, with a message that quotes the value: that refusal names the key and the
+    /// type, and not the value. Each is a configuration to change, so each is exit 2; until
+    /// 2026-10-03 the last two reached the command's catch-all and ended as exit 1, with a stack.
+    /// </para>
     /// </remarks>
     public static bool PinPepperIsUsable(this IServiceProvider services, ILogger logger, string command)
     {
@@ -120,9 +131,50 @@ public static class ServiceCollectionExtensions
         }
         catch (OptionsValidationException e)
         {
+            return Refused(logger, command, e.Failures);
+        }
+        catch (AggregateException e) when (e.InnerExceptions.All(inner => inner is OptionsValidationException))
+        {
+            return Refused(
+                logger, command, e.InnerExceptions.Cast<OptionsValidationException>().SelectMany(inner => inner.Failures));
+        }
+        catch (InvalidOperationException e) when (UnreadableSetting(e) is { } setting)
+        {
             logger.LogError(
-                "{Command} refused: {Failures} Nothing was opened.", command, string.Join(" ", e.Failures));
+                "{Command} refused: {Key} holds a value that cannot be read as {Type}. Nothing was opened.",
+                command,
+                setting.Key,
+                setting.Type);
             return false;
         }
+    }
+
+    private static bool Refused(ILogger logger, string command, IEnumerable<string> failures)
+    {
+        logger.LogError("{Command} refused: {Failures} Nothing was opened.", command, string.Join(" ", failures));
+        return false;
+    }
+
+    // The binder's own sentence: "Failed to convert configuration value '…' at 'Demo:Enabled' to
+    // type 'System.Boolean'." Read from its end, since the value can hold anything. Another
+    // InvalidOperationException is no setting's, and is not caught.
+    private static readonly Regex FailedConversion = new(
+        @" at '(?<key>[^']+)' to type '(?<type>[^']+)'\.$", RegexOptions.CultureInvariant);
+
+    private static (string Key, string Type)? UnreadableSetting(InvalidOperationException exception)
+    {
+        if (!exception.Message.StartsWith("Failed to convert configuration value ", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var match = FailedConversion.Match(exception.Message);
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        var type = match.Groups["type"].Value;
+        return (match.Groups["key"].Value, type.StartsWith("System.", StringComparison.Ordinal) ? type["System.".Length..] : type);
     }
 }

@@ -19,8 +19,8 @@ namespace AzureBank.Seeder.Commands;
 /// </para>
 /// <para>
 /// THE FLAG IS READ AFTER THE SETTINGS PASSED THEIR VALIDATOR (<c>PinPepperIsUsable</c> runs it): a
-/// demo setting out of range is then a refusal with a sentence, and never an exception thrown by
-/// the read.
+/// demo setting out of range, or one that cannot be read as its type, is then a refusal with a
+/// sentence, and never an exception thrown by the read.
 /// </para>
 /// </remarks>
 internal static class DemoMode
