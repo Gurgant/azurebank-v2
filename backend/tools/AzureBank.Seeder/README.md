@@ -48,7 +48,7 @@ connection string and nothing under `Demo`.
 
 | Variable | For | |
 |---|---|---|
-| `ConnectionStrings__DefaultConnection` | every command | Required; the name the API reads. It has to name a server and a database. A password that holds `;`, `=` or a quote has to be quoted, or the string cannot be read |
+| `ConnectionStrings__DefaultConnection` | every command | Required; the name the API reads. It has to name a server and a database, and it says how to sign in (below). A password that holds `;`, `=` or a quote has to be quoted, or the string cannot be read |
 | `Security__PinPepper` | `seed`, `reset`, `seed-pool`, `recycle` | 32 characters or more, equal to the API's (ADR-0011) |
 | `Security__PinPepperKeyId`, `Security__PreviousPinPeppers__<id>` | the same four | Optional: 1 and none. Where the API sets them, the same values: a PIN hash carries the key id of the pepper that made it, and the API verifies it only with the pepper it holds under that id. The order of a rotation is in `docs/runbooks/demo-pool.md` |
 | `Demo__Enabled` | `seed-pool` and `recycle`, which run only with `true`; `seed` and `reset`, which run only without it | Off by default |

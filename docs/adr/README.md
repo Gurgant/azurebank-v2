@@ -21,10 +21,10 @@ alternative record is running the same experiment again.
 
 ## If you read four, read these
 
-Sixty-one decisions is more than anyone reads cold. These four carry the architecture; the rest
+Sixty-two decisions is more than anyone reads cold. These four carry the architecture; the rest
 is detail hanging off them. *(It said fifty until 2026-09-24, fifty-six until 2026-09-28,
 fifty-seven until 2026-09-29, fifty-eight until 2026-10-01, fifty-nine until ADR-0060, the same
-day, and sixty until ADR-0062, 2026-10-03.)*
+day, sixty until 2026-10-02, and sixty-one until ADR-0062, 2026-10-03.)*
 
 | | Why this one |
 |---|---|
@@ -200,8 +200,7 @@ to `public` on that view, which it now keeps.)*
 
 </details>
 
-The next free number is **0063**. 0061 is taken by a record still under review, on a branch of its
-own; until it is accepted the list below goes from 0060 to 0062.
+The next free number is **0063**.
 
 <details>
 <summary>Full list in numeric order</summary>
@@ -269,6 +268,7 @@ own; until it is accepted the list below goes from 0060 to 0062.
 | [ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md) | The API gives up cleanly when the database is down | Accepted | 2026-09-29 |
 | [ADR-0059](0059-the-spa-tells-the-visitor-when-the-service-is-slow-or-down.md) | The SPA tells the visitor when the service is slow or down | Accepted | 2026-10-01 |
 | [ADR-0060](0060-migrations-run-as-a-one-shot-container-before-the-app.md) | Migrations run as a one-shot container before the app | Accepted | 2026-10-01 |
+| [ADR-0061](0061-the-demo-is-deployed-to-azure-container-apps-with-no-database-password.md) | The demo is deployed to Azure Container Apps with no database password | Accepted | 2026-10-02 |
 | [ADR-0062](0062-demo-visitors-get-private-copies-from-a-prepared-pool.md) | Demo visitors get private copies from a prepared pool | Accepted | 2026-10-03 |
 
 </details>
