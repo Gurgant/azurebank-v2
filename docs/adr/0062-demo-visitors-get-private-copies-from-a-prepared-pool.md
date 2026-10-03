@@ -355,7 +355,9 @@ The copies share one database and one deployment, so these are shared, and stay 
 
 - The audit rows of every deleted copy stay for ever, with an actor that names no user. They are
   what `recycle` cannot return when storage runs short. On Azure the database is Basic, 2 GB at
-  most, and none of ADR-0061's four alerts watches its size.
+  most, and none of ADR-0061's ~~four~~ alerts watches its size. *(2026-10-03: three alerts
+  since the one on the log volume was removed that day, ADR-0061's decision 10; none watches
+  the database's size, as before.)*
 - The record of a deleted copy is the operator's word (decision 11).
 - The evidence pack of a deleted copy's transfer is gone, and the verb answers for it as for a
   number nobody issued (decision 11).
