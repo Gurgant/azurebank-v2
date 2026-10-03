@@ -86,12 +86,13 @@ string that names no database is a 2: the server would open the login's default 
 `migrate` would build the schema there. For `migrate`, so is a connect timeout of 0, which
 SqlClient reads as no limit: one open that never ends is a run that never ends, whatever the wait.
 *(Amended 2026-10-03, [ADR-0062](0062-demo-visitors-get-private-copies-from-a-prepared-pool.md):
-a 2 still means "refused, and nothing was written", and one 2 now comes after a connection was
-opened: `seed` counts the demo pool's rows first and refuses a database that holds one. Every
-other 2 still comes before anything is opened, among them the new ones: a demo setting out of
-range, `seed` and `reset` in demo mode, `seed-pool` and `recycle` with the demo off. Those two
-commands also end with a code from 10 to 15, the pool's signals, set on the invocation as the
-three codes here are.)*
+a 2 still means "refused, and nothing was written", and two 2s now come after a connection was
+opened: `seed` counts the demo pool's rows first and refuses a database that holds one, and
+`reset` does the same after its prompt and before its drop. Every other 2 still comes before
+anything is opened, among them the new ones: a demo setting out of range, a setting whose value
+cannot be read as its type (named by its key, not its value; until then that was a 1), `seed` and
+`reset` in demo mode, `seed-pool` and `recycle` with the demo off. Those two commands also end
+with a code from 10 to 15, the pool's signals, set on the invocation as the three codes here are.)*
 
 **5. On an Azure SQL server name only `migrate` runs, and it never creates a database there.**
 `seed` and `reset` refuse the name with exit 2: `seed`'s four users have a password and a PIN that
@@ -110,16 +111,19 @@ public demo's database is an Azure SQL one, and they are what fills its pool and
   outside every copy matches none of them, and on a database with users and not one pool row they
   write nothing and exit 13. Neither drops, creates or migrates a database, which is what `reset`
   and `migrate` can do. And each refuses to run with `Demo:Enabled` off (exit 2), while `seed` and
-  `reset` now refuse it on, and `seed` a database that holds the pool's rows.*
+  `reset` now refuse it on, and a database that holds the pool's rows.*
 - ***How.*** *As a job of the tools image, with the arguments `["recycle"]` on a schedule, or
   `["seed-pool"]` for a first fill; `Demo__Enabled=true`; and the API's PIN pepper and its key id,
   since the copies carry PIN hashes the API has to verify. They run the same checks as `seed`
   before they open anything, apart from the name.*
 - ***As the app's database user, not the migration's.*** *Every statement either command sends
-  reads or writes rows; neither changes the schema or creates a database. A deployment's two
-  database users differ by one right, the migration's may also change the schema, and the app's
-  already deletes rows of its own accord (the API's clean-ups of expired grants and idempotency
-  records, which `recycle` repeats). Measured 2026-10-03 on LocalDB and on the compose SQL Server
+  reads or writes rows; neither changes the schema or creates a database. Where a deployment gives
+  the app and its migration database users of their own, the two differ by one right, the
+  migration's may also change the schema, and the app's already deletes rows of its own accord
+  (the API's clean-ups of expired grants and idempotency records, which `recycle` repeats). A user
+  of the job's own with the same two roles would tell its deletes apart from the app's and could
+  be revoked alone, at the cost of a third database user to create and check; the job shares the
+  app's, and ADR-0062 says what would give it one. Measured 2026-10-03 on LocalDB and on the compose SQL Server
   (`DemoPoolCommandSqlServerTests`, and by hand): a login holding `db_datareader` and
   `db_datawriter` alone ran both through a whole cycle, roles and copies built, a claimed copy and
   a stale one deleted, the sweeps run, and was refused `CREATE TABLE` (262). On the compose server
