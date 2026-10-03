@@ -9,6 +9,7 @@ using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.Entities;
+using AzureBank.Shared.Exceptions;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using FluentAssertions.Execution;
@@ -435,6 +436,148 @@ public sealed class DemoModeEndpointTests : IDisposable
             ownerThere.StatusCode.Should().Be(HttpStatusCode.OK, await ownerThere.Content.ReadAsStringAsync());
             contactThere.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
             (await FailedAttemptsOfAsync(_ordinary, there.Jane.Id)).Should().Be(1);
+        }
+    }
+
+    // ── Registration ─────────────────────────────────────────────────────────────────────────────
+
+    private const string RegisterPath = "/api/auth/register";
+
+    /// <summary>A registration the API accepts where registration is open.</summary>
+    private const string ARegistration =
+        """{"azureTag":"newcomer_2026","email":"newcomer@example.com","password":"TestPass123!","firstName":"New","lastName":"Comer"}""";
+
+    private static HttpRequestMessage RegistrationOf(string? body, string? mediaType)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, RegisterPath);
+        if (body is not null)
+        {
+            request.Content = new StringContent(body, Encoding.UTF8, mediaType!);
+        }
+
+        return request;
+    }
+
+    /// <summary>How many users the host's database holds.</summary>
+    private static async Task<int> UsersAsync(CustomWebApplicationFactory api)
+    {
+        using var scope = api.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        return await db.Users.CountAsync();
+    }
+
+    /// <summary>Requests to registration, each with the status a host with the demo off answers it.</summary>
+    public static TheoryData<string, string?, string?, int> Registrations() => new()
+    {
+        { "a registration that would be accepted", ARegistration, "application/json", 201 },
+        { "an empty object", "{}", "application/json", 400 },
+        { "a form post", "email=newcomer%40example.com", "application/x-www-form-urlencoded", 415 },
+        { "plain text", "let me in", "text/plain", 415 },
+        { "no body at all", null, null, 415 },
+    };
+
+    [Theory]
+    [MemberData(nameof(Registrations))]
+    public async Task WithTheDemoOn_RegistrationIs403RegistrationClosed_WhateverTheBody(
+        string what, string? body, string? mediaType, int withTheDemoOff)
+    {
+        // CONTROL: where registration is open the same request is answered by the binder, by the
+        // validators or by the action, each in its own way. On the demo none of them is reached.
+        using var ordinaryClient = _ordinary.CreateClient();
+        using var there = await ordinaryClient.SendAsync(RegistrationOf(body, mediaType));
+        ((int)there.StatusCode).Should().Be(
+            withTheDemoOff, "CONTROL: {0}, on a host with the demo off ({1})", what, await there.Content.ReadAsStringAsync());
+
+        using var client = _demo.CreateClient();
+        using var aRefusal = await DemoVisitor.TrySignInAsync(client, "nobody@example.com", GivenPassword);
+        var usersBefore = await UsersAsync(_demo);
+
+        using var response = await client.SendAsync(RegistrationOf(body, mediaType));
+
+        var text = await response.Content.ReadAsStringAsync();
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden, "{0}: on the demo registration is closed ({1})", what, text);
+        using var problem = JsonDocument.Parse(text);
+        using var anotherProblem = JsonDocument.Parse(await aRefusal.Content.ReadAsStringAsync());
+        using (new AssertionScope())
+        {
+            var root = problem.RootElement;
+            root.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.RegistrationClosed);
+            root.GetProperty("detail").GetString().Should().Be(RegistrationClosedException.Detail);
+            root.GetProperty("status").GetInt32().Should().Be(403);
+            root.GetProperty("instance").GetString().Should().Be(RegisterPath);
+            root.GetProperty("traceId").GetString().Should().NotBeNullOrWhiteSpace("a refusal can be found in the log by it");
+
+            // The house's refusal, member for member: what a wrong sign-in is answered with.
+            root.EnumerateObject().Select(p => p.Name).Should().BeEquivalentTo(
+                anotherProblem.RootElement.EnumerateObject().Select(p => p.Name));
+            (response.Content.Headers.ContentType?.MediaType).Should().Be(aRefusal.Content.Headers.ContentType?.MediaType);
+
+            (await UsersAsync(_demo)).Should().Be(usersBefore, "no user was written");
+        }
+    }
+
+    // CONTROL: green before this change, and kept true. A caller off the token road is refused by
+    // the road, before the demo's marker is read: it is told nothing, not that registration is
+    // closed either.
+    [Fact]
+    public async Task WithTheDemoOn_RegistrationOffTheTokenRoad_IsStill404()
+    {
+        using var client = _demo.CreateClient();
+        using var offTheRoad = RegistrationOf(ARegistration, "application/json");
+        offTheRoad.Headers.Add(FakeRemoteAddressStartupFilter.HeaderName, "10.0.0.7");
+        using var noSuchPath = new HttpRequestMessage(HttpMethod.Post, "/api/auth/no-such-endpoint")
+        {
+            Content = new StringContent(ARegistration, Encoding.UTF8, "application/json"),
+        };
+        var usersBefore = await UsersAsync(_demo);
+
+        using var refused = await client.SendAsync(offTheRoad);
+        using var unknown = await client.SendAsync(noSuchPath);
+
+        using (new AssertionScope())
+        {
+            refused.StatusCode.Should().Be(HttpStatusCode.NotFound, "only the BFF's own client, over loopback, reaches a token endpoint");
+            (await ShapeOfAsync(refused)).Should().Be(await ShapeOfAsync(unknown), "and the answer is a path with no route's");
+            (await UsersAsync(_demo)).Should().Be(usersBefore);
+        }
+    }
+
+    // CONTROL: green before this change. Where the demo is off, registration is open, as it was.
+    [Fact]
+    public async Task WithTheDemoOff_RegistrationIs201()
+    {
+        using var client = _ordinary.CreateClient();
+        var usersBefore = await UsersAsync(_ordinary);
+
+        using var response = await client.SendAsync(RegistrationOf(ARegistration, "application/json"));
+
+        var text = await response.Content.ReadAsStringAsync();
+        response.StatusCode.Should().Be(HttpStatusCode.Created, text);
+        var registered = JsonSerializer.Deserialize<ApiResponse<RegisterResponse>>(text, DemoVisitor.Json);
+        using (new AssertionScope())
+        {
+            (registered?.Data?.User.Email).Should().Be("newcomer@example.com");
+            (registered?.Data?.Token.AccessToken).Should().NotBeNullOrWhiteSpace();
+            (await UsersAsync(_ordinary)).Should().Be(usersBefore + 1, "the user was written");
+        }
+    }
+
+    // CONTROL: green before this change. It pins what the host answers today, as the pin of the
+    // claim's path does: the 403 closes the endpoint, which is POST, and not its path. Another
+    // method on the path never reaches the action, so no marker of the action's is read; it is
+    // answered 405 and told which method the path takes, with the demo off or on.
+    [Theory]
+    [MemberData(nameof(OtherMethods))]
+    public async Task AnotherMethodOnRegistrationsPath_Is405WhateverTheFlag(bool demoOn, string method)
+    {
+        using var client = (demoOn ? _demo : _ordinary).CreateClient();
+
+        using var response = await client.SendAsync(new HttpRequestMessage(new HttpMethod(method), RegisterPath));
+
+        using (new AssertionScope())
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.MethodNotAllowed);
+            response.Content.Headers.Allow.Should().Equal("POST");
         }
     }
 }

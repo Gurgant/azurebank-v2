@@ -226,9 +226,10 @@ try
     app.UseTokenRoad();
 
     // The public demo's own endpoints answer 404 while Demo:Enabled is false, as a path that
-    // matches no route does. After the token road, so a caller off it gets the road's refusal
-    // whatever the flag says; before authentication and model binding, so the answer is the same
-    // 404 whatever the request carries.
+    // matches no route does; while it is true, registration answers 403: on the demo it is
+    // closed. After the token road, so a caller off it gets the road's refusal whatever the flag
+    // says; before authentication and model binding, so each answer is the same whatever the
+    // request carries; under the exception handler, which writes the 403.
     app.UseDemoEndpoints();
 
     // Authentication & Authorization (order matters!)

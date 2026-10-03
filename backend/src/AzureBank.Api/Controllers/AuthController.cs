@@ -19,7 +19,9 @@ namespace AzureBank.Api.Controllers;
 /// stamp feed, session-stamps, carry <see cref="TokenEndpointAttribute"/>: they answer only the
 /// BFF's own client over loopback, and 404 to anything else (ADR-0057 §4.2, §5.3,
 /// <see cref="TokenRoadMiddleware"/>). The demo claim also carries <see cref="DemoOnlyAttribute"/>:
-/// it is 404 on every road while the demo is off (<see cref="DemoEndpointMiddleware"/>).
+/// it is 404 on every road while the demo is off (<see cref="DemoEndpointMiddleware"/>). Register
+/// carries <see cref="ClosedInDemoAttribute"/>: the same middleware refuses it with 403 while the
+/// demo is on.
 /// </remarks>
 [ApiController]
 [Route("api/auth")]
@@ -94,6 +96,7 @@ public class AuthController : ControllerBase
     [HttpPost("register")]
     [AllowAnonymous]
     [TokenEndpoint]
+    [ClosedInDemo]
     [ProducesResponseType(typeof(ApiResponse<RegisterResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
