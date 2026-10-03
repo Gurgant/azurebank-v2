@@ -238,6 +238,19 @@ public class PinHashingOptionsValidatorTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public void SpacesAloneOnTheSectionItself_AreRefusedAtStart_LikeAPepperThere(bool api)
+    {
+        // Not a pepper, and not nothing either: somebody wrote it, and no id was given.
+        using var root = BoundRoot(api, (null, "   "));
+        var start = () => root.GetRequiredService<IStartupValidator>().Validate();
+
+        start.Should().Throw<OptionsValidationException>().Which.Failures.Should().Equal(
+            "Security:PreviousPinPeppers holds a value of its own: each previous pepper goes under its key id.");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public void AnEmptyValueOnTheSection_IsNoPepper_AndTheHostStarts(bool api)
     {
         // CONTROL: green before this change. A variable set to nothing means no previous pepper.
