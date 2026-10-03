@@ -63,6 +63,7 @@ public sealed class DemoCopyBuilder
     private readonly AzureBankDbContext _context;
     private readonly UserManager<ApplicationUser> _users;
     private readonly RoleSeeder _roles;
+    private readonly RunCancellation _run;
     private readonly IPasswordHasher _pinHasher;
     private readonly DemoOptions _options;
     private readonly ILogger<DemoCopyBuilder> _logger;
@@ -72,6 +73,7 @@ public sealed class DemoCopyBuilder
         AzureBankDbContext context,
         UserManager<ApplicationUser> users,
         RoleSeeder roles,
+        RunCancellation run,
         IPasswordHasher pinHasher,
         IOptions<DemoOptions> options,
         ILogger<DemoCopyBuilder> logger,
@@ -80,6 +82,7 @@ public sealed class DemoCopyBuilder
         _context = context;
         _users = users;
         _roles = roles;
+        _run = run;
         _pinHasher = pinHasher;
         _options = options.Value;
         _logger = logger;
@@ -149,6 +152,14 @@ public sealed class DemoCopyBuilder
     /// Builds <paramref name="copies"/> free copies, each in its own try, and stops after three
     /// failures in a row. Zero or fewer builds nothing and writes nothing.
     /// </summary>
+    /// <remarks>
+    /// THE RUN'S TOKEN IS HANDED TO IDENTITY HERE, where both commands reach it. Identity's managers
+    /// take no token: the two this tool registers read the scope's <see cref="RunCancellation"/>,
+    /// which says "none" until it is set. Unset, a stop that came while a copy's users were being
+    /// created went unseen by every statement Identity sent, and the run ended only at the next
+    /// check of its own (<c>DemoPoolCommandSqlServerTests</c>: three statements to the roles table
+    /// sent with no token, where one, cancelled, is right).
+    /// </remarks>
     internal async Task<TopUpResult> BuildAsync(int copies, CancellationToken cancellationToken)
     {
         if (copies <= 0)
@@ -156,6 +167,7 @@ public sealed class DemoCopyBuilder
             return new TopUpResult(0, []);
         }
 
+        _run.Token = cancellationToken;
         await CreateTheRolesAsync(cancellationToken);
 
         // One hash for the run, shared by every user of every copy it builds. The PIN is the same
