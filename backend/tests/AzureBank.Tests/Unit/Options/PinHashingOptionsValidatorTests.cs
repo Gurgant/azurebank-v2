@@ -30,9 +30,9 @@ public class PinHashingOptionsValidatorTests
 
     // The same two roots over the previous-pepper entries exactly as a test writes them: each path
     // goes under Security:PreviousPinPeppers as it is, so a test can give one id two keys, put a
-    // section where the pepper belongs, or write an entry the wrong way round. The active pepper
-    // is P2 under key id 2.
-    private static ServiceProvider BoundRoot(bool api, params (string Path, string? Value)[] previous)
+    // section where the pepper belongs, or write an entry the wrong way round. A null path is the
+    // section itself. The active pepper is P2 under key id 2.
+    private static ServiceProvider BoundRoot(bool api, params (string? Path, string? Value)[] previous)
     {
         var settings = new Dictionary<string, string?>
         {
@@ -48,7 +48,8 @@ public class PinHashingOptionsValidatorTests
         };
         foreach (var (path, value) in previous)
         {
-            settings.Add($"Security:PreviousPinPeppers:{path}", value);
+            settings.Add(
+                path is null ? "Security:PreviousPinPeppers" : $"Security:PreviousPinPeppers:{path}", value);
         }
 
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
@@ -198,6 +199,52 @@ public class PinHashingOptionsValidatorTests
         refusal.Failures.Should().Equal(
             "Security:PreviousPinPeppers key of 43 characters must be a whole number >= 1.");
         refusal.ToString().Should().NotContain(P1).And.NotContain(P2).And.NotContain(P3);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void APepperWithAColonWrittenAsTheKey_IsNamedByItsLength_NotByItsFirstPart(bool api)
+    {
+        // A key is one segment of a path. The pepper written as the key and holding a colon reaches
+        // the validator as a short key with a section under it: quoted, it would print the secret's
+        // first part.
+        var firstPart = P1[..20];
+        using var root = BoundRoot(api, ($"{firstPart}:{P1[20..]}", "1"), ("4", P3));
+        var start = () => root.GetRequiredService<IStartupValidator>().Validate();
+
+        var refusal = start.Should().Throw<OptionsValidationException>().Which;
+        refusal.Failures.Should().Equal(
+            "Security:PreviousPinPeppers key of 20 characters must be a whole number >= 1.");
+        refusal.ToString().Should().NotContain(firstPart).And.NotContain(P2).And.NotContain(P3);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void APepperWrittenOnTheSectionItself_IsRefusedAtStart_WithoutItsValue(bool api)
+    {
+        // Security__PreviousPinPeppers=<pepper>, with no key id under it: the section has no key to
+        // judge, and the binder leaves the ring empty.
+        using var root = BoundRoot(api, (null, P1));
+        var start = () => root.GetRequiredService<IStartupValidator>().Validate();
+
+        var refusal = start.Should().Throw<OptionsValidationException>().Which;
+        refusal.Failures.Should().Equal(
+            "Security:PreviousPinPeppers holds a value of its own: each previous pepper goes under its key id.");
+        refusal.ToString().Should().NotContain(P1).And.NotContain(P2).And.NotContain(P3);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AnEmptyValueOnTheSection_IsNoPepper_AndTheHostStarts(bool api)
+    {
+        // CONTROL: green before this change. A variable set to nothing means no previous pepper.
+        using var root = BoundRoot(api, (null, ""));
+        var start = () => root.GetRequiredService<IStartupValidator>().Validate();
+
+        start.Should().NotThrow();
     }
 
     // The length from which a key could be a pepper is the length a pepper must have: one

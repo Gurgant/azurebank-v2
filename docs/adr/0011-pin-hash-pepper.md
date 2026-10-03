@@ -110,7 +110,10 @@ uncalled)*.
   does not hold exactly one value (a section under it, which the binder drops, or a value with a
   section under it, of which the binder reads the value alone) are refused too, and a key of 32
   characters or more, long enough to be a pepper, is never printed: the refusal gives its
-  length.)*
+  length. So it does for a key that is not a whole number and has a section under it, which is
+  the first part of a pepper that holds `:`, or `__` in a variable's name. A value on
+  `Security:PreviousPinPeppers` itself, under no key id, is refused as well: the binder reads
+  nothing from it.)*
 - **Rehash-on-use migration**: `IPasswordHasher.PinNeedsRehash` reports whether a
   stored hash predates the active key. On a **successful** verify, `PinService`
   re-hashes the PIN with the active pepper and persists it — in the service's

@@ -38,12 +38,22 @@ public sealed class PinHashingOptionsValidator(IConfiguration configuration) : I
         // negative id the binder did read, the bound-map check below retains the existing refusal.
         var previousPeppers = configuration.GetSection(PinHashingOptions.SectionName)
             .GetSection(nameof(PinHashingOptions.PreviousPinPeppers));
+
+        // A value on the section itself (Security__PreviousPinPeppers=<pepper>) has no key to
+        // judge below, and the binder reads nothing from it. The value is never printed.
+        if (!string.IsNullOrEmpty(previousPeppers.Value))
+        {
+            errors.Add("Security:PreviousPinPeppers holds a value of its own: " +
+                       "each previous pepper goes under its key id.");
+        }
+
         var firstKeyOfId = new Dictionary<int, string>();
         foreach (var entry in previousPeppers.GetChildren())
         {
             if (!int.TryParse(entry.Key, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var id))
             {
-                errors.Add($"Security:PreviousPinPeppers key {Shown(entry.Key)} must be a whole number >= 1.");
+                var key = Shown(entry.Key, firstPartOfAPath: entry.GetChildren().Any());
+                errors.Add($"Security:PreviousPinPeppers key {key} must be a whole number >= 1.");
             }
             else if (!firstKeyOfId.TryAdd(id, entry.Key))
             {
@@ -117,11 +127,12 @@ public sealed class PinHashingOptionsValidator(IConfiguration configuration) : I
     // How a configuration key is named in a failure. A key as long as a pepper may be one, written
     // where its id belongs, so it is never printed: only its length is. A key is one segment of a
     // path, so of a pepper that holds ':' (or "__" in a variable's name) only the part before it
-    // is the key, and a part shorter than a pepper is quoted like any short key. A shorter key is
-    // quoted, with each control character shown as '?', so a line feed in it cannot split the
-    // failure.
-    private static string Shown(string key) =>
-        key.Length >= MinPepperLength
+    // is the key: a key that is not a whole number and has a section under it is named by its
+    // length too, however short. A whole number is what an id looks like, and is quoted. Any
+    // other short key is quoted, with each control character shown as '?', so a line feed in it
+    // cannot split the failure.
+    private static string Shown(string key, bool firstPartOfAPath = false) =>
+        key.Length >= MinPepperLength || firstPartOfAPath
             ? $"of {key.Length.ToString(CultureInfo.InvariantCulture)} characters"
             : $"'{string.Concat(key.Select(c => char.IsControl(c) ? '?' : c))}'";
 }

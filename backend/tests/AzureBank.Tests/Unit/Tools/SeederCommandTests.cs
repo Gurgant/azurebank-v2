@@ -241,6 +241,36 @@ public class SeederCommandTests
         opens.Opens.Should().Be(0, "all four commands must refuse before any database work");
     }
 
+    [Theory]
+    [InlineData("seed")]
+    [InlineData("reset")]
+    [InlineData("seed-pool")]
+    [InlineData("recycle")]
+    public async Task APepperWrittenOnThePreviousPeppersSectionItself_IsRefusedInOneLine_WithoutASecretOrAnOpen(
+        string command)
+    {
+        // Security__PreviousPinPeppers=<pepper>, with no key id under it: the binder leaves the ring
+        // empty, and PINs hashed with that pepper would read as wrong.
+        var log = new RecordingLoggerProvider();
+        var opens = new OpenCountingInterceptor();
+        await using var provider = SeederHost.Build(
+            log, opens, onCommittedSettings: false,
+            (ConnectionKey, AbsentServer), (PepperKey, SeederHost.Pepper), ("Security:PinPepperKeyId", "2"),
+            ("Security:PreviousPinPeppers", PreviousPepper),
+            NoEfRetry, TheFlagItRunsWith(command));
+
+        var exitCode = await Run(command, provider);
+
+        using var all = new AssertionScope();
+        exitCode.Should().Be(2);
+        Errors(log).Should().ContainSingle().Which.Should().Be(
+            $"{command} refused: Security:PreviousPinPeppers holds a value of its own: "
+            + "each previous pepper goes under its key id. Nothing was opened.");
+        string.Join('\n', log.Lines.Select(line => line.Message)).Should()
+            .NotContain(PreviousPepper).And.NotContain(SeederHost.Pepper).And.NotContain("   at ");
+        opens.Opens.Should().Be(0, "all four commands must refuse before any database work");
+    }
+
     [Fact]
     public void AValidPreviousPepperKey_PassesTheSeederStartupValidator_AndKeepsItsPepper()
     {
