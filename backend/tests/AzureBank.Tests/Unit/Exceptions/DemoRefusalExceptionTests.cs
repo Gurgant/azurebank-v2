@@ -61,6 +61,18 @@ public class DemoRefusalExceptionTests
         DemoRefusalException.CopyLimit().Details.Should().BeNull();
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    [InlineData(int.MinValue)]
+    public void TheDailyLimitsWait_IsNeverUnderOneSecond(int computed)
+    {
+        // AppExceptionHandler writes this number to the Retry-After header as it stands. The header
+        // admits no negative number, and a refusal cannot tell a client to wait no time: whatever a
+        // caller computed, the least the refusal carries is one second.
+        DemoRefusalException.DailyLimit(computed).Details!["retryAfterSeconds"].Should().Be(1);
+    }
+
     [Fact]
     public void RegistrationClosed_Is403_WithItsOwnCode_AndOneSentence()
     {

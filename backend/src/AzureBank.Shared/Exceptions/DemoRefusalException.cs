@@ -35,10 +35,15 @@ public sealed class DemoRefusalException : AppException
     /// This client has claimed as many copies as one client may in a day, and is back under that
     /// number in <paramref name="retryAfterSeconds"/> seconds.
     /// </summary>
+    /// <remarks>
+    /// A number under 1 is carried as 1. <c>AppExceptionHandler</c> writes it to the
+    /// <c>Retry-After</c> header as it stands, where a negative number has no meaning, and a client
+    /// told to wait no time would ask again while the refusal still holds.
+    /// </remarks>
     public static DemoRefusalException DailyLimit(int retryAfterSeconds) =>
         new(DailyLimitDetail, ErrorCodes.DemoDailyLimit)
         {
-            Details = new Dictionary<string, object> { ["retryAfterSeconds"] = retryAfterSeconds },
+            Details = new Dictionary<string, object> { ["retryAfterSeconds"] = Math.Max(1, retryAfterSeconds) },
         };
 
     /// <summary>This copy has made as many changes as one copy may.</summary>
