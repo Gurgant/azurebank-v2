@@ -147,7 +147,7 @@ public class LogPlaceholderClassTests
         ["PendingRows"] = Operational,
         ["PeriodSeconds"] = Operational,
         ["PoolBlockingPeriod"] = Operational,
-        ["Reason"] = Operational, // a code's name: why a grant was revoked (RefreshTokenRevokedReason), which token-road check refused, or why a request answered the outage 503
+        ["Reason"] = Operational, // a code's name: why a grant was revoked (RefreshTokenRevokedReason), which token-road check refused, why a request answered the outage 503, or which of the demo gate's four reasons refused a sign-in
         ["Receipt"] = Operational,
         ["RequestDeadlineSeconds"] = Operational, // a setting the API starts with (ADR-0058)
         ["RequestMethod"] = Operational,

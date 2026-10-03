@@ -10,8 +10,10 @@ using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
 using AzureBank.Shared.Exceptions;
+using AzureBank.Shared.Options;
 using AzureBank.Shared.Services.Interfaces;
 using FluentAssertions;
+using FluentAssertions.Execution;
 using Microsoft.AspNetCore.Identity;
 using AzureBank.Tests.Fixtures;
 using Microsoft.EntityFrameworkCore;
@@ -20,6 +22,8 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Compliance.Classification;
 using Microsoft.Extensions.Compliance.Redaction;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Moq;
 
 namespace AzureBank.Tests.Unit.Services;
@@ -40,6 +44,7 @@ public class AuthServiceTests : IDisposable
     private readonly Mock<ILogger<AuthService>> _loggerMock;
     private readonly Mock<IPinVerifier> _pinVerifierMock;
     private readonly Mock<ILoginTimingEqualizer> _timingEqualizerMock;
+    private readonly Mock<IRedactorProvider> _redactorProviderMock;
     private readonly AuthService _sut;
 
     /// <summary>The expiry the mocked grant carries, so a test can see it reach the response.</summary>
@@ -94,8 +99,8 @@ public class AuthServiceTests : IDisposable
         // NARROWED to the Pii classification on purpose — if AuthService ever drifts to a
         // different classification, the stub returns null and the test fails loudly instead
         // of silently keeping the masking green.
-        var redactorProviderMock = new Mock<IRedactorProvider>();
-        redactorProviderMock
+        _redactorProviderMock = new Mock<IRedactorProvider>();
+        _redactorProviderMock
             .Setup(x => x.GetRedactor(new DataClassificationSet(DataClassifications.Pii)))
             .Returns(new EmailMaskingRedactor());
 
@@ -106,7 +111,14 @@ public class AuthServiceTests : IDisposable
             .Setup(x => x.AddToRoleAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()))
             .ReturnsAsync(IdentityResult.Success);
 
-        _sut = new AuthService(
+        // The demo off and the system clock, as in every deployment that is not the demo. The
+        // tests of the demo's sign-in gate build a second service of their own (ServiceFor).
+        _sut = ServiceFor(new DemoOptions(), TimeProvider.System);
+    }
+
+    /// <summary>The service under test, on this class's mocks and context, with the demo's settings and the clock it is given.</summary>
+    private AuthService ServiceFor(DemoOptions demo, TimeProvider clock) =>
+        new(
             _userManagerMock.Object,
             _context,
             _jwtServiceMock.Object,
@@ -117,9 +129,10 @@ public class AuthServiceTests : IDisposable
             _accountMapper,
             _timingEqualizerMock.Object,
             _loggerMock.Object,
-            redactorProviderMock.Object,
-            new Mock<IAuditService>().Object);
-    }
+            _redactorProviderMock.Object,
+            new Mock<IAuditService>().Object,
+            Options.Create(demo),
+            clock);
 
     public void Dispose()
     {
@@ -441,6 +454,252 @@ public class AuthServiceTests : IDisposable
         var nonExistentEx = await nonExistentAct.Should().ThrowAsync<AuthenticationException>();
 
         wrongPasswordEx.Which.Message.Should().Be(nonExistentEx.Which.Message);
+    }
+
+    #endregion
+
+    #region The demo's sign-in gate
+
+    /*
+      On the public demo, sign-in works for one kind of user: the owner of a copy a visitor has
+      claimed, while the copy lives. Anybody else the database holds is answered as an email nobody
+      has, before the password is looked at: the same exception, the same password cost spent, no
+      failed attempt counted, no token and no grant.
+
+      A second service, with the demo on and a clock the test moves, on this class's mocks and its
+      InMemory context, where the pool's rows are. What a refusal looks like through the host, and
+      that nothing is counted in the database, is shown on SQL Server (DemoClaimSqlServerTests).
+    */
+
+    /// <summary>A password that is right wherever the password is looked at: the mock says so.</summary>
+    private const string GatePassword = "Kp7m-Xw2R-hd9G-tQ4n";
+
+    /// <summary>
+    /// The instant the gate's clock starts at. Years before the wall clock, so a gate that read the
+    /// wall clock would find every copy below long ended.
+    /// </summary>
+    private static readonly DateTimeOffset GateNow = new(2021, 3, 14, 9, 26, 53, TimeSpan.Zero);
+
+    private AuthService ServiceWithTheDemo(TimeProvider clock, int copyLifetimeHours = 24) =>
+        ServiceFor(new DemoOptions { Enabled = true, CopyLifetimeHours = copyLifetimeHours }, clock);
+
+    /// <summary>
+    /// A user the context holds and sign-in finds by its email, with two failed attempts already
+    /// counted, so that a count that moves either way is seen. Where the password is looked at, it
+    /// is right, and a token is minted.
+    /// </summary>
+    private ApplicationUser SeedGateUser(string name, Guid? copyId, bool hasPassword = true)
+    {
+        var user = CreateTestUser($"{name}@example.com", name);
+        user.DemoCopyId = copyId;
+        user.PasswordHash = hasPassword ? "a-password-hash" : null;
+        user.AccessFailedCount = 2;
+        user.LockoutEnabled = true;
+        _context.Users.Add(user);
+        _context.SaveChanges();
+        _userManagerMock.Setup(x => x.FindByEmailAsync(user.Email!)).ReturnsAsync(user);
+        _userManagerMock.Setup(x => x.CheckPasswordAsync(user, GatePassword)).ReturnsAsync(true);
+        _jwtServiceMock.Setup(x => x.GenerateToken(user, null))
+            .Returns(new TokenResult($"jwt-of-{name}", DateTime.UtcNow.AddMinutes(15)));
+        return user;
+    }
+
+    /// <summary>A pool row and its owner: free when <paramref name="claimedAt"/> is null.</summary>
+    private ApplicationUser SeedCopyOwner(string name, DateTime? claimedAt, bool hasPassword = true)
+    {
+        var copyId = Guid.CreateVersion7();
+        var owner = SeedGateUser(name, copyId, hasPassword);
+        _context.DemoCopies.Add(new DemoCopy
+        {
+            Id = copyId,
+            OwnerUserId = owner.Id,
+            CreatedAt = GateNow.UtcDateTime.AddDays(-2),
+            ClaimedAt = claimedAt,
+            ClaimId = claimedAt is null ? null : Guid.CreateVersion7(),
+        });
+        _context.SaveChanges();
+        return owner;
+    }
+
+    private static LoginRequest GateRequest(ApplicationUser user) => new() { Email = user.Email!, Password = GatePassword };
+
+    /// <summary>Every line the service logged, as "Level: text".</summary>
+    private List<string> LoggedLines() =>
+        [.. _loggerMock.Invocations
+            .Where(call => call.Method.Name == nameof(ILogger.Log))
+            .Select(call => $"{call.Arguments[0]}: {call.Arguments[2]}")];
+
+    private int PasswordChecks() =>
+        _userManagerMock.Invocations.Count(call => call.Method.Name == nameof(UserManager<ApplicationUser>.CheckPasswordAsync));
+
+    private int VerifyCostsSpentOn(string password) =>
+        _timingEqualizerMock.Invocations.Count(call =>
+            call.Method.Name == nameof(ILoginTimingEqualizer.SpendVerifyCost) && (string)call.Arguments[0] == password);
+
+    /// <summary>
+    /// Signs in as <paramref name="user"/> with the right password and asserts the refusal an
+    /// unknown email gets, with nothing of what a known user's attempt leaves behind.
+    /// </summary>
+    private async Task ShouldBeRefusedAsAnUnknownEmailIsAsync(AuthService service, ApplicationUser user, string reason)
+    {
+        var thrown = await Record.ExceptionAsync(() => service.LoginAsync(GateRequest(user)));
+
+        var after = await ReloadAsync(user.Id);
+        using (new AssertionScope())
+        {
+            thrown.Should().BeOfType<AuthenticationException>("the right password signs nobody in past the gate");
+            (thrown?.Message).Should().Be("Invalid email or password.");
+            ((thrown as AppException)?.ErrorCode).Should().Be(ErrorCodes.InvalidCredentials);
+
+            VerifyCostsSpentOn(GatePassword).Should().Be(
+                1, "the password cost a real check would spend is spent, so the refusal takes the time an unknown email's does");
+            PasswordChecks().Should().Be(0, "the password is never looked at: the refusal is the same whatever it is");
+            after.AccessFailedCount.Should().Be(2, "no failed attempt is counted, and none is cleared");
+            after.LockoutEnd.Should().BeNull("and nothing is locked");
+
+            _jwtServiceMock.Invocations.Should().BeEmpty("no token is minted");
+            _refreshTokenServiceMock.Invocations.Should().BeEmpty("and no grant is issued");
+
+            // What an operator reads: which user, and which of the four reasons. Never the address.
+            LoggedLines().Should().Equal(
+                [$"Information: Sign-in refused by the demo gate for user {user.Id} ({reason})"]);
+        }
+    }
+
+    [Fact]
+    public async Task InDemoMode_AUserOutsideEveryCopy_WithTheCorrectPassword_Is401_LikeAnUnknownEmail()
+    {
+        var service = ServiceWithTheDemo(new FakeTimeProvider(GateNow));
+        var outsider = SeedGateUser("outsider", copyId: null);
+
+        await ShouldBeRefusedAsAnUnknownEmailIsAsync(service, outsider, "OutsideEveryCopy");
+
+        // And beside it, an email nobody has: the two refusals are one.
+        _userManagerMock.Setup(x => x.FindByEmailAsync("nobody@example.com")).ReturnsAsync((ApplicationUser?)null);
+        var unknown = await Record.ExceptionAsync(
+            () => service.LoginAsync(new LoginRequest { Email = "nobody@example.com", Password = "Another-Pass-1!" }));
+        var gated = await Record.ExceptionAsync(() => service.LoginAsync(GateRequest(outsider)));
+
+        using (new AssertionScope())
+        {
+            unknown.Should().BeOfType<AuthenticationException>("CONTROL: an unknown email is refused");
+            gated.Should().BeOfType<AuthenticationException>();
+            (gated?.Message).Should().Be(unknown?.Message);
+            ((gated as AppException)?.ErrorCode).Should().Be((unknown as AppException)?.ErrorCode);
+            ((gated as AppException)?.StatusCode).Should().Be((unknown as AppException)?.StatusCode).And.Be(401);
+            VerifyCostsSpentOn("Another-Pass-1!").Should().Be(1, "CONTROL: the unknown email's attempt spends the cost once too");
+        }
+    }
+
+    [Fact]
+    public async Task InDemoMode_AFreeCopysOwner_Is401()
+    {
+        var service = ServiceWithTheDemo(new FakeTimeProvider(GateNow));
+
+        // A free copy's owner has no password. This one was given one by something other than a
+        // claim, so what refuses it here is that nobody claimed the copy.
+        var owner = SeedCopyOwner("freeowner", claimedAt: null);
+
+        await ShouldBeRefusedAsAnUnknownEmailIsAsync(service, owner, "CopyNotClaimed");
+    }
+
+    [Theory]
+    [InlineData(24)]
+    [InlineData(5)]
+    public async Task InDemoMode_ACopyAtItsLifetimesEnd_Is401_AndOneSecondBeforeItSignsIn(int lifetimeHours)
+    {
+        var claimedAt = GateNow.UtcDateTime;
+        var end = GateNow.AddHours(lifetimeHours);
+        var clock = new FakeTimeProvider(end.AddSeconds(-1));
+        var service = ServiceWithTheDemo(clock, lifetimeHours);
+        var owner = SeedCopyOwner("liveowner", claimedAt);
+
+        // One second before the copy's end: the owner signs in.
+        var signedIn = await service.LoginAsync(GateRequest(owner));
+
+        using (new AssertionScope())
+        {
+            signedIn.Token.AccessToken.Should().Be("jwt-of-liveowner");
+            signedIn.User.Id.Should().Be(owner.Id);
+            PasswordChecks().Should().Be(1, "inside the copy's time the password decides, as on any deployment");
+            VerifyCostsSpentOn(GatePassword).Should().Be(0);
+            (await ReloadAsync(owner.Id)).AccessFailedCount.Should().Be(0, "a sign-in clears the failed attempts, as it always did");
+        }
+
+        // At the end exactly, to the second: the copy is over.
+        clock.Advance(TimeSpan.FromSeconds(1));
+        clock.GetUtcNow().Should().Be(end, "ARRANGE: the clock stands at the claim plus the lifetime");
+        var thrown = await Record.ExceptionAsync(() => service.LoginAsync(GateRequest(owner)));
+
+        using (new AssertionScope())
+        {
+            thrown.Should().BeOfType<AuthenticationException>("a copy lives Demo:CopyLifetimeHours from its claim, and not a second more");
+            (thrown?.Message).Should().Be("Invalid email or password.");
+            VerifyCostsSpentOn(GatePassword).Should().Be(1);
+            PasswordChecks().Should().Be(1, "the one check is the earlier sign-in's: the refusal looked at no password");
+            _refreshTokenServiceMock.Invocations.Should().HaveCount(1, "the one grant is the earlier sign-in's");
+            LoggedLines().Should().Contain(
+                $"Information: Sign-in refused by the demo gate for user {owner.Id} (CopyEnded)");
+        }
+    }
+
+    [Fact]
+    public async Task InDemoMode_AUserWithNoPassword_InALiveCopy_Is401_AndCountsNoFailedAttempt()
+    {
+        var service = ServiceWithTheDemo(new FakeTimeProvider(GateNow));
+
+        // One of a claimed, living copy's two contacts: its copy is as live as its owner's, and it
+        // has no password, so nobody can sign in as it. Without the gate its attempt would reach
+        // the password check, fail there and be counted toward a lock.
+        var copyId = Guid.CreateVersion7();
+        var owner = SeedGateUser("claimedowner", copyId);
+        var contact = SeedGateUser("contact", copyId, hasPassword: false);
+        _userManagerMock.Setup(x => x.CheckPasswordAsync(contact, GatePassword)).ReturnsAsync(false);
+        _context.DemoCopies.Add(new DemoCopy
+        {
+            Id = copyId,
+            OwnerUserId = owner.Id,
+            CreatedAt = GateNow.UtcDateTime.AddDays(-2),
+            ClaimedAt = GateNow.UtcDateTime.AddHours(-1),
+            ClaimId = Guid.CreateVersion7(),
+        });
+        _context.SaveChanges();
+
+        await ShouldBeRefusedAsAnUnknownEmailIsAsync(service, contact, "NoPassword");
+
+        // CONTROL: the same copy's owner, who has a password, signs in, so the copy is live and
+        // what refused the contact is the missing password.
+        var signedIn = await service.LoginAsync(GateRequest(owner));
+        signedIn.User.Id.Should().Be(owner.Id);
+    }
+
+    // CONTROL: green before this change. With the demo off the gate reads nothing: the same four
+    // users reach the password check, which is what decides, as on every deployment that is not the
+    // demo. (The mock answers the check for the user without a password too; Identity itself would
+    // refuse it there, and count the attempt.)
+    [Fact]
+    public async Task WithTheDemoOff_TheSameUsersSignIn()
+    {
+        var service = ServiceFor(new DemoOptions { Enabled = false }, new FakeTimeProvider(GateNow));
+        var outsider = SeedGateUser("outsider", copyId: null);
+        var freeOwner = SeedCopyOwner("freeowner", claimedAt: null);
+        var endedOwner = SeedCopyOwner("endedowner", claimedAt: GateNow.UtcDateTime.AddHours(-24));
+        var withoutPassword = SeedCopyOwner("nopassword", claimedAt: GateNow.UtcDateTime.AddHours(-1), hasPassword: false);
+
+        foreach (var user in new[] { outsider, freeOwner, endedOwner, withoutPassword })
+        {
+            var signedIn = await service.LoginAsync(GateRequest(user));
+
+            signedIn.User.Id.Should().Be(user.Id);
+            signedIn.Token.AccessToken.Should().Be($"jwt-of-{user.AzureTag}");
+        }
+
+        using (new AssertionScope())
+        {
+            PasswordChecks().Should().Be(4, "each of the four reached the password check");
+            VerifyCostsSpentOn(GatePassword).Should().Be(0, "and none was answered as an unknown email");
+            LoggedLines().Should().NotContain(line => line.Contains("demo gate", StringComparison.Ordinal));
+        }
     }
 
     #endregion

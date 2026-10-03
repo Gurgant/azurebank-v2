@@ -4,6 +4,7 @@ using System.Diagnostics.Metrics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using AzureBank.Api.Observability;
 using AzureBank.Api.Security;
@@ -1185,5 +1186,249 @@ public sealed class DemoClaimSqlServerTests
             tried.Take(10).Should().NotEqual(fresh.Select(row => row.Id), "the fresh candidates are not tried in the order they were read");
             tried.Skip(10).Should().NotEqual(old.Select(row => row.Id), "nor are the old ones");
         }
+    }
+
+    // ── Who can sign in ──────────────────────────────────────────────────────────────────────────
+
+    // On the demo, sign-in is for the owner of a claimed copy while the copy lives. Anybody else
+    // the database holds is answered as an email nobody has, before the password is looked at.
+    // Through the host and on SQL Server, because two of the things promised are rows: no grant is
+    // written for a refused sign-in, and no failed attempt is counted.
+
+    /// <summary>A password that passes the sign-in request's own rule and is nobody's.</summary>
+    private const string WrongPassword = "Wrong-Pass-2026!";
+
+    /// <summary>A response as status, media type and body, without the trace id, which differs between two requests.</summary>
+    /// <remarks>
+    /// With parentheses where the body has braces: a brace in a text the assertion library compares
+    /// makes a comparison that fails throw <see cref="FormatException"/> in place of its message
+    /// (<c>DemoModeEndpointTests.ShapeOfAsync</c> says how it was measured).
+    /// </remarks>
+    private static async Task<string> AnswerOfAsync(HttpResponseMessage response)
+    {
+        var body = await response.Content.ReadAsStringAsync();
+        if (body.Length > 0 && JsonNode.Parse(body) is JsonObject json)
+        {
+            json.Remove("traceId");
+            body = json.ToJsonString();
+        }
+
+        return $"{(int)response.StatusCode} {response.Content.Headers.ContentType?.MediaType} {body}"
+            .Replace('{', '(').Replace('}', ')');
+    }
+
+    /// <summary>A user no failed sign-in was counted for, and whom nothing locks.</summary>
+    private static readonly (int AccessFailedCount, DateTimeOffset? LockoutEnd) NothingCounted = (0, null);
+
+    /// <summary>What the lock on sign-in holds for a user, read from the row.</summary>
+    private static async Task<(int AccessFailedCount, DateTimeOffset? LockoutEnd)> LockOfAsync(DemoPoolDatabase database, Guid userId)
+    {
+        await using var db = database.NewContext();
+        var row = await db.Users.AsNoTracking()
+            .Where(u => u.Id == userId)
+            .Select(u => new { u.AccessFailedCount, u.LockoutEnd })
+            .SingleAsync();
+        return (row.AccessFailedCount, row.LockoutEnd);
+    }
+
+    /// <summary>
+    /// Registers a user of no copy through <paramref name="ordinary"/>, a host with the demo off,
+    /// and returns what signs in as it.
+    /// </summary>
+    private static async Task<(Guid Id, string Email, string Password)> RegisterOutsideEveryCopyAsync(HttpClient ordinary)
+    {
+        const string password = "Outside-Pass-2026!";
+        var unique = Guid.NewGuid().ToString("N")[..8];
+        var email = $"outsider{unique}@example.com";
+        using var response = await ordinary.PostAsJsonAsync(
+            "/api/auth/register",
+            new RegisterRequest
+            {
+                AzureTag = $"outsider_{unique}",
+                Email = email,
+                Password = password,
+                FirstName = "Outside",
+                LastName = "Anycopy",
+            },
+            DemoVisitor.Json);
+        response.StatusCode.Should().Be(
+            HttpStatusCode.Created, "ARRANGE: registration is open on a host with the demo off ({0})", await response.Content.ReadAsStringAsync());
+        var registered = await response.Content.ReadFromJsonAsync<ApiResponse<RegisterResponse>>(DemoVisitor.Json);
+        return (registered!.Data!.User.Id, email, password);
+    }
+
+    [SqlServerFact]
+    public async Task ACopyPastItsLifetime_CannotSignIn_AndRecycleThenDeletesIt_WithoutTheBackstop()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var free = (await database.BuildCopiesAsync(1)).Single();
+        var api = database.DemoApi();
+        api.CaptureLog(LogEventLevel.Information);
+        using var client = api.CreateClient();
+        using var claimed = await DemoVisitor.ClaimAsync(client, Visitor);
+        var claim = await DemoVisitor.ClaimedAsync(claimed);
+
+        // While the copy lives: a wrong password is refused, and the right one signs in.
+        using var wrongPassword = await DemoVisitor.TrySignInAsync(client, claim.Copy.Email, WrongPassword);
+        wrongPassword.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "ARRANGE: a wrong password is refused");
+        using (var live = await DemoVisitor.TrySignInAsync(client, claim.Copy.Email, claim.Copy.Password))
+        {
+            live.StatusCode.Should().Be(HttpStatusCode.OK, "CONTROL: inside its 24 hours the copy's password signs in");
+        }
+
+        // The copy's 24 hours ended six minutes ago, and the sessions opened in it ended with them:
+        // a grant that is neither revoked nor expired would keep the copy from being deleted.
+        await database.BackdateClaimAsync(free.Id, DateTime.UtcNow.AddHours(-24).AddMinutes(-6));
+        await database.ExpireGrantsAsync(free.UserIds);
+        var grantsBefore = await GrantsOfAsync(database, free.UserIds);
+        grantsBefore.Should().Be(2, "ARRANGE: the claim's grant and the sign-in's");
+
+        using var response = await DemoVisitor.TrySignInAsync(client, claim.Copy.Email, claim.Copy.Password);
+
+        using (new AssertionScope())
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "the copy's time is over, and its password signs nobody in");
+            (await DemoVisitor.ErrorCodeOfAsync(response)).Should().Be(ErrorCodes.InvalidCredentials);
+            (await AnswerOfAsync(response)).Should().Be(
+                await AnswerOfAsync(wrongPassword), "the answer says nothing a wrong password's does not: not that the copy was there, not that it ended");
+            (await GrantsOfAsync(database, free.UserIds)).Should().Be(grantsBefore, "no session is opened past the copy's end");
+
+            // What is logged: the user by its id and the reason, and not the address. (The host's
+            // logger writes a text value in quotes.)
+            api.CapturedLog.Should().Contain(line =>
+                line.Contains($"Sign-in refused by the demo gate for user {free.Owner.Id} (\"CopyEnded\")", StringComparison.Ordinal));
+            api.CapturedLog.Should().NotContain(line => line.Contains(claim.Copy.Email, StringComparison.OrdinalIgnoreCase));
+        }
+
+        // So the pool's job finds no live session in the copy and deletes it as a copy whose time
+        // is over. The backstop, which deletes a copy under a live session and counts it apart, is
+        // for a sign-in that went on being accepted past the end: there was none.
+        var summary = await database.RecycleAsync();
+
+        var after = await database.CopyAsync(free.Id);
+        using (new AssertionScope())
+        {
+            summary.Failures.Should().BeEmpty();
+            (summary.DeletedExpired, summary.DeletedHardStop, summary.DeleteFailed).Should().Be((1, 0, 0));
+            after.Should().NotBeNull("a claimed copy that was deleted leaves its pool row as the record of it");
+            (after?.Users).Should().BeEmpty();
+            (after?.Row.DeletedAt).Should().NotBeNull();
+        }
+    }
+
+    [SqlServerFact]
+    public async Task AUserOutsideEveryCopy_AndAFreeCopysOwner_CannotSignInOnTheDemoHost()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var free = (await database.BuildCopiesAsync(1)).Single();
+
+        // A free copy's owner has no password. This one was given one by something other than a
+        // claim, so the password below is right, and what refuses it is that nobody claimed the copy.
+        await database.GiveOwnerAPasswordAsync(free);
+        using var ordinary = database.Api().CreateClient();
+        var outsider = await RegisterOutsideEveryCopyAsync(ordinary);
+        var demoApi = database.DemoApi();
+        demoApi.CaptureLog(LogEventLevel.Information);
+        using var demo = demoApi.CreateClient();
+
+        using var unknownEmail = await DemoVisitor.TrySignInAsync(demo, "nobody@example.com", outsider.Password);
+        using var asTheOutsider = await DemoVisitor.TrySignInAsync(demo, outsider.Email, outsider.Password);
+        using var asTheFreeOwner = await DemoVisitor.TrySignInAsync(demo, free.Owner.Email!, DemoPoolDatabase.VisitorPassword);
+
+        using (new AssertionScope())
+        {
+            unknownEmail.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "CONTROL: an email nobody has is refused");
+            (await DemoVisitor.ErrorCodeOfAsync(unknownEmail)).Should().Be(ErrorCodes.InvalidCredentials);
+
+            asTheOutsider.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "a user of no copy does not sign in on the demo, with the right password");
+            (await AnswerOfAsync(asTheOutsider)).Should().Be(await AnswerOfAsync(unknownEmail), "and is answered as an email nobody has");
+
+            asTheFreeOwner.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "nor does the owner of a copy nobody claimed");
+            (await AnswerOfAsync(asTheFreeOwner)).Should().Be(await AnswerOfAsync(unknownEmail));
+
+            (await GrantsOfAsync(database, outsider.Id)).Should().Be(1, "the one grant is registration's: the refusal wrote none");
+            (await GrantsOfAsync(database, free.UserIds)).Should().Be(0);
+            (await LockOfAsync(database, outsider.Id)).Should().Be(NothingCounted, "and counted no failed attempt");
+            (await LockOfAsync(database, free.Owner.Id)).Should().Be(NothingCounted);
+
+            demoApi.CapturedLog.Should().Contain(line =>
+                line.Contains($"Sign-in refused by the demo gate for user {outsider.Id} (\"OutsideEveryCopy\")", StringComparison.Ordinal));
+            demoApi.CapturedLog.Should().Contain(line =>
+                line.Contains($"Sign-in refused by the demo gate for user {free.Owner.Id} (\"CopyNotClaimed\")", StringComparison.Ordinal));
+        }
+
+        // CONTROL: the same two sign-ins through the host with the demo off, on the same database.
+        // Both passwords were right, so what refused them above was the demo's gate.
+        using var outsiderThere = await DemoVisitor.TrySignInAsync(ordinary, outsider.Email, outsider.Password);
+        using var freeOwnerThere = await DemoVisitor.TrySignInAsync(ordinary, free.Owner.Email!, DemoPoolDatabase.VisitorPassword);
+        using (new AssertionScope())
+        {
+            outsiderThere.StatusCode.Should().Be(HttpStatusCode.OK, await outsiderThere.Content.ReadAsStringAsync());
+            freeOwnerThere.StatusCode.Should().Be(HttpStatusCode.OK, await freeOwnerThere.Content.ReadAsStringAsync());
+        }
+    }
+
+    [SqlServerFact]
+    public async Task FiveWrongPasswords_OnAGatedUser_LockNothing()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copies = await database.BuildCopiesAsync(3);
+        var (free, live, ended) = (copies[0], copies[1], copies[2]);
+
+        // One user for each reason the gate refuses for: a user of no copy; the owner of a copy
+        // nobody claimed, who was given a password; a contact of a claimed, living copy, who has
+        // none; and the owner of a copy whose 24 hours ended an hour ago.
+        await database.GiveOwnerAPasswordAsync(free);
+        await database.ClaimForAVisitorAsync(live, DateTime.UtcNow);
+        await database.ClaimForAVisitorAsync(ended, DateTime.UtcNow.AddHours(-25));
+        Guid outsider;
+        using (var ordinary = database.Api().CreateClient())
+        {
+            outsider = (await RegisterOutsideEveryCopyAsync(ordinary)).Id;
+        }
+
+        var gated = new (string Who, Guid Id)[]
+        {
+            ("a user of no copy", outsider),
+            ("a free copy's owner", free.Owner.Id),
+            ("a living copy's contact", live.Jane.Id),
+            ("an ended copy's owner", ended.Owner.Id),
+        };
+        ValidationRules.MaxLoginAttempts.Should().Be(5, "ARRANGE: the fifth wrong password in a row is the one that locks");
+        using var client = database.DemoApi().CreateClient();
+
+        await using (var db = database.NewContext())
+        {
+            foreach (var (who, id) in gated)
+            {
+                var email = await db.Users.Where(u => u.Id == id).Select(u => u.Email).SingleAsync();
+                for (var attempt = 1; attempt <= ValidationRules.MaxLoginAttempts; attempt++)
+                {
+                    using var refused = await DemoVisitor.TrySignInAsync(client, email!, WrongPassword);
+                    refused.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "{0}, wrong password {1} of 5", who, attempt);
+                }
+            }
+        }
+
+        using (new AssertionScope())
+        {
+            foreach (var (who, id) in gated)
+            {
+                (await LockOfAsync(database, id)).Should().Be(
+                    NothingCounted, "{0} is refused before the password is looked at, so no attempt is counted and nothing is locked", who);
+            }
+        }
+
+        // CONTROL: the living copy's owner, whom the gate lets through. The same five wrong
+        // passwords on the same host lock it, so the count is alive there and the zeros above are
+        // the gate's.
+        for (var attempt = 1; attempt <= ValidationRules.MaxLoginAttempts; attempt++)
+        {
+            using var refused = await DemoVisitor.TrySignInAsync(client, live.Owner.Email!, WrongPassword);
+            refused.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        }
+
+        (await LockOfAsync(database, live.Owner.Id)).LockoutEnd.Should().NotBeNull(
+            "five wrong passwords lock a user whose password is looked at");
     }
 }

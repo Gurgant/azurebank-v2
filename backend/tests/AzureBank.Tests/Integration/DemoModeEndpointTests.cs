@@ -4,12 +4,16 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using AzureBank.Api.Services.Interfaces;
+using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
+using AzureBank.Shared.Entities;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using FluentAssertions.Execution;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -327,5 +331,110 @@ public sealed class DemoModeEndpointTests : IDisposable
             HttpStatusCode.OK, "the answered password signs in to the copy ({0})", await signIn.Content.ReadAsStringAsync());
         var signedIn = await signIn.Content.ReadFromJsonAsync<ApiResponse<LoginResponse>>(DemoVisitor.Json);
         signedIn!.Data!.User.Id.Should().Be(copy.Owner.Id);
+    }
+
+    // ── Who can sign in, with the demo on ────────────────────────────────────────────────────────
+
+    /// <summary>A password that passes the sign-in request's own rule and Identity's.</summary>
+    private const string GivenPassword = "Given-Pass-2026!";
+
+    /// <summary>
+    /// Gives a hand-made copy's owner a password through Identity, as something other than a claim
+    /// would: a free copy has none.
+    /// </summary>
+    private static async Task GiveOwnerAPasswordAsync(CustomWebApplicationFactory api, HandMadeDemoCopy copy)
+    {
+        using var scope = api.Services.CreateScope();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var owner = await users.FindByIdAsync(copy.Owner.Id.ToString());
+        owner.Should().NotBeNull("ARRANGE: the copy's owner exists");
+        var added = await users.AddPasswordAsync(owner!, GivenPassword);
+        added.Succeeded.Should().BeTrue(
+            "ARRANGE: a free copy's owner has no password, so one can be added ({0})",
+            string.Join("; ", added.Errors.Select(e => e.Description)));
+    }
+
+    /// <summary>The failed sign-ins counted for a user, as the database holds them now.</summary>
+    private static async Task<int> FailedAttemptsOfAsync(CustomWebApplicationFactory api, Guid userId)
+    {
+        using var scope = api.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        return await db.Users.AsNoTracking().Where(u => u.Id == userId).Select(u => u.AccessFailedCount).SingleAsync();
+    }
+
+    // CONTROL: green before this change. It is the answer a deployment's smoke test reads after a
+    // deploy (infra/deploy.py signs in with an address nobody can register and expects 401 with
+    // this code): the demo's gate must leave it as it is.
+    [Fact]
+    public async Task WithTheDemoOn_AnUnknownEmail_IsStill401InvalidCredentials()
+    {
+        using var client = _demo.CreateClient();
+        using var ordinaryClient = _ordinary.CreateClient();
+
+        using var response = await DemoVisitor.TrySignInAsync(client, "deploy-smoke@azurebank.invalid", "Not-a-real-account-0");
+        using var withTheDemoOff = await DemoVisitor.TrySignInAsync(ordinaryClient, "deploy-smoke@azurebank.invalid", "Not-a-real-account-0");
+
+        var text = await response.Content.ReadAsStringAsync();
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized, text);
+        using var body = JsonDocument.Parse(text);
+        using (new AssertionScope())
+        {
+            body.RootElement.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.InvalidCredentials);
+            body.RootElement.GetProperty("detail").GetString().Should().Be("Invalid email or password.");
+            (await ShapeOfAsync(response)).Should().Be(
+                await ShapeOfAsync(withTheDemoOff), "the demo changes nothing in what an unknown email is answered");
+        }
+    }
+
+    [Fact]
+    public async Task WithTheDemoOn_OnlyTheOwnerOfAClaimedCopySignsIn()
+    {
+        // A claimed copy first, while it is the only one in the pool: the claim takes it.
+        var claimed = await HandMadeDemoCopy.CreateAsync(_demo);
+        using var client = _demo.CreateClient();
+        using var claimResponse = await DemoVisitor.ClaimAsync(client);
+        var claim = await DemoVisitor.ClaimedAsync(claimResponse);
+        claim.User.Id.Should().Be(claimed.Owner.Id, "ARRANGE: the one free copy is the one claimed");
+
+        // Then a free one, whose owner was given a password by something other than a claim.
+        var free = await HandMadeDemoCopy.CreateAsync(_demo);
+        await GiveOwnerAPasswordAsync(_demo, free);
+
+        using var unknownEmail = await DemoVisitor.TrySignInAsync(client, "nobody@example.com", GivenPassword);
+        using var asTheFreeOwner = await DemoVisitor.TrySignInAsync(client, free.Owner.Email!, GivenPassword);
+        using var asAContact = await DemoVisitor.TrySignInAsync(client, claimed.Jane.Email!, GivenPassword);
+        using var asTheOwner = await DemoVisitor.TrySignInAsync(client, claim.Copy.Email, claim.Copy.Password);
+
+        using (new AssertionScope())
+        {
+            unknownEmail.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "CONTROL: an email nobody has is refused");
+            var anUnknownEmails = await ShapeOfAsync(unknownEmail);
+
+            asTheFreeOwner.StatusCode.Should().Be(
+                HttpStatusCode.Unauthorized, "nobody claimed the copy, so its owner does not sign in, with the right password");
+            (await ShapeOfAsync(asTheFreeOwner)).Should().Be(anUnknownEmails, "and is answered as an email nobody has");
+
+            asAContact.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "a copy's contact has no password");
+            (await ShapeOfAsync(asAContact)).Should().Be(anUnknownEmails);
+            (await FailedAttemptsOfAsync(_demo, claimed.Jane.Id)).Should().Be(
+                0, "and its attempt is not counted toward a lock: it is refused before the password is looked at");
+
+            asTheOwner.StatusCode.Should().Be(
+                HttpStatusCode.OK, "CONTROL: the claimed copy's owner signs in ({0})", await asTheOwner.Content.ReadAsStringAsync());
+        }
+
+        // CONTROL: the same two users on a host with the demo off. The owner with a password signs
+        // in, and the contact's attempt is counted, so what differs above is the demo's gate.
+        var there = await HandMadeDemoCopy.CreateAsync(_ordinary);
+        await GiveOwnerAPasswordAsync(_ordinary, there);
+        using var ordinaryClient = _ordinary.CreateClient();
+        using var ownerThere = await DemoVisitor.TrySignInAsync(ordinaryClient, there.Owner.Email!, GivenPassword);
+        using var contactThere = await DemoVisitor.TrySignInAsync(ordinaryClient, there.Jane.Email!, GivenPassword);
+        using (new AssertionScope())
+        {
+            ownerThere.StatusCode.Should().Be(HttpStatusCode.OK, await ownerThere.Content.ReadAsStringAsync());
+            contactThere.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            (await FailedAttemptsOfAsync(_ordinary, there.Jane.Id)).Should().Be(1);
+        }
     }
 }
