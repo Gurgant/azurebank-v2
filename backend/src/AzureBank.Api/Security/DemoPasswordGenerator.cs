@@ -21,7 +21,7 @@ namespace AzureBank.Api.Security;
 /// EVERY CHARACTER comes from the cryptographic generator, one <c>GetInt32</c> each: a generator
 /// whose next value follows from its last would hand one visitor the passwords of the next.
 /// <c>GetInt32</c> is uniform over the alphabet; a random byte reduced modulo 56 would favour its
-/// first thirty-two characters. Sixteen characters of fifty-six are 92 bits
+/// first thirty-two characters (256 = 4 x 56 + 32). Sixteen characters of fifty-six are 92 bits
 /// (<c>python -c "from math import log2; print(16*log2(56))"</c> prints 92.9...), and the draws
 /// thrown away cost a fraction of one bit.
 /// </para>
@@ -40,7 +40,9 @@ public static class DemoPasswordGenerator
     /// letter and a digit among them.
     /// </summary>
     public static string Create() =>
-        Create(static toExclusive => RandomNumberGenerator.GetInt32(toExclusive));
+        // The method itself, and no lambda around it: nothing stands between what the draw asks
+        // for and what the generator is asked.
+        Create(RandomNumberGenerator.GetInt32);
 
     /// <summary>
     /// The same, with each character's place in the alphabet asked of <paramref name="next"/>, which

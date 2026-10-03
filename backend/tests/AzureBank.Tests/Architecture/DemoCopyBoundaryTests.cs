@@ -581,8 +581,12 @@ public class DemoCopyBoundaryTests
         var file = ClaimSources().Single(f => Path.GetFileName(f) == "DemoPasswordGenerator.cs");
         var code = string.Join("\n", CodeLines(file));
 
+        // The method itself, handed over bare. A lambda around it would have room for a wider draw
+        // and a modulo after it, with the generator's name still there to be found. That the draw
+        // then asks for each character among the fifty-six is held where the draw is chosen:
+        // DemoClaimPartsTests.EveryCharacter_IsAskedForAmongTheFiftySix_AndNoWider.
         code.Should().Contain(
-            "RandomNumberGenerator.GetInt32(",
-            "each character is drawn with GetInt32, which is uniform over the alphabet; a byte and a modulo would not be");
+            "Create(RandomNumberGenerator.GetInt32)",
+            "the draw is handed GetInt32 itself, which is uniform over what it is asked for; a byte and a modulo would not be");
     }
 }
