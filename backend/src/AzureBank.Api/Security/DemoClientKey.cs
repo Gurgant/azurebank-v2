@@ -31,13 +31,13 @@ public static class DemoClientKey
     /// The key of <paramref name="clientAddress"/> under <paramref name="secret"/>: 32 bytes.
     /// </summary>
     /// <exception cref="ArgumentException">
-    /// The secret is null, empty or white space, or the address is null or empty. Without an
-    /// address the label alone would be hashed, and every such client given the one key.
+    /// The secret or the address is null, empty or white space. Without an address the label
+    /// alone would be hashed, and every such client given the one key.
     /// </exception>
     public static byte[] Of(string secret, string clientAddress)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(secret);
-        ArgumentException.ThrowIfNullOrEmpty(clientAddress);
+        ArgumentException.ThrowIfNullOrWhiteSpace(clientAddress);
 
         return HMACSHA256.HashData(Encoding.UTF8.GetBytes(secret), Encoding.UTF8.GetBytes(Purpose + clientAddress));
     }

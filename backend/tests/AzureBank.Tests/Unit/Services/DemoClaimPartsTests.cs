@@ -299,10 +299,12 @@ public class DemoClaimPartsTests
     [Theory]
     [InlineData(null)]
     [InlineData("")]
+    [InlineData("    ")]
     public void WithNoAddress_NoKeyIsMade(string? address)
     {
         // Left alone, the label would be hashed by itself, and every client with no address would
-        // be given one and the same key.
+        // be given one and the same key. White space is no address either: the claim's request
+        // refuses one (DemoClaimRequest.ClientAddress is required), and the key keeps the same rule.
         var make = () => DemoClientKey.Of(Secret, address!);
 
         make.Should().Throw<ArgumentException>().WithParameterName("clientAddress");
