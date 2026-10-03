@@ -1,6 +1,7 @@
 import { createApi } from '@reduxjs/toolkit/query/react';
 import type { FetchBaseQueryMeta } from '@reduxjs/toolkit/query';
 import type {
+  BffDemoClaimResponse,
   BffLoginResponse,
   BffMeResponse,
   BffPinVerificationResponse,
@@ -8,6 +9,7 @@ import type {
 } from '../../api/bffTypes';
 import { unwrap } from '../../api/envelope';
 import {
+  bffDemoClaimResponseSchema,
   bffLoginResponseSchema,
   bffMeResponseSchema,
   bffPinVerificationResponseSchema,
@@ -578,6 +580,21 @@ export const apiSlice = createApi({
     }),
 
     /**
+     * Claim a private demo copy. The answer is a sign-in's plus the copy, its password and PIN
+     * among the rest, and it is checked as it arrives like a sign-in's.
+     *
+     * The request is an empty JSON object, not a bare POST: `body: {}` is what makes
+     * fetchBaseQuery write `{}` and a JSON content type, where a mutation written like `logout`
+     * below sends neither. src/features/demo/claim.test.ts holds both.
+     */
+    claimDemoCopy: builder.mutation<BffDemoClaimResponse, void>({
+      query: () => ({ url: '/bff/auth/demo/claim', method: 'POST', body: {} }),
+      transformResponse: (response: { data?: BffDemoClaimResponse | null }) =>
+        unwrap(response, bffDemoClaimResponseSchema),
+      invalidatesTags: (_result, error) => (error ? [] : ['Session']),
+    }),
+
+    /**
      * U6.7 — re-authenticate at the ABSOLUTE session cap, which cannot be extended.
      *
      * Password only: the BFF takes the identity from the session, so this cannot sign anyone in as
@@ -717,6 +734,7 @@ export const {
   // BFF auth
   useLoginMutation,
   useRegisterMutation,
+  useClaimDemoCopyMutation,
   useReauthenticateMutation,
   useGetMeQuery,
   useLogoutMutation,

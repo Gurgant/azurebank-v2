@@ -3,6 +3,8 @@ import type {
   userSessionInfoSchema,
   bffSessionInfoSchema,
   bffLoginResponseSchema,
+  demoCopyInfoSchema,
+  bffDemoClaimResponseSchema,
   bffMeResponseSchema,
   bffSessionStatusResponseSchema,
   bffPinVerificationResponseSchema,
@@ -20,6 +22,8 @@ import type {
 export type UserSessionInfo = z.infer<typeof userSessionInfoSchema>;
 export type BffSessionInfo = z.infer<typeof bffSessionInfoSchema>;
 export type BffLoginResponse = z.infer<typeof bffLoginResponseSchema>;
+export type DemoCopyInfo = z.infer<typeof demoCopyInfoSchema>;
+export type BffDemoClaimResponse = z.infer<typeof bffDemoClaimResponseSchema>;
 export type BffMeResponse = z.infer<typeof bffMeResponseSchema>;
 /** B5 — the SECOND bare (non-envelope) response besides GET /api/transactions. */
 export type BffSessionStatusResponse = z.infer<typeof bffSessionStatusResponseSchema>;

@@ -43,6 +43,39 @@ export const bffLoginResponseSchema = z.object({
   expiresAt: z.string(),
 });
 
+/**
+ * The copy a demo claim hands the visitor: the five members of `DemoCopyInfo`
+ * (backend/src/AzureBank.Shared/DTOs/Auth/DemoClaimResponse.cs).
+ *
+ * `password`, `pin` and `contacts` are checked for presence and type, and for nothing else. Their
+ * shapes are the server's to choose, and this file fails closed: a pattern here would turn a
+ * change of the seed into a claim the visitor cannot make.
+ */
+export const demoCopyInfoSchema = z.object({
+  email: z.email(),
+  password: z.string().min(1),
+  pin: z.string().min(1),
+  contacts: z.array(z.string().min(1)),
+  /**
+   * The copy's end: not the session's, and not the access token's, which is the `expiresAt`
+   * beside `user`.
+   *
+   * Strict, where every other date in this file is `z.string()`: this one is an instant to be
+   * compared with a clock and shown, and `new Date` reads a string that names no zone as local
+   * time, which would move the copy's end by the viewer's offset with nothing said. A `Z` and a
+   * numeric offset both name an exact instant and both pass. `{ offset: true }` is what lets the
+   * second through: without it `z.iso.datetime()` refuses `+00:00`, the form `apiOffsetInstant`
+   * in src/mocks/handlers.ts records for a `DateTimeOffset`. bffSchemas.test.ts holds the three
+   * forms.
+   */
+  expiresAt: z.iso.datetime({ offset: true }),
+});
+
+/** A demo claim's answer: what a sign-in answers, and the copy. */
+export const bffDemoClaimResponseSchema = bffLoginResponseSchema.extend({
+  copy: demoCopyInfoSchema,
+});
+
 export const bffMeResponseSchema = z.object({
   user: userSessionInfoSchema,
   session: bffSessionInfoSchema,
