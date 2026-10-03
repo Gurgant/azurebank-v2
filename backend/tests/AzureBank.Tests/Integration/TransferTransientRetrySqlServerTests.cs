@@ -317,9 +317,8 @@ public sealed class TransferTransientRetrySqlServerTests : IDisposable
         problem.TryGetProperty("applied", out _).Should().BeFalse(
             "the record is about another body, so applied is absent: never true, never false");
         problem.GetProperty("detail").GetString().Should().Be(
-            "A request with this idempotency key may have been executed: its record is no longer there, "
-            + "so the outcome is not known. Verify via GET /api/transactions before sending it again with "
-            + "a new key.");
+            "This idempotency key now holds another request's record, so the outcome of this request "
+            + "is not known. Verify via GET /api/transactions before sending it again with a new key.");
     }
 
     // ---- What "the record says Executed" stands on: the flip commits with the money or not at all ----

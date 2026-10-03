@@ -317,11 +317,12 @@ internal static class ConcurrencyRetry
     /// </remarks>
     /// <exception cref="IdempotencyException">
     /// Result unknown, 409 RESULT_UNKNOWN on the wire: this operation must not be executed again.
-    /// Two cases, and they are said differently. A record reloaded as committed, under the request
-    /// hash this request claimed with, carries <c>applied: true</c>; a claim row that vanished
-    /// under us, or that was replaced by a record claimed with another body, carries no
-    /// <c>applied</c>, because nothing is proven there. (Until 2026-10-01 this named them as one
-    /// answer: "a prior attempt committed, or the claim row vanished under us".)
+    /// A record reloaded as committed, under the request hash this request claimed with, carries
+    /// <c>applied: true</c>; a claim row that vanished under us, or that was replaced by a record
+    /// claimed with another body, carries no <c>applied</c>, because nothing is proven there.
+    /// (Until 2026-10-01 this named the committed record and the vanished row as one answer:
+    /// "a prior attempt committed, or the claim row vanished under us".) The detail tells a
+    /// missing row from another request's record under the key.
     /// </exception>
     public static async Task PrepareIdempotentAttemptAsync(
         AzureBankDbContext context, Account[] accounts, CancellationToken cancellationToken)
@@ -362,9 +363,9 @@ internal static class ConcurrencyRetry
             // and released by a request that was refused, and with no record left there was no
             // hash to refuse the other body on. What that record says is about those bytes.
             // Executed or Completed there is not this request's payment, and Processing there is
-            // not this request's claim to re-arm. This request's own record is gone, so it is the
-            // case above: nothing is proven either way.
-            throw IdempotencyException.ResultUnknown();
+            // not this request's claim to re-arm. Nothing is proven about this request, but the
+            // detail must say the key holds another request's record, not that no row is there.
+            throw IdempotencyException.ResultUnknownReplaced();
         }
 
         if (entry.Entity.Status is IdempotencyStatus.Executed or IdempotencyStatus.Completed)
