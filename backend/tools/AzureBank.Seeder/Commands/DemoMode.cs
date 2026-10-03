@@ -1,6 +1,8 @@
+using AzureBank.Infrastructure.Data;
 using AzureBank.Seeder.Extensions;
 using AzureBank.Seeder.Pool;
 using AzureBank.Shared.Options;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -46,6 +48,58 @@ internal static class DemoMode
             + "only where the demo is on (Demo__Enabled=true). Nothing was opened.",
             command);
         return false;
+    }
+
+    /// <summary>
+    /// What <c>seed</c> and <c>reset</c> ask after their own checks and before they open anything:
+    /// the demo off. False once the refusal has been logged, which is exit
+    /// <see cref="ExitCodes.Refused"/>.
+    /// </summary>
+    /// <param name="services">The tool's provider; the settings have passed their validator.</param>
+    /// <param name="logger">Where the refusal goes.</param>
+    /// <param name="command">The command's name, as typed.</param>
+    /// <param name="reason">Why this command must not run in demo mode, as a sentence.</param>
+    public static bool IsOffFor(IServiceProvider services, ILogger logger, string command, string reason)
+    {
+        if (!IsOn(services))
+        {
+            return true;
+        }
+
+        logger.LogError("{Command} refused: Demo:Enabled is true. {Reason} Nothing was opened.", command, reason);
+        return false;
+    }
+
+    /// <summary>
+    /// Whether the database holds a row of the demo pool, the record of a deleted copy included:
+    /// then it is the demo's, whatever the flag says. True once the refusal has been logged, which
+    /// is exit <see cref="ExitCodes.Refused"/>.
+    /// </summary>
+    /// <remarks>
+    /// One count, the first statement the command sends, before it writes anything. A record counts:
+    /// a demo database whose every copy was deleted still holds the records, and is still the demo's.
+    /// </remarks>
+    /// <param name="scoped">The command's scope.</param>
+    /// <param name="logger">Where the refusal goes.</param>
+    /// <param name="command">The command's name, as typed.</param>
+    /// <param name="reason">Why this command must not run on the demo's database, as a sentence.</param>
+    /// <param name="cancellationToken">The run's token.</param>
+    public static async Task<bool> HoldsThePoolAsync(
+        IServiceProvider scoped, ILogger logger, string command, string reason, CancellationToken cancellationToken)
+    {
+        var rows = await scoped.GetRequiredService<AzureBankDbContext>().DemoCopies.CountAsync(cancellationToken);
+        if (rows == 0)
+        {
+            return false;
+        }
+
+        logger.LogError(
+            "{Command} refused: the database holds the demo pool's rows ({Rows}), so it is the demo's. {Reason} "
+            + "Nothing was written.",
+            command,
+            rows,
+            reason);
+        return true;
     }
 
     /// <summary>The one line a pool run ends with: at Information when its code is 0, at Warning when it is a signal.</summary>

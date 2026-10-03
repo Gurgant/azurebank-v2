@@ -21,11 +21,13 @@ public static class ExitCodes
     public const int Failed = 1;
 
     /// <summary>
-    /// The command refused before any connection was opened: a setting it needs is missing, too
-    /// short, out of range or unreadable, the connection string names no database, <c>migrate</c>
-    /// was given a connect timeout of 0, the command was aimed at a server it must not touch, or
-    /// the demo flag is not what the command needs (<c>seed-pool</c> and <c>recycle</c> run only
-    /// with it on). Running it again changes nothing until the configuration does.
+    /// The command refused, and wrote nothing. Before any connection was opened: a setting it needs
+    /// is missing, too short, out of range or unreadable, the connection string names no database,
+    /// <c>migrate</c> was given a connect timeout of 0, the command was aimed at a server it must not
+    /// touch, or the demo flag is not what the command needs (<c>seed-pool</c> and <c>recycle</c>
+    /// run only with it on, <c>seed</c> and <c>reset</c> only with it off). After one count, the one
+    /// refusal that reads the database: <c>seed</c> on a database that holds the demo pool's rows.
+    /// Running it again changes nothing until the configuration does.
     /// </summary>
     public const int Refused = 2;
 }

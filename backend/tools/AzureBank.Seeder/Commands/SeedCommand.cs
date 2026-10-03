@@ -20,6 +20,13 @@ namespace AzureBank.Seeder.Commands;
 /// a deployment holds this command too.
 /// </para>
 /// <para>
+/// IT REFUSES THE PUBLIC DEMO TOO (exit 2), in two ways, for the same reason: the demo there is
+/// the pool's private copies (ADR-0062), and four users anybody can sign in as do not belong beside
+/// them. With <c>Demo:Enabled</c> on it opens nothing. With the flag off, its first statement counts
+/// the pool's rows, and one row, the record of a deleted copy included, ends the run before it
+/// writes anything: a job whose environment lost the flag is still pointed at the demo's database.
+/// </para>
+/// <para>
 /// IT CHECKS WHAT IT LEFT BEHIND. The seeders skip quietly: a user that fails to be created is
 /// logged and passed over, then the accounts find no users and skip, then the ledger finds no
 /// accounts and skips. That used to end in "Database seeded successfully!" and exit 0 with
@@ -40,6 +47,14 @@ namespace AzureBank.Seeder.Commands;
 public static class SeedCommand
 {
     private const string AzureSqlReason = "seed adds four users whose password and PIN are public.";
+
+    private const string DemoModeReason =
+        "In demo mode the demo is the pool's private copies, which seed-pool builds, and seed's four users "
+        + "have a password and a PIN that are public.";
+
+    private const string DemoDatabaseReason =
+        "seed's four users have a password and a PIN that are public, and there they would be users "
+        + "outside every copy that anybody can sign in as.";
 
     /// <param name="services">The tool's provider.</param>
     /// <param name="stopping">Cancelled when the process is asked to stop (SIGTERM; Program.cs).</param>
@@ -76,12 +91,18 @@ public static class SeedCommand
         try
         {
             if (ConnectionTarget.ReadOrRefuse(services, logger, "seed", AzureSqlReason) is null
-                || !services.PinPepperIsUsable(logger, "seed"))
+                || !services.PinPepperIsUsable(logger, "seed")
+                || !DemoMode.IsOffFor(services, logger, "seed", DemoModeReason))
             {
                 return ExitCodes.Refused;
             }
 
             using var scope = services.CreateScope();
+            if (await DemoMode.HoldsThePoolAsync(scope.ServiceProvider, logger, "seed", DemoDatabaseReason, cancellationToken))
+            {
+                return ExitCodes.Refused;
+            }
+
             await scope.ServiceProvider.GetRequiredService<SeederOrchestrator>().SeedAllAsync(cancellationToken);
 
             if (!await DemoDataIsCompleteAsync(scope.ServiceProvider, logger, cancellationToken))
@@ -121,9 +142,10 @@ public static class SeedCommand
     /// </para>
     /// <para>
     /// At least, not exactly: the app adds ledger rows and never removes one (the context refuses
-    /// a deleted transaction), so a seeded ledger only grows with use. The count cannot tell the
-    /// demo's rows from other rows: a database with that many rows of its own and no demo ledger
-    /// would pass.
+    /// a deleted transaction), so a seeded ledger only grows with use. The demo pool's recycler does
+    /// delete ledger rows, a deleted copy's, and only on a database that holds the pool, which this
+    /// command refuses before it seeds. The count cannot tell the demo's rows from other rows: a
+    /// database with that many rows of its own and no demo ledger would pass.
     /// </para>
     /// </remarks>
     internal static async Task<bool> DemoDataIsCompleteAsync(

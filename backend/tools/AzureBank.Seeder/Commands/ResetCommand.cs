@@ -21,6 +21,10 @@ namespace AzureBank.Seeder.Commands;
 /// service's default size, not the one the infrastructure made.
 /// </para>
 /// <para>
+/// IT REFUSES DEMO MODE (exit 2, nothing opened): there the database is the pool's, with the
+/// private copies visitors hold (ADR-0062).
+/// </para>
+/// <para>
 /// THE PIN PEPPER IS CHECKED BEFORE THE DROP. Seeding needs it, and a reset that dropped the
 /// database and then could not seed would leave nothing. That check used to run in
 /// <c>Program.cs</c>, ahead of the command line; it is here now, with the same guarantee.
@@ -31,6 +35,9 @@ public static class ResetCommand
     private const string AzureSqlReason =
         "reset drops the database and creates it again, and on Azure that would create a new database "
         + "at the service's default size.";
+
+    private const string DemoModeReason =
+        "reset drops the database, and in demo mode that is the pool's, with the copies visitors hold.";
 
     /// <param name="services">The tool's provider.</param>
     /// <param name="stopping">Cancelled when the process is asked to stop (SIGTERM; Program.cs).</param>
@@ -70,7 +77,8 @@ public static class ResetCommand
         try
         {
             if (ConnectionTarget.ReadOrRefuse(services, logger, "reset", AzureSqlReason) is null
-                || !services.PinPepperIsUsable(logger, "reset"))
+                || !services.PinPepperIsUsable(logger, "reset")
+                || !DemoMode.IsOffFor(services, logger, "reset", DemoModeReason))
             {
                 return ExitCodes.Refused;
             }
