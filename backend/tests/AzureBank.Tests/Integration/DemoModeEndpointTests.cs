@@ -52,6 +52,13 @@ public sealed class DemoModeEndpointTests : IDisposable
     }
 
     /// <summary>A response as status, media type and body, without the one member that differs between two requests.</summary>
+    /// <remarks>
+    /// With parentheses where the body has braces. The assertion library builds a failure's message
+    /// with <c>string.Format</c>, and a brace in either of two long texts that differ makes it throw
+    /// <see cref="FormatException"/> in place of the message that shows where they differ; inside
+    /// an assertion scope that exception is then lost behind the scope's own, with every assertion
+    /// after it (FluentAssertions 8.8.0, measured on a sign-in's answer).
+    /// </remarks>
     private static async Task<string> ShapeOfAsync(HttpResponseMessage response)
     {
         var body = await response.Content.ReadAsStringAsync();
@@ -61,7 +68,8 @@ public sealed class DemoModeEndpointTests : IDisposable
             body = json.ToJsonString();
         }
 
-        return $"{(int)response.StatusCode} {response.Content.Headers.ContentType?.MediaType} {body}";
+        return $"{(int)response.StatusCode} {response.Content.Headers.ContentType?.MediaType} {body}"
+            .Replace('{', '(').Replace('}', ')');
     }
 
     // ── With the demo off ────────────────────────────────────────────────────────────────────────
