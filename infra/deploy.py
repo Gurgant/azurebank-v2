@@ -78,7 +78,11 @@ GUID = re.compile(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}')
 IPV4 = re.compile(r'\b\d{1,3}(?:\.\d{1,3}){3}\b')
 # The shape of an execution's name. A name of any other shape is never printed.
 EXECUTION_NAME = re.compile(r'[A-Za-z0-9-]{1,100}')
-# What the tools image exits with (backend/tools/AzureBank.Seeder/Commands/ExitCodes.cs).
+# What `migrate` exits with: the one command a deployment runs, and the only container verdict()
+# reads (backend/tools/AzureBank.Seeder/Commands/ExitCodes.cs). For `migrate` a 2 always comes
+# before any connection. The image's other commands differ: `seed` and `reset` can also refuse
+# after one count, and `seed-pool` and `recycle` can also end with a code from 10 to 15
+# (Pool/PoolExitCodes.cs; `seed-pool` only 12 or 13), so a pool job needs a map of its own.
 EXIT_CODES = {0: 'done', 1: 'failed after it reached for the server; running it again is safe',
               2: 'refused before any connection; the configuration must change'}
 

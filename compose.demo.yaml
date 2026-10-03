@@ -1,0 +1,49 @@
+# compose.yaml with the public demo turned on, on one machine. With the same variables compose.yaml
+# asks for:
+#   docker compose -f compose.yaml -f compose.demo.yaml up --build
+#
+# What changes. The `seed` one-shot runs `seed-pool` in place of `seed`, with Demo__Enabled=true:
+# the database gets the demo pool's free copies (Demo:Pool:TargetFree of them, 50 by default), not
+# the four users whose password and PIN are in this repository (ADR-0062). The API starts once it
+# has exited 0, as before. A free copy has no password, so none can be signed in to.
+#
+# One volume, one kind of database. A volume this file filled holds the pool, and `seed` and
+# `reset` refuse it (exit 2) under compose.yaml alone; a volume compose.yaml filled holds the four
+# fixed users, and `seed-pool` exits 13 on it, writing nothing. Either way the API does not start:
+# `docker compose down -v` before changing files.
+#
+# Every `up` runs `seed-pool` again. It builds nothing while the pool holds its free copies, and once
+# they are older than 44 hours (Demo:Pool:MaxFreeAgeHours) it builds a new set beside them: only
+# `recycle` deletes the old ones. The app's registration is still open here, and an account made
+# through it is a user outside every copy: `seed-pool` counts it on its line and fills the pool all
+# the same, and `recycle` exits 13 for it.
+#
+# `recycle`, the job a deployment runs on a schedule, is a service here under the profile `pool`,
+# so `up` leaves it out and it runs when asked:
+#   docker compose -f compose.yaml -f compose.demo.yaml run --rm recycle
+# Options of a command go after the service name, as in compose.yaml:
+#   docker compose -f compose.yaml -f compose.demo.yaml run --rm seed seed-pool 5
+# backend/tools/AzureBank.Seeder/README.md has the two commands' exit codes, and
+# docs/runbooks/demo-pool.md what each count of their line means.
+
+services:
+  seed:
+    command: ["seed-pool"]
+    environment:
+      Demo__Enabled: "true"
+
+  recycle:
+    # The tools image the other one-shots run; a path here is read from compose.yaml's folder.
+    build:
+      context: .
+      dockerfile: backend/tools/AzureBank.Seeder/Dockerfile
+    image: ${COMPOSE_PROJECT_NAME}-tools
+    command: ["recycle"]
+    profiles: ["pool"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=AzureBank;User Id=sa;Password='${SQL_SA_PASSWORD:?set SQL_SA_PASSWORD}';TrustServerCertificate=true"
+      Security__PinPepper: ${PIN_PEPPER:?set PIN_PEPPER}
+      Demo__Enabled: "true"

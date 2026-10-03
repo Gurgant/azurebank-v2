@@ -181,7 +181,11 @@ public override async Task<int> SaveChangesAsync(...)
 
 #### 3. Transaction Immutability
 
-Transactions cannot be modified or deleted:
+A tracked transaction cannot be modified or deleted: `SaveChanges` refuses it. A set-based
+statement (`ExecuteUpdate`, `ExecuteDelete`, raw SQL) tracks nothing and never reaches the check,
+and the Seeder's recycler deletes a demo copy's ledger that way, on purpose (ADR-0062). Until then
+this said transactions cannot be modified or deleted, with no exception. The check, simplified (the
+real one also lets `RelatedTransactionId` be written once):
 
 ```csharp
 foreach (var entry in ChangeTracker.Entries<Transaction>())

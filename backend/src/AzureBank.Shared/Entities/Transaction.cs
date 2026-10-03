@@ -3,9 +3,17 @@
 namespace AzureBank.Shared.Entities;
 
 /// <summary>
-/// Transaction entity - IMMUTABLE (no updates, no deletes)
+/// Transaction entity - IMMUTABLE through the change tracker: <c>SaveChanges</c> refuses an update
+/// or a delete of a tracked row
 /// Financial records must be preserved for audit/compliance
 /// </summary>
+/// <remarks>
+/// One delete exists, and it goes around the change tracker, not around the context: the Seeder's
+/// recycler sends set-based statements through the context, which track nothing and never reach
+/// <c>SaveChanges</c>. It deletes the whole ledger of a demo copy whose time is over, invented data
+/// that belongs to nobody, keyed on the copy (ADR-0062). This said "no deletes" with no exception
+/// until then.
+/// </remarks>
 public class Transaction
 {
     public Guid Id { get; set; }

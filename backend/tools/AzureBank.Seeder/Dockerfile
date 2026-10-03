@@ -1,10 +1,10 @@
 # The tools image: the one-shot jobs that run beside the app. `migrate` brings the database to the
-# latest migration; `seed` adds the demo data, for local runs and CI only. Build it from the
-# repository root:
+# latest migration; `seed` adds the demo data, for local runs and CI only; `seed-pool` and
+# `recycle` keep the public demo's pool of private copies. Build it from the repository root:
 #   docker build -f backend/tools/AzureBank.Seeder/Dockerfile -t azurebank-tools .
 # It listens on nothing, runs one command and exits: the container's arguments are the command.
-# The connection string and, for `seed`, the PIN pepper come from the environment at run time
-# (README.md beside this file has the variables and the exit codes).
+# The connection string and, for every command but `migrate`, the PIN pepper come from the
+# environment at run time (README.md beside this file has the variables and the exit codes).
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src

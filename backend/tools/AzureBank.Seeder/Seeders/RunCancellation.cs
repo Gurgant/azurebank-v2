@@ -8,7 +8,7 @@ namespace AzureBank.Seeder.Seeders;
 /// <summary>
 /// The token of the command that is running, for the code that cannot be handed one. One per
 /// scope: whoever starts work in a scope sets it first (<see cref="SeederOrchestrator"/> does, for
-/// the seeders).
+/// the seeders, and <c>DemoCopyBuilder</c>, for the demo pool's two commands).
 /// </summary>
 /// <remarks>
 /// <para>

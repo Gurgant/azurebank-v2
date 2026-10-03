@@ -77,9 +77,18 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
     /// What an account holder is owed and has not yet been told (ADR-0045). Written by the API in
     /// the same save as the action that owes the notice; claimed, read and marked by the runner
     /// <c>Notices:Runner</c> NAMES — the API's relay (ADR-0048) or the Function (ADR-0051) — or by
-    /// the operator tool (ADR-0045), which that flag does not gate; purged by nothing.
+    /// the operator tool (ADR-0045), which that flag does not gate. Purged by nothing: a row leaves
+    /// only with its user, by the database's cascade, and the one statement that deletes users is
+    /// the Seeder's recycler's, which deletes a demo copy's (ADR-0062). This said "purged by
+    /// nothing" with no exception until then.
     /// </summary>
     public DbSet<SubscriberNotice> SubscriberNotices => Set<SubscriberNotice>();
+
+    /// <summary>
+    /// The demo's prepared copies, one row each: free, claimed, or the record of a claimed copy
+    /// whose users were deleted. No row outside the demo.
+    /// </summary>
+    public DbSet<DemoCopy> DemoCopies => Set<DemoCopy>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -322,7 +331,11 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
 
     /// <summary>
     /// Enforce immutability on Transaction entities.
-    /// Transactions are financial records and cannot be modified or deleted.
+    /// Transactions are financial records: a tracked one cannot be modified or deleted, because
+    /// <c>SaveChanges</c> runs this check over the change tracker. A set-based statement
+    /// (<c>ExecuteUpdate</c>, <c>ExecuteDelete</c>, raw SQL) tracks nothing and never reaches it,
+    /// even sent through this context: the Seeder's recycler deletes a demo copy's ledger that way,
+    /// on purpose (ADR-0062). This said "cannot be modified or deleted" with no exception until then.
     ///
     /// Single exception (write-once): RelatedTransactionId may go from null
     /// to a value. Transfer pairs reference EACH OTHER, and two mutually

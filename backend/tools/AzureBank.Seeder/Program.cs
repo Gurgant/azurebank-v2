@@ -8,7 +8,8 @@ using Serilog;
 // ============================================
 // AzureBank Database Seeder Tool
 // ============================================
-// A standalone CLI tool for migrating, seeding and resetting the database.
+// A standalone CLI tool for migrating, seeding and resetting the database, and for keeping the
+// public demo's pool of private copies (ADR-0062).
 // Lives outside the main architecture to avoid circular dependencies.
 // It is also what the tools image runs (the Dockerfile and README.md beside this file).
 //
@@ -16,10 +17,13 @@ using Serilog;
 //   dotnet run --project tools/AzureBank.Seeder -- migrate
 //   dotnet run --project tools/AzureBank.Seeder -- seed
 //   dotnet run --project tools/AzureBank.Seeder -- reset --confirm
+//   dotnet run --project tools/AzureBank.Seeder -- seed-pool [copies]
+//   dotnet run --project tools/AzureBank.Seeder -- recycle
 //   dotnet run --project tools/AzureBank.Seeder -- --help
 //
 // Exit codes (Commands/ExitCodes.cs): 0 done; 1 failed, or the command line was wrong;
-// 2 refused before any connection was opened.
+// 2 refused, with nothing written. seed-pool and recycle also end with a signal from 10 to 15
+// (Pool/PoolExitCodes.cs).
 // ============================================
 
 /*
@@ -61,7 +65,8 @@ var host = builder.Build();
   the pepper, all ended in an unhandled OptionsValidationException (exit 139 in a Linux container,
   measured 2026-10-01). `seed` and `reset` now run the validator at their own start, still before
   any database work, so `reset` cannot drop a database it then cannot seed, and answer with a
-  sentence and exit 2 (ServiceCollectionExtensions.PinPepperIsUsable).
+  sentence and exit 2 (ServiceCollectionExtensions.PinPepperIsUsable). `seed-pool` and `recycle`
+  run it the same way: the copies they build carry a PIN hash too.
 */
 
 /*
@@ -87,13 +92,15 @@ using var sigterm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, signal =
 // Build CLI with System.CommandLine
 var rootCommand = new RootCommand("AzureBank Database Seeder Tool")
 {
-    Description = "CLI tool for migrating, seeding and resetting the AzureBank database"
+    Description = "CLI tool for migrating, seeding and resetting the AzureBank database, and for keeping the demo's pool"
 };
 
 // Add commands
 rootCommand.AddCommand(MigrateCommand.Create(host.Services, stopping.Token));
 rootCommand.AddCommand(SeedCommand.Create(host.Services, stopping.Token));
 rootCommand.AddCommand(ResetCommand.Create(host.Services, stopping.Token));
+rootCommand.AddCommand(SeedPoolCommand.Create(host.Services, stopping.Token));
+rootCommand.AddCommand(RecycleCommand.Create(host.Services, stopping.Token));
 
 // Execute CLI. Each handler sets the exit code on its invocation, and that is what comes back.
 try

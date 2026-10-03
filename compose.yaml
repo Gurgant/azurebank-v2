@@ -15,6 +15,9 @@
 # alone: `docker compose run --rm migrate`. (Until 2026-10-01 this header had the seed run from the
 # host, with a command that drops the database first.)
 # Then open http://localhost:5000.
+# compose.demo.yaml, beside this file, turns the public demo on: `seed-pool` fills the database with
+# the demo pool's private copies in place of `seed`'s four users (ADR-0062). Its header has how, and
+# what a later `up` builds there: a new set, once its copies are 44 hours old.
 #
 # The API has no address of its own: it shares the BFF's network namespace and listens on
 # 127.0.0.1:5068, so the BFF reaches it over loopback -- the one plain-HTTP hop the BFF accepts --

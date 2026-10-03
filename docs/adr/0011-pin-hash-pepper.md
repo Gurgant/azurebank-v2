@@ -96,8 +96,12 @@ uncalled)*.
   missing or short pepper with a sentence and exit code 2 before any connection is
   opened. In `Program.cs` the validator ran ahead of the command line, so with no
   pepper `--help` crashed too, and `migrate`, which needs no pepper, could not have
-  run.)* The Seeder shares the same active pepper (else seeded PINs cannot be
-  verified).
+  run.)* *(2026-10-03,
+  [ADR-0062](0062-demo-visitors-get-private-copies-from-a-prepared-pool.md):
+  `seed-pool` and `recycle` check it the same way, at their start: the demo copies they build
+  carry PIN hashes. The job that runs `recycle` holds the API's pepper and key id, and adds and
+  retires a pepper in the order this record gives, on the count `docs/runbooks/demo-pool.md`
+  reads.)* The Seeder shares the same active pepper (else seeded PINs cannot be verified).
 - **Rehash-on-use migration**: `IPasswordHasher.PinNeedsRehash` reports whether a
   stored hash predates the active key. On a **successful** verify, `PinService`
   re-hashes the PIN with the active pepper and persists it — in the service's

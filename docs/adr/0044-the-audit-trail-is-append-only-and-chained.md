@@ -543,6 +543,11 @@ less than half of what it appeared to.
    with it the path from that row to an account and its owner. **The erasure-upstream answer applies
    to pointers whose target is deletable, and the majority of this table's pointers are not.** That is
    the same immutability the paragraph above cites as a STRENGTH, seen from the other side.
+   *(Amended 2026-10-03, [ADR-0062](0062-demo-visitors-get-private-copies-from-a-prepared-pool.md):
+   one kind of ledger row is deleted now, a demo copy's. The Seeder's recycler removes a copy's
+   whole ledger with its users, keyed on `DemoCopyId`, in set-based statements the change tracker
+   never sees. Every other ledger row is still refused deletion, so for every account that belongs
+   to no demo copy the target still outlives any retention period.)*
 
    ⚠️ **The guard is APPLICATION-LEVEL, and saying so makes the problem worse rather than smaller.**
    It runs in `SaveChanges` against the change tracker, `AuditEvent.SubjectId` carries an index and no
@@ -552,6 +557,12 @@ less than half of what it appeared to.
    perform an unlawful one: raw SQL, around the guard, leaving a pointer that resolves to nothing.
    **The compliant act and the attack are the same act.** That is the collision in its sharpest form,
    and it is the reason this section ends by naming redesigns rather than procedures.
+   *(Amended 2026-10-03, ADR-0062: the recycler is that act, done on purpose and for demo copies
+   only. Its statements go around the guard, and afterwards the copy's audit rows name an actor and
+   subjects that resolve to nothing. The sentence above still holds. The copy's pool row stays as
+   the record that the dangling actor was a demo copy, but it is written by the same hand that
+   deleted the rows, outside the chain, and anyone who can write to the database could write one:
+   it tells an honest reader which actor was a copy, and proves nothing to anyone else.)*
 4. ⚠️ **AMLR Art. 77(2) is a conditional derogation, not a licence, and invoking it here contradicted
    the paragraph two above.** It permits a reference instead of a copy only where the entity is within
    scope, the information stays immediately retrievable and unalterable, and internal procedures
@@ -599,11 +610,19 @@ exiting `NothingToVerify`. That separates zero from non-zero, never "purged" fro
   on `Transaction` the deletion is not merely unordered, it is REFUSED, so the pointer's target
   outlives any retention period by design. Where the target IS deletable — a `User` row — the ordering
   is still unenforced, and an early deletion would break the very condition Art. 77(2) attaches.
+  *(Amended 2026-10-03, ADR-0062: refused through the change tracker, and on every ledger row but a
+  demo copy's. The Seeder's recycler deletes a copy's ledger around the guard, before any retention
+  period, and with it the pack `evidence` would assemble for the copy's transfers; the audit rows
+  that name them stay. Every other ledger row still outlives any retention period.)*
 - **Three things would close it, and each is a redesign rather than a setting.** Segmenting the chain
   into periods that can be dropped whole; per-subject encryption so that destroying a key erases the
   data without touching a row; or making ledger rows deletable, which trades this table's problem for
   a worse one two tables over. None is proposed here. Naming them is what stops the next reader
-  concluding that the problem has no shape.
+  concluding that the problem has no shape. *(Amended 2026-10-03, ADR-0062: ledger rows are
+  deletable now in one place, and only there: the Seeder's recycler deletes the ledger of a demo
+  copy, invented data that belongs to nobody, keyed on `DemoCopyId`. That is not the third
+  redesign. No real user's ledger is reachable from it, no audit row is deleted, and erasure is as
+  undischarged as this list says, so none is proposed here still.)*
 - **There is no purge job**, and there is nothing to run one — the same premise that defers anchoring
   defers this. The policy is a rule a person follows, which is weaker than a rule a system enforces,
   and saying so is the point.

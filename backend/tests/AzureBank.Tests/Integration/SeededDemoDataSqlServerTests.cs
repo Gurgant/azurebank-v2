@@ -10,6 +10,7 @@ using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
+using DemoLedgerAccount = seeder::AzureBank.Seeder.Seeders.DemoLedgerAccount;
 using TransactionSeeder = seeder::AzureBank.Seeder.Seeders.TransactionSeeder;
 
 namespace AzureBank.Tests.Integration;
@@ -105,6 +106,38 @@ public sealed class SeededDemoDataSqlServerTests : IDisposable
         (now - lastFour[1].CreatedAt).TotalDays.Should().BeInRange(1.5, 2.5, "ATM withdrawal, 2 days back");
         (now - lastFour[2].CreatedAt).TotalDays.Should().BeInRange(0.5, 1.5, "online purchase, 1 day back");
         (now - lastFour[3].CreatedAt).TotalDays.Should().BeInRange(0, 0.5, "the refund is today");
+    }
+
+    [SqlServerFact]
+    public async Task TheSeededLedgerIsTheDemosHistoryRowForRow()
+    {
+        await using var db = NewContext();
+        await db.Database.MigrateAsync();
+
+        var accounts = await SeedTheDemoAccountsAsync(db);
+        await new TransactionSeeder(db, NullLogger<TransactionSeeder>.Instance).SeedAsync();
+
+        // The part each of the four literal numbers plays in the history.
+        var parts = new Dictionary<Guid, DemoLedgerAccount>
+        {
+            [accounts[JohnSavings]] = DemoLedgerAccount.OwnerSavings,
+            [accounts[JohnChecking]] = DemoLedgerAccount.OwnerChecking,
+            [accounts[JaneSavings]] = DemoLedgerAccount.JaneSavings,
+            [accounts[MikeInvestment]] = DemoLedgerAccount.MikeInvestment,
+        };
+        var rows = await db.Transactions.AsNoTracking().ToListAsync();
+
+        /*
+          The rows themselves, not only how many: a count, a chain that adds up and four offsets are
+          all true of a ledger in which the rent is 951, or in which Jane's rows landed on Mike's
+          account. The newest row, the refund, is dated at the seed instant itself, so every other
+          row's offset is read from it, and each is exact: the dates are written as that instant
+          minus a whole number of hours.
+        */
+        var seedInstant = rows.Max(t => t.CreatedAt);
+        rows.Select(t => new ExpectedDemoLedger.Row(parts[t.AccountId], seedInstant - t.CreatedAt, t.Type, t.Amount, t.Description))
+            .Should().BeEquivalentTo(
+                ExpectedDemoLedger.Rows, "the fixed demo opens on the same history a visitor's copy does, row for row");
     }
 
     [SqlServerFact]
