@@ -39,8 +39,10 @@ public static class PoolExitCodes
     /// <summary>The code <c>recycle</c> exits with.</summary>
     /// <remarks>
     /// "Low" and "empty" are about the pool the run FOUND, since that is what visitors met, and
-    /// only on a database that already held copies: the first fill of an empty database finds no
-    /// free copy and has turned nobody away.
+    /// only when it found a copy that is not a record: the first fill of an empty database finds
+    /// no free copy and has turned nobody away. A pool whose every copy was deleted holds only
+    /// records and is read the same way, so its next run exits 0 although visitors may have been
+    /// turned away since the run before (ADR-0062).
     /// </remarks>
     public static int From(PoolRunSummary summary, int lowMark)
     {

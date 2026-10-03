@@ -39,7 +39,9 @@ public class StepUpAuthorizationConfiguration : IEntityTypeConfiguration<StepUpA
         builder.Property(a => a.ExpiresAt)
             .IsRequired();
 
-        // No index on ExpiresAt, unlike IdempotencyRecords: nothing sweeps this table. Rows are the
-        // Art. 72 evidence and are kept. If a retention policy ever arrives it brings its own index.
+        // No index on ExpiresAt, unlike IdempotencyRecords: nothing sweeps this table by age. Rows
+        // are the Art. 72 evidence and are kept, except a demo copy's: the Seeder's recycler deletes
+        // those with the copy, by UserId (ADR-0062). This said the rows are kept, with no exception,
+        // until then. If a retention policy ever arrives it brings its own index.
     }
 }
