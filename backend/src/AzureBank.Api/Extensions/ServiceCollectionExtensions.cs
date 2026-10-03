@@ -750,6 +750,10 @@ public static class ServiceCollectionExtensions
             // with path parameters — except those marked [AlwaysFound], which cannot miss
             options.AddOperationTransformer<NotFoundResponseTransformer>();
 
+            // Operation transformer: the 404 a [DemoOnly] endpoint answers on a deployment that
+            // is not the demo, as the application/problem+json the framework writes for it
+            options.AddOperationTransformer<DemoEndpointResponsesTransformer>();
+
             // 415 on every operation with a body: the framework's refusal of a non-JSON body,
             // undocumented until the Schemathesis gate's first run (2026-09-15).
             options.AddOperationTransformer<UnsupportedMediaTypeResponseTransformer>();

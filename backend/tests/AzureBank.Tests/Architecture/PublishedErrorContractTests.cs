@@ -187,13 +187,43 @@ public class PublishedErrorContractTests
         // (revoke, whose 503 predates this), so a generated client had no type for the other 29.
         var document = Document();
         var operations = Operations(document).ToList();
-        operations.Should().HaveCount(30, "the API's 30 operations; fewer means the scan broke");
+        operations.Should().HaveCount(31, "the API's 31 operations; fewer means the scan broke");
 
         var missing = operations.Where(o => OutageSchema(o.Value) is null).Select(o => o.Operation).ToList();
 
         missing.Should().BeEmpty(
             "every operation can answer the outage 503; {0} of {1} declare none: {2}",
             missing.Count, operations.Count, string.Join(", ", missing));
+    }
+
+    [Fact]
+    public void The_demo_claim_declares_the_404_of_a_deployment_that_is_not_the_demo()
+    {
+        // The document is the same for every deployment, and on one with the demo off this
+        // operation answers nothing but 404: the framework's own, as for a path with no route.
+        // Measured through the test host (DemoModeEndpointTests): application/problem+json with
+        // type, title, status and traceId, and no errorCode.
+        var paths = Document().GetProperty("paths");
+        paths.TryGetProperty("/api/auth/demo/claim", out var path).Should().BeTrue("the claim is published");
+        path.TryGetProperty("post", out var claim).Should().BeTrue();
+        var responses = claim.GetProperty("responses");
+
+        responses.EnumerateObject().Select(r => r.Name).Should().BeEquivalentTo(
+            ["200", "400", "404", "415", "429", "503"],
+            "what a claim can answer: the copy, a body it cannot read, the demo off, a body that is "
+            + "not JSON, a refusal for now, and the outage");
+
+        var notFound = responses.GetProperty("404");
+        notFound.GetProperty("description").GetString().Should().Contain("the demo is off");
+        var content = notFound.GetProperty("content");
+        content.EnumerateObject().Select(m => m.Name).Should().Equal(
+            ["application/problem+json"], "this 404 is never the application's own application/json refusal");
+        content.GetProperty("application/problem+json").GetProperty("schema").GetProperty("$ref").GetString()
+            .Should().Be("#/components/schemas/ProblemDetails");
+
+        // Anonymous: the visitor has no account yet. An empty requirement, not an absent one.
+        claim.GetProperty("security").EnumerateArray().Should().ContainSingle()
+            .Which.EnumerateObject().Should().BeEmpty();
     }
 
     [Fact]
