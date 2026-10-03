@@ -8,8 +8,9 @@ PowerShell 7. Why it is built this way, what was weighed and what was left as it
 **State of this document.** The templates compile and the scripts are tested offline against
 stand-ins. Until 2026-10-03 nothing in this folder had run on Azure. That day the first
 deployment began. Steps 1 to 5 ran as written and read back what they should. Step 6 stopped at
-the users file's first check, on something of Azure's own that the file did not expect. That
-check was narrowed; the file has not run on Azure since, and the users are not
+the users file's first check, and a read-only look before it ran again found that a second check
+of the file would stop it too, each time on something of Azure's own that the file did not
+expect. Both checks were narrowed; the file has not run on Azure since, and the users are not
 made yet ([Measured on Azure](#measured-on-azure)). What ran there before, on 2026-10-02, is a
 throwaway trial: a resource group in the same subscription and region, created and deleted that
 day, in which requests of the shapes this folder makes were sent by hand, with `az rest` and
@@ -490,7 +491,12 @@ All the SQL is in `sql-principals.sql`: one transaction that
    user made from it signed in ([Measured on Azure](#measured-on-azure)). A user whose identity
    was deleted and made again is replaced;
 3. before it commits, compares every user, role, role membership, permission and schema owner with
-   what it expects, prints the name of anything else, and keeps nothing unless the lists are clean.
+   what it expects, prints the name of anything else (a permission on an object with the object's
+   schema and name), and keeps nothing unless the lists are clean. One grant of Azure's own is
+   expected among them: `SELECT` for `public` on an object in `sys` marked `is_ms_shipped`, the
+   two together. The same new database granted it on that view, and a read-only look before this
+   step ran again found that the permission list would have refused it
+   ([Measured on Azure](#measured-on-azure)).
 
 Each run must end with these two lines and with the rule list:
 
@@ -964,7 +970,7 @@ for what it refused. The what-if shows it first: a policy assignment, or a fourt
 | That fails too | The older ODBC `sqlcmd`, which signs in through a window: `-SqlcmdPath '<its path>' -OdbcSignInName '<the account's sign-in name>'`. It runs with `-X1`, so that it starts no operating-system command |
 | The tool's signature is not a valid Microsoft one | Stop: this program is handed the administrator's sign-in |
 | The address cannot be read from the server's refusal | The script stops and prints the two commands to allow the address by hand under another name and to delete that rule afterwards |
-| `Msg 50003` or `Msg 50004` on a database nobody has touched | Azure's baseline differs from the local engine's: read the names the file printed, correct the file's expected lists, run again. A defect, not a choice. It happened once, on 2026-10-03, at the first check ([Measured on Azure](#measured-on-azure)) |
+| `Msg 50003` or `Msg 50004` on a database nobody has touched | Azure's baseline differs from the local engine's: read the names the file printed, correct the file's expected lists, run again. A defect, not a choice. It happened twice on 2026-10-03, before the users were made: at the first check, on a run, and at the permission list, found by a read-only look before the next run ([Measured on Azure](#measured-on-azure)) |
 | The server refuses `WITH SID ..., TYPE = E` | `./infra/sql-principals.ps1 -CreateForm ExternalProvider`: `CREATE USER ... FROM EXTERNAL PROVIDER WITH OBJECT_ID`, which looks the identity up by its object ID, never by a name. The users keep their two names and the stored ID is still compared. In the trial the first form was accepted, and so was a look-up by the identity's name; this second form itself was not sent |
 | That form is refused as well | Stop |
 | The second run changes something | A defect in the file: fix it before going on |
@@ -1698,14 +1704,15 @@ printed. One run each.
   to the one mailbox given: 30, 50 and 100 % of the actual cost and 30 % of the forecast. The
   protected folder was gone afterwards.
 
-**The first deployment, step 6 (2026-10-03)**
+**The first deployment, step 6 (2026-10-03): two stops before the users were made**
 
-Not the trial: this folder's own script and file, on the database `AzureBank` that step 2 created
-that day.
+The same day, this folder's own script and file, on the database `AzureBank` that step 2 created.
 
-- `sql-principals.ps1` ran the users file, which stopped at its first check:
-  `Code found: [database_firewall_rules]`, `Msg 50003`. Nothing was run, and the temporary
-  firewall rule was removed.
+- `sql-principals.ps1` ran the users file twice, and both runs stopped at its first check:
+  `Code found: [database_firewall_rules]`, `Msg 50003`, exit 1. Nothing was run. The script knew
+  the server's refusal of this machine by its own pattern and allowed the address the refusal
+  named with its temporary rule; at the end it deleted that rule, with the lock on the database
+  in place, and read back `AllowAzureServices` alone.
 - A read-only query of the catalog, as the Microsoft Entra administrator, through a firewall rule
   created and deleted in the same run, returned this and no other row. In `sys.sql_modules`: the
   view `database_firewall_rules`, in the schema `sys`, `is_ms_shipped` 1, created on 2026-08-28,
@@ -1729,8 +1736,23 @@ that day.
   (<https://learn.microsoft.com/en-us/azure/azure-sql/database/change-data-capture-overview>,
   2025-09-24). No page read says that a user cannot set it on Azure SQL Database. The pages were
   read on 2026-10-03.
-- The file has not run past that check on Azure yet. What a new database there holds that the
-  lists before the commit could refuse is under [Not measured yet](#not-measured-yet).
+- Before the step ran again, a read-only query with the users file's own conditions, through a
+  firewall rule created and deleted in the same run, listed what the lists before the commit
+  would refuse in that database, the users not yet made. One row and nothing else: `SELECT`,
+  granted to `public`, on that view, whose ID is positive. Among the modules, that view alone,
+  which the narrowed first check leaves out; no trigger, no user, no role, no schema owned by a
+  user; of the role members, `dbo` in `db_owner` alone, which the file expects. The permission
+  list kept `public`'s grants on objects only when their ID is negative, so it would have refused
+  that row, and the same run would have stopped there.
+- So the permission list now also keeps `SELECT`, granted to `public`, on an object that is in
+  `sys` and marked `is_ms_shipped`, the pair the first check reads, and nothing wider: not a
+  `DENY`, not a grant that may be passed on, no other permission, grantee or class. It is a right
+  to read and creates no code; nobody can create an object in `sys`; and Microsoft's page on the
+  view, the one above, says that every user with permission to connect to the database may read
+  it. Each refused permission on an object now prints the object's schema and name; that row
+  would have printed none.
+- The file has not run on Azure since either change. What its lists meet once the users are made
+  is under [Not measured yet](#not-measured-yet).
 
 ## Not measured yet
 
@@ -1756,12 +1778,12 @@ on 2026-10-02), not on Azure:
   four times in two lines, a handle the same way. The BFF's console holds neither.
 
 **Measured on a local SQL Server** (17.0, LocalDB, with go-sqlcmd 1.10.0 and `-b`; run again on
-2026-10-03 on the file without the switch for the object ID, and again that day after the first
-check was narrowed). The local engine refuses both real forms of `CREATE USER` in
-`sql-principals.sql` (`TYPE = E`: a syntax error; `FROM EXTERNAL PROVIDER`: not configured), so
-the file ran with three substitutions: the database's name, a user made from a disabled SQL login
-whose ID is the 16 bytes asked for, and the user type that goes with it. Everything else is the
-file as it is.
+2026-10-03 on the file without the switch for the object ID, again that day after the first
+check was narrowed, and again after the permission list changed). The local engine refuses both
+real forms of `CREATE USER` in `sql-principals.sql` (`TYPE = E`: a syntax error; `FROM EXTERNAL
+PROVIDER`: not configured), so the file ran with three substitutions: the database's name, a user
+made from a disabled SQL login whose ID is the 16 bytes asked for, and the user type that goes
+with it. Everything else is the file as it is.
 
 - On a clean database it commits and exits 0; a second run changes nothing.
 - A new app identity replaces only that user. Asking for the second form of `CREATE USER` while
@@ -1781,6 +1803,18 @@ file as it is.
   each marked `is_ms_shipped` by `sys.sp_MS_marksystemobject` as sysadmin. Each was refused at the
   first check (`Msg 50003`) with its name printed. Every case of the run before the change gave
   the same answer again.
+- After the permission list changed: `SELECT` for `public` on a view, on a table, and on a table
+  marked `is_ms_shipped`, all in `dbo`. Each was refused with the object's schema and name
+  printed: the view at the first check, and by the permission list as well with that check
+  switched off. So was `SELECT` for `public` on the schema `sys`, though a permission on a schema
+  is still printed without the schema's name. LocalDB has no object in `sys` with a positive ID on
+  which a grant can be made (a new database has 115, system and internal tables, and a grant on
+  each was refused, Msg 15151), so the grant now kept cannot happen there. In a copy where the
+  kept condition names `dbo` instead of `sys`, `SELECT` for `public` on the marked table was kept
+  and the file committed, and so was `SELECT` on one of its columns; refused, each with its object
+  named, were the same grant `WITH GRANT OPTION`, a `DENY`, an `UPDATE`, a grant to the app, and a
+  grant on a table not marked. Every case of the run before the change gave the same answer again,
+  a grant to `public` on a table now with the table's name.
 - A value made of an ID, a quote and a statement, passed to `sqlcmd` as the runner never passes
   it: the statement ran, the lists named the user it created and the run was refused, and that
   user was still there afterwards, because it was made before the transaction began. The file
@@ -1813,16 +1847,15 @@ skipped. actionlint 1.7.12 with ShellCheck 0.11.0 read the run blocks of the thr
 found nothing; an unquoted variable planted in a copy is reported.
 
 **Not measured.** The trial sent requests by hand, and the first deployment has run steps 1 to 5
-and met step 6's first check; read-only commands, offline tests and local stacks cannot show the
-rest. Each line is checked at the step named, in the rest of the first deployment.
+and met step 6's checks; read-only commands, offline tests and local stacks cannot show the rest.
+Each line is checked at the step named, in the rest of the first deployment.
 
 | What | Where it shows |
 | --- | --- |
-| **This folder's own files on Azure, past what steps 1 to 6 met** ([Measured on Azure](#measured-on-azure)): the users file past its first check, `main.bicep`'s second step (nine more resources) with its what-if, `secrets.ps1` writing the app's file, `deploy.py`, and the workflow `deploy.yml` | steps 6, 9 and 15 to 17 |
+| **This folder's own files on Azure, past what steps 1 to 6 met** ([Measured on Azure](#measured-on-azure)): the users file past its two checks, `main.bicep`'s second step (nine more resources) with its what-if, `secrets.ps1` writing the app's file, `deploy.py`, and the workflow `deploy.yml` | steps 6, 9 and 15 to 17 |
 | What the template sends and neither the trial nor steps 2 to 4 showed: the four conditions of the policy named above at work (the definition is deployed and assigned), the action group and the four alert rules | step 15 |
 | How the app's scale reads back (a value Azure leaves out is read by `deploy.py` as its default). The logs settings read back at steps 3 and 4 | step 15 |
-| The users file on Azure SQL past its first check. A new database there held no trigger, no module but the view that check now leaves out, and no principal above the engine's four but the fixed roles (measured, step 6). What the lists before the commit may still meet is not settled by the Microsoft pages read: a role member other than `dbo` in `db_owner`, a right of `public` on an object whose ID is not negative (that view, which every user who can connect may read, is one to look for), `guest` allowed to connect. Dropping and creating a user inside its transaction; its second form, `FROM EXTERNAL PROVIDER WITH OBJECT_ID` | step 6; the second form only if it is asked for |
-| The runner on Azure: the server's refusal as the script's own pattern reads it (the trial read the words "is not allowed to access the server" and an address in quotes, with a looser pattern), and the temporary firewall rule deleted with the lock on the database in place | step 6 |
+| The users file on Azure SQL past its two checks: the two users made, the lists before the commit clean with them in place, and a second run that changes nothing. Before the users existed, every list was read with the file's own conditions, and the one row the file did not expect is now kept (measured, step 6); what the file's own statements add to the lists there has not been seen. Dropping and creating a user inside its transaction; its second form, `FROM EXTERNAL PROVIDER WITH OBJECT_ID` | step 6; the second form only if it is asked for |
 | The two users this folder makes, signing in from a job; the probe job's request accepted by the Deny policy; the SDK image building step 7's program inside half a vCPU (the trial's own program built there); that program's exit 3, which only a token refused on Azure can give | step 7 |
 | A container of the app that asks for a token and names no identity gets none (read on Microsoft's page: such a request is answered for a system-assigned identity, and the app has none) | not provoked |
 | `-ProveSqlSignInRefused` as the script sends it (the trial's refusal was provoked without naming the sign-in method) | step 8 |

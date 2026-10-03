@@ -12,7 +12,7 @@ compile, the scripts are tested against stand-ins and, where a local engine can 
 real. On 2026-10-02 the resource group did not exist (`az group exists` answered `false`; the same
 command answers `true` for a group that is there). On 2026-10-03 the first deployment began. Its
 steps 1 to 5 ran as the runbook writes them, and what they read back has a table of its own
-below; its step 6 stopped at the users file's first check, as told under
+below; its step 6 stopped twice before the users were made, as told under
 [the second reopened choice](#2-how-the-two-database-users-are-created). What ran on Azure before,
 on 2026-10-02, is a throwaway trial: a resource group in the same subscription and region, created
 and deleted that day, in which requests of the shapes these files make were sent by hand: not by
@@ -204,7 +204,8 @@ holds a role on any Azure resource. See [the first reopened choice](#1-how-the-a
 as the server's Microsoft Entra administrator, and the file guards itself.** It refuses a database
 that holds a trigger or a module (since 2026-10-03 one kind of module is left out, an object in the
 schema `sys` marked `is_ms_shipped`: see the second reopened choice), and before it commits it
-compares every user, role, membership, permission and schema owner with what it expects.
+compares every user, role, membership, permission and schema owner with what it expects (since
+the same day that includes one grant of Azure's own, `SELECT` for `public` on such an object).
 **Nothing else is run as administrator in that database.** See
 [the second reopened choice](#2-how-the-two-database-users-are-created).
 
@@ -333,41 +334,60 @@ typed value, but text that `sqlcmd` put in would run above its transaction (meas
 stays: the refusal is known by its sentence, because `sqlcmd` prints no number for an error at
 sign-in (measured with a refused login on a local server). The first is lost: on a local engine
 the file ran with stand-in users, and the file itself has run on one Azure SQL database, on
-2026-10-03, only as far as its first check.
+2026-10-03, only as far as its first check, and not since its two checks were narrowed.
 
 **Measured on Azure, by hand.** Azure SQL runs `CREATE USER ... WITH SID, TYPE = E`. go-sqlcmd
 signs in through the `az login` session, and the server's refusal of an address names that
 address.
 
 **Met at the first deployment, on 2026-10-03.** Step 6 ran `sql-principals.ps1` against the
-database `AzureBank`, which step 2 had created that day. The file stopped at its first check:
-`Code found: [database_firewall_rules]`, Msg 50003. Nothing ran, and the temporary firewall rule
-was removed. A read-only query of the catalog, as the Entra administrator, found that one module
-and nothing else: the view `database_firewall_rules`, in the schema `sys`, marked
-`is_ms_shipped`, created on 2026-08-28, before the database. No trigger, and no principal above
-the engine's four but the fixed roles. The local engine has no such view, which is why the local
-runs never met it. So the first check, and the same list before the commit, now leave out a
-module only when it is both in `sys` and marked `is_ms_shipped`; every trigger still counts. Each
-condition alone says less. No object can be created in `sys`
+database `AzureBank`, which step 2 had created that day, twice. Each run stopped at the file's
+first check: `Code found: [database_firewall_rules]`, Msg 50003. Nothing ran. The script knew the
+server's refusal of this machine by its own pattern, allowed the address with its temporary rule,
+and deleted the rule at the end with the lock on the database in place. A read-only query of the
+catalog, as the Entra administrator, found that one module and nothing else: the view
+`database_firewall_rules`, in the schema `sys`, marked `is_ms_shipped`, created on 2026-08-28,
+before the database. No trigger, and no principal above the engine's four but the fixed roles. The
+local engine has no such view, which is why the local runs never met it. So the first check, and
+the same list before the commit, now leave out a module only when it is both in `sys` and marked
+`is_ms_shipped`; every trigger still counts. Each condition alone says less. No object can be
+created in `sys`
 (<https://learn.microsoft.com/en-us/sql/relational-databases/security/authentication-access/ownership-and-user-schema-separation>,
 2024-05-09), but `is_ms_shipped` is not reserved to `sys`: on a local SQL Server a sysadmin marks
 a view in `dbo` with it, and change data capture in Azure SQL Database makes objects marked with
 it in the schema `cdc`
 (<https://learn.microsoft.com/en-us/azure/azure-sql/database/change-data-capture-overview>,
 2025-09-24). No Microsoft page read says that a user cannot set it on Azure SQL Database. Both
-pages were read on 2026-10-03. The file has not yet run past that check on Azure.
+pages were read on 2026-10-03.
 
-**Not measured.** The file past its first check on Azure SQL: that a new database there holds
-only the rows the lists before the commit expect (no trigger, no module but that view, and no
-principal beyond the engine's were measured; role members, rights and schema owners were not),
-and that dropping and creating a user inside its transaction works there. Its second form,
+**The second stop, found before the run.** Before step 6 ran again, a read-only query with the
+file's own conditions listed what its lists before the commit would refuse in that database, the
+users not yet made. One row and nothing else: `SELECT`, granted to `public`, on that view, whose
+ID is positive. No trigger, no module but that view, no user, no role, no schema owned by a user,
+and no role member but `dbo` in `db_owner`, which the file expects. The permission list kept
+`public`'s grants on objects only when their ID is negative, so it would have refused that row,
+and printed it without saying on what. It now also keeps `SELECT`, granted to `public`, on an
+object in `sys` marked `is_ms_shipped`, the pair the first check reads, and nothing wider: not a
+`DENY`, not a grant that may be passed on, no other permission, grantee or class. That is safe
+for what the file guards: it is a right to read and creates no code, so nothing runs as the
+administrator that did not before; nobody can create an object in `sys`; and it is `public`'s,
+so the two users get from it what every user gets. Microsoft's page on the view says that
+read-only access to it is available to every user with permission to connect to the database
+(<https://learn.microsoft.com/en-us/sql/relational-databases/system-catalog-views/sys-database-firewall-rules-azure-sql-database>,
+2025-07-29, read on 2026-10-03). And each refused permission on an object now prints the object's
+schema and name. The file has not yet run on Azure since either change.
+
+**Not measured.** The file past its two checks on Azure SQL: the users made, and the lists before
+the commit clean with them in place (before the users existed every list was read, above; what
+the file's own statements add there has not been seen), and that dropping and creating a user
+inside its transaction works there. Its second form,
 `FROM EXTERNAL PROVIDER WITH OBJECT_ID`: the trial looked the identity up by its name.
 
 **If Azure refuses.** The sign-in method fails: a second method, then the older ODBC `sqlcmd`
 with a sign-in window, the same file each time. The lists refuse a database nobody has touched:
 the file's expected rows are corrected, which is a defect and not a choice (on 2026-10-03 it was
-the first check, above). The statement is refused: `FROM EXTERNAL PROVIDER WITH OBJECT_ID`, by
-ID and never by a name. That is refused too: a stop.
+the first check, and then the permission list, above). The statement is refused:
+`FROM EXTERNAL PROVIDER WITH OBJECT_ID`, by ID and never by a name. That is refused too: a stop.
 
 ### 3. Where the logs go
 
@@ -532,7 +552,7 @@ twice the cap: the logs go off. The alert is refused: it is left out, one of fou
   its second package fails here instead of at the first open on Azure.
   `Unit/Tools/SeederCommandTests`: `migrate`'s line for a refused login names both ways to sign
   in.
-- `infra/test_scripts.py` and `infra/test_deploy.py`, 260 tests: the two PowerShell scripts run
+- `infra/test_scripts.py` and `infra/test_deploy.py`, 262 tests: the two PowerShell scripts run
   for real against a stand-in for the Azure CLI and a stand-in for `sqlcmd`; the users file is
   read as text, to keep each guard, every `WHERE` and every `IF` where it is; the compiled
   templates are read (the two identities and the one each resource carries, no database
@@ -548,7 +568,11 @@ twice the cap: the logs go off. The alert is refused: it is left out, one of fou
   left when the switch for the object ID went, and to how the verdict is read. So do the four
   made later that day to the first check's narrowing: its schema condition dropped, its
   `is_ms_shipped` condition dropped, the exclusion applied to triggers too, and the exclusion
-  widened to every schema.
+  widened to every schema. So do the thirteen made to the permission list's new condition and to
+  how a refused permission is printed: either half of the pair dropped, any permission, any
+  grantee or public and the app, a `DENY` or a grant that may be passed on, no state, no class or
+  schemas too, the pair read from `sys.objects`, the object's name left out, its ID printed
+  instead.
 
 **Measured**, beyond the Context table.
 
@@ -565,7 +589,12 @@ twice the cap: the logs go off. The alert is refused: it is left out, one of fou
   `DENY` for `public` and `CONTROL` for the migrator. Run again on 2026-10-03, on the file
   without the switch for the object ID, and again that day after the first check was narrowed,
   with two oddities more, a view and a trigger in `dbo` each marked `is_ms_shipped`: both refused
-  at the first check, and every earlier case answered as before.
+  at the first check, and every earlier case answered as before. And again after the permission
+  list changed: `SELECT` for `public` on a view, a table and a table marked `is_ms_shipped`, all
+  in `dbo`, each refused with the object's schema and name printed. The local engine has no object
+  in `sys` on which the grant now kept can be made, so in a copy where that condition names `dbo`
+  instead the grant was kept, and its neighbours (`WITH GRANT OPTION`, a `DENY`, an `UPDATE`, a
+  grant to the app, a table not marked) were refused.
 - The runner's tool checks against the real programs: go-sqlcmd passes, the ODBC `sqlcmd` is
   refused as the default tool and accepted on its own road, and a program validly signed by
   someone else is refused.
