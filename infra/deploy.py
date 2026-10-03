@@ -19,8 +19,9 @@ A full run, in order:
      app's shape again;
   5. wait until the revision that ran before has stopped answering, then smoke-test the address.
 If the new revision never gets ready, the app's shape has drifted when it is read again, or the
-smoke test gets a wrong answer, the app is put back on the template it had at step 1 and the run
-still fails. The schema is never put back.
+smoke test gets a wrong answer, the script tries to put the app back on the template it had at
+step 1, and the run still fails. If that put-back fails too, the run says so: the app may then be
+serving a broken revision. The schema is never put back.
 
 A migration leaves one line here, its verdict: the execution's name, status, times, exit code and
 a one-word reason. What it printed is never fetched by a deployment: the log of a public

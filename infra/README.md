@@ -1160,7 +1160,8 @@ looked for. The text could not be printed in time anyway: in the trial a line co
 six and a half minutes after it was written (the median), and the verdict as soon as the run had
 ended.
 
-**If step 5 or step 7 fails, the app is put back** on the template it had at step 2, under a new
+**If step 5 or step 7 fails, the script tries to put the app back** on the template it had at
+step 2 (if that fails too, the run says the app may be serving a broken revision), under a new
 revision, and the run still fails, saying "put back to `<tag>`; the schema stays where the
 migration left it". The sign-in is tried up to four times and the last try decides. If the last
 try is rate limited (429) or gets no answer (the connection refused, reset, closed or timed out),
