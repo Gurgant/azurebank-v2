@@ -154,7 +154,9 @@ before the API starts: `migrate` creates it and applies the migrations, then `se
 users and their history (ADR-0060; `backend/tools/AzureBank.Seeder/README.md` has their variables
 and exit codes). Both run again on every `up` and change nothing the second time. *(Until
 2026-10-01 the header had one seed command, run from the host: `reset --confirm`, which drops the
-database first.)* The database is published on 127.0.0.1:14330, not 1433, for tools on the host: a
+database first.)* `compose.demo.yaml`, an override of that file, turns the public demo on:
+`seed-pool` fills the database with the demo pool's private copies in place of `seed` (ADR-0062);
+its header says how to run it. The database is published on 127.0.0.1:14330, not 1433, for tools on the host: a
 SQL Server installed on the host usually holds 1433, publishing over it does not fail, and a tool
 aimed at it then reaches the host's instance instead. Measured on 2026-09-25: the e2e suite, 24 of
 24, against the two containers. Sign in from a Chromium browser, as that run does: the `__Host-`
