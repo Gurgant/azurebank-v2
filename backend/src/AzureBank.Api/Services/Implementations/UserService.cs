@@ -49,11 +49,32 @@ public class UserService : IUserService
         // current culture — a Turkish-I difference would silently mismatch).
         var normalizedTag = azureTag.ToLowerInvariant();
 
+        /*
+          A HANDLE IS RESOLVED ONLY INSIDE THE CALLER'S DEMO COPY. A copy is three users that find
+          and pay each other and nobody else, so a handle that another copy holds is answered below
+          exactly as a handle nobody holds: any difference would tell a visitor that some other copy
+          uses it.
+
+          NO FLAG IS READ HERE. Outside the demo no user belongs to a copy, the caller's copy and
+          the other user's are both null, and null matches null: every user goes on resolving every
+          other. On SQL Server too: EF Core sends a null copy as IS NULL, not as an equals sign,
+          which would match no row there (DemoIsolationSqlServerTests holds it). A caller whose own
+          row is gone has no copy to read and is treated as a user outside every copy: it finds
+          nothing inside a copy.
+
+          Only the one column is read, for the reason the next query gives.
+          DemoIsolationSqlServerTests reads what both statements send.
+        */
+        var callerCopy = await _context.Users
+            .Where(u => u.Id == currentUserId)
+            .Select(u => u.DemoCopyId)
+            .FirstOrDefaultAsync(cancellationToken);
+
         // EXACT match only — no substring/prefix search (ADR-0014). Project to just the
         // fields the response needs so the query never materialises the full ApplicationUser
         // (PasswordHash / PinHash / SecurityStamp) into memory.
         var match = await _context.Users
-            .Where(u => u.AzureTag == normalizedTag)
+            .Where(u => u.AzureTag == normalizedTag && u.DemoCopyId == callerCopy)
             .Select(u => new { u.Id, u.FirstName, u.LastName })
             .FirstOrDefaultAsync(cancellationToken);
 

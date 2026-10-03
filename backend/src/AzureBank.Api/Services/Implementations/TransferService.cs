@@ -176,6 +176,14 @@ public class TransferService : ITransferService
     /// existing TransferEndpointTests are what prove the extraction faithful — they exercise all
     /// four refusals through the endpoint and never touched this method.
     /// </para>
+    ///
+    /// <para>
+    /// A PAYEE IS RESOLVED ONLY INSIDE THE SENDER'S DEMO COPY. A handle that another copy holds
+    /// gets the 404 <c>Recipient</c> of a handle nobody holds: at the mint, where it comes before
+    /// the PIN is looked at, and at the transfer. No flag is read on this path: outside the demo
+    /// neither user belongs to a copy, both sides of the comparison are null and null matches
+    /// null, so every user goes on paying every other.
+    /// </para>
     /// </summary>
     private async Task<(ApplicationUser Sender, ApplicationUser Recipient, Account RecipientAccount)>
         ResolveExternalPayeeAsync(Guid userId, string recipientAzureTag, CancellationToken cancellationToken)
@@ -195,10 +203,12 @@ public class TransferService : ITransferService
                 ErrorCodes.SelfTransferNotAllowed);
         }
 
-        // Find recipient by AzureTag
+        // Find recipient by AzureTag, among the users of the sender's copy
         var recipient = await _context.Users
             .Include(u => u.Accounts)
-            .FirstOrDefaultAsync(u => u.AzureTag == recipientAzureTag.ToLower(), cancellationToken);
+            .FirstOrDefaultAsync(
+                u => u.AzureTag == recipientAzureTag.ToLower() && u.DemoCopyId == senderUser.DemoCopyId,
+                cancellationToken);
 
         if (recipient == null)
         {

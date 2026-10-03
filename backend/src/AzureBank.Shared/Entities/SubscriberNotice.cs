@@ -33,8 +33,10 @@ namespace AzureBank.Shared.Entities;
 /// </para>
 /// <para>
 /// Not a <c>BaseEntity</c>, like <see cref="StepUpAuthorization"/>: explicit instants, no managed
-/// timestamps, no soft delete. Nothing deletes from this table; a delivered row is the only record
-/// that a notice was rendered at all.
+/// timestamps, no soft delete. Nothing deletes from this table but the database's cascade from a
+/// deleted user, and the one statement that deletes users is the Seeder's recycler's, which deletes
+/// a demo copy's (ADR-0062); this said "nothing deletes" until then. A delivered row is the only
+/// record that a notice was rendered at all.
 /// </para>
 /// </remarks>
 public class SubscriberNotice

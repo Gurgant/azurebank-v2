@@ -312,7 +312,7 @@ AzureBank.Backend/
 | [**AzureBank.Tests**](tests/AzureBank.Tests/README.md)                 | Test Project  | Unit, integration, and architecture tests                          |
 | **AzureBank.Bff.Tests**                                                | Test Project  | BFF gateway integration tests — the second "Test run for" line of the gate |
 | **AzureBank.AuditVerifier**                                            | Console Tool  | `verify`, `anchor`, `evidence`, `export` and `notify` over the audit trail |
-| [**AzureBank.Seeder**](tools/AzureBank.Seeder/README.md)               | Console Tool  | `migrate`, `seed` and `reset`; also what the tools image runs      |
+| [**AzureBank.Seeder**](tools/AzureBank.Seeder/README.md)               | Console Tool  | `migrate`, `seed`, `reset`, and the demo pool's `seed-pool` and `recycle`; also what the tools image runs |
 
 ---
 

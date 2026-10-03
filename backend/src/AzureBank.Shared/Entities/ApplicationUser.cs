@@ -50,6 +50,16 @@ public class ApplicationUser : IdentityUser<Guid>
     /// </remarks>
     public int SessionStamp { get; set; }
 
+    /// <summary>
+    /// The demo copy this user belongs to. Null for every user outside the demo.
+    /// </summary>
+    /// <remarks>
+    /// The owner and the two contacts of a copy carry the same id, a foreign key to
+    /// <see cref="DemoCopy"/>. This column, and no name pattern or age, is what says which users
+    /// are a copy's.
+    /// </remarks>
+    public Guid? DemoCopyId { get; set; }
+
     [Required]
     public required string FirstName { get; set; }
     [Required]

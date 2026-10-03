@@ -16,6 +16,8 @@
       dotnet run [project tools/AzureBank.Seeder] migrate
       dotnet run [project tools/AzureBank.Seeder] seed
       dotnet run [project tools/AzureBank.Seeder] reset [confirm]
+      dotnet run [project tools/AzureBank.Seeder] seed-pool [copies]
+      dotnet run [project tools/AzureBank.Seeder] recycle
   -->
 
   <PropertyGroup>
@@ -55,6 +57,16 @@
     <None Update="appsettings.Development.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The recycler's controls are internal: a test runs the recycler's own delete with one
+      safeguard removed (the contacts' rows, the closed accounts, the try around each copy) and
+      shows what that safeguard is for. No command sets them: DemoCopyBoundaryTests fails when code
+      that ships names one.
+    -->
+    <InternalsVisibleTo Include="AzureBank.Tests" />
   </ItemGroup>
 
 </Project>

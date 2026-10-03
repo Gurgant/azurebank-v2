@@ -250,8 +250,10 @@ public class Transaction : BaseEntity
 ```
 
 **Immutability:**
-- Transactions cannot be modified or deleted
-- Enforced at DbContext level
+- A tracked transaction cannot be modified or deleted
+- Enforced at DbContext level, in `SaveChanges`: a set-based statement never reaches the check, and
+  the Seeder's recycler deletes a demo copy's ledger that way (ADR-0062). Until then this said
+  transactions cannot be modified or deleted, with no exception
 - Ensures audit trail integrity
 
 ---

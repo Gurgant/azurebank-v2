@@ -116,6 +116,9 @@ namespace AzureBank.Infrastructure.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<Guid?>("DemoCopyId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<string>("Email")
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
@@ -186,6 +189,9 @@ namespace AzureBank.Infrastructure.Migrations
 
                     b.HasIndex("AzureTag")
                         .IsUnique();
+
+                    b.HasIndex("DemoCopyId")
+                        .HasFilter("[DemoCopyId] IS NOT NULL");
 
                     b.HasIndex("NormalizedEmail")
                         .IsUnique()
@@ -359,6 +365,61 @@ namespace AzureBank.Infrastructure.Migrations
                         .HasDatabaseName("IX_AuditEvents_Event_OccurredAt");
 
                     b.ToTable("AuditEvents", (string)null);
+                });
+
+            modelBuilder.Entity("AzureBank.Shared.Entities.DemoCopy", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("ClaimId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("ClaimedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<byte[]>("ClientKey")
+                        .HasMaxLength(32)
+                        .HasColumnType("binary(32)")
+                        .IsFixedLength();
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Writes")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0);
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ClaimId")
+                        .IsUnique()
+                        .HasFilter("[ClaimId] IS NOT NULL");
+
+                    b.HasIndex("CreatedAt")
+                        .HasDatabaseName("IX_DemoCopies_Free")
+                        .HasFilter("[ClaimedAt] IS NULL");
+
+                    b.HasIndex("OwnerUserId")
+                        .IsUnique();
+
+                    b.HasIndex("ClientKey", "ClaimedAt")
+                        .HasDatabaseName("IX_DemoCopies_ClientKey")
+                        .HasFilter("[ClientKey] IS NOT NULL");
+
+                    b.ToTable("DemoCopies", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_DemoCopies_ClaimIsWhole", "([ClaimedAt] IS NULL AND [ClaimId] IS NULL) OR ([ClaimedAt] IS NOT NULL AND [ClaimId] IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_DemoCopies_DeletedWasClaimed", "[DeletedAt] IS NULL OR [ClaimedAt] IS NOT NULL");
+                        });
                 });
 
             modelBuilder.Entity("AzureBank.Shared.Entities.IdempotencyRecord", b =>
@@ -796,6 +857,14 @@ namespace AzureBank.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("AzureBank.Shared.Entities.ApplicationUser", b =>
+                {
+                    b.HasOne("AzureBank.Shared.Entities.DemoCopy", null)
+                        .WithMany()
+                        .HasForeignKey("DemoCopyId")
+                        .OnDelete(DeleteBehavior.NoAction);
                 });
 
             modelBuilder.Entity("AzureBank.Shared.Entities.RefreshToken", b =>

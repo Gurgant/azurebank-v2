@@ -171,6 +171,13 @@ mint now, which is the only place on this path that can spend an attempt.
 **Not done, and not pretended otherwise.** Withdraw keeps its in-body PIN with the same weakness and
 should follow this route as its own task. Nothing sweeps the table — rows are the Art. 72 evidence B3
 assembles, so a retention policy is a later decision that brings its own index.
+*(Amended 2026-10-03, [ADR-0062](0062-demo-visitors-get-private-copies-from-a-prepared-pool.md):
+one statement deletes from it, and only a demo copy's rows. The Seeder's recycler removes the
+authorisations of a copy's users, by `UserId`, in the transaction that deletes the copy. Nothing
+sweeps the table by age, and no row of a user outside every demo copy is reachable from that
+statement. The copy's ledger leaves in the same transaction, so the evidence of a copy's transfer
+leaves too: `evidence` answers `NOT ASSEMBLED` for its number and exits 4, while the audit row that
+names both the transfer and the authorisation stays.)*
 
 _2026-09-14: the audit row a consumed authorisation buys now names it. `AuditDetails` writes
 `{"authorizationId":"<id>"}` into the `Detail` of `MoneyTransferred`, `MoneyTransferredInternally`

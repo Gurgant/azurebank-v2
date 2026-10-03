@@ -30,9 +30,10 @@ namespace AzureBank.Tests.Integration;
 /// would not be the tool as it ships.
 /// </para>
 /// <para>
-/// The child gets <c>DOTNET_ENVIRONMENT=Production</c> and has the connection string and the pepper
-/// REMOVED from its environment unless a test sets them, so a developer's shell or user-secrets
-/// cannot make a test pass. It starts in the temporary folder, never in the Seeder's own.
+/// The child gets <c>DOTNET_ENVIRONMENT=Production</c> and has the connection string, the pepper and
+/// every <c>Demo__</c> setting REMOVED from its environment unless a test sets them, so a
+/// developer's shell or user-secrets cannot make a test pass. It starts in the temporary folder,
+/// never in the Seeder's own.
 /// </para>
 /// </remarks>
 public sealed class SeederProcessTests
@@ -40,14 +41,60 @@ public sealed class SeederProcessTests
     private const string AzureConnection =
         "Server=tcp:not_a_server.database.windows.net,1433;Database=x;User Id=u;Password=not-a-secret;Connect Timeout=1";
 
+    // Port 1 on loopback: nothing listens there. A command that should have refused and went on
+    // instead fails there, with exit 1.
+    private const string AbsentServer =
+        "Server=127.0.0.1,1;Database=x;User Id=u;Password=not-a-secret;Connect Timeout=1";
+
     [Fact]
-    public async Task Help_WithNoSecretAtAll_ListsTheThreeCommands_AndExitsZero()
+    public async Task Help_WithNoSecretAtAll_ListsTheFiveCommands_AndExitsZero()
     {
         var (output, exitCode) = await SeederProcess.Run(["--help"]);
 
         using var all = new AssertionScope();
         exitCode.Should().Be(0, SeederProcess.Shown(output));
-        output.Should().Contain("migrate").And.Contain("seed").And.Contain("reset");
+        output.Should().Contain("migrate").And.Contain("seed").And.Contain("reset")
+            .And.Contain("seed-pool").And.Contain("recycle");
+        output.Should().NotContain("Unhandled exception");
+    }
+
+    [Theory]
+    [InlineData("seed-pool")]
+    [InlineData("recycle")]
+    public async Task WithTheDemoOff_SeedPoolAndRecycle_ExitTwo_WithTheirRefusal(string command)
+    {
+        // The flag is off unless the environment turns it on, and here nothing does. Exit 2 is the
+        // process's own code: a job reads it as "nothing was done, change the configuration".
+        var (output, exitCode) = await SeederProcess.Run(
+            [command],
+            ("ConnectionStrings__DefaultConnection", AbsentServer),
+            ("Security__PinPepper", SeederHost.Pepper),
+            ("Database__MaxRetryCount", "0"));
+
+        using var all = new AssertionScope();
+        exitCode.Should().Be(2, SeederProcess.Shown(output));
+        output.Should().Contain($"{command} refused: Demo:Enabled is not true");
+        output.Should().Contain("Nothing was opened");
+        output.Should().NotContain("Unhandled exception");
+    }
+
+    [Fact]
+    public async Task AFlagThatIsNotTrueOrFalse_ExitsTwo_NamingTheVariable_AndNotItsValue()
+    {
+        // A job whose flag was typed "yes" is a configuration to change, not a run to try again:
+        // exit 2, as for a flag that is off, and never the value it was given.
+        var (output, exitCode) = await SeederProcess.Run(
+            ["recycle"],
+            ("ConnectionStrings__DefaultConnection", AbsentServer),
+            ("Security__PinPepper", SeederHost.Pepper),
+            ("Database__MaxRetryCount", "0"),
+            ("Demo__Enabled", "canary-value-7f3a"));
+
+        using var all = new AssertionScope();
+        exitCode.Should().Be(2, SeederProcess.Shown(output));
+        output.Should().Contain("recycle refused: Demo:Enabled holds a value that cannot be read as Boolean.");
+        output.Should().Contain("Nothing was opened");
+        output.Should().NotContain("canary");
         output.Should().NotContain("Unhandled exception");
     }
 
@@ -112,7 +159,8 @@ public sealed class SeederProcessTests
 
 /// <summary>
 /// The same child process against a real SQL Server: <c>migrate</c> started from a folder that is
-/// not the Seeder's still reads the Seeder's own settings.
+/// not the Seeder's still reads the Seeder's own settings, and <c>recycle</c> ends with the pool's
+/// own exit code.
 /// </summary>
 /// <remarks>
 /// The tool used to take its content root from the current directory. Started from anywhere else
@@ -168,6 +216,42 @@ public sealed class SeederProcessSqlServerTests : IDisposable
         output.Should().Contain("The database is at ");
         output.Should().NotContain("Executed DbCommand", "the tool's settings hold EF's command log at Warning");
     }
+
+    [SqlServerFact]
+    public async Task Recycle_WithTheLowMarkAboveThePoolsSize_ExitsTen_AsTheProcessesOwnExitCode()
+    {
+        // The one claim about the pool's exit codes that a test in process cannot make: that the
+        // code a run ends with is the code the process returns. System.CommandLine returns what the
+        // handler sets on its invocation, and a value put anywhere else is lost. A job runner reads
+        // this number and nothing else.
+        (string Name, string Value)[] demo =
+        [
+            ("ConnectionStrings__DefaultConnection", _connectionString),
+            ("Security__PinPepper", SeederHost.Pepper),
+            ("Demo__Enabled", "true"),
+            ("Demo__Pool__TargetFree", "2"),
+            ("Demo__Pool__LowMark", "2"),
+        ];
+
+        var (migrated, migrateExit) = await SeederProcess.Run(["migrate"], demo);
+        migrateExit.Should().Be(0, "ARRANGE: the database is migrated. " + SeederProcess.Shown(migrated));
+
+        // One free copy, by the number on the command line.
+        var (seeded, seedExit) = await SeederProcess.Run(["seed-pool", "1"], demo);
+        using (new AssertionScope())
+        {
+            seedExit.Should().Be(0, SeederProcess.Shown(seeded));
+            seeded.Should().Contain("pool: free=1 was=0 ").And.Contain(" seeded=1 ").And.Contain("result=PoolOk");
+        }
+
+        // The run finds one free copy where the low mark is two: exit 10, and it tops the pool up.
+        var (recycled, recycleExit) = await SeederProcess.Run(["recycle"], demo);
+
+        using var all = new AssertionScope();
+        recycleExit.Should().Be(10, SeederProcess.Shown(recycled));
+        recycled.Should().Contain("pool: free=2 was=1 ").And.Contain(" seeded=1 ").And.Contain("result=PoolLow");
+        recycled.Should().NotContain("Unhandled exception");
+    }
 }
 
 /// <summary>Starts the Seeder's dll as a child process and returns what it printed and its exit code.</summary>
@@ -202,6 +286,14 @@ internal static class SeederProcess
         start.Environment["DOTNET_ENVIRONMENT"] = "Production";
         start.Environment.Remove("ConnectionStrings__DefaultConnection");
         start.Environment.Remove("Security__PinPepper");
+
+        // Nor can a demo setting left in the shell: the pool's commands refuse, or count, by them.
+        foreach (var name in start.Environment.Keys
+            .Where(key => key.StartsWith("Demo__", StringComparison.OrdinalIgnoreCase))
+            .ToList())
+        {
+            start.Environment.Remove(name);
+        }
         foreach (var (name, value) in environment)
         {
             start.Environment[name] = value;

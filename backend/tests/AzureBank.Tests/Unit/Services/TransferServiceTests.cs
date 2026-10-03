@@ -319,6 +319,111 @@ public class TransferServiceTests : IDisposable
 
     #endregion
 
+    #region A payee is resolved only inside the sender's demo copy
+
+    /*
+      The transfer and its mint share one resolver, and it hands another user to the caller. In the
+      demo a copy's users pay each other and nobody else, so a handle in another copy must be
+      refused EXACTLY as a handle nobody holds: 404 Recipient, the same sentence. Outside the demo
+      every user's copy is null and null matches null; every other test in this file runs that way.
+    */
+
+    private async Task<(ApplicationUser Sender, Account SenderAccount, ApplicationUser Recipient)> ScenarioInCopiesAsync(
+        Guid? senderCopy, Guid? recipientCopy)
+    {
+        var (sender, senderAccount, recipient, _) = await SetupTransferScenarioAsync();
+        sender.DemoCopyId = senderCopy;
+        recipient.DemoCopyId = recipientCopy;
+        await _context.SaveChangesAsync();
+        return (sender, senderAccount, recipient);
+    }
+
+    private static string WithoutTheHandle(Exception refusal, string handle) =>
+        refusal.Message.Replace(handle, "<handle>", StringComparison.Ordinal);
+
+    [Fact]
+    public async Task TransferAsync_APayeeInAnotherCopy_IsRefusedExactlyAsAnUnknownPayee()
+    {
+        var (sender, senderAccount, recipient) = await ScenarioInCopiesAsync(Guid.NewGuid(), Guid.NewGuid());
+
+        TransferRequest To(string handle) =>
+            new() { FromAccountId = senderAccount.Id, RecipientAzureTag = handle, Amount = 100m };
+
+        var foreign = await ((Func<Task>)(() => _sut.TransferAsync(sender.Id, To(recipient.AzureTag), Presented())))
+            .Should().ThrowAsync<NotFoundException>("the payee belongs to another copy");
+        var unknown = await ((Func<Task>)(() => _sut.TransferAsync(sender.Id, To("nobody_here"), Presented())))
+            .Should().ThrowAsync<NotFoundException>();
+
+        WithoutTheHandle(foreign.Which, recipient.AzureTag).Should().Be(WithoutTheHandle(unknown.Which, "nobody_here"));
+        foreign.Which.ErrorCode.Should().Be(unknown.Which.ErrorCode);
+        (await _context.Transactions.CountAsync()).Should().Be(0, "nothing moved");
+    }
+
+    [Fact]
+    public async Task AuthoriseTransferAsync_APayeeInAnotherCopy_IsRefusedExactlyAsAnUnknownPayee_AndCostsNoPinAttempt()
+    {
+        var (sender, senderAccount, recipient) = await ScenarioInCopiesAsync(Guid.NewGuid(), Guid.NewGuid());
+
+        TransferAuthorizationRequest For(string handle) =>
+            new() { FromAccountId = senderAccount.Id, RecipientAzureTag = handle, Amount = 100m, Pin = TestPin };
+
+        var foreign = await ((Func<Task>)(() => _sut.AuthoriseTransferAsync(sender.Id, For(recipient.AzureTag))))
+            .Should().ThrowAsync<NotFoundException>("the payee belongs to another copy");
+        var unknown = await ((Func<Task>)(() => _sut.AuthoriseTransferAsync(sender.Id, For("nobody_here"))))
+            .Should().ThrowAsync<NotFoundException>();
+
+        WithoutTheHandle(foreign.Which, recipient.AzureTag).Should().Be(WithoutTheHandle(unknown.Which, "nobody_here"));
+        foreign.Which.ErrorCode.Should().Be(unknown.Which.ErrorCode);
+        (await _context.StepUpAuthorizations.CountAsync()).Should().Be(0, "nothing was minted");
+        _pinVerifierMock.Verify(
+            v => v.VerifyPinAsync(It.IsAny<Guid>(), It.IsAny<string>()), Times.Never,
+            "an unknown payee is refused before the PIN is looked at, and so is a foreign one");
+    }
+
+    [Theory]
+    [InlineData(true, false)] // a copy's user pays nobody outside the copy
+    [InlineData(false, true)] // and nobody outside a copy pays into it
+    public async Task AuthoriseTransferAsync_BetweenACopyAndAUserOutsideEveryCopy_IsRefusedAsUnknown(
+        bool senderInACopy, bool recipientInACopy)
+    {
+        var (sender, senderAccount, recipient) = await ScenarioInCopiesAsync(
+            senderInACopy ? Guid.NewGuid() : null, recipientInACopy ? Guid.NewGuid() : null);
+
+        var act = () => _sut.AuthoriseTransferAsync(sender.Id, new TransferAuthorizationRequest
+        {
+            FromAccountId = senderAccount.Id,
+            RecipientAzureTag = recipient.AzureTag,
+            Amount = 100m,
+            Pin = TestPin
+        });
+
+        await act.Should().ThrowAsync<NotFoundException>();
+        (await _context.StepUpAuthorizations.CountAsync()).Should().Be(0, "nothing was minted");
+    }
+
+    /// <summary>
+    /// CONTROL: green before the copy is compared and after. It shows the refusals beside it are
+    /// about the copy, not about the mint having stopped working for users that have one.
+    /// </summary>
+    [Fact]
+    public async Task AuthoriseTransferAsync_APayeeInTheSendersOwnCopy_Mints()
+    {
+        var copy = Guid.NewGuid();
+        var (sender, senderAccount, recipient) = await ScenarioInCopiesAsync(copy, copy);
+
+        var minted = await _sut.AuthoriseTransferAsync(sender.Id, new TransferAuthorizationRequest
+        {
+            FromAccountId = senderAccount.Id,
+            RecipientAzureTag = recipient.AzureTag,
+            Amount = 100m,
+            Pin = TestPin
+        });
+
+        minted.AuthorizationId.Should().NotBeEmpty();
+    }
+
+    #endregion
+
     #region TransferAsync - Insufficient Funds Tests
 
     [Fact]
