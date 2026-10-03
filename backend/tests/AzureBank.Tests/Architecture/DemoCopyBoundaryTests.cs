@@ -277,6 +277,136 @@ public class DemoCopyBoundaryTests
             new KeyValuePair<string, CopyRowFate>("AspNetUsers", CopyRowFate.Deleted), "the users are what the recycler deletes");
     }
 
+    /// <summary>
+    /// The foreign keys a copy's delete would run into: every key into a table the recycler empties,
+    /// or into the pool's own table (a stale free copy's row is deleted), that comes from a table the
+    /// recycler does not name and that the database does not empty with it. A table that cascades
+    /// from one the delete reaches is reached in turn, since its rows leave in the same statement,
+    /// and a key into IT would stop that statement: so the walk goes on until it finds no new table.
+    /// </summary>
+    /// <param name="model">The model to walk.</param>
+    /// <param name="keysRead">How many foreign keys the walk read: a walk of nothing finds nothing.</param>
+    private static List<string> KeysTheDeleteWouldMeet(IModel model, out int keysRead)
+    {
+        var reached = new HashSet<string>(DemoCopyRecycler.TablesOfACopy.Keys) { "DemoCopies" };
+        var keys = model.GetEntityTypes()
+            .Where(entity => entity.GetTableName() is not null)
+            .SelectMany(entity => entity.GetForeignKeys())
+            .Where(key => key.PrincipalEntityType.GetTableName() is not null)
+            .ToList();
+        keysRead = keys.Count;
+
+        bool grew;
+        do
+        {
+            grew = false;
+            foreach (var key in keys.Where(key => key.DeleteBehavior == DeleteBehavior.Cascade))
+            {
+                if (reached.Contains(key.PrincipalEntityType.GetTableName()!))
+                {
+                    grew |= reached.Add(key.DeclaringEntityType.GetTableName()!);
+                }
+            }
+        }
+        while (grew);
+
+        // A key that sets the dependent's column to null does not stop the delete, and leaves a row
+        // that is no longer the copy's.
+        return
+        [
+            .. keys
+                .Where(key => reached.Contains(key.PrincipalEntityType.GetTableName()!)
+                    && !reached.Contains(key.DeclaringEntityType.GetTableName()!)
+                    && key.DeleteBehavior != DeleteBehavior.SetNull)
+                .Select(key => $"{key.DeclaringEntityType.GetTableName()} -> {key.PrincipalEntityType.GetTableName()} ({key.DeleteBehavior})")
+                .Order(),
+        ];
+    }
+
+    /// <summary>
+    /// A GUARD, one level past <see cref="EveryTableThatHoldsACopysRows_IsOneTheRecyclerNames"/>, which
+    /// finds the tables keyed on a user, an account or a ledger row. A table keyed on one of the
+    /// recycler's other tables (an authorisation, a grant, a notice) or on the pool's row escapes
+    /// that walk, and a key from it that restricts would make every such copy's delete fail with
+    /// 547, run after run.
+    /// </summary>
+    [Fact]
+    public void EveryKeyIntoATableTheDeleteEmpties_ComesFromATableTheRecyclerNames_OrLeavesWithIt()
+    {
+        var unmet = KeysTheDeleteWouldMeet(Model(), out var keysRead);
+
+        keysRead.Should().BeGreaterThanOrEqualTo(13, "the walk read the foreign keys the model has today");
+        unmet.Should().BeEmpty(
+            "a table with a key into one the delete empties either stops the delete or keeps rows that name a deleted "
+            + "row; name it in DemoCopyRecycler.TablesOfACopy and delete it there, or make its key cascade");
+    }
+
+    /// <summary>
+    /// CONTROL for the guard above: a model with two tables the recycler does not know. One restricts
+    /// the delete of an authorisation directly; the other restricts a table that itself leaves with
+    /// an authorisation, two keys away from any user. The first walk saw neither.
+    /// </summary>
+    [Fact]
+    public void TheWalk_FindsAKeyIntoARecyclersTable_AndOneTwoCascadesAway()
+    {
+        using var context = new ModelWithTablesTheRecyclerDoesNotKnow(
+            new DbContextOptionsBuilder<AzureBankDbContext>().UseSqlServer("Server=.;Database=DemoCopyBoundaryTests").Options);
+
+        var unmet = KeysTheDeleteWouldMeet(context.Model, out _);
+
+        unmet.Should().Equal(
+            "NotesOnAReceipt -> ReceiptsOfAStepUp (Restrict)",
+            "UsesOfAStepUp -> StepUpAuthorizations (Restrict)");
+        EntitiesThatHoldACopysRows(context.Model).Select(entity => entity.GetTableName()).Should().NotContain(
+            new[] { "NotesOnAReceipt", "UsesOfAStepUp" },
+            "the walk of tables keyed on a user, an account or a ledger row does not reach them: this guard is the one that does");
+    }
+
+    private sealed class UseOfAStepUp
+    {
+        public Guid Id { get; set; }
+
+        public Guid StepUpId { get; set; }
+    }
+
+    private sealed class ReceiptOfAStepUp
+    {
+        public Guid Id { get; set; }
+
+        public Guid StepUpId { get; set; }
+    }
+
+    private sealed class NoteOnAReceipt
+    {
+        public Guid Id { get; set; }
+
+        public Guid ReceiptId { get; set; }
+    }
+
+    private sealed class ModelWithTablesTheRecyclerDoesNotKnow(DbContextOptions<AzureBankDbContext> options)
+        : AzureBankDbContext(options)
+    {
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+            modelBuilder.Entity<UseOfAStepUp>(use =>
+            {
+                use.ToTable("UsesOfAStepUp");
+                use.HasOne<StepUpAuthorization>().WithMany().HasForeignKey(u => u.StepUpId).OnDelete(DeleteBehavior.Restrict);
+            });
+            modelBuilder.Entity<ReceiptOfAStepUp>(receipt =>
+            {
+                receipt.ToTable("ReceiptsOfAStepUp");
+                receipt.HasOne<StepUpAuthorization>().WithMany().HasForeignKey(r => r.StepUpId).OnDelete(DeleteBehavior.Cascade);
+            });
+            modelBuilder.Entity<NoteOnAReceipt>(note =>
+            {
+                note.ToTable("NotesOnAReceipt");
+                note.HasOne<ReceiptOfAStepUp>().WithMany().HasForeignKey(n => n.ReceiptId).OnDelete(DeleteBehavior.Restrict);
+            });
+        }
+    }
+
     // ── The recycler's controls ──────────────────────────────────────────────────────────────────
 
     /// <summary>The lines of a source file that are code: no line that is only a comment.</summary>
