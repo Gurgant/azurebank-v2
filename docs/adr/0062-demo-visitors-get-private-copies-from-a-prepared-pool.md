@@ -385,6 +385,12 @@ The tests are in `backend/tests/AzureBank.Tests`.
 - `SeederProcessTests`: the real process exits 2 for either command with the demo off, and
   `recycle` that finds fewer free copies than the low mark exits 10, the process's own code.
 
+Each guard of decision 13 was then broken again, one at a time, and a test above failed: 20
+removals, 20 failures, among them the code each command passes on and the token the builder hands
+to Identity. So did each branch of `PoolExitCodes` that gives a code from 10 to 15: 7 removals, 7
+failures, the process test among those for 10. Each file was put back byte for byte, checked by
+its SHA-256.
+
 **Measured on 2026-10-03** on the compose stack under a project name of its own (SQL Server
 2022 CU27, the tools image built from this change, Production), one run per row:
 
