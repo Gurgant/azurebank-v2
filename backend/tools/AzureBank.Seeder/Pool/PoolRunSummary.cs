@@ -17,7 +17,10 @@ public sealed record PoolRunSummary
     /// <summary>Pool rows that are not records of a deleted copy, before the run changed anything.</summary>
     public int RowsAtStart { get; init; }
 
-    /// <summary>Fresh free copies before the run changed anything.</summary>
+    /// <summary>
+    /// Free copies before the run changed anything, however old: what a visitor could have been
+    /// given. The line prints it as <c>was</c>; "low" and "empty" are read from it.
+    /// </summary>
     public int FreeAtStart { get; init; }
 
     /// <summary>Fresh free copies at the end of the run.</summary>

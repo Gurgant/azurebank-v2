@@ -279,7 +279,7 @@ public sealed class DemoPoolCommandSqlServerTests
         using var all = new AssertionScope();
         recycled.Should().Be(0, Output(log));
         PoolLines(log).Last().Message.Should()
-            .Contain("pool: free=2 was=1 ").And.Contain(" seeded=1 ")
+            .Contain("pool: free=2 was=2 ").And.Contain(" seeded=1 ")
             .And.Contain("deleted(expired=1 hardStop=0 staleFree=1 failed=0)");
         logins.Users.Should().NotBeEmpty().And.OnlyContain(user => user == rowsOnly.Name, "every connection the two runs opened was the login's");
     }

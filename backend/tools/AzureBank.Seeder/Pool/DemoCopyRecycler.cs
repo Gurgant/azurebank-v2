@@ -263,7 +263,7 @@ public sealed class DemoCopyRecycler
         return Finish(new PoolRunSummary
         {
             RowsAtStart = start.Rows,
-            FreeAtStart = start.Free,
+            FreeAtStart = start.FreeOfAnyAge,
             Free = end.Free,
             Target = target,
             Claimed = end.Claimed,

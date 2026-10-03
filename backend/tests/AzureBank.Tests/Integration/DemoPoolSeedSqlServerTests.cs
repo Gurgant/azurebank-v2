@@ -711,7 +711,8 @@ public sealed class DemoPoolSeedSqlServerTests
 
         var summary = await database.SeedPoolAsync(2);
 
-        (summary.FreeAtStart, summary.Seeded, summary.Free).Should().Be((1, 1, 2));
+        (summary.FreeAtStart, summary.Seeded, summary.Free).Should().Be(
+            (2, 1, 2), "two copies were free, only one counted towards the target, and one was built beside it");
         (await CountAsync(database)).Copies.Should().Be(3, "the stale copy stays until recycle deletes it");
     }
 
@@ -730,7 +731,7 @@ public sealed class DemoPoolSeedSqlServerTests
         // 11 hours of 10: the older copy no longer counts, and one is built in its place.
         var summary = await database.SeedPoolAsync(2, settings: new() { ["Demo:Pool:MaxFreeAgeHours"] = "10" });
 
-        (summary.FreeAtStart, summary.Seeded, summary.Free).Should().Be((1, 1, 2));
+        (summary.FreeAtStart, summary.Seeded, summary.Free).Should().Be((2, 1, 2));
         (await CountAsync(database)).Copies.Should().Be(3);
     }
 

@@ -368,7 +368,8 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
         ATombstone(await database.CopyAsync(copies[2].Id), "the copy after the poisoned one is deleted");
         (await database.CopyAsync(copies[3].Id)).Should().BeNull("the stale free copy is deleted, row and all");
 
-        (summary.FreeAtStart, summary.Seeded, summary.Free).Should().Be((1, 1, 2), "the pool is at its target");
+        (summary.FreeAtStart, summary.Seeded, summary.Free).Should().Be(
+            (2, 1, 2), "two free copies at the start, one of them too old to count; one built, and the pool is at its target");
         summary.ExitCode.Should().Be(14);
     }
 
@@ -737,7 +738,7 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
         output.WriteLine(summary.ToLine());
 
         (summary.FreeAtStart, summary.Seeded, summary.DeletedStaleFree, summary.Free, summary.Tombstones).Should().Be(
-            (1, 1, 1, 2, 0), "only the fresh copy counted, one was built first, and the stale one was then deleted");
+            (2, 1, 1, 2, 0), "two copies were free, only the fresh one counted towards the target, one was built first, and the stale one was then deleted");
         (await database.CopyAsync(stale.Id)).Should().BeNull("nothing ever pointed at a free copy, so no record of it is kept");
         (await database.RowsOfAsync(stale.UserIds)).Should().OnlyContain(table => table.Value == 0);
         StillWhole(await database.CopyAsync(copies[1].Id), "a fresh free copy is not touched");
@@ -761,7 +762,7 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
         // 11 hours of 10: it no longer counts, one is built in its place, and it is deleted.
         var summary = await database.RecycleAsync(settings: new() { ["Demo:Pool:MaxFreeAgeHours"] = "10" });
 
-        (summary.FreeAtStart, summary.Seeded, summary.DeletedStaleFree, summary.Free).Should().Be((1, 1, 1, 2));
+        (summary.FreeAtStart, summary.Seeded, summary.DeletedStaleFree, summary.Free).Should().Be((2, 1, 1, 2));
         (await database.CopyAsync(older.Id)).Should().BeNull("11 hours of 10");
     }
 
@@ -1196,6 +1197,32 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
         (summary.RowsAtStart, summary.FreeAtStart, summary.Seeded, summary.Free, summary.ExitCode).Should().Be(
             (2, 0, 2, 2, 11), "every copy was claimed when the run started: visitors may have been turned away");
         summary.ToLine().Should().EndWith("result=PoolEmpty");
+    }
+
+    /// <summary>
+    /// A QUIET POOL. Nobody claimed a copy, and between two runs every free copy grew older than a
+    /// free copy is kept, as the whole of a first fill does once a day and a bit later. None was
+    /// claimed, so nobody was turned away: each one was still free, too old to count towards the
+    /// target and free all the same, until this run built the new ones and deleted it. The twin is
+    /// <see cref="APoolWithNoFreeCopy_ExitsEleven_AndIsToppedUpAllTheSame"/>: there every copy was
+    /// claimed.
+    /// </summary>
+    [SqlServerFact]
+    public async Task APoolWhoseFreeCopiesAllGrewTooOld_IsRebuilt_AndExitsZero_NotEleven()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copies = await database.BuildCopiesAsync(3);
+        foreach (var copy in copies)
+        {
+            await database.BackdateSeedAsync(copy.Id, DateTime.UtcNow.AddHours(-45));
+        }
+
+        var summary = await database.RecycleAsync(settings: new() { ["Demo:Pool:TargetFree"] = "3", ["Demo:Pool:LowMark"] = "1" });
+        output.WriteLine(summary.ToLine());
+
+        (summary.RowsAtStart, summary.FreeAtStart, summary.Seeded, summary.DeletedStaleFree, summary.Free, summary.ExitCode).Should().Be(
+            (3, 3, 3, 3, 3, 0), "three copies were free when the run started: too old to count towards the target, not too old to be given");
+        summary.ToLine().Should().Contain(" was=3 ").And.EndWith("result=PoolOk");
     }
 
     [SqlServerFact]

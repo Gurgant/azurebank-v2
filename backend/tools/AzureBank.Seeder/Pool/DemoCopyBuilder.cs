@@ -133,7 +133,7 @@ public sealed class DemoCopyBuilder
         var summary = new PoolRunSummary
         {
             RowsAtStart = start.Rows,
-            FreeAtStart = start.Free,
+            FreeAtStart = start.FreeOfAnyAge,
             Free = end.Free,
             Target = target,
             Claimed = end.Claimed,
