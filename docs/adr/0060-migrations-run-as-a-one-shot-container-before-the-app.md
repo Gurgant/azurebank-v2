@@ -85,6 +85,13 @@ a 2 with a fixed sentence, never the parser's message, which quotes the string. 
 string that names no database is a 2: the server would open the login's default database, and
 `migrate` would build the schema there. For `migrate`, so is a connect timeout of 0, which
 SqlClient reads as no limit: one open that never ends is a run that never ends, whatever the wait.
+*(Amended 2026-10-03, [ADR-0062](0062-demo-visitors-get-private-copies-from-a-prepared-pool.md):
+a 2 still means "refused, and nothing was written", and one 2 now comes after a connection was
+opened: `seed` counts the demo pool's rows first and refuses a database that holds one. Every
+other 2 still comes before anything is opened, among them the new ones: a demo setting out of
+range, `seed` and `reset` in demo mode, `seed-pool` and `recycle` with the demo off. Those two
+commands also end with a code from 10 to 15, the pool's signals, set on the invocation as the
+three codes here are.)*
 
 **5. On an Azure SQL server name only `migrate` runs, and it never creates a database there.**
 `seed` and `reset` refuse the name with exit 2: `seed`'s four users have a password and a PIN that
@@ -92,6 +99,34 @@ are in this repository, and `reset` drops the database. A missing database on Az
 `migrate` with exit 1; the infrastructure creates databases. There the database goes to EF only
 after one open of it succeeded (decision 3). The rule goes by the server's name, on the five
 suffixes SqlClient itself treats as Azure SQL.
+
+*(Amended 2026-10-03, [ADR-0062](0062-demo-visitors-get-private-copies-from-a-prepared-pool.md):
+`seed-pool` and `recycle` run on an Azure SQL name too, so "only `migrate`" no longer holds. The
+public demo's database is an Azure SQL one, and they are what fills its pool and keeps it.*
+
+- ***Why that is safe where `seed` and `reset` are not.*** *Their writes are copies whose users
+  have no password, so nothing they write can be signed in to with a value written down anywhere;
+  `seed`'s four users have a public password and PIN. Their deletes are keyed on a copy, so a user
+  outside every copy matches none of them, and on a database with users and not one pool row they
+  write nothing and exit 13. Neither drops, creates or migrates a database, which is what `reset`
+  and `migrate` can do. And each refuses to run with `Demo:Enabled` off (exit 2), while `seed` and
+  `reset` now refuse it on, and `seed` a database that holds the pool's rows.*
+- ***How.*** *As a job of the tools image, with the arguments `["recycle"]` on a schedule, or
+  `["seed-pool"]` for a first fill; `Demo__Enabled=true`; and the API's PIN pepper and its key id,
+  since the copies carry PIN hashes the API has to verify. They run the same checks as `seed`
+  before they open anything, apart from the name.*
+- ***As the app's database user, not the migration's.*** *Every statement either command sends
+  reads or writes rows; neither changes the schema or creates a database. A deployment's two
+  database users differ by one right, the migration's may also change the schema, and the app's
+  already deletes rows of its own accord (the API's clean-ups of expired grants and idempotency
+  records, which `recycle` repeats). Measured 2026-10-03 on LocalDB and on the compose SQL Server
+  (`DemoPoolCommandSqlServerTests`, and by hand): a login holding `db_datareader` and
+  `db_datawriter` alone ran both through a whole cycle, roles and copies built, a claimed copy and
+  a stale one deleted, the sweeps run, and was refused `CREATE TABLE` (262). On the compose server
+  the same login without `db_datawriter` made `seed-pool` exit 12, every copy refused with 229. The
+  migration's user would give a job that runs every few hours, and needs none of it, the right to
+  change the schema, a trigger included. On Azure SQL itself, with a managed identity's token,
+  nothing was run.)*
 
 **6. A database that holds a migration the build does not know is refused**, exit 1, checked before
 and after `MigrateAsync`. A newer build migrated it, and an older build must not move an app onto
@@ -268,4 +303,6 @@ add to the SQL job.
 - [ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md): the limits and the retry
   budget this command opens with, and the two preconditions this record amends.
 - [ADR-0011](0011-pin-hash-pepper.md): the pepper `seed` and `reset` check.
+- [ADR-0062](0062-demo-visitors-get-private-copies-from-a-prepared-pool.md): the demo pool, whose two commands run on an Azure SQL name
+  (decision 5's note), and the codes from 10 to 15 they add to decision 4's three.
 - `backend/tools/AzureBank.Seeder/README.md`: the commands, their variables and exit codes.
