@@ -209,6 +209,38 @@ public class SeederCommandTests
         opens.Opens.Should().Be(0, "all four commands must refuse before any database work");
     }
 
+    [Theory]
+    [InlineData("seed")]
+    [InlineData("reset")]
+    [InlineData("seed-pool")]
+    [InlineData("recycle")]
+    public async Task APreviousPepperKeyThatHoldsAValueAndASection_IsRefusedInOneLine_WithoutASecretOrAnOpen(
+        string command)
+    {
+        // The binder reads the value on the key itself and leaves the one under it out: id 1 is in
+        // the ring, and the second pepper is lost without a word.
+        var log = new RecordingLoggerProvider();
+        var opens = new OpenCountingInterceptor();
+        await using var provider = SeederHost.Build(
+            log, opens, onCommittedSettings: false,
+            (ConnectionKey, AbsentServer), (PepperKey, SeederHost.Pepper), ("Security:PinPepperKeyId", "2"),
+            ("Security:PreviousPinPeppers:1", PreviousPepper),
+            ("Security:PreviousPinPeppers:1:Value", CustomWebApplicationFactory.PinPepper),
+            NoEfRetry, TheFlagItRunsWith(command));
+
+        var exitCode = await Run(command, provider);
+
+        using var all = new AssertionScope();
+        exitCode.Should().Be(2);
+        Errors(log).Should().ContainSingle().Which.Should().Be(
+            $"{command} refused: Security:PreviousPinPeppers key '1' must hold exactly one value. "
+            + "Nothing was opened.");
+        string.Join('\n', log.Lines.Select(line => line.Message)).Should()
+            .NotContain(PreviousPepper).And.NotContain(CustomWebApplicationFactory.PinPepper)
+            .And.NotContain(SeederHost.Pepper).And.NotContain("   at ");
+        opens.Opens.Should().Be(0, "all four commands must refuse before any database work");
+    }
+
     [Fact]
     public void AValidPreviousPepperKey_PassesTheSeederStartupValidator_AndKeepsItsPepper()
     {

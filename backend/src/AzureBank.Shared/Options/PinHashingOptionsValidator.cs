@@ -25,9 +25,10 @@ public sealed class PinHashingOptionsValidator(IConfiguration configuration) : I
 
         var errors = new List<string>();
 
-        // The binder loses a previous pepper in silence in three ways: it drops an entry whose key
+        // The binder loses a previous pepper in silence in four ways: it drops an entry whose key
         // it cannot convert to an int, it drops one whose key holds a section instead of a value,
-        // and of two keys that name the same id ("1" and "01") it keeps one pepper. It also accepts
+        // under a key that holds a value and a section it reads the value alone, and of two keys
+        // that name the same id ("1" and "01") it keeps one pepper. It also accepts
         // surrounding whitespace. So the original keys are read here too, never their secret
         // values: each must be a whole number, the only key for its id, and an entry of the bound
         // map. Signed integer keys and leading zeroes keep working. The binder converts a key with
@@ -53,6 +54,12 @@ public sealed class PinHashingOptionsValidator(IConfiguration configuration) : I
                     : (entry.Key, firstKeyOfId[id]);
                 errors.Add($"Security:PreviousPinPeppers keys {Shown(first)} and {Shown(second)} name the same id; " +
                            "only one pepper can be held under it.");
+            }
+            else if (entry.Value is not null && entry.GetChildren().Any())
+            {
+                // A value on the key and another under it: the binder reads the first and leaves
+                // the second out, so the id is in the bound map and the check below sees nothing.
+                errors.Add($"Security:PreviousPinPeppers key {Shown(entry.Key)} must hold exactly one value.");
             }
             else if (!options.PreviousPinPeppers.ContainsKey(id))
             {

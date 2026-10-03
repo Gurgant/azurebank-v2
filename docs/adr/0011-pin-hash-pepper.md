@@ -107,8 +107,9 @@ uncalled)*.
   `seed-pool` and `recycle`, naming the key and never its value; the shared validator reads the
   original configuration keys too, because the binder silently drops a key it cannot convert.
   Two keys that name one id (`1` and `01`, of which the binder keeps one pepper) and a key that
-  holds no single value (a section under it, which the binder drops) are refused too, and a key
-  of 32 characters or more, long enough to be a pepper, is never printed: the refusal gives its
+  does not hold exactly one value (a section under it, which the binder drops, or a value with a
+  section under it, of which the binder reads the value alone) are refused too, and a key of 32
+  characters or more, long enough to be a pepper, is never printed: the refusal gives its
   length.)*
 - **Rehash-on-use migration**: `IPasswordHasher.PinNeedsRehash` reports whether a
   stored hash predates the active key. On a **successful** verify, `PinService`

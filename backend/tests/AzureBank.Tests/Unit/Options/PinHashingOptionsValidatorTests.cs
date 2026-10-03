@@ -170,6 +170,23 @@ public class PinHashingOptionsValidatorTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public void APreviousPepperKeyThatHoldsAValueAndASection_IsRefusedAtStart_WithoutEitherValue(bool api)
+    {
+        // Security__PreviousPinPeppers__1 beside Security__PreviousPinPeppers__1__Value: the binder
+        // reads the value on the key itself and leaves the one under it out, so the ring holds id 1
+        // and a pepper is still lost without a word.
+        using var root = BoundRoot(api, ("1", P1), ("1:Value", P3));
+        var start = () => root.GetRequiredService<IStartupValidator>().Validate();
+
+        var refusal = start.Should().Throw<OptionsValidationException>().Which;
+        refusal.Failures.Should().Equal(
+            "Security:PreviousPinPeppers key '1' must hold exactly one value.");
+        refusal.ToString().Should().NotContain(P1).And.NotContain(P2).And.NotContain(P3);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public void APreviousPepperEntryWrittenTheWrongWayRound_IsRefusedAtStart_WithoutPrintingItsKey(bool api)
     {
         // "<pepper>": "1" where "1": "<pepper>" was meant. Here the key is the secret, so the
