@@ -2,16 +2,22 @@
 
 **Status:** Accepted · **Date:** 2026-10-03 · **Decision Makers:** Vladislav Aleshaev ·
 **Amends** [ADR-0044](0044-the-audit-trail-is-append-only-and-chained.md) D6 (the ledger rows of a
-demo copy are deleted, around the ledger's guard, and the audit rows that name them stay) and
+demo copy are deleted, around the ledger's guard, and the audit rows that name them stay),
 [ADR-0042](0042-a-transfer-authorisation-is-bound-and-spent-once.md) (a demo copy's authorisations
-leave with the copy)
+leave with the copy),
+[ADR-0060](0060-migrations-run-as-a-one-shot-container-before-the-app.md) decisions 4 and 5 (two
+commands that run on an Azure SQL name, as the app's database user, and an exit 2 that comes after
+one count) and [ADR-0011](0011-pin-hash-pepper.md) (two more commands check the pepper)
 
 **Where the code is.** The pool's code is in `backend/tools/AzureBank.Seeder/Pool/`
 (`DemoCopyBuilder`, `DemoCopyRecycler`, `DemoCredentials`, `PoolCounts`, `PoolExitCodes`,
-`PoolRunSummary`) and `backend/tools/AzureBank.Seeder/Seeders/DemoLedger.cs`; the table is
+`PoolRunSummary`) and `backend/tools/AzureBank.Seeder/Seeders/DemoLedger.cs`; its two commands
+are `SeedPoolCommand` and `RecycleCommand`, beside `DemoMode`, in
+`backend/tools/AzureBank.Seeder/Commands/`, and `compose.demo.yaml` runs them; the table is
 `DemoCopy` and its configuration; the settings are `DemoOptions`; the two resolvers are
 `UserService.GetUserByAzureTagAsync` and the payee resolver of `TransferService`. The comments this
-record made false cite it as ADR-0062.
+record made false cite it as ADR-0062. The Seeder's README is the commands' contract: their
+variables, their exit codes and their line.
 
 ## Context
 
@@ -86,9 +92,10 @@ the day it is written.
 | `Demo:Copy:MaxWrites` | 200 | 10 to 100,000 |
 
 Today only the Seeder binds the section. The builder and the recycler refuse to run with the flag
-off, in their own code and not only in whatever calls them. **Not behind the flag:** the migration
-and the two resolver comparisons of decision 7, which change nothing where no user belongs to a
-copy.
+off, in their own code and not only in whatever calls them, and their two commands refuse first,
+before they open anything (decision 13). `seed` and `reset` refuse to run with it on. **Not behind
+the flag:** the migration, the two resolver comparisons of decision 7, which change nothing where
+no user belongs to a copy, and `seed`'s refusal of a database that holds a pool row.
 
 **4. A free copy has no password.** Its users are created through Identity with none, so no
 password hash exists for a sign-in to match, whatever is typed. The claim sets one when a visitor
@@ -223,6 +230,37 @@ run. The line carries every count whatever the code, and never an id or an addre
 (The numbers are an example of the shape, not a measurement.) What each count means, and the SQL
 that looks behind it, is in [`docs/runbooks/demo-pool.md`](../runbooks/demo-pool.md).
 
+**13. Two commands run the pool, and `seed` and `reset` stay out of it.**
+
+| Command | Does | Exits |
+|---|---|---|
+| `seed-pool [copies]` | The top-up of decision 8 alone, to N fresh free copies (1 to 500, the range of `TargetFree`), or to `TargetFree` without N. The first fill, and a refill by hand | 0, 12 or 13 |
+| `recycle` | Decision 8, whole. The job a deployment schedules; safe at any interval | 0, or a signal from 10 to 15 |
+
+- **The code reaches the process.** Each handler sets the run's code on its invocation, as
+  `migrate`, `seed` and `reset` do (ADR-0060): System.CommandLine returns that value, and a value
+  put anywhere else is lost. The line is logged at Information when the code is 0 and at Warning
+  when it is a signal. A run that is stopped prints no line, says so and exits 1; a failure that is
+  no copy's prints a `failed:` line and exits 1.
+- **Refused before anything is opened, exit 2,** as the Seeder's other commands refuse: a
+  connection string that is missing, unreadable or names no database; a PIN pepper or a demo
+  setting their validators refuse; and the demo off.
+- **On an Azure SQL name they run**, where `seed` and `reset` are refused: the demo's database is
+  one. Why that is safe, and that the job signs in as the app's database user and not the
+  migration's, is ADR-0060's note on its decision 5.
+- **`seed` and `reset` refuse demo mode** (exit 2, nothing opened): `seed`'s four users have a
+  password and a PIN in this repository, and `reset` drops the database. **`seed` also refuses a
+  database that holds any pool row**, a record included, whatever the flag says: a job whose
+  environment lost the flag is still pointed at the demo's database. That refusal costs one count
+  before anything is written.
+- **A stop reaches Identity.** Identity's managers take no token; the two the Seeder registers
+  read the scope's `RunCancellation`, and the builder sets it before the roles and the copies'
+  users are created. It was not set before the commands existed: a run stopped at its first
+  statement to the roles table sent that statement and two more with no token.
+- **Locally**, `compose.demo.yaml` over `compose.yaml` runs `seed-pool` in place of `seed`, and
+  `recycle` under the profile `pool`. One volume holds one kind of database: each of `seed` and
+  `seed-pool` refuses the other's.
+
 ## What still crosses copies
 
 The copies share one database and one deployment, so these are shared, and stay so:
@@ -287,6 +325,10 @@ The copies share one database and one deployment, so these are shared, and stay 
   with no summary and no code of the pool's.
 - With `Demo:CopyLifetimeHours` below 24, a copy can be deleted, and its client key removed, inside
   the 24 hours its claim is counted over: that claim then stops counting towards its client's cap.
+- `seed` reads the database before it refuses the demo's: exit 2 there comes after a connection
+  was opened, where every other 2 of the tool comes before (ADR-0060, decision 4's note).
+- A compose volume that one of `compose.yaml` and `compose.demo.yaml` filled stops the other's
+  one-shot, and with it the API, until `docker compose down -v`.
 
 **Neutral**
 
@@ -331,9 +373,41 @@ The tests are in `backend/tests/AzureBank.Tests`.
   never uses `System.Random`.
 - `DemoCopySchemaSqlServerTests`: the columns, the two constraints, the filtered indexes, and the
   migration taken back.
+- `DemoPoolCommandSqlServerTests`: each command returns its run's code and logs one line, at
+  Warning for a signal; `seed` refuses a database holding a free copy, and one holding only a
+  record, while on one with no pool row it seeds; a run stopped at Identity's first statement is
+  stopped there, for each command; and a login that holds `db_datareader` and `db_datawriter` and
+  nothing else runs both through a whole cycle, while it is refused `CREATE TABLE` (262).
+- `Unit/Tools/SeederCommandTests`: every refusal of the tool holds for the two commands, with
+  nothing opened, and the demo off refuses them; `seed` and `reset` refuse demo mode; on an Azure
+  SQL name the two commands reach for the server; a cancelled run prints no line; the count
+  `seed-pool` takes is 1 to 500.
+- `SeederProcessTests`: the real process exits 2 for either command with the demo off, and
+  `recycle` that finds fewer free copies than the low mark exits 10, the process's own code.
 
-**Not measured here:** a run on the compose stack or on Azure SQL; seconds per copy built or
-deleted; the space a hundred copies take.
+**Measured on 2026-10-03** on the compose stack under a project name of its own (SQL Server
+2022 CU27, the tools image built from this change, Production), one run per row:
+
+| What was run | What happened |
+|---|---|
+| `migrate`, then `seed-pool 5` with `Demo__Enabled=true` | Exit 0 both. 5 pool rows, 15 users, 15 role rows, 20 accounts, 130 ledger rows: 185, counted per table; no user with a password |
+| `seed` with the flag on; with it off, on the same database; `reset --confirm` with it on | Exit 2 each, with its refusal: demo mode; "the database holds the demo pool's rows (5)"; demo mode. No fixed user was written |
+| `migrate` and `seed`, the flag off, on a second database | Exit 0 both: 4 users, 5 accounts, 26 ledger rows, 22 of them on John's accounts |
+| `seed` and `reset --confirm` on a `*.database.windows.net` name | Exit 2 each, the Azure SQL refusal, in 1.6 s with the container's start |
+| `seed-pool` and `recycle` on that name, the flag on, no retry | Exit 1 each: not refused; they reached for the server, whose name does not resolve |
+| `recycle` with `TargetFree` and `LowMark` at 6, the pool holding 5 | Exit 10, also as the container's exit code (`docker inspect`): `was=5 seeded=1 result=PoolLow` |
+| every copy marked claimed by SQL, then `recycle` | Exit 11, also as the container's exit code: `was=0 claimed=6`, and the pool topped up to 6 |
+| three copies back-dated by SQL, one free and 50 h old, one claimed 30 h ago, one claimed 30 h ago with a live grant inserted; then `recycle` | Exit 0. The first gone with its row; the second a record, with no user and no client key; the third left with its three users; 6 fresh free copies, the target |
+| `seed-pool 100` on a pool of 6 | Exit 0, 94 copies, in 13.2 s against 6.2 s for a run that built none: about 75 ms a copy. `sp_spaceused` reserved 6,056 KB before and 8,816 KB after: about 29 KB a copy |
+| a claimed copy given 474 more ledger rows by SQL, 500 in all, then `recycle` | Exit 0, the copy deleted. Its six statements took 90 ms by EF's own timings, 64 of them the ledger's |
+| a login with `db_datareader` and `db_datawriter` only: `CREATE TABLE`; `seed-pool 102`; `recycle` with one copy expired and one stale | 262; exit 0; exit 0 with `expired=1 staleFree=1` |
+| the same login without `db_datawriter`: `seed-pool 103` | Exit 12, three copies refused with 229 on `DemoCopies` |
+| `docker stop` sent to `seed-pool 300` while it built copies | Exit 1 and "seed-pool was cancelled", 0.7 s after the stop; no copy without its three users |
+| from an empty volume, the `seed` service of `compose.demo.yaml`; then its `recycle` service | Exit 0, 50 copies, 13.2 s with `migrate`; then exit 0 with nothing to do |
+
+**Not measured here:** anything on Azure SQL, a managed identity's token among it; a copy used
+through the front door and then deleted by a run of the command (no claim exists yet: the SQL
+Server test above uses the API in process); `recycle` stopped while it deletes.
 
 ## What would change this
 
@@ -345,6 +419,8 @@ deleted; the space a hundred copies take.
   compares the copy. The scan finds it only in the forms it reads (Validation).
 - A `hardStop` above 0: sign-in was accepted past a copy's end, and that is fixed where sign-in is
   decided, not here.
+- A pool command that needs a right the app's database user does not hold: the job gets a user of
+  its own with that right, never the migration's.
 
 ## Related
 
@@ -356,5 +432,8 @@ deleted; the space a hundred copies take.
 - [ADR-0057](0057-the-bffs-refresh-token-is-one-reusable-grant-per-session.md): the grant a
   session renews with, which decides when a copy is in use.
 - [ADR-0011](0011-pin-hash-pepper.md): the pepper ring the PIN hashes rotate on.
+- [ADR-0060](0060-migrations-run-as-a-one-shot-container-before-the-app.md): the tools image, the
+  Seeder's exit codes, and the Azure SQL rule the pool's commands are the exception to.
+- `backend/tools/AzureBank.Seeder/README.md`: the commands' contract.
 - [`docs/runbooks/demo-pool.md`](../runbooks/demo-pool.md): the exit codes, the counts and the SQL
   behind them.

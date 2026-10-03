@@ -1,13 +1,21 @@
 # Runbook — the demo pool
 
 **Symptom:** a run of `recycle` ended with a code from 10 to 15, or its line shows `hardStop` or
-`failed` above 0, or it ended with no line at all. Or the demo database's storage alert fired.
+`failed` above 0, or it ended with no line at all, with exit 1 or 2. Or the demo database's
+storage alert fired.
 
 **Why this runbook exists:** a run decides everything from the rows as they are, and says what it
 found in one line and one exit code
 ([ADR-0062](../adr/0062-demo-visitors-get-private-copies-from-a-prepared-pool.md), decision 12).
 The code names one signal; the line carries every count. This page says what each one means, and
 gives the SQL that looks behind it.
+
+**How a run is started.** The pool's job is the tools image with the argument `recycle`; a first
+fill, or a refill by hand, is `seed-pool`, or `seed-pool <N>` to top up to N free copies. Each
+needs `Demo__Enabled=true`, the connection string, and the API's `Security__PinPepper` and
+`Security__PinPepperKeyId`, and signs in as the app's database user, never the migration's
+(ADR-0060, decision 5's note). `backend/tools/AzureBank.Seeder/README.md` has every variable and
+code; on one machine, `compose.demo.yaml` runs both.
 
 **Running the SQL.** Every statement here reads and none writes. They run against the demo's
 database. Where a statement needs a copy's lifetime or the age a free copy is kept to, it uses the
@@ -40,15 +48,25 @@ pool: free=50 was=23 claimed=7 claims24h=12 clientsAtCap=0 seeded=38 deleted(exp
 | `ceiling` | `yes` when the day's claims held the top-up below its target |
 | `result` | The exit code's name |
 
-**A run with no line did not finish.** Something that is no copy's failed, such as a count, the
-roles the top-up creates first, or a sweep, and its log says which. Whatever the run had deleted
-stays deleted, and the next run starts again from the rows as they are.
+**A run with no line did not finish.** It exited 1. Its last line is `recycle failed: …` when
+something that is no copy's failed, such as a count, the roles the top-up creates first, or a
+sweep, and the log says which; or `recycle was cancelled` when the job was stopped. Whatever the
+run had deleted stays deleted, a copy is never left half built or half deleted, and the next run
+starts again from the rows as they are.
+
+**A run that exited 2 did nothing.** It refused before it opened anything, and its one Error line,
+`recycle refused: …`, says why: the demo is off where the job runs (`Demo__Enabled`), a demo
+setting is out of range, the pepper is missing or short, or the connection string is missing,
+unreadable or names no database. Change the job's configuration; running it again as it is
+changes nothing.
 
 ## The exit code
 
 | Code | Name | What to do |
 |---|---|---|
 | 0 | `PoolOk` | Nothing, unless the run found no copy at all (below) |
+| 1 | | The run did not finish (above) |
+| 2 | | The run refused, and did nothing (above) |
 | 10 | `PoolLow` | The run found fewer free copies than `Demo:Pool:LowMark`, and topped the pool up. Section 1 |
 | 11 | `PoolEmpty` | The run found no free copy, and at least one copy that is not a record: visitors may have been turned away since the run before. Section 1 |
 | 12 | `TopUpIncomplete` | A copy could not be built and the pool ended below its target. Section 2 |
