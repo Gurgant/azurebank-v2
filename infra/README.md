@@ -107,7 +107,7 @@ to one identity, by its client ID, and with no password. `azurebank_app` reads a
 | `azurebank-migrate` | A manual job: the tools image with the argument `migrate`, no retry, 600 s, the identity `azurebank-migrate` attached, one secret (its own connection string, no password) |
 | two role assignments | The custom role, to the deployment identity, on the app and on the job and nowhere else. From here the workflow can change the app |
 | `azurebank-owner` | An action group with one e-mail receiver, given as a parameter |
-| four alert rules | E-mail only. On the app: more than 66,667 requests in an hour; more than 3.3 GiB sent in a day; the replica running more than about 2.2 hours in a day (an average replica count above 0.093). On the workspace: more than 50,000 log lines in an hour |
+| four alert rules | E-mail only. On the app: more than 66,667 requests in an hour; more than 3.3 GiB sent in a day; the replica running more than about 2.2 hours in a day (an average replica count above 0.093). On the workspace: more than 50,000 records ingested in an hour, which are its lines if each measurement of the metric is one record (not yet measured: step 20) |
 
 **And a check that creates nothing.** A run with `deployApp=true` also deploys `app-inputs.bicep`
 as the nested deployment `azurebank-app-inputs`. Its parameters are the values the app needs, each
@@ -950,7 +950,57 @@ python infra/deploy.py --app-only
 
 [A migration nobody can read](#a-migration-nobody-can-read), with nothing left to migrate.
 
-#### 20. From outside, and the end (operator)
+#### 20. What the alert on the workspace counts (operator; **writes** only to switch it off)
+
+The fourth alert reads the metric `Ingestion Volume` with the aggregation `Count`. Microsoft's page
+on the workspace's metrics calls it the number of records ingested into a workspace or a table,
+and lists `Count` as its default aggregation
+(<https://learn.microsoft.com/en-us/azure/azure-monitor/reference/supported-metrics/microsoft-operationalinsights-workspaces-metrics>,
+2026-07-31). It does not say whether one measurement of the metric is one record. If one stands
+for several, `Count` counts measurements, and the rule may never see 50,000 in an hour however many
+lines arrive. This step reads the metric and a query of the rows over the same hour: the hour in
+which step 16's migration started, if it started ten minutes or more from either end of it, and
+otherwise the hour of the first run of step 17. It must have ended more than an hour ago.
+
+```powershell
+$start = ([datetimeoffset]'<the hour, as 2026-10-10T14:00:00Z>').UtcDateTime
+$utc = { param([int]$Minutes) $start.AddMinutes($Minutes).ToString("yyyy-MM-ddTHH:mm:ss'Z'", [cultureinfo]::InvariantCulture) }
+$workspace = az monitor log-analytics workspace show --resource-group $group --workspace-name azurebank-logs --query id --output tsv
+$customer = az monitor log-analytics workspace show --resource-group $group --workspace-name azurebank-logs --query customerId --output tsv
+
+# What the alert reads: the metric's Count for that hour, one line.
+az monitor metrics list --resource $workspace --metrics 'Ingestion Volume' --aggregation Count --interval PT1H `
+    --start-time (& $utc 0) --end-time (& $utc 60) --query 'value[0].timeseries[0].data[].[timeStamp, count]' --output tsv
+
+# What the workspace holds, by table and by the time each row was ingested: in the hour's middle
+# forty minutes, in the hour, and in the hour widened by ten minutes at each end.
+$between = { param([int]$From, [int]$To) "Ingested >= datetime($(& $utc $From)) and Ingested < datetime($(& $utc $To))" }
+@{ query = "union withsource = SourceTable * | extend Ingested = ingestion_time() | where $(& $between -10 70) " +
+    "| summarize Middle = countif($(& $between 10 50)), Hour = countif($(& $between 0 60)), Widened = count() by SourceTable" } |
+    ConvertTo-Json | Set-Content "$env:TEMP\ingested.json"
+$rows = @((az rest --method post --url "https://api.loganalytics.io/v1/workspaces/$customer/query" --resource https://api.loganalytics.io `
+    --body "@$env:TEMP\ingested.json" | ConvertFrom-Json).tables[0].rows)
+Remove-Item "$env:TEMP\ingested.json"
+$rows | ForEach-Object { '{0}: {1}, {2}, {3}' -f $_[0], $_[1], $_[2], $_[3] }
+'every table: {0}, {1}, {2}' -f @(1, 2, 3 | ForEach-Object { $column = $_; ($rows | ForEach-Object { [long]$_[$column] } | Measure-Object -Sum).Sum })
+```
+
+The query is sent as `deploy.py --job-log` sends its own. Ten minutes is more than the eight the
+trial's lines took to be readable. The metric and the query agree if the metric's count is at
+least the first of the three totals and at most the last. If the first total is 0, the hour proves
+nothing: take the hour of the next run of step 17.
+
+- **They agree:** the alert stays. The metric's count and the three totals go into
+  [Measured on Azure](#measured-on-azure).
+- **They do not:** the alert does not count lines, and it is switched off:
+  `az monitor metrics alert delete --name azurebank-log-volume --resource-group $group`, and every
+  later run of the template passes `@('logVolumeAlert=false')` (the file does not remember it:
+  [If Azure says no](#if-azure-says-no)). The four numbers and the reason go into
+  [Measured on Azure](#measured-on-azure). An alert that does count lines is a log search rule,
+  and it is billed: $0.50 a month evaluated every 15 minutes, as this rule is, $1.50 every 5 (the
+  Retail Prices API, Italy North). It is the owner's decision, and nothing here creates one.
+
+#### 21. From outside, and the end (operator)
 
 ```powershell
 $site = az containerapp show --name azurebank --resource-group $group --query properties.configuration.ingress.fqdn --output tsv
@@ -1006,9 +1056,10 @@ database's $0.161 a day), and the road to remove it all is
 **Two switches are not remembered.** The parameter file keeps what the environment does with its
 logs, read from Azure. It does not keep `denyPolicy=false` or `logVolumeAlert=false`: a policy or
 an alert that is absent cannot be told from one a run that stopped halfway never got to create,
-and a guard must not be switched off by that. If either was left out because Azure refused it,
-pass the same override on every later run of the template; without it the run asks Azure again
-for what it refused. The what-if shows it first: a policy assignment, or a fourth alert, to create.
+and a guard must not be switched off by that. If either was left out because Azure refused it, or
+the alert because step 20 found that it does not count lines, pass the same override on every
+later run of the template; without it the run asks Azure again for what it left out. The what-if
+shows it first: a policy assignment, or a fourth alert, to create.
 
 **The users (step 6)**
 
@@ -1044,6 +1095,7 @@ for what it refused. The what-if shows it first: a policy assignment, or a fourt
 | No line of the probe job is in the workspace once it is due | Set `disableLocalAuth: false` in the template, deploy, run the probe job once more, read again when due. Still none: [Switching the logs off](#switching-the-logs-off). In the trial the lines arrived with key access off |
 | The lines of a migration that lasts seconds never arrive | The logs stay on, because the app's lines are the other half: a short run may then leave a verdict and no text |
 | Azure reports no exit code for an execution | The verdict line is a status and two times. "Failed" is still a verdict |
+| At step 20 the metric's count is below the rows of the hour's middle or above those of the widened hour | The alert on the workspace does not count lines: it is deleted and left out from then on, as step 20 writes. A log search rule in its place is billed, and the owner's decision |
 
 **The app and the deployments (steps 9 and 15 to 19)**
 
@@ -1525,9 +1577,10 @@ try {
   supports may be moved to it after a notice, and that one with no running app or job and no
   recent activity may be archived; this one has jobs, a second container and Azure Monitor logs,
   which Express does not have (read on 2026-10-03).
-- If the policy or the alert on the workspace was left out because Azure refused it, the override
-  that left it out is passed again: `Invoke-Template 'change' @('denyPolicy=false')`. The file
-  does not remember it ([If Azure says no](#if-azure-says-no)).
+- If the policy or the alert on the workspace was left out because Azure refused it, or the alert
+  because step 20 found that it does not count lines, the override that left it out is passed
+  again: `Invoke-Template 'change' @('denyPolicy=false')`, or `@('logVolumeAlert=false')`. The
+  file does not remember it ([If Azure says no](#if-azure-says-no)).
 - A job with another trigger needs it added to the parameter `allowedJobTriggers`, or the policy
   refuses it.
 - After an identity was deleted and made again, run `./infra/sql-principals.ps1`: the user it left
@@ -1982,6 +2035,7 @@ Each line is checked at the step named, in the rest of the first deployment.
 | The API as `azurebank_app` under the three real-stack test suites, and a transfer as that user | before step 15, on a local SQL Server |
 | **The app itself:** two containers in one replica, its three probes against a cold start (1 s delay, 3 s period, 10 failures; 4 s timeout on readiness), the first database request after it, and scale to zero. Its own first sign-in after a cold start, against its 10 s: the probe program's first open as the app's identity took 6,390 ms at step 7, one cold run with a string that waits 30 s | steps 15 and 16, and the days after |
 | The four alert rules are accepted with these metric names (`Requests`, `TxBytes`, `Replicas`, `Ingestion Volume`), the fourth on a workspace and at no cost; a test e-mail arrives; any of the four ever firing | step 15, and the days after |
+| That the fourth alert counts lines. Microsoft's page calls `Ingestion Volume` the number of records ingested and lists `Count` as its default aggregation; whether one measurement of it is one record is said nowhere. If it is not, `Count` counts measurements, the rule may never reach 50,000 an hour, and it is switched off | step 20 |
 | What the `Replicas` metric reports while the app is scaled to zero: 0, or nothing. If nothing, a day's average is 1 on any day the app ran at all, the alert on replica time fires on any use, and that rule has to count another way | the first days after step 16 |
 | Our own template passes the Deny policy; the policy refuses a second replica on a PATCH (the trial saw an earlier rule refuse a job above half a vCPU) | step 15 |
 | What the registry answers the workflow's token for a package that does not exist yet (anonymously, measured: `denied`); the digest line | step 14 |
@@ -1996,8 +2050,8 @@ Each line is checked at the step named, in the rest of the first deployment.
 | A request to Azure that fails once in the middle of a run. Nothing is asked twice: the run stops, and nothing is put back | not provoked |
 | The raw log of a workflow run holds none of the three identifiers, not the app's address, not the server's name, no client ID of a database identity and no address: step 17 counts each | step 17 |
 | `migrate` from a checkout, signed in as the owner with `Active Directory Default` | step 19 |
-| The meters after 48 hours: the three environment meters and the Dedicated one at 0; whether the free 5 GB of logs apply to this offer; whether the cost view returns a row at all (on the trial's own day it returned none) | after steps 2 and 20 |
-| What the workspace bills for a line of the app; how far the cap overshoots; whether an environment set to `none` still feeds a setting that exists | after step 20; the last two are not provoked |
+| The meters after 48 hours: the three environment meters and the Dedicated one at 0; whether the free 5 GB of logs apply to this offer; whether the cost view returns a row at all (on the trial's own day it returned none) | after steps 2 and 21 |
+| What the workspace bills for a line of the app; how far the cap overshoots; whether an environment set to `none` still feeds a setting that exists | after step 21; the last two are not provoked |
 | How long a managed identity's token stays valid for the database | not found in the pages read |
 | That the identity is refused a scale change, a delete or a stop. One refusal is provoked on every deployment (the secrets listing); the policy's refusal is provoked as the owner | not provoked |
 | Every command under [Switching the logs off](#switching-the-logs-off), [If something was stolen](#if-something-was-stolen) and [Removing everything](#removing-everything). The trial made its own deletions with other commands | the day they are needed |

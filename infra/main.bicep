@@ -485,9 +485,16 @@ var alerts = [
   // the metric reports 0 while the app is scaled to zero, which nobody has seen: if it reports
   // nothing then, the average is 1 on any day of use and this rule fires every such day.
   { name: 'azurebank-replica-time', onLogs: false, metric: 'Replicas', aggregation: 'Average', threshold: json('0.093'), window: 'P1D', every: 'PT1H', text: 'The replica ran more than 2.2 hours in one day.' }
-  // 50,000 lines in one hour. At the 438 bytes that a line of a job was billed (README.md,
-  // "Measured on Azure") that is 22 MB of the 50 MB daily cap; at the 768 computed for one of the
-  // app's warnings, 38 MB. It warns of volume; nothing warns that the cap itself was reached.
+  // 50,000 records ingested in one hour. Microsoft's page on the workspace's metrics (2026-07-31)
+  // calls 'Ingestion Volume' the number of records ingested into a workspace or a table, with Count
+  // as its default aggregation. A record is a row, and in the trial a line printed was one row; but
+  // whether one measurement of the metric is one record is said nowhere: if one stands for
+  // several, Count counts measurements and this rule may never fire. Not measured yet: the
+  // runbook's step 20 reads the metric against a query of the rows, and if they disagree the rule
+  // is left out (logVolumeAlert=false). If they agree, 50,000 lines at the 438 bytes that a line of
+  // a job was billed (README.md, "Measured on Azure") are 22 MB of the 50 MB daily cap; at the 768
+  // computed for one of the app's warnings, 38 MB. It warns of volume; nothing warns that the cap
+  // itself was reached.
   { name: 'azurebank-log-volume', onLogs: true, metric: 'Ingestion Volume', aggregation: 'Count', threshold: 50000, window: 'PT1H', every: 'PT15M', text: 'More than 50,000 log lines in one hour.' }
 ]
 

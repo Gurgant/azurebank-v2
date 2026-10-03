@@ -250,17 +250,19 @@ client ID. That keeps both out of the container that faces the internet. It is n
 neither is a secret.
 
 **10. Nothing stops the app automatically, and the owner accepts that.** Four alerts send an
-e-mail: requests, data out and replica time on the app, and log lines on the workspace. The owner
+e-mail: requests, data out and replica time on the app, and records ingested on the workspace,
+which are its log lines only if the metric counts one per record (not yet measured). The owner
 stops the app by hand. The logs are switched off by rule: any cost on their meter, a day above
 twice the cap, or no line ever arriving.
 
 **11. What Azure accepts was measured before the first run, and what to do when it refuses is
 decided before it too.** The tool has three ways to sign in, the user creation a second form, the
 logs an off switch, the policy and the fourth alert a switch each; each is written with the
-refusal that triggers it. Anything else that is refused is a stop. The server has one shape and a
-user carries one kind of ID, its identity's client ID: the trial showed that the shape is
-accepted and which ID the server stores, so the two other shapes of the server and the switch for
-the object ID that this record first carried were taken out.
+refusal that triggers it, and the fourth alert's also with the measurement that does. Anything
+else that is refused is a stop. The server has one shape and a user carries one kind of ID, its
+identity's client ID: the trial showed that the shape is accepted and which ID the server stores,
+so the two other shapes of the server and the switch for the object ID that this record first
+carried were taken out.
 
 ## The three reopened choices
 
@@ -466,13 +468,19 @@ median), eight at the most: the workflow could not print a migration's text in t
 were wanted.
 
 **Not measured.** That the free 5 GB apply: the cost view had no row on the same day. That the
-alert on the workspace is accepted, and at no cost. What a line of the app is billed. How far the
-cap overshoots.
+alert on the workspace is accepted, and at no cost. That it counts lines: Microsoft's page on the
+workspace's metrics (2026-07-31) calls `Ingestion Volume` the number of records ingested and lists
+`Count` as its default aggregation, and says nowhere that one measurement is one record; if one
+stands for several, the rule counts measurements and may never fire. The runbook's step 20 reads
+the metric against a query of the rows over one hour. What a line of the app is billed. How far
+the cap overshoots.
 
 **If Azure refuses.** The offer refuses any part: the logs are switched off and nothing is kept, as
 first approved, with the verdict line still printed. No line arrives: access by key is allowed
 again and the read repeated; still none, the logs go off. Any cost on the meter, or a day above
-twice the cap: the logs go off. The alert is refused: it is left out, one of four.
+twice the cap: the logs go off. The alert is refused: it is left out, one of four. The metric and
+the query disagree: the alert is left out too, and an alert that counts lines, a log search rule
+billed $0.50 a month or more, is the owner's decision.
 
 ## Rejected
 
