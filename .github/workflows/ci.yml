@@ -764,7 +764,7 @@ jobs:
         if: failure()
         run: cat "$RUNNER_TEMP/api.log"
 
-  # The infrastructure: the two Bicep templates, the deployment script, the two PowerShell scripts
+  # The infrastructure: the three Bicep templates, the deployment script, the two PowerShell scripts
   # and the workflows themselves. Nothing here signs in to Azure or reads a secret.
   infra:
     name: Infrastructure (templates, scripts, workflows)
@@ -793,7 +793,7 @@ jobs:
             fi
             echo "$*: clean"
           }
-          for template in infra/main.bicep infra/guardrails.bicep; do
+          for template in infra/main.bicep infra/guardrails.bicep infra/app-inputs.bicep; do
             clean bicep build "$template" --stdout
             clean bicep lint "$template"
           done

@@ -43,9 +43,6 @@ param auditAnchorKey string = ''
 @secure()
 param securityPinPepper string = ''
 
-var appInputsMissing = length(imageTag) != 40 || empty(alertEmail) || empty(jwtSecret) || empty(idempotencyHashKey) || empty(stepUpBindingKey) || empty(serviceCredentialBffKey) || empty(auditChainKey) || empty(auditAnchorKey) || empty(securityPinPepper)
-var appName = deployApp && appInputsMissing ? fail('deployApp=true needs a 40-character imageTag, alertEmail and all seven application secrets (run infra/secrets.ps1).') : 'azurebank'
-
 // Bicep 0.47.16 has no types for this API version (BCP081): test_scripts.py checks the properties instead.
 #disable-next-line BCP081
 resource environment 'Microsoft.App/managedEnvironments@2026-07-01' = {
@@ -202,8 +199,27 @@ resource migrateIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-
 var appConnection = 'Server=tcp:${sql.properties.fullyQualifiedDomainName},1433;Database=AzureBank;Authentication=Active Directory Managed Identity;User ID=${appIdentity.properties.clientId};Encrypt=True;TrustServerCertificate=False'
 var migrationConnection = 'Server=tcp:${sql.properties.fullyQualifiedDomainName},1433;Database=AzureBank;Authentication=Active Directory Managed Identity;User ID=${migrateIdentity.properties.clientId};Encrypt=True;TrustServerCertificate=False'
 
+// Refuses deployApp=true without the image tag, the alerts' address or one of the seven secrets:
+// the checks are the parameters of app-inputs.bicep, and the app, the job and the action group
+// wait for it. The app's name stays a plain value, which a what-if can work out (README.md,
+// "Measured on Azure").
+module appInputs 'app-inputs.bicep' = if (deployApp) {
+  name: 'azurebank-app-inputs'
+  params: {
+    imageTag: imageTag
+    alertEmail: alertEmail
+    jwtSecret: jwtSecret
+    idempotencyHashKey: idempotencyHashKey
+    stepUpBindingKey: stepUpBindingKey
+    serviceCredentialBffKey: serviceCredentialBffKey
+    auditChainKey: auditChainKey
+    auditAnchorKey: auditAnchorKey
+    securityPinPepper: securityPinPepper
+  }
+}
+
 resource app 'Microsoft.App/containerApps@2025-01-01' = if (deployApp) {
-  name: appName
+  name: 'azurebank'
   location: location
   identity: {
     type: 'UserAssigned'
@@ -297,6 +313,9 @@ resource app 'Microsoft.App/containerApps@2025-01-01' = if (deployApp) {
       }
     }
   }
+  dependsOn: [
+    appInputs
+  ]
 }
 
 resource migrate 'Microsoft.App/jobs@2025-01-01' = if (deployApp) {
@@ -342,6 +361,9 @@ resource migrate 'Microsoft.App/jobs@2025-01-01' = if (deployApp) {
       ]
     }
   }
+  dependsOn: [
+    appInputs
+  ]
 }
 
 // What a deployment needs: read and write the app and the job, start the job, read its executions,
@@ -449,6 +471,9 @@ resource owner 'Microsoft.Insights/actionGroups@2023-01-01' = if (deployApp) {
       }
     ]
   }
+  dependsOn: [
+    appInputs
+  ]
 }
 
 var alerts = [

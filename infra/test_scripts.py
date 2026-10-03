@@ -1,10 +1,11 @@
-"""Offline tests of the two PowerShell scripts, of the users file and of the two templates.
+"""Offline tests of the two PowerShell scripts, of the users file and of the three templates.
 
 The scripts run for real, in PowerShell 7, against a stand-in for the Azure CLI and a stand-in for
 sqlcmd: they touch neither Azure, nor a database, nor the real parameter folder. The users file is
 read as text: what a SQL Server does with it is checked on a real engine (README.md). The
-templates are compiled by the Bicep CLI and the compiled JSON is read. What Azure itself answers
-is checked on the first deployment (README.md).
+templates are compiled by the Bicep CLI and the compiled JSON is read; the CLI's `snapshot` also
+works them out offline with given values, as a what-if does. What Azure itself answers is
+checked on the first deployment (README.md).
 
 On a developer's machine a missing tool skips its tests; in CI a missing tool is an error.
 """
@@ -1244,6 +1245,7 @@ class ParseTests(unittest.TestCase):
                 self.assertRegex(result.stdout.strip(), r'^[1-9][0-9]* tokens, 0 errors$', result.stderr)
 
 
+TEMPLATES = ('main', 'guardrails', 'app-inputs')
 NINE_ACTIONS = [
     'Microsoft.App/containerApps/read', 'Microsoft.App/containerApps/write',
     'Microsoft.App/containerApps/revisions/read', 'Microsoft.App/containerApps/revisions/replicas/read',
@@ -1251,7 +1253,15 @@ NINE_ACTIONS = [
     'Microsoft.App/jobs/executions/read', 'Microsoft.App/jobs/execution/read',
 ]
 BEHIND_DEPLOY_APP = ['Microsoft.App/containerApps', 'Microsoft.App/jobs', 'Microsoft.Authorization/roleAssignments',
-                     'Microsoft.Authorization/roleAssignments', 'Microsoft.Insights/actionGroups']
+                     'Microsoft.Authorization/roleAssignments', 'Microsoft.Insights/actionGroups',
+                     'Microsoft.Resources/deployments']
+# The module that refuses deployApp=true without these values (app-inputs.bicep), and what it asks
+# of each: a length of exactly 40 for the image tag, at least 1 for the others.
+GUARD = 'azurebank-app-inputs'
+GUARDED = {'imageTag': (40, 40), 'alertEmail': (1, None), **dict.fromkeys(SEVEN, (1, None))}
+# What every snapshot below is evaluated against: none of it is real.
+SNAPSHOT_CONTEXT = ['--subscription-id', '00000000-0000-4000-8000-00000000000a', '--resource-group', 'azurebank-demo',
+                    '--location', 'italynorth', '--tenant-id', '00000000-0000-4000-8000-00000000000b']
 # One loop. Each rule needs deployApp; the one on the log workspace also needs the logs and its own switch.
 ALERTS_CONDITION = ("[and(parameters('deployApp'), or(not(variables('alerts')[copyIndex()].onLogs), "
                     "and(parameters('keepLogs'), parameters('logVolumeAlert'))))]")
@@ -1322,12 +1332,51 @@ def as_azure_receives_it(node, variables):
     return node
 
 
+def copy_templates(folder, **texts):
+    """The three templates written into a folder, each as it is or as the text given for it."""
+    for name in TEMPLATES:
+        text = texts.pop(name, None)
+        if text is None:
+            text = (HERE / f'{name}.bicep').read_text(encoding='utf-8')
+        (pathlib.Path(folder) / f'{name}.bicep').write_text(text, encoding='utf-8')
+    assert not texts, f'no such template: {sorted(texts)}'
+
+
+def bicep_literal(value):
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    return "'" + value.replace('\\', '\\\\').replace("'", "\\'") + "'"
+
+
+# The values of a run with the app, none of them real, and of one without it.
+FOUNDATION_INPUTS = {'entraAdminObjectId': '00000000-0000-4000-8000-000000000001', 'entraAdminLogin': 'owner'}
+APP_INPUTS = {**FOUNDATION_INPUTS, 'deployApp': True, 'imageTag': TAG, 'alertEmail': 'owner',
+              **dict.fromkeys(SEVEN, 'x')}
+
+
+def snapshot(folder, values):
+    """`bicep snapshot` of the main.bicep in a folder, given these values: the template worked out
+    offline, the way a what-if works it out. On the template of the first session's step 9 it left
+    the app's name an expression, as that what-if did (README.md, "Measured on Azure"). Returns its
+    exit code, what it printed and the resources it predicts."""
+    parameters = pathlib.Path(folder) / 'run.bicepparam'
+    parameters.write_text("using 'main.bicep'\n" + ''.join(f'param {name} = {bicep_literal(value)}\n'
+                                                           for name, value in values.items()), encoding='utf-8')
+    written = pathlib.Path(folder) / 'run.snapshot.json'
+    written.unlink(missing_ok=True)
+    result = subprocess.run([BICEP, 'snapshot', str(parameters), '--mode', 'overwrite', *SNAPSHOT_CONTEXT],
+                            capture_output=True, text=True, timeout=300)
+    said = result.stdout + result.stderr
+    predicted = json.loads(written.read_text(encoding='utf-8'))['predictedResources'] if written.exists() else None
+    return result.returncode, said, predicted
+
+
 @unittest.skipUnless(BICEP, 'the Bicep CLI is not installed')
 class TemplateTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.compiled = {}
-        for name in ('main', 'guardrails'):
+        for name in TEMPLATES:
             for verb in (['build', '--stdout'], ['lint']):
                 result = subprocess.run([BICEP, verb[0], str(HERE / f'{name}.bicep'), *verb[1:]],
                                         capture_output=True, text=True, timeout=300)
@@ -1348,6 +1397,93 @@ class TemplateTests(unittest.TestCase):
 
     def test_the_app_and_all_that_needs_it_are_behind_deploy_app(self):
         self.assertEqual(self.conditions("[parameters('deployApp')]"), sorted(BEHIND_DEPLOY_APP))
+
+    def test_the_app_is_named_by_a_plain_value_and_no_resource_id_reads_a_secret(self):
+        # A what-if works out no expression that reads a secure parameter. On 2026-10-03 the app's
+        # name went through one, and the what-if listed the app and the role assignment on it as
+        # Unsupported (README.md, "Measured on Azure"). What makes a resource's ID: its name,
+        # scope, condition, copy, subscription, group and API version.
+        (app,) = self.of_type(APP)
+        self.assertEqual(app['name'], 'azurebank')
+        # The name the two scripts look the app up by.
+        self.assertRegex((HERE / 'deploy.py').read_text(encoding='utf-8'), r"(?m)^APP = 'azurebank'$")
+        self.assertRegex((HERE / 'secrets.ps1').read_text(encoding='utf-8'), r"(?m)^\$AppName = 'azurebank'$")
+        # Each secure parameter, and each variable that reads one, directly or through another.
+        reads_a_secret = {f"parameters('{name}')" for name in SEVEN}
+        variables = {f"variables('{name}')": json.dumps(value)
+                     for name, value in self.main.get('variables', {}).items()}
+        while True:
+            more = {name for name, value in variables.items()
+                    if name not in reads_a_secret and any(token in value for token in reads_a_secret)}
+            if not more:
+                break
+            reads_a_secret |= more
+        for resource in self.resources:
+            for key in ('name', 'scope', 'condition', 'copy', 'subscriptionId', 'resourceGroup', 'apiVersion'):
+                text = json.dumps(resource.get(key, ''))
+                self.assertEqual([token for token in reads_a_secret if token in text], [], (resource['type'], key))
+
+    def test_deploy_app_true_waits_for_a_check_of_each_value_the_app_needs(self):
+        (guard,) = [module for module in self.of_type('Microsoft.Resources/deployments') if module['name'] == GUARD]
+        self.assertEqual(guard['condition'], "[parameters('deployApp')]")
+        self.assertEqual(guard['properties']['expressionEvaluationOptions'], {'scope': 'inner'})
+        # Each value goes in under its own name, as main.bicep was given it.
+        self.assertEqual(guard['properties']['parameters'],
+                         {name: {'value': f"[parameters('{name}')]"} for name in GUARDED})
+        declared = guard['properties']['template']['parameters']
+        self.assertEqual(declared, self.compiled['app-inputs']['parameters'])
+        self.assertEqual({name: (entry.get('minLength'), entry.get('maxLength')) for name, entry in declared.items()},
+                         GUARDED)
+        # Secure inside it as well: a plain parameter of a nested deployment is kept in its history.
+        self.assertEqual(sorted(name for name, entry in declared.items() if entry['type'].lower() == 'securestring'),
+                         sorted(SEVEN))
+        self.assertEqual(sorted(name for name, entry in declared.items() if 'defaultValue' in entry), [])
+        # It creates nothing and gives nothing back.
+        self.assertEqual(guard['properties']['template']['resources'], [])
+        self.assertNotIn('outputs', guard['properties']['template'])
+        # The app, the job and the action group wait for it; the role assignments and the alerts
+        # wait for them.
+        waits = f"[resourceId('Microsoft.Resources/deployments', '{GUARD}')]"
+        self.assertEqual(sorted(resource['type'] for resource in self.resources
+                                if waits in resource.get('dependsOn', [])),
+                         sorted([APP, JOB, 'Microsoft.Insights/actionGroups']))
+
+    def test_a_what_if_can_name_everything_the_app_run_creates(self):
+        # Offline, with values of the shapes secrets.ps1 writes: fourteen things and nine more, and
+        # every ID worked out. The check creates nothing, and nothing of it is listed.
+        with tempfile.TemporaryDirectory() as folder:
+            copy_templates(folder)
+            code, said, predicted = snapshot(folder, APP_INPUTS)
+            self.assertEqual(code, 0, said)
+            self.assertEqual([resource['id'] for resource in predicted if resource['id'].startswith('[')], [])
+            self.assertEqual(len(predicted), 23)
+            (app,) = [resource['id'] for resource in predicted if resource['type'] == APP]
+            self.assertTrue(app.endswith('/resourceGroups/azurebank-demo/providers/' + APP + '/azurebank'), app)
+            on_the_app = [resource for resource in predicted
+                          if resource['id'].startswith(app + '/providers/Microsoft.Authorization/roleAssignments/')]
+            self.assertEqual(len(on_the_app), 1)
+            # And without the app: the fourteen, whatever the app's values are.
+            code, said, predicted = snapshot(folder, {**FOUNDATION_INPUTS, 'deployApp': False, 'imageTag': '',
+                                                      'alertEmail': ''})
+            self.assertEqual(code, 0, said)
+            self.assertEqual(len(predicted), 14)
+            self.assertNotIn(APP, [resource['type'] for resource in predicted])
+
+    def test_deploy_app_true_is_refused_with_a_tag_that_is_not_40_characters_or_no_address(self):
+        # Offline, as above. The seven secrets cannot be tried this way: like a what-if, this
+        # evaluation works out no secure value. Their checks are read from the compiled template
+        # above, and a local deployment saw each one refuse (README.md, "Checking these files").
+        with tempfile.TemporaryDirectory() as folder:
+            copy_templates(folder)
+            for name, value, why in (('imageTag', TAG[:39], "greater than or equal to '40'"),
+                                     ('imageTag', TAG + 'a', "less than or equal to '40'"),
+                                     ('alertEmail', '', "greater than or equal to '1'")):
+                with self.subTest(name=name, length=len(value)):
+                    code, said, predicted = snapshot(folder, {**APP_INPUTS, name: value})
+                    self.assertNotEqual(code, 0, said)
+                    self.assertIsNone(predicted)
+                    self.assertIn(f"The provided value for the template parameter '{name}' is not valid. "
+                                  f"Length of the value should be {why}", said)
 
     def test_the_foundation_is_created_whatever_deploy_app_says(self):
         self.assertEqual(sorted(resource['type'] for resource in self.resources if 'condition' not in resource),
@@ -1403,10 +1539,27 @@ class TemplateTests(unittest.TestCase):
         for code, text in mutants.items():
             for verb in (['build', '--stdout'], ['lint']):
                 with self.subTest(code=code, verb=verb[0]), tempfile.TemporaryDirectory() as folder:
-                    shutil.copy(HERE / 'guardrails.bicep', folder)
-                    copy = pathlib.Path(folder) / 'main.bicep'
-                    copy.write_text(text, encoding='utf-8')
-                    result = subprocess.run([BICEP, verb[0], str(copy), *verb[1:]],
+                    copy_templates(folder, main=text)
+                    result = subprocess.run([BICEP, verb[0], str(pathlib.Path(folder) / 'main.bicep'), *verb[1:]],
+                                            capture_output=True, text=True, timeout=300)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn(f'Warning {code}', result.stderr)
+
+    def test_the_check_of_the_app_inputs_silences_one_code_and_any_other_still_reaches_standard_error(self):
+        # Its parameters exist to be checked by Azure and nothing in the file reads them, so the
+        # file silences that one code, from that line on. Seen firing on copies: without the line
+        # the warning is back, through main.bicep too; with it an unused variable is reported.
+        source = (HERE / 'app-inputs.bicep').read_text(encoding='utf-8')
+        self.assertEqual([line for line in source.splitlines() if line.lstrip().startswith('#')],
+                         ['#disable-diagnostics no-unused-params'])
+        mutants = {'no-unused-params': source.replace('#disable-diagnostics no-unused-params\n', ''),
+                   'no-unused-vars': source + "\nvar nobodyReadsThis = 1\n"}
+        self.assertNotIn('#disable', mutants['no-unused-params'])
+        for code, text in mutants.items():
+            for verb, name in ((['build', '--stdout'], 'app-inputs'), (['lint'], 'app-inputs'), (['lint'], 'main')):
+                with self.subTest(code=code, verb=verb[0], file=name), tempfile.TemporaryDirectory() as folder:
+                    copy_templates(folder, **{'app-inputs': text})
+                    result = subprocess.run([BICEP, verb[0], str(pathlib.Path(folder) / f'{name}.bicep'), *verb[1:]],
                                             capture_output=True, text=True, timeout=300)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertIn(f'Warning {code}', result.stderr)
@@ -1561,7 +1714,10 @@ class TemplateTests(unittest.TestCase):
         self.assertNotIn('initContainers', job['properties']['template'])
 
     def test_the_policy_definition_sits_at_subscription_scope_and_denies(self):
-        (module,) = self.of_type('Microsoft.Resources/deployments')
+        self.assertEqual(sorted(module['name'] for module in self.of_type('Microsoft.Resources/deployments')),
+                         [GUARD, 'azurebank-shape-definition'])
+        (module,) = [module for module in self.of_type('Microsoft.Resources/deployments')
+                     if module['name'] == 'azurebank-shape-definition']
         self.assertEqual(module['subscriptionId'], '[subscription().subscriptionId]')
         nested = module['properties']['template']
         self.assertTrue(nested['$schema'].endswith('/subscriptionDeploymentTemplate.json#'), nested['$schema'])
@@ -1618,7 +1774,7 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(alerts['condition'], ALERTS_CONDITION)
         self.assertIs(self.main['parameters']['logVolumeAlert']['defaultValue'], True)
         workspace = "resourceId('Microsoft.OperationalInsights/workspaces', 'azurebank-logs')"
-        app = "resourceId('Microsoft.App/containerApps', variables('appName'))"
+        app = "resourceId('Microsoft.App/containerApps', 'azurebank')"
         self.assertEqual(alerts['properties']['scopes'],
                          [f"[if(variables('alerts')[copyIndex()].onLogs, {workspace}, {app})]"])
         (criterion,) = alerts['properties']['criteria']['allOf']
@@ -1642,8 +1798,8 @@ class TemplateTests(unittest.TestCase):
                                           state='foundation').returncode, 0)
             written = set(case.parameters())
             self.assertLessEqual(written, set(self.main['parameters']))
-            # What the template's own guard asks for when deployApp is true.
-            self.assertLessEqual(set(SEVEN) | {'imageTag', 'alertEmail', 'deployApp'}, written)
+            # What the template's own check asks for when deployApp is true.
+            self.assertLessEqual(set(self.compiled['app-inputs']['parameters']) | {'deployApp'}, written)
             # And everything secure in the template is something the script writes: no secret is typed by hand.
             secure = {name for name, entry in self.main['parameters'].items()
                       if entry['type'].lower() == 'securestring'}
