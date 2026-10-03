@@ -243,6 +243,85 @@ public sealed class TransferTransientRetrySqlServerTests : IDisposable
             + "a new key.");
     }
 
+    /// <summary>
+    /// A row under the key is not enough: after a stale claim was released, another body can own
+    /// it. Its status proves nothing about this request, and its Processing claim is not ours to
+    /// re-arm. The replacement lands before the faulted batch can lock or write the original row.
+    /// </summary>
+    [SqlServerTheory]
+    [InlineData(IdempotencyStatus.Processing)]
+    [InlineData(IdempotencyStatus.Executed)]
+    [InlineData(IdempotencyStatus.Completed)]
+    public async Task ExternalTransfer_RecordClaimedAgainWithOtherBytes_Answers409WithoutApplied_AndNothingMoved(
+        IdempotencyStatus stored)
+    {
+        var fault = new TransferTransientFault(TransferFaultMode.AtFirstSaveChanges);
+        var client = CreateRetryingClient(fault);
+
+        var sender = await RegisterAsync(client, "sxh");
+        var recipient = await RegisterAsync(client, "rxh");
+        await DepositAsync(client, sender, 1000m);
+
+        var key = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        var replacement = new AzureBank.Shared.Entities.IdempotencyRecord
+        {
+            UserId = sender.UserId,
+            Endpoint = "POST api/transfers",
+            Key = key,
+            ClaimId = Guid.NewGuid(),
+            RequestHash = new string('b', 64),
+            Status = stored,
+            ResponseStatusCode = stored == IdempotencyStatus.Completed ? 201 : null,
+            ResponseContentType = stored == IdempotencyStatus.Completed ? "application/json" : null,
+            ResponseBody = stored == IdempotencyStatus.Completed
+                ? """{"data":null,"message":"the answer to the other body"}"""
+                : null,
+            CreatedAt = now,
+            ExpiresAt = now.AddHours(24),
+        };
+        int? deleted = null;
+        int? inserted = null;
+        fault.BeforeCommandFault = () =>
+        {
+            deleted = DeleteRecordOutOfBand(sender.UserId, replacement.Endpoint, key, replacement.RequestHash);
+            inserted = InsertRecordOutOfBand(replacement);
+        };
+
+        fault.Arm();
+        var response = await TransferAsync(client, sender, new TransferRequest
+        {
+            FromAccountId = sender.AccountId,
+            RecipientAzureTag = recipient.AzureTag,
+            Amount = 100m,
+            Description = "Another body's record before the retry"
+        }, key);
+        var text = await response.Content.ReadAsStringAsync();
+        _output.WriteLine($"record replaced as the first save faulted ({deleted} deleted, {inserted} inserted, {stored}): {(int)response.StatusCode} {text}");
+
+        fault.Fired.Should().BeTrue("the transient must actually have been injected");
+        deleted.Should().Be(1, "the original claim must have a different hash and be deleted before the retry");
+        inserted.Should().Be(1, "the replacement must have been written, unlocked, before the retry");
+
+        var problem = await AssertResultUnknownAsync(response);
+
+        (await GetBalanceAsync(client, sender, sender.AccountId)).Should().Be(1000m, "nothing was debited");
+        (await GetBalanceAsync(client, recipient, recipient.AccountId)).Should().Be(0m, "nothing was credited");
+        (await CountTransactionsAsync(client, sender, sender.AccountId)).Should().Be(1, "the funding deposit only");
+        (await CountTransactionsAsync(client, recipient, recipient.AccountId)).Should().Be(0, "no transfer row");
+        (await AuthorisationStatusesAsync(sender.UserId)).Should().Equal(
+            new[] { StepUpAuthorizationStatus.Pending }, "nothing was spent");
+        (await FindRecordAsync(sender.UserId, replacement.Endpoint, key)).Should().BeEquivalentTo(
+            replacement, "the other body's record must survive without a re-arm, overwrite or release");
+
+        problem.TryGetProperty("applied", out _).Should().BeFalse(
+            "the record is about another body, so applied is absent: never true, never false");
+        problem.GetProperty("detail").GetString().Should().Be(
+            "A request with this idempotency key may have been executed: its record is no longer there, "
+            + "so the outcome is not known. Verify via GET /api/transactions before sending it again with "
+            + "a new key.");
+    }
+
     // ---- What "the record says Executed" stands on: the flip commits with the money or not at all ----
 
     [SqlServerFact]
@@ -523,18 +602,49 @@ public sealed class TransferTransientRetrySqlServerTests : IDisposable
     }
 
     /// <summary>Deletes the key's record from a connection of its own; returns the rows deleted.</summary>
-    private static int DeleteRecordOutOfBand(Guid userId, string endpoint, Guid key)
+    private static int DeleteRecordOutOfBand(Guid userId, string endpoint, Guid key, string? otherHash = null)
     {
         using var connection = new SqlConnection(SqlServerFactAttribute.ConnectionString!);
         connection.Open();
         using var delete = connection.CreateCommand();
         delete.CommandText =
             "SET LOCK_TIMEOUT 5000; "
-            + "DELETE FROM [IdempotencyRecords] WHERE [UserId] = @user AND [Endpoint] = @endpoint AND [Key] = @key";
+            + "DELETE FROM [IdempotencyRecords] WHERE [UserId] = @user AND [Endpoint] = @endpoint AND [Key] = @key "
+            + "AND (@otherHash IS NULL OR [RequestHash] <> @otherHash)";
         delete.Parameters.Add(new SqlParameter("@user", userId));
         delete.Parameters.Add(new SqlParameter("@endpoint", endpoint));
         delete.Parameters.Add(new SqlParameter("@key", key));
+        // A replacement must be for different bytes; the row count proves that premise too.
+        delete.Parameters.Add(new SqlParameter("@otherHash", (object?)otherHash ?? DBNull.Value));
         return delete.ExecuteNonQuery();
+    }
+
+    /// <summary>Inserts a record from a connection of its own; returns the rows inserted.</summary>
+    private static int InsertRecordOutOfBand(AzureBank.Shared.Entities.IdempotencyRecord record)
+    {
+        using var connection = new SqlConnection(SqlServerFactAttribute.ConnectionString!);
+        connection.Open();
+        using var insert = connection.CreateCommand();
+        insert.CommandText =
+            "SET LOCK_TIMEOUT 5000; "
+            + "INSERT INTO [IdempotencyRecords] "
+            + "([UserId], [Endpoint], [Key], [ClaimId], [RequestHash], [Status], "
+            + "[ResponseStatusCode], [ResponseContentType], [ResponseBody], [CreatedAt], [ExpiresAt]) "
+            + "VALUES (@user, @endpoint, @key, @claim, @hash, @status, @code, @type, @body, @created, @expires)";
+        insert.Parameters.Add(new SqlParameter("@user", record.UserId));
+        insert.Parameters.Add(new SqlParameter("@endpoint", record.Endpoint));
+        insert.Parameters.Add(new SqlParameter("@key", record.Key));
+        insert.Parameters.Add(new SqlParameter("@claim", record.ClaimId));
+        insert.Parameters.Add(new SqlParameter("@hash", record.RequestHash));
+        insert.Parameters.Add(new SqlParameter("@status", record.Status.ToString()));
+        insert.Parameters.Add(new SqlParameter("@code", (object?)record.ResponseStatusCode ?? DBNull.Value));
+        insert.Parameters.Add(new SqlParameter("@type", (object?)record.ResponseContentType ?? DBNull.Value));
+        insert.Parameters.Add(new SqlParameter("@body", (object?)record.ResponseBody ?? DBNull.Value));
+        // Match datetime2 rather than rounding through a datetime parameter: every stored field
+        // is compared after the refusal, including the timestamps the request must leave alone.
+        insert.Parameters.Add(new SqlParameter("@created", System.Data.SqlDbType.DateTime2) { Value = record.CreatedAt });
+        insert.Parameters.Add(new SqlParameter("@expires", System.Data.SqlDbType.DateTime2) { Value = record.ExpiresAt });
+        return insert.ExecuteNonQuery();
     }
 
     private sealed record TestUser(string Token, Guid UserId, Guid AccountId, string AzureTag);

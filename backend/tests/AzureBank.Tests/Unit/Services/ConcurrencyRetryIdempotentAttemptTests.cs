@@ -27,8 +27,8 @@ namespace AzureBank.Tests.Unit.Services;
 /// transactions, so "read as Executed" here is whatever the second context wrote. The committed
 /// record, the record that is gone and the record still <c>Processing</c> are on SQL Server too,
 /// over real commits and a real rollback, in <c>TransferTransientRetrySqlServerTests</c> and
-/// <c>WithdrawalStepUpSqlServerTests</c>. The record claimed again with another body is held here
-/// only.
+/// <c>WithdrawalStepUpSqlServerTests</c>. The record claimed again with another body is also held
+/// on SQL Server in <c>TransferTransientRetrySqlServerTests</c>, in all three statuses.
 /// </para>
 /// </remarks>
 public sealed class ConcurrencyRetryIdempotentAttemptTests : IDisposable
