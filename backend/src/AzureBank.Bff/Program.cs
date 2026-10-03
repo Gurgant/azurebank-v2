@@ -129,6 +129,15 @@ try
         .ValidateOnStart();
     builder.Services.AddSingleton<IValidateOptions<SpaOptions>, SpaOptionsValidator>();
 
+    // The public demo's settings (the "Demo" section, which the API and the Seeder read too). Of
+    // the section this host needs the flag alone; the validator checks every range all the same,
+    // flag on or off, as it does in the other two. No rule for Demo:ClientKeySecret here: this
+    // host hashes no address and holds no secret.
+    builder.Services.AddOptions<DemoOptions>()
+        .Bind(builder.Configuration.GetSection(DemoOptions.SectionName))
+        .ValidateOnStart();
+    builder.Services.AddSingleton<IValidateOptions<DemoOptions>, DemoOptionsValidator>();
+
     // ═══════════════════════════════════════════════════════════════════════════
     // SERILOG CONFIGURATION (reads from appsettings.json)
     // ═══════════════════════════════════════════════════════════════════════════

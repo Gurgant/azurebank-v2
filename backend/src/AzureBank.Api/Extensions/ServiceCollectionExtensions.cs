@@ -160,6 +160,7 @@ public static class ServiceCollectionExtensions
 
         services.AddDailyLimit(configuration);
         services.AddRequestDeadline(configuration);
+        services.AddDemoOptions(configuration);
 
         // Audit trail chain key (ADR-0044). A secret, with the same fail-fast treatment as
         // StepUp:BindingKey and Idempotency:HashKey, and SEPARATE from both: one leaked key must not
@@ -467,6 +468,39 @@ public static class ServiceCollectionExtensions
           closed.
         */
         services.TryAddSingleton(TimeProvider.System);
+
+        return services;
+    }
+
+    /// <summary>
+    /// The public demo's settings (the "Demo" section), checked at startup: every range
+    /// <see cref="DemoOptionsValidator"/> holds, whether the demo is on or off, and, with the demo
+    /// on, <c>Demo:ClientKeySecret</c>.
+    /// </summary>
+    /// <remarks>
+    /// Its own method, as <see cref="AddDailyLimit"/> is; called from
+    /// <see cref="AddApplicationServices"/> so a second host inherits both rules.
+    /// </remarks>
+    public static IServiceCollection AddDemoOptions(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        // The secret's rule is this host's own, and not one of DemoOptionsValidator's: the Seeder
+        // runs that validator too and holds no secret, so the rule there would stop `seed-pool`
+        // and `recycle`. It is asked for only with the demo on, so a deployment that never turns
+        // the demo on starts without it.
+        services.AddOptions<DemoOptions>()
+            .Bind(configuration.GetSection(DemoOptions.SectionName))
+            .Validate(
+                o => !o.Enabled
+                     || (!string.IsNullOrWhiteSpace(o.ClientKeySecret) && o.ClientKeySecret.Length >= 32),
+                "Demo:ClientKeySecret must be configured with at least 32 characters when " +
+                "Demo:Enabled is true: it is the key a client's address is hashed with before it is stored")
+            .ValidateOnStart();
+
+        // The ranges. Without this line the section binds and nothing checks it: a value out of
+        // range would start the host, flag on or off.
+        services.AddSingleton<IValidateOptions<DemoOptions>, DemoOptionsValidator>();
 
         return services;
     }
