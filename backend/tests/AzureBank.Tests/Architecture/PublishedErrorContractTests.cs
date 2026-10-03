@@ -227,6 +227,31 @@ public class PublishedErrorContractTests
     }
 
     [Fact]
+    public void Registration_declares_the_403_of_the_public_demo()
+    {
+        // The document is the same for every deployment, and on the public demo this operation
+        // answers the BFF's own client nothing but 403: registration is closed there. Measured
+        // through the test host (DemoModeEndpointTests): the application's own refusal,
+        // application/json with errorCode REGISTRATION_CLOSED, one sentence and a traceId.
+        var register = Document().GetProperty("paths").GetProperty("/api/auth/register").GetProperty("post");
+        var responses = register.GetProperty("responses");
+
+        responses.EnumerateObject().Select(r => r.Name).Should().BeEquivalentTo(
+            ["201", "400", "403", "409", "415", "503"],
+            "what a registration can answer: the user, a body it cannot read, the demo, a "
+            + "duplicate, a body that is not JSON, and the outage");
+
+        var content = responses.GetProperty("403").GetProperty("content");
+        content.EnumerateObject().Select(m => m.Name).Should().Equal(
+            ["application/json"], "the 403 is the application's refusal, written by its exception handler");
+        content.GetProperty("application/json").GetProperty("schema").GetProperty("$ref").GetString()
+            .Should().Be("#/components/schemas/ProblemDetails");
+
+        // The code a client branches on, named where the operation is described.
+        register.GetProperty("description").GetString().Should().Contain("REGISTRATION_CLOSED");
+    }
+
+    [Fact]
     public void ProblemDetails_declares_retryAfterSeconds_as_an_optional_integer()
     {
         var schema = Document().GetProperty("components").GetProperty("schemas").GetProperty("ProblemDetails");

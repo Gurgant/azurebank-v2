@@ -1020,7 +1020,7 @@
           "Auth"
         ],
         "summary": "Register",
-        "description": "Register a new user account with initial bank account.",
+        "description": "Register a new user account with initial bank account. On the public demo registration is\r\nclosed: the answer is 403 with `errorCode` `REGISTRATION_CLOSED`, whatever the request\r\ncarries.",
         "requestBody": {
           "description": "Registration details",
           "content": {
@@ -1055,6 +1055,16 @@
           },
           "400": {
             "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
             "content": {
               "application/json": {
                 "schema": {

@@ -88,7 +88,9 @@ public class AuthController : ControllerBase
     /// Register
     /// </summary>
     /// <remarks>
-    /// Register a new user account with initial bank account.
+    /// Register a new user account with initial bank account. On the public demo registration is
+    /// closed: the answer is 403 with `errorCode` `REGISTRATION_CLOSED`, whatever the request
+    /// carries.
     /// </remarks>
     /// <param name="cancellationToken">The request's token: cancelled by its deadline or by the caller hanging up (ADR-0058).</param>
     /// <param name="request">Registration details</param>
@@ -99,6 +101,7 @@ public class AuthController : ControllerBase
     [ClosedInDemo]
     [ProducesResponseType(typeof(ApiResponse<RegisterResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)] // REGISTRATION_CLOSED in demo mode
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
     public async Task<ActionResult<ApiResponse<RegisterResponse>>> Register(
         [FromBody] RegisterRequest request, CancellationToken cancellationToken)
