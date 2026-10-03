@@ -12,9 +12,9 @@ using seeder::AzureBank.Seeder.Pool;
 namespace AzureBank.Tests.Architecture;
 
 /// <summary>
-/// The edges of a demo copy, held where a later change would cross them unseen: every place a handle
-/// is compared, every table that holds a copy's rows, and the random source its identifiers come
-/// from.
+/// The edges of a demo copy, held where a later change would cross them unseen: the comparisons of
+/// a handle, in the forms <see cref="HandleComparison"/> reads, every table that holds a copy's
+/// rows, and the random source its identifiers come from.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -49,7 +49,18 @@ public class DemoCopyBoundaryTests
 
     // ── Every comparison of a handle ─────────────────────────────────────────────────────────────
 
-    private static readonly Regex HandleComparison = new(@"AzureTag\s*==", RegexOptions.Compiled);
+    /// <summary>
+    /// A comparison of a handle in the forms a query by handle is written in here: <c>AzureTag ==</c>,
+    /// <c>== x.AzureTag</c>, and an <c>Equals</c> call with a handle on either side.
+    /// </summary>
+    /// <remarks>
+    /// A TEXT SCAN, and it sees only these forms: a comparison written another way, such as
+    /// <c>!=</c> or a <c>ToLower()</c> before the <c>==</c>, passes it unseen. The two reversed
+    /// forms and <c>Equals</c> are in it because a resolver written with them passed the first
+    /// version of this scan, which read <c>AzureTag ==</c> alone.
+    /// </remarks>
+    private static readonly Regex HandleComparison = new(
+        @"AzureTag\s*==|==\s*[\w.]*AzureTag\b|AzureTag\s*\.Equals\(|Equals\([^)]*AzureTag\b", RegexOptions.Compiled);
 
     private sealed record Site(string File, int Line, string Text, string[] Lines);
 
@@ -67,13 +78,14 @@ public class DemoCopyBoundaryTests
     }
 
     /// <summary>
-    /// Every comparison of a handle in <c>backend/src</c>, by the file it is in and the text that
-    /// begins it. A comparison this table does not know fails the test below until someone decides
-    /// which of the three it is.
+    /// Every comparison of a handle in <c>backend/src</c> that <see cref="HandleComparison"/> sees,
+    /// by the file it is in and the text that begins it. A comparison this table does not know
+    /// fails the test below until someone decides which of the three it is.
     /// </summary>
     private static readonly (string File, string Begins, Role Role)[] Classified =
     [
         ("AuthService.cs", "AnyAsync(u => u.AzureTag == normalizedAzureTag", Role.AsksWhetherAHandleIsTaken),
+        ("TransferService.cs", "senderUser.AzureTag.Equals(recipientAzureTag", Role.ReadsTheCallersOwnRow),
         ("TransferService.cs", "u.AzureTag == recipientAzureTag.ToLower()", Role.HandsAnotherUserToTheCaller),
         ("UserService.cs", ".Where(u => u.AzureTag == normalizedTag", Role.HandsAnotherUserToTheCaller),
         ("UserService.cs", "u => u.AzureTag == normalized && u.Id != userId", Role.AsksWhetherAHandleIsTaken),
