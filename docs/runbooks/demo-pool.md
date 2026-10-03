@@ -289,6 +289,10 @@ PIN is next used, and the copies built before the rotation leave as the pool tur
 pepper is removed when its key id's count here is 0, and not before:** a pepper removed while a
 hash still carries its key id makes that PIN unusable.
 
+A `Security:PreviousPinPeppers` key that is not a whole number >= 1, or has surrounding whitespace,
+is refused at API startup and at the start of the Seeder commands that write PINs, before any
+database work, naming the key and never its pepper.
+
 On the Azure deployment (ADR-0061) the template gives the `api` container one pepper,
 `Security__PinPepper`, with no key id (so 1) and no previous pepper, and `infra/README.md` says
 rotating an application secret is not in its files. A rotation there starts with

@@ -1,3 +1,5 @@
+using System.Globalization;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 
 namespace AzureBank.Shared.Options;
@@ -7,7 +9,7 @@ namespace AzureBank.Shared.Options;
 /// the API and the Seeder so their rules cannot drift, and so the Seeder can be made
 /// to fail fast on the same conditions the API rejects.
 /// </summary>
-public sealed class PinHashingOptionsValidator : IValidateOptions<PinHashingOptions>
+public sealed class PinHashingOptionsValidator(IConfiguration configuration) : IValidateOptions<PinHashingOptions>
 {
     /// <summary>Minimum pepper length (characters). A pepper below this is rejected.</summary>
     public const int MinPepperLength = 32;
@@ -22,6 +24,20 @@ public sealed class PinHashingOptionsValidator : IValidateOptions<PinHashingOpti
         }
 
         var errors = new List<string>();
+
+        // The binder silently drops a dictionary entry whose key cannot become an int, and
+        // accepts surrounding whitespace. Read the original keys too, never their secret values.
+        // Keep signed integer keys and leading zeroes working; the bound-map check below retains
+        // the existing refusal for zero and negative ids.
+        var previousPeppers = configuration.GetSection(PinHashingOptions.SectionName)
+            .GetSection(nameof(PinHashingOptions.PreviousPinPeppers));
+        foreach (var entry in previousPeppers.GetChildren())
+        {
+            if (!int.TryParse(entry.Key, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out _))
+            {
+                errors.Add($"Security:PreviousPinPeppers key '{entry.Key}' must be a whole number >= 1.");
+            }
+        }
 
         // Active pepper.
         if (string.IsNullOrWhiteSpace(options.PinPepper) || options.PinPepper.Length < MinPepperLength)

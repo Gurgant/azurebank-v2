@@ -3,6 +3,7 @@ extern alias seeder;
 using System.CommandLine;
 using System.Data.Common;
 using AzureBank.Shared.Entities;
+using AzureBank.Shared.Options;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using FluentAssertions.Execution;
@@ -10,6 +11,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Xunit;
 using GateResult = seeder::AzureBank.Seeder.Commands.GateResult;
 using GateVerdict = seeder::AzureBank.Seeder.Commands.GateVerdict;
@@ -87,6 +89,61 @@ public class SeederCommandTests
 
     private static IEnumerable<string> Errors(RecordingLoggerProvider log) =>
         log.Lines.Where(line => line.Level == LogLevel.Error).Select(line => line.Message);
+
+    [Theory]
+    [InlineData("seed", "v1")]
+    [InlineData("reset", "v1")]
+    [InlineData("seed-pool", "v1")]
+    [InlineData("recycle", "v1")]
+    [InlineData("seed", "one")]
+    [InlineData("reset", "one")]
+    [InlineData("seed-pool", "one")]
+    [InlineData("recycle", "one")]
+    [InlineData("seed", "1 ")]
+    [InlineData("reset", "1 ")]
+    [InlineData("seed-pool", "1 ")]
+    [InlineData("recycle", "1 ")]
+    [InlineData("seed", "0")]
+    [InlineData("reset", "0")]
+    [InlineData("seed-pool", "0")]
+    [InlineData("recycle", "0")]
+    public async Task APreviousPepperKeyThatCannotBeUsed_IsRefused_WithoutItsValueOrAnOpen(string command, string key)
+    {
+        const string PreviousPepper = "fake-previous-pepper-for-tests-0123456789";
+        var log = new RecordingLoggerProvider();
+        var opens = new OpenCountingInterceptor();
+        await using var provider = SeederHost.Build(
+            log, opens, onCommittedSettings: false,
+            (ConnectionKey, AbsentServer), (PepperKey, SeederHost.Pepper),
+            ("Security:PinPepperKeyId", "2"), ($"Security:PreviousPinPeppers:{key}", PreviousPepper),
+            NoEfRetry, TheFlagItRunsWith(command));
+
+        var exitCode = await Run(command, provider);
+
+        var rule = key == "0" ? "must be >= 1." : "must be a whole number >= 1.";
+        using var all = new AssertionScope();
+        exitCode.Should().Be(2);
+        Errors(log).Should().ContainSingle().Which.Should().Be(
+            $"{command} refused: Security:PreviousPinPeppers key '{key}' {rule} Nothing was opened.");
+        string.Join('\n', log.Lines.Select(line => line.Message)).Should()
+            .NotContain(PreviousPepper).And.NotContain(SeederHost.Pepper).And.NotContain("   at ");
+        opens.Opens.Should().Be(0, "all four commands must refuse before any database work");
+    }
+
+    [Fact]
+    public void AValidPreviousPepperKey_PassesTheSeederStartupValidator_AndKeepsItsPepper()
+    {
+        const string PreviousPepper = "fake-previous-pepper-for-tests-0123456789";
+        using var provider = SeederHost.Build(
+            new RecordingLoggerProvider(), interceptor: null, onCommittedSettings: false,
+            (PepperKey, SeederHost.Pepper), ("Security:PinPepperKeyId", "2"),
+            ("Security:PreviousPinPeppers:1", PreviousPepper));
+        var start = () => provider.GetRequiredService<IStartupValidator>().Validate();
+
+        start.Should().NotThrow();
+        provider.GetRequiredService<IOptions<PinHashingOptions>>().Value.PreviousPinPeppers
+            .Should().BeEquivalentTo(new Dictionary<int, string> { [1] = PreviousPepper });
+    }
 
     [Theory]
     [InlineData("seed", "seed adds four users whose password and PIN are public")]

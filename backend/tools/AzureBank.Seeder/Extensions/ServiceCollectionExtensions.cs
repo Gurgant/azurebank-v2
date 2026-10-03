@@ -62,7 +62,7 @@ public static class ServiceCollectionExtensions
         services.AddOptions<PinHashingOptions>()
             .Bind(configuration.GetSection(PinHashingOptions.SectionName))
             .ValidateOnStart();
-        services.AddSingleton<IValidateOptions<PinHashingOptions>, PinHashingOptionsValidator>();
+        services.AddSingleton<IValidateOptions<PinHashingOptions>>(new PinHashingOptionsValidator(configuration));
 
         // Add PasswordHasher (from Shared layer) - built with the PIN pepper.
         // Singleton for the same reasons as the API: immutable, singleton-scoped deps.
