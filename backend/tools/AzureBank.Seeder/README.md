@@ -41,12 +41,21 @@ string.
 
 | Variable | For | |
 |---|---|---|
-| `ConnectionStrings__DefaultConnection` | every command | Required; the name the API reads. It has to name a server and a database. A password that holds `;`, `=` or a quote has to be quoted, or the string cannot be read |
+| `ConnectionStrings__DefaultConnection` | every command | Required; the name the API reads. It has to name a server and a database, and it says how to sign in (below). A password that holds `;`, `=` or a quote has to be quoted, or the string cannot be read |
 | `Security__PinPepper` | `seed`, `reset` | 32 characters or more, equal to the API's (ADR-0011) |
 | `Database__MaxRetryCount`, `Database__MaxRetryDelay`, `Database__ConnectTimeoutSeconds`, `Database__ConnectRetryCount`, `Database__MaxPoolSize` | every command | Optional. 4, `00:00:10`, 10, 0 and 5 (ADR-0058; the pool of 5 is this tool's own). A keyword in the connection string wins. `migrate` refuses a connect timeout of 0, which means no limit, from either place |
 
 In Development (`DOTNET_ENVIRONMENT=Development`) the two required values come from the project's
 user-secrets instead (`docs/engineering-practices.md`, "Local setup").
+
+**How the string signs in.** Either with a user and a password, as `compose.yaml` and CI do, or
+with a managed identity and no password:
+`Authentication=Active Directory Managed Identity;User ID=<the identity's client ID>`. The Azure
+deployment uses the second, with one identity for the app and another for `migrate`
+([infra/README.md](../../../infra/README.md)). The tool has no setting for it: it reads such a
+string, keeps the sign-in when it fills in the limits, and SqlClient asks Azure for the token. A
+managed identity exists only on Azure, so no local run and no CI job signs in that way. Where this
+file says "login", read: whatever the string signs in as.
 
 ## Exit codes
 
@@ -119,7 +128,17 @@ and then migrated an empty database):
   there" is the wait's rule: the database goes to EF only after one open of it succeeded, and the
   run stops when the server says the database is missing. A database that stopped answering after
   that open would still reach EF, which answers "cannot open" with `CREATE DATABASE`. That window
-  was read in the code, not produced; the login's rights are what closes it.
+  was read in the code, not produced; the login's rights are what closes it. The deployment's
+  identity is a user inside the one database, with no right on the server.
+- **With a managed identity, "refused" and "no token" end differently.** A refused login means the
+  database has no user for the identity: three Warnings, then `the login was refused three times`,
+  seconds after the start. An identity that gets no token (it is not attached to the container,
+  or the string names another client ID) is waited for, and the run ends when the wait is over:
+  SqlClient reports it as an error numbered 0 of class 20, which the wait takes for a server that
+  did not answer. `migrate` has produced neither on Azure. A throwaway program on SqlClient 6.1.1
+  got both answers there on 2026-10-02: 18456, class 14, for the missing user, and number 0,
+  class 20, around `Azure.Identity.AuthenticationFailedException`, for the missing token
+  ([infra/README.md](../../../infra/README.md), "Measured on Azure").
 - **On an Azure SQL name an answer the wait has no rule for is waited for too**, also one that
   waiting cannot change: the run then ends when the wait is over, with that answer in its last
   line. Off Azure such an answer goes to EF at once. What the wait has a rule for still ends the

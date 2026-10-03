@@ -246,8 +246,9 @@ public static class MigrateCommand
 
             case GateVerdict.LoginRefused:
                 logger.LogError(
-                    "migrate failed: the login was refused three times; check the user and the password in "
-                    + "{Variable}. The last answer was {LastAnswer}.",
+                    "migrate failed: the login was refused three times; check what {Variable} signs in "
+                    + "with: a user and its password, or a managed identity, which needs a user of its own "
+                    + "in this database. The last answer was {LastAnswer}.",
                     ConnectionTarget.Variable,
                     lastAnswer);
                 break;

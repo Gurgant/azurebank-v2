@@ -21,10 +21,10 @@ alternative record is running the same experiment again.
 
 ## If you read four, read these
 
-Sixty decisions is more than anyone reads cold. These four carry the architecture; the rest
+Sixty-one decisions is more than anyone reads cold. These four carry the architecture; the rest
 is detail hanging off them. *(It said fifty until 2026-09-24, fifty-six until 2026-09-28,
-fifty-seven until 2026-09-29, fifty-eight until 2026-10-01, and fifty-nine until ADR-0060, the
-same day.)*
+fifty-seven until 2026-09-29, fifty-eight until 2026-10-01, fifty-nine until ADR-0060, the
+same day, and sixty until 2026-10-02.)*
 
 | | Why this one |
 |---|---|
@@ -46,6 +46,7 @@ same day.)*
 - [ADR-0055](0055-the-api-serves-one-client-the-bff.md) the API serves one client, the BFF
 - [ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md) the API gives up cleanly when the database is down: a 503 before the BFF stops waiting, and never in the middle of a commit
 - [ADR-0060](0060-migrations-run-as-a-one-shot-container-before-the-app.md) migrations run as a one-shot container before the app: `migrate` waits for the database, never creates one on Azure SQL, and refuses a database ahead of the build
+- [ADR-0061](0061-the-demo-is-deployed-to-azure-container-apps-with-no-database-password.md) the demo is deployed to Azure Container Apps with no database password: two managed identities sign in, a guarded SQL file creates their users, the logs are private and capped, and the deployment identity cannot list a secret
 
 **Money** — how a money move is applied once, bounded and numbered.
 
@@ -132,6 +133,13 @@ the end of this page are the template's; only Accepted has ever been used. *(202
 had two exceptions while PR-1 was being written, two parts of ADR-0057 decided before they were
 built: its §5.3 session stamp and the renewal-rate detector of its §6. Both were built the same
 day, each as its own commit of PR-1.)*
+*(2026-10-02: ADR-0061 is shipped as templates and scripts; none of them has run on Azure yet,
+and the record says so. 2026-10-03: it also says what a throwaway trial measured there by hand.
+Later that day the first deployment's step 6 ran the users file, whose first check refused a view
+of Microsoft's in the new database; the record says what was found and how that check was
+narrowed. It now also has the deployment's steps 1 to 5, which ran before step 6, and step 6's
+second stop, found before the next run: the permission list would have refused Azure's own grant
+to `public` on that view, which it now keeps.)*
 
 <details>
 <summary>What changed in each decision after it was accepted — 46 records</summary>
@@ -187,7 +195,7 @@ day, each as its own commit of PR-1.)*
 
 </details>
 
-The next free number is **0061**.
+The next free number is **0062**.
 
 <details>
 <summary>Full list in numeric order</summary>
@@ -255,6 +263,7 @@ The next free number is **0061**.
 | [ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md) | The API gives up cleanly when the database is down | Accepted | 2026-09-29 |
 | [ADR-0059](0059-the-spa-tells-the-visitor-when-the-service-is-slow-or-down.md) | The SPA tells the visitor when the service is slow or down | Accepted | 2026-10-01 |
 | [ADR-0060](0060-migrations-run-as-a-one-shot-container-before-the-app.md) | Migrations run as a one-shot container before the app | Accepted | 2026-10-01 |
+| [ADR-0061](0061-the-demo-is-deployed-to-azure-container-apps-with-no-database-password.md) | The demo is deployed to Azure Container Apps with no database password | Accepted | 2026-10-02 |
 
 </details>
 

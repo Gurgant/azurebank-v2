@@ -1,0 +1,2093 @@
+"""Offline tests of the deployment script's decisions.
+
+Every Azure and HTTP answer below is invented here. The tests prove what the script does with an
+answer; what Azure and the app really answer is read on the first deployment (README.md, "Not
+measured yet"). Time is a counter: a wait of fifteen minutes costs nothing.
+"""
+
+import contextlib
+import copy
+import datetime
+from email.message import Message
+import http.client
+import io
+import json
+import os
+import re
+import socket
+import struct
+import subprocess
+import tempfile
+import threading
+import unittest
+from unittest.mock import MagicMock, patch
+import urllib.error
+import urllib.parse
+
+import deploy
+
+SUBSCRIPTION = 'subscription-placeholder'
+GROUP = 'group'
+PREFIX = f'/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}/providers/Microsoft.App'
+APP_ID = f'{PREFIX}/containerApps/azurebank'
+MIGRATE_ID = f'{PREFIX}/jobs/azurebank-migrate'
+OLD = 'b' * 40
+NEW = 'a' * 40
+ADDRESS = 'azurebank.example.invalid'
+BEFORE = 'azurebank--before'
+IDENTITY_IDS = ('aaaaaaaa-1111-4222-8333-444444444444', 'bbbbbbbb-5555-4666-8777-888888888888')
+
+
+def container(name, image):
+    return {'name': name, 'image': image, 'env': [{'name': 'KEY', 'secretRef': 'key'}],
+            'resources': {'cpu': 0.25, 'memory': '0.5Gi'}}
+
+
+def identity(name):
+    """The identity block as Azure returns it: the key holds the subscription, the entry two IDs."""
+    return {'type': 'UserAssigned', 'userAssignedIdentities': {
+        f'/subscriptions/{SUBSCRIPTION}/resourcegroups/{GROUP}/providers/Microsoft.ManagedIdentity'
+        f'/userAssignedIdentities/{name}': {'principalId': IDENTITY_IDS[0], 'clientId': IDENTITY_IDS[1]}}}
+
+
+def app_resource(tag=OLD):
+    return {
+        'location': 'italynorth',
+        'identity': identity('azurebank-app'),
+        'properties': {
+            'provisioningState': 'Succeeded',
+            'latestRevisionName': BEFORE,
+            'latestReadyRevisionName': BEFORE,
+            'configuration': {
+                'activeRevisionsMode': 'Single',
+                'ingress': {'external': True, 'targetPort': 8080, 'allowInsecure': False,
+                            'transport': 'Auto', 'fqdn': ADDRESS},
+            },
+            'template': {
+                'revisionSuffix': 'before',
+                'scale': {'minReplicas': 0, 'maxReplicas': 1},
+                'containers': [container(name, f'ghcr.io/gurgant/azurebank-{name}:{tag}')
+                               for name in ('bff', 'api')],
+            },
+        },
+    }
+
+
+def job_resource(name='migrate', tag=OLD):
+    return {
+        'location': 'italynorth',
+        'identity': identity('azurebank-migrate'),
+        'properties': {
+            'provisioningState': 'Succeeded',
+            'configuration': {
+                'triggerType': 'Manual', 'replicaRetryLimit': 0, 'replicaTimeout': 600,
+                'manualTriggerConfig': {'parallelism': 1, 'replicaCompletionCount': 1},
+            },
+            'template': {'containers': [container(name, f'ghcr.io/gurgant/azurebank-tools:{tag}')]},
+        },
+    }
+
+
+def resource(names):
+    """A bare resource for the tests of one function."""
+    return {
+        'location': 'italynorth',
+        'properties': {
+            'provisioningState': 'Succeeded',
+            'configuration': {'replicaTimeout': 600},
+            'template': {
+                'revisionSuffix': 'previous',
+                'scale': {'minReplicas': 0, 'maxReplicas': 1},
+                'containers': [container(name, 'previous') for name in names],
+            },
+        },
+    }
+
+
+def raise_(error):
+    raise error
+
+
+def execution(name, status, started=None, **more):
+    properties = {'status': status, **more}
+    if started:
+        properties['startTime'] = started
+    return {'name': name, 'properties': properties}
+
+
+def finished(name='run', status='Succeeded', code=0, reason='Completed', **more):
+    """An execution as the later API version describes it once it has ended."""
+    return execution(name, status, '2026-10-02T18:00:03.1234567Z', endTime='2026-10-02T18:00:09Z',
+                     reason=reason, detailedStatus={'replicas': [{'name': f'{name}-abcde', 'containers': [
+                         {'name': 'migrate', 'status': status, 'code': code}]}]}, **more)
+
+
+class Clock:
+    """Stands in for time.sleep and time.monotonic: sleeping is what moves the clock."""
+
+    def __init__(self):
+        self.now = 0.0
+        self.sleeps = []
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+class FakeAzure:
+    """What `deploy.rest` talks to: one app, its revisions and replicas, and the jobs."""
+
+    def __init__(self, out):
+        self.out = out
+        self.app = app_resource()
+        self.jobs = {'azurebank-migrate': job_resource()}
+        self.revisions = {BEFORE: {'active': True, 'provisioningState': 'Provisioned',
+                                   'runningState': 'Running', 'healthState': 'Healthy'}}
+        self.replicas = [{'name': 'azurebank--replica-1', 'properties': {'containers': [
+            {'name': 'bff', 'ready': False, 'started': False, 'restartCount': 7,
+             'runningState': 'Waiting', 'runningStateDetails': 'CrashLoopBackOff'}]}}]
+        # What happens to a revision, by the first letter of its suffix: d is a deploy, b a put-back.
+        self.fate = {'d': 'ready', 'b': 'ready'}
+        self.keep_old_active = False
+        self.reads_before_old_is_inactive = 0
+        self.drift_app_on_patch = None
+        self.drift_job_on_patch = None
+        self.refuse = None
+        self.refusal = 'Forbidden: AuthorizationFailed'
+        # None: the migration is a stand-in. A list: the job runs here, and ends as `outcome`.
+        self.executions = None
+        self.outcome = finished('this-run')
+        self.calls = []
+        self.versions = []
+        self.events = []
+        self.printed_before_first_write = None
+
+    def writes(self):
+        return [(method, resource_id) for method, resource_id, _ in self.calls if method != 'GET']
+
+    def app_patches(self):
+        return [body for method, resource_id, body in self.calls
+                if method == 'PATCH' and resource_id == APP_ID]
+
+    def rest(self, method, resource_id, body=None, api_version=deploy.API_VERSION):
+        self.calls.append((method, resource_id, copy.deepcopy(body)))
+        self.versions.append((method, resource_id.rsplit('/', 1)[-1], api_version))
+        if method != 'GET' and self.printed_before_first_write is None:
+            self.printed_before_first_write = self.out.getvalue()
+        if self.refuse and self.refuse(method, resource_id, body):
+            raise deploy.AzError(self.refusal)
+        if resource_id == APP_ID:
+            return self.app_call(method, body)
+        if resource_id.startswith(APP_ID + '/revisions/'):
+            return self.revision_call(resource_id[len(APP_ID + '/revisions/'):])
+        if resource_id.startswith(PREFIX + '/jobs/'):
+            return self.job_call(method, resource_id[len(PREFIX + '/jobs/'):], body)
+        raise AssertionError(f'unexpected call: {method} {resource_id}')
+
+    def app_call(self, method, body):
+        if method == 'GET':
+            return copy.deepcopy(self.app)
+        assert method == 'PATCH', method
+        assert set(body) == {'location', 'properties'} and set(body['properties']) == {'template'}, body
+        properties = self.app['properties']
+        template = copy.deepcopy(body['properties']['template'])
+        suffix = template['revisionSuffix']
+        name = f'azurebank--{suffix}'
+        fate = self.fate[suffix[0]]
+        if self.drift_app_on_patch:
+            self.drift_app_on_patch(template)
+        properties['template'] = template
+        properties['latestRevisionName'] = name
+        properties['provisioningState'] = 'Failed' if fate == 'failed' else 'Succeeded'
+        self.revisions[name] = {
+            'active': fate == 'ready',
+            'provisioningState': 'Provisioned' if fate == 'ready' else 'Provisioning',
+            'runningState': 'Running' if fate == 'ready' else 'Activating',
+            'healthState': 'Healthy' if fate == 'ready' else 'Unhealthy',
+            'provisioningError': None if fate == 'ready' else 'Container bff failed its startup probe.',
+        }
+        if fate == 'ready':
+            properties['latestReadyRevisionName'] = name
+            if not self.keep_old_active and not self.reads_before_old_is_inactive:
+                self.deactivate_all_but(name)
+        self.events.append(f'app {suffix[0]}')
+        return {}
+
+    def deactivate_all_but(self, name):
+        for other, state in self.revisions.items():
+            if other != name:
+                state['active'] = False
+
+    def revision_call(self, tail):
+        if tail.endswith('/replicas'):
+            return {'value': copy.deepcopy(self.replicas)}
+        if tail not in self.revisions:
+            raise deploy.AzError('Not Found: ResourceNotFound')
+        if self.reads_before_old_is_inactive:
+            self.reads_before_old_is_inactive -= 1
+            if not self.reads_before_old_is_inactive:
+                self.deactivate_all_but(self.app['properties']['latestReadyRevisionName'])
+        self.events.append(f'read {tail}')
+        return {'name': tail, 'properties': copy.deepcopy(self.revisions[tail])}
+
+    def job_call(self, method, tail, body):
+        name, _, rest = tail.partition('/')
+        if rest and self.executions is not None:
+            return self.execution_call(method, rest)
+        assert not rest, f'the migration is run by a stand-in in these tests: {tail}'
+        if method == 'GET':
+            return copy.deepcopy(self.jobs[name])
+        assert method == 'PATCH', method
+        assert set(body) == {'location', 'properties'} and set(body['properties']) == {'template'}, body
+        self.jobs[name]['properties']['template'] = copy.deepcopy(body['properties']['template'])
+        if self.drift_job_on_patch:
+            self.drift_job_on_patch(self.jobs[name])
+        self.events.append(f'job {name}')
+        return {}
+
+    def execution_call(self, method, tail):
+        """A job that runs for real: started once, and finished by the next time it is read."""
+        if (method, tail) == ('POST', 'start'):
+            self.executions.append(copy.deepcopy(self.outcome))
+            self.events.append('migration')
+            return {'name': 'this-run'}
+        assert (method, tail) == ('GET', 'executions'), f'unexpected call: {method} {tail}'
+        return {'value': copy.deepcopy(self.executions)}
+
+
+class Offline(unittest.TestCase):
+    """No clock, no Azure, no network; what the script prints is kept."""
+
+    def setUp(self):
+        self.clock = Clock()
+        self.start(patch('deploy.time.sleep', self.clock.sleep))
+        self.start(patch('deploy.time.monotonic', self.clock.monotonic))
+        # A test that reaches the Azure CLI is a broken test: on a machine where az is signed in
+        # it would send a real request.
+        self.start(patch('deploy.subprocess.run',
+                         side_effect=AssertionError('a test tried to start a process')))
+        # Under Actions the verdict is also written to the run's summary: never from a test.
+        self.start(patch.dict(deploy.os.environ))
+        deploy.os.environ.pop('GITHUB_STEP_SUMMARY', None)
+        self.out = io.StringIO()
+        redirect = contextlib.redirect_stdout(self.out)
+        redirect.__enter__()
+        self.addCleanup(redirect.__exit__, None, None, None)
+
+    def start(self, patcher):
+        mock = patcher.start()
+        self.addCleanup(patcher.stop)
+        return mock
+
+    def printed(self):
+        return self.out.getvalue()
+
+    def clear(self):
+        """Forget what was printed so far."""
+        self.out.seek(0)
+        self.out.truncate()
+
+
+class DeployCase(Offline):
+    """`deploy.deploy` against FakeAzure, with a stand-in for the migration and for the smoke test."""
+
+    def setUp(self):
+        super().setUp()
+        self.azure = FakeAzure(self.out)
+        self.start(patch('deploy.rest', self.azure.rest))
+        self.migration = self.start(patch('deploy.run_migration', side_effect=(
+            lambda *args, **options: self.azure.events.append('migration'))))
+        self.smoke = self.start(patch(
+            'deploy.smoke', side_effect=lambda *args: self.azure.events.append('smoke')))
+
+    def deploy(self, **options):
+        return deploy.deploy(SUBSCRIPTION, GROUP, NEW, **options)
+
+    def steps(self):
+        """The writes, the migration and the smoke test, in the order they happened."""
+        return [event for event in self.azure.events if not event.startswith('read ')]
+
+
+class AzTests(unittest.TestCase):
+    @patch('deploy.subprocess.run')
+    def test_a_refusal_shows_its_code_and_action_without_identifiers(self, run):
+        run.return_value = subprocess.CompletedProcess(
+            [], 1, stdout='',
+            stderr="Forbidden({\"error\":{\"code\":\"AuthorizationFailed\",\"message\":\"The client "
+                   "'11111111-2222-3333-4444-555555555555' does not have authorization to perform "
+                   "action 'Microsoft.App/containerApps/write' over scope "
+                   "'/subscriptions/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/resourceGroups/x'\"}})")
+        with self.assertRaises(deploy.AzError) as raised:
+            deploy.az('rest', '--method', 'PATCH')
+        message = str(raised.exception)
+        self.assertIn('AuthorizationFailed', message)
+        self.assertIn('Microsoft.App/containerApps/write', message)
+        self.assertNotRegex(message, r'[0-9a-f]{8}-[0-9a-f]{4}-')
+
+    @patch('deploy.subprocess.run')
+    def test_a_failure_shows_no_address(self, run):
+        run.return_value = subprocess.CompletedProcess(
+            [], 1, stdout='', stderr="Bad Request: the caller at 203.0.113.7 was refused; retry from 10.0.0.12:443.")
+        with self.assertRaises(deploy.AzError) as raised:
+            deploy.az('rest', '--method', 'GET')
+        self.assertEqual(str(raised.exception),
+                         'Bad Request: the caller at <address> was refused; retry from <address>:443.')
+
+    def test_what_is_hidden_is_an_id_and_an_address_and_nothing_that_only_looks_alike(self):
+        self.assertEqual(deploy.redact(' api-version 2025-01-01, 0.25 vCPU, sdk:10.0, 1.2.3 '),
+                         'api-version 2025-01-01, 0.25 vCPU, sdk:10.0, 1.2.3')
+        self.assertEqual(deploy.redact('at 198.51.100.254, id AAAAAAAA-1111-4222-8333-444444444444'),
+                         'at <address>, id <id>')
+        self.assertEqual(deploy.redact(None), '')
+
+    @patch('deploy.subprocess.run')
+    def test_an_empty_answer_is_an_empty_object(self, run):
+        run.return_value = subprocess.CompletedProcess([], 0, stdout='  ', stderr='')
+        self.assertEqual(deploy.az('rest'), {})
+
+    @patch('deploy.subprocess.run')
+    def test_a_request_body_travels_in_a_file_never_on_the_command_line(self, run):
+        run.return_value = subprocess.CompletedProcess([], 0, stdout='{}', stderr='')
+        deploy.rest('PATCH', APP_ID, {'properties': {'template': {'marker': 'only-in-the-file'}}})
+        command = run.call_args.args[0]
+        self.assertNotIn('only-in-the-file', ' '.join(command))
+        self.assertTrue(command[command.index('--body') + 1].startswith('@'))
+        self.assertEqual(command[1:4], ['rest', '--method', 'PATCH'])
+
+    @patch('deploy.subprocess.run')
+    def test_a_timeout_names_the_request_and_never_the_command_line(self, run):
+        # Python's own text for a timeout is the whole command, and the URL on it holds the subscription.
+        run.side_effect = lambda command, **options: raise_(
+            subprocess.TimeoutExpired(command, options['timeout']))
+        with self.assertRaises(deploy.AzError) as raised:
+            deploy.rest('GET', f'{APP_ID}/revisions/{BEFORE}')
+        message = str(raised.exception)
+        self.assertIn('no answer in 180 s', message)
+        self.assertIn(f'GET /containerApps/azurebank/revisions/{BEFORE}', message)
+        for hidden in (SUBSCRIPTION, 'subscriptions', 'management.azure.com'):
+            self.assertNotIn(hidden, message)
+        self.assertIn(SUBSCRIPTION, ' '.join(run.call_args.args[0]), 'the command line did hold it')
+
+    @patch('deploy.subprocess.run')
+    def test_a_timeout_on_a_resource_that_is_not_the_app_names_no_subscription_either(self, run):
+        run.side_effect = lambda command, **options: raise_(
+            subprocess.TimeoutExpired(command, options['timeout']))
+        workspace = (f'/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}/providers'
+                     '/Microsoft.OperationalInsights/workspaces/azurebank-logs')
+        with self.assertRaises(deploy.AzError) as raised:
+            deploy.rest('GET', workspace, api_version='2023-09-01')
+        message = str(raised.exception)
+        self.assertIn('(GET /Microsoft.OperationalInsights/workspaces/azurebank-logs)', message)
+        for hidden in (SUBSCRIPTION, 'subscriptions', 'resourceGroups'):
+            self.assertNotIn(hidden, message)
+
+    @patch('deploy.subprocess.run')
+    def test_a_request_carries_the_api_version_it_is_given_and_the_usual_one_otherwise(self, run):
+        run.return_value = subprocess.CompletedProcess([], 0, stdout='{}', stderr='')
+        deploy.rest('GET', APP_ID)
+        deploy.rest('GET', f'{MIGRATE_ID}/executions', api_version='2026-07-01')
+        urls = [call.args[0][call.args[0].index('--url') + 1] for call in run.call_args_list]
+        self.assertEqual(urls, [f'https://management.azure.com{APP_ID}?api-version=2025-01-01',
+                                f'https://management.azure.com{MIGRATE_ID}/executions?api-version=2026-07-01'])
+        self.assertEqual((deploy.API_VERSION, deploy.VERDICT_API_VERSION), ('2025-01-01', '2026-07-01'))
+
+    @patch('deploy.subprocess.run')
+    def test_a_log_query_travels_in_a_file_and_asks_for_the_log_service_by_name(self, run):
+        answer = '{"tables":[{"columns":[{"name":"Log"}],"rows":[["a line"],["another"]]}]}'
+        run.return_value = subprocess.CompletedProcess([], 0, stdout=answer, stderr='')
+        customer = 'cccccccc-9999-4aaa-8bbb-cccccccccccc'
+        rows = deploy.query(customer, 'ContainerAppConsoleLogs | take 2', 'PT5M')
+        self.assertEqual(rows, [{'Log': 'a line'}, {'Log': 'another'}])
+        command = run.call_args.args[0]
+        self.assertEqual(command[1:8], ['rest', '--method', 'POST', '--url',
+                                        f'https://api.loganalytics.io/v1/workspaces/{customer}/query',
+                                        '--resource', 'https://api.loganalytics.io'])
+        self.assertTrue(command[command.index('--body') + 1].startswith('@'))
+        self.assertNotIn('ContainerAppConsoleLogs', ' '.join(command))
+        self.assertEqual(deploy.query(customer, 'x', 'PT5M'), deploy.query(customer, 'y', 'PT5M'))
+
+
+class PatchTests(unittest.TestCase):
+    def test_both_images_change_together_without_mutating_source_or_secrets(self):
+        original = resource(['bff', 'api'])
+        before = copy.deepcopy(original)
+        body = deploy.image_patch(original, {'bff': 'new-bff', 'api': 'new-api'})
+        self.assertEqual(original, before)
+        self.assertNotIn('configuration', body['properties'])
+        self.assertNotIn('revisionSuffix', body['properties']['template'])
+        self.assertEqual(deploy.images(body), {'bff': 'new-bff', 'api': 'new-api'})
+        self.assertEqual(body['properties']['template']['scale'], {'minReplicas': 0, 'maxReplicas': 1})
+        self.assertEqual(body['properties']['template']['containers'][0]['env'],
+                         [{'name': 'KEY', 'secretRef': 'key'}])
+
+    def test_unexpected_topology_is_rejected(self):
+        with self.assertRaises(RuntimeError):
+            deploy.image_patch(resource(['bff']), {'bff': 'new', 'api': 'new'})
+
+
+class MigrationTests(Offline):
+    @patch('deploy.rest', return_value={'name': 'this-run'})
+    @patch('deploy.executions')
+    def test_waits_for_its_own_execution_not_an_older_success(self, executions, start):
+        old = execution('old-run', 'Succeeded')
+        executions.side_effect = [[old], [old], [old, execution('this-run', 'Running')],
+                                  [old, execution('this-run', 'Succeeded')]]
+        self.assertEqual(deploy.run_migration('/job', 600), 'this-run')
+        self.assertEqual([call.args for call in start.call_args_list if call.args[0] != 'GET'],
+                         [('POST', '/job/start')])
+
+    @patch('deploy.rest', return_value={})
+    @patch('deploy.executions')
+    def test_a_start_that_returns_no_name_is_found_by_what_is_new(self, executions, start):
+        old = execution('old-run', 'Succeeded')
+        executions.side_effect = [[old], [old], [old, execution('new-run', 'Running')],
+                                  [old, execution('new-run', 'Succeeded')]]
+        self.assertEqual(deploy.run_migration('/job', 600), 'new-run')
+        self.assertEqual([call.args[0] for call in start.call_args_list].count('POST'), 1)
+
+    @patch('deploy.rest', return_value={})
+    @patch('deploy.executions', return_value=[])
+    def test_a_start_with_no_execution_fails_and_is_never_repeated(self, executions, start):
+        with self.assertRaisesRegex(RuntimeError, 'no execution appeared'):
+            deploy.run_migration('/job', 600)
+        self.assertEqual(start.call_count, 1)
+
+    def test_a_run_that_ends_any_other_way_fails(self):
+        for status in ['Failed', 'Stopped', 'Degraded']:
+            with self.subTest(status=status), \
+                    patch('deploy.executions', side_effect=[[], [execution('run', status)]]), \
+                    patch('deploy.rest', return_value={'name': 'run'}):
+                with self.assertRaisesRegex(RuntimeError, status):
+                    deploy.run_migration('/job', 600)
+
+    @patch('deploy.rest', return_value={'name': 'run'})
+    @patch('deploy.executions')
+    def test_unknown_while_running_is_waited_out(self, executions, start):
+        executions.side_effect = [[], [execution('run', 'Unknown')], [execution('run', None)],
+                                  [execution('run', 'Succeeded')]]
+        self.assertEqual(deploy.run_migration('/job', 600), 'run')
+
+    @patch('deploy.rest')
+    @patch('deploy.executions', return_value=[execution('previous', 'Running')])
+    def test_a_running_execution_blocks_the_start(self, executions, start):
+        with self.assertRaisesRegex(RuntimeError, 'previous is Running'):
+            deploy.run_migration('/job', 600)
+        start.assert_not_called()
+
+    @patch('deploy.rest')
+    @patch('deploy.executions', return_value=[execution('previous', 'Running')])
+    def test_a_stuck_execution_names_who_can_stop_it_and_how(self, executions, start):
+        with self.assertRaises(RuntimeError) as raised:
+            deploy.run_migration(MIGRATE_ID, 600)
+        message = str(raised.exception)
+        self.assertIn('cannot stop it', message)
+        self.assertIn('az containerapp job stop --name azurebank-migrate --resource-group group '
+                      '--job-execution-name previous', message)
+
+    @patch('deploy.rest')
+    def test_an_unknown_execution_blocks_only_while_it_could_be_alive(self, start):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        recent = (now - datetime.timedelta(seconds=30)).isoformat()
+        with patch('deploy.executions', return_value=[execution('recent', 'Unknown', recent)]):
+            with self.assertRaisesRegex(RuntimeError, 'recent is Unknown'):
+                deploy.run_migration('/job', 600)
+        start.assert_not_called()
+
+        stale = (now - datetime.timedelta(days=2)).isoformat().replace('+00:00', 'Z')
+        start.return_value = {'name': 'run'}
+        with patch('deploy.executions', side_effect=[[execution('stale', 'Unknown', stale)],
+                                                    [execution('run', 'Succeeded')]]):
+            self.assertEqual(deploy.run_migration('/job', 600), 'run')
+
+    @patch('deploy.rest', return_value={'name': 'run'})
+    @patch('deploy.executions', return_value=[])
+    def test_polling_timeout_fails_and_names_the_stop_command(self, executions, start):
+        with self.assertRaisesRegex(RuntimeError, 'Timed out waiting for execution run') as raised:
+            deploy.run_migration(MIGRATE_ID, 600)
+        self.assertGreaterEqual(self.clock.now, 720)
+        self.assertIn('--job-execution-name run', str(raised.exception))
+
+
+# What Azure could put in a name or a status and nobody has seen: a second line, and on it a
+# command that GitHub Actions would obey.
+STRANGE = 'x\n::add-mask::something'
+
+
+class MigrationLinesTests(Offline):
+    """Every line `deploy.run_migration` prints or raises may be public: an execution's name and
+    its status are shown only in the shape expected, as the verdict shows them."""
+
+    def assert_nothing_strange(self, text):
+        for unwanted in ('\n', '::', 'something'):
+            self.assertNotIn(unwanted, text)
+
+    def assert_every_line_is_ours(self):
+        for line in self.printed().splitlines():
+            self.assertRegex(line, r'^\d\d:\d\d:\d\dZ ', 'a line this script did not begin')
+            self.assert_nothing_strange(line)
+
+    def lines(self):
+        return [line.split(' ', 1)[1] for line in self.printed().splitlines()]
+
+    @patch('deploy.rest', return_value={'name': 'run'})
+    @patch('deploy.executions')
+    def test_a_name_and_each_status_are_printed_as_azure_gave_them_when_they_have_the_shape(
+            self, executions, start):
+        executions.side_effect = [[], [execution('run', 'Running')], [execution('run', 'Succeeded')]]
+        self.assertEqual(deploy.run_migration('/job', 600), 'run')
+        self.assertEqual(self.lines()[:3], ['Migration execution run started.',
+                                            'Migration execution run: Running.',
+                                            'Migration execution run: Succeeded.'])
+
+    @patch('deploy.rest', return_value={'name': STRANGE})
+    @patch('deploy.executions')
+    def test_a_name_with_another_shape_is_never_printed_and_the_run_goes_on(self, executions, start):
+        executions.side_effect = [[], [execution(STRANGE, 'Running')], [execution(STRANGE, 'Succeeded')]]
+        self.assertEqual(deploy.run_migration('/job', 600), STRANGE)
+        self.assert_every_line_is_ours()
+        self.assertEqual(self.lines()[:3], ['Migration execution whose name is withheld started.',
+                                            'Migration execution whose name is withheld: Running.',
+                                            'Migration execution whose name is withheld: Succeeded.'])
+
+    @patch('deploy.rest', return_value={'name': 'run'})
+    @patch('deploy.executions')
+    def test_a_status_with_another_shape_is_never_printed_and_is_waited_out(self, executions, start):
+        # Text on two lines, something that is not text, and a word this script does not know.
+        executions.side_effect = [[], [execution('run', STRANGE)], [execution('run', ['Succeeded'])],
+                                  [execution('run', 'Pending')], [execution('run', 'Succeeded')]]
+        self.assertEqual(deploy.run_migration('/job', 600), 'run')
+        self.assert_every_line_is_ours()
+        self.assertEqual(self.lines()[:5], ['Migration execution run started.',
+                                            'Migration execution run: status not reported.',
+                                            'Migration execution run: status not reported.',
+                                            'Migration execution run: status not reported.',
+                                            'Migration execution run: Succeeded.'])
+        self.assertNotIn('Pending', self.printed())
+
+    @patch('deploy.rest')
+    def test_an_execution_that_blocks_the_start_is_named_only_in_the_shape_expected(self, start):
+        recent = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        for blocking in (execution(STRANGE, 'Running'), execution('previous', STRANGE, recent),
+                         execution(STRANGE, {'state': STRANGE}, recent)):
+            with self.subTest(blocking=blocking), patch('deploy.executions', return_value=[blocking]):
+                with self.assertRaises(RuntimeError) as raised:
+                    deploy.run_migration(MIGRATE_ID, 600)
+                self.assert_nothing_strange(str(raised.exception))
+                self.assertIn('a migration may still be running', str(raised.exception))
+        self.assertIn('Execution whose name is withheld is in a state this script does not know: ',
+                      str(raised.exception))
+        self.assertIn('--job-execution-name <its name>', str(raised.exception))
+        start.assert_not_called()
+
+    @patch('deploy.rest', return_value={})
+    @patch('deploy.executions')
+    def test_several_new_executions_are_listed_without_a_name_of_another_shape(self, executions, start):
+        executions.side_effect = [[], [execution('one', 'Running'), execution(STRANGE, 'Running')]]
+        with self.assertRaises(RuntimeError) as raised:
+            deploy.run_migration('/job', 600)
+        self.assertIn('Several new executions appeared (one, a name withheld)', str(raised.exception))
+        self.assert_nothing_strange(str(raised.exception))
+
+    def test_a_failure_and_a_timeout_withhold_a_name_of_another_shape(self):
+        with patch('deploy.rest', return_value={'name': STRANGE}), \
+                patch('deploy.executions', side_effect=[[], [execution(STRANGE, 'Failed')]]):
+            with self.assertRaises(RuntimeError) as raised:
+                deploy.run_migration(MIGRATE_ID, 600)
+        self.assertIn('did not succeed (execution whose name is withheld: Failed)', str(raised.exception))
+        self.assert_nothing_strange(str(raised.exception))
+        with patch('deploy.rest', return_value={'name': STRANGE}), \
+                patch('deploy.executions', return_value=[]):
+            with self.assertRaises(RuntimeError) as raised:
+                deploy.run_migration(MIGRATE_ID, 600)
+        self.assertIn('Timed out waiting for execution whose name is withheld.', str(raised.exception))
+        self.assertIn('--job-execution-name <its name>', str(raised.exception))
+        self.assert_nothing_strange(str(raised.exception))
+
+
+VERDICT = ('Verdict: execution this-run: Succeeded, started 2026-10-02T18:00:03Z, '
+           'ended 2026-10-02T18:00:09Z (6 s), exit code 0 (done), reason Completed.')
+
+
+def public_verdict(properties, name='run'):
+    """The line as a workflow run prints it."""
+    return deploy.verdict(name, properties, in_actions=True)
+
+
+class VerdictTests(unittest.TestCase):
+    """`deploy.verdict`: the one line a migration leaves in a log that anybody can read."""
+
+    def test_the_line_names_the_execution_its_status_its_times_its_exit_code_and_its_reason(self):
+        self.assertEqual(public_verdict(finished('this-run')['properties'], 'this-run'), VERDICT)
+
+    def test_each_exit_code_of_the_tool_says_what_it_means(self):
+        # backend/tools/AzureBank.Seeder/Commands/ExitCodes.cs
+        meanings = {0: 'done', 1: 'failed after it reached for the server; running it again is safe',
+                    2: 'refused before any connection; the configuration must change',
+                    137: 'not a code the tool itself exits with'}
+        for code, meaning in meanings.items():
+            with self.subTest(code=code):
+                line = public_verdict(finished(status='Failed', code=code)['properties'])
+                self.assertIn(': Failed, started', line)
+                self.assertIn(f', exit code {code} ({meaning}), ', line)
+
+    def test_an_exit_code_azure_did_not_report_is_said_to_be_missing_and_never_guessed(self):
+        entry = {'name': 'migrate', 'code': 0}
+        for detailed in (
+                None, {}, {'replicas': []}, {'replicas': [{'containers': []}]},
+                {'replicas': [{'containers': [{'name': 'migrate'}]}]},
+                {'replicas': [{'containers': [{'name': 'migrate', 'code': '0'}]}]},
+                {'replicas': [{'containers': [{'name': 'migrate', 'code': True}]}]},
+                {'replicas': [{'containers': [{'name': 'one', 'code': 0}, {'name': 'two', 'code': 0}]}]},
+                {'replicas': [{'containers': [entry]}, {'containers': [entry]}]},
+                'text', {'replicas': 'text'}, {'replicas': [None, {'containers': 'text'}]},
+                {'replicas': [{'containers': [None, 5]}]}):
+            with self.subTest(detailed=detailed):
+                properties = {**finished()['properties'], 'detailedStatus': detailed}
+                self.assertIn(', exit code not reported, ', public_verdict(properties))
+
+    def test_the_one_container_of_the_job_is_read_whatever_azure_calls_it(self):
+        replicas = [{'containers': [{'containerName': 'migrate', 'code': 2}]}]
+        properties = {**finished()['properties'], 'detailedStatus': {'replicas': replicas}}
+        self.assertIn(', exit code 2 (refused before', public_verdict(properties))
+
+    def test_the_length_of_the_run_is_on_the_line_when_both_times_are(self):
+        # About four seconds is a sign-in the database refused; the whole wait is a token that never came.
+        properties = finished()['properties']
+        properties.update(startTime='2026-10-02T18:00:00Z', endTime='2026-10-02T18:01:01.6Z')
+        self.assertIn(', ended 2026-10-02T18:01:01Z (62 s), ', public_verdict(properties))
+        del properties['endTime']
+        self.assertIn(', started 2026-10-02T18:00:00Z, end not reported, ', public_verdict(properties))
+
+    def test_inside_actions_a_reason_is_printed_only_if_it_is_one_plain_word(self):
+        for reason in ('Completed', 'BackoffLimitExceeded', 'a' * 40):
+            with self.subTest(reason=reason):
+                line = public_verdict(finished(reason=reason)['properties'])
+                self.assertTrue(line.endswith(f', reason {reason}.'), line)
+        for reason in ('Container migrate exited: azurebank-x.database.windows.net refused 203.0.113.7',
+                       'Two words', 'Completed\n', '::error::Completed', 'Completed.', 'a' * 41, 7,
+                       ['Completed'], {'code': 'Completed'}):
+            with self.subTest(reason=reason):
+                line = public_verdict(finished(reason=reason)['properties'])
+                self.assertTrue(line.endswith(', reason withheld, read it with --job-log.'), line)
+                self.assertNotIn('\n', line)
+                for word in ('Completed', 'database.windows.net', '203.0.113.7', 'Two', 'aaaa'):
+                    self.assertNotIn(word, line)
+        for reason in (None, ''):
+            with self.subTest(reason=reason):
+                line = public_verdict(finished(reason=reason)['properties'])
+                self.assertTrue(line.endswith(', no reason given.'), line)
+
+    def test_the_values_a_real_execution_carried_on_azure_read_as_these_lines(self):
+        # What two executions of a throwaway job carried on API version 2026-07-01, read by hand on
+        # 2026-10-02 (README.md, "Measured on Azure"): one that ended well, one made to exit 7. The
+        # values are the ones read; the times are invented, and where each field sits in the answer
+        # is the reference's, not something that read kept.
+        def carried(status, code, reason, message):
+            properties = finished(status=status, code=code, reason=reason, message=message)['properties']
+            properties['detailedStatus']['replicas'][0]['containers'][0]['additionalInformation'] = 'ProcessExited'
+            return properties
+
+        ended_well = carried('Succeeded', 0, 'CompletionsReached', 'Reached expected number of succeeded pods')
+        self.assertEqual(public_verdict(ended_well), (
+            'Verdict: execution run: Succeeded, started 2026-10-02T18:00:03Z, '
+            'ended 2026-10-02T18:00:09Z (6 s), exit code 0 (done), reason CompletionsReached.'))
+        self.assertTrue(deploy.verdict('run', ended_well).endswith(
+            ', reason CompletionsReached. Azure says: Reached expected number of succeeded pods / ProcessExited'))
+        # On the one that failed no length could be worked out: a start or an end time was absent.
+        failed = carried('Failed', 7, 'BackoffLimitExceeded', 'Job has reached the specified backoff limit')
+        ending = ', exit code 7 (not a code the tool itself exits with), reason BackoffLimitExceeded.'
+        for absent, times in (('startTime', 'start not reported, ended 2026-10-02T18:00:09Z'),
+                              ('endTime', 'started 2026-10-02T18:00:03Z, end not reported')):
+            with self.subTest(absent=absent):
+                properties = {key: value for key, value in failed.items() if key != absent}
+                self.assertEqual(public_verdict(properties), f'Verdict: execution run: Failed, {times}{ending}')
+                self.assertNotIn('backoff limit', public_verdict(properties))
+
+    def test_azures_own_message_is_for_the_owners_terminal_and_never_for_actions(self):
+        properties = finished(reason='Container exited with a non-zero code',
+                              message='MESSAGE-MARKER')['properties']
+        container = properties['detailedStatus']['replicas'][0]['containers'][0]
+        container['additionalInformation'] = 'ADDITIONAL-MARKER'
+        self.assertIn(", reason 'Container exited with a non-zero code'. "
+                      'Azure says: MESSAGE-MARKER / ADDITIONAL-MARKER', deploy.verdict('run', properties))
+        for hidden in ('MESSAGE-MARKER', 'ADDITIONAL-MARKER', 'non-zero', 'Azure says'):
+            self.assertNotIn(hidden, public_verdict(properties))
+
+    def test_a_field_with_a_shape_nobody_expects_is_said_to_be_missing_and_is_never_printed(self):
+        strange = 'x\n::add-mask::something'
+        properties = {'status': strange, 'startTime': strange, 'endTime': 5, 'reason': strange,
+                      'detailedStatus': strange}
+        self.assertEqual(public_verdict(properties, strange), (
+            'Verdict: execution whose name is withheld: status not reported, start not reported, '
+            'end not reported, exit code not reported, reason withheld, read it with --job-log.'))
+
+
+class MigrationVerdictTests(Offline):
+    """`deploy.run_migration` leaves the verdict whichever way the run ends."""
+
+    def run_with(self, final, later=None, in_actions=True):
+        """A migration that the polling sees end as `final`. `later` is what the read with the
+        later API version answers: an execution, nothing, or an error to raise."""
+        self.calls = []
+
+        def rest(method, resource_id, body=None, api_version=deploy.API_VERSION):
+            self.calls.append((method, resource_id, api_version))
+            if method == 'POST':
+                return {'name': 'this-run'}
+            if isinstance(later, Exception):
+                raise later
+            return {'value': [finished('another-run', code=2), later]} if later else {}
+
+        self.start(patch('deploy.rest', rest))
+        self.start(patch('deploy.executions', side_effect=[[], [final]]))
+        try:
+            return deploy.run_migration('/job', 600, in_actions=in_actions)
+        except RuntimeError as error:
+            return error
+
+    def verdicts(self):
+        return [line.split(' ', 1)[1] for line in self.printed().splitlines() if 'Verdict:' in line]
+
+    def test_a_run_that_succeeds_leaves_its_verdict_read_once_with_the_later_version(self):
+        result = self.run_with(execution('this-run', 'Succeeded'), finished('this-run'))
+        self.assertEqual(result, 'this-run')
+        self.assertEqual(self.verdicts(), [VERDICT])
+        self.assertEqual(self.calls, [('POST', '/job/start', '2025-01-01'),
+                                      ('GET', '/job/executions', '2026-07-01')])
+
+    def test_a_run_that_fails_leaves_its_verdict_and_says_where_its_text_is(self):
+        later = finished('this-run', status='Failed', code=1, reason='Error', message='MESSAGE-MARKER')
+        result = self.run_with(execution('this-run', 'Failed'), later)
+        self.assertIsInstance(result, RuntimeError)
+        self.assertEqual(self.verdicts(), [
+            'Verdict: execution this-run: Failed, started 2026-10-02T18:00:03Z, '
+            'ended 2026-10-02T18:00:09Z (6 s), exit code 1 (failed after it reached for the server; '
+            'running it again is safe), reason Error.'])
+        message = str(result)
+        self.assertIn('execution this-run: Failed', message)
+        self.assertIn('kept in the log workspace and is never fetched here', message)
+        self.assertIn('`python infra/deploy.py --job-log`', message)
+        self.assertIn('`--app-log <minutes>`', message)
+        self.assertNotIn('MESSAGE-MARKER', message + self.printed())
+        self.assertNotIn('portal', message)
+
+    def test_a_verdict_azure_will_not_detail_is_still_a_verdict_and_changes_nothing_of_the_run(self):
+        known = execution('this-run', 'Succeeded', '2026-10-02T18:00:03Z')
+        refused = deploy.AzError('Bad Request: NoRegisteredProviderFound for the API version')
+        for later in (refused, None, finished('a-third-run')):
+            with self.subTest(later=later):
+                self.clear()
+                self.assertEqual(self.run_with(known, later), 'this-run')
+                self.assertEqual(self.verdicts(), [
+                    'Verdict: execution this-run: Succeeded, started 2026-10-02T18:00:03Z, '
+                    'end not reported, exit code not reported, no reason given.'])
+        self.clear()
+        self.assertIsInstance(self.run_with(execution('this-run', 'Failed'), refused), RuntimeError)
+        self.assertEqual(self.verdicts(), [
+            'Verdict: execution this-run: Failed, start not reported, end not reported, '
+            'exit code not reported, no reason given.'])
+
+    def test_inside_actions_the_verdict_is_also_on_the_summary_page_and_nowhere_else(self):
+        with tempfile.TemporaryDirectory() as directory:
+            summary = os.path.join(directory, 'summary.md')
+            deploy.os.environ['GITHUB_STEP_SUMMARY'] = summary
+            self.run_with(execution('this-run', 'Succeeded'), finished('this-run'), in_actions=False)
+            self.assertFalse(os.path.exists(summary), 'outside Actions the variable means nothing')
+            self.run_with(execution('this-run', 'Succeeded'), finished('this-run'))
+            with open(summary, encoding='utf-8') as page:
+                self.assertEqual(page.read(), f'Migration: {VERDICT}\n')
+            self.assertEqual(os.listdir(directory), ['summary.md'])
+
+    def test_a_summary_page_that_cannot_be_written_fails_nothing(self):
+        deploy.os.environ['GITHUB_STEP_SUMMARY'] = os.path.join(
+            tempfile.gettempdir(), 'no-such-folder-here', 'summary.md')
+        result = self.run_with(execution('this-run', 'Succeeded'), finished('this-run'))
+        self.assertEqual(result, 'this-run')
+        self.assertEqual(self.verdicts(), [VERDICT])
+
+
+class RevisionTests(Offline):
+    @patch('deploy.rest')
+    def test_the_revision_before_this_run_does_not_pass_and_any_new_name_does(self, rest):
+        old = resource(['bff', 'api'])
+        old['properties'].update(latestRevisionName='before', latestReadyRevisionName='before')
+        unready = copy.deepcopy(old)
+        unready['properties'].update(latestRevisionName='app-d-x', latestReadyRevisionName='before')
+        new = copy.deepcopy(old)
+        new['properties'].update(latestRevisionName='app-d-x', latestReadyRevisionName='app-d-x')
+        rest.side_effect = [old, unready, new]
+        result = deploy.wait_revision('/app', {'bff': 'previous', 'api': 'previous'}, 'before')
+        self.assertEqual(result, new)
+        self.assertEqual(len(self.clock.sleeps), 2)
+
+    @patch('deploy.rest')
+    def test_failed_provisioning_is_a_failed_revision(self, rest):
+        failed = resource(['bff', 'api'])
+        failed['properties']['provisioningState'] = 'Failed'
+        rest.return_value = failed
+        with self.assertRaisesRegex(deploy.RevisionFailed, 'Failed'):
+            deploy.wait_revision('/app', {'bff': 'new', 'api': 'new'}, 'before')
+
+    @patch('deploy.rest')
+    def test_a_revision_that_is_never_ready_is_a_failed_revision_after_fifteen_minutes(self, rest):
+        unready = resource(['bff', 'api'])
+        unready['properties'].update(latestRevisionName='app-d-x', latestReadyRevisionName='before')
+        rest.return_value = unready
+        with self.assertRaisesRegex(deploy.RevisionFailed, 'never became ready'):
+            deploy.wait_revision('/app', {'bff': 'previous', 'api': 'previous'}, 'before')
+        self.assertGreaterEqual(self.clock.now, 900)
+
+
+class DeploymentTests(DeployCase):
+    def test_success_moves_the_job_then_migrates_then_moves_the_app_then_smokes(self):
+        self.deploy()
+        self.assertEqual(self.steps(), ['job azurebank-migrate', 'migration', 'app d', 'smoke'])
+        body = self.azure.app_patches()[0]
+        self.assertEqual(deploy.images(body),
+                         {name: f'ghcr.io/gurgant/azurebank-{name}:{NEW}' for name in ('bff', 'api')})
+        self.assertRegex(body['properties']['template']['revisionSuffix'], r'^d-a{12}-[0-9a-f]{8}$')
+        self.assertEqual(deploy.images(self.azure.jobs['azurebank-migrate']),
+                         {'migrate': f'ghcr.io/gurgant/azurebank-tools:{NEW}'})
+        self.migration.assert_called_once_with(MIGRATE_ID, 600, in_actions=False)
+        self.smoke.assert_called_once_with(f'https://{ADDRESS}')
+
+    def test_the_app_request_carries_the_template_it_read_and_nothing_else(self):
+        self.deploy()
+        body = self.azure.app_patches()[0]
+        self.assertEqual(set(body['properties']), {'template'})
+        self.assertEqual(body['properties']['template']['scale'], {'minReplicas': 0, 'maxReplicas': 1})
+        self.assertEqual(body['properties']['template']['containers'][0]['env'],
+                         [{'name': 'KEY', 'secretRef': 'key'}])
+
+    def test_failed_migration_never_patches_the_app(self):
+        self.migration.side_effect = RuntimeError('migration failed')
+        with self.assertRaisesRegex(RuntimeError, 'migration failed'):
+            self.deploy()
+        self.assertEqual(self.azure.writes(), [('PATCH', MIGRATE_ID)])
+        self.smoke.assert_not_called()
+
+    def test_invalid_sha_fails_before_azure(self):
+        # A branch name, a short SHA, upper case, a digest: only the tag build-push writes is taken.
+        for tag in ('main', 'a' * 7, 'a' * 39, 'a' * 41, 'A' * 40, 'sha256:' + 'a' * 40, 'a' * 40 + '\n'):
+            with self.subTest(tag=tag), self.assertRaises(ValueError):
+                deploy.deploy(SUBSCRIPTION, GROUP, tag)
+        self.assertEqual(self.azure.calls, [])
+
+    def test_a_job_timeout_over_fourteen_minutes_is_refused_before_any_change(self):
+        self.azure.jobs['azurebank-migrate']['properties']['configuration']['replicaTimeout'] = 900
+        with self.assertRaisesRegex(RuntimeError, 'timeout'):
+            self.deploy()
+        self.assertEqual(self.azure.writes(), [])
+
+    def test_what_runs_now_is_printed_before_the_first_write(self):
+        self.deploy()
+        before = self.azure.printed_before_first_write
+        self.assertIn('Running now', before)
+        for image in ('azurebank-bff', 'azurebank-api', 'azurebank-tools'):
+            self.assertIn(f'ghcr.io/gurgant/{image}:{OLD}', before)
+        self.assertEqual(before.count(BEFORE), 2, 'the latest revision and the latest ready one')
+
+
+class OrderTests(DeployCase):
+    """A second job, as the pool job will be: it must not run a new image on an old schema."""
+
+    def setUp(self):
+        super().setUp()
+        self.start(patch.dict(deploy.JOBS, {'azurebank-pool': 'pool'}))
+        self.azure.jobs['azurebank-pool'] = job_resource('pool')
+
+    def test_the_other_jobs_move_after_the_migration_and_before_the_app(self):
+        self.deploy()
+        self.assertEqual(self.steps(), ['job azurebank-migrate', 'migration', 'job azurebank-pool',
+                                        'app d', 'smoke'])
+        self.assertEqual(deploy.images(self.azure.jobs['azurebank-pool']),
+                         {'pool': f'ghcr.io/gurgant/azurebank-tools:{NEW}'})
+
+    def test_a_failed_migration_leaves_the_other_jobs_on_the_old_image(self):
+        self.migration.side_effect = RuntimeError('migration failed')
+        with self.assertRaisesRegex(RuntimeError, 'migration failed'):
+            self.deploy()
+        self.assertEqual(self.azure.writes(), [('PATCH', MIGRATE_ID)])
+        self.assertEqual(deploy.images(self.azure.jobs['azurebank-pool']),
+                         {'pool': f'ghcr.io/gurgant/azurebank-tools:{OLD}'})
+
+
+def app_part(azure, *path):
+    node = azure.app['properties']
+    for key in path:
+        node = node[key]
+    return node
+
+
+def job_configuration(azure):
+    return azure.jobs['azurebank-migrate']['properties']['configuration']
+
+
+# field named in the refusal -> how the resource drifted
+APP_DRIFTS = {
+    'template.scale.minReplicas': lambda a: app_part(a, 'template', 'scale').update(minReplicas=1),
+    'template.scale.maxReplicas': lambda a: app_part(a, 'template', 'scale').update(maxReplicas=2),
+    'configuration.activeRevisionsMode':
+        lambda a: app_part(a, 'configuration').update(activeRevisionsMode='Multiple'),
+    'configuration.ingress.external': lambda a: app_part(a, 'configuration', 'ingress').update(external=False),
+    'configuration.ingress.targetPort':
+        lambda a: app_part(a, 'configuration', 'ingress').update(targetPort=5068),
+    'configuration.ingress.allowInsecure':
+        lambda a: app_part(a, 'configuration', 'ingress').update(allowInsecure=True),
+    'configuration.ingress.additionalPortMappings':
+        lambda a: app_part(a, 'configuration', 'ingress').update(
+            additionalPortMappings=[{'external': True, 'targetPort': 5068}]),
+    'template.containers': lambda a: app_part(a, 'template', 'containers').append(
+        container('extra', 'ghcr.io/someone/else:latest')),
+    'template.initContainers': lambda a: app_part(a, 'template').update(
+        initContainers=[container('first', 'ghcr.io/someone/else:latest')]),
+}
+JOB_DRIFTS = {
+    'configuration.triggerType': lambda a: job_configuration(a).update(triggerType='Schedule'),
+    'configuration.manualTriggerConfig.parallelism':
+        lambda a: job_configuration(a)['manualTriggerConfig'].update(parallelism=3),
+    'configuration.replicaRetryLimit': lambda a: job_configuration(a).update(replicaRetryLimit=2),
+    'template.initContainers': lambda a: a.jobs['azurebank-migrate']['properties']['template'].update(
+        initContainers=[container('first', 'ghcr.io/someone/else:latest')]),
+}
+
+
+class ShapeTests(DeployCase):
+    def refused_before_any_change(self, field, drift, what):
+        drift(self.azure)
+        with self.assertRaises(deploy.ShapeError) as raised:
+            self.deploy()
+        self.assertIn(field, str(raised.exception))
+        self.assertTrue(str(raised.exception).startswith(what + ' is not in the shape'), str(raised.exception))
+        self.assertEqual(self.azure.writes(), [], 'nothing may be changed on a drifted resource')
+        self.migration.assert_not_called()
+        self.smoke.assert_not_called()
+
+    def test_values_azure_leaves_out_read_as_their_defaults(self):
+        app_part(self.azure, 'template', 'scale').update(minReplicas=None)
+        del app_part(self.azure, 'configuration', 'ingress')['allowInsecure']
+        app_part(self.azure, 'configuration', 'ingress').update(additionalPortMappings=None)
+        app_part(self.azure, 'template').update(initContainers=None)
+        job_configuration(self.azure).update(replicaRetryLimit=None)
+        self.azure.jobs['azurebank-migrate']['properties']['template'].update(initContainers=[])
+        self.deploy()
+        self.assertEqual(self.steps()[-1], 'smoke')
+
+    def test_an_init_container_is_named_and_its_definition_is_not_printed(self):
+        app_part(self.azure, 'template').update(initContainers=[
+            {'name': 'first', 'image': 'ghcr.io/someone/else:latest',
+             'env': [{'name': 'TOKEN', 'value': 'a-plain-value'}]}])
+        with self.assertRaises(deploy.ShapeError) as raised:
+            self.deploy()
+        self.assertIn("template.initContainers is ['first']", str(raised.exception))
+        self.assertNotIn('a-plain-value', str(raised.exception) + self.printed())
+        self.assertEqual(self.azure.writes(), [])
+
+    def test_an_app_without_ingress_is_refused_before_any_change(self):
+        self.refused_before_any_change(
+            'configuration.ingress.external', lambda a: app_part(a, 'configuration').update(ingress=None),
+            'The app')
+
+    def test_the_job_is_read_again_after_it_moved_and_a_drift_stops_the_run(self):
+        self.azure.drift_job_on_patch = lambda job: job['properties']['configuration'].update(
+            triggerType='Schedule')
+        with self.assertRaisesRegex(deploy.ShapeError, 'configuration.triggerType'):
+            self.deploy()
+        self.migration.assert_not_called()
+        self.assertEqual(self.azure.app_patches(), [])
+
+
+def _drift_test(field, drift, what):
+    def test(self):
+        self.refused_before_any_change(field, drift, what)
+    return test
+
+
+for _what, _drifts in (('The app', APP_DRIFTS), ('The job azurebank-migrate', JOB_DRIFTS)):
+    for _field, _drift in _drifts.items():
+        _name = f"{_what.split()[1]}_{_field.replace('.', '_')}"
+        setattr(ShapeTests, f'test_a_drift_in_the_{_name}_is_refused_before_any_change',
+                _drift_test(_field, _drift, _what))
+
+
+def keys_of(node):
+    """Every key anywhere in a request body."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield key
+            yield from keys_of(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from keys_of(value)
+
+
+BOTH = {'type': 'UserAssigned', 'userAssignedIdentities': {
+    **identity('azurebank-app')['userAssignedIdentities'],
+    **identity('azurebank-migrate')['userAssignedIdentities']}}
+# what is wrong with the identity block -> the block, on the app and on the job
+WRONG_IDENTITIES = {
+    'missing': (None, None),
+    'system-assigned': ({'type': 'SystemAssigned', 'principalId': IDENTITY_IDS[0]},) * 2,
+    'both kinds': ({**identity('azurebank-app'), 'type': 'SystemAssigned, UserAssigned'},
+                   {**identity('azurebank-migrate'), 'type': 'SystemAssigned, UserAssigned'}),
+    "the other resource's": (identity('azurebank-migrate'), identity('azurebank-app')),
+    'two of them': (BOTH, BOTH),
+    'none attached': ({'type': 'UserAssigned', 'userAssignedIdentities': {}},) * 2,
+    'attached as a list': ({'type': 'UserAssigned', 'userAssignedIdentities': ['azurebank-app']},
+                           {'type': 'UserAssigned', 'userAssignedIdentities': ['azurebank-migrate']}),
+    'one whose name only ends the same': (identity('not-azurebank-app'),
+                                          identity('not-azurebank-migrate')),
+}
+# Azure's words when a write needs a right on an identity attached to the resource.
+LINKED = ("Forbidden({\"error\":{\"code\":\"LinkedAuthorizationFailed\",\"message\":\"The client "
+          "'<id>' with object id '<id>' has permission to perform action 'Microsoft.App/jobs/write' "
+          "on scope '/subscriptions/<id>/resourceGroups/group/providers/Microsoft.App/jobs/"
+          "azurebank-migrate'; however, it does not have permission to perform action(s) "
+          "'Microsoft.ManagedIdentity/userAssignedIdentities/assign/action' on the linked scope(s) "
+          "'/subscriptions/<id>/resourcegroups/group/providers/Microsoft.ManagedIdentity/"
+          "userAssignedIdentities/azurebank-migrate' (respectively) or the linked scope(s) are "
+          "invalid.\"}})")
+
+
+class IdentityTests(DeployCase):
+    """The app carries the identity azurebank-app and the job azurebank-migrate: each exactly one."""
+
+    def test_an_app_or_a_job_that_does_not_carry_exactly_its_own_identity_is_refused(self):
+        job = self.azure.jobs['azurebank-migrate']
+        for what, (on_app, on_job) in WRONG_IDENTITIES.items():
+            for resource, block, name, expected in (
+                    (self.azure.app, on_app, 'The app', 'azurebank-app'),
+                    (job, on_job, 'The job azurebank-migrate', 'azurebank-migrate')):
+                with self.subTest(what=what, on=name):
+                    right = resource['identity']
+                    resource['identity'] = block
+                    with self.assertRaises(deploy.ShapeError) as raised:
+                        self.deploy()
+                    resource['identity'] = right
+                    self.assertEqual(str(raised.exception), (
+                        f'{name} is not in the shape this script deploys onto (nothing was changed): '
+                        f'identity is not exactly one user-assigned identity ending in /{expected}. '
+                        'Put it right with the template (infra/README.md) before deploying.'))
+                    self.assertEqual(self.azure.writes(), [], 'nothing may be changed')
+        self.migration.assert_not_called()
+        self.smoke.assert_not_called()
+
+    def test_a_wrong_identity_is_named_by_its_field_and_what_was_found_is_never_printed(self):
+        # The ID of an identity holds the subscription, and its entry the client and principal IDs.
+        self.azure.app['identity'] = {'type': 'UserAssigned', 'userAssignedIdentities': {
+            '/subscriptions/SUBSCRIPTION-MARKER/resourcegroups/other/providers'
+            '/Microsoft.ManagedIdentity/userAssignedIdentities/someone-elses':
+                {'principalId': IDENTITY_IDS[0], 'clientId': IDENTITY_IDS[1]}}}
+        with self.assertRaises(deploy.ShapeError) as raised:
+            self.deploy(in_actions=True)
+        for hidden in ('SUBSCRIPTION-MARKER', 'someone-elses', 'other', *IDENTITY_IDS):
+            self.assertNotIn(hidden, str(raised.exception) + self.printed())
+
+    def test_the_identity_is_recognised_whatever_the_case_azure_returns_its_id_in(self):
+        for resource in (self.azure.app, self.azure.jobs['azurebank-migrate']):
+            (key, entry), = resource['identity']['userAssignedIdentities'].items()
+            resource['identity'] = {'type': 'userAssigned', 'userAssignedIdentities': {key.upper(): entry}}
+        self.deploy()
+        self.assertEqual(self.steps()[-1], 'smoke')
+
+    def test_the_app_only_road_checks_the_apps_identity_too(self):
+        self.azure.app['identity'] = None
+        with self.assertRaisesRegex(deploy.ShapeError, 'ending in /azurebank-app'):
+            self.deploy(app_only=True)
+        self.assertEqual(self.azure.writes(), [])
+
+
+class RequestTests(DeployCase):
+    """What a PATCH carries, and the one refusal that is never worked around."""
+
+    def test_no_request_ever_carries_an_identity(self):
+        # The deploy, and the put-back after it: three bodies, each a location and a template.
+        self.azure.fate['d'] = 'never'
+        with self.assertRaisesRegex(RuntimeError, 'put back'):
+            self.deploy()
+        bodies = [body for method, _, body in self.azure.calls if method == 'PATCH']
+        self.assertEqual(len(bodies), 3)
+        for body in bodies:
+            self.assertEqual((sorted(body), sorted(body['properties'])),
+                             (['location', 'properties'], ['template']))
+            self.assertEqual([key for key in keys_of(body) if 'identit' in key.lower()], [])
+        self.assertIn('identity', self.azure.app, 'the resource that was read did hold one')
+
+    def test_a_refusal_that_asks_for_a_right_on_the_identity_stops_the_run_and_is_not_tried_again(self):
+        self.azure.refusal = LINKED
+        for target, what, written in ((MIGRATE_ID, 'the job azurebank-migrate', 1), (APP_ID, 'the app', 2)):
+            with self.subTest(target=what):
+                self.azure.calls.clear()
+                self.azure.refuse = lambda method, resource_id, body: (
+                    method == 'PATCH' and resource_id == target)
+                with self.assertRaises(deploy.IdentityRightAsked) as raised:
+                    self.deploy()
+                message = str(raised.exception)
+                self.assertTrue(message.startswith('Azure asked for a right on a database identity '
+                                                   f'before it would change {what}: stop here.'), message)
+                self.assertIn('it was not tried again, and no role is to be added for it', message)
+                self.assertIn('userAssignedIdentities/assign/action', message)
+                writes = self.azure.writes()
+                self.assertEqual(writes.count(('PATCH', target)), 1)
+                self.assertEqual(len(writes), written, 'no retry, no put-back, nothing after it')
+        self.smoke.assert_not_called()
+
+    def test_any_other_refusal_of_a_request_stays_azures_own_error(self):
+        self.azure.refuse = lambda method, resource_id, body: method == 'PATCH'
+        for refusal in ('Forbidden: AuthorizationFailed',
+                        'Forbidden: LinkedAuthorizationFailed on a subnet join/action',
+                        "Forbidden: AuthorizationFailed for 'Microsoft.ManagedIdentity"
+                        "/userAssignedIdentities/assign/action'"):
+            with self.subTest(refusal=refusal):
+                self.azure.refusal = refusal
+                with self.assertRaises(deploy.AzError):
+                    self.deploy()
+
+    def test_that_refusal_ends_the_program_with_its_own_sentence(self):
+        self.azure.refusal = LINKED
+        self.azure.refuse = lambda method, resource_id, body: method == 'PATCH'
+        environment = {'AZURE_SUBSCRIPTION_ID': SUBSCRIPTION, 'AZURE_RESOURCE_GROUP': GROUP,
+                       'IMAGE_TAG': NEW}
+        with patch.dict(deploy.os.environ, environment, clear=True), \
+                self.assertRaises(SystemExit) as raised:
+            deploy.main([])
+        self.assertTrue(str(raised.exception.code).startswith(
+            'Azure asked for a right on a database identity'), raised.exception.code)
+
+
+REFUSED_LISTING = subprocess.CompletedProcess(
+    [], 1, stdout='',
+    stderr="Forbidden({\"error\":{\"code\":\"AuthorizationFailed\",\"message\":\"The client "
+           "'11111111-2222-3333-4444-555555555555' does not have authorization to perform action "
+           "'Microsoft.App/containerApps/listSecrets/action'\"}})")
+
+
+class SecretsListingTests(DeployCase):
+    """The deployment identity must be refused the app's secrets, and that is tried, not assumed."""
+
+    def setUp(self):
+        super().setUp()
+        self.run = self.start(patch('deploy.subprocess.run', return_value=REFUSED_LISTING))
+
+    def test_a_refusal_lets_the_deployment_go_on_and_is_reported(self):
+        self.deploy(expect_secrets_refused=True)
+        self.assertEqual(self.steps(), ['job azurebank-migrate', 'migration', 'app d', 'smoke'])
+        self.assertIn('the listing was refused', self.printed())
+        command = self.run.call_args.args[0]
+        self.assertEqual(command[1:4], ['rest', '--method', 'POST'])
+        url = command[command.index('--url') + 1]
+        self.assertTrue(url.startswith(f'https://management.azure.com{APP_ID}/listSecrets?'), url)
+        self.assertEqual(command[command.index('--output') + 1], 'none')
+        self.assertEqual(self.run.call_count, 1)
+
+    def test_the_refusal_is_proved_before_anything_is_changed(self):
+        self.run.side_effect = lambda *args, **kwargs: (
+            self.assertEqual(self.azure.writes(), []), REFUSED_LISTING)[1]
+        self.deploy(expect_secrets_refused=True)
+        self.assertEqual(self.run.call_count, 1)
+
+    def test_an_answer_stops_the_run_before_any_change(self):
+        self.run.return_value = subprocess.CompletedProcess([], 0, stdout='SECRET-VALUE', stderr='')
+        with self.assertRaisesRegex(RuntimeError, 'can list the secrets') as raised:
+            self.deploy(expect_secrets_refused=True)
+        self.assertEqual(self.azure.writes(), [])
+        self.assertNotIn('SECRET-VALUE', str(raised.exception) + self.printed())
+
+    def test_any_other_failure_proves_nothing_and_stops_the_run(self):
+        self.run.return_value = subprocess.CompletedProcess(
+            [], 1, stdout='', stderr='ERROR: Connection reset by peer')
+        with self.assertRaisesRegex(RuntimeError, 'Could not prove'):
+            self.deploy(expect_secrets_refused=True)
+        self.assertEqual(self.azure.writes(), [])
+
+    def test_a_listing_that_times_out_proves_nothing_and_names_no_identifier(self):
+        self.run.side_effect = lambda command, **options: raise_(subprocess.TimeoutExpired(command, 180))
+        with self.assertRaisesRegex(RuntimeError, 'Could not prove') as raised:
+            self.deploy(expect_secrets_refused=True)
+        self.assertIn('POST /containerApps/azurebank/listSecrets', str(raised.exception))
+        self.assertNotIn(SUBSCRIPTION, str(raised.exception) + self.printed())
+        self.assertEqual(self.azure.writes(), [])
+
+    def test_the_owner_is_not_asked_to_be_refused(self):
+        self.deploy()
+        self.run.assert_not_called()
+        self.assertNotIn('listing', self.printed())
+
+
+class GateTests(DeployCase):
+    """A deploy that fails after the app moved puts the app back on what it ran before."""
+
+    def assert_put_back(self, raised):
+        message = str(raised.exception)
+        self.assertIn(f'put back to {OLD}', message)
+        self.assertIn('the schema stays where the migration left it', message)
+        first, second = self.azure.app_patches()
+        template = second['properties']['template']
+        suffix = template.pop('revisionSuffix')
+        self.assertRegex(suffix, r'^b-b{12}-[0-9a-f]{8}$')
+        self.assertNotEqual(suffix, first['properties']['template']['revisionSuffix'])
+        original = app_resource()['properties']['template']
+        del original['revisionSuffix']
+        self.assertEqual(template, original, 'the template read at the start, images included')
+        self.assertEqual(deploy.images(self.azure.app), deploy.images(app_resource()))
+
+    def assert_diagnosed(self):
+        printed = self.printed()
+        for expected in ('provisioningState', 'runningState', 'healthState', 'provisioningError',
+                         'Container bff failed its startup probe.', 'CrashLoopBackOff', 'restarts 7'):
+            self.assertIn(expected, printed)
+
+    def test_a_revision_that_never_gets_ready_is_diagnosed_and_the_app_is_put_back(self):
+        self.azure.fate['d'] = 'never'
+        with self.assertRaises(RuntimeError) as raised:
+            self.deploy()
+        self.assertGreaterEqual(self.clock.now, 900)
+        self.assert_diagnosed()
+        self.assert_put_back(raised)
+        self.assertEqual(self.steps(), ['job azurebank-migrate', 'migration', 'app d', 'app b'])
+        self.smoke.assert_not_called()
+
+    def test_a_revision_that_ends_failed_is_diagnosed_and_the_app_is_put_back(self):
+        self.azure.fate['d'] = 'failed'
+        with self.assertRaises(RuntimeError) as raised:
+            self.deploy()
+        self.assertLess(self.clock.now, 900, 'a failure is not waited out')
+        self.assert_diagnosed()
+        self.assert_put_back(raised)
+
+    def test_a_failed_smoke_test_is_diagnosed_and_the_app_is_put_back(self):
+        self.smoke.side_effect = deploy.SmokeFailed('Smoke test failed: the sign-in probe got 500.')
+        self.azure.revisions[BEFORE]['active'] = False
+        with self.assertRaisesRegex(RuntimeError, 'the sign-in probe got 500') as raised:
+            self.deploy()
+        self.assertIn('runningState', self.printed())
+        self.assert_put_back(raised)
+        self.assertEqual(self.steps(), ['job azurebank-migrate', 'migration', 'app d', 'app b'])
+
+    def test_an_app_read_back_out_of_shape_after_it_moved_is_diagnosed_and_put_back(self):
+        # Only the deployment's request drifts: what the put-back sends is the template read at
+        # the start, which passed the same check, and never the one that failed it.
+        self.azure.drift_app_on_patch = lambda template: (
+            template['revisionSuffix'].startswith('d-') and template['scale'].update(maxReplicas=5))
+        with self.assertRaisesRegex(RuntimeError, r'\(after its images moved\): '
+                                                  'template.scale.maxReplicas is 5') as raised:
+            self.deploy()
+        self.assertIsInstance(raised.exception.__cause__, deploy.ShapeError)
+        self.assertIn('runningState', self.printed())
+        self.assert_put_back(raised)
+        self.assertEqual(self.steps(), ['job azurebank-migrate', 'migration', 'app d', 'app b'])
+        self.smoke.assert_not_called()
+
+    def test_an_unproven_smoke_test_is_never_put_back(self):
+        self.smoke.side_effect = deploy.SmokeUnproven('Smoke test unproven: only 429.')
+        with self.assertRaises(deploy.SmokeUnproven):
+            self.deploy()
+        self.assertEqual(len(self.azure.app_patches()), 1)
+        self.assertEqual(deploy.images(self.azure.app),
+                         {name: f'ghcr.io/gurgant/azurebank-{name}:{NEW}' for name in ('bff', 'api')})
+
+    def test_a_put_back_that_never_gets_ready_says_the_app_may_be_broken(self):
+        self.azure.fate.update(d='never', b='never')
+        with self.assertRaisesRegex(RuntimeError, 'may be serving a broken revision') as raised:
+            self.deploy()
+        self.assertNotIn('was put back', str(raised.exception))
+        self.assertEqual(len(self.azure.app_patches()), 2)
+
+    def test_a_put_back_azure_refuses_says_the_app_may_be_broken(self):
+        self.azure.fate['d'] = 'never'
+        self.azure.refuse = lambda method, resource_id, body: (
+            method == 'PATCH' and resource_id == APP_ID
+            and body['properties']['template']['revisionSuffix'].startswith('b-'))
+        with self.assertRaisesRegex(RuntimeError, 'may be serving a broken revision'):
+            self.deploy()
+
+    def test_an_old_revision_still_active_stops_before_the_smoke_test_and_puts_nothing_back(self):
+        self.azure.keep_old_active = True
+        with self.assertRaisesRegex(RuntimeError, f'{BEFORE} was still active'):
+            self.deploy()
+        self.assertGreaterEqual(self.clock.now, 180)
+        self.smoke.assert_not_called()
+        self.assertEqual(len(self.azure.app_patches()), 1)
+
+    def test_the_old_revision_is_waited_out_before_the_first_request(self):
+        self.azure.reads_before_old_is_inactive = 3
+        self.deploy()
+        events = self.azure.events
+        self.assertEqual(events.count(f'read {BEFORE}'), 3)
+        self.assertLess(max(i for i, e in enumerate(events) if e == f'read {BEFORE}'), events.index('smoke'))
+
+    def test_a_revision_answer_that_does_not_say_is_not_taken_for_inactive(self):
+        self.azure.keep_old_active = True
+        del self.azure.revisions[BEFORE]['active']
+        with self.assertRaisesRegex(RuntimeError, 'still active'):
+            self.deploy()
+        self.smoke.assert_not_called()
+
+    def test_the_app_is_read_again_after_the_put_back(self):
+        self.azure.fate['d'] = 'never'
+        self.azure.drift_app_on_patch = lambda template: template['scale'].update(maxReplicas=5)
+        with self.assertRaisesRegex(deploy.ShapeError, 'after the put-back'):
+            self.deploy()
+
+    def test_a_diagnosis_shows_no_address(self):
+        # A replica's state is Azure's own text, and it may name where the replica runs.
+        self.azure.fate['d'] = 'never'
+        self.azure.replicas[0]['properties']['containers'][0]['runningStateDetails'] = (
+            'Readiness probe failed: dial tcp 10.250.0.47:8080: connection refused')
+        with self.assertRaisesRegex(RuntimeError, f'put back to {OLD}'):
+            self.deploy()
+        self.assertIn('Waiting (Readiness probe failed: dial tcp <address>:8080: connection refused)',
+                      self.printed())
+        self.assertNotIn('10.250.0.47', self.printed())
+
+    def test_a_diagnosis_azure_refuses_does_not_hide_the_failure(self):
+        self.azure.fate['d'] = 'never'
+        self.azure.refuse = lambda method, resource_id, body: '/revisions/' in resource_id
+        with self.assertRaisesRegex(RuntimeError, f'put back to {OLD}'):
+            self.deploy()
+        self.assertIn('Could not read why', self.printed())
+
+
+class MaskTests(DeployCase):
+    def setUp(self):
+        super().setUp()
+        self.smoke.side_effect = lambda url: print(f'checked {url}')
+
+    def test_in_actions_the_address_is_masked_before_any_line_that_holds_it(self):
+        self.deploy(in_actions=True)
+        lines = self.printed().splitlines()
+        self.assertEqual(lines[0], f'::add-mask::{ADDRESS}', 'the mask is the first line of the run')
+        holding = [index for index, line in enumerate(lines) if ADDRESS in line]
+        self.assertGreater(len(holding), 1, 'a later line does hold the address')
+
+    def test_outside_actions_no_workflow_command_is_printed(self):
+        self.deploy()
+        self.assertNotIn('::add-mask::', self.printed())
+
+    def test_an_address_that_is_not_a_host_name_is_never_printed(self):
+        strange = 'x.invalid\n::add-mask::something'
+        app_part(self.azure, 'configuration', 'ingress').update(fqdn=strange)
+        with self.assertRaisesRegex(RuntimeError, 'Unexpected application address') as raised:
+            self.deploy(in_actions=True)
+        self.assertNotIn('something', str(raised.exception) + self.printed())
+        self.assertEqual(self.azure.writes(), [])
+
+
+class AppOnlyTests(DeployCase):
+    """The owner's road back: the app alone, from a terminal."""
+
+    def test_it_moves_the_app_and_touches_no_job(self):
+        self.deploy(app_only=True)
+        self.assertEqual(self.steps(), ['app d', 'smoke'])
+        self.assertEqual([call for call in self.azure.calls if '/jobs/' in call[1]], [])
+        self.migration.assert_not_called()
+        self.assertEqual(deploy.images(self.azure.app),
+                         {name: f'ghcr.io/gurgant/azurebank-{name}:{NEW}' for name in ('bff', 'api')})
+
+    def test_it_is_refused_inside_actions_before_any_call(self):
+        with self.assertRaisesRegex(ValueError, 'refused inside GitHub Actions'):
+            self.deploy(app_only=True, in_actions=True)
+        self.assertEqual(self.azure.calls, [])
+
+    def test_it_keeps_the_gate_and_the_put_back(self):
+        self.azure.fate['d'] = 'never'
+        with self.assertRaisesRegex(RuntimeError, f'put back to {OLD}'):
+            self.deploy(app_only=True)
+        self.assertEqual(self.steps(), ['app d', 'app b'])
+
+
+class MainTests(Offline):
+    ENVIRONMENT = {'AZURE_SUBSCRIPTION_ID': SUBSCRIPTION, 'AZURE_RESOURCE_GROUP': GROUP, 'IMAGE_TAG': NEW}
+
+    def run_main(self, arguments, **extra):
+        with patch.dict(deploy.os.environ, {**self.ENVIRONMENT, **extra}, clear=True):
+            return deploy.main(arguments)
+
+    @patch('deploy.app_log')
+    @patch('deploy.job_log')
+    @patch('deploy.deploy')
+    def test_the_two_log_commands_deploy_nothing_and_need_no_image_tag(self, run, job_log, app_log):
+        environment = {'AZURE_SUBSCRIPTION_ID': SUBSCRIPTION, 'AZURE_RESOURCE_GROUP': GROUP}
+        with patch.dict(deploy.os.environ, environment, clear=True):
+            deploy.main(['--job-log'])
+            deploy.main(['--job-log', 'azurebank-migrate-abc123'])
+            deploy.main(['--app-log', '15'])
+        self.assertEqual([call.args + (call.kwargs,) for call in job_log.call_args_list],
+                         [(SUBSCRIPTION, GROUP, '', {'in_actions': False}),
+                          (SUBSCRIPTION, GROUP, 'azurebank-migrate-abc123', {'in_actions': False})])
+        app_log.assert_called_once_with(SUBSCRIPTION, GROUP, 15, in_actions=False)
+        run.assert_not_called()
+
+    @patch('deploy.rest')
+    @patch('deploy.az')
+    def test_the_two_log_commands_inside_actions_exit_non_zero_without_calling_azure(self, az, rest):
+        for arguments in (['--job-log'], ['--job-log', 'a-run'], ['--app-log', '15']):
+            with self.subTest(arguments=arguments):
+                with self.assertRaises(SystemExit) as raised:
+                    self.run_main(arguments, GITHUB_ACTIONS='true')
+                self.assertIn('refused inside GitHub Actions', str(raised.exception.code))
+        az.assert_not_called()
+        rest.assert_not_called()
+
+    def test_two_modes_at_once_are_refused_by_the_command_line(self):
+        for arguments in (['--app-only', '--job-log'], ['--job-log', '--app-log', '5'],
+                          ['--app-log', 'soon']):
+            with self.subTest(arguments=arguments), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as raised:
+                    self.run_main(arguments)
+                self.assertEqual(raised.exception.code, 2)
+
+    @patch('deploy.deploy')
+    def test_the_workflow_run_asks_for_the_mask_and_the_refusal(self, run):
+        self.run_main([], GITHUB_ACTIONS='true', EXPECT_SECRETS_REFUSED='1')
+        run.assert_called_once_with(SUBSCRIPTION, GROUP, NEW, app_only=False, in_actions=True,
+                                    expect_secrets_refused=True)
+
+    @patch('deploy.deploy')
+    def test_the_owners_terminal_asks_for_neither(self, run):
+        self.run_main(['--app-only'])
+        run.assert_called_once_with(SUBSCRIPTION, GROUP, NEW, app_only=True, in_actions=False,
+                                    expect_secrets_refused=False)
+
+    @patch('deploy.rest')
+    def test_app_only_inside_actions_exits_non_zero_without_calling_azure(self, rest):
+        with self.assertRaises(SystemExit) as raised:
+            self.run_main(['--app-only'], GITHUB_ACTIONS='true')
+        self.assertIn('refused inside GitHub Actions', str(raised.exception.code))
+        rest.assert_not_called()
+
+    @patch('deploy.deploy', side_effect=deploy.AzError('Forbidden: AuthorizationFailed'))
+    def test_a_refusal_by_azure_exits_non_zero_with_its_text(self, run):
+        with self.assertRaises(SystemExit) as raised:
+            self.run_main([])
+        self.assertIn('AuthorizationFailed', str(raised.exception.code))
+
+    @patch('deploy.deploy', side_effect=deploy.SmokeUnproven('Smoke test unproven.'))
+    def test_an_unproven_run_exits_non_zero(self, run):
+        with self.assertRaises(SystemExit) as raised:
+            self.run_main([])
+        self.assertEqual(raised.exception.code, 'Smoke test unproven.')
+
+    def test_a_cli_that_never_answers_exits_non_zero_without_the_subscription(self):
+        commands = []
+
+        def never_answers(command, **options):
+            commands.append(' '.join(command))
+            raise subprocess.TimeoutExpired(command, options['timeout'])
+
+        self.start(patch('deploy.subprocess.run', never_answers))
+        with self.assertRaises(SystemExit) as raised:
+            self.run_main([])
+        self.assertIn('no answer in 180 s (GET /containerApps/azurebank)', str(raised.exception.code))
+        self.assertIn(SUBSCRIPTION, commands[0], 'the command line did hold it')
+        self.assertNotIn(SUBSCRIPTION, str(raised.exception.code) + self.printed())
+
+
+WORKSPACE_ID = (f'/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}/providers'
+                '/Microsoft.OperationalInsights/workspaces/azurebank-logs')
+CUSTOMER = 'cccccccc-9999-4aaa-8bbb-cccccccccccc'
+QUERY = ('rest', '--method', 'POST', '--url',
+         f'https://api.loganalytics.io/v1/workspaces/{CUSTOMER}/query',
+         '--resource', 'https://api.loganalytics.io')
+
+
+def workspace(status='RespectQuota', customer=CUSTOMER):
+    return {'properties': {'customerId': customer, 'workspaceCapping': {
+        'dailyQuotaGb': 0.05, 'dataIngestionStatus': status,
+        'quotaNextResetTime': '2026-10-03T07:00:00Z'}}}
+
+
+def table(*rows, columns=('TimeGenerated', 'Log')):
+    return {'tables': [{'name': 'PrimaryResult',
+                        'columns': [{'name': name, 'type': 'string'} for name in columns],
+                        'rows': [list(row) for row in rows]}]}
+
+
+class LogTests(Offline):
+    """--job-log and --app-log: the owner reads what the containers printed, from the workspace."""
+
+    def setUp(self):
+        super().setUp()
+        self.workspace = workspace()
+        earlier = finished('an-earlier-run', code=1)
+        earlier['properties'].update(startTime='2026-10-01T09:00:00Z', endTime='2026-10-01T09:00:05Z')
+        self.listed = [finished('this-run'), earlier]
+        self.answer = table(('2026-10-02T18:00:04Z', 'Applying migration 0001'),
+                            ('2026-10-02T18:00:08Z', 'Done.'))
+        self.reads = []
+        self.queries = []
+        self.start(patch('deploy.rest', self.rest))
+        self.start(patch('deploy.az', self.az))
+
+    def rest(self, method, resource_id, body=None, api_version=deploy.API_VERSION):
+        self.reads.append((method, resource_id, api_version))
+        if resource_id == WORKSPACE_ID:
+            if isinstance(self.workspace, Exception):
+                raise self.workspace
+            return self.workspace
+        if resource_id == MIGRATE_ID + '/executions':
+            return {'value': self.listed}
+        raise AssertionError(f'unexpected call: {method} {resource_id}')
+
+    def az(self, *args, what=None):
+        # The body is a file that exists only while the call runs: read it here.
+        with open(args[args.index('--body') + 1][1:], encoding='utf-8') as request:
+            self.queries.append((args[:args.index('--body')], json.load(request)))
+        return self.answer
+
+    def said(self):
+        """What was printed, without the clock in front of the lines that carry one."""
+        return [re.sub(r'^\d\d:\d\d:\d\dZ ', '', line) for line in self.printed().splitlines()]
+
+    def test_the_job_log_says_what_the_cap_is_doing_then_the_verdict_then_the_lines(self):
+        deploy.job_log(SUBSCRIPTION, GROUP)
+        self.assertEqual(self.said(), [
+            'Log workspace azurebank-logs: daily cap 0.05 GB, ingestion RespectQuota, '
+            'next reset 2026-10-03T07:00:00Z.',
+            VERDICT, '2026-10-02T18:00:04Z Applying migration 0001', '2026-10-02T18:00:08Z Done.',
+            '2 line(s).'])
+        self.assertEqual(self.reads, [('GET', WORKSPACE_ID, '2023-09-01'),
+                                      ('GET', MIGRATE_ID + '/executions', '2026-07-01')])
+        # The latest execution, from two minutes before its start to five after its end.
+        self.assertEqual(self.queries, [(QUERY, {
+            'query': "ContainerAppConsoleLogs | where JobName == 'azurebank-migrate' "
+                     '| where TimeGenerated between (datetime(2026-10-02T17:58:03Z) .. '
+                     'datetime(2026-10-02T18:05:09Z)) | order by TimeGenerated asc | take 5000 '
+                     '| project TimeGenerated, Log',
+            'timespan': '2026-10-02T17:58:03Z/2026-10-02T18:05:09Z'})])
+
+    def test_a_named_execution_is_the_one_read_and_a_name_nobody_has_is_an_error(self):
+        deploy.job_log(SUBSCRIPTION, GROUP, 'an-earlier-run')
+        self.assertIn('Verdict: execution an-earlier-run: Succeeded', self.said()[1])
+        self.assertEqual(self.queries[0][1]['timespan'], '2026-10-01T08:58:00Z/2026-10-01T09:05:05Z')
+        with self.assertRaisesRegex(RuntimeError, 'has no execution named no-such-run'):
+            deploy.job_log(SUBSCRIPTION, GROUP, 'no-such-run')
+        self.listed = []
+        with self.assertRaisesRegex(RuntimeError, 'has no execution yet'):
+            deploy.job_log(SUBSCRIPTION, GROUP)
+        self.assertEqual(len(self.queries), 1)
+
+    def test_on_the_owners_terminal_the_verdict_carries_what_azure_said(self):
+        self.listed = [finished('this-run', status='Failed', code=1, message='MESSAGE-MARKER',
+                                reason='Container failed to start')]
+        deploy.job_log(SUBSCRIPTION, GROUP)
+        self.assertIn("reason 'Container failed to start'. Azure says: MESSAGE-MARKER", self.said()[1])
+
+    def test_a_cap_that_was_reached_is_said_before_an_answer_with_no_line(self):
+        self.workspace, self.answer = workspace('OverQuota'), table()
+        deploy.job_log(SUBSCRIPTION, GROUP)
+        said = self.said()
+        self.assertIn('ingestion OverQuota', said[0])
+        self.assertTrue(said[1].startswith('The cap was reached: the workspace takes no line'), said[1])
+        self.assertEqual(said[3], '0 line(s).')
+        self.assertTrue(said[4].startswith('No line is not proof that nothing was printed'), said[4])
+
+    def test_without_a_workspace_both_commands_say_that_nothing_is_kept(self):
+        self.workspace = deploy.AzError(
+            'Not Found({"error":{"code":"ResourceNotFound","message":"The Resource '
+            "'Microsoft.OperationalInsights/workspaces/azurebank-logs' was not found.\"}})")
+        for read in (lambda: deploy.job_log(SUBSCRIPTION, GROUP),
+                     lambda: deploy.app_log(SUBSCRIPTION, GROUP, 15)):
+            with self.assertRaisesRegex(RuntimeError, 'the logs are switched off and nothing is kept'):
+                read()
+        self.workspace = deploy.AzError('Forbidden: AuthorizationFailed')
+        with self.assertRaisesRegex(deploy.AzError, 'AuthorizationFailed'):
+            deploy.job_log(SUBSCRIPTION, GROUP)
+        self.assertEqual(self.queries, [])
+
+    def test_an_id_that_is_not_an_id_never_becomes_part_of_a_url(self):
+        for customer in ('x/../../other?', None, '', f'{CUSTOMER}/query?x='):
+            with self.subTest(customer=customer):
+                self.workspace = workspace(customer=customer)
+                with self.assertRaisesRegex(RuntimeError, 'did not report the ID a query is sent to'):
+                    deploy.app_log(SUBSCRIPTION, GROUP, 15)
+        self.assertEqual(self.queries, [])
+        self.workspace = workspace(customer=CUSTOMER.upper())
+        deploy.app_log(SUBSCRIPTION, GROUP, 15)
+        self.assertEqual(self.queries[0][0], QUERY, 'parsed, and printed again')
+
+    def test_the_app_log_reads_the_last_minutes_of_the_app(self):
+        self.answer = table(('2026-10-02T18:00:04Z', 'api', 'a line of the api'),
+                            ('2026-10-02T18:00:05Z', 'bff', 'a line of the bff'),
+                            columns=('TimeGenerated', 'ContainerName', 'Log'))
+        deploy.app_log(SUBSCRIPTION, GROUP, 15)
+        self.assertEqual(self.said()[1:], ['2026-10-02T18:00:04Z api a line of the api',
+                                           '2026-10-02T18:00:05Z bff a line of the bff', '2 line(s).'])
+        self.assertEqual(self.reads, [('GET', WORKSPACE_ID, '2023-09-01')])
+        self.assertEqual(self.queries, [(QUERY, {
+            'query': "ContainerAppConsoleLogs | where ContainerAppName == 'azurebank' "
+                     '| where TimeGenerated > ago(15m) | order by TimeGenerated asc | take 5000 '
+                     '| project TimeGenerated, ContainerName, Log',
+            'timespan': 'PT15M'})])
+
+    def test_minutes_outside_one_day_are_refused_before_any_call(self):
+        for minutes in (0, -5, 1441):
+            with self.subTest(minutes=minutes), self.assertRaisesRegex(ValueError, 'between 1 and 1440'):
+                deploy.app_log(SUBSCRIPTION, GROUP, minutes)
+        self.assertEqual(self.reads + self.queries, [])
+
+    def test_both_commands_are_refused_inside_actions_before_any_call(self):
+        for read in (lambda: deploy.job_log(SUBSCRIPTION, GROUP, in_actions=True),
+                     lambda: deploy.app_log(SUBSCRIPTION, GROUP, 15, in_actions=True)):
+            with self.assertRaisesRegex(ValueError, 'refused inside GitHub Actions'):
+                read()
+        self.assertEqual(self.reads + self.queries, [])
+        self.assertEqual(self.printed(), '')
+
+    def test_an_execution_without_a_start_has_no_period_to_read(self):
+        self.listed = [execution('this-run', 'Unknown')]
+        with self.assertRaisesRegex(RuntimeError, 'no start time'):
+            deploy.job_log(SUBSCRIPTION, GROUP)
+        self.assertEqual(self.queries, [])
+
+
+class WholeRunTests(Offline):
+    """`deploy.deploy` with the real `run_migration`, as the workflow runs it: what a public log
+    gets from a migration, and what a deployment never asks for."""
+
+    def setUp(self):
+        super().setUp()
+        self.azure = FakeAzure(self.out)
+        self.azure.executions = []
+        self.start(patch('deploy.rest', self.azure.rest))
+        self.start(patch('deploy.az', side_effect=AssertionError('a deployment sent a log query')))
+        self.smoke = self.start(patch('deploy.smoke'))
+
+    def verdicts(self):
+        return [line.split(' ', 1)[1] for line in self.printed().splitlines() if 'Verdict:' in line]
+
+    def test_a_deployment_prints_the_verdict_and_fetches_nothing_the_job_printed(self):
+        deploy.deploy(SUBSCRIPTION, GROUP, NEW, in_actions=True)
+        self.assertEqual(self.verdicts(), [VERDICT])
+        # Every call is on the app or on a job: nothing reads the log workspace.
+        self.assertEqual({resource_id.split('/providers/')[1].split('/')[0]
+                          for _, resource_id, _ in self.azure.calls}, {'Microsoft.App'})
+        self.assertEqual([call for call in self.azure.versions if call[2] != deploy.API_VERSION],
+                         [('GET', 'executions', '2026-07-01')])
+        self.smoke.assert_called_once()
+
+    def test_a_failed_migration_prints_its_verdict_and_leaves_the_app_alone(self):
+        self.azure.outcome = finished('this-run', status='Failed', code=2, reason='Error')
+        with self.assertRaisesRegex(RuntimeError, 'did not succeed .execution this-run: Failed.'):
+            deploy.deploy(SUBSCRIPTION, GROUP, NEW, in_actions=True)
+        self.assertEqual(self.verdicts(), [
+            'Verdict: execution this-run: Failed, started 2026-10-02T18:00:03Z, '
+            'ended 2026-10-02T18:00:09Z (6 s), exit code 2 (refused before any connection; '
+            'the configuration must change), reason Error.'])
+        self.assertEqual(self.azure.app_patches(), [])
+        self.smoke.assert_not_called()
+
+
+SPA = ('<!doctype html><title>AzureBank</title><div id="root"></div>'
+       '<script type="module" src="/assets/index-hash.js"></script>')
+# The four answers below are not invented: they were observed on 2026-10-02 on a local stack of
+# this code (compose.yaml, Production images, SQL Server 2022), for POST /bff/auth/login with
+# deploy.SMOKE_LOGIN. /health/ready answered 200 "Healthy" in all four situations.
+#   REFUSED      the schema is there and the address is unknown
+#   LIMITED      the shared sign-in limit is spent (the answer carries Retry-After: 60)
+#   NO_TABLES    the database exists and holds no table: what a deployment without a migration is
+#   NO_DATABASE  the server is there and the database is not
+REFUSED = (401, 'application/json',
+           '{"type":"https://httpstatuses.com/401","title":"Unauthorized","status":401,'
+           '"detail":"Invalid email or password.","instance":"/api/auth/login",'
+           '"errorCode":"INVALID_CREDENTIALS","traceId":"dc85e0cb0e40bb6fc1402f5b3ddc6812"}')
+LIMITED = (429, 'application/json',
+           '{"type":"https://httpstatuses.com/429","title":"Too Many Requests","status":429,'
+           '"detail":"Too many requests. Please retry later.","instance":"/bff/auth/login",'
+           '"errorCode":"RATE_LIMIT_EXCEEDED","traceId":"5661db9e82fddf4bd7377d5f271683f4"}')
+NO_TABLES = (500, 'application/json',
+             '{"type":"https://httpstatuses.com/500","title":"Internal Server Error","status":500,'
+             '"detail":"An unexpected error occurred. Please try again later.","instance":"/api/auth/login",'
+             '"traceId":"29c72c7410160addbe4edaa4bf659693"}')
+NO_DATABASE = (503, 'application/json',
+               '{"type":"https://httpstatuses.com/503","title":"Service Unavailable","status":503,'
+               '"detail":"The service is temporarily unavailable. Try again shortly.",'
+               '"instance":"/api/auth/login","errorCode":"SERVICE_UNAVAILABLE",'
+               '"traceId":"3b7bc662e57734de951062361ab2d548","retryAfterSeconds":10}')
+SITE = 'https://example.invalid'
+# What a connection that is dropped raises, as urllib and http.client raise it. None of them is a
+# urllib.error.URLError: each was an uncaught exception before the smoke test took it for silence.
+DROPPED = (
+    ConnectionResetError(104, 'Connection reset by peer'),
+    ConnectionAbortedError(10053, 'An established connection was aborted'),
+    ConnectionRefusedError(111, 'Connection refused'),
+    http.client.RemoteDisconnected('Remote end closed connection without response'),
+    http.client.IncompleteRead(b'<!doctype'),
+    http.client.BadStatusLine('not HTTP'),
+    TimeoutError('timed out'),
+)
+
+
+class Site:
+    """Stands in for `deploy.fetch`: the page, the readiness answer, and the sign-in answers. Each is
+    one answer or a list of answers in order (the last one repeats); an exception is raised."""
+
+    def __init__(self, *sign_in, page=(200, 'text/html', SPA), ready=(200, 'text/plain', 'Healthy')):
+        self.answers = {'/': page if isinstance(page, list) else [page],
+                        '/health/ready': ready if isinstance(ready, list) else [ready],
+                        '/bff/auth/login': list(sign_in)}
+        self.requests = []
+
+    def fetch(self, opener, url, body=None):
+        path = urllib.parse.urlsplit(url).path
+        self.requests.append((path, body))
+        answers = self.answers[path]
+        answer = answers.pop(0) if len(answers) > 1 else answers[0]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    def sign_ins(self):
+        return [path for path, body in self.requests if body is not None]
+
+
+class SmokeTests(Offline):
+    def site(self, *sign_in, **pages):
+        site = Site(*sign_in, **pages)
+        self.start(patch('deploy.fetch', site.fetch))
+        return site
+
+    def test_page_healthy_and_refused_sign_in_pass(self):
+        site = self.site(REFUSED)
+        deploy.smoke(SITE)
+        self.assertEqual(site.requests, [('/', None), ('/health/ready', None),
+                                         ('/bff/auth/login', deploy.SMOKE_LOGIN)])
+        self.assertEqual(self.clock.sleeps, [])
+
+    def test_the_sign_in_goes_to_the_bffs_own_door_never_to_the_proxied_path(self):
+        site = self.site(LIMITED, (404, 'text/plain', ''), REFUSED)
+        deploy.smoke(SITE)
+        self.assertEqual(set(site.sign_ins()), {'/bff/auth/login'})
+        self.assertNotIn('/api/auth/login', [path for path, _ in site.requests])
+
+    def test_the_password_passes_the_bffs_own_rule_so_the_request_reaches_the_api(self):
+        # backend/src/AzureBank.Shared/Constants/ValidationRules.cs, PasswordPattern
+        self.assertRegex(deploy.SMOKE_LOGIN['password'],
+                         r'^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[^a-zA-Z0-9])[\x20-\x7E]{8,128}$')
+        self.assertTrue(deploy.SMOKE_LOGIN['email'].endswith('.invalid'), 'nobody can register it')
+
+    def test_a_degraded_readiness_is_not_a_pass(self):
+        site = self.site(REFUSED, ready=(200, 'text/plain', 'Degraded'))
+        with self.assertRaisesRegex(deploy.SmokeFailed, 'Degraded'):
+            deploy.smoke(SITE)
+        self.assertGreaterEqual(self.clock.now, 300)
+        self.assertEqual(site.sign_ins(), [])
+
+    def test_a_generic_page_is_not_the_spa(self):
+        self.site(REFUSED, page=(200, 'text/html', '<!doctype html><title>Welcome</title>'))
+        with self.assertRaisesRegex(deploy.SmokeFailed, 'Smoke test failed'):
+            deploy.smoke(SITE)
+
+    def test_a_404_on_the_sign_in_fails_after_four_tries(self):
+        site = self.site((404, 'text/plain', ''))
+        with self.assertRaisesRegex(deploy.SmokeFailed, 'got 404'):
+            deploy.smoke(SITE)
+        self.assertEqual(len(site.sign_ins()), 4)
+        self.assertEqual(self.clock.sleeps, [20, 20, 20])
+
+    def test_an_outage_that_ends_before_the_last_try_passes(self):
+        site = self.site(NO_DATABASE, NO_DATABASE, NO_DATABASE, REFUSED)
+        deploy.smoke(SITE)
+        self.assertEqual(len(site.sign_ins()), 4)
+
+    def test_a_database_that_was_never_migrated_fails_though_the_app_says_healthy(self):
+        for answer, status in ((NO_TABLES, 500), (NO_DATABASE, 503)):
+            with self.subTest(status=status):
+                self.site(answer)
+                with self.assertRaisesRegex(deploy.SmokeFailed, f'got {status}'):
+                    deploy.smoke(SITE)
+
+    def test_a_401_with_another_code_fails(self):
+        self.site((401, 'application/problem+json', '{"status":401,"errorCode":"ACCOUNT_LOCKED"}'))
+        with self.assertRaisesRegex(deploy.SmokeFailed, 'ACCOUNT_LOCKED'):
+            deploy.smoke(SITE)
+
+    def test_the_code_under_another_status_fails(self):
+        self.site((403, 'application/problem+json', '{"status":403,"errorCode":"INVALID_CREDENTIALS"}'))
+        with self.assertRaisesRegex(deploy.SmokeFailed, 'got 403'):
+            deploy.smoke(SITE)
+
+    def test_a_401_that_is_not_json_fails(self):
+        self.site((401, 'text/html', '<html>INVALID_CREDENTIALS</html>'))
+        with self.assertRaises(deploy.SmokeFailed):
+            deploy.smoke(SITE)
+
+    def test_only_429_is_unproven_and_each_wait_is_a_full_window(self):
+        site = self.site(LIMITED)
+        with self.assertRaisesRegex(deploy.SmokeUnproven, '429'):
+            deploy.smoke(SITE)
+        self.assertEqual(len(site.sign_ins()), 4)
+        self.assertEqual(self.clock.sleeps, [65, 65, 65])
+
+    def test_429_then_the_refusal_passes(self):
+        site = self.site(LIMITED, REFUSED)
+        deploy.smoke(SITE)
+        self.assertEqual(len(site.sign_ins()), 2)
+        self.assertEqual(self.clock.sleeps, [65])
+
+    def test_no_answer_at_all_is_unproven(self):
+        self.site(urllib.error.URLError('timed out'))
+        with self.assertRaisesRegex(deploy.SmokeUnproven, 'no answer'):
+            deploy.smoke(SITE)
+        self.assertEqual(self.clock.sleeps, [20, 20, 20])
+
+    def test_a_dropped_connection_on_the_sign_in_is_no_answer_and_is_tried_again(self):
+        for dropped in DROPPED:
+            with self.subTest(dropped=type(dropped).__name__):
+                self.clock.sleeps.clear()
+                site = self.site(dropped)
+                with self.assertRaisesRegex(deploy.SmokeUnproven, 'no answer'):
+                    deploy.smoke(SITE)
+                self.assertEqual(len(site.sign_ins()), 4)
+                self.assertEqual(self.clock.sleeps, [20, 20, 20])
+
+    def test_a_dropped_sign_in_then_the_refusal_passes(self):
+        site = self.site(http.client.RemoteDisconnected('Remote end closed connection without response'),
+                         ConnectionResetError(104, 'Connection reset by peer'), REFUSED)
+        deploy.smoke(SITE)
+        self.assertEqual(len(site.sign_ins()), 3)
+
+    def test_a_dropped_connection_on_the_page_is_asked_again_until_the_deadline(self):
+        for dropped in DROPPED:
+            with self.subTest(dropped=type(dropped).__name__):
+                began = self.clock.now
+                site = self.site(REFUSED, page=dropped)
+                with self.assertRaisesRegex(deploy.SmokeFailed, f'/ -> no answer .{type(dropped).__name__}'):
+                    deploy.smoke(SITE)
+                self.assertGreaterEqual(self.clock.now - began, 300)
+                self.assertGreater(len(site.requests), 60)
+                self.assertEqual(site.sign_ins(), [])
+
+    def test_a_dropped_connection_on_the_readiness_answer_is_asked_again_until_the_deadline(self):
+        site = self.site(REFUSED, ready=ConnectionResetError(104, 'Connection reset by peer'))
+        with self.assertRaisesRegex(deploy.SmokeFailed,
+                                    '/ -> 200, /health/ready -> no answer .ConnectionResetError'):
+            deploy.smoke(SITE)
+        self.assertGreaterEqual(self.clock.now, 300)
+        self.assertEqual(site.sign_ins(), [])
+
+    def test_a_page_that_answers_after_dropped_connections_passes(self):
+        reset = ConnectionResetError(104, 'Connection reset by peer')
+        site = self.site(REFUSED, page=[reset, reset, (200, 'text/html', SPA)],
+                         ready=[http.client.RemoteDisconnected('closed'), (200, 'text/plain', 'Healthy')])
+        deploy.smoke(SITE)
+        self.assertEqual(self.clock.sleeps, [5, 5, 5])
+        self.assertEqual(len(site.sign_ins()), 1)
+
+    def test_the_verdict_is_the_last_try(self):
+        failure = (500, 'application/problem+json', '{"errorCode":"INTERNAL_ERROR"}')
+        self.site(LIMITED, LIMITED, LIMITED, failure)
+        with self.assertRaisesRegex(deploy.SmokeFailed, 'got 500'):
+            deploy.smoke(SITE)
+        self.clock.sleeps.clear()
+        self.site(failure, LIMITED)
+        with self.assertRaises(deploy.SmokeUnproven):
+            deploy.smoke(SITE)
+        self.assertEqual(self.clock.sleeps, [20, 65, 65])
+
+    def test_an_error_status_is_an_answer_not_an_exception(self):
+        headers = Message()
+        headers['Content-Type'] = 'application/json; charset=utf-8'
+        error = deploy.urllib.error.HTTPError(SITE, 401, 'Unauthorized', headers,
+                                              MagicMock(read=lambda n: REFUSED[2].encode()))
+        opener = MagicMock()
+        opener.open.side_effect = error
+        self.assertEqual(deploy.fetch(opener, SITE, {}), REFUSED)
+
+    def test_redirects_are_not_followed(self):
+        self.assertIsNone(deploy.NoRedirect().redirect_request(None, None, 302, '', {}, SITE))
+
+
+def http_answer(status, content_type, body, *headers):
+    lines = [f'HTTP/1.1 {status} Answer', f'Content-Type: {content_type}',
+             f'Content-Length: {len(body.encode())}', 'Connection: close', *headers]
+    return '\r\n'.join(lines).encode() + b'\r\n\r\n' + body.encode()
+
+
+HANG_UP, RESET = 'hang up', 'reset'
+GOOD_PAGE = http_answer(200, 'text/html', SPA)
+GOOD_READY = http_answer(200, 'text/plain', 'Healthy')
+GOOD_REFUSAL = http_answer(401, 'application/json; charset=utf-8', REFUSED[2])
+
+
+class LocalSite:
+    """A real server on 127.0.0.1, for what only a real connection can do: hang up, reset, answer
+    something that is not HTTP, redirect. Each path answers with bytes, HANG_UP or RESET, or with a
+    list of those in order (the last one repeats). A path nobody named hangs up."""
+
+    def __init__(self, routes):
+        self.routes = {path: answers if isinstance(answers, list) else [answers]
+                       for path, answers in routes.items()}
+        self.requests = []
+        self.closing = False
+        self.listener = socket.create_server(('127.0.0.1', 0))
+        self.url = f'http://127.0.0.1:{self.listener.getsockname()[1]}'
+        self.thread = threading.Thread(target=self.serve, daemon=True)
+        self.thread.start()
+
+    def close(self):
+        # A connection of our own wakes the thread that waits in accept(); closing the listener
+        # from here would not, everywhere.
+        self.closing = True
+        with contextlib.suppress(OSError), socket.create_connection(self.listener.getsockname(), 5):
+            pass
+        self.thread.join(5)
+        self.listener.close()
+
+    def paths(self):
+        return [path for _, path, _, _ in self.requests]
+
+    def serve(self):
+        while True:
+            try:
+                connection, _ = self.listener.accept()
+            except OSError:
+                return
+            with connection:
+                if self.closing:
+                    return
+                connection.settimeout(5)
+                try:
+                    head, body = self.read_request(connection)
+                except OSError:
+                    continue
+                method, path = head.split(' ')[:2]
+                self.requests.append((method, path, head.lower(), body))
+                answers = self.routes.get(path, [HANG_UP])
+                answer = answers.pop(0) if len(answers) > 1 else answers[0]
+                if answer == RESET:
+                    # Closing with a zero linger sends a reset in place of an orderly end.
+                    connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
+                                          struct.pack('hh' if os.name == 'nt' else 'ii', 1, 0))
+                elif answer != HANG_UP:
+                    connection.sendall(answer)
+
+    @staticmethod
+    def read_request(connection):
+        """The whole request: closing on unread bytes would turn an answer into a reset."""
+        data = b''
+        while b'\r\n\r\n' not in data:
+            chunk = connection.recv(65536)
+            if not chunk:
+                raise OSError('the client went away')
+            data += chunk
+        head, _, body = data.partition(b'\r\n\r\n')
+        length = re.search(rb'(?im)^content-length: *(\d+)', head)
+        while length and len(body) < int(length.group(1)):
+            chunk = connection.recv(65536)
+            if not chunk:
+                raise OSError('the client went away')
+            body += chunk
+        return head.decode(), body.decode()
+
+
+class RealConnectionTests(Offline):
+    """`deploy.smoke` with the real `deploy.fetch`, against a server on this machine. Time is still
+    a counter. What these prove that a stand-in for `fetch` cannot: which exceptions urllib really
+    raises when a connection is dropped, and that every one of them ends in a verdict."""
+
+    def site(self, routes=None):
+        site = LocalSite({'/': GOOD_PAGE, '/health/ready': GOOD_READY, '/bff/auth/login': GOOD_REFUSAL,
+                          **(routes or {})})
+        self.addCleanup(site.close)
+        return site
+
+    def test_the_three_requests_as_they_are_really_sent_pass(self):
+        site = self.site()
+        deploy.smoke(site.url)
+        self.assertEqual([(method, path) for method, path, _, _ in site.requests],
+                         [('GET', '/'), ('GET', '/health/ready'), ('POST', '/bff/auth/login')])
+        _, _, head, body = site.requests[-1]
+        self.assertIn('content-type: application/json', head)
+        self.assertNotIn('cookie:', head)
+        self.assertEqual(json.loads(body), deploy.SMOKE_LOGIN)
+
+    def test_a_sign_in_the_server_hangs_up_on_is_unproven_not_a_crash(self):
+        site = self.site({'/bff/auth/login': HANG_UP})
+        with self.assertRaisesRegex(deploy.SmokeUnproven, 'no answer'):
+            deploy.smoke(site.url)
+        self.assertEqual(site.paths().count('/bff/auth/login'), 4)
+        self.assertEqual(self.clock.sleeps, [20, 20, 20])
+
+    def test_a_sign_in_the_server_resets_is_unproven_not_a_crash(self):
+        site = self.site({'/bff/auth/login': RESET})
+        with self.assertRaisesRegex(deploy.SmokeUnproven, 'no answer'):
+            deploy.smoke(site.url)
+        self.assertEqual(site.paths().count('/bff/auth/login'), 4)
+
+    def test_a_sign_in_answered_with_something_that_is_not_http_is_unproven_not_a_crash(self):
+        site = self.site({'/bff/auth/login': b'this is not HTTP\r\n\r\n'})
+        with self.assertRaisesRegex(deploy.SmokeUnproven, 'no answer'):
+            deploy.smoke(site.url)
+        self.assertEqual(site.paths().count('/bff/auth/login'), 4)
+
+    def test_a_page_the_server_hangs_up_on_fails_at_the_deadline_not_at_the_first_drop(self):
+        for drop in (HANG_UP, RESET):
+            with self.subTest(drop=drop):
+                site = self.site({'/': drop})
+                with self.assertRaisesRegex(deploy.SmokeFailed, '/ -> no answer'):
+                    deploy.smoke(site.url, timeout=30)
+                self.assertEqual(site.paths(), ['/'] * 7)
+
+    def test_two_dropped_connections_then_the_page_pass(self):
+        site = self.site({'/': [HANG_UP, RESET, GOOD_PAGE]})
+        deploy.smoke(site.url)
+        self.assertEqual(site.paths(), ['/', '/', '/', '/health/ready', '/bff/auth/login'])
+
+    def test_a_redirect_is_an_answer_and_is_not_followed(self):
+        site = self.site({'/': http_answer(302, 'text/plain', '', 'Location: /elsewhere'),
+                          '/elsewhere': GOOD_PAGE})
+        with self.assertRaisesRegex(deploy.SmokeFailed, '/ -> 302'):
+            deploy.smoke(site.url, timeout=30)
+        self.assertNotIn('/elsewhere', site.paths())
+        self.assertNotIn('/bff/auth/login', site.paths())
+
+
+class SmokeInTheGateTests(Offline):
+    """The real smoke test inside the real deploy: what a rate limit and a wrong answer lead to."""
+
+    def setUp(self):
+        super().setUp()
+        self.azure = FakeAzure(self.out)
+        self.start(patch('deploy.rest', self.azure.rest))
+        self.start(patch('deploy.run_migration'))
+
+    def test_a_rate_limited_sign_in_leaves_the_new_revision_and_exits_unproven(self):
+        self.start(patch('deploy.fetch', Site(LIMITED).fetch))
+        with self.assertRaisesRegex(deploy.SmokeUnproven, 'not put back'):
+            deploy.deploy(SUBSCRIPTION, GROUP, NEW)
+        self.assertEqual(len(self.azure.app_patches()), 1)
+
+    def test_a_wrong_sign_in_answer_puts_the_app_back(self):
+        self.start(patch('deploy.fetch', Site((404, 'text/plain', '')).fetch))
+        with self.assertRaisesRegex(RuntimeError, f'put back to {OLD}'):
+            deploy.deploy(SUBSCRIPTION, GROUP, NEW)
+        self.assertEqual(len(self.azure.app_patches()), 2)
+
+    def test_a_page_that_stops_answering_after_the_app_moved_puts_the_app_back(self):
+        self.start(patch('deploy.fetch', Site(REFUSED, page=ConnectionResetError(104, 'reset')).fetch))
+        with self.assertRaisesRegex(RuntimeError, f'no answer.*put back to {OLD}'):
+            deploy.deploy(SUBSCRIPTION, GROUP, NEW)
+        self.assertEqual(len(self.azure.app_patches()), 2)
+
+    def test_a_sign_in_whose_connection_is_dropped_leaves_the_new_revision_and_exits_unproven(self):
+        dropped = http.client.RemoteDisconnected('Remote end closed connection without response')
+        self.start(patch('deploy.fetch', Site(dropped).fetch))
+        with self.assertRaisesRegex(deploy.SmokeUnproven, 'no answer'):
+            deploy.deploy(SUBSCRIPTION, GROUP, NEW)
+        self.assertEqual(len(self.azure.app_patches()), 1)
+
+    def test_in_actions_the_smoke_line_comes_after_the_mask(self):
+        self.start(patch('deploy.fetch', Site(REFUSED).fetch))
+        deploy.deploy(SUBSCRIPTION, GROUP, NEW, in_actions=True)
+        lines = self.printed().splitlines()
+        holding = [index for index, line in enumerate(lines) if ADDRESS in line]
+        self.assertEqual(lines[holding[0]], f'::add-mask::{ADDRESS}')
+        self.assertIn('Smoke passed', lines[holding[-1]])
+
+
+if __name__ == '__main__':
+    unittest.main()
