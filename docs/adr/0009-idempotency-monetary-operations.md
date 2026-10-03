@@ -101,7 +101,9 @@ design — see Notes).
   the request's context between the flip and the business commit would write `Executed` with no
   money moved. The reload's comparison of the request hash is held without SQL Server, by
   `ARecordClaimedAgainWithOtherBytes_RefusesToRun_AndDoesNotSayTheOperationWasApplied`, for a
-  record `Executed`, `Completed` and `Processing`. Not in the answer: the transaction's id, since the record holds no link to a
+  record `Executed`, `Completed` and `Processing`, and since 2026-10-03 on SQL Server too, by
+  `ExternalTransfer_RecordClaimedAgainWithOtherBytes_Answers409WithoutApplied_AndNothingMoved`.
+  Not in the answer: the transaction's id, since the record holds no link to a
   ledger row. With one a client could show the movement; without it the client is told that it
   exists. Nor a promise that `GET /api/transactions` lists it: a movement on an account closed
   afterwards is not listed. Still withheld for two minutes: a committed send whose answer was

@@ -619,6 +619,7 @@ public sealed class TransferTransientRetrySqlServerTests : IDisposable
         return delete.ExecuteNonQuery();
     }
 
+    /// <summary>Inserts a record from a connection of its own; returns the rows inserted.</summary>
     private static int InsertRecordOutOfBand(AzureBank.Shared.Entities.IdempotencyRecord record)
     {
         using var connection = new SqlConnection(SqlServerFactAttribute.ConnectionString!);
