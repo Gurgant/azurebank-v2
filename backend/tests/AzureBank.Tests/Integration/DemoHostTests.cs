@@ -60,6 +60,22 @@ public sealed class DemoHostTests
         demo.Claim.MaxPerClientPerDay.Should().Be(3);
     }
 
+    // The fixture sets the flag and a secret of its own, and a test's settings after them: a key
+    // the test gives is the one the host starts with, the fixture's own secret included.
+    [Fact]
+    public void EnableDemo_AppliesTheSettingsItIsGiven_AfterItsOwn()
+    {
+        const string other = "another-test-only-demo-client-key-0123456789abcdef";
+        other.Should().NotBe(CustomWebApplicationFactory.DemoClientKeySecret);
+        using var factory = new CustomWebApplicationFactory();
+        factory.EnableDemo(("Demo:ClientKeySecret", other));
+
+        var demo = DemoOf(factory.Services);
+
+        demo.Enabled.Should().BeTrue();
+        demo.ClientKeySecret.Should().Be(other, "a setting the test gives replaces the fixture's");
+    }
+
     [Fact]
     public void ThroughBffOverApiFactory_TheBffHasTheDemoOn_OnlyWhenAsked()
     {
