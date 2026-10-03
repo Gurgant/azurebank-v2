@@ -13,8 +13,8 @@ gives the SQL that looks behind it.
 **How a run is started.** The pool's job is the tools image with the argument `recycle`; a first
 fill, or a refill by hand, is `seed-pool`, or `seed-pool <N>` to top up to N free copies. Each
 needs `Demo__Enabled=true`, the connection string, and the API's `Security__PinPepper` and
-`Security__PinPepperKeyId`, and signs in as the app's database user, never the migration's
-(ADR-0060, decision 5's note). `backend/tools/AzureBank.Seeder/README.md` has every variable and
+`Security__PinPepperKeyId`. Where a deployment gives the app and its migration database users of
+their own, it signs in as the app's, never the migration's (ADR-0060, decision 5's note). `backend/tools/AzureBank.Seeder/README.md` has every variable and
 code; on one machine, `compose.demo.yaml` runs both.
 
 **Running the SQL.** Every statement here reads and none writes. They run against the demo's
@@ -33,7 +33,7 @@ pool: free=50 was=23 claimed=7 claims24h=12 clientsAtCap=0 seeded=38 deleted(exp
 | Count | What it counts |
 |---|---|
 | `free` | Fresh free copies at the end of the run: free, and younger than `Demo:Pool:MaxFreeAgeHours` |
-| `was` | Fresh free copies when the run started, before it changed anything: what visitors met |
+| `was` | Free copies when the run started, however old, before it changed anything: what visitors met. One too old to count towards the target is still free until the run that replaces it deletes it |
 | `claimed` | Claimed copies whose users still exist, at the end |
 | `claims24h` | Claims in the 24 hours before the run started, deleted copies included |
 | `clientsAtCap` | Client keys with at least `Demo:Claim:MaxPerClientPerDay` claims in those 24 hours |
@@ -56,9 +56,9 @@ starts again from the rows as they are.
 
 **A run that exited 2 did nothing.** It refused before it opened anything, and its one Error line,
 `recycle refused: …`, says why: the demo is off where the job runs (`Demo__Enabled`), a demo
-setting is out of range, the pepper is missing or short, or the connection string is missing,
-unreadable or names no database. Change the job's configuration; running it again as it is
-changes nothing.
+setting is out of range or holds a value that cannot be read as its type (the line names the key),
+the pepper is missing or short, or the connection string is missing, unreadable or names no
+database. Change the job's configuration; running it again as it is changes nothing.
 
 ## The exit code
 
@@ -132,6 +132,11 @@ ORDER BY Claims DESC;
 **15 is the ceiling doing its job.** A run builds no more than `Demo:Pool:MaxClaimsPerDay` minus
 the day's claims, so a pool drained again and again cannot grow the database without end.
 
+**More free copies than `Demo:Pool:TargetFree`** means two runs overlapped: a `seed-pool` started
+while `recycle` was building, or two runs of the job. Each topped up from its own count. Nothing is
+wrong with the copies, and the extra ones are deleted when they grow too old to count; a schedule
+whose runs end before the next starts keeps it from happening again.
+
 ## 2. A copy could not be built (12)
 
 The log names each failed copy by its id, with SQL Server's error number when the database refused
@@ -161,8 +166,10 @@ ORDER BY u.CreatedAt;
 
 No statement that deletes a copy matches them: each is keyed on the copy. The two sweeps are not.
 They remove the expired grants and idempotency records of anyone, these users' included, as the
-API's own clean-ups do. Every run exits 13 while one of these users exists, and nothing removes the
-users themselves: a person decides what they are.
+API's own clean-ups do. Every run of `recycle` exits 13 while one of these users exists, and
+nothing removes the users themselves: a person decides what they are. `seed-pool` fills the pool
+beside them, exits 0 and counts them on its line; it exits 13 only on a database with no pool row
+at all, where it writes nothing.
 
 ## 4. A copy could not be deleted (14)
 
@@ -204,8 +211,9 @@ WHERE u.DemoCopyId = '<copy id from the log>';
 
 ## 5. Copies past their time, held by a live session (and `hardStop`)
 
-A claimed copy whose time is over is deleted only once no grant of its users is live. These are
-the ones waiting:
+A claimed copy whose time is over is deleted only once no grant of its users is live, or ended
+less than five minutes ago: a request accepted the moment before a grant ended may still be
+running. These are the ones waiting:
 
 ```sql
 SELECT c.Id, c.ClaimedAt, MAX(t.ExpiresAt) AS LiveUntil
@@ -214,12 +222,12 @@ JOIN AspNetUsers u ON u.DemoCopyId = c.Id
 JOIN RefreshTokens t ON t.UserId = u.Id
 WHERE c.DeletedAt IS NULL
   AND c.ClaimedAt < DATEADD(MINUTE, -5, DATEADD(HOUR, -24, SYSUTCDATETIME()))
-  AND t.RevokedAt IS NULL AND t.ExpiresAt > SYSUTCDATETIME()
+  AND t.RevokedAt IS NULL AND t.ExpiresAt > DATEADD(MINUTE, -5, SYSUTCDATETIME())
 GROUP BY c.Id, c.ClaimedAt
 ORDER BY c.ClaimedAt;
 ```
 
-Each is deleted by the first run after its `LiveUntil`. **`hardStop` above 0** means a copy got 48
+Each is deleted by the first run more than five minutes after its `LiveUntil`. **`hardStop` above 0** means a copy got 48
 hours past its time with a grant still live, and was deleted anyway. A grant lives at most
 `Jwt:RefreshTokenLifetimeMinutes` from sign-in (60 minutes by default, 24 hours at most), so that
 grant was issued after the copy's time was over: sign-in went on being accepted for it. The cause
