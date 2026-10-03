@@ -1432,6 +1432,15 @@ class MainTests(Offline):
         az.assert_not_called()
         rest.assert_not_called()
 
+    @patch('deploy.rest')
+    @patch('deploy.az')
+    def test_a_job_log_name_of_another_shape_exits_non_zero_without_calling_azure(self, az, rest):
+        with self.assertRaises(SystemExit) as raised:
+            self.run_main(['--job-log', "a-run' or JobName != '"])
+        self.assertIn("--job-log takes an execution's name", str(raised.exception.code))
+        az.assert_not_called()
+        rest.assert_not_called()
+
     def test_two_modes_at_once_are_refused_by_the_command_line(self):
         for arguments in (['--app-only', '--job-log'], ['--job-log', '--app-log', '5'],
                           ['--app-log', 'soon']):
@@ -1551,13 +1560,53 @@ class LogTests(Offline):
             '2 line(s).'])
         self.assertEqual(self.reads, [('GET', WORKSPACE_ID, '2023-09-01'),
                                       ('GET', MIGRATE_ID + '/executions', '2026-07-01')])
-        # The latest execution, from two minutes before its start to five after its end.
+        # The latest execution's own lines, from two minutes before its start to five after its end.
         self.assertEqual(self.queries, [(QUERY, {
             'query': "ContainerAppConsoleLogs | where JobName == 'azurebank-migrate' "
+                     "| where ContainerGroupName startswith 'this-run-' "
                      '| where TimeGenerated between (datetime(2026-10-02T17:58:03Z) .. '
                      'datetime(2026-10-02T18:05:09Z)) | order by TimeGenerated asc | take 5000 '
                      '| project TimeGenerated, Log',
             'timespan': '2026-10-02T17:58:03Z/2026-10-02T18:05:09Z'})])
+
+    def test_the_job_log_asks_for_the_lines_of_the_execution_it_names_and_of_no_other(self):
+        # Measured on 2026-10-03: the job's name and a period also matched the five lines of the
+        # next execution, which started inside the margin. In the table each line carries its
+        # execution's name, a hyphen and a suffix in ContainerGroupName (README.md, "Measured on
+        # Azure").
+        deploy.job_log(SUBSCRIPTION, GROUP)
+        deploy.job_log(SUBSCRIPTION, GROUP, 'an-earlier-run')
+        asked = [request['query'] for _, request in self.queries]
+        group = r"\| where ContainerGroupName startswith '([^']*)' \|"
+        self.assertEqual([re.findall(group, query) for query in asked], [['this-run-'], ['an-earlier-run-']])
+        # The period stays: it bounds the read.
+        self.assertEqual([query.count('| where TimeGenerated between (datetime(') for query in asked], [1, 1])
+        self.assertEqual([request['timespan'] for _, request in self.queries],
+                         ['2026-10-02T17:58:03Z/2026-10-02T18:05:09Z', '2026-10-01T08:58:00Z/2026-10-01T09:05:05Z'])
+
+    def test_a_name_that_is_not_the_shape_of_one_is_refused_before_any_call(self):
+        # The name goes into the query between quotes: only the shape of an execution's name may.
+        for name in ("this-run' or JobName != '", 'this run', 'this-run\n', 'this_run', 'this-run|take 1',
+                     'a' * 101):
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(ValueError, "--job-log takes an execution's name") as raised:
+                    deploy.job_log(SUBSCRIPTION, GROUP, name)
+                self.assertNotIn(name, str(raised.exception), 'a name of another shape is never printed')
+        self.assertEqual(self.reads + self.queries, [])
+        self.assertEqual(self.printed(), '')
+
+    def test_an_execution_azure_names_in_another_shape_gets_its_verdict_and_no_query(self):
+        for name in ("this-run' or JobName != '", 'this run', 'a' * 101, None, 7):
+            with self.subTest(name=name):
+                self.clear()
+                self.listed = [finished('this-run')]
+                self.listed[0]['name'] = name
+                with self.assertRaisesRegex(RuntimeError, 'is not the shape of one.*no query was sent') as raised:
+                    deploy.job_log(SUBSCRIPTION, GROUP)
+                self.assertIn('Verdict: execution whose name is withheld: Succeeded', self.said()[1])
+                if isinstance(name, str):
+                    self.assertNotIn(name, self.printed() + str(raised.exception))
+        self.assertEqual(self.queries, [])
 
     def test_a_named_execution_is_the_one_read_and_a_name_nobody_has_is_an_error(self):
         deploy.job_log(SUBSCRIPTION, GROUP, 'an-earlier-run')
