@@ -399,8 +399,8 @@ public class DemoPoolTests
     public void SeedPool_ReportsOnlyWhatItDid_AShortTopUpOrTheWrongDatabase(
         int rowsAtStart, int freeAtStart, int free, int target, int buildFailed, int foreignUsers, bool wrongDatabase, int expected)
     {
-        var summary = Run(rowsAtStart, freeAtStart, free, target, buildFailed, foreignUsers, deleteFailed: 0, ceiling: false)
-            with { StoppedOnTheWrongDatabase = wrongDatabase };
+        var counted = Run(rowsAtStart, freeAtStart, free, target, buildFailed, foreignUsers, deleteFailed: 0, ceiling: false);
+        var summary = counted with { StoppedOnTheWrongDatabase = wrongDatabase };
 
         PoolExitCodes.ForSeedPool(summary).Should().Be(expected);
     }
