@@ -167,11 +167,12 @@ and then migrated an empty database):
   both write nothing and exit 13.
 - **Give them a login that reads and writes rows and nothing more**: where a deployment gives the
   app and its migration database users of their own, the app's, never the migration's. Measured
-  2026-10-03 on the compose SQL Server and on LocalDB, a login with `db_datareader` and
-  `db_datawriter` alone ran `seed-pool` and `recycle` through a whole cycle (roles, copies, a
-  claimed copy and a stale one deleted, the sweeps), exit 0, and was refused `CREATE TABLE` (262).
-  On the compose server, the same login without `db_datawriter` made `seed-pool` exit 12, every
-  copy refused with 229 on `DemoCopies`.
+  2026-10-03, a login with `db_datareader` and `db_datawriter` alone ran `seed-pool` and `recycle`
+  through a whole cycle (copies built, a claimed copy and a stale one deleted, the sweeps), exit 0,
+  on LocalDB from an empty database, roles included, and on the compose SQL Server, where the roles
+  were there already; on LocalDB it was refused `CREATE TABLE` (262). On the compose server, the
+  same login without `db_datawriter` made `seed-pool` end with `TopUpIncomplete`, every copy
+  refused with 229 on `DemoCopies`.
 - **`seed-pool` exits 0 on a pool it found low or empty**: filling it is what it was run for. A
   one-shot that exits with anything else stops the stack that waits for it, so only 12 and 13 come
   from it, and 13 only when it wrote nothing. A user outside every copy beside a pool is counted on

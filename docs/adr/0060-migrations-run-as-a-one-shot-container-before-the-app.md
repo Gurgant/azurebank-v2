@@ -123,14 +123,15 @@ public demo's database is an Azure SQL one, and they are what fills its pool and
   (the API's clean-ups of expired grants and idempotency records, which `recycle` repeats). A user
   of the job's own with the same two roles would tell its deletes apart from the app's and could
   be revoked alone, at the cost of a third database user to create and check; the job shares the
-  app's, and ADR-0062 says what would give it one. Measured 2026-10-03 on LocalDB and on the compose SQL Server
-  (`DemoPoolCommandSqlServerTests`, and by hand): a login holding `db_datareader` and
-  `db_datawriter` alone ran both through a whole cycle, roles and copies built, a claimed copy and
-  a stale one deleted, the sweeps run, and was refused `CREATE TABLE` (262). On the compose server
-  the same login without `db_datawriter` made `seed-pool` exit 12, every copy refused with 229. The
-  migration's user would give a job that runs every few hours, and needs none of it, the right to
-  change the schema, a trigger included. On Azure SQL itself, with a managed identity's token,
-  nothing was run.)*
+  app's, and ADR-0062 says what would give it one. Measured 2026-10-03: a login holding
+  `db_datareader` and `db_datawriter` alone ran both through a whole cycle, copies built, a
+  claimed copy and a stale one deleted, the sweeps run, on LocalDB from an empty database, roles
+  included (`DemoPoolCommandSqlServerTests`), and by hand on the compose SQL Server, where the
+  roles were there already; on LocalDB it was refused `CREATE TABLE` (262). On the compose server
+  the same login without `db_datawriter` made `seed-pool` end short of its target, every copy
+  refused with 229. The migration's user would give a job that runs every few hours, and needs
+  none of it, the right to change the schema, a trigger included. On Azure SQL itself, with a
+  managed identity's token, nothing was run.)*
 
 **6. A database that holds a migration the build does not know is refused**, exit 1, checked before
 and after `MigrateAsync`. A newer build migrated it, and an older build must not move an app onto

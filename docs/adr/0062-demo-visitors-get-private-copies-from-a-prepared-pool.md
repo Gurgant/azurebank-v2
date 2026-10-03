@@ -437,8 +437,8 @@ container's own timestamps, between its first line and its pool line, unless a r
 |---|---|
 | `migrate`, then `seed-pool 5` with `Demo__Enabled=true` | Exit 0 both. 5 pool rows, 15 users, 15 role rows, 20 accounts, 130 ledger rows: 185, counted per table; no user with a password |
 | `seed` with the flag on; with it off, on the same database; `reset --confirm` with it on | Exit 2 each, with its refusal: demo mode; "the database holds the demo pool's rows (5)"; demo mode. No fixed user was written |
-| `migrate` and `seed`, the flag off, on a second database | Exit 0 both: 4 users, 5 accounts, 26 ledger rows, 22 of them on John's accounts |
-| `seed` and `reset --confirm` on a `*.database.windows.net` name | Exit 2 each, the Azure SQL refusal, in 1.6 s with the container's start |
+| `migrate` and `seed`, the flag off, on a second database | Exit 0 both: 4 users, 5 accounts, 26 ledger rows |
+| `seed` and `reset --confirm` on a `*.database.windows.net` name | Exit 2 each, the Azure SQL refusal; the containers ran 0.47 s and 0.41 s (second run) |
 | `seed-pool` and `recycle` on that name, the flag on, no retry | Exit 1 each: not refused; they reached for the server, whose name does not resolve |
 | `recycle` with `TargetFree` and `LowMark` at 6, the pool holding 5 | Exit 10, also as the container's exit code (`docker inspect`): `was=5 seeded=1 result=PoolLow` |
 | every copy marked claimed by SQL, then `recycle` | Exit 11, also as the container's exit code: `was=0 claimed=6`, and the pool topped up to 6 |
@@ -446,8 +446,8 @@ container's own timestamps, between its first line and its pool line, unless a r
 | every free copy back-dated 45 h by SQL, nothing claimed, then `recycle` (last run) | Exit 0, `was=5 seeded=5 staleFree=5`. Before the review's fix the same pool, run on LocalDB at +48 h, exited 11 with `was=0` |
 | `seed-pool 100` on a pool of 5 or 6 (all three runs) | Exit 0, 94, 95 and 95 copies. About 93 to 103 ms a copy: 9.75 s and 9.56 s for the two runs of 95, and 4.63 s for 50 copies from the roles to the line in a first fill (the run of 94 was timed by whole seconds only: 9 s). `sp_spaceused` reserved +2,760, +3,016 and +2,824 KB: 29 to 32 KB a copy |
 | a claimed copy given 474 more ledger rows by SQL, 500 in all, then `recycle` (first two runs) | Exit 0, the copy deleted. Its six statements took 90 and 93 ms by EF's own timings, 64 and 58 of them the ledger's |
-| a login with `db_datareader` and `db_datawriter` only: `CREATE TABLE`; `seed-pool 102`; `recycle` with one copy expired and one stale | 262; exit 0; exit 0 with `expired=1 staleFree=1` |
-| the same login without `db_datawriter`: `seed-pool 103` | Exit 12, three copies refused with 229 on `DemoCopies` |
+| a login with `db_datareader` and `db_datawriter` only, on a server whose roles existed: `seed-pool 102`; `recycle` with one copy expired and one stale (first run) | Exit 0; exit 0 with `expired=1 staleFree=1`. The same login's `CREATE TABLE` refused with 262, and its first fill with the roles, were measured on LocalDB (`DemoPoolCommandSqlServerTests`) |
+| the same login without `db_datawriter`: `seed-pool 103` (first run) | Exit 12, three copies refused with 229 on `DemoCopies` |
 | `docker stop` sent about 4 s into building copies: to `seed-pool 500`, and to `recycle` with a target of 400 (last run) | Exit 1 and the command's own cancellation line each, 0.15 s after the stop was sent; 37 and 36 copies built by then, and no copy without its three users |
 | `reset --confirm` with the flag off: on the pool's database; on a database with no pool row; on one that does not exist (last run) | Exit 2, "the database holds the demo pool's rows (102)", and the database's id and creation time unchanged; exit 0, dropped and created again; exit 0, created, with no retry logged |
 | `recycle` with `Demo__Enabled` set to a word; with no pepper and `TargetFree` at 0 (last run, no network) | Exit 2 each: "Demo:Enabled holds a value that cannot be read as Boolean", the word printed nowhere; one line naming both failures |
