@@ -33,6 +33,15 @@ namespace AzureBank.Tests.Unit.Services;
 /// generator that never drew again would pass a test of one password eleven times in twelve.
 /// </para>
 /// <para>
+/// A CHOSEN DRAW where a thousand are too few. A draw has no upper-case letter about 13 times in
+/// 100,000 (<c>python -c "print((32/56)**16)"</c> prints 0.000129...), and no lower-case letter as
+/// often, so a thousand draws hold one in about 12 runs of 100
+/// (<c>python -c "print(1-(1-(32/56)**16)**1000)"</c> prints 0.121...): a generator that never drew
+/// again for want of an upper-case letter would pass them the other 88. So the generator is handed
+/// its draw one character at a time, and each of the three conditions is held by a draw that lacks
+/// that one alone.
+/// </para>
+/// <para>
 /// THE KEY IS HELD TWICE: by what it must do (one client, one key; another secret or another client,
 /// another key; no address inside it), and by one known answer worked out outside .NET, because
 /// the first is as true of a function that is no HMAC at all.
@@ -131,6 +140,76 @@ public class DemoClaimPartsTests
         var used = AThousand().SelectMany(password => password).Where(c => c != '-').Distinct().ToArray();
 
         used.Should().BeEquivalentTo(TheFiftySix());
+    }
+
+    /// <summary>A draw that holds all three: an upper-case letter, a lower-case letter and a digit.</summary>
+    private const string Whole = "Kp7mXw2Rhd9GtQ4n";
+
+    /// <summary>Another, so that an answer says which of two whole draws it is.</summary>
+    private const string AnotherWhole = "Hq3vNc8TyB5kZe6W";
+
+    /// <summary>The draw a test chooses: each character's place in the alphabet, in the order drawn.</summary>
+    private static Queue<int> PlacesOf(string characters)
+    {
+        var places = characters.Select(c => DemoPasswordGenerator.Alphabet.IndexOf(c)).ToArray();
+        places.Should().NotContain(-1, "ARRANGE: every character fed to the generator is one of its alphabet");
+        return new Queue<int>(places);
+    }
+
+    [Theory]
+    [InlineData("abcd2345efgh6789", "no upper-case letter")]
+    [InlineData("ABCD2345EFGH6789", "no lower-case letter")]
+    [InlineData("ABCDabcdEFGHefgh", "no digit")]
+    public void ADrawThatLacksOneOfTheThree_IsThrownAway_AndTheNextIsAnswered(string lacking, string what)
+    {
+        var places = PlacesOf(lacking + Whole);
+
+        var password = DemoPasswordGenerator.Create(_ => places.Dequeue());
+
+        using (new AssertionScope())
+        {
+            password.Should().Be(
+                "Kp7m-Xw2R-hd9G-tQ4n", $"a password with {what} is refused at sign-in as malformed, so that draw is never answered");
+            places.Should().BeEmpty("two draws of sixteen were made, and no more");
+        }
+    }
+
+    [Fact]
+    public void ADrawThatHoldsAllThree_IsAnsweredAsItIs()
+    {
+        var places = PlacesOf(Whole + AnotherWhole);
+
+        var password = DemoPasswordGenerator.Create(_ => places.Dequeue());
+
+        using (new AssertionScope())
+        {
+            password.Should().Be("Kp7m-Xw2R-hd9G-tQ4n", "the first draw is whole, and it is the one answered");
+            places.Should().HaveCount(16, "a whole draw is not thrown away, and nothing is drawn after it");
+        }
+    }
+
+    [Fact]
+    public void EveryCharacter_IsAskedForAmongTheFiftySix_AndNoWider()
+    {
+        // What makes a draw even is asking for a place among fifty-six. Asked for one among 256 and
+        // reduced modulo 56 afterwards, thirty-two of the characters would come up five times for
+        // every four of the other twenty-four (256 = 4 x 56 + 32), and every password would still
+        // match the pattern and use every character.
+        var places = PlacesOf(Whole + AnotherWhole);
+        var asked = new List<int>();
+
+        var password = DemoPasswordGenerator.Create(toExclusive =>
+        {
+            asked.Add(toExclusive);
+            return places.Dequeue();
+        });
+
+        using (new AssertionScope())
+        {
+            asked.Should().Equal(
+                Enumerable.Repeat(56, 16), "sixteen characters are asked for, each among the fifty-six, with no modulo after");
+            password.Should().Be("Kp7m-Xw2R-hd9G-tQ4n", "the place answered is the character's place in the alphabet, as it is");
+        }
     }
 
     // ── The client's key ─────────────────────────────────────────────────────────────────────────

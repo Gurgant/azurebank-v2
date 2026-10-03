@@ -29,7 +29,7 @@ namespace AzureBank.Api.Security;
 public static class DemoPasswordGenerator
 {
     // Upper case without I and O, lower case without l and o, the digits from 2 to 9: fifty-six.
-    private const string Alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+    internal const string Alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
 
     private const int Groups = 4;
     private const int GroupLength = 4;
@@ -39,11 +39,20 @@ public static class DemoPasswordGenerator
     /// A new password: four groups of four characters, with an upper-case letter, a lower-case
     /// letter and a digit among them.
     /// </summary>
-    public static string Create()
+    public static string Create() =>
+        Create(static toExclusive => RandomNumberGenerator.GetInt32(toExclusive));
+
+    /// <summary>
+    /// The same, with each character's place in the alphabet asked of <paramref name="next"/>, which
+    /// is given the alphabet's size and answers a place below it. A test's way to choose the draw:
+    /// one that lacks an upper-case letter comes up about 13 times in 100,000
+    /// (<c>python -c "print((32/56)**16)"</c> prints 0.000129...), too seldom to wait for.
+    /// </summary>
+    internal static string Create(Func<int, int> next)
     {
         while (true)
         {
-            var password = Draw();
+            var password = Draw(next);
             if (password.Any(char.IsAsciiLetterUpper)
                 && password.Any(char.IsAsciiLetterLower)
                 && password.Any(char.IsAsciiDigit))
@@ -53,15 +62,15 @@ public static class DemoPasswordGenerator
         }
     }
 
-    private static string Draw() =>
-        string.Create(Groups * GroupLength + Groups - 1, 0, static (characters, _) =>
+    private static string Draw(Func<int, int> next) =>
+        string.Create(Groups * GroupLength + Groups - 1, next, static (characters, next) =>
         {
             for (var i = 0; i < characters.Length; i++)
             {
                 // Every fifth character is the hyphen between two groups.
                 characters[i] = (i + 1) % (GroupLength + 1) == 0
                     ? Separator
-                    : Alphabet[RandomNumberGenerator.GetInt32(Alphabet.Length)];
+                    : Alphabet[next(Alphabet.Length)];
             }
         });
 }
