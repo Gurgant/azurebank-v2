@@ -76,10 +76,11 @@ otherwise.
 | What two jobs printed | 45 lines in the workspace. The first arrived 8 min 38 s after the setting was created. A line could be read 387 s and 398 s after it was written (the median of each job), 486 s at the most. Three runs that lasted seconds each kept their line. Billed: 438 bytes a line, for 194 characters of text |
 | A custom role with the nine actions | Accepted, found when asked at the group and at the subscription, deleted |
 | A custom policy definition with the effect Deny, assigned to the resource group | Accepted, and **it refused at once**: a job at 0.75 vCPU got `RequestDisallowedByPolicy` on the first try. The rule was an earlier one: four conditions of this record's rule were not in it |
-| A budget of 20 a month with four e-mail notifications to an outside mailbox | Accepted and read back |
+| A budget of 20 a month with four e-mail notifications to one mailbox | Accepted and read back |
 | The cost view, on the same day | No row for the resource group |
 
-**Read on Microsoft's pages on 2026-10-02.** Each is paraphrased; the date is the page's own.
+**Read on Microsoft's pages on 2026-10-02**, unless a line gives another day. Each is
+paraphrased; the date in parentheses is the page's own.
 
 - Azure SQL's security guidance and the Well-Architected guide for SQL Database both say to prefer
   Microsoft Entra authentication and to disable SQL authentication where possible

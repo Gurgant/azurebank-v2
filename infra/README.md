@@ -425,7 +425,7 @@ budget that warns is one REST call with a body file. The body holds the address 
 taken from the variable `AZUREBANK_ALERT_EMAIL`. `secrets.ps1 -Action New` makes the session's
 folder again, open to its owner only, before the file is written into it; both go in the
 `finally`. The offer accepts a budget: in the trial one of this amount, with these four e-mail
-notifications to an outside mailbox, was created, read back and deleted. The body below is built
+notifications to one mailbox, was created, read back and deleted. The body below is built
 to be the one that was accepted then (the same properties, operator, thresholds and a period of
 one year), under another name. A refusal here changes nothing else.
 
@@ -1065,8 +1065,8 @@ inside GitHub Actions. The other way in is the portal: the workspace `azurebank-
   since the cap was reached and takes none until the reset, at an hour Azure picks.
 - **An empty answer is not proof that nothing was printed.** A line takes minutes to arrive (in
   the trial a median of 387 s and 398 s for two jobs, 486 s at the most), Microsoft's page allows
-  a new diagnostic setting up to 90 minutes, and a capped workspace takes none. The trial's three runs that lasted seconds
-  each kept their line: three runs, not a promise.
+  a new diagnostic setting up to 90 minutes, and a capped workspace takes none. The trial's three
+  runs that lasted seconds each kept their line: three runs, not a promise.
 - **Telling two failures of the migration apart by the run's length**, which is on the verdict
   line: a login refused because the database has no user for the identity ends after about four
   seconds; an identity that gets no token is waited for the whole 60 s. Neither has been seen
@@ -1631,7 +1631,7 @@ and a connect timeout of 10 s.
   was an earlier one than this folder's: it had every condition of `guardrails.bicep` but four
   (an init container on an app, an init container on a job, parallel runs under a schedule
   trigger and under an event trigger). Those four have never been sent.
-- A budget on the subscription, 20 a month, with four e-mail notifications to an outside mailbox:
+- A budget on the subscription, 20 a month, with four e-mail notifications to one mailbox:
   accepted and read back. No e-mail was due in the seconds it existed.
 
 At the end the database, the workspace and then the resource group were deleted (the group took
@@ -1761,7 +1761,8 @@ counter and no process is started. A few of its tests open a real connection to 
 own on `127.0.0.1`, to see what a dropped connection really raises. `test_scripts.py` runs the two
 PowerShell scripts for real against a stand-in for the Azure CLI and a stand-in for `sqlcmd`,
 reads `sql-principals.sql` as text (the order of its guards and every condition, word for word;
-what a server does with them is above), and reads the compiled templates: the role's nine actions, the federated credential's
-subject, every rule of the policy, the two identities and the one each resource carries, that no
-database credential is anywhere, the workspace and its cap, the environment's mode and its API
-version. The CI job `infra` runs the same three checks and actionlint on the workflows.
+what a server does with them is above), and reads the compiled templates: the role's nine
+actions, the federated credential's subject, every rule of the policy, the two identities and the
+one each resource carries, that no database credential is anywhere, the workspace and its cap, the
+environment's mode and its API version. The CI job `infra` runs the same three checks and
+actionlint on the workflows.
