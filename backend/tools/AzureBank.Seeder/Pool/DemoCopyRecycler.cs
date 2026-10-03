@@ -199,8 +199,9 @@ public sealed class DemoCopyRecycler
         // For every statement this scope sends from here on, the top-up's included.
         _context.Database.SetCommandTimeout(StatementTimeout);
 
-        // What the run found, before it changes anything.
-        var start = await PoolCounts.ReadAsync(_context, _options, Now(), cancellationToken);
+        // What the run found, before it changes anything, and the instant it counted at.
+        var countedAt = Now();
+        var start = await PoolCounts.ReadAsync(_context, _options, countedAt, cancellationToken);
 
         // The day's claims cap the pool: a pool that is drained again and again is refilled only
         // up to the ceiling, so what a day can add to the database has an end.
@@ -241,9 +242,12 @@ public sealed class DemoCopyRecycler
                 copy.Id, failures, () => DeleteClaimedAsync(copy.Id, pastTheBackstop, cancellationToken), cancellationToken));
         }
 
-        // Free copies too old to hand out. The copies built above replace them, and were built
-        // first, so the pool is never short while this goes on.
-        var freshSince = now.AddHours(-_options.Pool.MaxFreeAgeHours);
+        // Free copies too old to hand out AS OF THE INSTANT THE TOP-UP COUNTED: those are the ones
+        // it built replacements for, first, so the pool is never short while this goes on. A copy
+        // that grew too old while the top-up ran was counted as fresh and has no replacement yet;
+        // the next run builds one and then deletes it. Unlike the claimed copies above, where the
+        // later instant is the one that matters: a copy whose time ended meanwhile is in nobody's way.
+        var freshSince = countedAt.AddHours(-_options.Pool.MaxFreeAgeHours);
         var stale = await _context.DemoCopies.AsNoTracking()
             .Where(copy => copy.ClaimedAt == null && copy.CreatedAt < freshSince)
             .OrderBy(copy => copy.CreatedAt)

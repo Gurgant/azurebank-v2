@@ -1049,6 +1049,44 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
         tombstone!.Row.DeletedAt.Should().Be(started.AddMinutes(30), "the record carries the instant of the delete");
     }
 
+    /// <summary>
+    /// The other way round from <see cref="ACopyWhoseTimeEndsWhileTheTopUpRuns_IsDeletedByTheSameRun"/>:
+    /// a FREE copy that grows too old while the top-up runs was counted as fresh by that top-up, so
+    /// no copy was built in its place. Deleted by the same run, it would leave the pool one short
+    /// until the next, with no code that says so. It is left for the next run, which builds its
+    /// replacement first.
+    /// </summary>
+    [SqlServerFact]
+    public async Task AFreeCopyThatGrowsTooOldWhileTheTopUpRuns_IsLeftForTheNextRun()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copies = await database.BuildCopiesAsync(2);
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var started = clock.GetUtcNow().UtcDateTime;
+
+        // One copy claimed now, so the run has one to build towards its target of two. The other
+        // is free and ten minutes short of the 44 hours: fresh when the run counts.
+        await database.MarkClaimedAsync(copies[1].Id, started);
+        await database.BackdateSeedAsync(copies[0].Id, started.AddHours(-44).AddMinutes(10));
+        database.AlsoRegister = services => services.AddSingleton<TimeProvider>(clock);
+
+        // Parked at the first read of its top-up, and half an hour passes there.
+        var hold = new HoldingReadInterceptor("[AspNetRoles]");
+        var run = database.RecycleAsync(interceptors: hold);
+        (await Task.WhenAny(hold.Held, run)).Should().BeSameAs(
+            hold.Held, "the run must be parked inside its top-up, or the order below is not the one under test");
+        clock.Advance(TimeSpan.FromMinutes(30));
+        hold.Release();
+        var summary = await run;
+        output.WriteLine(summary.ToLine());
+
+        (summary.FreeAtStart, summary.Seeded, summary.DeletedStaleFree).Should().Be(
+            (1, 1, 0), "the top-up counted the copy as fresh and built none in its place, so this run does not delete it");
+        StillWhole(await database.CopyAsync(copies[0].Id), "the next run builds its replacement first, and then deletes it");
+        (await database.CopiesAsync()).Count(c => c.Row.ClaimedAt == null).Should().Be(
+            2, "until then the pool holds the two free copies its target asks for");
+    }
+
     [SqlServerFact]
     public async Task TimeThatPassesInsideARun_IsSeenByEachDeleteAfterIt_ByTheSweeps_AndByTheLastCount()
     {
