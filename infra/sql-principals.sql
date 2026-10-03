@@ -10,7 +10,7 @@
 -- here asks the directory nothing: through a trigger it could make anyone in the tenant an owner.
 -- So the file
 --   1. refuses to run in a database that holds a trigger or any other module (the app's
---      migrations create none), and
+--      migrations create none; one kind of Microsoft's own is left out, under 1. below), and
 --   2. before it commits, compares every user, role, role member, permission and schema owner
 --      with what it expects. One thing more or less and nothing is kept: the THROW rolls back
 --      this transaction, and with it whatever a trigger did inside it.
@@ -54,11 +54,18 @@ DECLARE @bad nvarchar(2000) = N'';
 BEGIN TRANSACTION;
 
 -- 1. No code may live here. A SELECT fires no trigger, so nothing has run when this stops.
+-- Every trigger counts. Of the other modules one kind is left out, since 2026-10-03: an object
+-- that is in the schema sys and is marked is_ms_shipped, the two together. A new Azure SQL
+-- database held one, the view sys.database_firewall_rules, and this check refused it. LocalDB
+-- does not list that view.
 SET @found = (SELECT STRING_AGG(CONVERT(nvarchar(max), ISNULL(QUOTENAME(code.name), N'(no name)')), N', ')
               FROM (SELECT name FROM sys.triggers
                     UNION ALL
-                    SELECT OBJECT_NAME(object_id) FROM sys.sql_modules
-                    WHERE object_id NOT IN (SELECT object_id FROM sys.triggers)) AS code);
+                    SELECT OBJECT_NAME(m.object_id) FROM sys.sql_modules AS m
+                    WHERE m.object_id NOT IN (SELECT object_id FROM sys.triggers)
+                      AND NOT EXISTS (SELECT 1 FROM sys.all_objects AS o
+                                      WHERE o.object_id = m.object_id
+                                        AND o.schema_id = SCHEMA_ID(N'sys') AND o.is_ms_shipped = 1)) AS code);
 IF @found IS NOT NULL
 BEGIN
     PRINT N'Code found: ' + LEFT(@found, 3500);
@@ -117,12 +124,16 @@ IF NOT EXISTS (SELECT 1 FROM sys.database_role_members
 
 -- 3. Before the commit: everything that can hold a right, listed whole. Each list is what is
 -- there and should not be. What is printed is a name, never an ID, so that a baseline that
--- differs on another engine is read at once and not guessed.
+-- differs on another engine is read at once and not guessed. The first list asks what 1. asks,
+-- word for word.
 SET @found = (SELECT STRING_AGG(CONVERT(nvarchar(max), ISNULL(QUOTENAME(code.name), N'(no name)')), N', ')
               FROM (SELECT name FROM sys.triggers
                     UNION ALL
-                    SELECT OBJECT_NAME(object_id) FROM sys.sql_modules
-                    WHERE object_id NOT IN (SELECT object_id FROM sys.triggers)) AS code);
+                    SELECT OBJECT_NAME(m.object_id) FROM sys.sql_modules AS m
+                    WHERE m.object_id NOT IN (SELECT object_id FROM sys.triggers)
+                      AND NOT EXISTS (SELECT 1 FROM sys.all_objects AS o
+                                      WHERE o.object_id = m.object_id
+                                        AND o.schema_id = SCHEMA_ID(N'sys') AND o.is_ms_shipped = 1)) AS code);
 IF @found IS NOT NULL
 BEGIN
     SET @bad += N'code; ';

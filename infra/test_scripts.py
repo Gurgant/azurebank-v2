@@ -1002,19 +1002,44 @@ class UsersFileTests(unittest.TestCase):
         begin, refusal = self.at('BEGIN TRANSACTION;'), self.at('THROW 50003,')
         self.assertLess(begin, refusal)
         before = self.code[begin + len('BEGIN TRANSACTION;'):refusal]
-        # Every trigger and every other module: one SELECT, and the refusal hangs on its answer alone.
+        # Every trigger and every other module but one kind of Microsoft's own: one SELECT, and
+        # the refusal hangs on its answer alone.
         self.assertEqual(before.strip().split('\n'), [
             "SET @found = (SELECT STRING_AGG(CONVERT(nvarchar(max), ISNULL(QUOTENAME(code.name), N'(no name)')), N', ')",
             '              FROM (SELECT name FROM sys.triggers',
             '                    UNION ALL',
-            '                    SELECT OBJECT_NAME(object_id) FROM sys.sql_modules',
-            '                    WHERE object_id NOT IN (SELECT object_id FROM sys.triggers)) AS code);',
+            '                    SELECT OBJECT_NAME(m.object_id) FROM sys.sql_modules AS m',
+            '                    WHERE m.object_id NOT IN (SELECT object_id FROM sys.triggers)',
+            '                      AND NOT EXISTS (SELECT 1 FROM sys.all_objects AS o',
+            '                                      WHERE o.object_id = m.object_id',
+            '                                        '
+            "AND o.schema_id = SCHEMA_ID(N'sys') AND o.is_ms_shipped = 1)) AS code);",
             'IF @found IS NOT NULL',
             'BEGIN',
             "    PRINT N'Code found: ' + LEFT(@found, 3500);"])
         self.assertEqual(self.changing.findall(self.code[:begin]), [], 'and nothing changes before it')
         # The same question is asked again before the commit.
-        self.assertEqual(self.code.count('\n'.join(before.strip().split('\n')[:6])), 2)
+        self.assertEqual(self.code.count('\n'.join(before.strip().split('\n')[:9])), 2)
+
+    def test_only_a_module_both_in_sys_and_shipped_by_microsoft_is_left_out_and_every_trigger_counts(self):
+        # A new Azure SQL database held the view sys.database_firewall_rules, in the schema sys
+        # and marked is_ms_shipped; LocalDB does not list it. Nobody can create an object in sys,
+        # and is_ms_shipped alone is set on objects in other schemas too (LocalDB lets sysadmin
+        # mark a view in dbo), so a module is left out only when both hold. A trigger never is.
+        flat = ' '.join(self.code.split())
+        left_out = ("AND NOT EXISTS (SELECT 1 FROM sys.all_objects AS o WHERE o.object_id = m.object_id "
+                    "AND o.schema_id = SCHEMA_ID(N'sys') AND o.is_ms_shipped = 1)) AS code)")
+        modules = ('FROM (SELECT name FROM sys.triggers UNION ALL SELECT OBJECT_NAME(m.object_id) '
+                   'FROM sys.sql_modules AS m WHERE m.object_id NOT IN (SELECT object_id FROM sys.triggers) ')
+        # Both code lists: the triggers whole, then the modules that are not triggers, less that one kind.
+        self.assertEqual(flat.count(modules + left_out), 2)
+        # Nothing else is left out anywhere, and the schema is sys and no other.
+        self.assertEqual(flat.count('sys.all_objects'), 2)
+        self.assertEqual(flat.count('is_ms_shipped'), 2)
+        self.assertEqual(re.findall(r'schema_id = (\S+)', flat), ["SCHEMA_ID(N'sys')", "SCHEMA_ID(N'sys')"])
+        # The trigger half has no condition at all: every trigger, is_ms_shipped or not.
+        self.assertEqual(flat.count('SELECT name FROM sys.triggers'), 2)
+        self.assertEqual(flat.count('SELECT name FROM sys.triggers UNION ALL SELECT OBJECT_NAME(m.object_id)'), 2)
 
     def test_everything_that_can_hold_a_right_is_listed_before_the_commit(self):
         last_change = max(match.start() for match in self.changing.finditer(self.code))
@@ -1065,7 +1090,9 @@ class UsersFileTests(unittest.TestCase):
         def given(role, user):
             return (f"role_principal_id = DATABASE_PRINCIPAL_ID(N'{role}') AND member_principal_id = "
                     f"DATABASE_PRINCIPAL_ID(N'{user}')) ALTER ROLE [{role}] ADD MEMBER [{user}]")
-        code = 'object_id NOT IN (SELECT object_id FROM sys.triggers)) AS code)'
+        code = ('m.object_id NOT IN (SELECT object_id FROM sys.triggers) AND NOT EXISTS (SELECT 1 FROM sys.all_objects '
+                'AS o WHERE o.object_id = m.object_id '
+                "AND o.schema_id = SCHEMA_ID(N'sys') AND o.is_ms_shipped = 1)) AS code)")
         self.assertEqual([' '.join(found.split()) for found in re.findall(r'\bWHERE (.+?);\n', self.code, re.S)], [
             code,
             # A user is replaced when its stored ID is another one, or when it is another kind of user.
