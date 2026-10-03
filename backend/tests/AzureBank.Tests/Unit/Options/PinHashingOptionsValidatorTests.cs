@@ -1,3 +1,4 @@
+using System.Globalization;
 using AzureBank.Api.Extensions;
 using AzureBank.Shared.Options;
 using AzureBank.Tests.Fixtures;
@@ -24,14 +25,19 @@ public class PinHashingOptionsValidatorTests
 
     // Both the shared validator after binding and the API's real startup registrations. Reading
     // only a hand-built Dictionary<int, string> cannot expose a configuration key the binder lost.
-    private static ServiceProvider BoundRoot(bool api, string previousKey)
+    private static ServiceProvider BoundRoot(bool api, string previousKey) =>
+        BoundRoot(api, (previousKey, P1), ("4", P3));
+
+    // The same two roots over the previous-pepper entries exactly as a test writes them: each path
+    // goes under Security:PreviousPinPeppers as it is, so a test can give one id two keys, put a
+    // section where the pepper belongs, or write an entry the wrong way round. The active pepper
+    // is P2 under key id 2.
+    private static ServiceProvider BoundRoot(bool api, params (string Path, string? Value)[] previous)
     {
-        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        var settings = new Dictionary<string, string?>
         {
             ["Security:PinPepper"] = P2,
             ["Security:PinPepperKeyId"] = "2",
-            [$"Security:PreviousPinPeppers:{previousKey}"] = P1,
-            ["Security:PreviousPinPeppers:4"] = P3,
             ["Idempotency:HashKey"] = CustomWebApplicationFactory.IdempotencyHashKey,
             ["StepUp:BindingKey"] = CustomWebApplicationFactory.StepUpBindingKey,
             ["ServiceCredential:BffKey"] = CustomWebApplicationFactory.ServiceCredentialKey,
@@ -39,7 +45,13 @@ public class PinHashingOptionsValidatorTests
             ["Audit:AnchorKey"] = CustomWebApplicationFactory.AuditAnchorKey,
             ["Jwt:Secret"] = CustomWebApplicationFactory.JwtSecret,
             ["ConnectionStrings:DefaultConnection"] = CustomWebApplicationFactory.PlaceholderConnectionString,
-        }).Build();
+        };
+        foreach (var (path, value) in previous)
+        {
+            settings.Add($"Security:PreviousPinPeppers:{path}", value);
+        }
+
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
         var services = new ServiceCollection();
         services.AddSingleton<IConfiguration>(configuration);
         services.AddLogging();
@@ -113,6 +125,132 @@ public class PinHashingOptionsValidatorTests
         var refusal = start.Should().Throw<OptionsValidationException>().Which;
         refusal.Failures.Should().Equal($"Security:PreviousPinPeppers key '{key}' must be >= 1.");
         refusal.ToString().Should().NotContain(P1).And.NotContain(P2).And.NotContain(P3);
+    }
+
+    // Each spelling is a valid key alone (the rows above). Together they are two configuration
+    // keys and one id: the binder keeps one pepper and the other is gone. The sentence puts the
+    // two keys in ordinal order itself, whichever the configuration lists first.
+    [Theory]
+    [InlineData(false, "1", "01", "'01' and '1'")]
+    [InlineData(false, "01", "1", "'01' and '1'")]
+    [InlineData(false, "1", "+1", "'+1' and '1'")]
+    [InlineData(false, "+1", "1", "'+1' and '1'")]
+    [InlineData(true, "1", "01", "'01' and '1'")]
+    [InlineData(true, "01", "1", "'01' and '1'")]
+    [InlineData(true, "1", "+1", "'+1' and '1'")]
+    [InlineData(true, "+1", "1", "'+1' and '1'")]
+    public void TwoPreviousPepperKeysForOneId_AreRefusedAtStart_NamingBoth_WithoutAValue(
+        bool api, string first, string second, string named)
+    {
+        using var root = BoundRoot(api, (first, P1), (second, P3));
+        var start = () => root.GetRequiredService<IStartupValidator>().Validate();
+
+        var refusal = start.Should().Throw<OptionsValidationException>().Which;
+        refusal.Failures.Should().Equal(
+            $"Security:PreviousPinPeppers keys {named} name the same id; only one pepper can be held under it.");
+        refusal.ToString().Should().NotContain(P1).And.NotContain(P2).And.NotContain(P3);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void APreviousPepperKeyThatHoldsASection_IsRefusedAtStart_WithoutItsValue(bool api)
+    {
+        // Security__PreviousPinPeppers__1__Value, or "1": { "Value": "..." } in a file: the key is
+        // a whole number, and the binder reads no pepper under it.
+        using var root = BoundRoot(api, ("1:Value", P1), ("4", P3));
+        var start = () => root.GetRequiredService<IStartupValidator>().Validate();
+
+        var refusal = start.Should().Throw<OptionsValidationException>().Which;
+        refusal.Failures.Should().Equal(
+            "Security:PreviousPinPeppers key '1' was not read: it must be a whole number >= 1 that holds one value.");
+        refusal.ToString().Should().NotContain(P1).And.NotContain(P2).And.NotContain(P3);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void APreviousPepperEntryWrittenTheWrongWayRound_IsRefusedAtStart_WithoutPrintingItsKey(bool api)
+    {
+        // "<pepper>": "1" where "1": "<pepper>" was meant. Here the key is the secret, so the
+        // refusal gives its length and not its text.
+        using var root = BoundRoot(api, (P1, "1"), ("4", P3));
+        var start = () => root.GetRequiredService<IStartupValidator>().Validate();
+
+        var refusal = start.Should().Throw<OptionsValidationException>().Which;
+        refusal.Failures.Should().Equal(
+            "Security:PreviousPinPeppers key of 43 characters must be a whole number >= 1.");
+        refusal.ToString().Should().NotContain(P1).And.NotContain(P2).And.NotContain(P3);
+    }
+
+    // The length from which a key could be a pepper is the length a pepper must have: one
+    // character below it the key is still quoted, as every key in the rows above is.
+    [Theory]
+    [InlineData(false, 31, "key 'kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk'")]
+    [InlineData(false, 32, "key of 32 characters")]
+    [InlineData(true, 31, "key 'kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk'")]
+    [InlineData(true, 32, "key of 32 characters")]
+    public void AnUnreadableKey_IsQuotedBelowAPeppersLength_AndNamedByItsLengthFromThere(
+        bool api, int length, string shown)
+    {
+        using var root = BoundRoot(api, (new string('k', length), P1), ("4", P3));
+        var start = () => root.GetRequiredService<IStartupValidator>().Validate();
+
+        var refusal = start.Should().Throw<OptionsValidationException>().Which;
+        refusal.Failures.Should().Equal($"Security:PreviousPinPeppers {shown} must be a whole number >= 1.");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AControlCharacterInAPreviousPepperKey_IsNotPrintedRaw(bool api)
+    {
+        // A line feed printed as it is would break the one line a refusal is in the Seeder's log.
+        using var root = BoundRoot(api, ("1\n", P1), ("4", P3));
+        var start = () => root.GetRequiredService<IStartupValidator>().Validate();
+
+        var refusal = start.Should().Throw<OptionsValidationException>().Which;
+        refusal.Failures.Should().Equal("Security:PreviousPinPeppers key '1?' must be a whole number >= 1.");
+        refusal.Message.Should().NotContain("\n");
+        refusal.ToString().Should().NotContain(P1).And.NotContain(P2).And.NotContain(P3);
+    }
+
+    // The binder converts a key with the host's culture, the validator reads it with the invariant
+    // one, and the rows above run under whatever culture the machine has. Here the culture is
+    // built, not looked up, so the rows do not depend on the machine's data: one that writes the
+    // signs with a left-to-right mark before them (as he-IL does) cannot read "+1" or "-1", and one
+    // whose minus is U+2212 (as sv-SE's is) reads "-1" and would print the id back with that sign.
+    [Theory]
+    [InlineData(false, "\u200e+", "\u200e-", "+1", false)]
+    [InlineData(false, "\u200e+", "\u200e-", "-1", false)]
+    [InlineData(false, "+", "\u2212", "-1", true)]
+    [InlineData(true, "\u200e+", "\u200e-", "+1", false)]
+    [InlineData(true, "\u200e+", "\u200e-", "-1", false)]
+    [InlineData(true, "+", "\u2212", "-1", true)]
+    public void ASignedKey_UnderACultureThatWritesSignsItsOwnWay_IsRefusedAtStart_InPlainAscii(
+        bool api, string positiveSign, string negativeSign, string key, bool theBinderReadsIt)
+    {
+        var culture = (CultureInfo)CultureInfo.InvariantCulture.Clone();
+        culture.NumberFormat.PositiveSign = positiveSign;
+        culture.NumberFormat.NegativeSign = negativeSign;
+        var previous = CultureInfo.CurrentCulture;
+        CultureInfo.CurrentCulture = culture;
+        try
+        {
+            using var root = BoundRoot(api, key);
+            var start = () => root.GetRequiredService<IStartupValidator>().Validate();
+
+            var rule = theBinderReadsIt
+                ? "must be >= 1."
+                : "was not read: it must be a whole number >= 1 that holds one value.";
+            var refusal = start.Should().Throw<OptionsValidationException>().Which;
+            refusal.Failures.Should().Equal($"Security:PreviousPinPeppers key '{key}' {rule}");
+            refusal.ToString().Should().NotContain(P1).And.NotContain(P2).And.NotContain(P3);
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previous;
+        }
     }
 
     [Fact]

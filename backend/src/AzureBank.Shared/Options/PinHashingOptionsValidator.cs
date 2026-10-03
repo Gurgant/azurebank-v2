@@ -25,17 +25,39 @@ public sealed class PinHashingOptionsValidator(IConfiguration configuration) : I
 
         var errors = new List<string>();
 
-        // The binder silently drops a dictionary entry whose key cannot become an int, and
-        // accepts surrounding whitespace. Read the original keys too, never their secret values.
-        // Keep signed integer keys and leading zeroes working; the bound-map check below retains
-        // the existing refusal for zero and negative ids.
+        // The binder loses a previous pepper in silence in three ways: it drops an entry whose key
+        // it cannot convert to an int, it drops one whose key holds a section instead of a value,
+        // and of two keys that name the same id ("1" and "01") it keeps one pepper. It also accepts
+        // surrounding whitespace. So the original keys are read here too, never their secret
+        // values: each must be a whole number, the only key for its id, and an entry of the bound
+        // map. Signed integer keys and leading zeroes keep working. The binder converts a key with
+        // the host's culture and this loop reads it with the invariant one. A sign this loop reads
+        // and the binder does not leaves the key out of the bound map, and it is refused as not
+        // read; a sign only the binder reads fails the whole-number rule here. For a zero or
+        // negative id the binder did read, the bound-map check below retains the existing refusal.
         var previousPeppers = configuration.GetSection(PinHashingOptions.SectionName)
             .GetSection(nameof(PinHashingOptions.PreviousPinPeppers));
+        var firstKeyOfId = new Dictionary<int, string>();
         foreach (var entry in previousPeppers.GetChildren())
         {
-            if (!int.TryParse(entry.Key, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out _))
+            if (!int.TryParse(entry.Key, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var id))
             {
-                errors.Add($"Security:PreviousPinPeppers key '{entry.Key}' must be a whole number >= 1.");
+                errors.Add($"Security:PreviousPinPeppers key {Shown(entry.Key)} must be a whole number >= 1.");
+            }
+            else if (!firstKeyOfId.TryAdd(id, entry.Key))
+            {
+                // Which of the two the configuration lists first is the provider's business, so
+                // the sentence orders them itself.
+                var (first, second) = string.CompareOrdinal(firstKeyOfId[id], entry.Key) <= 0
+                    ? (firstKeyOfId[id], entry.Key)
+                    : (entry.Key, firstKeyOfId[id]);
+                errors.Add($"Security:PreviousPinPeppers keys {Shown(first)} and {Shown(second)} name the same id; " +
+                           "only one pepper can be held under it.");
+            }
+            else if (!options.PreviousPinPeppers.ContainsKey(id))
+            {
+                errors.Add($"Security:PreviousPinPeppers key {Shown(entry.Key)} was not read: " +
+                           "it must be a whole number >= 1 that holds one value.");
             }
         }
 
@@ -55,7 +77,8 @@ public sealed class PinHashingOptionsValidator(IConfiguration configuration) : I
         {
             if (keyId < 1)
             {
-                errors.Add($"Security:PreviousPinPeppers key '{keyId}' must be >= 1.");
+                // The invariant culture, so the minus sign is the same on every host.
+                errors.Add($"Security:PreviousPinPeppers key '{keyId.ToString(CultureInfo.InvariantCulture)}' must be >= 1.");
             }
             if (string.IsNullOrWhiteSpace(pepper) || pepper.Length < MinPepperLength)
             {
@@ -83,4 +106,15 @@ public sealed class PinHashingOptionsValidator(IConfiguration configuration) : I
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(errors);
     }
+
+    // How a configuration key is named in a failure. A key as long as a pepper may be one, written
+    // where its id belongs, so it is never printed: only its length is. A key is one segment of a
+    // path, so of a pepper that holds ':' (or "__" in a variable's name) only the part before it
+    // is the key, and a part shorter than a pepper is quoted like any short key. A shorter key is
+    // quoted, with each control character shown as '?', so a line feed in it cannot split the
+    // failure.
+    private static string Shown(string key) =>
+        key.Length >= MinPepperLength
+            ? $"of {key.Length.ToString(CultureInfo.InvariantCulture)} characters"
+            : $"'{string.Concat(key.Select(c => char.IsControl(c) ? '?' : c))}'";
 }

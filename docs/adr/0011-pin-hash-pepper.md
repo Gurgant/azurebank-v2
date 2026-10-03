@@ -105,7 +105,11 @@ uncalled)*.
   *(2026-10-03: a `Security:PreviousPinPeppers` key that is not a whole number >= 1, or has
   surrounding whitespace, is refused at API startup and at the start of `seed`, `reset`,
   `seed-pool` and `recycle`, naming the key and never its value; the shared validator reads the
-  original configuration keys too, because the binder silently drops a key it cannot convert.)*
+  original configuration keys too, because the binder silently drops a key it cannot convert.
+  Two keys that name one id (`1` and `01`, of which the binder keeps one pepper) and a key that
+  holds no single value (a section under it, which the binder drops) are refused too, and a key
+  of 32 characters or more, long enough to be a pepper, is never printed: the refusal gives its
+  length.)*
 - **Rehash-on-use migration**: `IPasswordHasher.PinNeedsRehash` reports whether a
   stored hash predates the active key. On a **successful** verify, `PinService`
   re-hashes the PIN with the active pepper and persists it — in the service's
