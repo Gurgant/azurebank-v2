@@ -8,16 +8,18 @@ no" holds what is done when Azure refuses a step. This record holds the reasons,
 measured, and what is known and left as it is.
 
 **Until 2026-10-03 none of the files this record describes had run on Azure.** The templates
-compile, the scripts are tested against stand-ins and, where a local engine can run them, for
-real. On 2026-10-02 the resource group did not exist (`az group exists` answered `false`; the same
-command answers `true` for a group that is there). On 2026-10-03 the first deployment began. Its
-steps 1 to 5 ran as the runbook writes them, and what they read back has a table of its own
-below; its step 6 stopped twice before the users were made, as told under
-[the second reopened choice](#2-how-the-two-database-users-are-created). What ran on Azure before,
-on 2026-10-02, is a throwaway trial: a resource group in the same subscription and region, created
-and deleted that day, in which requests of the shapes these files make were sent by hand: not by
-these files, and not every one of them. What it measured has a table of its own below. Every
-other sentence about what Azure does is marked as read or as not measured.
+compile, the scripts are tested against stand-ins and, where a local engine can run them, for real.
+On 2026-10-02 the resource group did not exist (`az group exists` answered `false`; the same
+command answers `true` for a group that is there). On 2026-10-03 the first session of the first
+deployment ran, steps 1 to 10, and what they read back has a table of its own below. Step 6 stopped
+twice before the users were made, as told under
+[the second reopened choice](#2-how-the-two-database-users-are-created), and then made them. The
+what-if of step 9 could not name the app, and the template's check of the app's values moved for
+that (decision 1). What ran on Azure before, on 2026-10-02, is a throwaway trial: a resource group
+in the same subscription and region, created and deleted that day, in which requests of the shapes
+these files make were sent by hand: not by these files, and not every one of them. What it measured
+has a table of its own below. Every other sentence about what Azure does is marked as read or as
+not measured.
 
 ## Context
 
@@ -161,7 +163,7 @@ $0.161 a day; log ingestion $2.99 a GB past the free 5 GB.
 
 **Measured on Azure on 2026-10-03, at the first deployment**, with these files, by the runbook's
 blocks as written (the question before a deployment answered by a variable, not typed). One run
-per row. The runbook's section "Measured on Azure" has each line in full.
+per row unless it says otherwise. The runbook's section "Measured on Azure" has each line in full.
 
 | Step | What happened |
 |---|---|
@@ -170,17 +172,25 @@ per row. The runbook's section "Measured on Azure" has each line in full.
 | 3, the same template again | Nothing to create or delete, `NoChange` on the server; `Modify` named on the policy definition, the environment, the diagnostic setting and the policy assignment. `Succeeded`. The three properties it named on the environment read the same before and after; the other three resources were not read |
 | 4, read back | Every value the runbook expects: the Consumption profile alone; logs to `azure-monitor`, the workspace capped at 0.05 GB with key access off, one setting with the two categories; Basic, 5 DTU, 2 GB, local backups; one firewall rule, one administrator, Entra-only, TLS 1.2; three identities attached to nothing; one federated credential; the role of nine actions, not assigned; the lock on the database; the policy assignment |
 | 5, a budget | 20 a month, four e-mail notifications to one mailbox: created by the runbook's block and read back |
+| 6, the users | After the file's two checks were narrowed (the second reopened choice), it made the two users. Its two runs were noted at the time as ending with exit 0 and the two lines expected; their output is not in the record. The record holds its run inside step 8: `ID as asked: 1` for each user with its roles, and the one firewall rule left |
+| 7, a sign-in as each identity | The probe job, three starts: as the app's identity `Succeeded`, exit 0, reader and writer, not `db_ddladmin`; the same identity asking the migrator's token `Failed`, exit 3, after 641 ms, error 0 of class 20 around `AuthenticationFailedException`; as the migrator's identity `Succeeded`, exit 0, the three roles. **The first open as the app's identity took 6,390 ms** against the app's 10 s, on one cold run of the probe, whose string waits 30 s; the migrator's 3,253 ms. The job deleted, the program removed |
+| 8, a SQL sign-in | Refused with the Entra-only reason, through the script's own switch: "Proved" |
+| 9, the app's what-if | On the template as it was then: 7 to create, the four `Modify` of step 3, and **two `Unsupported`: the app and the role assignment on it**, where nine creates were expected. Nothing was refused. The app's name went through `fail()` and the seven secure parameters, and a what-if works out no secure value. Fixed in the template (decision 1); that what-if is to be read again |
+| 10, end of the session | The probe's five lines in the workspace when read, 6 min 52 s to 8 min 51 s after they were written; the reads of step 1 as expected: one firewall rule, Entra-only, the log's cap taking data, no job, nothing attached, the mode `WorkloadProfiles`, the protected folder gone |
 
 ## Decision
 
-**1. One resource group in Italy North, created by one template that a person runs, in two
-steps.** The first step needs no image: the environment, the log workspace, the SQL server and
-database, three identities, the custom role and the policy, fourteen things. The second adds the
-app, the migration job, two role assignments, the action group and four alerts, nine things. The
-workflow never creates or changes infrastructure. The environment names its mode,
-`WorkloadProfiles`, on an API version that has the property: on this subscription a request that
-names none is taken as Express, which has neither jobs nor a second container, and is refused
-(`ExpressEnvironmentFeatureNotSupported`).
+**1. One resource group in Italy North, created by one template that a person runs, in two steps.**
+The first step needs no image: the environment, the log workspace, the SQL server and database,
+three identities, the custom role and the policy, fourteen things. The second adds the app, the
+migration job, two role assignments, the action group and four alerts, nine things. A run of the
+second step without the image tag, the alerts' address or one of the seven secrets is refused by a
+module of its own, `app-inputs.bicep`, whose parameters carry the lengths those values must have;
+the app, the job and the action group wait for it, and the app's name stays a plain value that a
+what-if can work out. The workflow never creates or changes infrastructure. The environment names
+its mode, `WorkloadProfiles`, on an API version that has the property: on this subscription a
+request that names none is taken as Express, which has neither jobs nor a second container, and is
+refused (`ExpressEnvironmentFeatureNotSupported`).
 
 **2. One replica, zero to one, with both hosts in it.** The BFF answers on port 8080 behind an
 HTTPS ingress; the API listens on `127.0.0.1:5068` and nothing outside the replica can reach it
@@ -289,16 +299,26 @@ user), which that handler leaves a 500. The two errors were measured; the two an
 asks first, was called on its own and takes neither error. A job carrying one identity gets no
 token for the other. The server names Entra-only in its refusal of a SQL sign-in.
 
-**Not measured.** The same things done by these files: the two users the script makes. (The
-template's own second run left the server alone on 2026-10-03: `NoChange` in its what-if, and the
-server read back as expected afterwards.) That a request for a token which names no identity gets
-none. Whether a change that touches no identity needs a right on the attached one.
+**Measured at the first deployment, on 2026-10-03, with these files.** The template's own second
+run left the server alone: `NoChange` in its what-if, and the server read back as expected
+afterwards. The two users the script made signed in from the runbook's probe job, each as its own
+user with its roles; the job carrying the app's identity got no token for the migrator's (exit 3,
+after 641 ms, the trial's error and chain); and the script's own switch had a SQL sign-in refused
+with the Entra-only reason. **The first open as the app's identity took 6,390 ms**, against the
+app's 10 s connect timeout: one cold run of a program whose string waits 30 s. The migrator's took
+3,253 ms, the trial's first open 3,810 ms. It is nearer the timeout than the trial's, and it is
+not the app's own sign-in.
+
+**Not measured.** The app's own first sign-in after a cold start, with its 10 s. That a request for
+a token which names no identity gets none. Whether a change that touches no identity needs a
+right on the attached one.
 
 **If Azure refuses.** The server refused, or disturbed by a second run of the template: a stop.
 This record first listed two more shapes of the server as steps down; they are gone, because the
 first shape was accepted, twice. A slow first token: nothing automatic. The timeout stays 10 s,
 one 503 after a cold start is accepted, and a larger value is a decision in ADR-0058, because that
-timeout also bounds each commit.
+timeout also bounds each commit. The 6,390 ms of step 7 does not change that: the decision stands
+until the app's own first sign-in is measured, in the second session.
 
 ### 2. How the two database users are created
 
@@ -334,7 +354,8 @@ typed value, but text that `sqlcmd` put in would run above its transaction (meas
 stays: the refusal is known by its sentence, because `sqlcmd` prints no number for an error at
 sign-in (measured with a refused login on a local server). The first is lost: on a local engine
 the file ran with stand-in users, and the file itself has run on one Azure SQL database, on
-2026-10-03, only as far as its first check, and not since its two checks were narrowed.
+2026-10-03: twice it stopped at its first check, and after its two checks were narrowed it made
+the two users there.
 
 **Measured on Azure, by hand.** Azure SQL runs `CREATE USER ... WITH SID, TYPE = E`. go-sqlcmd
 signs in through the `az login` session, and the server's refusal of an address names that
@@ -375,12 +396,16 @@ so the two users get from it what every user gets. Microsoft's page on the view 
 read-only access to it is available to every user with permission to connect to the database
 (<https://learn.microsoft.com/en-us/sql/relational-databases/system-catalog-views/sys-database-firewall-rules-azure-sql-database>,
 2025-07-29, read on 2026-10-03). And each refused permission on an object now prints the object's
-schema and name. The file has not yet run on Azure since either change.
+schema and name.
 
-**Not measured.** The file past its two checks on Azure SQL: the users made, and the lists before
-the commit clean with them in place (before the users existed every list was read, above; what
-the file's own statements add there has not been seen), and that dropping and creating a user
-inside its transaction works there. Its second form,
+**After both changes, the same day.** The file made the two users, and the users signed in from
+the probe job (the first reopened choice). Its two runs at step 6 were noted at the time as ending
+with exit 0 and the two lines expected; their output is not in the session's record. Its run
+inside step 8 is: both users with their roles and `ID as asked: 1`, which the file prints only when
+its lists before the commit are clean, so they were, with the two users in place.
+
+**Not measured.** That dropping and creating a user inside its transaction works on Azure SQL; it
+happens only when an identity has been made again. Its second form,
 `FROM EXTERNAL PROVIDER WITH OBJECT_ID`: the trial looked the identity up by its name.
 
 **If Azure refuses.** The sign-in method fails: a second method, then the older ODBC `sqlcmd`
@@ -482,6 +507,16 @@ twice the cap: the logs go off. The alert is refused: it is left out, one of fou
   more.
 - **Built-in roles for the deployment identity.** The ones that can deploy can also list every
   secret and delete.
+- **The check of the app's values in the app's name, through `fail()`.** It was the first form.
+  A what-if works out no expression that reads a secure parameter, and a resource whose ID it
+  cannot work out is left out
+  (<https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/deploy-what-if>,
+  2026-03-03, read on 2026-10-03): on 2026-10-03 the what-if of step 9 could name neither the app
+  nor the role assignment on it. The same check in a property of the app would leave the name
+  alone and guard the app only, while the job and the action group went out without it. A module
+  whose parameters carry the lengths, which the three wait for, guards all three and keeps every
+  ID plain. Where Azure stops a run on it, at the template's validation or when the module's own
+  deployment starts, Microsoft's pages read do not say; either way none of the three is sent.
 - **A rollback action in the workflow.** A workflow that deploys any published tag without the
   migration is a second, weaker road. Going back by hand is `deploy.py --app-only`, from the
   owner's terminal, refused inside GitHub Actions.
@@ -509,8 +544,8 @@ twice the cap: the logs go off. The alert is refused: it is left out, one of fou
   touches the BFF's security logging and is not made here.
 - **Nothing stops the app automatically.** Requests and data out have no bound but the credit.
 - **The sign-in and the user creation cannot be rehearsed off Azure.** The trial saw both there
-  once, with users of its own. The first session makes both happen for the real users before any
-  image exists, with a throwaway job that signs in as each identity.
+  once, with users of its own. The first session made both happen for the real users on
+  2026-10-03, before any image existed, with a throwaway job that signed in as each identity.
 - **Whoever can act as the deployment identity can run code as either database identity**, by
   writing the app or the job. As the migrator it can leave code in the database that runs as
   whoever next changes users there; the users file refuses such a database. The boundary is who
@@ -527,7 +562,8 @@ twice the cap: the logs go off. The alert is refused: it is left out, one of fou
 - **One account** is the only administrator of the database and the only Owner of the
   subscription.
 - A first sign-in after a cold start may answer one 503. In the trial the first open took
-  3,810 ms, measured once.
+  3,810 ms, measured once; at the first deployment's step 7, 6,390 ms as the app's identity, once,
+  in a probe whose string waits 30 s.
 - ADR-0058's first precondition, one replica, is what the template sets and what the policy is
   expected to refuse to exceed. Until the policy is seen refusing a second replica, that record's
   sentence that no code enforces it stands. The trial saw an earlier form of the rule refuse a job
@@ -552,13 +588,16 @@ twice the cap: the logs go off. The alert is refused: it is left out, one of fou
   its second package fails here instead of at the first open on Azure.
   `Unit/Tools/SeederCommandTests`: `migrate`'s line for a refused login names both ways to sign
   in.
-- `infra/test_scripts.py` and `infra/test_deploy.py`, 262 tests: the two PowerShell scripts run
+- `infra/test_scripts.py` and `infra/test_deploy.py`, 267 tests: the two PowerShell scripts run
   for real against a stand-in for the Azure CLI and a stand-in for `sqlcmd`; the users file is
   read as text, to keep each guard, every `WHERE` and every `IF` where it is; the compiled
   templates are read (the two identities and the one each resource carries, no database
   credential anywhere, only the `api` container and the job handed a connection string, the
   workspace and its cap, the environment's mode and API version, the four alerts, the role's nine
-  actions, every rule of the policy);
+  actions, every rule of the policy, the app's plain name and no resource ID that reads a secret,
+  the check of the app's values and the three that wait for it); `bicep snapshot` works the
+  template out offline (every ID worked out with the app; a tag that is not 40 characters and an
+  empty address refused);
   `deploy.py`'s decisions against invented answers. While they were written, single changes were
   made to the scripts, the users file and `deploy.py`, and the suite had to fail: 108, none left
   uncaught. That count had not tried enough: a review loosened conditions of the users file by
@@ -572,15 +611,31 @@ twice the cap: the logs go off. The alert is refused: it is left out, one of fou
   how a refused permission is printed: either half of the pair dropped, any permission, any
   grantee or public and the app, a `DENY` or a grant that may be passed on, no state, no class or
   schemas too, the pair read from `sys.objects`, the object's name left out, its ID printed
-  instead.
+  instead. So do the seven made after step 9 to the templates: the app's name back through
+  `fail()` and the secrets, a secret in the name of the role assignment on the app, the tag's
+  length dropped, a secret's length dropped, the app no longer waiting for the check, a constant
+  handed to the check for the address, and the check deployed whatever `deployApp` says. Each
+  turned one to four tests red and was put back byte for byte.
 
 **Measured**, beyond the Context table.
 
-- The compiled template: 20 resources, 19 parameters of which 7 secure and 2 required, 8 outputs,
-  none secure; 14 resources without the app and 9 more with it. `bicep build` and `bicep lint`
-  exit 0 with nothing on standard error for both templates; an unused parameter puts a warning
+- The compiled template: 21 resources, 19 parameters of which 7 secure and 2 required, 8 outputs,
+  none secure; 14 resources without the app and 9 more with it, and with them the check of the
+  app's values, a nested deployment that creates nothing. `bicep build` and `bicep lint` exit 0
+  with nothing on standard error for the three templates; an unused parameter puts a warning
   there. One warning is silenced, on one line: BCP081, because Bicep 0.47.16 has no types for the
-  environment's API version. Without that line the warning is back.
+  environment's API version. Without that line the warning is back. `app-inputs.bicep` silences
+  `no-unused-params` from its pragma on: nothing in it reads its parameters, which are there to
+  be checked. Without the pragma the warning is back, and an unused variable is still reported.
+- The check of the app's values, on this machine with Bicep 0.47.16. `bicep snapshot`, which works
+  a template out offline as a what-if does, gave the template of step 9 the app's ID unworked, in
+  the form that what-if printed, and the role assignment's ID around it; it names all 23 resources
+  of the changed one, and refuses a tag of 39 or 41 characters and an empty address with the
+  parameter named. It works out no secure value. `bicep local-deploy` (experimental) ran
+  `app-inputs.bicep`, with only a local scope added, as a module with `main.bicep`'s condition and
+  parameters and a second module waiting for it: the address and each secret empty, and the tag at
+  39 and 41 characters, failed the check, and the waiting module never ran; all nine given, both
+  ran; the file without its length decorators let an empty secret through.
 - The users file on a local SQL Server 17 with go-sqlcmd 1.10.0, with three substitutions (the
   database's name, a user made from a disabled SQL login whose ID is the 16 bytes asked for, and
   the user type that goes with it): it commits on a clean database and a second run changes
@@ -607,12 +662,13 @@ twice the cap: the logs go off. The alert is refused: it is left out, one of fou
   stand-in for the CLI. The sign-in probe's program ran against a local SQL Server and gave each
   of its exit codes but 3, which needs a token refused on Azure.
 
-**Not measured:** everything these files themselves do on Azure past the first deployment's steps
-1 to 5 and what its step 6 met (under the second reopened choice); what is listed under "Not
-measured" in the three sections above; the app with its two containers, its probes and its scale
-to zero; the deployment identity's nine actions against an app that carries an identity; the
-automatic put-back on a real failure; that the policy refuses a second replica; any alert firing;
-the meters after 48 hours; every command of the runbook's sections on switching the logs off, on a
+**Not measured:** everything these files themselves do on Azure past the first deployment's first
+session, steps 1 to 10: the what-if of the run with the app on the changed template, and where
+Azure stops a run that lacks one of the app's values; what is listed under "Not measured" in the
+three sections above; the app with its two containers, its probes and its scale to zero; the
+deployment identity's nine actions against an app that carries an identity; the automatic
+put-back on a real failure; that the policy refuses a second replica; any alert firing; the
+meters after 48 hours; every command of the runbook's sections on switching the logs off, on a
 theft and on removal. The runbook's "Not measured yet" lists each with the step where it shows.
 
 ## What would change this
