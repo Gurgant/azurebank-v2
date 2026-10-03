@@ -1,0 +1,39 @@
+# Dependabot watches the actions the three workflows use, and nothing else here: no package of
+# the backend or the frontend. It opens one pull request a month that groups every update.
+#
+# Until 2026-10-03 nothing watched them. Five actions sat on majors that declared Node 20, and
+# the first sign was a warning on every run, after GitHub had taken Node 20 off its runners.
+#
+# What it can change: a `uses:` line in .github/workflows. azure/login is pinned to a commit with
+# its version in a comment; GitHub's changelog of 2022-10-31 says Dependabot updates that comment
+# with the commit. Not seen here yet.
+# What it cannot: the image a job runs on (`runs-on: ubuntu-24.04`) and the version of
+# actionlint that ci.yml downloads. Both move by hand.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns:
+          - "*"
+    ignore:
+      # A new major of these four is left alone on purpose. actionlint 1.7.12, which ci.yml runs
+      # on the workflows, checks the inputs a step passes only for the action versions it knows.
+      # Measured on 2026-10-03 with an input that does not exist: it reports it for checkout@v6,
+      # setup-dotnet@v5, setup-node@v6, setup-python@v6 and upload-artifact@v7, and says nothing
+      # for checkout@v7, setup-dotnet@v6, setup-node@v7 and setup-python@v7. On those the lint
+      # would stay green and check nothing.
+      #
+      # When ACTIONLINT_VERSION in ci.yml moves, give each action below its next major and an
+      # input that does not exist: if the linter reports the input, drop the entry.
+      - dependency-name: actions/checkout
+        update-types: ["version-update:semver-major"]
+      - dependency-name: actions/setup-dotnet
+        update-types: ["version-update:semver-major"]
+      - dependency-name: actions/setup-node
+        update-types: ["version-update:semver-major"]
+      - dependency-name: actions/setup-python
+        update-types: ["version-update:semver-major"]
