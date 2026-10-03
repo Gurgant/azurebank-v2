@@ -42,6 +42,15 @@ public class DemoRefusalExceptionTests
         copyLimit.Message.Should().Be(DemoRefusalException.CopyLimitDetail);
         new[] { poolEmpty.Message, dailyLimit.Message, copyLimit.Message }
             .Should().OnlyHaveUniqueItems("each refusal tells the visitor something different to do");
+
+        // The sentences are on the wire too, as each answer's detail: a word changed is a changed
+        // answer, so each is held by its text and not only by its constant.
+        DemoRefusalException.PoolEmptyDetail.Should().Be(
+            "All demo copies are in use right now. Please try again later.");
+        DemoRefusalException.DailyLimitDetail.Should().Be(
+            "This network has used its demo copies for today. Please try again later.");
+        DemoRefusalException.CopyLimitDetail.Should().Be(
+            "This demo copy has reached its limit of changes. Start over to get a fresh copy.");
     }
 
     [Fact]
@@ -82,6 +91,7 @@ public class DemoRefusalExceptionTests
         closed.ErrorCode.Should().Be(ErrorCodes.RegistrationClosed);
         ErrorCodes.RegistrationClosed.Should().Be("REGISTRATION_CLOSED");
         closed.Message.Should().Be(RegistrationClosedException.Detail);
+        RegistrationClosedException.Detail.Should().Be("Registration is closed on this demo.");
         closed.Details.Should().BeNull();
     }
 }
