@@ -80,9 +80,10 @@ public static class ServiceCollectionExtensions
         // Register orchestrator
         services.AddScoped<SeederOrchestrator>();
 
-        // The demo's settings, validated with the PIN pepper above before any command runs. This
-        // CLI never starts the host, so .ValidateOnStart() fires only when the start-up validator
-        // is run by hand.
+        // The demo's settings. This CLI never starts the host, so .ValidateOnStart() fires only when
+        // the start-up validator is run by hand, and PinPepperIsUsable below runs it: a command that
+        // asks it refuses a demo setting out of range as it refuses the pepper, exit 2, before any
+        // database work. `seed` and `reset` ask it; `migrate` reads neither and does not.
         services.AddOptions<DemoOptions>()
             .Bind(configuration.GetSection(DemoOptions.SectionName))
             .ValidateOnStart();
@@ -99,12 +100,14 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Whether the PIN pepper keyring passes the shared validator, with the refusal logged when it
-    /// does not. <c>seed</c> and <c>reset</c> ask before they open anything: a false means exit 2.
+    /// Whether the PIN pepper keyring passes the shared validator, and the demo's settings theirs,
+    /// with the refusal logged when one does not. <c>seed</c> and <c>reset</c> ask before they open
+    /// anything: a false means exit 2.
     /// </summary>
     /// <remarks>
-    /// The failures name keys and lengths only (<c>PinHashingOptionsValidator</c>), never a value,
-    /// so they are printed as they are, without the exception's stack.
+    /// The pepper's failures name keys and lengths only (<c>PinHashingOptionsValidator</c>), never a
+    /// value. The demo's name a key and the number it holds (<c>DemoOptionsValidator</c>), which is
+    /// no secret. So they are printed as they are, without the exception's stack.
     /// </remarks>
     public static bool PinPepperIsUsable(this IServiceProvider services, ILogger logger, string command)
     {
