@@ -71,6 +71,12 @@ public sealed record PoolRunSummary
     /// <summary>Users that belong to no copy.</summary>
     public int ForeignUsers { get; init; }
 
+    /// <summary>
+    /// The run found users and not one pool row, the signature of a database that is not the
+    /// demo's, and wrote nothing.
+    /// </summary>
+    public bool StoppedOnTheWrongDatabase { get; init; }
+
     /// <summary>Whether the day's claims limited the top-up.</summary>
     public bool Ceiling { get; init; }
 

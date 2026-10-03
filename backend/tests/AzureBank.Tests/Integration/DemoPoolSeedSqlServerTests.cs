@@ -942,7 +942,8 @@ public sealed class DemoPoolSeedSqlServerTests
 
         (summary.RowsAtStart, summary.Tombstones, summary.ForeignUsers).Should().Be((0, 1, 1), "ARRANGE: a record, no live row, one user outside");
         (summary.Seeded, summary.Free, summary.ExitCode).Should().Be(
-            (2, 2, 13), "the pool is the demo's, so it is filled; the user that should not be there is what the exit code says");
+            (2, 2, 0), "the pool is the demo's, so it is filled; the user that should not be there is on the line, and recycle exits 13 for it");
+        summary.ToLine().Should().Contain(" foreignUsers=1 ");
     }
 
     [SqlServerFact]

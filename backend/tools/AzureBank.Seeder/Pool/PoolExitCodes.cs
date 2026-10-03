@@ -27,7 +27,10 @@ public static class PoolExitCodes
     /// <summary>A copy could not be built, and the pool ended below its target.</summary>
     public const int TopUpIncomplete = 12;
 
-    /// <summary>A user that belongs to no copy exists.</summary>
+    /// <summary>
+    /// A user that belongs to no copy exists. From <c>seed-pool</c>, only when there was no pool row
+    /// at all and so it wrote nothing (<see cref="ForSeedPool"/>).
+    /// </summary>
     public const int ForeignUsers = 13;
 
     /// <summary>At least one copy could not be deleted.</summary>
@@ -83,14 +86,24 @@ public static class PoolExitCodes
 
     /// <summary>The code <c>seed-pool</c> exits with.</summary>
     /// <remarks>
-    /// Only what the run itself did or found: a user outside every copy, else a top-up that came
-    /// up short. A pool that was low or empty when the run started is why <c>seed-pool</c> was
-    /// run, not a signal, and a one-shot service that exits non-zero stops the stack waiting for
-    /// it. A copy that failed while the target was still reached is not a signal either.
+    /// <para>
+    /// Only what the run itself did: it wrote nothing because the database held users and not one
+    /// pool row (13), else its top-up came up short (12). A pool that was low or empty when the run
+    /// started is why <c>seed-pool</c> was run, not a signal, and a one-shot service that exits
+    /// non-zero stops the stack waiting for it. A copy that failed while the target was still
+    /// reached is not a signal either.
+    /// </para>
+    /// <para>
+    /// NOR IS A USER OUTSIDE EVERY COPY BESIDE A POOL. The run fills the pool all the same and the
+    /// line counts the user (<c>foreignUsers</c>); <c>recycle</c>, the job that runs on a schedule,
+    /// exits 13 for it every run. Until 2026-10-03 <c>seed-pool</c> did too, and one account
+    /// registered through the app under <c>compose.demo.yaml</c> kept the API, which waits for that
+    /// one-shot, from starting again until the volume was removed.
+    /// </para>
     /// </remarks>
     public static int ForSeedPool(PoolRunSummary summary)
     {
-        if (summary.ForeignUsers > 0)
+        if (summary.StoppedOnTheWrongDatabase)
         {
             return ForeignUsers;
         }

@@ -211,7 +211,7 @@ public sealed class DemoCopyRecycler
         if (start.IsTheWrongDatabase)
         {
             // Every count but this one is 0: there is no pool row to count.
-            return Finish(new PoolRunSummary { Target = target, ForeignUsers = start.ForeignUsers });
+            return Finish(new PoolRunSummary { Target = target, ForeignUsers = start.ForeignUsers, StoppedOnTheWrongDatabase = true });
         }
 
         // "Limited" means copies were held back. A pool that already holds its full target had

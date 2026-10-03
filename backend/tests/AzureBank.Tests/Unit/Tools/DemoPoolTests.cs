@@ -392,17 +392,31 @@ public class DemoPoolTests
     }
 
     [Theory]
-    //          rows  was free target buildFailed foreign  code
-    [InlineData(30, 30, 49, 50, 1, 0, 12)] // a build failed and the pool is short
-    [InlineData(30, 30, 50, 50, 0, 1, 13)] // a user outside every copy
-    [InlineData(0, 0, 0, 50, 0, 4, 13)] // the wrong database: nothing was written
-    [InlineData(30, 30, 49, 50, 1, 1, 13)] // 13 before 12
-    public void SeedPool_ReportsOnlyWhatItDid_AShortTopUpOrForeignUsers(
-        int rowsAtStart, int freeAtStart, int free, int target, int buildFailed, int foreignUsers, int expected)
+    //          rows  was free target buildFailed foreign wrongDatabase code
+    [InlineData(30, 30, 49, 50, 1, 0, false, 12)] // a build failed and the pool is short
+    [InlineData(30, 30, 49, 50, 1, 1, false, 12)] // the same, beside a user outside every copy
+    [InlineData(0, 0, 0, 50, 0, 4, true, 13)] // the wrong database: nothing was written
+    public void SeedPool_ReportsOnlyWhatItDid_AShortTopUpOrTheWrongDatabase(
+        int rowsAtStart, int freeAtStart, int free, int target, int buildFailed, int foreignUsers, bool wrongDatabase, int expected)
     {
-        var summary = Run(rowsAtStart, freeAtStart, free, target, buildFailed, foreignUsers, deleteFailed: 0, ceiling: false);
+        var summary = Run(rowsAtStart, freeAtStart, free, target, buildFailed, foreignUsers, deleteFailed: 0, ceiling: false)
+            with { StoppedOnTheWrongDatabase = wrongDatabase };
 
         PoolExitCodes.ForSeedPool(summary).Should().Be(expected);
+    }
+
+    /// <summary>
+    /// CONTROL: a user outside every copy, beside a pool, is not <c>seed-pool</c>'s signal. It is
+    /// the one-shot a stack waits for, and the user is on its line and is <c>recycle</c>'s 13.
+    /// Recycle's own function, given the same counts, does answer 13.
+    /// </summary>
+    [Fact]
+    public void SeedPool_ExitsZero_BesideAPool_ThoughAUserOutsideEveryCopyExists()
+    {
+        var summary = Run(rowsAtStart: 30, freeAtStart: 30, free: 50, target: 50, buildFailed: 0, foreignUsers: 1, deleteFailed: 0, ceiling: false);
+
+        PoolExitCodes.ForSeedPool(summary).Should().Be(0);
+        PoolExitCodes.From(summary, lowMark: 20).Should().Be(13);
     }
 
     /// <summary>

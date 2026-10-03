@@ -120,15 +120,16 @@ public sealed class DemoCopyBuilder
         var start = await PoolCounts.ReadAsync(_context, _options, Now(), cancellationToken);
         if (start.IsTheWrongDatabase)
         {
-            return Summary(start, start, goal, new TopUpResult(0, []));
+            return Summary(start, start, goal, new TopUpResult(0, []), stoppedOnTheWrongDatabase: true);
         }
 
         var topUp = await BuildAsync(goal - start.Free, cancellationToken);
         var end = await PoolCounts.ReadAsync(_context, _options, Now(), cancellationToken);
-        return Summary(start, end, goal, topUp);
+        return Summary(start, end, goal, topUp, stoppedOnTheWrongDatabase: false);
     }
 
-    private static PoolRunSummary Summary(PoolCounts start, PoolCounts end, int target, TopUpResult topUp)
+    private static PoolRunSummary Summary(
+        PoolCounts start, PoolCounts end, int target, TopUpResult topUp, bool stoppedOnTheWrongDatabase)
     {
         var summary = new PoolRunSummary
         {
@@ -143,6 +144,7 @@ public sealed class DemoCopyBuilder
             BuildFailed = topUp.Failures.Count,
             Tombstones = end.Tombstones,
             ForeignUsers = start.ForeignUsers,
+            StoppedOnTheWrongDatabase = stoppedOnTheWrongDatabase,
             Failures = topUp.Failures,
         };
         return summary with { ExitCode = PoolExitCodes.ForSeedPool(summary) };

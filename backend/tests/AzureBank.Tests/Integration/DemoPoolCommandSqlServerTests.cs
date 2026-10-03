@@ -100,6 +100,44 @@ public sealed class DemoPoolCommandSqlServerTests
         (await db.Users.CountAsync()).Should().Be(1, "the one user that was there, and no other");
     }
 
+    [SqlServerFact]
+    public async Task BesideAPool_AUserOutsideEveryCopy_DoesNotStopSeedPool_AndRecycleReportsIt()
+    {
+        // A registration made through the app under compose.demo.yaml leaves such a user. seed-pool
+        // is the one-shot the API waits for, so an exit 13 there kept the API down until the volume
+        // was removed. It fills the pool and names the user on its line; recycle, the job that runs
+        // on a schedule, exits 13 for it, every run.
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        await database.BuildCopiesAsync(1);
+        await AddAUserOutsideEveryCopyAsync(database);
+        var log = new RecordingLoggerProvider();
+        database.Log = log;
+
+        var seeded = await SeedPoolCommand.RunAsync(database.Seeder(), copies: 2, CancellationToken.None);
+
+        using (new AssertionScope())
+        {
+            seeded.Should().Be(0, Output(log));
+            PoolLines(log).Should().ContainSingle().Which.Should().Be((
+                LogLevel.Information,
+                "pool: free=2 was=1 claimed=0 claims24h=0 clientsAtCap=0 seeded=1 "
+                + "deleted(expired=0 hardStop=0 staleFree=0 failed=0) swept(idempotency=0 grants=0) "
+                + "tombstones=0 foreignUsers=1 ceiling=no result=PoolOk"));
+        }
+
+        // TWIN: the same database, the scheduled command.
+        var recycled = await RecycleCommand.RunAsync(database.Seeder(), CancellationToken.None);
+
+        using var all = new AssertionScope();
+        recycled.Should().Be(13, Output(log));
+        PoolLines(log).Last().Should().Be((
+            LogLevel.Warning,
+            "pool: free=2 was=2 claimed=0 claims24h=0 clientsAtCap=0 seeded=0 "
+            + "deleted(expired=0 hardStop=0 staleFree=0 failed=0) swept(idempotency=0 grants=0) "
+            + "tombstones=0 foreignUsers=1 ceiling=no result=ForeignUsers"));
+        (await UsersAsync(database)).Should().Be(7, "the two copies' six users and the one outside them: nothing of it was deleted");
+    }
+
     [SqlServerTheory]
     [InlineData("seed-pool")]
     [InlineData("recycle")]
