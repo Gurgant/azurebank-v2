@@ -110,16 +110,20 @@ public class DemoClaimService(
                   pay. Sorted here, by code point, so the order is the same on every database.
 
                   READ BEFORE THIS CLAIM WRITES A USER, because it is the one read that can touch
-                  another copy's users: on a small table the database answers it with a scan of
-                  every user. Run after the password was written, two claims at once each held
-                  their own owner's row and waited to read the other's. Measured on SQL Server
-                  with READ_COMMITTED_SNAPSHOT off, eight claims at once on a pool of five: three
-                  runs of three ended with claims answered 503 for error 1205 (three of the eight
-                  in one run, four in another), and both deadlock graphs that were read named this
-                  statement on both sides, each waiting for a key of PK_AspNetUsers the other
-                  held. Here the claim holds its pool row and no user's, and from the next
-                  statement on it reads no user but its own owner, by key: a claim that holds a
-                  user's row never waits for another's.
+                  another copy's users: the database is free to answer it by reading every user.
+                  Run after the password was written, two claims at once each held their own
+                  owner's row and waited to read the other's. Measured on SQL Server (LocalDB)
+                  with READ_COMMITTED_SNAPSHOT off, by running
+                  DemoClaimSqlServerTests.EightParallelClaims_... (eight claims at once on a pool
+                  of five): three runs of three ended with claims answered 503 for error 1205
+                  (three of the eight in one run, four in another). Of the 18 deadlock reports
+                  the runs made with that order left in the server's system_health session
+                  (xml_deadlock_report), 17 show this statement on every side, each waiting for a
+                  key of PK_AspNetUsers another held.
+
+                  Here the claim holds its pool row and no user's, and from the next statement on
+                  it reads no user but its own owner, by key: a claim that holds a user's row
+                  never waits for another's.
                   DemoClaimSqlServerTests.OnceAClaimHasWrittenAUser_... holds the order, and
                   EightParallelClaims_... runs it, in its row without row versioning.
                 */
@@ -256,12 +260,15 @@ public class DemoClaimService(
     /// (<c>IX_DemoCopies_Free</c>: <c>CreatedAt</c>, and the key). Asked for the owner as well, the
     /// database read each candidate in two steps, its index entry and then its row, holding the
     /// first while it waited for the second; a claim taking that copy holds the row and then
-    /// waits for the index entry, to remove it. Measured on SQL Server with READ_COMMITTED_SNAPSHOT
-    /// off, twelve claims at once on a pool of twenty: in 2 runs of 36, one or two claims were
-    /// answered 503 for error 1205, and each deadlock graph showed this read holding a key of
-    /// IX_DemoCopies_Free and waiting for one of PK_DemoCopies, against the conditional update
-    /// holding that one and waiting for the other. Read from the index alone, it holds nothing while
-    /// it waits. <c>DemoClaimSqlServerTests.TheCandidatesRead_...</c> holds the columns.
+    /// waits for the index entry, to remove it. Measured on SQL Server (LocalDB) with
+    /// READ_COMMITTED_SNAPSHOT off, by running
+    /// <c>DemoClaimSqlServerTests.TwelveParallelClaims_...</c> (twelve claims at once on a pool of
+    /// twenty): in 2 runs of 36, one or two claims were answered 503 for error 1205, and the three
+    /// deadlock reports those runs left in the server's system_health session
+    /// (xml_deadlock_report) show this read holding a key of IX_DemoCopies_Free and waiting for one
+    /// of PK_DemoCopies, against the conditional update holding that one and waiting for the other.
+    /// Read from the index alone, it holds nothing while it waits.
+    /// <c>DemoClaimSqlServerTests.TheCandidatesRead_...</c> holds the columns.
     /// </para>
     /// </remarks>
     private async Task<List<Candidate>> ReadCandidatesAsync(DateTime now, int maxFreeAgeHours, CancellationToken ct)

@@ -18,12 +18,13 @@ namespace AzureBank.Tests.Fixtures;
 /// </summary>
 /// <remarks>
 /// <para>
-/// For the tests of the claim that run on the InMemory provider, where the Seeder's builder cannot
-/// run: it opens a transaction through a retrying strategy and ends with set-based statements. What
-/// the claim reads of a copy is all here: the pool row, the owner without a password, and the two
-/// contacts carrying the copy's id. Its accounts and its ledger are not, and no test that uses
-/// this looks at them; the copies the builder makes are what the SQL Server tests claim
-/// (<see cref="DemoPoolDatabase"/>).
+/// For the tests of the claim that run on the InMemory provider. The Seeder's builder is not
+/// what makes these: it runs in the Seeder's own container, against SQL Server, and dates a
+/// copy's ledger with set-based statements, which the API's own code never sends to the InMemory
+/// provider. What the claim reads of a copy is all here: the pool row, the owner without a
+/// password, and the two contacts carrying the copy's id. Its accounts and its ledger are not, and
+/// no test that uses this looks at them; the copies the builder makes are what the SQL Server
+/// tests claim (<see cref="DemoPoolDatabase"/>).
 /// </para>
 /// <para>
 /// The identities are drawn by the Seeder's own <see cref="DemoCredentials"/>, so a hand-made

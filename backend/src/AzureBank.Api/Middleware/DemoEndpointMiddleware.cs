@@ -13,7 +13,8 @@ namespace AzureBank.Api.Middleware;
 /// <b>404, as a path that matches no route.</b> A deployment that is not the demo should tell a
 /// caller nothing about the demo, so the response is left empty for the status-code pages to fill,
 /// which is what they do for a path with no route, and what <see cref="TokenRoadMiddleware"/> does
-/// for a caller off the road. The two answers are the same but for the trace id.
+/// for a caller off the road. The two answers are the same but for the trace id
+/// (<c>DemoModeEndpointTests</c> compares them through the host).
 /// </para>
 /// <para>
 /// <b>Before model binding.</b> The marker is read from the endpoint's metadata, so the 404 does
