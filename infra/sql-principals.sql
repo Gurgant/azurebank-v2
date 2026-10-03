@@ -181,10 +181,14 @@ IF (SELECT COUNT(*) FROM sys.database_role_members WHERE member_principal_id > 4
 
 -- Expected: CONNECT for dbo and for the two users, and what the engine grants to public (two
 -- database permissions about encryption key metadata, and its grants on system objects).
+-- A permission on an object is printed with the object's schema and name, read from its ID; the
+-- ID itself is not printed. Its own "(no name)" keeps the rest of the line when no name is found.
 SET @found = (SELECT STRING_AGG(CONVERT(nvarchar(max), ISNULL(d.state_desc COLLATE DATABASE_DEFAULT + N' '
                                 + d.permission_name COLLATE DATABASE_DEFAULT + N' ('
                                 + d.class_desc COLLATE DATABASE_DEFAULT + N') to '
-                                + QUOTENAME(USER_NAME(d.grantee_principal_id)), N'(no name)')), N', ')
+                                + QUOTENAME(USER_NAME(d.grantee_principal_id)), N'(no name)')
+                                + IIF(d.class = 1, N' on ' + ISNULL(QUOTENAME(OBJECT_SCHEMA_NAME(d.major_id)) + N'.'
+                                                                   + QUOTENAME(OBJECT_NAME(d.major_id)), N'(no name)'), N'')), N', ')
               FROM sys.database_permissions AS d
               WHERE NOT (d.class = 0 AND d.type = 'CO' AND d.state = 'G'
                          AND USER_NAME(d.grantee_principal_id) IN (N'dbo', N'azurebank_app', N'azurebank_migrator'))

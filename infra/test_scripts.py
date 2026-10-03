@@ -1154,6 +1154,24 @@ class UsersFileTests(unittest.TestCase):
         self.assertEqual(lists.count('SET @found = (SELECT STRING_AGG('), 6)
         self.assertEqual(lists.count('IF @found IS NOT NULL'), 6)
 
+    def test_a_refused_permission_on_an_object_names_the_object_and_never_its_id(self):
+        # A grant to public on a table was printed "GRANT SELECT (OBJECT_OR_COLUMN) to [public]"
+        # (LocalDB), which does not say on what. A permission on an object (class 1) now ends with
+        # " on [schema].[name]", both read from the object's ID by the two functions that name it,
+        # and the ID itself is printed nowhere. A name that cannot be read gives "(no name)" there
+        # and leaves the rest of the line.
+        flat = ' '.join(self.code.split())
+        start = flat.index('ISNULL(d.state_desc')
+        printed = flat[start:flat.index(' FROM sys.database_permissions AS d', start)]
+        self.assertEqual(printed,
+                         "ISNULL(d.state_desc COLLATE DATABASE_DEFAULT + N' ' + d.permission_name COLLATE DATABASE_DEFAULT "
+                         "+ N' (' + d.class_desc COLLATE DATABASE_DEFAULT + N') to ' "
+                         "+ QUOTENAME(USER_NAME(d.grantee_principal_id)), N'(no name)') "
+                         "+ IIF(d.class = 1, N' on ' + ISNULL(QUOTENAME(OBJECT_SCHEMA_NAME(d.major_id)) + N'.' "
+                         "+ QUOTENAME(OBJECT_NAME(d.major_id)), N'(no name)'), N'')), N', ')")
+        self.assertEqual(re.findall(r'(\w+)\(d\.major_id\)', printed), ['OBJECT_SCHEMA_NAME', 'OBJECT_NAME'])
+        self.assertEqual(printed.count('major_id'), 2)
+
     def test_the_roles_it_gives_are_the_five_and_no_other(self):
         self.assertEqual(sorted(re.findall(r'ALTER ROLE \[(\w+)\] ADD MEMBER \[(\w+)\];', self.code)),
                          [('db_datareader', 'azurebank_app'), ('db_datareader', 'azurebank_migrator'),
