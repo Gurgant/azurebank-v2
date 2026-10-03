@@ -54,8 +54,9 @@ public static class ServiceCollectionExtensions
 
         // PIN-hash pepper keyring (ADR-0011). MUST match the API's Security:PinPepper,
         // else seeded PINs won't verify. Same shared validator as the API. This CLI never
-        // starts the host, so .ValidateOnStart() alone would not fire: `seed` and `reset`
-        // run the validator themselves, before any database work (PinPepperIsUsable below).
+        // starts the host, so .ValidateOnStart() alone would not fire: `seed`, `reset`,
+        // `seed-pool` and `recycle` run the validator themselves, before any database work
+        // (PinPepperIsUsable below).
         // Until 2026-10-01 Program.cs ran it ahead of the command line, for every command.
         services.AddOptions<PinHashingOptions>()
             .Bind(configuration.GetSection(PinHashingOptions.SectionName))
@@ -83,7 +84,8 @@ public static class ServiceCollectionExtensions
         // The demo's settings. This CLI never starts the host, so .ValidateOnStart() fires only when
         // the start-up validator is run by hand, and PinPepperIsUsable below runs it: a command that
         // asks it refuses a demo setting out of range as it refuses the pepper, exit 2, before any
-        // database work. `seed` and `reset` ask it; `migrate` reads neither and does not.
+        // database work. `seed`, `reset`, `seed-pool` and `recycle` ask it; `migrate` reads
+        // neither and does not.
         services.AddOptions<DemoOptions>()
             .Bind(configuration.GetSection(DemoOptions.SectionName))
             .ValidateOnStart();
@@ -101,8 +103,8 @@ public static class ServiceCollectionExtensions
 
     /// <summary>
     /// Whether the PIN pepper keyring passes the shared validator, and the demo's settings theirs,
-    /// with the refusal logged when one does not. <c>seed</c> and <c>reset</c> ask before they open
-    /// anything: a false means exit 2.
+    /// with the refusal logged when one does not. <c>seed</c>, <c>reset</c>, <c>seed-pool</c> and
+    /// <c>recycle</c> ask before they open anything: a false means exit 2.
     /// </summary>
     /// <remarks>
     /// The pepper's failures name keys and lengths only (<c>PinHashingOptionsValidator</c>), never a

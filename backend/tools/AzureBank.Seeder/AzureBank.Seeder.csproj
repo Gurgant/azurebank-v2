@@ -16,6 +16,8 @@
       dotnet run [project tools/AzureBank.Seeder] migrate
       dotnet run [project tools/AzureBank.Seeder] seed
       dotnet run [project tools/AzureBank.Seeder] reset [confirm]
+      dotnet run [project tools/AzureBank.Seeder] seed-pool [copies]
+      dotnet run [project tools/AzureBank.Seeder] recycle
   -->
 
   <PropertyGroup>

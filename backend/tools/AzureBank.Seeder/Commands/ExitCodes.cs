@@ -4,6 +4,10 @@ namespace AzureBank.Seeder.Commands;
 /// What the tool's process exits with. A job runner acts on this number and on nothing else, so
 /// each value says whether running the command again can help (README.md beside the project).
 /// </summary>
+/// <remarks>
+/// <c>seed-pool</c> and <c>recycle</c> also end with a code from 10 to 15: the run finished, and
+/// the code names the count somebody should read (<c>Pool/PoolExitCodes.cs</c>).
+/// </remarks>
 public static class ExitCodes
 {
     /// <summary>The command did its work. Running it again is safe and changes nothing.</summary>
@@ -18,9 +22,10 @@ public static class ExitCodes
 
     /// <summary>
     /// The command refused before any connection was opened: a setting it needs is missing, too
-    /// short or unreadable, the connection string names no database, <c>migrate</c> was given a
-    /// connect timeout of 0, or the command was aimed at a server it must not touch. Running it
-    /// again changes nothing until the configuration does.
+    /// short, out of range or unreadable, the connection string names no database, <c>migrate</c>
+    /// was given a connect timeout of 0, the command was aimed at a server it must not touch, or
+    /// the demo flag is not what the command needs (<c>seed-pool</c> and <c>recycle</c> run only
+    /// with it on). Running it again changes nothing until the configuration does.
     /// </summary>
     public const int Refused = 2;
 }

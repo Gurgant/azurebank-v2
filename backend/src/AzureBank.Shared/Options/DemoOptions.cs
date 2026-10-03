@@ -41,6 +41,12 @@ public class DemoOptions
 /// <summary>The "Demo:Pool" section.</summary>
 public class DemoPoolOptions
 {
+    /// <summary>
+    /// The most free copies <see cref="TargetFree"/> may ask for, and the most <c>seed-pool</c>
+    /// tops up to.
+    /// </summary>
+    public const int TargetFreeCeiling = 500;
+
     /// <summary>Free copies the pool is topped up to. 50.</summary>
     public int TargetFree { get; set; } = 50;
 
@@ -134,7 +140,7 @@ public sealed class DemoOptionsValidator : IValidateOptions<DemoOptions>
         }
 
         Range(CopyLifetimeHours, options.CopyLifetimeHours, 1, 168);
-        Range(TargetFree, options.Pool.TargetFree, 1, 500);
+        Range(TargetFree, options.Pool.TargetFree, 1, DemoPoolOptions.TargetFreeCeiling);
         Range(MaxFreeAgeHours, options.Pool.MaxFreeAgeHours, 1, 720);
         Range(MaxPerClientPerDay, options.Claim.MaxPerClientPerDay, 1, 1000);
         Range(MaxWrites, options.Copy.MaxWrites, 10, 100_000);
