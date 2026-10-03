@@ -3,7 +3,7 @@
 **Symptom:** a run of `recycle` ended with a code from 10 to 15, or its line shows `hardStop` or
 `failed` above 0, or it ended with no line at all, with exit 1 or 2. Or the demo's database is
 filling up: on Azure it is Basic, 2 GB at most (`infra/main.bicep`), and none of the
-deployment's four alerts watches its size (ADR-0061, decision 10).
+deployment's alerts watches its size (ADR-0061, decision 10).
 
 **Why this runbook exists:** a run decides everything from the rows as they are, and says what it
 found in one line and one exit code

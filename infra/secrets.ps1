@@ -185,7 +185,7 @@ if ($DeployApp) {
     if ($ImageTag -cnotmatch '^[0-9a-f]{40}$') { throw 'Pass -ImageTag with the full SHA of the commit whose three images are published. Nothing was written.' }
     $parameters['imageTag'] = @{ value = $ImageTag }
 
-    # Where the four alerts write. The report says which source, never the address.
+    # Where the alerts write. The report says which source, never the address.
     $address = $AlertEmail
     $source = 'from -AlertEmail'
     if (-not $address) {

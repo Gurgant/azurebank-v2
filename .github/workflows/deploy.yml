@@ -4,7 +4,8 @@ name: Deploy
 #   build-push  builds the three images of this commit and pushes them to GHCR, tagged with its SHA.
 #               A tag is written once: an image that is already there is left as it is.
 #   deploy      runs the database migration, then moves the app to those images, then checks the
-#               address. If the check fails, the app is put back on the images it ran before.
+#               address. If the check fails, the script tries to put the app back on the images
+#               it ran before, and the run says so if that fails too.
 # The infrastructure itself is never created or changed from here.
 
 on:
@@ -76,7 +77,8 @@ jobs:
               docker build --platform linux/amd64 --file "$2" --tag "$image" .
               docker push "$image"
             elif [[ "$FIRST_PUBLICATION" == 'true' ]] && grep -qiE 'denied|name unknown' <<<"$answer"; then
-              # A package that does not exist yet is answered like a private one. The push below is
+              # A package that does not exist yet may be answered like a private one. (On 2026-10-03
+              # the first publication took the branch above, with no tick.) The push below is
               # refused if the package exists out of this workflow's reach, so nothing is overwritten.
               echo "The registry does not say whether $image exists; first_publication is ticked: publishing."
               docker build --platform linux/amd64 --file "$2" --tag "$image" .
