@@ -48,7 +48,7 @@ jobs:
           echo "::error::Images are published from main only."
           exit 1
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
       - name: Build and push the three images of this commit
@@ -144,7 +144,7 @@ jobs:
           done
           exit "$wrong"
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
       - name: Check that the three images can be pulled without signing in
