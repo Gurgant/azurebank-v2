@@ -9,8 +9,8 @@ namespace AzureBank.Api.Attributes;
 /// A marker rather than a check inside the action, for the reason
 /// <see cref="TokenEndpointAttribute"/> is one: the refusal happens in middleware before model
 /// binding, so a deployment with the demo off answers the same 404 whatever the request's body.
-/// Checked in the action, a malformed body would be answered 400 and a form post 415 first, and
-/// either tells the caller that the endpoint is there.
+/// Checked in the action, a malformed body would be answered 400 and a form post 415 first:
+/// answers of an endpoint that, on that deployment, is not there to give them.
 /// </remarks>
 [AttributeUsage(AttributeTargets.Method)]
 public sealed class DemoOnlyAttribute : Attribute

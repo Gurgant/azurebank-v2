@@ -94,7 +94,7 @@ public sealed class DemoModeEndpointTests : IDisposable
             // And everything else: status, media type, and each member but the trace id.
             (await ShapeOfAsync(claim)).Should().Be(
                 await ShapeOfAsync(unknown),
-                "a deployment that is not the demo tells a caller nothing a path with no route would not");
+                "with the demo off, a claim is answered as a path with no route is");
         }
     }
 
@@ -126,6 +126,44 @@ public sealed class DemoModeEndpointTests : IDisposable
             HttpStatusCode.NotFound,
             "{0}: with the demo off the endpoint is not there, so nothing reads the body ({1})",
             what, await response.Content.ReadAsStringAsync());
+    }
+
+    public static TheoryData<bool, string> OtherMethods()
+    {
+        var rows = new TheoryData<bool, string>();
+        foreach (var demoOn in new[] { false, true })
+        {
+            foreach (var method in new[] { "GET", "HEAD", "PUT", "PATCH", "DELETE", "OPTIONS" })
+            {
+                rows.Add(demoOn, method);
+            }
+        }
+
+        return rows;
+    }
+
+    // CONTROL: green before this change. It pins what the host answers today, so that it is known:
+    // the 404 above hides the endpoint, which is POST, and not its path. Another method on the path
+    // never reaches the action, so no marker of the action's is read; it is answered 405 and told
+    // which method the path takes, with the demo off or on, as on every token endpoint.
+    [Theory]
+    [MemberData(nameof(OtherMethods))]
+    public async Task AnotherMethodOnTheClaimsPath_Is405WhateverTheFlag_AsOnEveryTokenEndpoint(bool demoOn, string method)
+    {
+        using var client = (demoOn ? _demo : _ordinary).CreateClient();
+
+        using var claim = await client.SendAsync(new HttpRequestMessage(new HttpMethod(method), ClaimPath));
+        using var login = await client.SendAsync(new HttpRequestMessage(new HttpMethod(method), "/api/auth/login"));
+        using var unknown = await client.SendAsync(new HttpRequestMessage(new HttpMethod(method), "/api/auth/no-such-endpoint"));
+
+        using (new AssertionScope())
+        {
+            claim.StatusCode.Should().Be(HttpStatusCode.MethodNotAllowed);
+            claim.Content.Headers.Allow.Should().Equal("POST");
+            login.StatusCode.Should().Be(HttpStatusCode.MethodNotAllowed, "CONTROL: sign-in's path answers another method the same way");
+            login.Content.Headers.Allow.Should().Equal("POST");
+            unknown.StatusCode.Should().Be(HttpStatusCode.NotFound, "CONTROL: a path with no route is 404 under any method");
+        }
     }
 
     [Fact]

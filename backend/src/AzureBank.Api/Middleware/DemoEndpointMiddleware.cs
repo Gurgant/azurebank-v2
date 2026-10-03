@@ -10,11 +10,19 @@ namespace AzureBank.Api.Middleware;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>404, as a path that matches no route.</b> A deployment that is not the demo should tell a
-/// caller nothing about the demo, so the response is left empty for the status-code pages to fill,
+/// <b>404, as a path that matches no route.</b> A deployment that is not the demo should not
+/// answer for the demo's endpoints, so the response is left empty for the status-code pages to fill,
 /// which is what they do for a path with no route, and what <see cref="TokenRoadMiddleware"/> does
 /// for a caller off the road. The two answers are the same but for the trace id
 /// (<c>DemoModeEndpointTests</c> compares them through the host).
+/// </para>
+/// <para>
+/// <b>The endpoint is hidden, not its path.</b> Another method on a demo-only endpoint's path
+/// never reaches that endpoint, so no marker is read: the answer is 405 with <c>Allow</c> naming
+/// the endpoint's method, with the demo off or on, as the path of sign-in answers
+/// (<c>DemoModeEndpointTests.AnotherMethodOnTheClaimsPath_...</c> pins it, for six methods). A
+/// path with no route is 404 under each of them, so the 405 tells that this build has the
+/// endpoint. It does not tell whether the demo is on.
 /// </para>
 /// <para>
 /// <b>Before model binding.</b> The marker is read from the endpoint's metadata, so the 404 does
