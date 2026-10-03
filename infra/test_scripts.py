@@ -334,8 +334,13 @@ class SecretsScriptTests(ScriptCase):
                                       state=state)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 written = (self.folder / 'parameters.json').read_text(encoding='utf-8')
-                for word in ('password', 'sql', 'connection', 'Server='):
+                for word in ('password', 'connection', 'Server='):
                     self.assertNotIn(word.lower(), written.lower())
+                # Three letters can occur by chance in a random key, and did ("...ulsqlw="): "sql"
+                # is looked for in every name and in every value but the seven generated ones.
+                parameters = json.loads(written)['parameters']
+                self.assertNotIn('sql', json.dumps({name: None if name in SEVEN else entry
+                                                    for name, entry in parameters.items()}).lower())
                 # The job holds one secret, its connection string: nothing here asks for it.
                 self.assertEqual([call for call in self.calls() if 'jobs/' in ' '.join(call)], [])
 
