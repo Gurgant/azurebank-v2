@@ -54,8 +54,15 @@ internal sealed record HandMadeDemoCopy(Guid Id, ApplicationUser Owner, Applicat
         await db.SaveChangesAsync();
 
         var owner = await CreateUserAsync(users, ownerId, copyId, cast.Owner, pinHash);
-        var jane = await CreateUserAsync(users, Guid.CreateVersion7(), copyId, cast.Jane, pinHash);
+
+        // Mike before Jane, so that the order the two contacts are added in is not the sorted one.
+        // Added Jane first, a claim that did not sort its contacts still answered them in order on
+        // the InMemory provider, and DemoModeEndpointTests.OnAFreeCopy_... could not fail for it.
+        // Added Mike first, it does: shown by taking the claim's sort out once.
         var mike = await CreateUserAsync(users, Guid.CreateVersion7(), copyId, cast.Mike, pinHash);
+        var jane = await CreateUserAsync(users, Guid.CreateVersion7(), copyId, cast.Jane, pinHash);
+        string.CompareOrdinal(mike.AzureTag, jane.AzureTag).Should().BePositive(
+            "ARRANGE: the contact added first sorts second ({0}, {1})", mike.AzureTag, jane.AzureTag);
         return new HandMadeDemoCopy(copyId, owner, jane, mike);
     }
 
