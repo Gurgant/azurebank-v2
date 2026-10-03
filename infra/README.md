@@ -14,7 +14,8 @@ that the file did not expect. Both checks were narrowed, and the file then made 
 Each signed in from the probe job of step 7 with the roles expected, a token for the other
 identity was refused, and a SQL sign-in was refused for the reason expected. The what-if of
 step 9 could not name the app: the template's own check of the app's values hid it. The check
-was moved for that, and that what-if is to be read again
+was moved for that, and the same what-if, run again that day on the changed template, listed the
+nine resources expected and nothing it could not work out
 ([Measured on Azure](#measured-on-azure)). What ran there before, on 2026-10-02, is a throwaway
 trial: a resource group in the same subscription and region, created and deleted that day, in
 which requests of the shapes this folder makes were sent by hand, with `az rest` and go-sqlcmd,
@@ -117,7 +118,7 @@ of them is sent without its values: seen offline and on a local engine
 ([Checking these files](#checking-these-files)), not yet on Azure. The check used to be the app's
 name, through `fail()`. A what-if works out no expression that reads a secure parameter, and on
 2026-10-03 it could name neither the app nor the role assignment on it (step 9). Now the name is
-the plain `azurebank`.
+the plain `azurebank`, and the same what-if, run again that day, named both.
 
 The environment variables of the two containers are the ones `compose.yaml` sets, plus the one
 Serilog setting on the BFF. The connection limits are the hosts' own defaults (ADR-0058); the
@@ -524,10 +525,11 @@ Firewall rules now: AllowAzureServices.
 An exit code of 0 without both lines is not a pass, and the script says so. These are the final
 users, not throwaway ones.
 
-On 2026-10-03, once its two checks were narrowed, the file made the two users. Its two runs here
-were noted at the time as ending with exit 0 and these lines; their output is not in the
-session's record. The file's run inside step 8 is: these two lines and this rule list, and step 7
-saw each user sign in with its roles ([Measured on Azure](#measured-on-azure)).
+On 2026-10-03, once its two checks were narrowed, the file made the two users. Both runs here
+ended with exit 0, these two lines and this rule list; its run inside step 8 printed them too,
+and step 7 saw each user sign in with its roles ([Measured on Azure](#measured-on-azure)). The
+second run printed what the first did. That shows the lists, not that the run changed nothing:
+the file prints the same lines when it has replaced a user.
 
 **The rule that goes with this file: run nothing else as administrator in this database.** The
 file runs as the owner of the database, and so does a trigger that one of its statements fires.
@@ -690,10 +692,10 @@ was gone ([Measured on Azure](#measured-on-azure)).
 ./infra/sql-principals.ps1 -ProveSqlSignInRefused
 ```
 
-After the users file has run once more (nothing changes), and while the firewall still lets this
-machine in, the script tries one SQL sign-in with a name and a value made up on the spot, which
-exist nowhere. The value travels in the tool's own environment variable for that one start, never
-on a command line. It passes only if the server's refusal says
+After the users file has run once more (it should change nothing), and while the firewall still
+lets this machine in, the script tries one SQL sign-in with a name and a value made up on the
+spot, which exist nowhere. The value travels in the tool's own environment variable for that one
+start, never on a command line. It passes only if the server's refusal says
 `Azure Active Directory only authentication is enabled`:
 
 ```text
@@ -735,7 +737,9 @@ the role definition's, where the function reads a type. The template's check of 
 had made the app's name an expression that reads the secure parameters, and a what-if works out
 none of those. The check is now in `app-inputs.bicep` and the name is `azurebank`; worked out
 offline the same way, the template names all nine ([Checking these files](#checking-these-files)).
-The what-if itself is to be read again ([Measured on Azure](#measured-on-azure)).
+Run again on the changed template later that day, and answered "no" again, this what-if listed
+what is expected above: nine to create, the same four `Modify` lines, nothing `Unsupported`,
+nothing to delete, and no line for the check ([Measured on Azure](#measured-on-azure)).
 
 `secrets.ps1` takes the address the alerts write to from `-AlertEmail`; without it from the
 variable `AZUREBANK_ALERT_EMAIL`; without that from the address the deployed alerts already use;
@@ -761,9 +765,9 @@ Then the reads of step 1 (one firewall rule, no job, nothing attached), `Test-Pa
 az logout
 ```
 
-On 2026-10-03 the probe job's five lines were in the workspace when they were read, at 02:40Z,
-6 min 52 s to 8 min 51 s after they were written; nobody looked earlier. The reads of step 1 gave
-what they should ([Measured on Azure](#measured-on-azure)).
+On 2026-10-03 the session's record holds one read of the workspace, at 02:40:28Z: the probe
+job's five lines were there, 6 min 52 s to 8 min 51 s after they were written. The reads of
+step 1 gave what they should ([Measured on Azure](#measured-on-azure)).
 
 ### Between the sessions: GitHub
 
@@ -1801,17 +1805,19 @@ The same day, this folder's own script and file, on the database `AzureBank` tha
 
 **The first deployment, steps 6 to 10 (2026-10-03): the users, the sign-ins, the app's what-if**
 
-The same session, with both checks narrowed. Each line is what the step printed, but where it
-says otherwise. One run each.
+The same session, with both checks narrowed. Each line is what one run of the step printed,
+unless the line says otherwise.
 
-- Step 6: the users file ran twice and made the two users. Both runs were noted at the time as
-  ending with exit 0, the two lines expected and the rule list `AllowAzureServices` alone; their
-  output is not in the session's record. The record holds the file's run inside step 8:
+- Step 6: the users file ran twice and made the two users. Each run printed go-sqlcmd 1.10.0
+  signing in with `ActiveDirectoryAzCli`, that the server refused this machine's address and
+  that the script was allowing it until the users were created, then
   `azurebank_app: db_datareader, db_datawriter; ID as asked: 1`,
-  `azurebank_migrator: db_datareader, db_datawriter, db_ddladmin; ID as asked: 1`, and
-  `Firewall rules now: AllowAzureServices.`, the script having allowed this machine's address
-  from the server's refusal and deleted that rule again. The file prints those lines only when
-  its lists before the commit are clean, so they were, with the two users in place.
+  `azurebank_migrator: db_datareader, db_datawriter, db_ddladmin; ID as asked: 1` and
+  `Firewall rules now: AllowAzureServices.`, and ended with exit 0. The file prints the two
+  users' lines only when its lists before the commit are clean, so they were, with the two users
+  in place. The second run printed the same lines as the first, and the file's run inside step 8
+  printed them too. That the second run changed nothing is not shown: the file prints the same
+  lines when it has replaced a user.
 - Step 7, the probe job, three starts. Each request for the job was accepted, the Deny policy
   assigned, and the SDK image built the program inside half a vCPU:
   - start 1, carrying `azurebank-app` and asking its token: `Succeeded`, 39 s, exit code 0, and
@@ -1855,11 +1861,17 @@ says otherwise. One run each.
   2026-03-03, read on 2026-10-03). The template's check of the app's values made the app's name go
   through `fail()` and the seven secure parameters. So the check moved into `app-inputs.bicep`
   ([What this creates](#what-this-creates)), and offline the changed template names all 23
-  resources of the run with the app. The what-if itself is to be read again.
+  resources of the run with the app. On Azure, see step 9 again, below.
 - Step 10: the five lines of step 7 were in the workspace when they were read, at 02:40:28Z,
   written from 02:31:37Z to 02:33:36Z. The reads of step 1: the rule `AllowAzureServices` alone;
   Entra-only `true`; the log's cap 0.05, taking data (`RespectQuota`); no job; nothing attached
   to either identity; the mode `WorkloadProfiles`; the protected folder gone.
+- Step 9 again, later that day, on the changed template, answered "no". `secrets.ps1` wrote the
+  same 13 parameters, each read as at step 9. The what-if: 9 `Create` (the app, the job, two role
+  assignments, the action group, four alerts); `Modify` on the same four resources, naming the
+  same properties; `NoChange` on the same ten; one `Ignore` on a database; nothing
+  `Unsupported`, nothing to delete, and no line for the check of the app's values. The protected
+  folder was gone afterwards.
 
 ## Not measured yet
 
@@ -1959,9 +1971,11 @@ Each line is checked at the step named, in the rest of the first deployment.
 
 | What | Where it shows |
 | --- | --- |
-| **This folder's own files on Azure, past what steps 1 to 10 met** ([Measured on Azure](#measured-on-azure)): the what-if of the run with the app on the changed template, which must name all nine; Azure refusing a run with a value missing, through `app-inputs.bicep` (seen offline and on a local engine only, under [Checking these files](#checking-these-files)), and whether it refuses before the foundation's resources are sent again or only when the check's own deployment starts (the app, the job and the action group wait for it either way); `main.bicep`'s second step deployed (nine more resources); `deploy.py`; the workflow `deploy.yml` | step 9 again, and steps 15 to 17 |
+| **This folder's own files on Azure, past what the first session met** ([Measured on Azure](#measured-on-azure)): `main.bicep`'s second step deployed (nine more resources); `deploy.py`; the workflow `deploy.yml` | steps 15 to 17 |
+| Azure refusing a run with a value missing, through `app-inputs.bicep` (seen offline and on a local engine only, under [Checking these files](#checking-these-files)), and whether it refuses before the foundation's resources are sent again or only when the check's own deployment starts (the app, the job and the action group wait for it either way). The what-if run again at step 9 was given every value | not provoked |
 | What the template sends and neither the trial nor steps 2 to 4 showed: the four conditions of the policy named above at work (the definition is deployed and assigned), the action group and the four alert rules | step 15 |
 | How the app's scale reads back (a value Azure leaves out is read by `deploy.py` as its default). The logs settings read back at steps 3 and 4 | step 15 |
+| That a second run of the users file on Azure SQL changes nothing. The second run of step 6 ended with the same lines as the first, and the file prints those lines whether or not it replaced a user | no step reads it |
 | The users file dropping and creating a user inside its transaction, which it does when an identity has been made again; its second form, `FROM EXTERNAL PROVIDER WITH OBJECT_ID` | not provoked; the second form only if it is asked for |
 | A container of the app that asks for a token and names no identity gets none (read on Microsoft's page: such a request is answered for a system-assigned identity, and the app has none) | not provoked |
 | The API as `azurebank_app` under the three real-stack test suites, and a transfer as that user | before step 15, on a local SQL Server |

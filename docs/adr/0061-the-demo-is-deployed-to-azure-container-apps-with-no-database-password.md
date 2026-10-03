@@ -15,11 +15,12 @@ deployment ran, steps 1 to 10, and what they read back has a table of its own be
 twice before the users were made, as told under
 [the second reopened choice](#2-how-the-two-database-users-are-created), and then made them. The
 what-if of step 9 could not name the app, and the template's check of the app's values moved for
-that (decision 1). What ran on Azure before, on 2026-10-02, is a throwaway trial: a resource group
-in the same subscription and region, created and deleted that day, in which requests of the shapes
-these files make were sent by hand: not by these files, and not every one of them. What it measured
-has a table of its own below. Every other sentence about what Azure does is marked as read or as
-not measured.
+that (decision 1); run again that day on the changed template, the same what-if listed the nine
+resources expected and nothing it could not work out. What ran on Azure before, on 2026-10-02,
+is a throwaway trial: a resource group in the same subscription and region, created and deleted
+that day, in which requests of the shapes these files make were sent by hand: not by these files,
+and not every one of them. What it measured has a table of its own below. Every other sentence
+about what Azure does is marked as read or as not measured.
 
 ## Context
 
@@ -172,10 +173,10 @@ per row unless it says otherwise. The runbook's section "Measured on Azure" has 
 | 3, the same template again | Nothing to create or delete, `NoChange` on the server; `Modify` named on the policy definition, the environment, the diagnostic setting and the policy assignment. `Succeeded`. The three properties it named on the environment read the same before and after; the other three resources were not read |
 | 4, read back | Every value the runbook expects: the Consumption profile alone; logs to `azure-monitor`, the workspace capped at 0.05 GB with key access off, one setting with the two categories; Basic, 5 DTU, 2 GB, local backups; one firewall rule, one administrator, Entra-only, TLS 1.2; three identities attached to nothing; one federated credential; the role of nine actions, not assigned; the lock on the database; the policy assignment |
 | 5, a budget | 20 a month, four e-mail notifications to one mailbox: created by the runbook's block and read back |
-| 6, the users | After the file's two checks were narrowed (the second reopened choice), it made the two users. Its two runs were noted at the time as ending with exit 0 and the two lines expected; their output is not in the record. The record holds its run inside step 8: `ID as asked: 1` for each user with its roles, and the one firewall rule left |
+| 6, the users | After the file's two checks were narrowed (the second reopened choice), it made the two users. Each of its two runs ended with exit 0, `ID as asked: 1` for each user with its roles, and the one firewall rule left; its run inside step 8 printed the same. The second run printed what the first did; its output does not show whether it replaced a user |
 | 7, a sign-in as each identity | The probe job, three starts: as the app's identity `Succeeded`, exit 0, reader and writer, not `db_ddladmin`; the same identity asking the migrator's token `Failed`, exit 3, after 641 ms, error 0 of class 20 around `AuthenticationFailedException`; as the migrator's identity `Succeeded`, exit 0, the three roles. **The first open as the app's identity took 6,390 ms** against the app's 10 s, on one cold run of the probe, whose string waits 30 s; the migrator's 3,253 ms. The job deleted, the program removed |
 | 8, a SQL sign-in | Refused with the Entra-only reason, through the script's own switch: "Proved" |
-| 9, the app's what-if | On the template as it was then: 7 to create, the four `Modify` of step 3, and **two `Unsupported`: the app and the role assignment on it**, where nine creates were expected. Nothing was refused. The app's name went through `fail()` and the seven secure parameters, and a what-if works out no secure value. Fixed in the template (decision 1); that what-if is to be read again |
+| 9, the app's what-if | On the template as it was then: 7 to create, the four `Modify` of step 3, and **two `Unsupported`: the app and the role assignment on it**, where nine creates were expected. Nothing was refused. The app's name went through `fail()` and the seven secure parameters, and a what-if works out no secure value. Fixed in the template (decision 1). Run again later that day on the changed template, answered "no" again: 9 to create, the same four `Modify`, nothing `Unsupported`, nothing to delete |
 | 10, end of the session | The probe's five lines in the workspace when read, 6 min 52 s to 8 min 51 s after they were written; the reads of step 1 as expected: one firewall rule, Entra-only, the log's cap taking data, no job, nothing attached, the mode `WorkloadProfiles`, the protected folder gone |
 
 ## Decision
@@ -399,13 +400,15 @@ read-only access to it is available to every user with permission to connect to 
 schema and name.
 
 **After both changes, the same day.** The file made the two users, and the users signed in from
-the probe job (the first reopened choice). Its two runs at step 6 were noted at the time as ending
-with exit 0 and the two lines expected; their output is not in the session's record. Its run
-inside step 8 is: both users with their roles and `ID as asked: 1`, which the file prints only when
-its lists before the commit are clean, so they were, with the two users in place.
+the probe job (the first reopened choice). Each of its two runs at step 6 ended with exit 0, the
+one firewall rule left, and both users with their roles and `ID as asked: 1`, which the file
+prints only when its lists before the commit are clean: so they were, with the two users in
+place. Its run inside step 8 printed the same lines.
 
-**Not measured.** That dropping and creating a user inside its transaction works on Azure SQL; it
-happens only when an identity has been made again. Its second form,
+**Not measured.** That a second run changes nothing on Azure SQL: the second run at step 6 ended
+with the same lines as the first, and the file prints them whether or not it replaced a user.
+That dropping and creating a user inside its transaction works on Azure SQL; it happens only when
+an identity has been made again. Its second form,
 `FROM EXTERNAL PROVIDER WITH OBJECT_ID`: the trial looked the identity up by its name.
 
 **If Azure refuses.** The sign-in method fails: a second method, then the older ODBC `sqlcmd`
@@ -663,13 +666,12 @@ twice the cap: the logs go off. The alert is refused: it is left out, one of fou
   of its exit codes but 3, which needs a token refused on Azure.
 
 **Not measured:** everything these files themselves do on Azure past the first deployment's first
-session, steps 1 to 10: the what-if of the run with the app on the changed template, and where
-Azure stops a run that lacks one of the app's values; what is listed under "Not measured" in the
-three sections above; the app with its two containers, its probes and its scale to zero; the
-deployment identity's nine actions against an app that carries an identity; the automatic
-put-back on a real failure; that the policy refuses a second replica; any alert firing; the
-meters after 48 hours; every command of the runbook's sections on switching the logs off, on a
-theft and on removal. The runbook's "Not measured yet" lists each with the step where it shows.
+session: where Azure stops a run that lacks one of the app's values; what is listed under "Not
+measured" in the three sections above; the app with its two containers, its probes and its scale
+to zero; the deployment identity's nine actions against an app that carries an identity; the
+automatic put-back on a real failure; that the policy refuses a second replica; any alert firing;
+the meters after 48 hours; every command of the runbook's sections on switching the logs off, on
+a theft and on removal. The runbook's "Not measured yet" lists each with the step where it shows.
 
 ## What would change this
 
