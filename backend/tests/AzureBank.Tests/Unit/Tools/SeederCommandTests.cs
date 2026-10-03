@@ -1,5 +1,6 @@
 extern alias seeder;
 
+using System.CommandLine;
 using System.Data.Common;
 using AzureBank.Shared.Entities;
 using AzureBank.Tests.Fixtures;
@@ -13,9 +14,11 @@ using Xunit;
 using GateResult = seeder::AzureBank.Seeder.Commands.GateResult;
 using GateVerdict = seeder::AzureBank.Seeder.Commands.GateVerdict;
 using MigrateCommand = seeder::AzureBank.Seeder.Commands.MigrateCommand;
+using RecycleCommand = seeder::AzureBank.Seeder.Commands.RecycleCommand;
 using ResetCommand = seeder::AzureBank.Seeder.Commands.ResetCommand;
 using RunCancellation = seeder::AzureBank.Seeder.Seeders.RunCancellation;
 using SeedCommand = seeder::AzureBank.Seeder.Commands.SeedCommand;
+using SeedPoolCommand = seeder::AzureBank.Seeder.Commands.SeedPoolCommand;
 
 namespace AzureBank.Tests.Unit.Tools;
 
@@ -46,6 +49,7 @@ public class SeederCommandTests
 {
     private const string ConnectionKey = "ConnectionStrings:DefaultConnection";
     private const string PepperKey = "Security:PinPepper";
+    private const string DemoKey = "Demo:Enabled";
 
     private const string AzureName = "not_a_server.database.windows.net";
 
@@ -68,8 +72,18 @@ public class SeederCommandTests
             "migrate" => MigrateCommand.RunAsync(provider, TimeSpan.Zero, token),
             "seed" => SeedCommand.RunAsync(provider, token),
             "reset" => ResetCommand.RunAsync(provider, confirm: true, token),
+            "seed-pool" => SeedPoolCommand.RunAsync(provider, copies: null, token),
+            "recycle" => RecycleCommand.RunAsync(provider, token),
             _ => throw new ArgumentOutOfRangeException(nameof(command), command, "not a Seeder command"),
         };
+
+    /// <summary>
+    /// The demo flag a command runs with when a test is about something else: on for the two pool
+    /// commands, off for the others, so that each gets past its own refusal of the flag and the
+    /// refusal the test is about is the one left.
+    /// </summary>
+    private static (string Key, string? Value) TheFlagItRunsWith(string command) =>
+        (DemoKey, command is "seed-pool" or "recycle" ? "true" : "false");
 
     private static IEnumerable<string> Errors(RecordingLoggerProvider log) =>
         log.Lines.Where(line => line.Level == LogLevel.Error).Select(line => line.Message);
@@ -98,12 +112,15 @@ public class SeederCommandTests
     [Theory]
     [InlineData("seed")]
     [InlineData("reset")]
-    public async Task WithoutAPinPepper_SeedAndReset_AreRefused_AndNothingIsOpened(string command)
+    [InlineData("seed-pool")]
+    [InlineData("recycle")]
+    public async Task WithoutAPinPepper_EveryCommandThatWritesAPin_IsRefused_AndNothingIsOpened(string command)
     {
+        // The pool's two commands write PIN hashes too: recycle tops the pool up before it deletes.
         var log = new RecordingLoggerProvider();
         var opens = new OpenCountingInterceptor();
         await using var provider = SeederHost.Build(
-            log, opens, onCommittedSettings: false, (ConnectionKey, AbsentServer), NoEfRetry);
+            log, opens, onCommittedSettings: false, (ConnectionKey, AbsentServer), NoEfRetry, TheFlagItRunsWith(command));
 
         var exitCode = await Run(command, provider);
 
@@ -120,12 +137,14 @@ public class SeederCommandTests
     [InlineData("migrate")]
     [InlineData("seed")]
     [InlineData("reset")]
+    [InlineData("seed-pool")]
+    [InlineData("recycle")]
     public async Task WithoutAConnectionString_EveryCommand_IsRefused_AndNothingIsOpened(string command)
     {
         var log = new RecordingLoggerProvider();
         var opens = new OpenCountingInterceptor();
         await using var provider = SeederHost.Build(
-            log, opens, onCommittedSettings: false, (PepperKey, SeederHost.Pepper), NoEfRetry);
+            log, opens, onCommittedSettings: false, (PepperKey, SeederHost.Pepper), NoEfRetry, TheFlagItRunsWith(command));
 
         var exitCode = await Run(command, provider);
 
@@ -141,6 +160,8 @@ public class SeederCommandTests
     [InlineData("migrate")]
     [InlineData("seed")]
     [InlineData("reset")]
+    [InlineData("seed-pool")]
+    [InlineData("recycle")]
     public async Task AStringTheParserRefuses_IsRefused_AndNoneOfItsTextIsPrinted(string command)
     {
         // A password holding an unquoted ';' leaves a tail the parser reads as a keyword and names
@@ -153,7 +174,8 @@ public class SeederCommandTests
             onCommittedSettings: false,
             (ConnectionKey, "Server=127.0.0.1,1;Database=x;User Id=u;Password=aaa;FRAGMENT=bbb;Connect Timeout=1"),
             (PepperKey, SeederHost.Pepper),
-            NoEfRetry);
+            NoEfRetry,
+            TheFlagItRunsWith(command));
 
         var exitCode = await Run(command, provider);
 
@@ -173,6 +195,8 @@ public class SeederCommandTests
     [InlineData("migrate")]
     [InlineData("seed")]
     [InlineData("reset")]
+    [InlineData("seed-pool")]
+    [InlineData("recycle")]
     public async Task AStringThatNamesNoDatabase_IsRefused_AndNothingIsOpened(string command)
     {
         // Without a database in the string the server picks the login's default one, and migrate
@@ -180,7 +204,13 @@ public class SeederCommandTests
         var log = new RecordingLoggerProvider();
         var opens = new OpenCountingInterceptor();
         await using var provider = SeederHost.Build(
-            log, opens, onCommittedSettings: false, (ConnectionKey, NoDatabase), (PepperKey, SeederHost.Pepper), NoEfRetry);
+            log,
+            opens,
+            onCommittedSettings: false,
+            (ConnectionKey, NoDatabase),
+            (PepperKey, SeederHost.Pepper),
+            NoEfRetry,
+            TheFlagItRunsWith(command));
 
         var exitCode = await Run(command, provider);
 
@@ -391,6 +421,184 @@ public class SeederCommandTests
         log.Lines.Select(line => line.Message).Should().NotContain(message => message.Contains("PinPepper"));
     }
 
+    [Theory]
+    [InlineData("seed-pool", null)]
+    [InlineData("seed-pool", "false")]
+    [InlineData("recycle", null)]
+    [InlineData("recycle", "false")]
+    public async Task WithTheDemoOff_SeedPoolAndRecycle_AreRefused_AndNothingIsOpened(string command, string? flag)
+    {
+        // Off is the default, and it is what a job gets whose environment lost the variable. A
+        // pool command run on a database that is not the demo's would write demo users there, or
+        // delete. The builder and the recycler refuse too, by throwing; the command refuses first,
+        // with a sentence, and with the code a job reads as "change the configuration".
+        var log = new RecordingLoggerProvider();
+        var opens = new OpenCountingInterceptor();
+        await using var provider = SeederHost.Build(
+            log,
+            opens,
+            onCommittedSettings: false,
+            (ConnectionKey, AbsentServer),
+            (PepperKey, SeederHost.Pepper),
+            NoEfRetry,
+            (DemoKey, flag));
+
+        var exitCode = await Run(command, provider);
+
+        using var all = new AssertionScope();
+        exitCode.Should().Be(2, "refused before any connection was opened");
+        Errors(log).Should().ContainSingle()
+            .Which.Should().Contain($"{command} refused: Demo:Enabled is not true")
+            .And.Contain("Nothing was opened");
+        opens.Opens.Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData("seed", "seed's four users have a password and a PIN that are public")]
+    [InlineData("reset", "reset drops the database")]
+    public async Task InDemoMode_SeedAndReset_AreRefused_AndNothingIsOpened(string command, string reason)
+    {
+        // In demo mode the database is the pool's: seed would add users anybody can sign in as,
+        // beside the private copies, and reset would drop the copies visitors hold.
+        var log = new RecordingLoggerProvider();
+        var opens = new OpenCountingInterceptor();
+        await using var provider = SeederHost.Build(
+            log,
+            opens,
+            onCommittedSettings: false,
+            (ConnectionKey, AbsentServer),
+            (PepperKey, SeederHost.Pepper),
+            NoEfRetry,
+            (DemoKey, "true"));
+
+        var exitCode = await Run(command, provider);
+
+        using var all = new AssertionScope();
+        exitCode.Should().Be(2, "refused before any connection was opened");
+        Errors(log).Should().ContainSingle()
+            .Which.Should().Contain($"{command} refused: Demo:Enabled is true")
+            .And.Contain(reason)
+            .And.Contain("Nothing was opened");
+        opens.Opens.Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData("seed")]
+    [InlineData("reset")]
+    [InlineData("seed-pool")]
+    [InlineData("recycle")]
+    public async Task ADemoSettingOutOfRange_IsRefused_ByEveryCommandThatReadsTheDemosSettings(string command)
+    {
+        // The validator runs with the pepper's, by hand: this tool never starts the host, so
+        // ValidateOnStart alone would not fire. Each of these four reads the demo's settings.
+        var log = new RecordingLoggerProvider();
+        var opens = new OpenCountingInterceptor();
+        await using var provider = SeederHost.Build(
+            log,
+            opens,
+            onCommittedSettings: false,
+            (ConnectionKey, AbsentServer),
+            (PepperKey, SeederHost.Pepper),
+            NoEfRetry,
+            TheFlagItRunsWith(command),
+            ("Demo:Pool:TargetFree", "0"));
+
+        var exitCode = await Run(command, provider);
+
+        using var all = new AssertionScope();
+        exitCode.Should().Be(2);
+        Errors(log).Should().ContainSingle()
+            .Which.Should().Contain($"{command} refused: Demo:Pool:TargetFree must be between 1 and 500, and is 0.")
+            .And.Contain("Nothing was opened");
+        opens.Opens.Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData("seed-pool")]
+    [InlineData("recycle")]
+    public async Task OnAnAzureSqlName_SeedPoolAndRecycle_AreNotRefused_AndReachForTheDatabase(string command)
+    {
+        // The demo's database is an Azure SQL one, and these two are the commands that must run
+        // there; seed and reset are refused on the same name (above). The instrument stops the
+        // open, so nothing leaves the machine.
+        var log = new RecordingLoggerProvider();
+        var opens = new RefuseEveryOpen();
+        await using var provider = SeederHost.Build(
+            log,
+            opens,
+            onCommittedSettings: false,
+            (ConnectionKey, AzureConnection),
+            (PepperKey, SeederHost.Pepper),
+            NoEfRetry,
+            (DemoKey, "true"));
+
+        var exitCode = await Run(command, provider);
+
+        using var all = new AssertionScope();
+        exitCode.Should().Be(1, "the database was reached for, so this is a failure and not a refusal");
+        opens.Opens.Should().BeGreaterThan(0);
+        Errors(log).Should().NotContain(message => message.Contains("refused"));
+        Errors(log).Should().Contain(
+            message => message.StartsWith($"{command} failed: ", StringComparison.Ordinal)
+                && message.Contains(RefuseEveryOpen.Message));
+    }
+
+    [Theory]
+    [InlineData("seed-pool")]
+    [InlineData("recycle")]
+    public async Task APoolRunThatIsCancelled_Fails_SaysSo_AndPrintsNoSummary(string command)
+    {
+        // A run that did not finish has no counts to report: its line would be a guess.
+        var log = new RecordingLoggerProvider();
+        await using var provider = SeederHost.Build(
+            log,
+            interceptor: null,
+            onCommittedSettings: false,
+            (ConnectionKey, AbsentServer),
+            (PepperKey, SeederHost.Pepper),
+            NoEfRetry,
+            (DemoKey, "true"));
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+
+        var exitCode = await Run(command, provider, cancelled.Token);
+
+        var messages = log.Lines.Select(line => line.Message).ToList();
+        using var all = new AssertionScope();
+        exitCode.Should().Be(1);
+        messages.Should().Contain(message => message.Contains($"{command} was cancelled"));
+        messages.Should().NotContain(message => message.StartsWith("pool: ", StringComparison.Ordinal));
+        Errors(log).Should().BeEmpty("being stopped is not a failure of the run's own");
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("501")]
+    public void SeedPool_RefusesACountOutsideOneTo500_AsAWrongCommandLine(string copies)
+    {
+        // The parser answers, with System.CommandLine's exit 1, before the handler is reached.
+        // 500 is the most Demo:Pool:TargetFree accepts.
+        var root = new RootCommand { SeedPoolCommand.Create(new ServiceCollection().BuildServiceProvider()) };
+
+        var parsed = root.Parse(["seed-pool", copies]);
+
+        parsed.Errors.Select(error => error.Message).Should().ContainSingle()
+            .Which.Should().Be($"seed-pool takes a number of copies from 1 to 500, and was given {copies}.");
+    }
+
+    [Theory]
+    [InlineData]
+    [InlineData("1")]
+    [InlineData("500")]
+    public void SeedPool_TakesNoCount_OrOneFromOneTo500(params string[] copies)
+    {
+        var root = new RootCommand { SeedPoolCommand.Create(new ServiceCollection().BuildServiceProvider()) };
+
+        var parsed = root.Parse(["seed-pool", .. copies]);
+
+        parsed.Errors.Should().BeEmpty();
+    }
+
     [Fact]
     public async Task ACancelledSeed_Fails_AndDoesNotClaimSuccess()
     {
@@ -516,6 +724,37 @@ public class SeederCommandTests
 
             cancellationToken.ThrowIfCancellationRequested();
             return result;
+        }
+    }
+
+    /// <summary>
+    /// Counts each open EF starts and stops it there, with a failure EF does not retry: a command
+    /// that reaches for the database is seen to, and nothing leaves the machine.
+    /// </summary>
+    private sealed class RefuseEveryOpen : DbConnectionInterceptor
+    {
+        public const string Message = "Stopped by the test: no connection is opened.";
+
+        private int _opens;
+
+        /// <summary>How many times EF started to open a connection.</summary>
+        public int Opens => Volatile.Read(ref _opens);
+
+        public override InterceptionResult ConnectionOpening(
+            DbConnection connection, ConnectionEventData eventData, InterceptionResult result)
+        {
+            Interlocked.Increment(ref _opens);
+            throw new InvalidOperationException(Message);
+        }
+
+        public override ValueTask<InterceptionResult> ConnectionOpeningAsync(
+            DbConnection connection,
+            ConnectionEventData eventData,
+            InterceptionResult result,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _opens);
+            throw new InvalidOperationException(Message);
         }
     }
 }

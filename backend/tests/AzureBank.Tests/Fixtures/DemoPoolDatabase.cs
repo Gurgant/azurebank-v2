@@ -113,9 +113,9 @@ internal sealed class DemoPoolDatabase : IAsyncDisposable
     }
 
     /// <summary>
-    /// The Seeder's container, as its <c>Program.cs</c> builds it, with the demo on.
-    /// <paramref name="settings"/> override the defaults above; <paramref name="interceptors"/> reach
-    /// every context the container builds.
+    /// The Seeder's container, as its <c>Program.cs</c> builds it, with the demo on: a command can
+    /// be run on it as the tool runs it. <paramref name="settings"/> override the defaults above;
+    /// <paramref name="interceptors"/> reach every context the container builds.
     /// </summary>
     public ServiceProvider Seeder(Dictionary<string, string?>? settings = null, params IInterceptor[] interceptors)
     {
@@ -148,7 +148,11 @@ internal sealed class DemoPoolDatabase : IAsyncDisposable
             services.AddSingleton(interceptor);
         }
 
-        services.AddSeederServices(new ConfigurationBuilder().AddInMemoryCollection(values).Build(), environment.Object);
+        // Registered as the host registers it in the tool: a command reads its connection string
+        // from it before it opens anything.
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
+        services.AddSingleton<IConfiguration>(configuration);
+        services.AddSeederServices(configuration, environment.Object);
         AlsoRegister?.Invoke(services);
 
         var provider = services.BuildServiceProvider();
