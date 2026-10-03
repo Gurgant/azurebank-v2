@@ -10,10 +10,13 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Xunit;
 using RecycleCommand = seeder::AzureBank.Seeder.Commands.RecycleCommand;
+using ResetCommand = seeder::AzureBank.Seeder.Commands.ResetCommand;
 using SeedCommand = seeder::AzureBank.Seeder.Commands.SeedCommand;
 using SeedPoolCommand = seeder::AzureBank.Seeder.Commands.SeedPoolCommand;
 
@@ -166,6 +169,84 @@ public sealed class DemoPoolCommandSqlServerTests
         }
     }
 
+    [SqlServerTheory]
+    [InlineData("a free copy", 2)]
+    [InlineData("only the record of a deleted copy", 2)]
+    [InlineData("no pool row", 0)]
+    [InlineData("no database at all", 0)]
+    [InlineData("a schema from before the pool's table", 0)]
+    public async Task Reset_OnADatabaseThatHoldsThePool_IsRefused_AndDropsNothing(string holding, int exitCode)
+    {
+        // reset drops the database. The flag is off here, as on a job that lost its environment:
+        // what says the database is the demo's is its pool rows, and reset with the flag off would
+        // drop the copies visitors hold and put back four users whose password is public. The last
+        // three rows are CONTROLS: reset is the repair tool, so a database with no pool row, none at
+        // all, or one migrated before the pool's table existed is reset as before, and none of them
+        // costs a retry.
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        switch (holding)
+        {
+            case "a free copy":
+                await database.BuildCopiesAsync(1);
+                break;
+            case "only the record of a deleted copy":
+                await AddTheRecordOfADeletedCopyAsync(database);
+                break;
+            case "no database at all":
+                await using (var db = database.NewContext())
+                {
+                    SqlConnection.ClearAllPools();
+                    (await db.Database.EnsureDeletedAsync()).Should().BeTrue("ARRANGE: the database is gone");
+                }
+
+                break;
+            case "a schema from before the pool's table":
+                await using (var db = database.NewContext())
+                {
+                    await db.GetService<IMigrator>().MigrateAsync("20260928192931_AddUserSessionStamp");
+                    (await db.Database.GetAppliedMigrationsAsync()).Should().NotContain(
+                        id => id.EndsWith("_AddDemoCopies", StringComparison.Ordinal), "ARRANGE: the pool's migration is taken back");
+                }
+
+                break;
+        }
+
+        var refused = exitCode == 2;
+        var createdBefore = await CreatedAtAsync(database);
+        var poolRowsBefore = refused ? (await database.CopiesAsync()).Count : 0;
+        var usersBefore = refused ? await UsersAsync(database) : 0;
+        var log = new RecordingLoggerProvider();
+        database.Log = log;
+
+        var actual = await ResetCommand.RunAsync(
+            database.Seeder(new() { ["Demo:Enabled"] = "false" }), confirm: true, CancellationToken.None);
+
+        using var all = new AssertionScope();
+        actual.Should().Be(exitCode, Output(log));
+        var errors = log.Lines.Where(line => line.Level == LogLevel.Error).Select(line => line.Message).ToList();
+        log.Lines.Should().NotContain(
+            line => line.Message.Contains("transient exception", StringComparison.OrdinalIgnoreCase),
+            "a database that is missing is answered by one open, not by EF's retries");
+        if (refused)
+        {
+            errors.Should().ContainSingle()
+                .Which.Should().Contain("reset refused: the database holds the demo pool's rows")
+                .And.Contain("Nothing was written");
+            log.Lines.Should().NotContain(line => line.Message.Contains("Deleting database"), "reset refused before the drop");
+            createdBefore.Should().NotBeNull("ARRANGE: the database exists");
+            (await CreatedAtAsync(database)).Should().Be(createdBefore, "the database was not dropped and created again");
+            (await database.CopiesAsync()).Should().HaveCount(poolRowsBefore, "the pool's rows are as they were");
+            (await UsersAsync(database)).Should().Be(usersBefore, "and so are its users");
+        }
+        else
+        {
+            errors.Should().BeEmpty();
+            log.Lines.Should().Contain(line => line.Message.Contains("Database reset and reseeded"));
+            (await UsersAsync(database)).Should().Be(4, "the fixed demo's four users");
+            (await database.CopiesAsync()).Should().BeEmpty();
+        }
+    }
+
     [SqlServerFact]
     public async Task ThePoolCommands_NeedNoRightButToReadAndWriteRows()
     {
@@ -207,6 +288,19 @@ public sealed class DemoPoolCommandSqlServerTests
     {
         await using var db = database.NewContext();
         return await db.Users.CountAsync();
+    }
+
+    /// <summary>When the server created the test's database, or null when it holds none by that name.</summary>
+    private static async Task<DateTime?> CreatedAtAsync(DemoPoolDatabase database)
+    {
+        var name = new SqlConnectionStringBuilder(database.ConnectionString).InitialCatalog;
+        await using var master = new SqlConnection(
+            new SqlConnectionStringBuilder(database.ConnectionString) { InitialCatalog = "master" }.ConnectionString);
+        await master.OpenAsync();
+        await using var command = master.CreateCommand();
+        command.CommandText = "SELECT create_date FROM sys.databases WHERE name = @name;";
+        command.Parameters.AddWithValue("@name", name);
+        return await command.ExecuteScalarAsync() as DateTime?;
     }
 
     /// <summary>One user with no copy, as registration would leave it.</summary>

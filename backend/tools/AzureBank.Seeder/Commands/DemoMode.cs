@@ -1,8 +1,11 @@
+using System.Reflection;
 using AzureBank.Infrastructure.Data;
+using AzureBank.Infrastructure.Migrations;
 using AzureBank.Seeder.Extensions;
 using AzureBank.Seeder.Pool;
 using AzureBank.Shared.Options;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -100,6 +103,40 @@ internal static class DemoMode
             rows,
             reason);
         return true;
+    }
+
+    /// <summary>
+    /// What <c>reset</c> asks after its prompt and before its drop: whether the database it is about
+    /// to drop holds a row of the demo pool, the record of a deleted copy included. True once the
+    /// refusal has been logged, which is exit <see cref="ExitCodes.Refused"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// RESET IS THE REPAIR TOOL, so a database it cannot count in is not refused: one that does not
+    /// exist, and one migrated before the pool's table, hold no pool row, and each is answered
+    /// without an error. The first question is whether the pool's migration was applied, read from
+    /// the history table: EF asks that only after one open that reads "no such database" as no,
+    /// where a count sent to a missing database would be refused with 4060, which its retry
+    /// strategy waits on as a transient fault; and a table that is not there would answer 208.
+    /// Only then the count.
+    /// </para>
+    /// </remarks>
+    /// <param name="scoped">The command's scope.</param>
+    /// <param name="logger">Where the refusal goes.</param>
+    /// <param name="reason">Why reset must not drop the demo's database, as a sentence.</param>
+    /// <param name="cancellationToken">The run's token.</param>
+    public static async Task<bool> WouldDropThePoolAsync(
+        IServiceProvider scoped, ILogger logger, string reason, CancellationToken cancellationToken)
+    {
+        var context = scoped.GetRequiredService<AzureBankDbContext>();
+        var poolsMigration = typeof(AddDemoCopies).GetCustomAttribute<MigrationAttribute>()!.Id;
+        var applied = await context.Database.GetAppliedMigrationsAsync(cancellationToken);
+        if (!applied.Contains(poolsMigration))
+        {
+            return false;
+        }
+
+        return await HoldsThePoolAsync(scoped, logger, "reset", reason, cancellationToken);
     }
 
     /// <summary>The one line a pool run ends with: at Information when its code is 0, at Warning when it is a signal.</summary>

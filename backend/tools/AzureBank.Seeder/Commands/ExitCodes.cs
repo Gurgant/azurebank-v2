@@ -26,8 +26,8 @@ public static class ExitCodes
     /// <c>migrate</c> was given a connect timeout of 0, the command was aimed at a server it must not
     /// touch, or the demo flag is not what the command needs (<c>seed-pool</c> and <c>recycle</c>
     /// run only with it on, <c>seed</c> and <c>reset</c> only with it off). After one count, the one
-    /// refusal that reads the database: <c>seed</c> on a database that holds the demo pool's rows.
-    /// Running it again changes nothing until the configuration does.
+    /// refusal that reads the database: <c>seed</c>, or <c>reset</c> before its drop, on a database
+    /// that holds the demo pool's rows. Running it again changes nothing until the configuration does.
     /// </summary>
     public const int Refused = 2;
 }

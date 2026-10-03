@@ -25,6 +25,13 @@ namespace AzureBank.Seeder.Commands;
 /// private copies visitors hold (ADR-0062).
 /// </para>
 /// <para>
+/// AND IT REFUSES THE DEMO'S DATABASE WITH THE FLAG OFF (exit 2, nothing written), as <c>seed</c>
+/// does: a job whose environment lost the flag is still pointed at the pool. After the prompt and
+/// before the drop it asks whether the database holds a pool row, the record of a deleted copy
+/// included. A database that does not exist, or that was migrated before the pool's table, holds
+/// none and is reset as before (<c>DemoMode.WouldDropThePoolAsync</c>).
+/// </para>
+/// <para>
 /// THE PIN PEPPER IS CHECKED BEFORE THE DROP. Seeding needs it, and a reset that dropped the
 /// database and then could not seed would leave nothing. That check used to run in
 /// <c>Program.cs</c>, ahead of the command line; it is here now, with the same guarantee.
@@ -38,6 +45,10 @@ public static class ResetCommand
 
     private const string DemoModeReason =
         "reset drops the database, and in demo mode that is the pool's, with the copies visitors hold.";
+
+    private const string DemoDatabaseReason =
+        "reset would drop it with the copies visitors hold and put back four users whose password and PIN are "
+        + "public. Dropping the demo's database is a person's decision, made by hand (locally: docker compose down -v).";
 
     /// <param name="services">The tool's provider.</param>
     /// <param name="stopping">Cancelled when the process is asked to stop (SIGTERM; Program.cs).</param>
@@ -100,6 +111,11 @@ public static class ResetCommand
             }
 
             using var scope = services.CreateScope();
+            if (await DemoMode.WouldDropThePoolAsync(scope.ServiceProvider, logger, DemoDatabaseReason, cancellationToken))
+            {
+                return ExitCodes.Refused;
+            }
+
             var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
 
             logger.LogInformation("Deleting database...");
