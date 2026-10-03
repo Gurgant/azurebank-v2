@@ -62,8 +62,9 @@ internal enum RecyclerControl
 /// </para>
 /// <para>
 /// NEVER A COPY IN USE. A claimed copy is left alone until five minutes past its lifetime, and
-/// after that for as long as one of its users holds a grant that is neither revoked nor expired:
-/// that is read inside the transaction that deletes the copy, not when the copy was chosen. The
+/// after that for as long as one of its users holds a grant that is not revoked and did not end
+/// more than five minutes ago: that is read inside the transaction that deletes the copy, not
+/// when the copy was chosen. The
 /// one limit is the backstop, two days past the lifetime, which no copy outlives. A free copy is
 /// taken with the statement a visitor's claim uses, so of the two only one can have it.
 /// </para>
@@ -85,8 +86,8 @@ internal enum RecyclerControl
 public sealed class DemoCopyRecycler
 {
     /// <summary>
-    /// How long past its lifetime a claimed copy is left alone: a request that began just before
-    /// the end may still be running.
+    /// How long past its lifetime a claimed copy is left alone, and how long past its end a grant
+    /// still keeps the copy: a request that began just before either end may still be running.
     /// </summary>
     private static readonly TimeSpan Margin = TimeSpan.FromMinutes(5);
 
@@ -411,6 +412,12 @@ public sealed class DemoCopyRecycler
     /// another run can have written its record.
     /// </para>
     /// <para>
+    /// A GRANT THAT ENDED LESS THAN FIVE MINUTES AGO STILL COUNTS. Every access token a grant mints
+    /// ends with it, so no request is accepted after; but one accepted the moment before has its
+    /// deadline still to run, and a delete that began under it could leave behind a row it inserts.
+    /// The same margin as the claim's.
+    /// </para>
+    /// <para>
     /// THE INSTANT IS THE COPY'S OWN, read when its delete begins: a run can spend minutes on the
     /// copies before this one, and a session that ended meanwhile keeps nothing. It is the instant
     /// the record carries.
@@ -420,6 +427,7 @@ public sealed class DemoCopyRecycler
     {
         var outcome = Outcome.LeftAlone;
         var now = Now();
+        var liveSince = now - Margin;
         var strategy = _context.Database.CreateExecutionStrategy();
         await strategy.ExecuteInTransactionAsync(
             async token =>
@@ -429,7 +437,7 @@ public sealed class DemoCopyRecycler
 
                 var inUse = await _context.RefreshTokens.AnyAsync(
                     grant => grant.RevokedAt == null
-                        && grant.ExpiresAt > now
+                        && grant.ExpiresAt > liveSince
                         && _context.Users.Any(user => user.Id == grant.UserId && user.DemoCopyId == copyId),
                     token);
                 if (inUse && !pastTheBackstop)

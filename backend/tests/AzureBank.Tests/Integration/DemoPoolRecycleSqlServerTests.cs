@@ -573,11 +573,12 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
         var copy = (await database.BuildCopiesAsync(3))[0];
         await database.MarkClaimedAsync(copy.Id, ADayAndAnHourAgo);
 
-        // A grant that nobody revoked and that has expired. The sweep that removes such grants
-        // comes after the copies, so this one is there when the copy's grants are read.
+        // A grant that nobody revoked and that expired more than five minutes ago. The sweep that
+        // removes such grants comes after the copies, so this one is there when the copy's grants
+        // are read.
         await using (var db = database.NewContext())
         {
-            db.RefreshTokens.Add(AGrant(copy.Owner.Id, expiresAt: DateTime.UtcNow.AddMinutes(-1)));
+            db.RefreshTokens.Add(AGrant(copy.Owner.Id, expiresAt: DateTime.UtcNow.AddMinutes(-6)));
             await db.SaveChangesAsync();
         }
 
@@ -588,6 +589,37 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
             (0, 1), "a session that has ended is not a session: what keeps a copy is a grant that is neither revoked nor expired");
         ATombstone(await database.CopyAsync(copy.Id), "the expired grant left with its user");
         (await database.RowsOfAsync(copy.UserIds)).Should().OnlyContain(table => table.Value == 0);
+    }
+
+    /// <summary>
+    /// A session's last request can outlive its grant. The access token it carries ends with the
+    /// grant, but a request accepted the moment before has its deadline still to run, and a delete
+    /// that began under it could leave behind a row it inserts (a step-up authorisation has no
+    /// foreign key, so it would name a deleted user for good). A grant that ended less than five
+    /// minutes ago still keeps the copy, as its claim does for five minutes past its lifetime.
+    /// </summary>
+    [SqlServerFact]
+    public async Task AGrantThatEndedLessThanFiveMinutesAgo_StillKeepsTheCopy()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copies = await database.BuildCopiesAsync(3);
+        var (justEnded, endedEarlier) = (copies[0], copies[1]);
+        await database.MarkClaimedAsync(justEnded.Id, ADayAndAnHourAgo);
+        await database.MarkClaimedAsync(endedEarlier.Id, ADayAndAnHourAgo);
+        await using (var db = database.NewContext())
+        {
+            db.RefreshTokens.AddRange(
+                AGrant(justEnded.Owner.Id, expiresAt: DateTime.UtcNow.AddMinutes(-1)),
+                AGrant(endedEarlier.Owner.Id, expiresAt: DateTime.UtcNow.AddMinutes(-6)));
+            await db.SaveChangesAsync();
+        }
+
+        var summary = await database.RecycleAsync();
+
+        summary.Failures.Should().BeEmpty();
+        summary.DeletedExpired.Should().Be(1, "of two copies whose time is over, one had a session end a minute ago");
+        StillWhole(await database.CopyAsync(justEnded.Id), "its grant ended a minute ago: a request of that session may still be running");
+        ATombstone(await database.CopyAsync(endedEarlier.Id), "TWIN: its grant ended six minutes ago");
     }
 
     /// <summary>
