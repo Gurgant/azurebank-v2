@@ -270,6 +270,23 @@ that looks behind it, is in [`docs/runbooks/demo-pool.md`](../runbooks/demo-pool
 - **On an Azure SQL name they run**, where `seed` and `reset` are refused: the demo's database is
   one. Why that is safe, and that the job signs in as the app's database user and not the
   migration's where a deployment has the two, is ADR-0060's note on its decision 5.
+- **On the Azure deployment no job runs them yet**
+  ([ADR-0061](0061-the-demo-is-deployed-to-azure-container-apps-with-no-database-password.md)),
+  and the change that adds one amends that record. A job that is not manual is refused by the
+  resource group's Deny policy until `Schedule` is in `allowedJobTriggers` (`infra/main.bicep`;
+  ADR-0061's decision 2). The PIN pepper becomes a secret of the job too, where ADR-0061's
+  decision 9 keeps it in the app. The job carries the identity `azurebank-app` and a connection
+  string like the one only the `api` container references today, where `infra/README.md`'s
+  read-back expects each database identity on exactly one resource. And the deployment identity
+  holds its role on the app and the migration job and nowhere else (ADR-0061's decision 8). The
+  API there sets no `Security__PinPepperKeyId`,
+  so the key id the job holds is 1. An execution that exited 7 read `Failed` in ADR-0061's trial,
+  so the signals 10 to 15 may show there as failed executions; that was not tried.
+- **On Azure the app goes live on an empty database with its registration open**
+  (`infra/README.md`, "What is not here"). A user who registers before the first `seed-pool`
+  makes it exit 13 on the demo's own database and write nothing, as on any database with users
+  and no pool row, until a person removes that user. Whether registration closes before the first
+  fill is for the change that adds the job.
 - **`seed` and `reset` refuse demo mode** (exit 2, nothing opened): `seed`'s four users have a
   password and a PIN in this repository, and `reset` drops the database. **Both also refuse a
   database that holds any pool row**, a record included, whatever the flag says: a job whose
@@ -337,7 +354,8 @@ The copies share one database and one deployment, so these are shared, and stay 
 **Negative**
 
 - The audit rows of every deleted copy stay for ever, with an actor that names no user. They are
-  what `recycle` cannot return when storage runs short.
+  what `recycle` cannot return when storage runs short. On Azure the database is Basic, 2 GB at
+  most, and none of ADR-0061's four alerts watches its size.
 - The record of a deleted copy is the operator's word (decision 11).
 - The evidence pack of a deleted copy's transfer is gone, and the verb answers for it as for a
   number nobody issued (decision 11).

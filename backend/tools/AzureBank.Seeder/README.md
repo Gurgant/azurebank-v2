@@ -166,7 +166,9 @@ and then migrated an empty database):
   neither drops, creates or migrates a database; and on a database with users and not one pool row
   both write nothing and exit 13.
 - **Give them a login that reads and writes rows and nothing more**: where a deployment gives the
-  app and its migration database users of their own, the app's, never the migration's. Measured
+  app and its migration database users of their own, the app's, never the migration's. On the
+  Azure deployment, which has no pool job yet, that is the identity `azurebank-app` and the user
+  `azurebank_app`, never `azurebank-migrate`. Measured
   2026-10-03, a login with `db_datareader` and `db_datawriter` alone ran `seed-pool` and `recycle`
   through a whole cycle (copies built, a claimed copy and a stale one deleted, the sweeps), exit 0,
   on LocalDB from an empty database, roles included, and on the compose SQL Server, where the roles
@@ -196,21 +198,26 @@ and then migrated an empty database):
   there" is the wait's rule: the database goes to EF only after one open of it succeeded, and the
   run stops when the server says the database is missing. A database that stopped answering after
   that open would still reach EF, which answers "cannot open" with `CREATE DATABASE`. That window
-  was read in the code, not produced; the login's rights are what closes it. The deployment's
-  identity is a user inside the one database, with no right on the server.
-- **With a managed identity, "refused" and "no token" end differently.** A refused login means the
-  database has no user for the identity: three Warnings, then `the login was refused three times`,
-  seconds after the start. An identity that gets no token (it is not attached to the container,
-  or the string names another client ID) is waited for, and the run ends when the wait is over:
-  SqlClient reports it as an error numbered 0 of class 20, which the wait takes for a server that
-  did not answer. `migrate` has produced neither on Azure. A throwaway program on SqlClient 6.1.1
-  got both answers there on 2026-10-02: 18456, class 14, for the missing user, and number 0,
-  class 20, around `Azure.Identity.AuthenticationFailedException`, for the missing token
-  ([infra/README.md](../../../infra/README.md), "Measured on Azure").
-- **On an Azure SQL name an answer the wait has no rule for is waited for too**, also one that
-  waiting cannot change: the run then ends when the wait is over, with that answer in its last
-  line. Off Azure such an answer goes to EF at once. What the wait has a rule for still ends the
-  run sooner: a login refused three times in a row, and on an Azure SQL name a database the server
-  does not hold.
+  was read in the code, not produced; the login's rights are what closes it. The deployment gives
+  `migrate` the identity `azurebank-migrate`, whose user `azurebank_migrator` is inside the one
+  database with no right on the server ([infra/README.md](../../../infra/README.md)).
+- **With a managed identity, `migrate`'s "refused" and "no token" end differently.** A refused
+  login means the database has no user for the identity: three Warnings, then
+  `the login was refused three times`, seconds after the start. An identity that gets no token
+  (it is not attached to the container, or the string names another client ID) is waited for, and
+  the run ends when the wait is over: SqlClient reports it as an error numbered 0 of class 20,
+  which the wait takes for a server that did not answer. `migrate` has produced neither on Azure.
+  A throwaway program on SqlClient 6.1.1 got both answers there on 2026-10-02: 18456, class 14,
+  for the missing user, and number 0, class 20, around
+  `Azure.Identity.AuthenticationFailedException`, for the missing token
+  ([infra/README.md](../../../infra/README.md), "Measured on Azure"). `seed-pool` and `recycle`
+  have no such wait: their first statement is a count, and SqlClient's answer to it ends the run
+  there, for a refused login as for no token, with one `failed:` line and exit 1. That is read in
+  the code, with EF's list of transient errors as ADR-0061 measured it; neither was run on Azure.
+- **On an Azure SQL name an answer `migrate`'s wait has no rule for is waited for too**, also one
+  that waiting cannot change: the run then ends when the wait is over, with that answer in its
+  last line. Off Azure such an answer goes to EF at once. What the wait has a rule for still ends
+  the run sooner: a login refused three times in a row, and on an Azure SQL name a database the
+  server does not hold.
 - **A declined `reset` prompt exits 0.** Nothing was done and nothing failed. In a container there
   is no terminal: pass `--confirm`.

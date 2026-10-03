@@ -1993,9 +1993,12 @@ with it. Everything else is the file as it is.
   it: the statement ran, the lists named the user it created and the run was refused, and that
   user was still there afterwards, because it was made before the transaction began. The file
   does not keep such text out; the runner does, by parsing each ID.
-- After all 16 migrations a database holds 0 triggers and 0 modules, and none of the lists has an
-  unexpected row. (Measured on 2026-10-02 and not repeated: since then only the two code lists
-  have changed, and they now leave one kind of module out, so they can only name less.)
+- After the first 16 migrations a database held 0 triggers and 0 modules, and none of the lists had
+  an unexpected row. (Measured on 2026-10-02 and not repeated. Since then the two code lists have
+  changed, and they now leave one kind of module out, so they can only name less; and a 17th
+  migration, `AddDemoCopies`, was added. Read, not run: it adds a table with its primary key, a
+  column, five indexes, a foreign key, a default and two CHECK constraints, kinds the first 16
+  already create, and no `Sql()` statement.)
 - Without `-b`, `sqlcmd` exits 0 when the file stops on an error.
 
 **Measured on this machine, of the tools:** go-sqlcmd 1.10.0 passes the users script's three

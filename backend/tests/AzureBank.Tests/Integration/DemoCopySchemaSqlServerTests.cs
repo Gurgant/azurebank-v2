@@ -262,8 +262,10 @@ public sealed class DemoCopySchemaSqlServerTests
     }
 
     /// <summary>
-    /// The migration can be taken back. A deployment returned to the release before the pool gets
-    /// the schema that release knows, and keeps every user it had, the users of a copy included.
+    /// The migration can be taken back: run by hand to the migration before it, a database gets the
+    /// schema the release before the pool knows, and keeps every user it had, the users of a copy
+    /// included. No deployment does this: the Azure one never puts the schema back (ADR-0061,
+    /// decision 7).
     /// </summary>
     /// <remarks>
     /// Taken back with a user still pointing at a copy, which is the case a wrong order fails on:

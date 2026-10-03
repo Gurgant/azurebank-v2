@@ -290,8 +290,10 @@ public sealed class DemoPoolCommandSqlServerTests
     {
         // Where a deployment gives its app a database user that reads and writes rows (db_datareader,
         // db_datawriter) and its migration one that may also change the schema (db_ddladmin), the
-        // pool's commands are to run as the first. This is such a user, on a login of the test's
-        // own, through a whole cycle: the roles and copies of a first fill, then a run that tops up,
+        // pool's commands are to run as the first. The Azure deployment's are azurebank_app and
+        // azurebank_migrator (infra/sql-principals.sql). This is a user with the first one's two
+        // roles, on a SQL login of the test's own, not a managed identity's token, through a whole
+        // cycle: the roles and copies of a first fill, then a run that tops up,
         // deletes a claimed copy whose time is over and a free copy too old to hand out, and sweeps.
         await using var database = await DemoPoolDatabase.CreateAsync();
         await using var rowsOnly = await RowsOnlyLogin.CreateAsync(database);

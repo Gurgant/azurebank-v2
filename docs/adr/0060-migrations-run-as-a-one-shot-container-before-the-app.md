@@ -123,7 +123,12 @@ public demo's database is an Azure SQL one, and they are what fills its pool and
   (the API's clean-ups of expired grants and idempotency records, which `recycle` repeats). A user
   of the job's own with the same two roles would tell its deletes apart from the app's and could
   be revoked alone, at the cost of a third database user to create and check; the job shares the
-  app's, and ADR-0062 says what would give it one. Measured 2026-10-03: a login holding
+  app's, and ADR-0062 says what would give it one. The Azure deployment of ADR-0061 has the two:
+  `azurebank_app` (`db_datareader`, `db_datawriter`), bound to the identity `azurebank-app`, and
+  `azurebank_migrator` (the same and `db_ddladmin`), bound to `azurebank-migrate`. There the job,
+  which does not exist yet, is to carry `azurebank-app`, and ADR-0062's decision 13 says what
+  else adding it changes. The two roles of the login measured below are `azurebank_app`'s.
+  Measured 2026-10-03: a login holding
   `db_datareader` and `db_datawriter` alone ran both through a whole cycle, copies built, a
   claimed copy and a stale one deleted, the sweeps run, on LocalDB from an empty database, roles
   included (`DemoPoolCommandSqlServerTests`), and by hand on the compose SQL Server, where the

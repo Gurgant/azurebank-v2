@@ -1,8 +1,9 @@
 # Runbook — the demo pool
 
 **Symptom:** a run of `recycle` ended with a code from 10 to 15, or its line shows `hardStop` or
-`failed` above 0, or it ended with no line at all, with exit 1 or 2. Or the demo database's
-storage alert fired.
+`failed` above 0, or it ended with no line at all, with exit 1 or 2. Or the demo's database is
+filling up: on Azure it is Basic, 2 GB at most (`infra/main.bicep`), and none of the
+deployment's four alerts watches its size (ADR-0061, decision 10).
 
 **Why this runbook exists:** a run decides everything from the rows as they are, and says what it
 found in one line and one exit code
@@ -14,13 +15,30 @@ gives the SQL that looks behind it.
 fill, or a refill by hand, is `seed-pool`, or `seed-pool <N>` to top up to N free copies. Each
 needs `Demo__Enabled=true`, the connection string, and the API's `Security__PinPepper` and
 `Security__PinPepperKeyId`. Where a deployment gives the app and its migration database users of
-their own, it signs in as the app's, never the migration's (ADR-0060, decision 5's note). `backend/tools/AzureBank.Seeder/README.md` has every variable and
-code; on one machine, `compose.demo.yaml` runs both.
+their own, it signs in as the app's, never the migration's (ADR-0060, decision 5's note). On the
+Azure deployment (ADR-0061), which has no pool job yet, that job is to carry the identity
+`azurebank-app` and sign in as `azurebank_app`, never with `azurebank-migrate`; ADR-0062,
+decision 13, says what else adding it changes. `backend/tools/AzureBank.Seeder/README.md` has
+every variable and code; on one machine, `compose.demo.yaml` runs both.
 
 **Running the SQL.** Every statement here reads and none writes. They run against the demo's
 database. Where a statement needs a copy's lifetime or the age a free copy is kept to, it uses the
 defaults, 24 hours (`Demo:CopyLifetimeHours`) and 44 hours (`Demo:Pool:MaxFreeAgeHours`): put in
 the deployment's values if it sets others.
+
+On the Azure deployment (ADR-0061) the server takes Microsoft Entra sign-ins only and admits
+Azure services alone, and the two database users belong to managed identities that exist only
+there. The one person who can sign in, the Microsoft Entra administrator, runs nothing in that
+database but `infra/sql-principals.sql` (ADR-0061, decision 5; `infra/README.md` names the
+migration run by hand as its one exception). So these statements need a road there before they
+are used: a throwaway job that carries `azurebank-app`, like the sign-in probe of
+`infra/README.md` step 7, would send them as `azurebank_app`. All but one: section 7's first
+statement reads `sys.dm_db_partition_stats`, which Microsoft's page (read 2026-10-03) says needs
+`VIEW DATABASE STATE` and `VIEW DEFINITION`, or on SQL Server 2022 and later their performance
+and security forms. `azurebank_app` holds neither, and `infra/sql-principals.sql` refuses any
+permission of the two users but `CONNECT`, so on Azure that statement has no road yet. None of
+them has been run as that user, and running them as the administrator would be a new exception
+to that rule, to be written there first.
 
 ---
 
@@ -158,9 +176,11 @@ First, whether this is the demo's database at all:
 SELECT COUNT(*) AS PoolRows FROM DemoCopies;
 ```
 
-**0 pool rows:** the run was pointed at a database that is not the demo's, and it wrote nothing,
-not even a sweep. Check the connection string the run was given. **Pool rows and users outside
-them:** these users are not the pool's.
+**0 pool rows:** the run was pointed at a database that is not the demo's, or at the demo's
+before its first fill, after somebody registered through the app: on Azure the app goes live on
+an empty database with its registration open (`infra/README.md`, "What is not here"). Either way
+it wrote nothing, not even a sweep. Check the connection string the run was given, then the
+users below. **Pool rows and users outside them:** these users are not the pool's.
 
 ```sql
 SELECT u.Id, u.AzureTag, u.CreatedAt
@@ -269,7 +289,13 @@ PIN is next used, and the copies built before the rotation leave as the pool tur
 pepper is removed when its key id's count here is 0, and not before:** a pepper removed while a
 hash still carries its key id makes that PIN unusable.
 
-## 7. The storage alert: what `recycle` cannot give back
+On the Azure deployment (ADR-0061) the template gives the `api` container one pepper,
+`Security__PinPepper`, with no key id (so 1) and no previous pepper, and `infra/README.md` says
+rotating an application secret is not in its files. A rotation there starts with
+`infra/main.bicep` and `infra/secrets.ps1` carrying `Security__PinPepperKeyId` and
+`Security__PreviousPinPeppers__<id>`, for the `api` container and, once it exists, the pool's job.
+
+## 7. Storage: what `recycle` cannot give back
 
 Where the space is:
 
@@ -296,7 +322,10 @@ WHERE EXISTS (
 
 When `AuditEvents` is what fills the database, nothing in the application gives that space back.
 It comes back only by giving the database more, or by recreating the demo's database, which starts
-a new chain and loses every row.
+a new chain and loses every row. On Azure the database is Basic, 5 DTU and 2 GB, set in
+`infra/main.bicep` (more is a change to ADR-0061, decision 3); recreating it first needs the lock
+`keep-the-database` removed, and the two database users made again with `infra/sql-principals.ps1`
+before the migration and the app can sign in (`infra/README.md`).
 
 ## 8. An audit row whose actor is neither a user nor a deleted copy
 
