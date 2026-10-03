@@ -234,6 +234,9 @@ public static class ServiceCollectionExtensions
         // still computed exactly once, via a process-wide static cache inside the equalizer.
         services.AddScoped<Security.ILoginTimingEqualizer, Security.LoginTimingEqualizer>();
         services.AddScoped<IAuthService, AuthService>();
+        // The public demo's claim: scoped, sharing the request's DbContext with the grant service,
+        // so the grant it issues is written inside the claim's transaction.
+        services.AddScoped<IDemoClaimService, DemoClaimService>();
         // PIN attempt-limiting lives in one place; withdrawals depend on the narrow
         // IPinVerifier. PinService persists lockout state in its own DbContext scope.
         services.AddScoped<IPinVerifier, PinService>();

@@ -80,6 +80,7 @@ public class LogPlaceholderClassTests
         ["AccountId"] = SurrogateKey,
         ["ActorUserId"] = SurrogateKey,
         ["AuthorizationId"] = SurrogateKey,
+        ["CopyId"] = SurrogateKey, // a demo copy's row id: minted by the Seeder, it names no person and opens nothing
         ["FromId"] = SurrogateKey,
         ["Key"] = SurrogateKey, // the client's Idempotency-Key: an opaque request id it generated
         ["NewId"] = SurrogateKey,

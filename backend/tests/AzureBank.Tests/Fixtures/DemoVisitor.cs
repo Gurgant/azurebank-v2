@@ -54,6 +54,32 @@ internal sealed class DemoVisitor
     }
 
     /// <summary>
+    /// <c>POST /api/auth/demo/claim</c>, as it answered: the BFF's own client asking for a free copy
+    /// for the visitor at <paramref name="clientAddress"/>.
+    /// </summary>
+    public static Task<HttpResponseMessage> ClaimAsync(HttpClient client, string clientAddress = "203.0.113.7") =>
+        client.PostAsJsonAsync("/api/auth/demo/claim", new DemoClaimRequest { ClientAddress = clientAddress }, Json);
+
+    /// <summary>What a claim answered with, and a failed test when it did not answer 200.</summary>
+    public static async Task<DemoClaimResponse> ClaimedAsync(HttpResponseMessage response)
+    {
+        response.StatusCode.Should().Be(
+            HttpStatusCode.OK, "a free copy is there to be claimed ({0})", await response.Content.ReadAsStringAsync());
+        return (await response.Content.ReadFromJsonAsync<ApiResponse<DemoClaimResponse>>(Json))!.Data!;
+    }
+
+    /// <summary>The <c>errorCode</c> of a refusal's body, or null when the body carries none.</summary>
+    public static async Task<string?> ErrorCodeOfAsync(HttpResponseMessage response)
+    {
+        var body = await response.Content.ReadAsStringAsync();
+        return body.Length > 0
+            && JsonNode.Parse(body) is JsonObject json
+            && json.TryGetPropertyValue("errorCode", out var code)
+                ? code?.GetValue<string>()
+                : null;
+    }
+
+    /// <summary>
     /// Registers a user outside every copy, with a PIN, and returns it with its handle and its one
     /// account.
     /// </summary>

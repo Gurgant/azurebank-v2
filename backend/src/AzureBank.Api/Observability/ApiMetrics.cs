@@ -32,6 +32,15 @@ public static class ApiMetrics
         Meter.CreateCounter<long>("azurebank.idempotency.replays", unit: "{replay}", description: "Idempotency replays served.");
 
     /// <summary>
+    /// Claims of a demo copy, tagged <c>outcome</c> = claimed | pool_empty | daily_limit | lost_races.
+    /// The last is a claim that found free copies three times over and lost every one to another
+    /// claim: answered as an empty pool, counted apart, since it says the pool is being emptied
+    /// faster than it is claimed from and not that it is empty.
+    /// </summary>
+    public static readonly Counter<long> DemoClaims =
+        Meter.CreateCounter<long>("azurebank.demo.claims", unit: "{claim}", description: "Demo copy claims by outcome.");
+
+    /// <summary>
     /// Commits of a request's own context that the request deadline let start and that landed
     /// (ADR-0058, <c>CommitGateInterceptor</c>). A successful money request adds exactly one: its
     /// movement commits once, and the idempotency claim and the stored answer are single statements

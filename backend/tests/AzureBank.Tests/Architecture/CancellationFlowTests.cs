@@ -45,7 +45,7 @@ public class CancellationFlowTests
     private static readonly string[] Exempt = ["Refresh", "Revoke", "Logout"];
 
     /// <summary>
-    /// The seven interfaces the controllers reach the database through. The token each method takes
+    /// The eight interfaces the controllers reach the database through. The token each method takes
     /// is the request's own: the controllers pass it on.
     /// </summary>
     private static readonly Type[] RequestServices =
@@ -53,6 +53,7 @@ public class CancellationFlowTests
         typeof(IAccountAccessService),
         typeof(IAccountService),
         typeof(IAuthService),
+        typeof(IDemoClaimService),
         typeof(ITransactionService),
         typeof(ITransferService),
         typeof(IUserService),
@@ -72,10 +73,10 @@ public class CancellationFlowTests
     public void EveryActionButTheThreeExemptTokenEndpoints_TakesTheRequestsToken()
     {
         var actions = Actions().ToList();
-        actions.Should().HaveCount(30, "the API's 30 operations; a scan that finds fewer is not reading them");
+        actions.Should().HaveCount(31, "the API's 31 operations; a scan that finds fewer is not reading them");
 
         var bound = actions.Where(a => !Exempt.Contains(a.Name)).ToList();
-        bound.Should().HaveCount(27);
+        bound.Should().HaveCount(28);
 
         var missing = bound.Where(a => !TakesAToken(a)).Select(a => $"{a.DeclaringType!.Name}.{a.Name}").ToList();
         missing.Should().BeEmpty(
@@ -93,8 +94,8 @@ public class CancellationFlowTests
             .Where(m => !(m.DeclaringType == typeof(IAuthService) && Exempt.Contains(m.Name.Replace("Async", string.Empty, StringComparison.Ordinal))))
             .ToList();
 
-        // 30 methods, plus the one that already had a token (GetSessionStampsAsync).
-        methods.Should().HaveCount(31, "a scan that finds fewer is not reading the interfaces");
+        // 31 methods, plus the one that already had a token (GetSessionStampsAsync).
+        methods.Should().HaveCount(32, "a scan that finds fewer is not reading the interfaces");
 
         // The claim release, run on the error path in its own scope, takes the token that bounds it.
         methods.Add(typeof(IIdempotencyService).GetMethod(nameof(IIdempotencyService.ReleaseIfNotExecutedAsync))!);
@@ -521,7 +522,7 @@ public class CancellationFlowTests
 }
 
 /// <summary>
-/// Each of the seven service families stops at the token it is given (ADR-0058): called with one
+/// Each of the eight service families stops at the token it is given (ADR-0058): called with one
 /// that is already cancelled, it throws <see cref="OperationCanceledException"/> and writes nothing.
 /// </summary>
 /// <remarks>
@@ -581,6 +582,24 @@ public class CancellationFlowFamilyTests : IntegrationTestBase
 
         await act.Should().ThrowAsync<OperationCanceledException>();
         (await ReadAsync(db => db.Users.AnyAsync(u => u.Email == email))).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task DemoClaims_StopAtTheToken_AndTakeNoCopy()
+    {
+        // A host of its own, with the demo on and one free copy: the claim refuses to run at all
+        // with the demo off, and with no copy it would stop at an empty pool whatever its token.
+        using var demo = new CustomWebApplicationFactory();
+        demo.EnableDemo();
+        var copy = await HandMadeDemoCopy.CreateAsync(demo);
+        using var scope = demo.Services.CreateScope();
+
+        var act = () => scope.ServiceProvider.GetRequiredService<IDemoClaimService>().ClaimAsync(
+            new DemoClaimRequest { ClientAddress = "203.0.113.7" }, Cancelled);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        (await copy.RowAsync(demo)).ClaimedAt.Should().BeNull("the copy is still free");
+        (await copy.OwnerPasswordHashAsync(demo)).Should().BeNull();
     }
 
     [Fact]

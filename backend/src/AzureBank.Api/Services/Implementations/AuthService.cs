@@ -503,8 +503,9 @@ public class AuthService : IAuthService
     }
 
     /// <summary>
-    /// The token object BOTH sign-in endpoints answer — one construction site, so login and
-    /// registration cannot drift apart again. <c>ExpiresAt</c> is the token's own <c>exp</c>
+    /// The token object the THREE endpoints that open a session answer — login, registration and
+    /// the demo claim (<see cref="DemoClaimService"/>) — one construction site, so they cannot
+    /// drift apart again. <c>ExpiresAt</c> is the token's own <c>exp</c>
     /// (ADR-0012); <c>ExpiresIn</c> is what is left of it when the response is built, truncated to
     /// whole seconds, so it reads a second or two under the lifetime: 899 on a login and 898 on a
     /// registration, which writes to the database in between, for the 900-second token (measured
@@ -512,7 +513,7 @@ public class AuthService : IAuthService
     /// session at (ADR-0057 §4.1); both grant fields are null when a registration's grant failed.
     /// <c>SessionStamp</c> is the user's, which the BFF keeps on the session (ADR-0057 §5.3).
     /// </summary>
-    private static TokenResponse ToTokenResponse(TokenResult tokenResult, IssuedGrant? grant, int sessionStamp) => new()
+    internal static TokenResponse ToTokenResponse(TokenResult tokenResult, IssuedGrant? grant, int sessionStamp) => new()
     {
         AccessToken = tokenResult.AccessToken,
         RefreshToken = grant?.RefreshToken,

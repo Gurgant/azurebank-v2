@@ -539,6 +539,7 @@ public class DemoCopyBoundaryTests
         [
             Path.Combine(api, "Security", "DemoPasswordGenerator.cs"),
             Path.Combine(api, "Security", "DemoClientKey.cs"),
+            Path.Combine(api, "Services", "Implementations", "DemoClaimService.cs"),
         ];
         foreach (var file in files)
         {
