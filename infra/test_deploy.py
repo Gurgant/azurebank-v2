@@ -991,13 +991,6 @@ class ShapeTests(DeployCase):
             'configuration.ingress.external', lambda a: app_part(a, 'configuration').update(ingress=None),
             'The app')
 
-    def test_the_app_is_read_again_after_it_moved_and_a_drift_stops_the_run(self):
-        self.azure.drift_app_on_patch = lambda template: template['scale'].update(maxReplicas=5)
-        with self.assertRaisesRegex(deploy.ShapeError, 'template.scale.maxReplicas'):
-            self.deploy()
-        self.assertEqual(len(self.azure.app_patches()), 1, 'a drift is reported, not put back')
-        self.smoke.assert_not_called()
-
     def test_the_job_is_read_again_after_it_moved_and_a_drift_stops_the_run(self):
         self.azure.drift_job_on_patch = lambda job: job['properties']['configuration'].update(
             triggerType='Schedule')
@@ -1273,6 +1266,20 @@ class GateTests(DeployCase):
         self.assertIn('runningState', self.printed())
         self.assert_put_back(raised)
         self.assertEqual(self.steps(), ['job azurebank-migrate', 'migration', 'app d', 'app b'])
+
+    def test_an_app_read_back_out_of_shape_after_it_moved_is_diagnosed_and_put_back(self):
+        # Only the deployment's request drifts: what the put-back sends is the template read at
+        # the start, which passed the same check, and never the one that failed it.
+        self.azure.drift_app_on_patch = lambda template: (
+            template['revisionSuffix'].startswith('d-') and template['scale'].update(maxReplicas=5))
+        with self.assertRaisesRegex(RuntimeError, r'\(after its images moved\): '
+                                                  'template.scale.maxReplicas is 5') as raised:
+            self.deploy()
+        self.assertIsInstance(raised.exception.__cause__, deploy.ShapeError)
+        self.assertIn('runningState', self.printed())
+        self.assert_put_back(raised)
+        self.assertEqual(self.steps(), ['job azurebank-migrate', 'migration', 'app d', 'app b'])
+        self.smoke.assert_not_called()
 
     def test_an_unproven_smoke_test_is_never_put_back(self):
         self.smoke.side_effect = deploy.SmokeUnproven('Smoke test unproven: only 429.')

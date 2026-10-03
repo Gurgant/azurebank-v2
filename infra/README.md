@@ -1084,7 +1084,8 @@ written once: an image that is already published is left as it is, and only the 
    execution. When it ends, either way, it prints the verdict: the execution's name, status, start,
    end, length, exit code and a one-word reason. A failed migration stops here: the app is not
    touched;
-5. moves both app images in one request and waits up to 15 minutes for the new revision to be ready;
+5. moves both app images in one request, waits up to 15 minutes for the new revision to be ready,
+   and reads the app's shape again, as in step 2;
 6. waits until the revision that ran before is inactive, so that the answers below come from the
    new code;
 7. smoke test: `/` is the built page; `/health/ready` answers `Healthy` (not merely 200: the BFF
@@ -1225,7 +1226,7 @@ stopped. The deployment identity cannot stop or start the app.
 | --- | --- | --- |
 | `build-push`: "The registry gave no clear answer" | The registry did not say "no such manifest". For a package that has never been published it may answer `denied`, the same as for a private one | First publication only: run again with `-f first_publication=true`. Otherwise read the answer printed below the error and run again |
 | `deploy`: an image "is not published, or its package is not public" | The check before the Azure sign-in | Run `build-push` at this commit; make the package public |
-| "is not in the shape this script deploys onto" | Something changed the app or the job outside the template: its scale, its ingress, its containers, or the identity it carries. Nothing was changed by this run | Run the template again ([Changing the infrastructure later](#changing-the-infrastructure-later)). If it is the identity, read [If something was stolen](#if-something-was-stolen) first |
+| "is not in the shape this script deploys onto" | Something changed the app or the job outside the template: its scale, its ingress, its containers, or the identity it carries. The words in brackets say when it was read. "(nothing was changed)": nothing was changed by this run. "(after its images moved)": the app had moved, and the run printed what Azure says about the revision and put the app back, as below. "(after its image moved)": the job runs the new tools image, no migration ran and the app was not touched. "(after the put-back)": the old images run again, and the shape is still wrong | Run the template again ([Changing the infrastructure later](#changing-the-infrastructure-later)). If it is the identity, read [If something was stolen](#if-something-was-stolen) first |
 | "This identity can list the secrets" | The identity holds more than the custom role. Nothing was changed | Look at its role assignments: there must be exactly two |
 | "Azure asked for a right on a database identity" | Azure wants `assign/action` on the attached identity before it changes the job or the app. The request changed nothing and was not tried again | Stop. No role is added: [If Azure says no](#if-azure-says-no) |
 | "Execution ... is Running: a migration may still be running" | An execution blocks every later deployment until it ends, and the deployment identity cannot stop it | The owner: `az containerapp job stop --name azurebank-migrate --resource-group azurebank-demo --job-execution-name <name>` |

@@ -15,10 +15,12 @@ A full run, in order:
   1. read the app and the jobs, print what runs now, and refuse to go on if their shape drifted;
   2. move the tools image on the migrate job, run the migration, wait for that exact execution;
   3. move the tools image on every other job;
-  4. move both app images in one request and wait for the new revision to be ready;
+  4. move both app images in one request, wait for the new revision to be ready, and read the
+     app's shape again;
   5. wait until the revision that ran before has stopped answering, then smoke-test the address.
-If the new revision never gets ready, or the smoke test gets a wrong answer, the app is put back
-on the template it had at step 1 and the run still fails. The schema is never put back.
+If the new revision never gets ready, the app's shape has drifted when it is read again, or the
+smoke test gets a wrong answer, the app is put back on the template it had at step 1 and the run
+still fails. The schema is never put back.
 
 A migration leaves one line here, its verdict: the execution's name, status, times, exit code and
 a one-word reason. What it printed is never fetched by a deployment: the log of a public
@@ -783,7 +785,9 @@ def deploy(subscription, resource_group, tag, app_only=False, in_actions=False,
         assert_shape('The app', app_drift(moved), 'after its images moved')
         wait_inactive(app_id, previous)
         smoke(f'https://{fqdn}')
-    except (RevisionFailed, SmokeFailed) as failure:
+    # A shape read back wrong is put back too: put_back sends the template read at the start,
+    # which passed the same check, never the one read after the move.
+    except (RevisionFailed, ShapeError, SmokeFailed) as failure:
         say(str(failure))
         diagnose(app_id)
         label = put_back(app_id, app)

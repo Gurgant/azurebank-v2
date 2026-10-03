@@ -230,8 +230,8 @@ the app, then a check, and a failed check puts the app back.** The migration is 
 one-shot, as a manual job. The check is the built page, a readiness answer of `Healthy`, and one
 sign-in for an address nobody can register, which must be refused with the API's own error code:
 that answer needs the BFF, the API, the schema and the database sign-in together. If the new
-revision never gets ready or the check gets a wrong answer, the app goes back to the template it
-had. The schema is never put back.
+revision never gets ready, the app reads back out of the shape it must keep, or the check gets a
+wrong answer, the app goes back to the template it had. The schema is never put back.
 
 **8. The deployment identity can move images and start the job, and nothing else.** GitHub signs
 in as it only from the environment `demo`, which the owner sets to allow `main` only and to ask for
@@ -617,8 +617,9 @@ twice the cap: the logs go off. The alert is refused: it is left out, one of fou
   instead. So do the seven made after step 9 to the templates: the app's name back through
   `fail()` and the secrets, a secret in the name of the role assignment on the app, the tag's
   length dropped, a secret's length dropped, the app no longer waiting for the check, a constant
-  handed to the check for the address, and the check deployed whatever `deployApp` says. Each
-  turned one to four tests red and was put back byte for byte.
+  handed to the check for the address, and the check deployed whatever `deployApp` says. So does
+  the one made after the first review to what puts the app back: a shape read back wrong after
+  the move taken out of it. Each turned one to four tests red and was put back byte for byte.
 
 **Measured**, beyond the Context table.
 
