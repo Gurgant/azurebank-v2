@@ -223,11 +223,15 @@ public sealed class DemoClaimSqlServerTests
     /// </remarks>
     private sealed class EveryCandidateTakenFirstInterceptor(string connectionString) : DbCommandInterceptor
     {
+        private readonly ConcurrentQueue<Guid> _takenInOrder = new();
         private int _taken;
         private int _statements;
 
         /// <summary>Copies taken out of band.</summary>
         public int Taken => Volatile.Read(ref _taken);
+
+        /// <summary>The copies taken out of band, in the order the claim tried them.</summary>
+        public IReadOnlyList<Guid> TakenInOrder => [.. _takenInOrder];
 
         /// <summary>The claim's conditional updates that were seen.</summary>
         public int Statements => Volatile.Read(ref _statements);
@@ -251,7 +255,11 @@ public sealed class DemoClaimSqlServerTests
                         "UPDATE [DemoCopies] SET [ClaimedAt] = SYSUTCDATETIME(), [ClaimId] = NEWID() "
                         + "WHERE [Id] = @id AND [ClaimedAt] IS NULL";
                     claim.Parameters.Add(new SqlParameter("@id", id));
-                    Interlocked.Add(ref _taken, await claim.ExecuteNonQueryAsync(cancellationToken));
+                    if (await claim.ExecuteNonQueryAsync(cancellationToken) == 1)
+                    {
+                        Interlocked.Increment(ref _taken);
+                        _takenInOrder.Enqueue(id);
+                    }
                 }
             }
 
@@ -860,6 +868,42 @@ public sealed class DemoClaimSqlServerTests
     }
 
     [SqlServerFact]
+    public async Task AClaimRunAgainAfterATransientFault_ClaimsOneCopy_AndWritesOneGrant()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copies = await database.BuildCopiesAsync(2);
+        var api = database.DemoApi();
+
+        // The grant's insert fails once, with a fault the retrying strategy runs the whole claim
+        // again for. By then the first attempt had taken a copy, written a password and handed the
+        // context a grant to insert: the first two went back with the transaction, and the third
+        // stays in the context unless the next attempt starts by forgetting it.
+        api.EnableSqlRetryOnFailure();
+        var fault = new TransientFailureInterceptor("INSERT INTO [RefreshTokens]");
+        api.AddInterceptor(fault);
+        using var client = api.CreateClient();
+
+        using var response = await DemoVisitor.ClaimAsync(client, Visitor);
+
+        fault.Fired.Should().BeTrue("the grant's insert must actually have failed once, else the test proves nothing");
+        var claim = await DemoVisitor.ClaimedAsync(response);
+        var rows = await RowsAsync(database);
+        var after = await database.CopiesAsync();
+        using (new AssertionScope())
+        {
+            rows.Where(row => row.ClaimedAt != null).Select(row => row.OwnerUserId).Should().Equal(
+                [claim.User.Id], "one copy is claimed, the one the answer is for");
+            after.Where(copy => copy.Owner.PasswordHash != null).Select(copy => copy.Owner.Id).Should().Equal(
+                [claim.User.Id], "and no password is left on a copy the first attempt took");
+            (await GrantsOfAsync(database, [.. copies.Select(c => c.Owner.Id)])).Should().Be(
+                1, "the first attempt's grant was never written, and is not written with the second's");
+        }
+
+        using var signIn = await DemoVisitor.TrySignInAsync(client, claim.Copy.Email, claim.Copy.Password);
+        signIn.StatusCode.Should().Be(HttpStatusCode.OK, "the password answered is the one the second attempt committed");
+    }
+
+    [SqlServerFact]
     public async Task AWholeRowWriteOfAnOwnerReadBeforeTheClaim_IsRefused_AndThePasswordStillSignsIn()
     {
         await using var database = await DemoPoolDatabase.CreateAsync();
@@ -1056,5 +1100,90 @@ public sealed class DemoClaimSqlServerTests
 
         using var seventh = await DemoVisitor.ClaimAsync(client, "198.51.100.7");
         await ShouldBePoolEmptyAsync(seventh);
+    }
+
+    [SqlServerFact]
+    public async Task HowOldAFreeCopyStillGoesFirst_IsWhatTheHostIsGiven()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copies = await database.BuildCopiesAsync(3);
+
+        // Fifty hours old: too old to count under the default of 44, young enough under 60.
+        foreach (var copy in copies)
+        {
+            await database.BackdateSeedAsync(copy.Id, DateTime.UtcNow.AddHours(-50));
+        }
+
+        // Sixteen rows of seventy hours, too old under either, with no users behind them: a claim
+        // that took one of these is answered 500. Nineteen free rows, so one round reads them all.
+        // Were the three no fresher than the sixteen, three claims would take the three first in
+        // one run of 969 (3/19 x 2/18 x 1/17).
+        var seededAt = DateTime.UtcNow.AddHours(-70);
+        await AddBareCopiesAsync(database, 16, (row, i) => row.CreatedAt = seededAt.AddMinutes(-i));
+        using var client = database.DemoApi(("Demo:Pool:MaxFreeAgeHours", "60")).CreateClient();
+
+        var owners = new List<Guid>();
+        for (var i = 1; i <= 3; i++)
+        {
+            using var response = await DemoVisitor.ClaimAsync(client, $"198.51.100.{i}");
+            owners.Add((await DemoVisitor.ClaimedAsync(response)).User.Id);
+        }
+
+        owners.Should().BeEquivalentTo(
+            copies.Select(c => c.Owner.Id), "under Demo:Pool:MaxFreeAgeHours of 60 a copy of 50 hours is fresh, and goes before one of 70");
+    }
+
+    [SqlServerFact]
+    public async Task WithMoreFreeCopiesThanARoundReads_TheFreshOneIsStillHandedOutFirst()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var fresh = (await database.BuildCopiesAsync(1)).Single();
+
+        // Twenty-one rows too old to count, one more than a round reads, with no users behind them.
+        // A round reads the newest twenty free rows, so the fresh copy is always among them. Read
+        // oldest first, a round would hold none but these, and the claim would take one of them.
+        var seededAt = DateTime.UtcNow.AddHours(-50);
+        await AddBareCopiesAsync(database, 21, (row, i) => row.CreatedAt = seededAt.AddMinutes(-i));
+        using var client = database.DemoApi().CreateClient();
+
+        using var response = await DemoVisitor.ClaimAsync(client, Visitor);
+
+        (await DemoVisitor.ClaimedAsync(response)).User.Id.Should().Be(
+            fresh.Owner.Id, "a pool keeps more free copies than a round reads, and the fresh ones are the ones read");
+    }
+
+    [SqlServerFact]
+    public async Task TheFreshCandidatesAreTriedFirst_AndEachGroupInAnOrderThatIsNotTheReads()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+
+        // One round's twenty: ten fresh rows and ten too old to count, each list newest first,
+        // which is the order the candidates' read answers them in.
+        var now = DateTime.UtcNow;
+        var fresh = await AddBareCopiesAsync(database, 10, (row, i) => row.CreatedAt = now.AddMinutes(-(i + 1)));
+        var old = await AddBareCopiesAsync(database, 10, (row, i) => row.CreatedAt = now.AddHours(-50).AddMinutes(-(i + 1)));
+        var api = database.DemoApi();
+
+        // Each candidate is taken by somebody else as its turn comes, so the claim goes through all
+        // twenty, and the order it tried them in can be read.
+        var thief = new EveryCandidateTakenFirstInterceptor(database.ConnectionString);
+        api.AddInterceptor(thief);
+        using var client = api.CreateClient();
+
+        using var response = await DemoVisitor.ClaimAsync(client, Visitor);
+
+        await ShouldBePoolEmptyAsync(response);
+        var tried = thief.TakenInOrder;
+        tried.Should().HaveCount(20, "every candidate of the round was tried, and taken first");
+        using (new AssertionScope())
+        {
+            tried.Take(10).Should().BeEquivalentTo(fresh.Select(row => row.Id), "the fresh ones are tried before any old one");
+            tried.Skip(10).Should().BeEquivalentTo(old.Select(row => row.Id));
+
+            // Shuffled, each group by itself: claims that arrive together then do not all try the
+            // same copy first. A shuffle of ten leaves them as they were read once in 3,628,800.
+            tried.Take(10).Should().NotEqual(fresh.Select(row => row.Id), "the fresh candidates are not tried in the order they were read");
+            tried.Skip(10).Should().NotEqual(old.Select(row => row.Id), "nor are the old ones");
+        }
     }
 }
