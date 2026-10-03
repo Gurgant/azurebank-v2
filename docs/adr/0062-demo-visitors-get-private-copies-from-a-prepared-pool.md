@@ -138,12 +138,21 @@ oneself), and stay global.
    copies. First, because building writes only new rows, which nothing a visitor did can stop, and
    free copies are what visitors wait for.
 4. **Delete each claimed copy whose time is over** (decision 9), oldest first.
-5. **Delete each free copy older than `MaxFreeAgeHours`**: its history ends that long ago. Older
-   as of the instant of step 1, the instant the top-up counted, so every copy deleted here had a
-   copy built in its place first; one that grew too old while the top-up ran is the next run's.
-   It is taken with the statement a claim uses (`UPDATE … WHERE Id = @id AND ClaimedAt IS NULL`),
-   and deleted in the same transaction only if that statement changed the row, so of a visitor
-   and the run only one can have it, and a run that dies half way leaves it free.
+5. **Delete each free copy older than `MaxFreeAgeHours`**: its history ends that long ago. **Only
+   once the top-up has reached its target**, the lowered one under the ceiling: the fresh free
+   copies step 1 counted and the copies step 3 built are at least that target. A copy too old to
+   count is still one a visitor can be given, so a run whose top-up came up short deletes none of
+   them, and the next run that reaches its target deletes them all. All or none, not as many as
+   were built: the copies a top-up builds stand in for claimed copies too, and which one stands in
+   for which cannot be told. Older as of the instant of step 1, the instant the top-up counted:
+   those are the copies it counted as missing, so the target it reached was reached without them;
+   one that grew too old while the top-up ran is the next run's. Until a review found it, a run
+   deleted them whatever its top-up built: with every insert refused, a pool of three free copies
+   that had grown old together was left with none (on LocalDB, before the fix:
+   `was=3 seeded=0 staleFree=3`). It is taken with the statement a claim uses
+   (`UPDATE … WHERE Id = @id AND ClaimedAt IS NULL`), and deleted in the same transaction only if
+   that statement changed the row, so of a visitor and the run only one can have it, and a run
+   that dies half way leaves it free.
 6. **Sweep** the expired idempotency records and grants of anyone, as the API's own clean-ups do,
    with the same Warning for a record of an operation that never stored its answer. Last, and
    outside every per-copy `try`: a sweep that fails ends the run as failed, after the copies.
@@ -336,6 +345,11 @@ The copies share one database and one deployment, so these are shared, and stay 
   run exits 0, not 11, although visitors may have been turned away since the run before.
 - A copy that failed to build is not on the summary line: the summary counts it (`BuildFailed`),
   the line does not print it, and exit 12 says one failed only when the pool ended short.
+- A run whose top-up came up short keeps every free copy too old to count: until a run reaches its
+  target, a visitor can be given a copy whose history ends more than `MaxFreeAgeHours` ago.
+- Under the ceiling those copies go once the lowered target is reached, so a run can end with
+  fewer free copies than it found (`was`): the day's claims hold the pool there, and exit 15 says
+  so.
 - A failure that is no copy's (a count, the roles the top-up creates first, a sweep) ends the run
   with no summary and no code of the pool's.
 - With `Demo:CopyLifetimeHours` below 24, a copy can be deleted, and its client key removed, inside
@@ -382,7 +396,12 @@ The tests are in `backend/tests/AzureBank.Tests`.
   `APoolWhoseFreeCopiesAllGrewTooOld_IsRebuilt_AndExitsZero_NotEleven` (it exited 11),
   `AFreeCopyThatGrowsTooOldWhileTheTopUpRuns_IsLeftForTheNextRun` (the same run deleted it and the
   pool stayed one short), `AGrantThatEndedLessThanFiveMinutesAgo_StillKeepsTheCopy` (deleted a
-  minute after its last session ended), in `DemoPoolRecycleSqlServerTests`; and in
+  minute after its last session ended),
+  `WhenNoCopyCanBeBuilt_TheFreeCopiesTooOldToCount_AreKept` and
+  `WhenTheTopUpComesUpShortAfterBuildingSome_NoFreeCopyTooOldToCountIsDeleted` (a run deleted
+  every free copy too old to count whatever its top-up built), with
+  `UnderTheCeiling_TheFreeCopiesTooOldToCountAreDeleted_OnceTheLoweredTargetIsReached` for the
+  lowered target, in `DemoPoolRecycleSqlServerTests`; and in
   `DemoPoolCommandSqlServerTests`, `Reset_OnADatabaseThatHoldsThePool_IsRefused_AndDropsNothing`
   (with the flag off, `reset` dropped the pool) and
   `BesideAPool_AUserOutsideEveryCopy_DoesNotStopSeedPool_AndRecycleReportsIt` (`seed-pool` exited
@@ -426,7 +445,10 @@ to Identity. So did each branch of `PoolExitCodes` that gives a code from 10 to 
 failures, the process test among those for 10. The fixes the review brought were broken the same
 way: 12 removals, 12 failures. A 13th, a check that the database exists before `reset` reads its
 migration history, failed no test: EF makes that check itself before it reads the history, so the
-check was removed. Each file was put back byte for byte, checked by its SHA-256.
+check was removed. The condition step 5 of decision 8 waits on was broken the same way: removed,
+the two tests that keep the old copies failed; compared with `TargetFree` instead of the lowered
+target, the ceiling's test failed alone. Each file was put back byte for byte, checked by its
+SHA-256.
 
 **Measured on 2026-10-03** on the compose stack, in three runs, each under a project name of its
 own (SQL Server 2022 CU27, the tools image built from this change, Production). A row holds one

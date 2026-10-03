@@ -243,17 +243,34 @@ public sealed class DemoCopyRecycler
                 copy.Id, failures, () => DeleteClaimedAsync(copy.Id, pastTheBackstop, cancellationToken), cancellationToken));
         }
 
-        // Free copies too old to hand out AS OF THE INSTANT THE TOP-UP COUNTED: those are the ones
-        // it built replacements for, first, so the pool is never short while this goes on. A copy
-        // that grew too old while the top-up ran was counted as fresh and has no replacement yet;
-        // the next run builds one and then deletes it. Unlike the claimed copies above, where the
-        // later instant is the one that matters: a copy whose time ended meanwhile is in nobody's way.
+        // Free copies too old to hand out, and ONLY ONCE THE TOP-UP HAS REACHED ITS TARGET (the
+        // lowered one under the ceiling): the fresh copies it found and the ones it built are at
+        // least that target. A copy too old to count is still a copy a visitor can be given, and
+        // one deleted before the pool holds its target without it leaves the pool short because
+        // of this run. A run whose top-up came up short (an insert refused, a right missing)
+        // deletes none of them; the next run that reaches its target deletes them all.
+        //
+        // ALL OR NONE. Not as many as were built: the copies a top-up builds stand in for claimed
+        // copies too, and which stands in for which cannot be told. A target of five, two fresh,
+        // two claimed, one too old, one built: deleting the old copy for it would leave three
+        // free copies where keeping it leaves four. Nor as many as the target can spare: while
+        // building fails, the old copies are the pool's reserve, and they wait only for the run
+        // that builds again.
+        var replaced = start.Free + topUp.Seeded >= target;
+
+        // Too old AS OF THE INSTANT THE TOP-UP COUNTED: those are the ones it counted as missing,
+        // so the target it reached was reached without them. A copy that grew too old while the
+        // top-up ran was counted as fresh and has no replacement yet; the next run builds one and
+        // then deletes it. Unlike the claimed copies above, where the later instant is the one
+        // that matters: a copy whose time ended meanwhile is in nobody's way.
         var freshSince = countedAt.AddHours(-_options.Pool.MaxFreeAgeHours);
-        var stale = await _context.DemoCopies.AsNoTracking()
-            .Where(copy => copy.ClaimedAt == null && copy.CreatedAt < freshSince)
-            .OrderBy(copy => copy.CreatedAt)
-            .Select(copy => copy.Id)
-            .ToListAsync(cancellationToken);
+        List<Guid> stale = replaced
+            ? await _context.DemoCopies.AsNoTracking()
+                .Where(copy => copy.ClaimedAt == null && copy.CreatedAt < freshSince)
+                .OrderBy(copy => copy.CreatedAt)
+                .Select(copy => copy.Id)
+                .ToListAsync(cancellationToken)
+            : [];
         foreach (var copyId in stale)
         {
             outcomes.Add(await InItsOwnTryAsync(

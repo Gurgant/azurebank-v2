@@ -798,6 +798,116 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
         (await database.CopyAsync(older.Id)).Should().BeNull("11 hours of 10");
     }
 
+    /// <summary>
+    /// <see cref="APoolWhoseFreeCopiesAllGrewTooOld_IsRebuilt_AndExitsZero_NotEleven"/> with the
+    /// top-up refused. A copy too old to count is still a copy a visitor can be given, so the run
+    /// deletes those only once the pool holds its target without them. Here it built none:
+    /// deleting them would take a pool of three free copies to none.
+    /// </summary>
+    [SqlServerFact]
+    public async Task WhenNoCopyCanBeBuilt_TheFreeCopiesTooOldToCount_AreKept()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copies = await database.BuildCopiesAsync(3);
+        foreach (var copy in copies)
+        {
+            await database.BackdateSeedAsync(copy.Id, DateTime.UtcNow.AddHours(-45));
+        }
+
+        Dictionary<string, string?> settings = new() { ["Demo:Pool:TargetFree"] = "3", ["Demo:Pool:LowMark"] = "1" };
+        var refused = FailingCommandInterceptor.OnText("INSERT INTO [DemoCopies]");
+        var summary = await database.RecycleAsync(settings, interceptors: refused);
+        output.WriteLine(summary.ToLine());
+
+        refused.Failures.Should().Be(3, "the failure must actually have been injected, else the test proves nothing");
+        (summary.FreeAtStart, summary.Seeded, summary.BuildFailed, summary.DeletedStaleFree, summary.Free, summary.ExitCode).Should().Be(
+            (3, 0, 3, 0, 0, 12), "nothing was built in their place, so not one of the three is deleted, and the pool ended below its target");
+        foreach (var copy in copies)
+        {
+            var kept = await database.CopyAsync(copy.Id);
+            StillWhole(kept, "a copy too old to count is still one a visitor can be given");
+            kept!.Row.ClaimedAt.Should().BeNull("and it is still free");
+        }
+
+        // TWIN: the next run builds three, and then deletes the same three.
+        var next = await database.RecycleAsync(settings);
+        output.WriteLine(next.ToLine());
+
+        (next.Seeded, next.DeletedStaleFree, next.Free, next.ExitCode).Should().Be((3, 3, 3, 0));
+        foreach (var copy in copies)
+        {
+            (await database.CopyAsync(copy.Id)).Should().BeNull("their replacements were built first");
+        }
+    }
+
+    /// <summary>
+    /// ALL OR NONE, not as many as were built. The pool lacks three copies of its five: two for
+    /// claimed copies, one for a copy too old to count. The top-up builds one and is refused. Which
+    /// of the three it stands in for cannot be told, and deleting the old copy for it would leave
+    /// three free copies where keeping it leaves four.
+    /// </summary>
+    [SqlServerFact]
+    public async Task WhenTheTopUpComesUpShortAfterBuildingSome_NoFreeCopyTooOldToCountIsDeleted()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copies = await database.BuildCopiesAsync(5);
+        await database.MarkClaimedAsync(copies[0].Id, DateTime.UtcNow);
+        await database.MarkClaimedAsync(copies[1].Id, DateTime.UtcNow);
+        var old = copies[2];
+        await database.BackdateSeedAsync(old.Id, DateTime.UtcNow.AddHours(-45));
+
+        // The first copy is built; the next three are refused, and the top-up gives up.
+        Dictionary<string, string?> settings = new() { ["Demo:Pool:TargetFree"] = "5", ["Demo:Pool:LowMark"] = "1" };
+        var refused = FailingCommandInterceptor.OnTurnsOfText(turn => turn > 1, "INSERT INTO [DemoCopies]");
+        var summary = await database.RecycleAsync(settings, interceptors: refused);
+        output.WriteLine(summary.ToLine());
+
+        refused.Failures.Should().Be(3, "the failure must actually have been injected, else the test proves nothing");
+        (summary.FreeAtStart, summary.Seeded, summary.BuildFailed, summary.DeletedStaleFree, summary.Free, summary.ExitCode).Should().Be(
+            (3, 1, 3, 0, 3, 12), "two fresh copies and one built are three of five: the pool does not hold its target without the old copy");
+        StillWhole(await database.CopyAsync(old.Id), "a copy too old to count is still one a visitor can be given");
+        (await database.CopiesAsync()).Count(c => c.Row.ClaimedAt is null).Should().Be(
+            4, "three fresh copies and the old one: one more than the run found, none fewer");
+
+        // TWIN: the next run builds the two still missing, and then deletes the old copy.
+        var next = await database.RecycleAsync(settings);
+
+        (next.Seeded, next.DeletedStaleFree, next.Free, next.ExitCode).Should().Be((2, 1, 5, 0));
+        (await database.CopyAsync(old.Id)).Should().BeNull("its replacement was built first");
+    }
+
+    /// <summary>
+    /// Under the ceiling the run's target is the lowered one, and that is the target the pool has
+    /// to hold without its copies too old to count. Two claims of a ceiling of 4 leave room for two
+    /// of the target of three: two are built, and the three old copies are deleted, though only two
+    /// were built. The day's claims, not the delete, are what hold the pool below three, and exit
+    /// 15 says so.
+    /// </summary>
+    [SqlServerFact]
+    public async Task UnderTheCeiling_TheFreeCopiesTooOldToCountAreDeleted_OnceTheLoweredTargetIsReached()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copies = await database.BuildCopiesAsync(5);
+        await database.MarkClaimedAsync(copies[0].Id, DateTime.UtcNow.AddHours(-1));
+        await database.MarkClaimedAsync(copies[1].Id, DateTime.UtcNow.AddHours(-2));
+        var old = copies.Skip(2).ToList();
+        foreach (var copy in old)
+        {
+            await database.BackdateSeedAsync(copy.Id, DateTime.UtcNow.AddHours(-45));
+        }
+
+        var summary = await database.RecycleAsync(
+            settings: new() { ["Demo:Pool:TargetFree"] = "3", ["Demo:Pool:MaxClaimsPerDay"] = "4" });
+        output.WriteLine(summary.ToLine());
+
+        (summary.Target, summary.FreeAtStart, summary.Seeded, summary.DeletedStaleFree, summary.Free, summary.Ceiling, summary.ExitCode)
+            .Should().Be((2, 3, 2, 3, 2, true, 15), "the two built reach the target the day's claims left, so the three old copies go");
+        foreach (var copy in old)
+        {
+            (await database.CopyAsync(copy.Id)).Should().BeNull("the pool holds its lowered target without it");
+        }
+    }
+
     [SqlServerFact]
     public async Task WhenTheAnswerToADeletesCommitIsLost_TheCopyIsCountedOnce_AndIsNotAFailure()
     {

@@ -40,7 +40,7 @@ pool: free=50 was=23 claimed=7 claims24h=12 clientsAtCap=0 seeded=38 deleted(exp
 | `seeded` | Copies the run built |
 | `expired` | Claimed copies deleted: their time was over and no session was running in them |
 | `hardStop` | Claimed copies deleted 48 hours past their time with a session still live in them (section 5) |
-| `staleFree` | Free copies deleted because they were too old to hand out |
+| `staleFree` | Free copies deleted because they were too old to hand out. Only a run whose top-up reached its target deletes them, the lowered target under the ceiling; one that came up short leaves them free (section 2) |
 | `failed` | Copies whose delete threw (section 4) |
 | `idempotency`, `grants` | Expired idempotency records and grants removed, whoever they belonged to |
 | `tombstones` | Records of deleted copies, at the end |
@@ -144,6 +144,11 @@ it. A copy is built in one transaction, so nothing of a failed one was written. 
 handle, account number or transaction number was taken already (2601 or 2627) has been drawn again
 three times before it counts as failed, and three failures in a row end the top-up. The next run
 tries again.
+
+**A run whose top-up came up short deletes no free copy too old to count**, and its `staleFree` is
+0. Until a run builds the pool back to its target, a copy older than `Demo:Pool:MaxFreeAgeHours` is
+still one a visitor can be given; the first run that reaches its target deletes them. A pool whose
+copies grew old together keeps them while nothing can be built, instead of being left with none.
 
 ## 3. Users outside every copy (13)
 
