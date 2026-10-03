@@ -96,6 +96,14 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         "integration-tests-only-pin-pepper-0123456789abcdef0123456789";
 
     /// <summary>
+    /// Test-only <c>Demo:ClientKeySecret</c>, the key a client's address is hashed with on the
+    /// demo; <see cref="EnableDemo"/> sets it. Public so a test can compute a client's key itself.
+    /// NOT a real secret.
+    /// </summary>
+    public const string DemoClientKeySecret =
+        "integration-tests-only-demo-client-key-0123456789abcdef";
+
+    /// <summary>
     /// Whether this host accepts a request with no remote address on the token endpoints, as every
     /// test host does by default: TestServer has no socket, so it gives every request a null
     /// address. False leaves <c>TokenRoadOptions</c> exactly as the API registers it, which is how
@@ -199,6 +207,24 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
     public void SetRequestDeadlineSeconds(int seconds)
     {
         _requestDeadlineSeconds = seconds;
+    }
+
+    private (string Key, string Value)[]? _demoSettings;
+
+    /// <summary>
+    /// Turns the public demo on in this host: <c>Demo:Enabled</c>, the client-key secret the API
+    /// refuses to start without once the demo is on (<see cref="DemoClientKeySecret"/>), and then
+    /// <paramref name="settings"/>, each a configuration key and its value. Call before
+    /// <c>CreateClient()</c>.
+    /// </summary>
+    /// <remarks>
+    /// Off unless a test asks, as it is off in every deployment that does not set it. Through
+    /// <c>UseSetting</c>, so each value is bound and validated at start like a real one; the
+    /// settings given are applied after the flag and the secret.
+    /// </remarks>
+    public void EnableDemo(params (string Key, string Value)[] settings)
+    {
+        _demoSettings = settings;
     }
 
     private FakeTimeProvider? _clock;
@@ -367,6 +393,16 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         if (_requestDeadlineSeconds is { } deadline)
         {
             builder.UseSetting("RequestDeadline:Seconds", deadline.ToString(CultureInfo.InvariantCulture));
+        }
+
+        if (_demoSettings is { } demoSettings)
+        {
+            builder.UseSetting("Demo:Enabled", "true");
+            builder.UseSetting("Demo:ClientKeySecret", DemoClientKeySecret);
+            foreach (var (key, value) in demoSettings)
+            {
+                builder.UseSetting(key, value);
+            }
         }
 
         // After the application's own registrations, so the swap replaces the TimeProvider.System
