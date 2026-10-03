@@ -225,6 +225,12 @@ try
     // authentication, so an access token proves nothing off the road either.
     app.UseTokenRoad();
 
+    // The public demo's own endpoints answer 404 while Demo:Enabled is false, as a path that
+    // matches no route does. After the token road, so a caller off it gets the road's refusal
+    // whatever the flag says; before authentication and model binding, so the answer is the same
+    // 404 whatever the request carries.
+    app.UseDemoEndpoints();
+
     // Authentication & Authorization (order matters!)
     app.UseAuthentication();
     app.UseAuthorization();
