@@ -46,6 +46,10 @@ public sealed class ConcurrencyRetryIdempotentAttemptTests : IDisposable
         + "so the outcome is not known. Verify via GET /api/transactions before sending it again with "
         + "a new key.";
 
+    private const string ReplacedRecordSentence =
+        "This idempotency key now holds another request's record, so the outcome of this request "
+        + "is not known. Verify via GET /api/transactions before sending it again with a new key.";
+
     private readonly string _dbName = Guid.NewGuid().ToString();
     private readonly InMemoryDatabaseRoot _root = new();
     private readonly AzureBankDbContext _request;
@@ -185,7 +189,7 @@ public sealed class ConcurrencyRetryIdempotentAttemptTests : IDisposable
 
         refusal.Details.Should().BeNull(
             "what was read is about another body, so nothing is proven about this one: no applied member at all");
-        refusal.Message.Should().Be(NotKnownSentence);
+        refusal.Message.Should().Be(ReplacedRecordSentence);
 
         var after = await ElsewhereAsync(db => db.IdempotencyRecords.AsNoTracking().SingleAsync());
         after.Status.Should().Be(stored, "the other request's record is left as it was");

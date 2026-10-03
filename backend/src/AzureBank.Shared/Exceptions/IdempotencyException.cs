@@ -14,9 +14,9 @@ namespace AzureBank.Shared.Exceptions;
 /// </summary>
 /// <remarks>
 /// Until 2026-10-01 the second 409 read "executed with the response lost", in one sentence for
-/// every path. It is two answers now: <see cref="ResultUnknownApplied"/>, where the key's record
-/// was read from the database as committed, and <see cref="ResultUnknown"/>, where the record is
-/// gone and nothing is proven.
+/// every path. <see cref="ResultUnknownApplied"/> says the key's record was read from the database
+/// as committed. Nothing is proven by <see cref="ResultUnknown"/>, where the record is gone, or
+/// <see cref="ResultUnknownReplaced"/>, where the key now holds another request's record.
 /// </remarks>
 public class IdempotencyException(string message, string errorCode, int statusCode)
     : AppException(message, errorCode, statusCode)
@@ -70,9 +70,8 @@ public class IdempotencyException(string message, string errorCode, int statusCo
 
     /// <summary>
     /// The request's record is no longer there, so nothing about the outcome is proven: the same
-    /// code as <see cref="ResultUnknownApplied"/>, with no <c>applied</c> member at all. Gone is
-    /// deleted, or replaced under the same key by a record claimed with another body, which says
-    /// nothing about this request.
+    /// code as <see cref="ResultUnknownApplied"/>, with no <c>applied</c> member at all. The reload
+    /// found no row. A record claimed with another body uses <see cref="ResultUnknownReplaced"/>.
     /// </summary>
     /// <remarks>
     /// Until 2026-10-01 this was the one answer of every path and said "was executed, but its
@@ -84,6 +83,17 @@ public class IdempotencyException(string message, string errorCode, int statusCo
         "A request with this idempotency key may have been executed: its record is no longer there, " +
         "so the outcome is not known. Verify via GET /api/transactions before sending it again with " +
         "a new key.",
+        ErrorCodes.IdempotencyResultUnknown,
+        409);
+
+    /// <summary>
+    /// The key now holds a record claimed with another body, so nothing about this request's
+    /// outcome is proven. The same code as <see cref="ResultUnknown"/>, with no <c>applied</c>
+    /// member, but the detail says which record was found rather than saying no record is there.
+    /// </summary>
+    public static IdempotencyException ResultUnknownReplaced() => new(
+        "This idempotency key now holds another request's record, so the outcome of this request " +
+        "is not known. Verify via GET /api/transactions before sending it again with a new key.",
         ErrorCodes.IdempotencyResultUnknown,
         409);
 

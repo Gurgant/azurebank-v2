@@ -112,6 +112,13 @@ design — see Notes).
   judged on the answering instance's clock against the claiming instance's `CreatedAt`: a clock
   ahead says `applied: true` sooner, never wrongly, since the record is `Executed` in the
   database either way.)*
+  *(Corrected 2026-10-03: the two unproven outcomes above shared a sentence saying the record
+  "is no longer there", even when the reload found another body's record under the key. That
+  second case now says: "This idempotency key now holds another request's record, so the outcome
+  of this request is not known. Verify via GET /api/transactions before sending it again with a
+  new key." The no-row case keeps its sentence byte for byte. Both remain 409
+  `IDEMPOTENCY_RESULT_UNKNOWN` with no `applied` member; only the detail of the replaced-record
+  case changes.)*
 - *(Added 2026-09-30, [ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md).)*
   The database cannot be reached, or the request ran past its deadline → **503
   `SERVICE_UNAVAILABLE`** with `retryAfterSeconds` and `Retry-After`. It carries **`applied:
