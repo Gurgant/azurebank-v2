@@ -6,8 +6,9 @@ demo copy are deleted, around the ledger's guard, and the audit rows that name t
 [ADR-0042](0042-a-transfer-authorisation-is-bound-and-spent-once.md) (a demo copy's authorisations
 leave with the copy),
 [ADR-0060](0060-migrations-run-as-a-one-shot-container-before-the-app.md) decisions 4 and 5 (two
-commands that run on an Azure SQL name, as the app's database user, and an exit 2 that comes after
-one count) and [ADR-0011](0011-pin-hash-pepper.md) (two more commands check the pepper)
+commands that run on an Azure SQL name, as the app's database user where it has one of its own, and
+two exits 2 that come after one count) and [ADR-0011](0011-pin-hash-pepper.md) (two more commands
+check the pepper)
 
 **Where the code is.** The pool's code is in `backend/tools/AzureBank.Seeder/Pool/`
 (`DemoCopyBuilder`, `DemoCopyRecycler`, `DemoCredentials`, `PoolCounts`, `PoolExitCodes`,
@@ -137,10 +138,12 @@ oneself), and stay global.
    copies. First, because building writes only new rows, which nothing a visitor did can stop, and
    free copies are what visitors wait for.
 4. **Delete each claimed copy whose time is over** (decision 9), oldest first.
-5. **Delete each free copy older than `MaxFreeAgeHours`**: its history ends that long ago. It is
-   taken with the statement a claim uses (`UPDATE … WHERE Id = @id AND ClaimedAt IS NULL`), and
-   deleted in the same transaction only if that statement changed the row, so of a visitor and
-   the run only one can have it, and a run that dies half way leaves it free.
+5. **Delete each free copy older than `MaxFreeAgeHours`**: its history ends that long ago. Older
+   as of the instant of step 1, the instant the top-up counted, so every copy deleted here had a
+   copy built in its place first; one that grew too old while the top-up ran is the next run's.
+   It is taken with the statement a claim uses (`UPDATE … WHERE Id = @id AND ClaimedAt IS NULL`),
+   and deleted in the same transaction only if that statement changed the row, so of a visitor
+   and the run only one can have it, and a run that dies half way leaves it free.
 6. **Sweep** the expired idempotency records and grants of anyone, as the API's own clean-ups do,
    with the same Warning for a record of an operation that never stored its answer. Last, and
    outside every per-copy `try`: a sweep that fails ends the run as failed, after the copies.
@@ -152,9 +155,11 @@ this one. A run that is stopped blames no copy. Every statement of a run gets 12
 shared 30 s, because a statement that times out is not sent again.
 
 **9. A claimed copy is deleted when its time is over and no session is running in it.** Its time is
-over five minutes after `ClaimedAt + CopyLifetimeHours`. A grant of one of its users that is
-neither revoked nor expired keeps it, and that is read inside the transaction that deletes it, not
-when the copy was chosen. **The backstop:** 48 hours past its lifetime a copy is deleted with a
+over five minutes after `ClaimedAt + CopyLifetimeHours`. A grant of one of its users that is not
+revoked and did not end more than five minutes ago keeps it, and that is read inside the
+transaction that deletes it, not when the copy was chosen. The five minutes are the claim's
+margin again: every access token a grant mints ends with it, but a request accepted the moment
+before has its deadline still to run. **The backstop:** 48 hours past its lifetime a copy is deleted with a
 live grant all the same, and counted apart (`hardStop`). A grant lives at most 24 hours from
 sign-in (`Jwt:RefreshTokenLifetimeMinutes`, 60 by default), so a grant still live two days after a
 copy's end says sign-in went on being accepted after it. The next renewal of that session presents
@@ -213,8 +218,8 @@ counts:
 | Code | Name | When |
 |---|---|---|
 | 0 | `PoolOk` | Nothing below applies. A run that found no copy, only the records of deleted copies or no row at all, is 0: it is read as a first fill |
-| 10 | `PoolLow` | The run found fewer fresh free copies than `LowMark`, and at least one |
-| 11 | `PoolEmpty` | The run found no fresh free copy, and at least one copy that is not a record: visitors may have been turned away |
+| 10 | `PoolLow` | The run found fewer free copies than `LowMark`, however old, and at least one |
+| 11 | `PoolEmpty` | The run found no free copy, however old, and at least one copy that is not a record: visitors may have been turned away |
 | 12 | `TopUpIncomplete` | A copy could not be built, and the pool ended below its target |
 | 13 | `ForeignUsers` | A user that belongs to no copy exists |
 | 14 | `DeleteFailed` | At least one copy's delete threw |
@@ -222,8 +227,15 @@ counts:
 
 When several apply the run exits with the first of 13, 14, 12, 15, 11, 10: what needs a look before
 what was only short. 10, 11 and 15 mean "done, and the pool was short"; 12, 13 and 14 need a look.
-A top-up run on its own reports only 13 and 12: a pool that was low when it started is why it was
-run. The line carries every count whatever the code, and never an id or an address:
+"Low" and "empty" count the free copies however old (the line's `was`): a copy too old to count
+towards the target is still free until the run that replaces it deletes it. Counted fresh, a pool
+nobody claimed from exited 11 whenever its copies grew too old together, about every two days,
+with nobody turned away.
+
+A top-up run on its own reports only 12, and 13 when it wrote nothing because the database held
+users and not one pool row: a pool that was low when it started is why it was run, and a user
+outside every copy beside a pool is on its line and is `recycle`'s 13. The line carries every count
+whatever the code, and never an id or an address:
 
 `pool: free=50 was=23 claimed=7 claims24h=12 clientsAtCap=0 seeded=38 deleted(expired=4 hardStop=0 staleFree=11 failed=0) swept(idempotency=120 grants=31) tombstones=412 foreignUsers=0 ceiling=no result=PoolOk`
 
@@ -234,7 +246,7 @@ that looks behind it, is in [`docs/runbooks/demo-pool.md`](../runbooks/demo-pool
 
 | Command | Does | Exits |
 |---|---|---|
-| `seed-pool [copies]` | The top-up of decision 8 alone, to N fresh free copies (1 to 500, the range of `TargetFree`), or to `TargetFree` without N. The first fill, and a refill by hand | 0, 12 or 13 |
+| `seed-pool [copies]` | The top-up of decision 8 alone and without its daily ceiling, to N fresh free copies (1 to 500, the range of `TargetFree`), or to `TargetFree` without N. The first fill, and a refill by hand | 0, 12 or 13 |
 | `recycle` | Decision 8, whole. The job a deployment schedules; safe at any interval | 0, or a signal from 10 to 15 |
 
 - **The code reaches the process.** Each handler sets the run's code on its invocation, as
@@ -244,22 +256,25 @@ that looks behind it, is in [`docs/runbooks/demo-pool.md`](../runbooks/demo-pool
   no copy's prints a `failed:` line and exits 1.
 - **Refused before anything is opened, exit 2,** as the Seeder's other commands refuse: a
   connection string that is missing, unreadable or names no database; a PIN pepper or a demo
-  setting their validators refuse; and the demo off.
+  setting their validators refuse, both in one line when both fail; a value that cannot be read as
+  its setting's type, named by its key and never by the value; and the demo off.
 - **On an Azure SQL name they run**, where `seed` and `reset` are refused: the demo's database is
   one. Why that is safe, and that the job signs in as the app's database user and not the
-  migration's, is ADR-0060's note on its decision 5.
+  migration's where a deployment has the two, is ADR-0060's note on its decision 5.
 - **`seed` and `reset` refuse demo mode** (exit 2, nothing opened): `seed`'s four users have a
-  password and a PIN in this repository, and `reset` drops the database. **`seed` also refuses a
+  password and a PIN in this repository, and `reset` drops the database. **Both also refuse a
   database that holds any pool row**, a record included, whatever the flag says: a job whose
   environment lost the flag is still pointed at the demo's database. That refusal costs one count
-  before anything is written.
+  before anything is written; `reset` asks after its prompt and before its drop, and reads first
+  whether the pool's migration was applied, so a database that does not exist, or one migrated
+  before the pool's table, is reset as before.
 - **A stop reaches Identity.** Identity's managers take no token; the two the Seeder registers
   read the scope's `RunCancellation`, and the builder sets it before the roles and the copies'
   users are created. It was not set before the commands existed: a run stopped at its first
   statement to the roles table sent that statement and two more with no token.
 - **Locally**, `compose.demo.yaml` over `compose.yaml` runs `seed-pool` in place of `seed`, and
-  `recycle` under the profile `pool`. One volume holds one kind of database: each of `seed` and
-  `seed-pool` refuses the other's.
+  `recycle` under the profile `pool`. One volume holds one kind of database: `seed` and `reset`
+  refuse the pool's (exit 2), and `seed-pool` exits 13 on the fixed demo's, writing nothing.
 
 ## What still crosses copies
 
@@ -325,10 +340,17 @@ The copies share one database and one deployment, so these are shared, and stay 
   with no summary and no code of the pool's.
 - With `Demo:CopyLifetimeHours` below 24, a copy can be deleted, and its client key removed, inside
   the 24 hours its claim is counted over: that claim then stops counting towards its client's cap.
-- `seed` reads the database before it refuses the demo's: exit 2 there comes after a connection
-  was opened, where every other 2 of the tool comes before (ADR-0060, decision 4's note).
+- `seed` and `reset` read the database before they refuse the demo's: exit 2 there comes after a
+  connection was opened, where every other 2 of the tool comes before (ADR-0060, decision 4's
+  note).
 - A compose volume that one of `compose.yaml` and `compose.demo.yaml` filled stops the other's
-  one-shot, and with it the API, until `docker compose down -v`.
+  one-shot, and with it the API, until `docker compose down -v`. Under `compose.demo.yaml` a later
+  `up` builds a new set of copies once the old ones are 44 hours old, and only `recycle` deletes
+  the old ones.
+- Two runs at once each top up from their own count, so together they can build up to twice the
+  target, and twice what the day's claims leave room for. Nothing is lost or deleted twice, and the
+  extra copies go when they grow too old; a schedule whose runs do not overlap avoids it. No lock
+  serialises the runs.
 
 **Neutral**
 
@@ -356,6 +378,15 @@ The tests are in `backend/tests/AzureBank.Tests`.
   `BesideAPool_AnOrdinaryUserLosesNothing_AndAnExpiredCopyIsStillDeleted`; each exit code is
   produced on purpose by a test of its own, and
   `APoolLeftWithOnlyRecords_IsReadAsAFirstFill_AndExitsZero` pins the exit 0 above.
+- What a review of this record found, each with its test:
+  `APoolWhoseFreeCopiesAllGrewTooOld_IsRebuilt_AndExitsZero_NotEleven` (it exited 11),
+  `AFreeCopyThatGrowsTooOldWhileTheTopUpRuns_IsLeftForTheNextRun` (the same run deleted it and the
+  pool stayed one short), `AGrantThatEndedLessThanFiveMinutesAgo_StillKeepsTheCopy` (deleted a
+  minute after its last session ended), in `DemoPoolRecycleSqlServerTests`; and in
+  `DemoPoolCommandSqlServerTests`, `Reset_OnADatabaseThatHoldsThePool_IsRefused_AndDropsNothing`
+  (with the flag off, `reset` dropped the pool) and
+  `BesideAPool_AUserOutsideEveryCopy_DoesNotStopSeedPool_AndRecycleReportsIt` (`seed-pool` exited
+  13, and the API that waits for it under `compose.demo.yaml` never started).
 - `DemoPoolRecycleSqlServerTests.ADeletedCopysTransfer_HasNoEvidencePack_ThoughTheAuditRowThatNamesItStays`:
   the pack is assembled for the copy's transfer while the copy exists, and after the delete the
   verb exits 4 with `NOT ASSEMBLED`, while the `MoneyTransferred` row is unchanged.
@@ -369,8 +400,10 @@ The tests are in `backend/tests/AzureBank.Tests`.
   `== x.AzureTag` or an `Equals` call on a handle is classified, and the two that hand another user
   to the caller compare the copy. It is a text scan: a comparison written another way, such as
   `!=` or a `ToLower()` before the `==`, passes it unseen. Every table that holds a copy's rows is
-  one the recycler names, and the ones it leaves to the database really cascade; the pool's code
-  never uses `System.Random`.
+  one the recycler names, and the ones it leaves to the database really cascade; every foreign key
+  into a table the delete empties, or into the pool's own, comes from a table the recycler names or
+  one that leaves with it, followed through cascades (its control, a model with two tables the
+  recycler does not know, is found only by that walk); the pool's code never uses `System.Random`.
 - `DemoCopySchemaSqlServerTests`: the columns, the two constraints, the filtered indexes, and the
   migration taken back.
 - `DemoPoolCommandSqlServerTests`: each command returns its run's code and logs one line, at
@@ -381,18 +414,24 @@ The tests are in `backend/tests/AzureBank.Tests`.
 - `Unit/Tools/SeederCommandTests`: every refusal of the tool holds for the two commands, with
   nothing opened, and the demo off refuses them; `seed` and `reset` refuse demo mode; on an Azure
   SQL name the two commands reach for the server; a cancelled run prints no line; the count
-  `seed-pool` takes is 1 to 500.
-- `SeederProcessTests`: the real process exits 2 for either command with the demo off, and
-  `recycle` that finds fewer free copies than the low mark exits 10, the process's own code.
+  `seed-pool` takes is 1 to 500; a pepper and a demo setting that both fail are one refusal, and a
+  value that cannot be read is one that names its key and never the value.
+- `SeederProcessTests`: the real process exits 2 for either command with the demo off, and for a
+  flag that is neither true nor false, and `recycle` that finds fewer free copies than the low mark
+  exits 10, the process's own code.
 
 Each guard of decision 13 was then broken again, one at a time, and a test above failed: 20
 removals, 20 failures, among them the code each command passes on and the token the builder hands
 to Identity. So did each branch of `PoolExitCodes` that gives a code from 10 to 15: 7 removals, 7
-failures, the process test among those for 10. Each file was put back byte for byte, checked by
-its SHA-256.
+failures, the process test among those for 10. The fixes the review brought were broken the same
+way: 12 removals, 12 failures. A 13th, a check that the database exists before `reset` reads its
+migration history, failed no test: EF makes that check itself before it reads the history, so the
+check was removed. Each file was put back byte for byte, checked by its SHA-256.
 
-**Measured on 2026-10-03** on the compose stack under a project name of its own (SQL Server
-2022 CU27, the tools image built from this change, Production), one run per row:
+**Measured on 2026-10-03** on the compose stack, in three runs, each under a project name of its
+own (SQL Server 2022 CU27, the tools image built from this change, Production). A row holds one
+run unless it says otherwise; the last run came after the review's fixes. Times are read from the
+container's own timestamps, between its first line and its pool line, unless a row says otherwise:
 
 | What was run | What happened |
 |---|---|
@@ -403,13 +442,17 @@ its SHA-256.
 | `seed-pool` and `recycle` on that name, the flag on, no retry | Exit 1 each: not refused; they reached for the server, whose name does not resolve |
 | `recycle` with `TargetFree` and `LowMark` at 6, the pool holding 5 | Exit 10, also as the container's exit code (`docker inspect`): `was=5 seeded=1 result=PoolLow` |
 | every copy marked claimed by SQL, then `recycle` | Exit 11, also as the container's exit code: `was=0 claimed=6`, and the pool topped up to 6 |
-| three copies back-dated by SQL, one free and 50 h old, one claimed 30 h ago, one claimed 30 h ago with a live grant inserted; then `recycle` | Exit 0. The first gone with its row; the second a record, with no user and no client key; the third left with its three users; 6 fresh free copies, the target |
-| `seed-pool 100` on a pool of 6 | Exit 0, 94 copies, in 13.2 s against 6.2 s for a run that built none: about 75 ms a copy. `sp_spaceused` reserved 6,056 KB before and 8,816 KB after: about 29 KB a copy |
-| a claimed copy given 474 more ledger rows by SQL, 500 in all, then `recycle` | Exit 0, the copy deleted. Its six statements took 90 ms by EF's own timings, 64 of them the ledger's |
+| three copies back-dated by SQL, one free and 50 h old, one claimed 30 h ago, one claimed 30 h ago with a live grant inserted; then `recycle` (all three runs) | Exit 0. The first gone with its row; the second a record, with no user and no client key; the third left with its three users; the pool back at its target. In the last run, with five free copies before: `was=3 seeded=3 expired=1 staleFree=1`, the stale copy counted in `was` |
+| every free copy back-dated 45 h by SQL, nothing claimed, then `recycle` (last run) | Exit 0, `was=5 seeded=5 staleFree=5`. Before the review's fix the same pool, run on LocalDB at +48 h, exited 11 with `was=0` |
+| `seed-pool 100` on a pool of 5 or 6 (all three runs) | Exit 0, 94, 95 and 95 copies. About 93 to 103 ms a copy: 9.75 s and 9.56 s for the two runs of 95, and 4.63 s for 50 copies from the roles to the line in a first fill (the run of 94 was timed by whole seconds only: 9 s). `sp_spaceused` reserved +2,760, +3,016 and +2,824 KB: 29 to 32 KB a copy |
+| a claimed copy given 474 more ledger rows by SQL, 500 in all, then `recycle` (first two runs) | Exit 0, the copy deleted. Its six statements took 90 and 93 ms by EF's own timings, 64 and 58 of them the ledger's |
 | a login with `db_datareader` and `db_datawriter` only: `CREATE TABLE`; `seed-pool 102`; `recycle` with one copy expired and one stale | 262; exit 0; exit 0 with `expired=1 staleFree=1` |
 | the same login without `db_datawriter`: `seed-pool 103` | Exit 12, three copies refused with 229 on `DemoCopies` |
-| `docker stop` sent to `seed-pool 300` while it built copies | Exit 1 and "seed-pool was cancelled", 0.7 s after the stop; no copy without its three users |
-| from an empty volume, the `seed` service of `compose.demo.yaml`; then its `recycle` service | Exit 0, 50 copies, 13.2 s with `migrate`; then exit 0 with nothing to do |
+| `docker stop` sent about 4 s into building copies: to `seed-pool 500`, and to `recycle` with a target of 400 (last run) | Exit 1 and the command's own cancellation line each, 0.15 s after the stop was sent; 37 and 36 copies built by then, and no copy without its three users |
+| `reset --confirm` with the flag off: on the pool's database; on a database with no pool row; on one that does not exist (last run) | Exit 2, "the database holds the demo pool's rows (102)", and the database's id and creation time unchanged; exit 0, dropped and created again; exit 0, created, with no retry logged |
+| `recycle` with `Demo__Enabled` set to a word; with no pepper and `TargetFree` at 0 (last run, no network) | Exit 2 each: "Demo:Enabled holds a value that cannot be read as Boolean", the word printed nowhere; one line naming both failures |
+| a user outside every copy added by SQL beside the pool, then `seed-pool 103`, then `recycle` (last run) | Exit 0 with `seeded=3 foreignUsers=1`; exit 13, the user left in place |
+| from an empty volume, the `seed` service of `compose.demo.yaml`; then its `recycle` service | Exit 0, 50 copies, 10.4 s from `migrate`'s start to the end of `seed-pool` (second run); then exit 0 with nothing to do |
 
 **Not measured here:** anything on Azure SQL, a managed identity's token among it; a copy used
 through the front door and then deleted by a run of the command (no claim exists yet: the SQL
@@ -417,8 +460,12 @@ Server test above uses the API in process); `recycle` stopped while it deletes.
 
 ## What would change this
 
-- A key to users, accounts or ledger rows added by a later migration: the recycler names its table
-  (the model walk fails until it does).
+- A key to users, accounts or ledger rows, or to any table the delete empties, added by a later
+  migration: the recycler names its table (the model walks fail until it does).
+- Runs that overlap where the demo is deployed, which the line shows as more free copies than the
+  target: a lock that lets one pool run at a time.
+- A need to tell the job's deletes apart from the app's, or to revoke the job alone: a database
+  user of its own with the app's two roles (ADR-0060, decision 5's note).
 - Building copies too slow for the job that runs `recycle`: free copies re-dated in place instead
   of rebuilt, which is a second way around the ledger's guard and needs its own line here.
 - A new query by handle in `backend/src`: classified, and if it hands a user to the caller, it

@@ -136,8 +136,9 @@ and then migrated an empty database):
   history table does not list are applied. A pool run is too: a copy is built or deleted whole or
   not at all. Measured in the image with SQL Server down, `docker stop` sent five seconds in:
   `migrate`, `seed` and `reset` each printed its line and exited 0.3 to 0.4 s after the stop was
-  sent. Measured with the server up, `seed-pool` stopped while it was building copies: its line,
-  exit 1, 0.7 s, and no copy without its three users.
+  sent. Measured with the server up, `seed-pool` and `recycle` each stopped about 4 s into
+  building copies: its line, exit 1, 0.15 s after the stop was sent, and no copy without its three
+  users. A `recycle` stopped while it deletes was not measured.
 - **A command is cancelled only where its token reaches.** The signal cancels a token; the call
   that is in flight has to have been given it. Identity's managers take none, so the tool registers
   two that read it from `RunCancellation`, which the seeders' orchestrator sets, and the demo

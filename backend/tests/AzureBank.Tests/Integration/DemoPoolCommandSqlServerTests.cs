@@ -288,8 +288,8 @@ public sealed class DemoPoolCommandSqlServerTests
     [SqlServerFact]
     public async Task ThePoolCommands_NeedNoRightButToReadAndWriteRows()
     {
-        // A deployment gives its app a database user that reads and writes rows (db_datareader,
-        // db_datawriter) and its migration one that may also change the schema (db_ddladmin). The
+        // Where a deployment gives its app a database user that reads and writes rows (db_datareader,
+        // db_datawriter) and its migration one that may also change the schema (db_ddladmin), the
         // pool's commands are to run as the first. This is such a user, on a login of the test's
         // own, through a whole cycle: the roles and copies of a first fill, then a run that tops up,
         // deletes a claimed copy whose time is over and a free copy too old to hand out, and sweeps.
