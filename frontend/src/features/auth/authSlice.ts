@@ -105,11 +105,19 @@ const authSlice = createSlice({
     // importing the slice instance here proved fragile in the Vite dev runtime
     // (module-instance identity), while the wire shape below is the stable contract.
     builder
-      .addMatcher(isAuthEndpointFulfilled(['login', 'register', 'getMe']), (state, action) => {
-        // Registration IS a login: the BFF sets the session cookie on the 201.
-        state.status = 'authenticated';
-        state.user = (action.payload as BffLoginResponse | BffMeResponse).user;
-      })
+      .addMatcher(
+        isAuthEndpointFulfilled(['login', 'register', 'getMe', 'claimDemoCopy']),
+        (state, action) => {
+          // Registration IS a login: the BFF sets the session cookie on the 201.
+          //
+          // A demo claim is one too: its answer is a sign-in's with the copy added
+          // (bffDemoClaimResponseSchema), so `user` is read the same way. The name in the list is
+          // the endpoint's in apiSlice.ts, one word in two files; src/features/demo/claim.test.ts
+          // fails if either moves alone.
+          state.status = 'authenticated';
+          state.user = (action.payload as BffLoginResponse | BffMeResponse).user;
+        },
+      )
       .addMatcher(isAuthEndpointRejected('getMe'), (state, action) => {
         // Only the BOOT probe's failure resolves here (D3): unknown -> anonymous, no
         // banner. Post-boot 401s are sessionMiddleware's business ('expired' must not

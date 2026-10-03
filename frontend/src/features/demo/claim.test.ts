@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
+import { mockState } from '../../mocks/state';
 import { makeTestStore, type TestStore } from '../../test/renderWithProviders';
 import { apiSlice } from '../api/apiSlice';
 
 /*
-  The claim at the store: what goes out and what comes back. Each test arms its own answer, so
-  what it asserts is what this file was sent and what this file answered.
+  The claim at the store: what goes out, what comes back, and what a claim that succeeded makes of
+  the visitor. Each test arms its own answer, so what it asserts is what this file was sent and
+  what this file answered.
 
   The fixture's password and PIN are its own, on purpose. '987654' is not the demo's PIN
   (`DemoCopyDefaults.Pin`, backend/src/AzureBank.Shared/Constants/DemoCopyDefaults.cs), so a
@@ -126,5 +128,21 @@ describe('a demo claim', () => {
       expect(text).not.toContain('Fixture-Pass-7!');
       expect(text).not.toContain('987654');
     }
+  });
+
+  it("a claim that succeeded signs the visitor in as the copy's owner", async () => {
+    // ANONYMOUS on purpose: the shared setup signs every test in, and a visitor who claims from
+    // the sign-in page has no session. The answer armed below is this test's own and reads no
+    // mock state, so the line only says where the claim starts from.
+    mockState.session = null;
+    server.use(http.post(CLAIM, () => answer()));
+    const store = makeTestStore();
+    expect(store.getState().auth.status).toBe('unknown');
+
+    await claim(store);
+
+    expect(store.getState().auth.status).toBe('authenticated');
+    expect(store.getState().auth.user?.email).toBe('demo-k7m2x9q4w8e1r5t3@azurebank.example');
+    expect(store.getState().auth.user).toStrictEqual(data.user);
   });
 });
