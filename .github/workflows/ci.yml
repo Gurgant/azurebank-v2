@@ -8,7 +8,7 @@ on:
 
 # Least privilege for the GITHUB_TOKEN, inherited by every job (CodeQL
 # actions/missing-workflow-permissions). Nothing here writes to the repo: the steps are
-# checkout, setup-*, build/test and upload-artifact — and upload-artifact@v4 authenticates
+# checkout, setup-*, build/test and upload-artifact — and upload-artifact authenticates
 # with the Actions runtime token, not this one. A job that ever needs more declares its own
 # narrower block rather than widening this default.
 permissions:
@@ -18,16 +18,25 @@ env:
   DOTNET_NOLOGO: true
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
 
+# Every job in the three workflows names its image, ubuntu-24.04. `ubuntu-latest` was that
+# image too (20260927.320.1, read in the jobs' logs on 2026-10-03), and GitHub moves the label
+# to Ubuntu 26.04 run by run from 2026-10-19 (actions/runner-images#14748), with no commit
+# here. Jobs take tools from the image and install none of them: python3, PowerShell 7 and
+# Bicep in the infrastructure job, python3, az and docker in the deploy workflow, the shared
+# libraries Chromium needs in the real-stack job. A new image is a change like any other: the
+# label moves on a branch whose run on that image is green, and deploy.yml, which no branch can
+# run, moves last.
 jobs:
   backend:
     name: Backend build + tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
-          # `actions/checkout` writes the GITHUB_TOKEN into .git/config by default, and every job
+          # `actions/checkout` keeps the GITHUB_TOKEN on the runner by default (from v6 in a file
+          # under $RUNNER_TEMP that the git config points at; before, in .git/config), and every job
           # here then runs third-party code that could read it — NuGet restore, `dotnet run` on the
           # app itself, `npm ci` with its postinstall scripts. No job performs an authenticated git
           # operation (the only git use is a local `git diff --exit-code` drift check), so the
@@ -35,7 +44,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
@@ -91,7 +100,7 @@ jobs:
           --logger "trx;LogFileName=bff-test-results.trx"
 
       - name: Upload test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: backend-test-results
@@ -106,7 +115,7 @@ jobs:
   # container (Category=SqlServer trait; they self-skip elsewhere).
   backend-sql:
     name: Backend concurrency proofs (SQL Server)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
 
     services:
@@ -126,12 +135,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
@@ -172,7 +181,7 @@ jobs:
           fi
 
       - name: Upload test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: backend-sql-test-results
@@ -180,16 +189,16 @@ jobs:
 
   frontend:
     name: Frontend build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '24'
           cache: npm
@@ -297,7 +306,7 @@ jobs:
   # ---------------------------------------------------------------------------------------
   frontend-tz:
     name: Frontend tests (TZ=${{ matrix.tz }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -307,12 +316,12 @@ jobs:
       TZ: ${{ matrix.tz }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '24'
           cache: npm
@@ -357,7 +366,7 @@ jobs:
   # ---------------------------------------------------------------------------------------
   real-stack:
     name: Real-stack layers (contract + integration + e2e)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     services:
@@ -408,17 +417,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '24'
           cache: npm
@@ -533,7 +542,7 @@ jobs:
       # nobody here can fix. Measured 2026-09-09: runs at 15:40, 16:06 and 16:22 passed, then main
       # itself failed at 17:31, before any branch was involved, and stayed failing on re-run.
       #
-      # ubuntu-latest already carries the shared libraries Chromium needs, so the browser binary is
+      # ubuntu-24.04 already carries the shared libraries Chromium needs, so the browser binary is
       # all this step has to fetch. The proof is not this step passing — it is the E2E step below
       # LAUNCHING a real browser: a missing library shows up there and nowhere else, so a green e2e
       # run is what says the dependencies were already present.
@@ -567,7 +576,7 @@ jobs:
       # colour contrast, which is reported only, so this is uploaded on every run, green or red.
       # (Until 2026-09-17 the spec failed on no finding at all, and this said so.)
       - name: Upload the accessibility report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: axe-report
@@ -576,7 +585,7 @@ jobs:
           retention-days: 30
 
       - name: Upload Playwright report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-report
@@ -593,7 +602,7 @@ jobs:
 
   conformance:
     name: Runtime conformance (Schemathesis against the running API)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     # Its own SQL Server, its own seed: the run mints users, accounts and authorisations, and the
@@ -634,17 +643,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -753,7 +762,7 @@ jobs:
           PY
 
       - name: Upload the report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: schemathesis-report
@@ -768,11 +777,11 @@ jobs:
   # and the workflows themselves. Nothing here signs in to Azure or reads a secret.
   infra:
     name: Infrastructure (templates, scripts, workflows)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
 

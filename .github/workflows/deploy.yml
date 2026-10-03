@@ -32,7 +32,7 @@ jobs:
   build-push:
     name: Build and push the images
     if: inputs.action == 'build-push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     # Two runs at one commit must not race each other to the same tag.
     concurrency:
@@ -48,7 +48,7 @@ jobs:
           echo "::error::Images are published from main only."
           exit 1
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
       - name: Build and push the three images of this commit
@@ -104,7 +104,7 @@ jobs:
   deploy:
     name: Migrate and deploy
     if: inputs.action == 'deploy'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The tools image 5, the migration 16, the new revision 15, the old one going inactive 3, the
     # smoke test with its waits 10, a put-back 15, and the steps around them.
     timeout-minutes: 70
@@ -144,7 +144,7 @@ jobs:
           done
           exit "$wrong"
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
       - name: Check that the three images can be pulled without signing in
