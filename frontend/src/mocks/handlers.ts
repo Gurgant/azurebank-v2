@@ -4282,12 +4282,16 @@ const reauthenticate = http.post('*/bff/auth/reauthenticate', async ({ request }
   if (!mockState.session) {
     return bffProblem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
   }
-  // The password of the account the session is on: a claimed demo copy's own, and the mock's for
-  // every other session.
+  // The password of the account the session is on: a claimed demo copy's own, and off the demo
+  // the mock's for every other session.
   const sessionUserId = mockState.session.id;
   const sessionCopy = mockState.demoCopies.find((claimed) => claimed.user.id === sessionUserId);
   const sessionPassword = sessionCopy ? sessionCopy.password : MOCK_PASSWORD;
-  if ((parsed.body.password as string | undefined) !== sessionPassword) {
+  // While the page is the demo a session that is on no claimed copy has no account behind it, as
+  // at sign-in (`accountForLogin`): no password is its password, and the answer is a wrong
+  // password's. Read, not measured: that a running stack answers such a session this way.
+  const outsideEveryCopy = !sessionCopy && mockDemoEnabled();
+  if (outsideEveryCopy || (parsed.body.password as string | undefined) !== sessionPassword) {
     // Re-authentication calls the API's LOGIN endpoint and forwards its answer, so this is the
     // same body the login route produces — `instance` names `/api/auth/login`, not the BFF's own
     // path. Measured rather than assumed to match its sibling, on a throwaway user:

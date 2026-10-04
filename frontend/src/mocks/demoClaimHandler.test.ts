@@ -442,6 +442,17 @@ describe("who signs in to the mock while the page is the demo, and who doesn't",
     const neverClaimed = await signIn(free.user.email, free.password);
     expect(neverClaimed.status).toBe(401);
     expect(await neverClaimed.json()).toMatchObject(INVALID_CREDENTIALS);
+
+    // Re-authentication goes through the same gate. The session the suite starts on is the mock's
+    // own user's, on no claimed copy: its own password does not renew it, and it stays as it was.
+    const outsideEveryCopyAgain = await reauthenticate(MOCK_PASSWORD);
+    expect(outsideEveryCopyAgain.status).toBe(401);
+    expect(await outsideEveryCopyAgain.json()).toMatchObject(INVALID_CREDENTIALS);
+    expect(await whoAmI()).toEqual({ status: 200, email: MOCK_USER.email, authLevel: 1 });
+
+    // Off the demo the same session and the same password renew it: the tag is what refused.
+    resetDemoMode();
+    expect((await reauthenticate(MOCK_PASSWORD)).status).toBe(200);
   });
 
   it("without the tag the mock's own user signs in", async () => {
