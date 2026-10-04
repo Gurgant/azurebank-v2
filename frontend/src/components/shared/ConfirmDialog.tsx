@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { makeStyles, mergeClasses, Text, Button, tokens } from '@fluentui/react-components';
 import { Warning24Regular, Dismiss24Regular } from '@fluentui/react-icons';
 import { colors, safeArea, zIndex, transitions, shadows } from '../../theme/tokens';
@@ -31,6 +31,13 @@ export interface ConfirmDialogProps {
    * owning surface — the dialog stays open so the user reads WHY it was refused).
    */
   errorText?: string | null;
+  /**
+   * What the caller has to say while the dialog is open that is neither its message nor its
+   * error: a wait's hint, for a confirm that takes time. Rendered under the error and above the
+   * buttons. It is outside the message, which is the dialog's description, and outside the
+   * alert, so it is read on its own and never as a part of either.
+   */
+  children?: ReactNode;
 }
 
 // ============================================
@@ -234,6 +241,7 @@ export function ConfirmDialog({
   variant = 'default',
   isLoading = false,
   errorText = null,
+  children,
 }: ConfirmDialogProps) {
   const styles = useStyles();
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -274,6 +282,17 @@ export function ConfirmDialog({
       (focusableWithin(dialogRef.current)[0] ?? dialogRef.current).focus();
     }
   }, [isOpen]);
+
+  // Keep focus IN when a wait starts while the dialog is open. `isLoading` disables every control
+  // at once, the confirm that was just pressed included, and a browser hands a disabled control's
+  // focus to the page (src/test/outage.ts has the measurement). From the page, Tab never reaches
+  // the handler below, and its next stop is the page behind. So the dialog element takes focus,
+  // as it does when the dialog opens already waiting.
+  useEffect(() => {
+    if (isOpen && isLoading && dialogRef.current) {
+      dialogRef.current.focus();
+    }
+  }, [isOpen, isLoading]);
 
   /*
     CONTAIN Tab, which is the half that was missing.
@@ -375,6 +394,7 @@ export function ConfirmDialog({
               {errorText}
             </Text>
           )}
+          {children}
         </div>
 
         {/* Footer */}
