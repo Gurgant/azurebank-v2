@@ -81,7 +81,8 @@ function parseStored(raw: string): StoredDemoCopy | null {
  * nothing a caller happened to carry beside it.
  *
  * A browser that refuses the write still has the copy while the page lives: it is held here, and
- * it is what the page is given until a write succeeds or the copy is forgotten.
+ * it is what the page is given until a write succeeds or the copy is forgotten. The key is
+ * removed then, so the copy this one replaces is not left behind in it.
  */
 export function writeDemoCopy(copy: DemoCopyInfo): void {
   const stored: StoredDemoCopy = {
@@ -97,6 +98,9 @@ export function writeDemoCopy(copy: DemoCopyInfo): void {
     refused = null;
   } catch {
     refused = stored;
+    // The key may still hold the copy this one replaces. It is not this browser's copy any more,
+    // and a reload would read it back.
+    removeKey();
   }
   tellListeners();
 }

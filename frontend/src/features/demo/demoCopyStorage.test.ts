@@ -317,6 +317,23 @@ describe('the demo copy the browser keeps', () => {
     });
   });
 
+  it('a write the browser refuses does not leave the copy before it in the key', () => {
+    enableDemoMode();
+    writeDemoCopy(copy);
+    const keyBefore = keyNow();
+    const denied = deny('setItem');
+    writeDemoCopy(anotherCopy);
+    denied.mockRestore();
+
+    // The copy before it is not this browser's copy any more. Left in the key, it is what a
+    // reload would read back, with its password.
+    expect({ keyBefore, snapshot: getDemoCopySnapshot(), key: keyNow() }).toStrictEqual({
+      keyBefore: kept(copy),
+      snapshot: kept(anotherCopy),
+      key: null,
+    });
+  });
+
   it('a browser that refuses to be read has no copy, and nothing throws', () => {
     enableDemoMode();
     rememberDemoCopy(copy);
@@ -372,10 +389,11 @@ describe('the demo copy the browser keeps', () => {
   */
   it('leaves a copy in the key and another in memory', () => {
     enableDemoMode();
-    rememberDemoCopy(anotherCopy);
     const denied = deny('setItem');
     writeDemoCopy(copy);
     denied.mockRestore();
+    // Put in the key after the refusal, as another tab would: a refused write leaves no key.
+    rememberDemoCopy(anotherCopy);
 
     theTestBeforeLeft = {
       aKey: localStorage.getItem(KEY) !== null,
