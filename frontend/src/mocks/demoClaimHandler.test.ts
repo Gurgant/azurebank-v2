@@ -78,6 +78,18 @@ async function whoAmI() {
   return { status: 200, email: data.user.email, authLevel: data.session.authLevel };
 }
 
+/**
+ * The user the mock's session is on, to write on as a handler would. It throws when there is no
+ * session, so a step that renames the user is never skipped in silence. Read through a function
+ * because the compiler takes `mockState.session` for `null` from the line where a test sets it to
+ * `null` to the end of that test, whatever a request did to it in between.
+ */
+function sessionUser() {
+  const session = mockState.session;
+  if (!session) throw new Error('The mock holds no session, so there is no user to write on.');
+  return session;
+}
+
 interface ListedAccount {
   id: string;
   name: string;
@@ -348,9 +360,7 @@ describe("the mock's demo claim", () => {
 
     // The visitor renames their handle, which the mock writes on the session's user, and a test
     // edits what it was handed. The copy the mock holds as claimed is as it was.
-    const session = mockState.session;
-    if (!session) throw new Error('The seed left no session.');
-    session.azureTag = 'renamed';
+    sessionUser().azureTag = 'renamed';
     handedOut.user.firstName = 'Edited';
     handedOut.copy.contacts.push('someone_else');
     expect(mockState.demoCopies).toEqual(asClaimed);
@@ -388,9 +398,7 @@ describe("who signs in to the mock while the page is the demo, and who doesn't",
     // The session a sign-in opens holds a copy of the owner: a handle renamed there, which the
     // mock writes on the session's user, is not written on the copy as claimed.
     const asClaimed = structuredClone(mockState.demoCopies);
-    const session = mockState.session;
-    if (!session) throw new Error('A sign-in that answered 200 left no session.');
-    session.azureTag = 'renamed';
+    sessionUser().azureTag = 'renamed';
     expect(mockState.demoCopies).toEqual(asClaimed);
 
     // An address is found whatever its spelling, a copy's as any other.
