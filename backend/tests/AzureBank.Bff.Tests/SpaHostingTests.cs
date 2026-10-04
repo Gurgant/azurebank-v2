@@ -171,6 +171,9 @@ public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Progra
     [InlineData("/settings")]
     [InlineData("/accounts/123")]
     [InlineData("/index.html")]
+    // Another spelling of the file's name. Where the file system ignores case the static files
+    // answer it with the file, which has no tag; where it does not, nothing answers it.
+    [InlineData("/INDEX.HTML")]
     public async Task WithTheDemoOn_TheShellAndIndexHtml_CarryTheTagExactlyOnce_BeforeTheHeadCloses(string path)
     {
         using var host = HostServing(ShellWithAHead, demo: true);
