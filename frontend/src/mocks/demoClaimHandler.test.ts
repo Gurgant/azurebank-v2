@@ -260,12 +260,14 @@ describe("the mock's demo claim", () => {
 
   it('the pool runs out', async () => {
     enableDemoMode();
-    const addresses = [
-      (await claimed()).copy.email,
-      (await claimed()).copy.email,
-      (await claimed()).copy.email,
-    ];
+    const copies = [(await claimed()).copy, (await claimed()).copy, (await claimed()).copy];
+    const addresses = copies.map((copy) => copy.email);
     expect(new Set(addresses).size).toBe(3);
+    // Each of the three has the shapes the first is checked for above.
+    for (const copy of copies) {
+      expect(copy.email).toMatch(/^demo-[a-z0-9]{16}@azurebank\.example$/);
+      expect(copy.password).toMatch(/^[A-HJ-NP-Za-kmnp-z2-9]{4}(-[A-HJ-NP-Za-kmnp-z2-9]{4}){3}$/);
+    }
 
     const fourth = await claim();
 
