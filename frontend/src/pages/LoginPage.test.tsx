@@ -1413,6 +1413,38 @@ describe('the sign-in page on the demo, in a browser that keeps a copy', () => {
     });
   });
 
+  it('a copy past its end is not offered even in a browser that will not remove it', async () => {
+    // Ended a minute ago, by this browser's clock.
+    rememberAClaimedCopy({ expiresAt: new Date(Date.now() - 60_000).toISOString() });
+    // The browser will not remove the key: here the removal throws. The ended copy stays under
+    // the key for as long as the page is there.
+    const removals = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+      throw new Error('SecurityError');
+    });
+    try {
+      await openSignInPage();
+
+      expect({
+        // The page asked, and was refused: the copy read below is one it could not remove.
+        askedToRemoveTheKey: removals.mock.calls.some(([key]) => key === KEY),
+        stillKept: keptAddress(),
+        // Not offered all the same. What the page offers goes by the copy's end, and not by
+        // whether the copy could be removed.
+        continue: buttonsNamed(WORDS.continue).length,
+        tryTheDemo: disabledOf(WORDS.tryTheDemo),
+        alerts: alerts(),
+      }).toStrictEqual({
+        askedToRemoveTheKey: true,
+        stillKept: FIRST_COPY,
+        continue: 0,
+        tryTheDemo: [false],
+        alerts: [],
+      });
+    } finally {
+      removals.mockRestore();
+    }
+  });
+
   it('a copy whose end passes while the page is open is still offered: the end is looked at when the page opens', async () => {
     // Half a minute left, by this browser's clock, when the page opens.
     rememberAClaimedCopy({ expiresAt: new Date(Date.now() + 30_000).toISOString() });
