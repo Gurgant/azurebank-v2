@@ -153,6 +153,8 @@ public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Progra
         _moreBuilds.Add(build);
         File.WriteAllBytes(Path.Combine(build, "index.html"), Encoding.UTF8.GetBytes(shell));
         File.WriteAllText(Path.Combine(build, "theme-init.js"), "/* theme */");
+        Directory.CreateDirectory(Path.Combine(build, "assets"));
+        File.WriteAllText(Path.Combine(build, "assets", "index-Cemq5B69.js"), "/* bundle */");
 
         return _root.WithWebHostBuilder(builder =>
         {
@@ -286,6 +288,46 @@ public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Progra
             bytes.Should().Equal(Encoding.UTF8.GetBytes(ShellWithAHead));
             Encoding.UTF8.GetString(bytes).Should().NotContain("azurebank-demo");
             (response.Content.Headers.ContentType?.MediaType).Should().Be("text/html");
+        }
+    }
+
+    // CONTROL: green before this change. With the demo on, a middleware of the demo's stands
+    // before the static files and answers with the tagged page: what is not the page is still
+    // not answered with it, and is answered as with the demo off.
+    [Theory]
+    [InlineData("GET", "/theme-init.js", HttpStatusCode.OK)]
+    [InlineData("HEAD", "/theme-init.js", HttpStatusCode.OK)]
+    [InlineData("GET", "/assets/index-Cemq5B69.js", HttpStatusCode.OK)]
+    [InlineData("GET", "/assets/missing.js", HttpStatusCode.NotFound)]
+    [InlineData("GET", "/missing.html", HttpStatusCode.NotFound)]
+    // Names that end as the shell's does, and are not it.
+    [InlineData("GET", "/assets/index.html", HttpStatusCode.NotFound)]
+    [InlineData("GET", "/xindex.html", HttpStatusCode.NotFound)]
+    [InlineData("GET", "/bff/nope", HttpStatusCode.NotFound)]
+    [InlineData("GET", "/health/live", HttpStatusCode.OK)]
+    [InlineData("GET", "/bff/auth/login", HttpStatusCode.MethodNotAllowed)]
+    [InlineData("GET", "/api/accounts", HttpStatusCode.Unauthorized)]
+    [InlineData("HEAD", "/api/accounts", HttpStatusCode.Unauthorized)]
+    [InlineData("POST", "/index.html", HttpStatusCode.NotFound)]
+    [InlineData("POST", "/settings", HttpStatusCode.NotFound)]
+    public async Task WithTheDemoOn_WhatIsNotThePage_NeverGetsTheTaggedShell(string method, string path, HttpStatusCode expected)
+    {
+        using var host = HostServing(ShellWithAHead, demo: true);
+        using var ordinary = HostServing(ShellWithAHead, demo: false);
+
+        var response = await host.CreateClient().SendAsync(new HttpRequestMessage(new HttpMethod(method), path));
+        var there = await ordinary.CreateClient().SendAsync(new HttpRequestMessage(new HttpMethod(method), path));
+
+        using (new AssertionScope())
+        {
+            response.StatusCode.Should().Be(expected);
+            (await response.Content.ReadAsStringAsync()).Should().NotContain("stand-in shell").And.NotContain("azurebank-demo");
+
+            // A HEAD has no body to read: its headers say what a GET would be answered with.
+            (response.Content.Headers.ContentType?.MediaType).Should().NotBe("text/html");
+            (response.Content.Headers.ContentType?.ToString()).Should().Be(
+                there.Content.Headers.ContentType?.ToString(), "the answer's type is the one a host with the demo off gives");
+            there.StatusCode.Should().Be(expected, "CONTROL: a host with the demo off answers the same status");
         }
     }
 
