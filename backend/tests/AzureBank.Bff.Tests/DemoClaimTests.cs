@@ -639,6 +639,40 @@ public class DemoClaimTests : IClassFixture<WebApplicationFactory<Program>>, IDi
         }
     }
 
+    // CONTROL: green before this change. The answer is the one place the copy's password is
+    // written to; the email and the two tokens stay out of the log as well. What the log does name
+    // is the user's id.
+    [Fact]
+    public async Task AClaim_WritesNoLogLineThatHoldsThePasswordTheEmailOrAToken()
+    {
+        var log = new ConcurrentQueue<LogEvent>();
+        var (host, _) = NewHost(demo: true, builder =>
+            builder.ConfigureServices(services => services.AddSingleton<ILogEventSink>(new QueueSink(log))));
+
+        using var response = await Browser(host).SendAsync(Post(ClaimPath));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        (await Eventually(() => log.Any(e => e.MessageTemplate.Text.StartsWith("HTTP {RequestMethod}", StringComparison.Ordinal))))
+            .Should().BeTrue("ARRANGE: the request's own line is written last, so the claim's lines are all in");
+
+        // Each event as one text: its message, the value of every property, its exception. With
+        // parentheses for braces, as AnswerOfAsync does and for its reason.
+        var written = log
+            .Select(e => string.Join(" ", e.Properties.Select(p => p.Value.ToString()).Prepend(e.RenderMessage()).Append(e.Exception?.ToString())))
+            .Select(line => line.Replace('{', '(').Replace('}', ')'))
+            .ToList();
+        using (new AssertionScope())
+        {
+            written.Should().Contain(
+                line => line.Contains("claimed a demo copy") && line.Contains(Upstream.CopyOwnerId.ToString()),
+                "CONTROL: the claim's own line is among those read, and names the user by id");
+            foreach (var secret in new[] { Upstream.CopyPassword, Upstream.CopyEmail(1), "jwt-claim-1", "rt-claim-1" })
+            {
+                written.Should().NotContain(line => line.Contains(secret), "{0} stays out of the log", secret);
+            }
+        }
+    }
+
     /// <summary>Bodies no page of the application sends, each with the status the binder answers it.</summary>
     public static TheoryData<string, string?, string?, int> HostileBodies() => new()
     {
