@@ -270,8 +270,8 @@ describe('a partial failure', () => {
   starting over from it does to the page around it.
 
   The words are typed out here and not imported from the product, so a test fails the day the words
-  on screen are no longer these. The address is the second copy's of the mock's pool
-  (src/mocks/state.ts): a fixture no server knows.
+  on screen are no longer these. The addresses and the passwords are those of the first two copies
+  of the mock's pool (src/mocks/state.ts): fixtures no server knows.
 */
 const DEMO = {
   heading: 'Your private copy',
@@ -286,7 +286,10 @@ const DEMO = {
 const CLAIM = '*/bff/auth/demo/claim';
 const ACCOUNTS = '*/api/accounts';
 const KEY = 'azurebank.demoCopy';
+const FIRST_COPY = 'demo-k7m2x9q4w8e1r5t3@azurebank.example';
+const FIRST_PASSWORD = 'Xk7p-Rm3w-Hn8d-Tq5v';
 const SECOND_COPY = 'demo-4h9d2s7f1g6j3k8a@azurebank.example';
+const SECOND_PASSWORD = 'Fb4t-Wy9c-Kz2g-Ne6s';
 /** What a demo copy starts with, 12,450.00 and 2,300.00, and that sum with ten more in it. */
 const STARTING_SUM = '€14,750.00';
 const SUM_WITH_TEN_MORE = '€14,760.00';
@@ -604,6 +607,53 @@ describe("on the demo: the panel about the visitor's copy", () => {
       sameButton: true,
       contacts: ['Contacts you can pay: @jane_p3x8 and @mike_p3x8'],
       kept: SECOND_COPY,
+    });
+  });
+
+  it("sign-in details left open stay open across a new copy, and are then the new copy's", async () => {
+    // CONTROL: green before this change
+    // What the panel does as it is built. Whether the details are shown is a state of the panel,
+    // not of the copy they were opened for: it outlives a new copy, and the page then shows the
+    // new copy's address and password with no press of its own. Closing them at a new copy
+    // instead is a choice between two behaviours, and this is the test that says which one the
+    // panel has.
+    const { store } = await openTheOwnersDashboard();
+    /** The toggle, whichever of its two names it has, and the line it shows. */
+    const look = () => ({
+      toggle: within(panels()[0])
+        .queryAllByRole('button', { name: /sign-in details$/ })
+        .map((button) => ({
+          name: button.textContent,
+          expanded: button.getAttribute('aria-expanded'),
+        })),
+      details: Array.from(panels()[0].querySelectorAll('p'))
+        .map((line) => line.textContent)
+        .filter((line) => line?.startsWith('Email:')),
+    });
+
+    const atRest = look();
+    await userEvent.click(
+      within(panels()[0]).getByRole('button', { name: 'Show sign-in details' }),
+    );
+    const opened = look();
+
+    await startOverFromThePanel(store);
+
+    expect({
+      atRest,
+      opened,
+      afterANewCopy: { signedInAs: store.getState().auth.user?.email, ...look() },
+    }).toStrictEqual({
+      atRest: { toggle: [{ name: 'Show sign-in details', expanded: 'false' }], details: [] },
+      opened: {
+        toggle: [{ name: 'Hide sign-in details', expanded: 'true' }],
+        details: [`Email: ${FIRST_COPY} · Password: ${FIRST_PASSWORD}`],
+      },
+      afterANewCopy: {
+        signedInAs: SECOND_COPY,
+        toggle: [{ name: 'Hide sign-in details', expanded: 'true' }],
+        details: [`Email: ${SECOND_COPY} · Password: ${SECOND_PASSWORD}`],
+      },
     });
   });
 
