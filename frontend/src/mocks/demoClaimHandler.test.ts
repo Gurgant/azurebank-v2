@@ -433,11 +433,18 @@ describe("who signs in to the mock while the page is the demo, and who doesn't",
 
   it("re-authentication takes the session copy's password", async () => {
     enableDemoMode();
+    // Two copies are claimed and the session is on the second: the password asked for is that
+    // copy's, not another claimed copy's and not the mock's own.
+    const earlier = seedMockDemoCopy();
     const { copy } = seedMockDemoCopy();
 
     const withItsPassword = await reauthenticate(copy.password);
     expect(withItsPassword.status).toBe(200);
     expect((await withItsPassword.json()).data.user.email).toBe(copy.email);
+
+    const withAnotherCopys = await reauthenticate(earlier.copy.password);
+    expect(withAnotherCopys.status).toBe(401);
+    expect(await withAnotherCopys.json()).toMatchObject(INVALID_CREDENTIALS);
 
     const withTheMocksOwn = await reauthenticate(MOCK_PASSWORD);
     expect(withTheMocksOwn.status).toBe(401);
