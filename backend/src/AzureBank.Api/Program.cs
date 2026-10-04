@@ -236,6 +236,13 @@ try
     app.UseAuthentication();
     app.UseAuthorization();
 
+    // On the public demo a copy can make only so many changes (Demo:Copy:MaxWrites): the one past
+    // the limit answers 429. After authentication, which says who the caller is and so whose copy
+    // is counted; before idempotency and the endpoint, so nothing is written for a request it
+    // refuses, not even a claim of its idempotency key. While Demo:Enabled is false it passes
+    // every request on and sends nothing.
+    app.UseDemoWriteBudget();
+
     // Idempotency for monetary endpoints (ADR-0009).
     // AFTER auth (401/403 must short-circuit before any record is created),
     // BEFORE the endpoints it guards.

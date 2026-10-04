@@ -109,7 +109,7 @@ public sealed class DemoClaimSqlServerTests
     /// (<c>READ_COMMITTED_SNAPSHOT</c>), and reads the setting back. On: Azure SQL's default. Off:
     /// SQL Server's, which a database created under compose has.
     /// </summary>
-    private static async Task SetRowVersioningAsync(DemoPoolDatabase database, bool on)
+    internal static async Task SetRowVersioningAsync(DemoPoolDatabase database, bool on)
     {
         // The name is the fixture's own: "AzureBankPoolProof_" and 32 hexadecimal digits.
         var name = new SqlConnectionStringBuilder(database.ConnectionString).InitialCatalog;
@@ -130,7 +130,7 @@ public sealed class DemoClaimSqlServerTests
         (await RowVersioningAsync(database)).Should().Be(on, "ARRANGE: the database reads committed data the way this row of the theory says");
     }
 
-    private static async Task<bool> RowVersioningAsync(DemoPoolDatabase database)
+    internal static async Task<bool> RowVersioningAsync(DemoPoolDatabase database)
     {
         await using var db = database.NewContext();
         return await db.Database
