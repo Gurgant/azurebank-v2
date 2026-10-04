@@ -72,15 +72,22 @@ function focusIs(): string {
  * The dialog as a page keeps it: mounted and closed, opened by a button of the page, closed by its
  * own cancel or by Escape, and made to wait by its confirm. `answered` is the answer arriving
  * while it waits, which closes it as a success does: nobody presses anything.
+ * `closedStillWaiting` is a caller that closes it and has not yet put its own waiting flag down.
  */
-function OpenedFromAButton({ answered = false }: { answered?: boolean }) {
+function OpenedFromAButton({
+  answered = false,
+  closedStillWaiting = false,
+}: {
+  answered?: boolean;
+  closedStillWaiting?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [waiting, setWaiting] = useState(false);
   return (
     <>
       <button onClick={() => setOpen(true)}>open the dialog</button>
       <ConfirmDialog
-        isOpen={open && !answered}
+        isOpen={open && !answered && !closedStillWaiting}
         isLoading={waiting && !answered}
         onClose={() => setOpen(false)}
         onConfirm={() => setWaiting(true)}
@@ -352,6 +359,37 @@ describe('ConfirmDialog', () => {
         afterEscape: 'on "open the dialog"',
         thePressedButtonWasDisabled: true,
         afterTheAnswer: 'on "open the dialog"',
+      });
+    } finally {
+      stopFixup();
+    }
+  });
+
+  it('closed while its caller still says it waits, it does not take focus back', async () => {
+    // CONTROL: green before this change
+    // The dialog takes focus when a wait starts while it is open. Closed, it is hidden and still
+    // in the page: a wait that is still said to run must not pull focus into it, away from the
+    // control that focus was just given back to.
+    const stopFixup = emulateFocusFixup();
+    try {
+      const user = userEvent.setup();
+      const { rerender } = renderWithProviders(<OpenedFromAButton />);
+      await user.click(screen.getByRole('button', { name: 'open the dialog' }));
+      const pressed = confirmButton() as HTMLButtonElement;
+      await user.click(pressed);
+      await waitFor(() => expect(pressed).not.toHaveFocus());
+      const whileItWaited = focusIs();
+
+      rerender(<OpenedFromAButton closedStillWaiting />);
+
+      expect({
+        whileItWaited,
+        stillSaidToWait: pressed.disabled,
+        afterItWasClosed: focusIs(),
+      }).toStrictEqual({
+        whileItWaited: 'inside the dialog',
+        stillSaidToWait: true,
+        afterItWasClosed: 'on "open the dialog"',
       });
     } finally {
       stopFixup();
