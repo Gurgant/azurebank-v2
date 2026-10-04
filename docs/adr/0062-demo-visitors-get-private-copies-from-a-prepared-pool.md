@@ -76,6 +76,13 @@ that says which users are a copy's: no name pattern, no age. `ClaimId`, `ClientK
 belong to the claim and its caps, which a later record decides; their columns are here so that the
 pool has one migration. Outside the demo the table holds no row and the column is null on every
 user.
+*(Decided 2026-10-04,
+[ADR-0063](0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md). `ClaimId` is what a
+claim whose commit's answer was lost is recognised by. `ClientKey` is the HMAC-SHA256 of the
+address the BFF names for the visitor, under `Demo:ClientKeySecret`, and the claim counts a
+client's copies of the last 24 hours by it. `Writes` counts more than the table above says:
+every request of a signed-in user of the copy that could change something, refused ones and
+replayed retries included, and each reveal of an account number; never a token endpoint.)*
 
 **3. Off unless a deployment turns it on.** `Demo:Enabled` is false by default, and no committed
 settings file sets anything under `Demo`. The defaults live in `DemoOptions`, and
@@ -92,8 +99,13 @@ the day it is written.
 | `Demo:Claim:MaxPerClientPerDay` | 10 | 1 to 1,000 |
 | `Demo:Copy:MaxWrites` | 200 | 10 to 100,000 |
 
-Today only the Seeder binds the section. The builder and the recycler refuse to run with the flag
-off, in their own code and not only in whatever calls them, and their two commands refuse first,
+~~Today only the Seeder binds the section.~~ *(Struck 2026-10-04, ADR-0063: the API and the BFF
+bind it too, and each registers `DemoOptionsValidator`, so either refuses to start on a `Demo:*`
+value out of range, one it never reads included, with the demo on or off. The API also asks for
+`Demo:ClientKeySecret`, 32 characters or more, when the demo is on; that rule is its own and not
+the validator's, since the Seeder runs the validator and holds no secret.)* The builder and the
+recycler refuse to run with the flag off,
+in their own code and not only in whatever calls them, and their two commands refuse first,
 before they open anything (decision 13). `seed` and `reset` refuse to run with it on. **Not behind
 the flag:** the migration, the two resolver comparisons of decision 7, which change nothing where
 no user belongs to a copy, and `seed`'s refusal of a database that holds a pool row.
@@ -301,6 +313,11 @@ that looks behind it, is in [`docs/runbooks/demo-pool.md`](../runbooks/demo-pool
 - **Locally**, `compose.demo.yaml` over `compose.yaml` runs `seed-pool` in place of `seed`, and
   `recycle` under the profile `pool`. One volume holds one kind of database: `seed` and `reset`
   refuse the pool's (exit 2), and `seed-pool` exits 13 on the fixed demo's, writing nothing.
+  *(Amended 2026-10-04, ADR-0063: it also runs the API and the BFF with `Demo__Enabled=true`,
+  and asks for a ninth variable, `DEMO_CLIENT_KEY_SECRET`, which every command that loads the
+  file needs, the pool's two and `down` among them. Until then the app under it ran with the
+  demo off: its registration was open, and a user registered there made every `recycle` exit
+  13.)*
 
 ## What still crosses copies
 
@@ -494,9 +511,16 @@ container's own timestamps, between its first line and its pool line, unless a r
 | a user outside every copy added by SQL beside the pool, then `seed-pool 103`, then `recycle` (last run) | Exit 0 with `seeded=3 foreignUsers=1`; exit 13, the user left in place |
 | from an empty volume, the `seed` service of `compose.demo.yaml`; then its `recycle` service | Exit 0, 50 copies, 10.4 s from `migrate`'s start to the end of `seed-pool` (second run); then exit 0 with nothing to do |
 
-**Not measured here:** anything on Azure SQL, a managed identity's token among it; a copy used
+**Not measured here:** anything on Azure SQL, a managed identity's token among it; ~~a copy used
 through the front door and then deleted by a run of the command (no claim exists yet: the SQL
-Server test above uses the API in process); `recycle` stopped while it deletes.
+Server test above uses the API in process);~~ `recycle` stopped while it deletes.
+*(Struck 2026-10-04, ADR-0063: measured that day on the compose stack, twice. A copy claimed
+through the BFF and used there (transfers, a changed PIN, a renamed handle, a drained account, an
+account opened and renamed, a locked sign-in and a locked PIN) was deleted by a run of `recycle`
+once its claim was moved 24 h 6 min back by SQL: exit 0, `expired=1`, no row left for its three
+users in the tables `TablesOfACopy` names (seven of them counted in the first run, all eleven in
+the second), its record there with no client key, its owner's 9 audit rows still 9, and `verify`
+answered `CHAIN INTACT`. ADR-0063's Validation has the line and the counts.)*
 
 ## What would change this
 
@@ -527,6 +551,9 @@ Server test above uses the API in process); `recycle` stopped while it deletes.
 - [ADR-0011](0011-pin-hash-pepper.md): the pepper ring the PIN hashes rotate on.
 - [ADR-0060](0060-migrations-run-as-a-one-shot-container-before-the-app.md): the tools image, the
   Seeder's exit codes, and the Azure SQL rule the pool's commands are the exception to.
+- [ADR-0063](0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md): the claim, its
+  caps, the sign-in gate and closed registration, decided on 2026-10-04; the notes above that
+  carry its number.
 - `backend/tools/AzureBank.Seeder/README.md`: the commands' contract.
 - [`docs/runbooks/demo-pool.md`](../runbooks/demo-pool.md): the exit codes, the counts and the SQL
   behind them.

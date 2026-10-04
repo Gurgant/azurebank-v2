@@ -142,6 +142,7 @@ AzureBank.Bff/
 │   ├── SecurityHeadersMiddleware.cs    # OWASP security headers
 │   ├── FetchMetadataMiddleware.cs      # Sec-Fetch-* cross-site isolation (ADR-0018)
 │   ├── SessionActivityMiddleware.cs    # Update last activity
+│   ├── DemoModeMiddleware.cs           # Public demo: 404 the claim while it is off, 403 registration while it is on (ADR-0063)
 │   └── AuthLevelMiddleware.cs          # 404 the proxied auth paths, 401 no session, 403 step-up
 │
 ├── 📁 Options/
@@ -166,6 +167,7 @@ AzureBank.Bff/
 │   └── ObservabilityServiceCollectionExtensions.cs # OpenTelemetry traces/metrics
 │
 ├── 📄 RateLimitPolicies.cs             # "auth" / "lookup" policy names
+├── 📄 ClientAddress.cs                 # The client a request comes from: the limiters' key, and what the demo claim tells the API
 ├── 📄 Program.cs                       # Application setup
 ├── 📄 appsettings.json                 # Configuration
 └── 📄 appsettings.Development.json     # Dev overrides (session 10/20, PIN 10)
@@ -180,7 +182,8 @@ AzureBank.Bff/
 | Endpoint | Method | Description | Auth |
 |----------|--------|-------------|------|
 | `/bff/auth/login` | POST | Login, create session, return cookie | No |
-| `/bff/auth/register` | POST | Register user, create session | No |
+| `/bff/auth/register` | POST | Register user, create session. On the public demo (`Demo:Enabled`): 403 `REGISTRATION_CLOSED`, whatever the body, and the API is not called | No |
+| `/bff/auth/demo/claim` | POST | On the public demo only: claim a private demo copy and open a session on it. Body `{}` as JSON. Answers `{ data: { user, expiresAt, copy }, message }`, where `copy` holds the email, the password, the PIN, the two contacts' handles and the copy's end; `no-store`. 404 while `Demo:Enabled` is false, as a path the BFF does not have (ADR-0063) | No |
 | `/bff/auth/reauthenticate` | POST | Prove the password BEFORE the absolute cap and take a new session: `IsSessionValid` fails at the cap, so this answers 401 after it. Mints a NEW session at level 1, no PIN elevation carried over | Yes (401 with no resolvable session) |
 | `/bff/auth/logout` | POST | Destroy session, clear cookie | Yes |
 | `/bff/auth/me` | GET | User info (read through to the API, cache as fallback — ADR-0039) + session details | Yes |
@@ -196,7 +199,7 @@ AzureBank.Bff/
 
 | BFF Route | Backend Route | What the BFF requires |
 |-----------|---------------|-----------------------|
-| `/api/auth/login`, `/api/auth/register`, `/api/auth/refresh`, `/api/auth/revoke`, `/api/auth/logout`, `/api/auth/session-stamps` | — never proxied | answered `404` whatever the session |
+| `/api/auth/login`, `/api/auth/register`, `/api/auth/refresh`, `/api/auth/revoke`, `/api/auth/logout`, `/api/auth/session-stamps`, `/api/auth/demo/claim` | — never proxied | answered `404` whatever the session |
 | `/api/accounts` | `/api/accounts` | session (level 1) |
 | `/api/transactions` | `/api/transactions` | session (level 1) |
 | `/api/transfers` | `/api/transfers` | session (level 1) — **PIN NOT checked here** |
@@ -213,7 +216,7 @@ move that still sends its PIN in the body. The BFF no longer gates a transfer at
 double-gating would leave the weaker of the two checks in the path and keep the five-minute session
 window alive for money movement. `/full-number` is the only route behind the level-2 gate. The
 no-session refusal is not transfer-specific either: since `d74603c` (2026-08-20) every `/api/*`
-request that is not one of the six 404'd auth paths above, any method, is refused at the BFF with
+request that is not one of the seven 404'd auth paths above, any method, is refused at the BFF with
 the API's own 401 shape unless a live session resolves.
 
 ---
@@ -243,9 +246,24 @@ so an unknown API route stays a 404 and a POST-only route stays a 405. Unset, th
 pages and vite does, as in the dev loop; set to a directory with no `index.html`, the host refuses
 to start. ADR-0054.
 
+On the public demo (`Demo:Enabled`) the page carries one tag,
+`<meta name="azurebank-demo" content="true">`, put right before its `</head>` when the host
+starts: for a navigation, and for `index.html` asked for by its name. A build whose `index.html`
+has no `</head>` stops the host. With the demo off the page is the file, byte for byte. In the
+dev loop the BFF serves no page, so nothing carries the tag there. ADR-0063.
+
 ### Session Activity Middleware
 
 Updates `LastActivity` timestamp on every authenticated request for timeout tracking.
+
+### Demo Mode Middleware
+
+After the rate limiter and before the controllers bind anything, two answers that depend on
+`Demo:Enabled` and on nothing the request carries (ADR-0063). While it is false,
+`POST /bff/auth/demo/claim` is 404 with no body, as a path the BFF does not have. While it is
+true, `POST /bff/auth/register` is 403 `REGISTRATION_CLOSED`, in the API's words and without
+calling it. Another method on either path is 405 with `Allow: POST`, whatever the flag, as on
+sign-in's path.
 
 ### Auth Level Middleware
 
@@ -253,17 +271,19 @@ Three refusals, in this order, all decided in the BFF before the request reaches
 tests pin the forwarded-path list empty for each (`AuthLevelMiddlewareTests`):
 
 ```csharp
-// These five auth paths are answered 404 — as if the routes did not exist — before the session is
+// These six auth paths are answered 404 — as if the routes did not exist — before the session is
 // read, so they answer 404 even to a valid session. The SPA signs in through the BFF's own
 // /bff/auth/* controller; a raw proxied login had no legitimate caller and handed out the very JWT
 // the BFF exists to withhold (measured 2026-08-19, ADR-0041 amendment). Revoke, logout and the
 // session-stamp feed are token endpoints the API answers only to the BFF's own client
-// (ADR-0057 §4.2, §5.3). /api/auth/refresh is answered 404 by the branch just above this one.
+// (ADR-0057 §4.2, §5.3). The demo's claim joined them (ADR-0063): its answer carries the tokens,
+// and the API counts a client's copies by the address its caller names, which must be this host.
+// /api/auth/refresh is answered 404 by the branch just above this one.
 private static readonly HashSet<string> BlockedProxiedAuthPaths =
     new(StringComparer.OrdinalIgnoreCase)
     {
         "/api/auth/login", "/api/auth/register", "/api/auth/revoke", "/api/auth/logout",
-        "/api/auth/session-stamps"
+        "/api/auth/session-stamps", "/api/auth/demo/claim"
     };
 
 // EVERY proxied request — any method — needs a live session, decided HERE rather than delegated to
@@ -286,6 +306,7 @@ DELETE verbs of row 2 on 2026-08-20 (`d74603c`):
 | Request | Session cookie | Answer |
 |---|---|---|
 | `/api/auth/login`, `/api/auth/register`, `/api/auth/refresh`, `/api/auth/revoke`, `/api/auth/logout`, `/api/auth/session-stamps` | any, even a live one | `404` |
+| `/api/auth/demo/claim` (not in the measurements above: on the compose stack, Production, the demo on, 2026-10-04) | live | `404`, no body. With no session it is `404` too, where a path under `/api` that names nothing is `401` (`AuthLevelMiddlewareTests`) |
 | any other `/api/*` route, any method | none, never issued, or replayed after logout | `401` — the API's own `AUTH_TOKEN_MISSING` body, no `X-Auth-Level-*` header |
 | `GET /api/accounts/{id}/full-number` | live, level 1 | `403 STEP_UP_REQUIRED`, `X-Auth-Level-Required: 2`, `X-Auth-Level-Current: 1` |
 | `POST /api/transfers` | live, level 1 | proxied — `400` model-state from the API on `{}`; its proof is the one-shot authorisation in the `Step-Up-Authorization` header, which the API binds and spends (ADR-0042) |
@@ -432,7 +453,8 @@ hard-coded. The global limiter and `auth` are keyed by client IP (IPv6 on its /6
 is keyed by the AUTHENTICATED USER and falls back to the IP only with no session (ADR-0014). A
 global fixed window catches everything; the two named policies are SLIDING windows. `auth` is
 attached in two places: `[EnableRateLimiting(RateLimitPolicies.Auth)]` on the BFF's own
-`/bff/auth/login`, `/bff/auth/register`, `/bff/auth/reauthenticate` and `PATCH /bff/auth/azuretag`,
+`/bff/auth/login`, `/bff/auth/register`, `/bff/auth/demo/claim`, `/bff/auth/reauthenticate` and
+`PATCH /bff/auth/azuretag`,
 and `RateLimiterPolicy` on the proxied `/api/auth/login|register` routes in the `ReverseProxy`
 config; `lookup` is attached to the proxied `/api/users/{**catch-all}` route the same way.
 
@@ -451,7 +473,7 @@ builder.Services.AddRateLimiter(options =>
 | Limiter | Applies to | Permits | Window | Shape |
 |---------|-----------|---------|--------|-------|
 | Global | every request except `/health/live` and `/health/ready` | 300 | 60 s | fixed, per IP |
-| `auth` | `/bff/auth/login`, `/bff/auth/register`, `/bff/auth/reauthenticate`, `PATCH /bff/auth/azuretag`; also the proxied `/api/auth/login` and `/api/auth/register` routes | 10 | 60 s | sliding, 6 segments, per IP |
+| `auth` | `/bff/auth/login`, `/bff/auth/register`, `/bff/auth/demo/claim`, `/bff/auth/reauthenticate`, `PATCH /bff/auth/azuretag`; also the proxied `/api/auth/login` and `/api/auth/register` routes | 10 | 60 s | sliding, 6 segments, per IP |
 | `lookup` | `/api/users/{**catch-all}` | 20 | 60 s | sliding, 6 segments, per authenticated user |
 
 The proxied `/api/auth/login|register` routes keep their `RateLimiterPolicy` even though
@@ -463,6 +485,13 @@ Rejections answer **429** with `Retry-After`, `Cache-Control: no-store` and the 
 ProblemDetails shape (`errorCode: RATE_LIMIT_EXCEEDED`); the sliding policies do not advertise a
 retry time of their own, so `RateLimiting:AuthWindowSeconds` is used as a conservative floor.
 Nothing queues — a request over the limit is refused immediately.
+
+The `auth` policy counts a request before the public demo's middleware looks at it (ADR-0063): a
+registration the demo refuses with 403 spends one of the ten, and so does a claim on a
+deployment with the demo off, which is answered 404 and, past the limit, 429
+(`DemoClaimTests`). The key the limiters count a client by is `ClientAddress.Of`, and it is the
+address the claim tells the API, so the ten claims a client may make in a day
+(`Demo:Claim:MaxPerClientPerDay`, counted by the API) are counted for the same client.
 
 ---
 

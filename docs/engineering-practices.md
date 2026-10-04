@@ -63,11 +63,19 @@ can still open the documentation. Calling an API OPERATION by hand — curl, Bru
 "Try it" — needs that header. Bruno reads it from `serviceKey`, which ships empty in the tracked
 `local.bru` and is passed per run instead: `cd tests/api-collection && bru run . -r --env local
 --env-var serviceKey="$SERVICE_KEY" --insecure`. The `-r` is not optional — without it bru sends no
-requests at all and still reports PASS. The five token endpoints — login, register, refresh, revoke
-and logout — and the session-stamp feed also answer 404 unless the call comes over loopback and
+requests at all and still reports PASS. The six token endpoints — login, register, refresh, revoke,
+logout and the public demo's claim — and the session-stamp feed also answer 404 unless the call
+comes over loopback and
 carries exactly one `X-AzureBank-Token-Road`, the marker the BFF's own client adds; calling one by
-hand needs that header too, and the Bruno requests that call them send it. In production the API
+hand needs that header too, and the Bruno requests that call them send it. *(It said five until
+2026-10-04: `POST /api/auth/demo/claim` is the sixth, ADR-0063. It also answers 404 to every
+caller while `Demo:Enabled` is false, which is what this setup leaves it.)* In production the API
 also has no public address; the key is the second line behind that.
+
+`Demo:ClientKeySecret` is not among the secrets set above, and nothing in this setup needs it: the
+public demo is off unless `Demo:Enabled` is true. Where it is, the API refuses to start without 32
+characters of it. It keys the hash a claimed demo copy keeps in place of its client's address
+(ADR-0063), so it is a secret of its own, apart from every key above.
 
 `Audit:ChainKey` keys the audit trail's hash chain and `Audit:AnchorKey` authenticates the anchor
 records that say what the chain looked like at an instant (ADR-0044). Both are 32+ characters and
@@ -155,9 +163,14 @@ users and their history (ADR-0060; `backend/tools/AzureBank.Seeder/README.md` ha
 and exit codes). Both run again on every `up` and change nothing the second time. *(Until
 2026-10-01 the header had one seed command, run from the host: `reset --confirm`, which drops the
 database first.)* `compose.demo.yaml`, an override of that file, turns the public demo on:
-`seed-pool` fills the database with the demo pool's private copies in place of `seed` (ADR-0062);
-its header says how to run it, and that there a later `up` builds a new set of copies once the
-old ones are too old to count. The database is published on 127.0.0.1:14330, not 1433, for tools on the host: a
+`seed-pool` fills the database with the demo pool's private copies in place of `seed` (ADR-0062),
+and the API and the BFF run with `Demo__Enabled=true`: a visitor claims a copy, registration is
+closed, and only the owner of a claimed copy signs in (ADR-0063). It asks for a ninth variable,
+`DEMO_CLIENT_KEY_SECRET`, 32 characters or more, and every command that loads the file needs it,
+`down` included.
+Its header says how to run it, and that there a later `up` builds a new set of copies once the
+old ones are too old to count. *(Until 2026-10-04 the override ran the pool's commands and left
+the app as it was, with the demo off and its registration open.)* The database is published on 127.0.0.1:14330, not 1433, for tools on the host: a
 SQL Server installed on the host usually holds 1433, publishing over it does not fail, and a tool
 aimed at it then reaches the host's instance instead. Measured on 2026-09-25: the e2e suite, 24 of
 24, against the two containers. Sign in from a Chromium browser, as that run does: the `__Host-`
