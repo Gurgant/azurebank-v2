@@ -39,9 +39,14 @@ public class TokenRoadTests : IntegrationTestBase
     public TokenRoadTests(CustomWebApplicationFactory factory) : base(factory) { }
 
     /// <summary>
-    /// The five token endpoints and the stamp feed (ADR-0057 §5.3), each with a body it would
-    /// otherwise accept.
+    /// Five of the six token endpoints and the stamp feed (ADR-0057 §5.3), each with a body it
+    /// would otherwise accept.
     /// </summary>
+    /// <remarks>
+    /// The sixth, the demo claim, is not here: this host has the demo off, where the claim is 404
+    /// on every road, so its refusal off the road would prove nothing. It is shown on a host with
+    /// the demo on (<c>DemoModeEndpointTests</c>).
+    /// </remarks>
     public static TheoryData<string> TokenEndpoints() =>
     [
         "/api/auth/login",

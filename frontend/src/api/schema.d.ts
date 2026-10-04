@@ -912,7 +912,9 @@ export interface paths {
         put?: never;
         /**
          * Register
-         * @description Register a new user account with initial bank account.
+         * @description Register a new user account with initial bank account. On the public demo registration is
+         *     closed: the answer is 403 with `errorCode` `REGISTRATION_CLOSED`, whatever the request
+         *     carries.
          */
         post: {
             parameters: {
@@ -948,6 +950,15 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
+                /** @description Forbidden */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
                 /** @description Conflict */
                 409: {
                     headers: {
@@ -959,6 +970,101 @@ export interface paths {
                 };
                 /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
                 415: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (its Cache-Control includes no-store). Send the request again after that many seconds. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/demo/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Claim a demo copy
+         * @description On the public demo, take one free demo copy for a visitor and sign in to it: the answer
+         *     carries the tokens and the user a login answers, and what signs in to the copy again. The
+         *     copy's password exists in this answer only. A 429 names its reason in `errorCode`:
+         *     `DEMO_POOL_EMPTY` when no copy is free, `DEMO_DAILY_LIMIT` when this client has claimed as
+         *     many copies as one client may in a day, with `retryAfterSeconds`.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            /** @description The visitor's address, as the BFF saw it */
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["DemoClaimRequest"];
+                    "text/json": components["schemas"]["DemoClaimRequest"];
+                    "application/*+json": components["schemas"]["DemoClaimRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiResponseOfDemoClaimResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Not Found - the demo is off on this deployment (Demo:Enabled is false), where this endpoint does not exist. Answered as a path that matches no route is: by the framework, as application/problem+json with no errorCode, whatever the request's body. */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                415: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Too Many Requests */
+                429: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -3249,6 +3355,10 @@ export interface components {
             data?: null | components["schemas"]["BalanceResponse"];
             message?: null | string;
         };
+        ApiResponseOfDemoClaimResponse: {
+            data?: null | components["schemas"]["DemoClaimResponse"];
+            message?: null | string;
+        };
         ApiResponseOfDepositResponse: {
             data?: null | components["schemas"]["DepositResponse"];
             message?: null | string;
@@ -3341,6 +3451,42 @@ export interface components {
         CreateAccountRequest: {
             name: string;
             type: components["schemas"]["AccountType"];
+        };
+        /**
+         * @description Request body for POST /api/auth/demo/claim: the BFF asks for a free demo copy for the visitor
+         *     it is serving.
+         */
+        DemoClaimRequest: {
+            /**
+             * @description The visitor's address as the BFF saw it. The copies one client may claim in a day are
+             *     counted by it.
+             */
+            clientAddress: string;
+        };
+        /**
+         * @description Result of a successful demo claim: the tokens and the user a login answers, and the copy the
+         *     visitor was given.
+         */
+        DemoClaimResponse: {
+            token: components["schemas"]["TokenResponse"];
+            user: components["schemas"]["UserLoginInfo"];
+            copy: components["schemas"]["DemoCopyInfo"];
+        };
+        /** @description The demo copy a visitor was given: what signs in to it again, whom it can pay, and when it ends. */
+        DemoCopyInfo: {
+            /** @description The email the copy's demo user signs in with. */
+            email: string;
+            /** @description The demo user's password, set by this claim. */
+            password: string;
+            /** @description The demo user's PIN. */
+            pin: string;
+            /** @description The handles of the copy's other users, sorted: the payees a transfer can name. */
+            contacts: string[];
+            /**
+             * Format: date-time
+             * @description The instant the copy ends, in UTC: the claim plus `Demo:CopyLifetimeHours`.
+             */
+            expiresAt: string;
         };
         DepositRequest: {
             /**

@@ -33,7 +33,10 @@ public class DemoOptions
     /// <summary>The key the client address is hashed with. None by default.</summary>
     /// <remarks>
     /// <see cref="DemoOptionsValidator"/> has no rule for it: a host that does not hash addresses
-    /// must start without it. A host that hashes them has to require it itself.
+    /// must start without it. A host that hashes them has to require it itself. The API is that
+    /// host (ADR-0063): with the demo on it refuses to start without 32 characters of it, and the
+    /// row of a claimed copy holds its client's address only as a hash under this key. The BFF and
+    /// the Seeder bind this section too and hold no secret.
     /// </remarks>
     public string? ClientKeySecret { get; set; }
 }
@@ -74,7 +77,14 @@ public class DemoClaimOptions
 /// <summary>The "Demo:Copy" section.</summary>
 public class DemoCopyOptions
 {
-    /// <summary>Authenticated unsafe requests one copy may make. 200.</summary>
+    /// <summary>Requests of one copy's signed-in users that are counted as changes, at most. 200.</summary>
+    /// <remarks>
+    /// The API's <c>DemoWriteBudgetMiddleware</c> counts them (ADR-0063, decision 11): a request
+    /// of any method but GET, HEAD, OPTIONS and TRACE, and each reveal of an account number; never
+    /// a token endpoint. A request is counted before it is looked at, so one the API then refuses
+    /// has spent one. (Until 2026-10-04 this said "authenticated unsafe requests one copy may
+    /// make": the reveal, a GET, is counted, and signing out everywhere, a POST, is not.)
+    /// </remarks>
     public int MaxWrites { get; set; } = 200;
 }
 

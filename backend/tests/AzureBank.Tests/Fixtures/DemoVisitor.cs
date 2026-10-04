@@ -54,6 +54,39 @@ internal sealed class DemoVisitor
     }
 
     /// <summary>
+    /// <c>POST /api/auth/demo/claim</c>, as it answered: the BFF's own client asking for a free copy
+    /// for the visitor at <paramref name="clientAddress"/>.
+    /// </summary>
+    public static Task<HttpResponseMessage> ClaimAsync(HttpClient client, string clientAddress = "203.0.113.7") =>
+        client.PostAsJsonAsync("/api/auth/demo/claim", new DemoClaimRequest { ClientAddress = clientAddress }, Json);
+
+    /// <summary>What a claim answered with, and a failed test when it did not answer 200.</summary>
+    public static async Task<DemoClaimResponse> ClaimedAsync(HttpResponseMessage response)
+    {
+        response.StatusCode.Should().Be(
+            HttpStatusCode.OK, "a free copy is there to be claimed ({0})", await response.Content.ReadAsStringAsync());
+        return (await response.Content.ReadFromJsonAsync<ApiResponse<DemoClaimResponse>>(Json))!.Data!;
+    }
+
+    /// <summary>
+    /// The owner of the copy a claim answered, on the session that claim opened: no sign-in of its
+    /// own.
+    /// </summary>
+    public static DemoVisitor OfClaim(HttpClient client, DemoClaimResponse claim) =>
+        new(client, claim.Token.AccessToken, claim.User.Id);
+
+    /// <summary>The <c>errorCode</c> of a refusal's body, or null when the body carries none.</summary>
+    public static async Task<string?> ErrorCodeOfAsync(HttpResponseMessage response)
+    {
+        var body = await response.Content.ReadAsStringAsync();
+        return body.Length > 0
+            && JsonNode.Parse(body) is JsonObject json
+            && json.TryGetPropertyValue("errorCode", out var code)
+                ? code?.GetValue<string>()
+                : null;
+    }
+
+    /// <summary>
     /// Registers a user outside every copy, with a PIN, and returns it with its handle and its one
     /// account.
     /// </summary>
@@ -89,13 +122,37 @@ internal sealed class DemoVisitor
         return (await response.Content.ReadFromJsonAsync<ApiResponse<List<AccountResponse>>>(Json))!.Data!;
     }
 
-    /// <summary><c>POST /api/transactions/deposit</c>.</summary>
-    public Task<HttpResponseMessage> DepositAsync(Guid accountId, decimal amount) =>
+    /// <summary><c>GET /api/accounts</c>, as it answered.</summary>
+    public Task<HttpResponseMessage> ListAccountsAsync() =>
+        SendAsync<object>(HttpMethod.Get, "/api/accounts");
+
+    /// <summary><c>GET /api/accounts/{id}/full-number</c>: the reveal of an account's whole number.</summary>
+    public Task<HttpResponseMessage> RevealAsync(Guid accountId) =>
+        SendAsync<object>(HttpMethod.Get, $"/api/accounts/{accountId}/full-number");
+
+    /// <summary>
+    /// <c>POST /api/transactions/deposit</c>, under a key of its own unless
+    /// <paramref name="idempotencyKey"/> names one: the same key and the same deposit again is a
+    /// retry, which the API answers from what it stored.
+    /// </summary>
+    public Task<HttpResponseMessage> DepositAsync(Guid accountId, decimal amount, Guid? idempotencyKey = null) =>
         SendAsync(
             HttpMethod.Post,
             "/api/transactions/deposit",
             new DepositRequest { AccountId = accountId, Amount = amount, Description = "Test deposit" },
-            idempotencyKey: Guid.NewGuid());
+            idempotencyKey: idempotencyKey ?? Guid.NewGuid());
+
+    /// <summary><c>POST /api/auth/pin/verify</c>.</summary>
+    public Task<HttpResponseMessage> VerifyPinAsync(string pin) =>
+        SendAsync(HttpMethod.Post, "/api/auth/pin/verify", new VerifyPinRequest { Pin = pin });
+
+    /// <summary><c>POST /api/auth/logout</c>: sign out of every session.</summary>
+    public Task<HttpResponseMessage> SignOutEverywhereAsync() =>
+        SendAsync<object>(HttpMethod.Post, "/api/auth/logout");
+
+    /// <summary>Any other request as this user, with no body.</summary>
+    public Task<HttpResponseMessage> RequestAsync(HttpMethod method, string url) =>
+        SendAsync<object>(method, url);
 
     /// <summary><c>GET /api/users/{handle}</c>: the recipient lookup.</summary>
     public Task<HttpResponseMessage> LookupAsync(string handle) =>

@@ -160,6 +160,7 @@ public static class ServiceCollectionExtensions
 
         services.AddDailyLimit(configuration);
         services.AddRequestDeadline(configuration);
+        services.AddDemoOptions(configuration);
 
         // Audit trail chain key (ADR-0044). A secret, with the same fail-fast treatment as
         // StepUp:BindingKey and Idempotency:HashKey, and SEPARATE from both: one leaked key must not
@@ -199,7 +200,7 @@ public static class ServiceCollectionExtensions
         services.AddOptions<PinHashingOptions>()
             .Bind(configuration.GetSection(PinHashingOptions.SectionName))
             .ValidateOnStart();
-        services.AddSingleton<IValidateOptions<PinHashingOptions>, PinHashingOptionsValidator>();
+        services.AddSingleton<IValidateOptions<PinHashingOptions>>(new PinHashingOptionsValidator(configuration));
 
         // Mappers (Mapperly source-generated, stateless - singleton is optimal)
         services.AddSingleton<AccountMapper>();
@@ -233,6 +234,9 @@ public static class ServiceCollectionExtensions
         // still computed exactly once, via a process-wide static cache inside the equalizer.
         services.AddScoped<Security.ILoginTimingEqualizer, Security.LoginTimingEqualizer>();
         services.AddScoped<IAuthService, AuthService>();
+        // The public demo's claim: scoped, sharing the request's DbContext with the grant service,
+        // so the grant it issues is written inside the claim's transaction.
+        services.AddScoped<IDemoClaimService, DemoClaimService>();
         // PIN attempt-limiting lives in one place; withdrawals depend on the narrow
         // IPinVerifier. PinService persists lockout state in its own DbContext scope.
         services.AddScoped<IPinVerifier, PinService>();
@@ -467,6 +471,39 @@ public static class ServiceCollectionExtensions
           closed.
         */
         services.TryAddSingleton(TimeProvider.System);
+
+        return services;
+    }
+
+    /// <summary>
+    /// The public demo's settings (the "Demo" section), checked at startup: every range
+    /// <see cref="DemoOptionsValidator"/> holds, whether the demo is on or off, and, with the demo
+    /// on, <c>Demo:ClientKeySecret</c>.
+    /// </summary>
+    /// <remarks>
+    /// Its own method, as <see cref="AddDailyLimit"/> is; called from
+    /// <see cref="AddApplicationServices"/> so a second host inherits both rules.
+    /// </remarks>
+    public static IServiceCollection AddDemoOptions(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        // The secret's rule is this host's own, and not one of DemoOptionsValidator's: the Seeder
+        // runs that validator too and holds no secret, so the rule there would stop `seed-pool`
+        // and `recycle`. It is asked for only with the demo on, so a deployment that never turns
+        // the demo on starts without it.
+        services.AddOptions<DemoOptions>()
+            .Bind(configuration.GetSection(DemoOptions.SectionName))
+            .Validate(
+                o => !o.Enabled
+                     || (!string.IsNullOrWhiteSpace(o.ClientKeySecret) && o.ClientKeySecret.Length >= 32),
+                "Demo:ClientKeySecret must be configured with at least 32 characters when " +
+                "Demo:Enabled is true: it is the key a client's address is hashed with before it is stored")
+            .ValidateOnStart();
+
+        // The ranges. Without this line the section binds and nothing checks it: a value out of
+        // range would start the host, flag on or off.
+        services.AddSingleton<IValidateOptions<DemoOptions>, DemoOptionsValidator>();
 
         return services;
     }
@@ -712,6 +749,10 @@ public static class ServiceCollectionExtensions
             // Operation transformer: Add 404 Not Found, WITH its ProblemDetails body, to endpoints
             // with path parameters — except those marked [AlwaysFound], which cannot miss
             options.AddOperationTransformer<NotFoundResponseTransformer>();
+
+            // Operation transformer: the 404 a [DemoOnly] endpoint answers on a deployment that
+            // is not the demo, as the application/problem+json the framework writes for it
+            options.AddOperationTransformer<DemoEndpointResponsesTransformer>();
 
             // 415 on every operation with a body: the framework's refusal of a non-JSON body,
             // undocumented until the Schemathesis gate's first run (2026-09-15).

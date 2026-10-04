@@ -36,7 +36,8 @@ public class RateLimitingOptions
     /// <summary>
     /// Tight limit for recipient lookup (/api/users/*), partitioned per authenticated USER
     /// (not IP — registration is open, so the abuse unit is the account). Bounds directory
-    /// harvesting on top of the exact-match-only design (ADR-0014).
+    /// harvesting on top of the exact-match-only design (ADR-0014). On the public demo
+    /// (<c>Demo:Enabled</c>) registration is closed, and the account is a claimed demo copy.
     /// </summary>
     public int LookupPermitLimit { get; set; } = 20;
 

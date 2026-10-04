@@ -14,7 +14,7 @@ namespace AzureBank.Tests.Architecture;
 /// <summary>
 /// The edges of a demo copy, held where a later change would cross them unseen: the comparisons of
 /// a handle, in the forms <see cref="HandleComparison"/> reads, every table that holds a copy's
-/// rows, and the random source its identifiers come from.
+/// rows, and the random source its identifiers and its password come from.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -525,5 +525,69 @@ public class DemoCopyBoundaryTests
         source.Should().Contain(
             "RandomNumberGenerator.GetInt32(",
             "each character is drawn with GetInt32, which is uniform over the alphabet; a byte and a modulo would not be");
+    }
+
+    /// <summary>
+    /// The files in which a claim makes what it hands to a visitor or stores about one. Named one
+    /// by one, and each must be there: they sit in folders that hold other code, and a file moved
+    /// away would otherwise leave the scan reading nothing and reporting clean.
+    /// </summary>
+    private static string[] ClaimSources()
+    {
+        var api = Path.Combine(RepoRoot().FullName, "backend", "src", "AzureBank.Api");
+        string[] files =
+        [
+            Path.Combine(api, "Security", "DemoPasswordGenerator.cs"),
+            Path.Combine(api, "Security", "DemoClientKey.cs"),
+            Path.Combine(api, "Services", "Implementations", "DemoClaimService.cs"),
+        ];
+        foreach (var file in files)
+        {
+            File.Exists(file).Should().BeTrue(because: $"expected to scan {file}");
+        }
+
+        return files;
+    }
+
+    /// <summary>
+    /// A GUARD: green until somebody reaches for <c>System.Random</c> in the claim's code. A claimed
+    /// copy is signed in to with the password its claim answered, so that password must not come
+    /// from a generator whose next value can be computed from its last.
+    /// </summary>
+    [Fact]
+    public void TheClaimsCode_NeverUsesSystemRandom()
+    {
+        var offenders = new List<string>();
+        foreach (var file in ClaimSources())
+        {
+            var lines = File.ReadAllLines(file);
+            for (var i = 0; i < lines.Length; i++)
+            {
+                var text = lines[i].TrimStart();
+                var isComment = text.StartsWith("//", StringComparison.Ordinal) || text.StartsWith('*') || text.StartsWith("/*", StringComparison.Ordinal);
+                if (!isComment && SystemRandom.IsMatch(text))
+                {
+                    offenders.Add($"{Path.GetFileName(file)}:{i + 1}  {text}");
+                }
+            }
+        }
+
+        offenders.Should().BeEmpty("whatever a claim draws, it draws from RandomNumberGenerator");
+    }
+
+    [Fact]
+    public void ACopysPassword_IsDrawnFromTheCryptographicGenerator()
+    {
+        // The code lines only: the file's remarks name the call too, and a remark draws nothing.
+        var file = ClaimSources().Single(f => Path.GetFileName(f) == "DemoPasswordGenerator.cs");
+        var code = string.Join("\n", CodeLines(file));
+
+        // The method itself, handed over bare. A lambda around it would have room for a wider draw
+        // and a modulo after it, with the generator's name still there to be found. That the draw
+        // then asks for each character among the fifty-six is held where the draw is chosen:
+        // DemoClaimPartsTests.EveryCharacter_IsAskedForAmongTheFiftySix_AndNoWider.
+        code.Should().Contain(
+            "Create(RandomNumberGenerator.GetInt32)",
+            "the draw is handed GetInt32 itself, which is uniform over what it is asked for; a byte and a modulo would not be");
     }
 }

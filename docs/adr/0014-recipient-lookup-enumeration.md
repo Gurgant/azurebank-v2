@@ -20,6 +20,10 @@ two authenticated (`[Authorize]`) endpoints:
 
 The substring search is a **customer-directory harvester**. `[Authorize]` is a weak barrier
 because registration is open and auto-logs-in, so an attacker registers one throwaway account
+*(2026-10-04, [ADR-0063](0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md): on the
+public demo, `Demo:Enabled`, registration is closed, and the throwaway account is a claimed demo
+copy. A copy's owner looks up handles inside its own copy only (ADR-0062, decision 7), so there
+the sweep finds the copy's two contacts and nobody else)*
 and then sweeps: iterating the 3-character space (~46k queries) against `Contains` + 10
 results/query, bounded only by the generous per-IP global limit (~300/min ⇒ ~3000 handles/min),
 reveals most of the handle namespace and the masked names attached to it. No real payments app
@@ -43,6 +47,11 @@ owner). The anomaly was the substring sweep, not the confirmation.
    `/api/users/*` route, partitioned per **authenticated user** (session → user id, IP
    fallback), not per IP — because with open registration the abuse unit is the account, not
    the address (the Venmo precedent: per-IP limiting alone was bypassed via many IPs/accounts).
+   *(2026-10-04, ADR-0063: on the public demo the unit is still the account, and the account is
+   a claimed copy: registration is closed there, and the API gives one client address
+   `Demo:Claim:MaxPerClientPerDay` copies in a rolling 24 hours, 10 by default. So an address
+   is given that many budgets of the lookup's limit in a day, not as many as it cares to
+   register; ADR-0063's decision 7 says by how much that cap can be overshot.)*
 3. **Hardening of the exact lookup.** `[Required][AzureTagQuery]` on the route parameter (was
    unvalidated); project the EF query to only `{Id, FirstName, LastName}` so it never
    materialises `PasswordHash`/`PinHash`/`SecurityStamp`; `ToLowerInvariant` normalisation to

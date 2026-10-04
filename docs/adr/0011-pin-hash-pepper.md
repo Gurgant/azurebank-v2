@@ -102,6 +102,18 @@ uncalled)*.
   carry PIN hashes. The job that runs `recycle` holds the API's pepper and key id, and adds and
   retires a pepper in the order this record gives, on the count `docs/runbooks/demo-pool.md`
   reads.)* The Seeder shares the same active pepper (else seeded PINs cannot be verified).
+  *(2026-10-03: a `Security:PreviousPinPeppers` key that is not a whole number >= 1, or has
+  surrounding whitespace, is refused at API startup and at the start of `seed`, `reset`,
+  `seed-pool` and `recycle`, naming the key and never its value; the shared validator reads the
+  original configuration keys too, because the binder silently drops a key it cannot convert.
+  Two keys that name one id (`1` and `01`, of which the binder keeps one pepper) and a key that
+  does not hold exactly one value (a section under it, which the binder drops, or a value with a
+  section under it, of which the binder reads the value alone) are refused too, and a key of 32
+  characters or more, long enough to be a pepper, is never printed: the refusal gives its
+  length. So it does for a key that is not a whole number and has a section under it, which is
+  the first part of a pepper that holds `:`, or `__` in a variable's name. A value on
+  `Security:PreviousPinPeppers` itself, under no key id, is refused as well: the binder reads
+  nothing from it.)*
 - **Rehash-on-use migration**: `IPasswordHasher.PinNeedsRehash` reports whether a
   stored hash predates the active key. On a **successful** verify, `PinService`
   re-hashes the PIN with the active pepper and persists it — in the service's

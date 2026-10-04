@@ -137,7 +137,7 @@ public class CommittedOpenApiDocumentTests : IntegrationTestBase
         var operations = CountOperations(parsed);
         operations.Should().BeGreaterThanOrEqualTo(
             20,
-            "the API publishes 30 operations (2026-09-28); a generated document with almost none means the provider "
+            "the API publishes 31 operations (2026-10-03); a generated document with almost none means the provider "
             + "or the composition is wrong, and comparing two empty documents would prove nothing");
 
         var path = CommittedPath();

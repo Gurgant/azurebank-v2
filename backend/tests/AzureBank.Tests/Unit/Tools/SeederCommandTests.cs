@@ -3,6 +3,7 @@ extern alias seeder;
 using System.CommandLine;
 using System.Data.Common;
 using AzureBank.Shared.Entities;
+using AzureBank.Shared.Options;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using FluentAssertions.Execution;
@@ -10,6 +11,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Xunit;
 using GateResult = seeder::AzureBank.Seeder.Commands.GateResult;
 using GateVerdict = seeder::AzureBank.Seeder.Commands.GateVerdict;
@@ -51,6 +53,9 @@ public class SeederCommandTests
     private const string PepperKey = "Security:PinPepper";
     private const string DemoKey = "Demo:Enabled";
 
+    // Not a secret: a previous pepper for the rows about Security:PreviousPinPeppers.
+    private const string PreviousPepper = "fake-previous-pepper-for-tests-0123456789";
+
     private const string AzureName = "not_a_server.database.windows.net";
 
     private const string AzureConnection =
@@ -87,6 +92,198 @@ public class SeederCommandTests
 
     private static IEnumerable<string> Errors(RecordingLoggerProvider log) =>
         log.Lines.Where(line => line.Level == LogLevel.Error).Select(line => line.Message);
+
+    [Theory]
+    [InlineData("seed", "v1")]
+    [InlineData("reset", "v1")]
+    [InlineData("seed-pool", "v1")]
+    [InlineData("recycle", "v1")]
+    [InlineData("seed", "one")]
+    [InlineData("reset", "one")]
+    [InlineData("seed-pool", "one")]
+    [InlineData("recycle", "one")]
+    [InlineData("seed", "1 ")]
+    [InlineData("reset", "1 ")]
+    [InlineData("seed-pool", "1 ")]
+    [InlineData("recycle", "1 ")]
+    [InlineData("seed", "0")]
+    [InlineData("reset", "0")]
+    [InlineData("seed-pool", "0")]
+    [InlineData("recycle", "0")]
+    public async Task APreviousPepperKeyThatCannotBeUsed_IsRefused_WithoutItsValueOrAnOpen(string command, string key)
+    {
+        var log = new RecordingLoggerProvider();
+        var opens = new OpenCountingInterceptor();
+        await using var provider = SeederHost.Build(
+            log, opens, onCommittedSettings: false,
+            (ConnectionKey, AbsentServer), (PepperKey, SeederHost.Pepper),
+            ("Security:PinPepperKeyId", "2"), ($"Security:PreviousPinPeppers:{key}", PreviousPepper),
+            NoEfRetry, TheFlagItRunsWith(command));
+
+        var exitCode = await Run(command, provider);
+
+        var rule = key == "0" ? "must be >= 1." : "must be a whole number >= 1.";
+        using var all = new AssertionScope();
+        exitCode.Should().Be(2);
+        Errors(log).Should().ContainSingle().Which.Should().Be(
+            $"{command} refused: Security:PreviousPinPeppers key '{key}' {rule} Nothing was opened.");
+        string.Join('\n', log.Lines.Select(line => line.Message)).Should()
+            .NotContain(PreviousPepper).And.NotContain(SeederHost.Pepper).And.NotContain("   at ");
+        opens.Opens.Should().Be(0, "all four commands must refuse before any database work");
+    }
+
+    [Theory]
+    [InlineData("seed", "01", "'01' and '1'")]
+    [InlineData("reset", "01", "'01' and '1'")]
+    [InlineData("seed-pool", "01", "'01' and '1'")]
+    [InlineData("recycle", "01", "'01' and '1'")]
+    [InlineData("seed", "+1", "'+1' and '1'")]
+    [InlineData("reset", "+1", "'+1' and '1'")]
+    [InlineData("seed-pool", "+1", "'+1' and '1'")]
+    [InlineData("recycle", "+1", "'+1' and '1'")]
+    public async Task TwoPreviousPepperKeysForOneId_AreRefused_NamingBoth_WithoutAValueOrAnOpen(
+        string command, string secondKey, string named)
+    {
+        // Each key is valid alone. Together they are one id, and the binder keeps one pepper of
+        // the two.
+        var log = new RecordingLoggerProvider();
+        var opens = new OpenCountingInterceptor();
+        await using var provider = SeederHost.Build(
+            log, opens, onCommittedSettings: false,
+            (ConnectionKey, AbsentServer), (PepperKey, SeederHost.Pepper), ("Security:PinPepperKeyId", "2"),
+            ("Security:PreviousPinPeppers:1", PreviousPepper),
+            ($"Security:PreviousPinPeppers:{secondKey}", CustomWebApplicationFactory.PinPepper),
+            NoEfRetry, TheFlagItRunsWith(command));
+
+        var exitCode = await Run(command, provider);
+
+        using var all = new AssertionScope();
+        exitCode.Should().Be(2);
+        Errors(log).Should().ContainSingle().Which.Should().Be(
+            $"{command} refused: Security:PreviousPinPeppers keys {named} name the same id; "
+            + "only one pepper can be held under it. Nothing was opened.");
+        string.Join('\n', log.Lines.Select(line => line.Message)).Should()
+            .NotContain(PreviousPepper).And.NotContain(CustomWebApplicationFactory.PinPepper)
+            .And.NotContain(SeederHost.Pepper).And.NotContain("   at ");
+        opens.Opens.Should().Be(0, "all four commands must refuse before any database work");
+    }
+
+    [Theory]
+    // A section where the pepper belongs (Security__PreviousPinPeppers__1__Value): the key is a
+    // whole number, and the binder reads no pepper under it.
+    [InlineData("seed", "1:Value", PreviousPepper, "key '1' was not read: it must be a whole number >= 1 that holds one value.")]
+    [InlineData("reset", "1:Value", PreviousPepper, "key '1' was not read: it must be a whole number >= 1 that holds one value.")]
+    [InlineData("seed-pool", "1:Value", PreviousPepper, "key '1' was not read: it must be a whole number >= 1 that holds one value.")]
+    [InlineData("recycle", "1:Value", PreviousPepper, "key '1' was not read: it must be a whole number >= 1 that holds one value.")]
+    // The entry written the wrong way round: the key is the pepper, so only its length is given.
+    [InlineData("seed", PreviousPepper, "1", "key of 41 characters must be a whole number >= 1.")]
+    [InlineData("reset", PreviousPepper, "1", "key of 41 characters must be a whole number >= 1.")]
+    [InlineData("seed-pool", PreviousPepper, "1", "key of 41 characters must be a whole number >= 1.")]
+    [InlineData("recycle", PreviousPepper, "1", "key of 41 characters must be a whole number >= 1.")]
+    // A line feed in the key: printed as it is, it would break the one line a refusal is.
+    [InlineData("seed", "1\n", PreviousPepper, "key '1?' must be a whole number >= 1.")]
+    [InlineData("reset", "1\n", PreviousPepper, "key '1?' must be a whole number >= 1.")]
+    [InlineData("seed-pool", "1\n", PreviousPepper, "key '1?' must be a whole number >= 1.")]
+    [InlineData("recycle", "1\n", PreviousPepper, "key '1?' must be a whole number >= 1.")]
+    public async Task APreviousPepperEntryThatIsNotOneValueUnderANumber_IsRefusedInOneLine_WithoutASecretOrAnOpen(
+        string command, string path, string value, string failure)
+    {
+        var log = new RecordingLoggerProvider();
+        var opens = new OpenCountingInterceptor();
+        await using var provider = SeederHost.Build(
+            log, opens, onCommittedSettings: false,
+            (ConnectionKey, AbsentServer), (PepperKey, SeederHost.Pepper),
+            ("Security:PinPepperKeyId", "2"), ($"Security:PreviousPinPeppers:{path}", value),
+            NoEfRetry, TheFlagItRunsWith(command));
+
+        var exitCode = await Run(command, provider);
+
+        using var all = new AssertionScope();
+        exitCode.Should().Be(2);
+        Errors(log).Should().ContainSingle().Which.Should().Be(
+            $"{command} refused: Security:PreviousPinPeppers {failure} Nothing was opened.");
+        log.Lines.Select(line => line.Message).Should().NotContain(
+            message => message.Contains('\n'), "a refusal is one line");
+        string.Join('\n', log.Lines.Select(line => line.Message)).Should()
+            .NotContain(PreviousPepper).And.NotContain(SeederHost.Pepper).And.NotContain("   at ");
+        opens.Opens.Should().Be(0, "all four commands must refuse before any database work");
+    }
+
+    [Theory]
+    [InlineData("seed")]
+    [InlineData("reset")]
+    [InlineData("seed-pool")]
+    [InlineData("recycle")]
+    public async Task APreviousPepperKeyThatHoldsAValueAndASection_IsRefusedInOneLine_WithoutASecretOrAnOpen(
+        string command)
+    {
+        // The binder reads the value on the key itself and leaves the one under it out: id 1 is in
+        // the ring, and the second pepper is lost without a word.
+        var log = new RecordingLoggerProvider();
+        var opens = new OpenCountingInterceptor();
+        await using var provider = SeederHost.Build(
+            log, opens, onCommittedSettings: false,
+            (ConnectionKey, AbsentServer), (PepperKey, SeederHost.Pepper), ("Security:PinPepperKeyId", "2"),
+            ("Security:PreviousPinPeppers:1", PreviousPepper),
+            ("Security:PreviousPinPeppers:1:Value", CustomWebApplicationFactory.PinPepper),
+            NoEfRetry, TheFlagItRunsWith(command));
+
+        var exitCode = await Run(command, provider);
+
+        using var all = new AssertionScope();
+        exitCode.Should().Be(2);
+        Errors(log).Should().ContainSingle().Which.Should().Be(
+            $"{command} refused: Security:PreviousPinPeppers key '1' must hold exactly one value. "
+            + "Nothing was opened.");
+        string.Join('\n', log.Lines.Select(line => line.Message)).Should()
+            .NotContain(PreviousPepper).And.NotContain(CustomWebApplicationFactory.PinPepper)
+            .And.NotContain(SeederHost.Pepper).And.NotContain("   at ");
+        opens.Opens.Should().Be(0, "all four commands must refuse before any database work");
+    }
+
+    [Theory]
+    [InlineData("seed")]
+    [InlineData("reset")]
+    [InlineData("seed-pool")]
+    [InlineData("recycle")]
+    public async Task APepperWrittenOnThePreviousPeppersSectionItself_IsRefusedInOneLine_WithoutASecretOrAnOpen(
+        string command)
+    {
+        // Security__PreviousPinPeppers=<pepper>, with no key id under it: the binder leaves the ring
+        // empty, and PINs hashed with that pepper would read as wrong.
+        var log = new RecordingLoggerProvider();
+        var opens = new OpenCountingInterceptor();
+        await using var provider = SeederHost.Build(
+            log, opens, onCommittedSettings: false,
+            (ConnectionKey, AbsentServer), (PepperKey, SeederHost.Pepper), ("Security:PinPepperKeyId", "2"),
+            ("Security:PreviousPinPeppers", PreviousPepper),
+            NoEfRetry, TheFlagItRunsWith(command));
+
+        var exitCode = await Run(command, provider);
+
+        using var all = new AssertionScope();
+        exitCode.Should().Be(2);
+        Errors(log).Should().ContainSingle().Which.Should().Be(
+            $"{command} refused: Security:PreviousPinPeppers holds a value of its own: "
+            + "each previous pepper goes under its key id. Nothing was opened.");
+        string.Join('\n', log.Lines.Select(line => line.Message)).Should()
+            .NotContain(PreviousPepper).And.NotContain(SeederHost.Pepper).And.NotContain("   at ");
+        opens.Opens.Should().Be(0, "all four commands must refuse before any database work");
+    }
+
+    [Fact]
+    public void AValidPreviousPepperKey_PassesTheSeederStartupValidator_AndKeepsItsPepper()
+    {
+        using var provider = SeederHost.Build(
+            new RecordingLoggerProvider(), interceptor: null, onCommittedSettings: false,
+            (PepperKey, SeederHost.Pepper), ("Security:PinPepperKeyId", "2"),
+            ("Security:PreviousPinPeppers:1", PreviousPepper));
+        var start = () => provider.GetRequiredService<IStartupValidator>().Validate();
+
+        start.Should().NotThrow();
+        provider.GetRequiredService<IOptions<PinHashingOptions>>().Value.PreviousPinPeppers
+            .Should().BeEquivalentTo(new Dictionary<int, string> { [1] = PreviousPepper });
+    }
 
     [Theory]
     [InlineData("seed", "seed adds four users whose password and PIN are public")]

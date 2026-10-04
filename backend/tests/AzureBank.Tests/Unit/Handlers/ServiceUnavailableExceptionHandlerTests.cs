@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text.Json;
 using AzureBank.Api.Attributes;
 using AzureBank.Api.Handlers;
@@ -29,8 +28,9 @@ namespace AzureBank.Tests.Unit.Handlers;
 /// </summary>
 /// <remarks>
 /// The SQL errors are built the way SqlClient builds them (its internal factory, through
-/// reflection): the handler reads their numbers and classes, and no public constructor exists.
-/// The SQL Server proofs make the real ones (<c>DatabaseUnavailableSqlServerTests</c>).
+/// reflection, in <see cref="SqlErrors"/>): the handler reads their numbers and classes, and no
+/// public constructor exists. The SQL Server proofs make the real ones
+/// (<c>DatabaseUnavailableSqlServerTests</c>).
 /// </remarks>
 public class ServiceUnavailableExceptionHandlerTests
 {
@@ -441,21 +441,6 @@ public class ServiceUnavailableExceptionHandlerTests
     }
 
     /// <summary>A <see cref="SqlException"/> carrying one error per number, all of one class.</summary>
-    private static SqlException Sql(int number, byte errorClass, params int[] more)
-    {
-        const BindingFlags Any = BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static;
-        var collection = (SqlErrorCollection)Activator.CreateInstance(typeof(SqlErrorCollection), nonPublic: true)!;
-        var add = typeof(SqlErrorCollection).GetMethod("Add", Any)!;
-        var ctor = typeof(SqlError).GetConstructor(
-            Any, [typeof(int), typeof(byte), typeof(byte), typeof(string), typeof(string), typeof(string), typeof(int), typeof(Exception)])!;
-
-        foreach (var n in more.Prepend(number))
-        {
-            add.Invoke(collection, [ctor.Invoke([n, (byte)0, errorClass, "server", $"error {n}", "", 0, null])]);
-        }
-
-        var create = typeof(SqlException).GetMethod(
-            "CreateException", Any, [typeof(SqlErrorCollection), typeof(string)])!;
-        return (SqlException)create.Invoke(null, [collection, "16.0"])!;
-    }
+    private static SqlException Sql(int number, byte errorClass, params int[] more) =>
+        SqlErrors.OfEach(errorClass, [number, .. more]);
 }

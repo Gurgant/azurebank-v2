@@ -183,8 +183,14 @@ a profile this system meets.
 
 ### 4.2 The token endpoints answer only the BFF's own client, over loopback
 
-- The five token endpoints are login, register, refresh, revoke and logout. The stamp feed of §5.3,
+- The ~~five~~ token endpoints are login, register, refresh, revoke and logout. The stamp feed of §5.3,
   `POST /api/auth/session-stamps`, gets the same rule.
+  *(Amended 2026-10-04,
+  [ADR-0063](0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md): six. The demo's
+  claim, `POST /api/auth/demo/claim`, is a token endpoint too, and the first that opens a session
+  from no credential: it asks for neither a password nor a grant, and takes the visitor's address
+  on its caller's word. So it rests on this rule and on the first precondition above, and on
+  nothing else. While `Demo:Enabled` is false it answers 404 on the road as off it.)*
 - The API answers **404**, the answer an unknown path gets, unless `Connection.RemoteIpAddress` is
   loopback (an IPv4 address mapped into IPv6 counts). A null address is accepted only where the test
   host sets an explicit option, which no configuration can set (F1).
@@ -197,6 +203,9 @@ a profile this system meets.
     pre-review of this pull request).
 - `/api/auth/revoke` and `/api/auth/logout` also join the BFF's blocked proxied paths, beside login,
   register and refresh, and so does `/api/auth/session-stamps`.
+  *(Amended 2026-10-04, ADR-0063: `/api/auth/demo/claim` joined them, with the demo off as with
+  it on. Its answer carries the tokens the BFF withholds, and the API counts a client's claims by
+  the address its caller names, which is meant to be the BFF and never a browser.)*
 - The check is a middleware on endpoint metadata (`TokenEndpointAttribute`, `TokenRoadMiddleware`).
   It runs after the service-key check, so a caller without the key still gets that check's 401, and
   before authentication and model binding.

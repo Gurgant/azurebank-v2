@@ -15,10 +15,13 @@ namespace AzureBank.Api.Controllers;
 /// Authentication controller handling login, registration, logout, and PIN operations.
 /// </summary>
 /// <remarks>
-/// The five token endpoints — login, register, refresh, revoke and logout — and the stamp feed,
-/// session-stamps, carry <see cref="TokenEndpointAttribute"/>: they answer only the BFF's own client
-/// over loopback, and 404 to anything else (ADR-0057 §4.2, §5.3,
-/// <see cref="TokenRoadMiddleware"/>).
+/// The six token endpoints — login, register, the demo claim, refresh, revoke and logout — and the
+/// stamp feed, session-stamps, carry <see cref="TokenEndpointAttribute"/>: they answer only the
+/// BFF's own client over loopback, and 404 to anything else (ADR-0057 §4.2, §5.3,
+/// <see cref="TokenRoadMiddleware"/>). The demo claim also carries <see cref="DemoOnlyAttribute"/>:
+/// it is 404 on every road while the demo is off (<see cref="DemoEndpointMiddleware"/>). Register
+/// carries <see cref="ClosedInDemoAttribute"/>: the same middleware refuses it with 403 while the
+/// demo is on.
 /// </remarks>
 [ApiController]
 [Route("api/auth")]
@@ -34,6 +37,7 @@ public class AuthController : ControllerBase
     */
 
     private readonly IAuthService _authService;
+    private readonly IDemoClaimService _demoClaimService;
     private readonly IValidator<LoginRequest> _loginValidator;
     private readonly IValidator<RegisterRequest> _registerValidator;
     private readonly IValidator<SetPinRequest> _setPinValidator;
@@ -41,12 +45,14 @@ public class AuthController : ControllerBase
 
     public AuthController(
         IAuthService authService,
+        IDemoClaimService demoClaimService,
         IValidator<LoginRequest> loginValidator,
         IValidator<RegisterRequest> registerValidator,
         IValidator<SetPinRequest> setPinValidator,
         IValidator<VerifyPinRequest> verifyPinValidator)
     {
         _authService = authService;
+        _demoClaimService = demoClaimService;
         _loginValidator = loginValidator;
         _registerValidator = registerValidator;
         _setPinValidator = setPinValidator;
@@ -82,7 +88,9 @@ public class AuthController : ControllerBase
     /// Register
     /// </summary>
     /// <remarks>
-    /// Register a new user account with initial bank account.
+    /// Register a new user account with initial bank account. On the public demo registration is
+    /// closed: the answer is 403 with `errorCode` `REGISTRATION_CLOSED`, whatever the request
+    /// carries.
     /// </remarks>
     /// <param name="cancellationToken">The request's token: cancelled by its deadline or by the caller hanging up (ADR-0058).</param>
     /// <param name="request">Registration details</param>
@@ -90,8 +98,10 @@ public class AuthController : ControllerBase
     [HttpPost("register")]
     [AllowAnonymous]
     [TokenEndpoint]
+    [ClosedInDemo]
     [ProducesResponseType(typeof(ApiResponse<RegisterResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)] // REGISTRATION_CLOSED in demo mode
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
     public async Task<ActionResult<ApiResponse<RegisterResponse>>> Register(
         [FromBody] RegisterRequest request, CancellationToken cancellationToken)
@@ -101,6 +111,39 @@ public class AuthController : ControllerBase
         var result = await _authService.RegisterAsync(request, cancellationToken);
         return StatusCode(StatusCodes.Status201Created,
             ApiResponse<RegisterResponse>.Success(result, "Registration successful"));
+    }
+
+    /// <summary>
+    /// Claim a demo copy
+    /// </summary>
+    /// <remarks>
+    /// On the public demo, take one free demo copy for a visitor and sign in to it: the answer
+    /// carries the tokens and the user a login answers, and what signs in to the copy again. The
+    /// copy's password exists in this answer only. A 429 names its reason in `errorCode`:
+    /// `DEMO_POOL_EMPTY` when no copy is free, `DEMO_DAILY_LIMIT` when this client has claimed as
+    /// many copies as one client may in a day, with `retryAfterSeconds`.
+    /// </remarks>
+    /// <param name="cancellationToken">The request's token: cancelled by its deadline or by the caller hanging up (ADR-0058).</param>
+    /// <param name="request">The visitor's address, as the BFF saw it</param>
+    /// <returns>Tokens, user information, and the demo copy</returns>
+    [HttpPost("demo/claim")]
+    [AllowAnonymous] // a visitor has no account yet; the service key, the marker and loopback still apply
+    [TokenEndpoint]
+    [DemoOnly]
+    [ProducesResponseType(typeof(ApiResponse<DemoClaimResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)] // DEMO_POOL_EMPTY, DEMO_DAILY_LIMIT
+    public async Task<ActionResult<ApiResponse<DemoClaimResponse>>> ClaimDemoCopy(
+        [FromBody] DemoClaimRequest request, CancellationToken cancellationToken)
+    {
+        var result = await _demoClaimService.ClaimAsync(request, cancellationToken);
+
+        // The answer carries a password, and this is the only time it exists outside its hash: it
+        // must never land in a cache, the rule the unmasked account number follows (ASVS 14.3.2).
+        Response.Headers.CacheControl = "no-store";
+        Response.Headers.Pragma = "no-cache";
+
+        return Ok(ApiResponse<DemoClaimResponse>.Success(result, "Demo copy claimed"));
     }
 
     /// <summary>
