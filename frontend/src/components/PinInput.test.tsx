@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { fireEvent, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
+import { enableDemoMode, resetDemoMode } from '../test/demoMode';
 import { renderWithProviders } from '../test/renderWithProviders';
-import { PinInput } from './PinInput';
+import { PinInput, type PinInputProps } from './PinInput';
 
 /**
  * PR-10 — the reusable 6-box PIN entry. Pins the controlled compact-value contract:
@@ -138,5 +139,149 @@ describe('PinInput (PR-10)', () => {
     fireEvent.change(screen.getByLabelText('Digit 2 of 6'), { target: { value: '987654' } });
 
     expect(screen.getByTestId('value')).toHaveTextContent('987654');
+  });
+});
+
+/*
+  On the demo, boxes that ask for a PIN the visitor already has are told apart from boxes where a
+  PIN is being chosen: under the first kind the page prints the PIN every demo copy starts with,
+  and the boxes say they are described by it.
+
+  The sentence is typed out here and not imported from the product, so a test fails the day the
+  words on screen are no longer these. It ends on a full stop.
+*/
+const DEMO_PIN_HINT = 'Demo PIN: 123456, unless you changed it.';
+
+/** What a caller's own description reads, here: the element the boxes are told to point at. */
+const REFUSED = 'Incorrect PIN. Please try again.';
+const WHAT_TO_DO = 'Enter your 6-digit PIN.';
+
+/**
+ * Boxes named "PIN", beside the two elements a caller's description may name. Nothing typed into
+ * them is kept: these tests read what is drawn around the boxes.
+ */
+function Boxes(props: Pick<PinInputProps, 'purpose' | 'ariaDescribedBy'>) {
+  return (
+    <>
+      <p id="what-to-do">{WHAT_TO_DO}</p>
+      <PinInput value="" onChange={() => {}} ariaLabel="PIN" {...props} />
+      <p id="why-it-was-refused">{REFUSED}</p>
+    </>
+  );
+}
+
+const boxes = () => screen.getByRole('group', { name: 'PIN' });
+
+/** Every hint on the page. None is `[]`, not an error. */
+const hints = () => screen.queryAllByText(DEMO_PIN_HINT);
+
+/** The boxes' `aria-describedby` as it is written; `null` when they carry none. */
+const describedByAttribute = () => boxes().getAttribute('aria-describedby');
+
+/**
+ * What the boxes are described by, id by id: the words of the element each id names, and `null`
+ * for an id that names nothing on the page. `[]` when the boxes carry no description.
+ */
+function described(): (string | null)[] {
+  const attribute = describedByAttribute();
+  if (attribute === null) return [];
+  return attribute.split(' ').map((id) => document.getElementById(id)?.textContent ?? null);
+}
+
+/**
+ * The column the boxes stand in, top to bottom: the boxes and a button by their names, anything
+ * else by its words.
+ */
+function column(): string[] {
+  return Array.from(boxes().parentElement?.children ?? []).map((child) => {
+    if (child.getAttribute('role') === 'group') return `boxes: ${child.getAttribute('aria-label')}`;
+    if (child.tagName === 'BUTTON') return `button: ${child.getAttribute('aria-label')}`;
+    return child.textContent ?? '';
+  });
+}
+
+/** Draws the boxes, reads how many hints the page has and what the boxes point at, and unmounts. */
+function look(props: Pick<PinInputProps, 'purpose' | 'ariaDescribedBy'> = {}) {
+  const view = renderWithProviders(<Boxes {...props} />);
+  const seen = { hints: hints().length, describedBy: describedByAttribute() };
+  view.unmount();
+  return seen;
+}
+
+describe('PinInput on the demo', () => {
+  it('in the demo the boxes of an existing PIN are described by the demo PIN', () => {
+    enableDemoMode();
+    renderWithProviders(<Boxes />);
+
+    expect({ hints: hints().length, column: column(), described: described() }).toEqual({
+      hints: 1,
+      // Between the boxes and the button that shows the digits.
+      column: ['boxes: PIN', DEMO_PIN_HINT, 'button: Show PIN'],
+      described: [DEMO_PIN_HINT],
+    });
+  });
+
+  it("the caller's description is kept beside the hint", () => {
+    enableDemoMode();
+
+    const one = renderWithProviders(<Boxes ariaDescribedBy="why-it-was-refused" />);
+    const withOne = { attribute: describedByAttribute(), described: described() };
+    one.unmount();
+
+    // A caller may pass a list of ids as well as one (src/pages/TransferPage.tsx does).
+    renderWithProviders(<Boxes ariaDescribedBy="what-to-do why-it-was-refused" />);
+    const withAList = { attribute: describedByAttribute(), described: described() };
+
+    // The caller's ids as the caller wrote them, then one more; and every id names an element.
+    expect({ withOne, withAList }).toEqual({
+      withOne: {
+        attribute: expect.stringMatching(/^why-it-was-refused \S+$/),
+        described: [REFUSED, DEMO_PIN_HINT],
+      },
+      withAList: {
+        attribute: expect.stringMatching(/^what-to-do why-it-was-refused \S+$/),
+        described: [WHAT_TO_DO, REFUSED, DEMO_PIN_HINT],
+      },
+    });
+  });
+
+  it("no hint without the tag, and the description is the caller's alone", () => {
+    const withoutTheTag = {
+      passedOne: look({ ariaDescribedBy: 'why-it-was-refused' }),
+      passedNone: look(),
+    };
+
+    // A tag that is there and does not say `true` is not the demo.
+    document.head.insertAdjacentHTML('beforeend', '<meta name="azurebank-demo" content="false">');
+    const withATagThatSaysFalse = look();
+    resetDemoMode();
+
+    // The same boxes on the demo, so that the zeros above are counts of something that is drawn.
+    enableDemoMode();
+    const withTheTag = look().hints;
+
+    expect({ withoutTheTag, withATagThatSaysFalse, withTheTag }).toEqual({
+      withoutTheTag: {
+        passedOne: { hints: 0, describedBy: 'why-it-was-refused' },
+        passedNone: { hints: 0, describedBy: null },
+      },
+      withATagThatSaysFalse: { hints: 0, describedBy: null },
+      withTheTag: 1,
+    });
+  });
+
+  it('no hint where a new PIN is chosen', () => {
+    enableDemoMode();
+
+    expect({
+      chosen: look({ purpose: 'new' }),
+      chosenWithADescription: look({ purpose: 'new', ariaDescribedBy: 'why-it-was-refused' }),
+      // The same boxes asking for a PIN the visitor has, so that the zeros are counts of something.
+      asked: look({ purpose: 'existing' }).hints,
+    }).toEqual({
+      chosen: { hints: 0, describedBy: null },
+      chosenWithADescription: { hints: 0, describedBy: 'why-it-was-refused' },
+      asked: 1,
+    });
   });
 });

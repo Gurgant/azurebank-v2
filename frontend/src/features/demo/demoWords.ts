@@ -139,3 +139,12 @@ export const HIDE_SIGN_IN_DETAILS = 'Hide sign-in details';
 /** What signs in to the copy, shown to its owner once asked for. */
 export const signInDetails = (email: string, password: string) =>
   `Email: ${email} · Password: ${password}`;
+
+// Under the boxes that ask for a PIN the visitor already has.
+
+/**
+ * The PIN a copy starts with, said where one is asked for. A sentence, so it ends on a full stop;
+ * the panel's line about the same digits (`copyPin`) ends on none. `pin` is the digits
+ * (src/features/demo/demoPin.ts).
+ */
+export const demoPinHint = (pin: string) => `Demo PIN: ${pin}, unless you changed it.`;
