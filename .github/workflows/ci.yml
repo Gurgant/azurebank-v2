@@ -113,10 +113,15 @@ jobs:
   # concurrency tokens, transactions); the InMemory provider only
   # approximates them. This job runs exactly those proofs against a mssql
   # container (Category=SqlServer trait; they self-skip elsewhere).
+  #
+  # 15 minutes, 10 until 2026-10-04. With 278 proofs the job took 332 to
+  # 430 s in fourteen runs of 2026-10-03 and 531 s in a fifteenth. The
+  # proofs run one after another, and each one of the demo's pool, of its
+  # claim and of a copy's budget makes a database of its own first.
   backend-sql:
     name: Backend concurrency proofs (SQL Server)
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     services:
       sqlserver:
