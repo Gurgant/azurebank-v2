@@ -149,7 +149,7 @@ function renderDialog(answer?: () => Response | Promise<Response> | undefined) {
 }
 
 describe('the dialog that asks before starting over', () => {
-  it("asks in the design's words", () => {
+  it('asks its question in these words: the title, the message, the buttons', () => {
     const { dialog, description } = renderDialog();
 
     expect({
@@ -292,8 +292,9 @@ describe('the dialog that asks before starting over', () => {
 
   it('too many attempts: its sentence', async () => {
     const { claims, dialog, startOver, store } = renderDialog();
-    // The mock's own limiter, with its budget of ten spent: it answers before the claim's handler
-    // takes a copy, in the limiter's own shape (a `Retry-After` header and no wait in the body).
+    // The mock's own limiter, with its budget spent (`AUTH_PERMIT_LIMIT` in src/mocks/handlers.ts,
+    // ten): it answers before the claim's handler takes a copy, in the limiter's own shape (a
+    // `Retry-After` header and no wait in the body).
     mockState.authCallTimes = Array.from({ length: 10 }, () => Date.now());
 
     await userEvent.click(startOver());
