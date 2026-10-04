@@ -337,6 +337,9 @@ describe('the demo copy the browser keeps', () => {
   it('a browser that refuses to be read has no copy, and nothing throws', () => {
     enableDemoMode();
     rememberDemoCopy(copy);
+    // Read once before the refusal: a page that had the copy a moment ago is the page a refused
+    // read must not leave holding it.
+    const beforeTheRefusal = getDemoCopySnapshot();
     const denied = deny('getItem');
 
     let whileRefused: unknown = 'not asked';
@@ -347,7 +350,8 @@ describe('the demo copy the browser keeps', () => {
 
     // A read the browser refused is not a copy that could not be read: the key is left as it was,
     // and is the copy again the moment the browser answers.
-    expect({ whileRefused, onceItAnswers: getDemoCopySnapshot() }).toStrictEqual({
+    expect({ beforeTheRefusal, whileRefused, onceItAnswers: getDemoCopySnapshot() }).toStrictEqual({
+      beforeTheRefusal: kept(copy),
       whileRefused: null,
       onceItAnswers: kept(copy),
     });
