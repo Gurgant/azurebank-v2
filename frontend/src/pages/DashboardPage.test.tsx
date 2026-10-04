@@ -469,16 +469,22 @@ describe("on the demo: the panel about the visitor's copy", () => {
     try {
       const off = renderSignedInDashboard();
       await signedInAndLoaded(off.store);
+      // The page's column is found by the page's alert, which is one of its children. The boxes
+      // looked at are the others.
+      const alert = document.querySelector('[role="alert"]');
+      const boxes = Array.from(alert?.parentElement?.children ?? []).filter((box) => box !== alert);
       const offTheDemo = {
         panels: panels().length,
         readsOfTheKey: readsOfTheKey(),
         // No dialog in the page either, open or closed: the one the panel opens is the demo's.
         dialogs: document.querySelectorAll('[role="alertdialog"]').length,
+        // The column was found and holds more than the alert. Without either, the count below
+        // would be a count of nothing, and 0 whatever the page left behind.
+        pageHasItsAlert: alert !== null,
+        boxesBesideTheAlert: boxes.length > 0,
         // And nothing is left where the panel would be: no child of the page's column is an
         // empty box, but for the alert, which is there, empty, on purpose.
-        emptyBoxes: Array.from(
-          document.querySelector('[role="alert"]')?.parentElement?.children ?? [],
-        ).filter((box) => box.getAttribute('role') !== 'alert' && box.innerHTML === '').length,
+        emptyBoxes: boxes.filter((box) => box.innerHTML === '').length,
       };
       off.unmount();
 
@@ -491,7 +497,14 @@ describe("on the demo: the panel about the visitor's copy", () => {
           offTheDemo,
           onTheDemo: { panels: panels().length, keyWasRead: readsOfTheKey() > 0 },
         }).toStrictEqual({
-          offTheDemo: { panels: 0, readsOfTheKey: 0, dialogs: 0, emptyBoxes: 0 },
+          offTheDemo: {
+            panels: 0,
+            readsOfTheKey: 0,
+            dialogs: 0,
+            pageHasItsAlert: true,
+            boxesBesideTheAlert: true,
+            emptyBoxes: 0,
+          },
           onTheDemo: { panels: 1, keyWasRead: true },
         }),
       );
