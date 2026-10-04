@@ -49,7 +49,9 @@ public class BffReauthenticateRequest
 /// (<c>DemoClaimTests.HostileBodies_...</c> holds each). A page of another site can make a
 /// browser post a form or plain text without asking first; it cannot make it send JSON. So a
 /// claim cannot be started from somebody else's page, also from a browser that sends no
-/// <c>Sec-Fetch-Site</c> for the Fetch-Metadata rule to judge by (ADR-0018).
+/// <c>Sec-Fetch-Site</c> for the Fetch-Metadata rule to judge by (ADR-0018). From a browser that
+/// sends it, that rule refuses the request before the body is looked at
+/// (<c>DemoClaimTests.AClaimFromAnotherSite_...</c>).
 /// </para>
 /// </remarks>
 public class BffDemoClaimRequest

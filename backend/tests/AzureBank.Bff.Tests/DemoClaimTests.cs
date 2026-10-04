@@ -678,11 +678,15 @@ public class DemoClaimTests : IClassFixture<WebApplicationFactory<Program>>, IDi
     {
         { "a form with no field", "", "application/x-www-form-urlencoded", 415 },
         { "a form with one field", "clientAddress=203.0.113.7", "application/x-www-form-urlencoded", 415 },
+        { "a form sent in parts, with one field", "203.0.113.7", MultipartForm, 415 },
         { "plain text carrying an object", "{}", "text/plain", 415 },
         { "no body and no content type", null, null, 415 },
         { "JSON with nothing in it", "", "application/json", 400 },
         { "JSON that is not an object", "[]", "application/json", 400 },
+        { "JSON that is null", "null", "application/json", 400 },
     };
+
+    private const string MultipartForm = "multipart/form-data";
 
     [Theory]
     [MemberData(nameof(HostileBodies))]
@@ -696,7 +700,16 @@ public class DemoClaimTests : IClassFixture<WebApplicationFactory<Program>>, IDi
         var sessions = host.Services.GetRequiredService<ISessionService>();
         var old = NewSession(host, "rt-old");
 
-        using var response = await Browser(host).SendAsync(WithCookie(host, Post(ClaimPath, body, mediaType), old));
+        // The form in parts is built as a browser builds one, boundary and all; its one field
+        // is named as the API's request names the address.
+        var request = mediaType == MultipartForm
+            ? new HttpRequestMessage(HttpMethod.Post, ClaimPath)
+            {
+                Content = new MultipartFormDataContent { { new StringContent(body!), "clientAddress" } },
+            }
+            : Post(ClaimPath, body, mediaType);
+
+        using var response = await Browser(host).SendAsync(WithCookie(host, request, old));
 
         using (new AssertionScope())
         {
@@ -704,6 +717,45 @@ public class DemoClaimTests : IClassFixture<WebApplicationFactory<Program>>, IDi
             upstream.CallsTo(ApiClaimPath).Should().Be(0, "{0}: the API is not asked for a copy", what);
             response.Headers.Contains("Set-Cookie").Should().BeFalse();
             sessions.GetSession(old).Should().NotBeNull("the session the cookie named is left as it was");
+        }
+    }
+
+    // CONTROL: green before this change. The Fetch-Metadata rule reads no path, so it stands
+    // before the claim as before every other door (FetchMetadataTests runs it on sign-in's). This
+    // runs it on the claim's: BffDemoClaimRequest's remark leans on it for a browser that says
+    // where a request comes from.
+    [Theory]
+    [InlineData("cross-site")]
+    [InlineData("same-site")]
+    public async Task AClaimFromAnotherSite_Is403_AndReachesNoApi(string site)
+    {
+        var (host, upstream) = NewHost(demo: true);
+        var sessions = host.Services.GetRequiredService<ISessionService>();
+        var old = NewSession(host, "rt-old");
+        var client = Browser(host);
+        var request = WithCookie(host, Post(ClaimPath), old);
+        request.Headers.Add("Sec-Fetch-Site", site);
+
+        using var response = await client.SendAsync(request);
+
+        using (new AssertionScope())
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+            (await response.Content.ReadAsStringAsync()).Should().Contain("CROSS_SITE_REQUEST_BLOCKED");
+            upstream.CallsTo(ApiClaimPath).Should().Be(0, "the API is not asked for a copy");
+            response.Headers.Contains("Set-Cookie").Should().BeFalse();
+            sessions.GetSession(old).Should().NotBeNull("the session the cookie named is left as it was");
+        }
+
+        // Its control: the same claim from the application's own page is served. Without it the
+        // lines above would pass on a host that refused every claim that names a site.
+        var fromThePage = Post(ClaimPath);
+        fromThePage.Headers.Add("Sec-Fetch-Site", "same-origin");
+        using var served = await client.SendAsync(fromThePage);
+        using (new AssertionScope())
+        {
+            served.StatusCode.Should().Be(HttpStatusCode.OK, "CONTROL: a claim from the same origin is served");
+            upstream.CallsTo(ApiClaimPath).Should().Be(1);
         }
     }
 
