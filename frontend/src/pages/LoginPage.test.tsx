@@ -542,6 +542,32 @@ describe('the sign-in page on the demo, in a browser that keeps no copy', () => 
     expectNoNestedLiveRegions();
   });
 
+  it("too many attempts on the form's sign-in: the banner is above the demo, and every control waits it out", async () => {
+    const { requests } = await openSignInPage();
+    // The same limiter with its budget spent, met by the form's sign-in this time. On the demo
+    // the banner's place and what waits are the same whichever control was refused.
+    mockState.authCallTimes = Array.from({ length: 10 }, () => Date.now());
+    await fillTheForm(NOBODY, 'Any-Pass-1!');
+
+    await userEvent.click(signInButton());
+
+    await waitFor(() => expect(alerts()).toStrictEqual([WORDS.tooManyAttempts]));
+    const banner = document.querySelector('[role="alert"]');
+    expect({
+      requests: [requests.signIns, requests.claims],
+      timers: timers().length,
+      aboveTheDemo: inOrder(banner, screen.queryByRole('timer'), tryTheDemo()),
+      inTheForm: theForm()?.contains(banner),
+      disabled: [tryTheDemo().disabled, signInButton().disabled],
+    }).toStrictEqual({
+      requests: [1, 0],
+      timers: 1,
+      aboveTheDemo: true,
+      inTheForm: false,
+      disabled: [true, true],
+    });
+  });
+
   it('when the countdown ends the banner goes and every control can be pressed again', async () => {
     await openSignInPage();
     mockState.authCallTimes = Array.from({ length: 10 }, () => Date.now());
