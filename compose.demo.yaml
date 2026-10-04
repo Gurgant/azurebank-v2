@@ -24,11 +24,15 @@
 # `recycle` deletes the old ones.
 #
 # No number of the demo is set here, so every service runs on the defaults
-# (backend/tools/AzureBank.Seeder/README.md lists them). A value written under one service reaches
-# no other: give it to every service that reads it. Demo__CopyLifetimeHours goes to `api`, which
-# ends a copy by it, and to `recycle`, which deletes by it; Demo__Claim__MaxPerClientPerDay to
-# `api`, which refuses a client by it, and to `seed` and `recycle`, whose line counts the clients
-# at their cap by it.
+# (backend/tools/AzureBank.Seeder/README.md lists them). One default shows at once on one
+# machine: the stack hands out 10 copies (Demo:Claim:MaxPerClientPerDay) in a rolling 24 hours,
+# to all its browsers together. Through the published port the BFF saw one address for every
+# request, the compose network's gateway, so every browser was the same client (measured on
+# Docker Desktop for Windows, 2026-10-04). Give `api`, `seed` and `recycle` a higher value to
+# claim more. A value written under one service reaches no other: give it to every service that
+# reads it. Demo__CopyLifetimeHours goes to `api`, which ends a copy by it, and to `recycle`,
+# which deletes by it; Demo__Claim__MaxPerClientPerDay to `api`, which refuses a client by it,
+# and to `seed` and `recycle`, whose line counts the clients at their cap by it.
 #
 # `recycle`, the job a deployment runs on a schedule, is a service here under the profile `pool`,
 # so `up` leaves it out and it runs when asked:
