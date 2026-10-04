@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
+import { problem } from '../../mocks/problem';
 import { server } from '../../mocks/server';
 import { mockState } from '../../mocks/state';
 import { makeTestStore, type TestStore } from '../../test/renderWithProviders';
@@ -144,5 +145,54 @@ describe('a demo claim', () => {
     expect(store.getState().auth.status).toBe('authenticated');
     expect(store.getState().auth.user?.email).toBe('demo-k7m2x9q4w8e1r5t3@azurebank.example');
     expect(store.getState().auth.user).toStrictEqual(data.user);
+  });
+
+  it('a claim that succeeded makes a session query in use ask again, and a refused one does not', async () => {
+    // What the claim's `invalidatesTags` is for. The app keeps `/bff/auth/me` in use from its
+    // first render (src/features/auth/AuthBootstrap.tsx), and a fulfilled answer of it is the one
+    // place the session's policy is learned (src/features/auth/sessionMiddleware.ts). A claim
+    // that succeeded opens another session, so the question is put again; a refused one opens
+    // none. The refusal is the API's for an empty pool
+    // (backend/src/AzureBank.Shared/Exceptions/DemoRefusalException.cs), and it comes first: the
+    // count it leaves at 1 is the count the claim then moves to 2.
+    let asked = 0;
+    let poolIsEmpty = true;
+    server.use(
+      // Counted here, answered by the mock's own handler.
+      http.get('*/bff/auth/me', () => {
+        asked += 1;
+        return undefined;
+      }),
+      http.post(CLAIM, () =>
+        poolIsEmpty
+          ? problem({
+              status: 429,
+              errorCode: 'DEMO_POOL_EMPTY',
+              detail: 'All demo copies are in use right now. Please try again later.',
+            })
+          : answer(),
+      ),
+    );
+    const store = makeTestStore();
+    const settled = () => Promise.all(store.dispatch(apiSlice.util.getRunningQueriesThunk()));
+
+    // In use, as a mounted hook keeps it: the subscription is never given back.
+    await store.dispatch(apiSlice.endpoints.getMe.initiate());
+    const atFirst = asked;
+
+    await expect(claim(store)).rejects.toMatchObject({ status: 429, errorCode: 'DEMO_POOL_EMPTY' });
+    await settled();
+    const afterARefusedClaim = asked;
+
+    poolIsEmpty = false;
+    await claim(store);
+    await settled();
+    const afterAClaim = asked;
+
+    expect({ atFirst, afterARefusedClaim, afterAClaim }).toStrictEqual({
+      atFirst: 1,
+      afterARefusedClaim: 1,
+      afterAClaim: 2,
+    });
   });
 });
