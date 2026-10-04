@@ -232,10 +232,10 @@ public sealed class RunbookSqlBindsSqlServerTests
     /// <para>
     /// <b>What it does not see.</b> A <c>SELECT</c> that takes locks: with <c>WITH (UPDLOCK,
     /// HOLDLOCK)</c> the plan still says <c>SELECT</c> (measured the same day). And a
-    /// <c>SELECT</c> that writes through something it calls, which this schema gives no way to
-    /// do: it has no sequence for <c>NEXT VALUE FOR</c> to draw from (<c>sys.sequences</c> is
-    /// empty), and <c>OPENROWSET</c> was refused where it was tried (Msg 15281 on LocalDB, whose
-    /// "Ad Hoc Distributed Queries" option is off).
+    /// <c>SELECT</c> that writes through something it calls. Two such ways were tried, and
+    /// neither was open: the schema has no sequence for <c>NEXT VALUE FOR</c> to draw from
+    /// (<c>sys.sequences</c> is empty), and <c>OPENROWSET</c> was refused (Msg 15281 on LocalDB,
+    /// whose "Ad Hoc Distributed Queries" option is off).
     /// </para>
     /// </remarks>
     [SqlServerFact]
@@ -320,8 +320,9 @@ public sealed class RunbookSqlBindsSqlServerTests
             return kinds;
         }
 
-        // What only reads, in the shapes the runbook uses: a join with an aggregate, a UNION ALL,
-        // a CROSS APPLY, a common table expression.
+        // What only reads. The first four are shapes the pool's runbook uses (TOP with an ORDER BY,
+        // a join with an aggregate, a UNION ALL, a CROSS APPLY); the fifth, a common table
+        // expression, is one it does not use.
         string[] reads =
         [
             "SELECT TOP (20) c.Id, c.ClaimedAt, c.Writes FROM DemoCopies c WHERE c.DeletedAt IS NULL ORDER BY c.Writes DESC, c.ClaimedAt;",

@@ -186,7 +186,7 @@ public sealed class DemoModeEndpointTests : IDisposable
 
     /// <summary>
     /// A path, the flag, a method, and what the host answers that request when it carries the
-    /// service key and the token road's marker, as every other test of this class sends it.
+    /// service key and the token road's marker, as a client of the factory's sends it.
     /// </summary>
     public static TheoryData<string, bool, string, int> RequestsWithoutTheServiceKey() => new()
     {
@@ -203,10 +203,10 @@ public sealed class DemoModeEndpointTests : IDisposable
     // CONTROL: green before this change. The answers this class pins on the claim's path and on
     // registration's (the 404 of a deployment that is not the demo, the 405 of another method, the
     // 403 of a closed registration) are what a caller that holds the service key is answered. A
-    // caller without it is answered 401 on these paths as on every operation of the API (the
-    // health probes alone need no key), whatever the method and the flag: the key is asked for
-    // before routing's own answer or any marker is looked at (ADR-0055), so none of those answers
-    // tells such a caller anything.
+    // caller without it is answered 401 on these paths as on every operation of the API, whatever
+    // the method and the flag: the key is asked for before routing's own answer or any marker is
+    // looked at (ADR-0055), so none of those answers tells such a caller anything. (What needs no
+    // key is no operation: the health probes, and in Development the API's own document.)
     [Theory]
     [MemberData(nameof(RequestsWithoutTheServiceKey))]
     public async Task WithoutTheServiceKey_TheClaimsPathAndRegistrations_Are401_WhateverTheMethodAndTheFlag(
