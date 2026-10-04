@@ -1431,4 +1431,68 @@ public sealed class DemoClaimSqlServerTests
         (await LockOfAsync(database, live.Owner.Id)).LockoutEnd.Should().NotBeNull(
             "five wrong passwords lock a user whose password is looked at");
     }
+
+    // What the gate costs a sign-in, counted in the statements the host sends.
+
+    /// <summary>
+    /// The statements a host sends for one sign-in of <paramref name="copy"/>'s owner, a sign-in
+    /// that is answered 200.
+    /// </summary>
+    private static async Task<IReadOnlyList<string>> StatementsOfOneSignInAsync(CustomWebApplicationFactory api, BuiltCopy copy)
+    {
+        var statements = new StatementsInOrder();
+        api.AddInterceptor(statements);
+        using var client = api.CreateClient();
+
+        // One request first: what the host sends while it starts is not the sign-in's.
+        using (await client.GetAsync("/health/live"))
+        {
+        }
+
+        statements.Start();
+        using var response = await DemoVisitor.TrySignInAsync(client, copy.Owner.Email!, DemoPoolDatabase.VisitorPassword);
+        response.StatusCode.Should().Be(
+            HttpStatusCode.OK, "ARRANGE: the owner of a claimed, living copy signs in, with the demo on or off ({0})", await AnswerOfAsync(response));
+        return statements.Texts;
+    }
+
+    private static bool ReadsOrWritesThePool(string statement) => statement.Contains("[DemoCopies]", StringComparison.Ordinal);
+
+    [SqlServerFact]
+    public async Task WithTheDemoOff_ASignInSendsNoStatementAboutThePool_AndWithItOn_OneReadOfTheCopyByItsKey()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copy = (await database.BuildCopiesAsync(1)).Single();
+        await database.ClaimForAVisitorAsync(copy, DateTime.UtcNow);
+
+        // The same user, the same password and the same database, through a host with the demo
+        // off and through one with it on.
+        var withTheDemoOff = await StatementsOfOneSignInAsync(database.Api(), copy);
+        var withTheDemoOn = await StatementsOfOneSignInAsync(database.DemoApi(), copy);
+
+        // CONTROL: with the demo on the gate asks when the copy was claimed, once, by the copy's
+        // key. So the read is there to be heard, and its absence below is the flag's doing.
+        // Recorded on LocalDB, between the read of the user and the grant's insert:
+        //   SELECT TOP(1) [d].[ClaimedAt] FROM [DemoCopies] AS [d] WHERE [d].[Id] = @copyId
+        var read = withTheDemoOn.Where(ReadsOrWritesThePool).Should().ContainSingle(
+            "CONTROL: on the demo a sign-in reads its copy's row, once").Subject;
+        read.Should().MatchRegex(
+            @"^SELECT TOP\(1\) \[d\]\.\[ClaimedAt\]\s+FROM \[DemoCopies\] AS \[d\]\s+WHERE \[d\]\.\[Id\] = @\w+$",
+            "CONTROL: one column of one row, found by the primary key");
+
+        using (new AssertionScope())
+        {
+            // CONTROL: the recorder heard this sign-in from before the gate's place to after it,
+            // the read of the user by its email and the grant's insert.
+            withTheDemoOff.Should().Contain(
+                statement => statement.Contains("FROM [AspNetUsers]", StringComparison.Ordinal)
+                    && statement.Contains("[NormalizedEmail] = @", StringComparison.Ordinal),
+                "CONTROL: the user was read while the recorder listened");
+            withTheDemoOff.Should().Contain(
+                statement => statement.Contains("INSERT INTO [RefreshTokens]", StringComparison.Ordinal),
+                "CONTROL: and its grant was written");
+            withTheDemoOff.Should().NotContain(
+                statement => ReadsOrWritesThePool(statement), "with the demo off the gate reads nothing");
+        }
+    }
 }
