@@ -360,6 +360,41 @@ public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Progra
         (await withAHead.CreateClient().GetStringAsync("/")).Should().Be(TaggedShell);
     }
 
+    [Fact]
+    public void TheRepositorysShell_NamesItsHeadsEndOnce_SoTheTagLandsWhereThePageReadsIt()
+    {
+        // The tag goes before the FIRST "</head>" of the file's bytes, whatever stands around it.
+        // A comment that spelled it earlier in the file would take the tag with it: the host would
+        // start, the page would be served, and the application would read no tag. The file the
+        // build copies is held to one, here, where an edit to it is made.
+        var shell = File.ReadAllText(Path.Combine(RepoRoot(), "frontend", "index.html"));
+
+        var ends = 0;
+        for (var at = shell.IndexOf("</head>", StringComparison.OrdinalIgnoreCase);
+             at >= 0;
+             at = shell.IndexOf("</head>", at + 1, StringComparison.OrdinalIgnoreCase))
+        {
+            ends++;
+        }
+
+        ends.Should().Be(1, "frontend/index.html must spell </head> once, at its head's end");
+    }
+
+    // The folder that holds frontend/index.html. Not finding it is a failure, never a test that
+    // read nothing.
+    private static string RepoRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null
+               && !File.Exists(Path.Combine(directory.FullName, "frontend", "index.html")))
+        {
+            directory = directory.Parent;
+        }
+
+        directory.Should().NotBeNull("the test reads the repository's frontend/index.html");
+        return directory!.FullName;
+    }
+
     // CONTROL: green before this change. The development loop with the demo on: Vite serves the
     // page, the BFF serves none, and there is no shell to tag or to refuse.
     [Fact]
