@@ -76,6 +76,15 @@ const useStyles = makeStyles({
   overlayOpen: {
     opacity: 1,
     visibility: 'visible',
+    /*
+      Open, only the fade is a transition, so `visibility` turns `visible` at once. Under the
+      closed state's transition on it, the dialog and everything in it is still `hidden` at the
+      instant the dialog opens. A browser gives no focus to a hidden element, and the effect below
+      that moves focus in asks at that instant: focus would stay on the page behind the open
+      dialog (e2e/confirmDialog.spec.ts). Closing goes back to the transition above, which is what
+      keeps the dialog on screen while it fades out.
+    */
+    transition: `opacity ${transitions.normal}`,
   },
 
   dialog: {
@@ -130,7 +139,10 @@ const useStyles = makeStyles({
     justifyContent: 'center',
     cursor: 'pointer',
     color: colors.neutral[500],
-    transition: `all ${transitions.fast}`,
+    // The two colours its hover changes, and not `all`. `all` covers `visibility`, which this
+    // button inherits from the overlay: under it the button is still `hidden` at the instant the
+    // overlay turns visible, and this is the control the dialog gives focus to when it opens.
+    transition: `background-color ${transitions.fast}, color ${transitions.fast}`,
     flexShrink: 0,
     ':hover': {
       backgroundColor: colors.neutral[100],
@@ -325,7 +337,14 @@ export function ConfirmDialog({
 
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
-    const active = document.activeElement;
+    // The element the key was pressed on, and not `document.activeElement`: by the time this
+    // handler runs, focus may have left it. Fluent's tabster hears Tab on the window, before
+    // React does, and when the element is the last Tab stop of the whole document (backward: the
+    // first) it moves focus to an element of its own, for the browser's default to carry out of
+    // the page. A trap that asks where focus is by then sees neither of its ends and lets it go:
+    // on a page whose last control is this dialog's, Tab would leave the open dialog for the
+    // page behind it (e2e/confirmDialog.spec.ts).
+    const active = event.target;
     const onContainer = active === dialogRef.current;
 
     if (event.shiftKey && (active === first || onContainer)) {

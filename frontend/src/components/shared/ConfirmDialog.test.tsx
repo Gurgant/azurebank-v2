@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { screen, waitFor } from '@testing-library/react';
+import { cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { emulateFocusFixup } from '../../test/outage';
@@ -69,6 +69,27 @@ function focusIs(): string {
 }
 
 /**
+ * The properties an element's `transition` runs on, as jsdom hands the declaration back: the
+ * parts between its commas, each with its property first. A part that names no property (it
+ * starts with a time) runs on `all`.
+ */
+function transitionsOn(element: Element): string[] {
+  const declared = getComputedStyle(element).transition;
+  if (declared === '' || declared === 'none') return [];
+  return (
+    declared
+      // Not the commas inside a timing function's brackets.
+      .split(/,(?![^(]*\))/)
+      .map((part) => part.trim().split(/\s+/)[0])
+      .map((first) => (/^[\d.]/.test(first) ? 'all' : first))
+  );
+}
+
+/** A transition on `visibility`, by its name or as one of `all`. */
+const delaysVisibility = (element: Element) =>
+  transitionsOn(element).some((property) => property === 'visibility' || property === 'all');
+
+/**
  * The dialog as a page keeps it: mounted and closed, opened by a button of the page, closed by its
  * own cancel or by Escape, and made to wait by its confirm. `answered` is the answer arriving
  * while it waits, which closes it as a success does: nobody presses anything.
@@ -104,6 +125,60 @@ describe('ConfirmDialog', () => {
     renderOpen();
     // The close button is first in DOM order, so it is where focus lands.
     expect(closeButton()).toHaveFocus();
+  });
+
+  it('open, nothing from the control that takes focus up to the overlay delays its visibility', () => {
+    /*
+      The test above passes in jsdom whatever the styles say: jsdom gives focus to an element
+      whatever its `visibility`. A browser refuses one whose computed `visibility` is `hidden`,
+      which is how this dialog is hidden while it is closed. A transition that covers `visibility`,
+      on the control or on an element it inherits the value from, leaves the control `hidden` at
+      the instant the dialog opens and asks for focus, and focus then stays on the page behind.
+      That focus is asserted in a browser by e2e/confirmDialog.spec.ts. This holds the cause, for
+      each element between the one that took focus and the overlay, in both ways of opening.
+
+      The closed overlay does delay it, and has to: that transition is what keeps the dialog on
+      screen while it fades out.
+    */
+    // The overlay is the dialog's outermost element: the one that is hidden while it is closed.
+    const overlayNow = () => document.querySelector('[role="alertdialog"]')?.parentElement ?? null;
+    const nameOf = (element: Element) =>
+      element === overlayNow()
+        ? 'the overlay'
+        : (element.getAttribute('aria-label') ??
+          element.getAttribute('role') ??
+          element.tagName.toLowerCase());
+    // Every element from the one that has focus up to the overlay, and which of them delay it.
+    const wayToTheOverlay = () => {
+      const way: Element[] = [];
+      for (let at = document.activeElement; at !== null; at = at.parentElement) {
+        way.push(at);
+        if (at === overlayNow()) break;
+      }
+      return {
+        looked: way.map(nameOf),
+        delayed: way
+          .filter(delaysVisibility)
+          .map((element) => `${nameOf(element)}: ${transitionsOn(element).join(', ')}`),
+      };
+    };
+
+    const opened = renderOpen();
+    const open = wayToTheOverlay();
+    opened.update({ isOpen: false });
+    const closedOverlay = overlayNow();
+    const closedOverlayDelays = closedOverlay !== null && delaysVisibility(closedOverlay);
+    cleanup();
+
+    // Opened already waiting: every control is disabled, and the dialog itself takes focus.
+    renderOpen({ isLoading: true });
+    const openWaiting = wayToTheOverlay();
+
+    expect({ open, closedOverlayDelays, openWaiting }).toStrictEqual({
+      open: { looked: ['Close', 'div', 'alertdialog', 'the overlay'], delayed: [] },
+      closedOverlayDelays: true,
+      openWaiting: { looked: ['alertdialog', 'the overlay'], delayed: [] },
+    });
   });
 
   it('wraps Tab from the last control back to the first', async () => {
@@ -144,6 +219,48 @@ describe('ConfirmDialog', () => {
     for (let i = 0; i < 8; i += 1) {
       await user.tab({ shift: true });
       expect(dialog()).toContainElement(document.activeElement as HTMLElement);
+    }
+  });
+
+  it('wraps Tab by where it was pressed, also when a listener before the dialog has moved focus', async () => {
+    /*
+      Fluent's tabster hears Tab on the window, before React does. When the element that has focus
+      is the last Tab stop of the whole document (backward: the first), it moves focus to an
+      element of its own and leaves the rest to the browser's default. A trap that asks where
+      focus is by then sees neither of its ends, prevents nothing, and focus leaves the dialog. A
+      browser meets this on the transfer page, whose last control is this dialog's, and the wrap
+      is asserted there by e2e/confirmDialog.spec.ts. Here a listener stands in for tabster: on
+      Tab it moves focus to a control outside the dialog before the dialog hears the key.
+    */
+    const user = userEvent.setup();
+    renderOpen();
+    // The control that has focus, by its name: the X has a label, the others their words.
+    const focusOn = () =>
+      document.activeElement?.getAttribute('aria-label') ?? document.activeElement?.textContent;
+    const movedTo: unknown[] = [];
+    const moveFocusAway = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      screen.getByText('outside after').focus();
+      movedTo.push(focusOn());
+    };
+    window.addEventListener('keydown', moveFocusAway, true);
+    try {
+      confirmButton().focus();
+      await user.tab();
+      const forward = focusOn();
+
+      closeButton().focus();
+      await user.tab({ shift: true });
+      const backward = focusOn();
+
+      expect({ movedTo, forward, backward }).toStrictEqual({
+        // The listener did move focus out, both times: the wrap is not a focus that never left.
+        movedTo: ['outside after', 'outside after'],
+        forward: 'Close',
+        backward: 'Delete',
+      });
+    } finally {
+      window.removeEventListener('keydown', moveFocusAway, true);
     }
   });
 

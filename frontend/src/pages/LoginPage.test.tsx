@@ -1546,8 +1546,9 @@ describe('the sign-in page on the demo, in a browser that keeps a copy', () => {
       await userEvent.click(getNewButton());
       await waitFor(() => expect(openDialogs()).toStrictEqual([WORDS.startOverTitle]));
       // Focus moved off the button when the dialog opened, so focus on the button afterwards is
-      // a return, not a button that never lost it. That it moves is this test page's doing:
-      // whether a browser moves it when the dialog opens is not something this test can see.
+      // a return, not a button that never lost it. Here it moves whatever the dialog's styles
+      // say. That a browser moves it too is asserted in one, for the component under this
+      // dialog (e2e/confirmDialog.spec.ts).
       const focusLeftTheButton = document.activeElement !== getNewButton();
 
       await userEvent.click(
