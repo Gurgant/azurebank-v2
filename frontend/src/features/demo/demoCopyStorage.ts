@@ -19,8 +19,8 @@ import { isDemoMode } from './demoMode';
 
   Off the demo the key is never read: a page that is not the demo has no business with it.
 
-  A caught storage error is never logged. A browser with storage denied throws on every call, and
-  that is a setting of the visitor's, not a fault to report.
+  A caught storage error is never logged. A browser with storage denied throws when storage is
+  used, and that is a setting of the visitor's, not a fault to report.
 */
 export const DEMO_COPY_STORAGE_KEY = 'azurebank.demoCopy';
 
