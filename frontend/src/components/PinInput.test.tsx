@@ -1,3 +1,4 @@
+import { readFileSync, readdirSync } from 'node:fs';
 import { useState } from 'react';
 import { fireEvent, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -208,6 +209,36 @@ function look(props: Pick<PinInputProps, 'purpose' | 'ariaDescribedBy'> = {}) {
   return seen;
 }
 
+/** Every `.tsx` file under `dir` that is not a test, with forward slashes on any machine. */
+function componentFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) return componentFiles(path);
+    return entry.name.endsWith('.tsx') && !entry.name.includes('.test.') ? [path] : [];
+  });
+}
+
+/**
+ * The `<PinInput … />` elements in a file, comments left out, each from its `<` to the `/>` that
+ * closes it. That is the first `/>` outside every pair of braces: a property's value has arrow
+ * functions and braces of its own.
+ */
+function boxesDrawnIn(file: string): string[] {
+  const code = readFileSync(file, 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+  return [...code.matchAll(/<PinInput\s/g)].map(({ index }) => {
+    let depth = 0;
+    let end = index;
+    while (end < code.length && !(depth === 0 && code.startsWith('/>', end))) {
+      if (code[end] === '{') depth += 1;
+      if (code[end] === '}') depth -= 1;
+      end += 1;
+    }
+    return code.slice(index, end + 2);
+  });
+}
+
 describe('PinInput on the demo', () => {
   it('in the demo the boxes of an existing PIN are described by the demo PIN', () => {
     enableDemoMode();
@@ -283,5 +314,72 @@ describe('PinInput on the demo', () => {
       chosenWithADescription: { hints: 0, describedBy: 'why-it-was-refused' },
       asked: 1,
     });
+  });
+
+  it('two groups on one page are each described by the line under them', () => {
+    enableDemoMode();
+    renderWithProviders(
+      <>
+        <PinInput value="" onChange={() => {}} ariaLabel="One PIN" />
+        <PinInput value="" onChange={() => {}} ariaLabel="Another PIN" />
+      </>,
+    );
+    const groups = ['One PIN', 'Another PIN'].map((name) => screen.getByRole('group', { name }));
+    const ids = groups.map((group) => group.getAttribute('aria-describedby') ?? '');
+
+    expect({
+      hints: hints().length,
+      differentIds: new Set(ids).size,
+      // An id is one element's. Carried by two, it finds the first, whichever group asks.
+      elementsWithEachId: ids.map((id) => document.querySelectorAll(`[id="${id}"]`).length),
+      // What a group's id names is the line right under that group, not the other group's.
+      namesTheLineUnderIt: groups.map(
+        (group, index) => document.getElementById(ids[index]) === group.nextElementSibling,
+      ),
+    }).toEqual({
+      hints: 2,
+      differentIds: 2,
+      elementsWithEachId: [1, 1],
+      namesTheLineUnderIt: [true, true],
+    });
+  });
+
+  /*
+    Where the boxes are drawn, read from the source of every file that draws them.
+
+    The tests above hold what `purpose` does: on the demo, boxes that say `new` get no line and
+    boxes that say nothing get one. This holds where it is said. The line belongs where a visitor
+    is asked for a PIN they were handed and never chose: the step-up prompt, a withdrawal, the two
+    transfers, a deleted account and "Current PIN". It must stay away from the four groups where a
+    PIN is being chosen, where the starting digits would read as the PIN to choose.
+
+    One list for all ten, and not a render of each page: a place that draws the boxes later is one
+    more line here before this is green again, and that line says which of the two it is.
+  */
+  it('says, place by place, which boxes choose a PIN and which ask for one', () => {
+    // A plain relative folder, like the other tests that read source: Vitest runs from the
+    // frontend root (src/theme/brandFillUsage.test.ts has the reason).
+    const places = componentFiles('src')
+      .flatMap((file) =>
+        boxesDrawnIn(file).map((element) => {
+          const name = /\sariaLabel="([^"]*)"/.exec(element)?.[1] ?? 'no name';
+          const purpose = /\spurpose=(?:"([^"]*)"|\{([^}]*)\})/.exec(element);
+          return `${file} | ${name} | ${purpose ? (purpose[1] ?? purpose[2]) : 'says nothing'}`;
+        }),
+      )
+      .sort();
+
+    expect(places).toEqual([
+      'src/components/dialogs/ChangePinDialog.tsx | Confirm new PIN | new',
+      'src/components/dialogs/ChangePinDialog.tsx | Current PIN | says nothing',
+      'src/components/dialogs/ChangePinDialog.tsx | New PIN | new',
+      'src/components/dialogs/DeleteAccountDialog.tsx | Enter your PIN | says nothing',
+      'src/components/dialogs/WithdrawDialog.tsx | Enter your PIN | says nothing',
+      'src/features/auth/StepUpModal.tsx | Enter your PIN | says nothing',
+      'src/pages/InternalTransferPage.tsx | Enter your PIN | says nothing',
+      'src/pages/PinSetupPage.tsx | Confirm your PIN | new',
+      'src/pages/PinSetupPage.tsx | Create your PIN | new',
+      'src/pages/TransferPage.tsx | Enter your PIN | says nothing',
+    ]);
   });
 });
