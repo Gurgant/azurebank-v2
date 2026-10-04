@@ -346,7 +346,9 @@ describe("the mock's demo claim", () => {
 
     // The visitor renames their handle, which the mock writes on the session's user, and a test
     // edits what it was handed. The copy the mock holds as claimed is as it was.
-    if (mockState.session) mockState.session.azureTag = 'renamed';
+    const session = mockState.session;
+    if (!session) throw new Error('The seed left no session.');
+    session.azureTag = 'renamed';
     handedOut.user.firstName = 'Edited';
     handedOut.copy.contacts.push('someone_else');
     expect(mockState.demoCopies).toEqual(asClaimed);
@@ -380,6 +382,14 @@ describe("who signs in to the mock while the page is the demo, and who doesn't",
     expect(withItsPair.status).toBe(200);
     expect((await withItsPair.json()).data.user.email).toBe(copy.email);
     expect(await whoAmI()).toEqual({ status: 200, email: copy.email, authLevel: 1 });
+
+    // The session a sign-in opens holds a copy of the owner: a handle renamed there, which the
+    // mock writes on the session's user, is not written on the copy as claimed.
+    const asClaimed = structuredClone(mockState.demoCopies);
+    const session = mockState.session;
+    if (!session) throw new Error('A sign-in that answered 200 left no session.');
+    session.azureTag = 'renamed';
+    expect(mockState.demoCopies).toEqual(asClaimed);
 
     // An address is found whatever its spelling, a copy's as any other.
     expect((await signIn(copy.email.toUpperCase(), copy.password)).status).toBe(200);
