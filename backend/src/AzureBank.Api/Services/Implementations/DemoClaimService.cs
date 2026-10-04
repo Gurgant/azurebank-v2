@@ -36,6 +36,13 @@ namespace AzureBank.Api.Services.Implementations;
 /// landed, the question is "does a copy carry this claim's id": no other request can have written
 /// it. A claim that landed is then answered, not run again on a second copy.
 /// </para>
+/// <para>
+/// RUN AGAIN. The host's execution strategy runs the whole claim again when the database refuses
+/// it for a transient reason, and one such reason is expected: while READ_COMMITTED_SNAPSHOT is
+/// off, two claims at once can deadlock, and the server ends one of them
+/// (<see cref="ReadCandidatesAsync"/> says how, and how often it was seen). So each attempt starts
+/// from nothing an earlier one read or tracked, and writes what was made once, outside.
+/// </para>
 /// </remarks>
 public class DemoClaimService(
     AzureBankDbContext context,
@@ -113,19 +120,21 @@ public class DemoClaimService(
                   another copy's users: the database is free to answer it by reading every user.
                   Run after the password was written, two claims at once each held their own
                   owner's row and waited to read the other's. Measured on SQL Server (LocalDB)
-                  with READ_COMMITTED_SNAPSHOT off, by running
-                  DemoClaimSqlServerTests.EightParallelClaims_... (eight claims at once on a pool
-                  of five): three runs of three ended with claims answered 503 for error 1205
-                  (three of the eight in one run, four in another). Of the 18 deadlock reports
-                  the runs made with that order left in the server's system_health session
-                  (xml_deadlock_report), 17 show this statement on every side, each waiting for a
-                  key of PK_AspNetUsers another held.
+                  with READ_COMMITTED_SNAPSHOT off and on a host that ran nothing again, by
+                  running eight claims at once on a pool of five (the load of
+                  DemoClaimSqlServerTests.EightParallelClaims_...): three runs of three ended
+                  with claims answered 503 for error 1205 (three of the eight in one run, four
+                  in another). Of the 18 deadlock reports the runs made with that order left in
+                  the server's system_health session (xml_deadlock_report), 17 show this
+                  statement on every side, each waiting for a key of PK_AspNetUsers another held.
 
                   Here the claim holds its pool row and no user's, and from the next statement on
                   it reads no user but its own owner, by key: a claim that holds a user's row
                   never waits for another's.
-                  DemoClaimSqlServerTests.OnceAClaimHasWrittenAUser_... holds the order, and
-                  EightParallelClaims_... runs it, in its row without row versioning.
+                  DemoClaimSqlServerTests.OnceAClaimHasWrittenAUser_... holds the order. The
+                  theories of claims at once do not: without row versioning they run on a host
+                  that runs a refused claim again, and with this read moved after the password
+                  and the grant they ended as they should all the same.
                 */
                 var contacts = await context.Users.AsNoTracking()
                     .Where(u => u.DemoCopyId == won.Id && u.Id != won.OwnerUserId)
@@ -261,18 +270,60 @@ public class DemoClaimService(
     /// </para>
     /// <para>
     /// ONLY THE ID AND THE SEED INSTANT, which is all the index of free copies holds
-    /// (<c>IX_DemoCopies_Free</c>: <c>CreatedAt</c>, and the key). Asked for the owner as well, the
-    /// database read each candidate in two steps, its index entry and then its row, holding the
-    /// first while it waited for the second; a claim taking that copy holds the row and then
-    /// waits for the index entry, to remove it. Measured on SQL Server (LocalDB) with
-    /// READ_COMMITTED_SNAPSHOT off, by running
-    /// <c>DemoClaimSqlServerTests.TwelveParallelClaims_...</c> (twelve claims at once on a pool of
-    /// twenty): in 2 runs of 36, one or two claims were answered 503 for error 1205, and the three
-    /// deadlock reports those runs left in the server's system_health session
-    /// (xml_deadlock_report) show this read holding a key of IX_DemoCopies_Free and waiting for one
-    /// of PK_DemoCopies, against the conditional update holding that one and waiting for the other.
-    /// Read from the index alone, it holds nothing while it waits.
-    /// <c>DemoClaimSqlServerTests.TheCandidatesRead_...</c> holds the columns.
+    /// (<c>IX_DemoCopies_Free</c>: <c>CreatedAt</c>, and the key): the statement asks for nothing
+    /// that is only in the row. <c>DemoClaimSqlServerTests.TheCandidatesRead_...</c> holds the
+    /// columns.
+    /// </para>
+    /// <para>
+    /// SQL SERVER GOES TO THE ROW ALL THE SAME. The index is filtered on <c>ClaimedAt IS NULL</c>
+    /// and does not hold that column, and the plan looks each candidate's row up to check the
+    /// condition there. Measured on SQL Server (LocalDB 17.0.4025), on pools of two, three and
+    /// eight copies: the plan in the server's cache for this statement is an index scan of
+    /// IX_DemoCopies_Free and a key lookup in PK_DemoCopies, whose predicate is
+    /// <c>ClaimedAt IS NULL</c>. And with READ_COMMITTED_SNAPSHOT off the statement, sent while
+    /// another session held one free row and no index entry, waited for that row until its lock
+    /// timeout (error 1222).
+    /// </para>
+    /// <para>
+    /// SO TWO CLAIMS CAN DEADLOCK WHILE READ_COMMITTED_SNAPSHOT IS OFF. The read holds a shared
+    /// lock on an index entry while it waits for the row; a claim taking that copy holds the row
+    /// and waits for the index entry, which its update removes; the server ends the read with
+    /// error 1205. That is rare, and it is not excluded. Measured on the same server, with the
+    /// setting turned off, by running three loads 50 times each: eight claims at once on a pool of
+    /// five, twelve on a pool of twenty (the loads of
+    /// <c>DemoClaimSqlServerTests.EightParallelClaims_...</c> and <c>TwelveParallelClaims_...</c>),
+    /// and six claims at once beside fourteen other requests of one copy's owner on a pool of
+    /// eight. On a host that runs a refused claim again, the server's system_health session
+    /// recorded three deadlocks in those 150 runs (xml_deadlock_report: none among the eight, one
+    /// among the twelve, two in the third load), each this read against the conditional update on
+    /// those two indexes, and all 150 ended as they should. On a host that runs nothing again,
+    /// the same 150 runs met two (one among the twelve, one in the third load), and each left one
+    /// claim answered 503.
+    /// </para>
+    /// <para>
+    /// WHAT ANSWERS IT IS THE HOST. Its execution strategy runs the whole claim again when the
+    /// server refuses it this way (<c>AddInfrastructure</c> turns EF's retrying strategy on, and
+    /// error 1205 is on the list EF retries), and a claim is built to be run again: what it makes
+    /// up is made once, outside, and each attempt starts from nothing an earlier one read.
+    /// <c>DemoClaimSqlServerTests.AClaimWhoseReadOfCandidatesIsRefusedOnce_...</c> holds that for
+    /// this read refused with a transient fault, and <c>OnAHostThatRunsNothingAgain_...</c> that
+    /// without the strategy the visitor is answered 503.
+    /// </para>
+    /// <para>
+    /// WITH READ_COMMITTED_SNAPSHOT ON, SQL Server answers a read from the last committed version
+    /// of each row and takes no shared lock for it (its own documentation of that setting). This
+    /// read then holds nothing and waits for no row: measured, the same statement beside the same
+    /// held row was answered at once. The two theories of <c>DemoClaimSqlServerTests</c> run under
+    /// that setting on a host that runs nothing again, and in 40 runs of them none of those 80
+    /// results failed.
+    /// </para>
+    /// <para>
+    /// ON IS WHAT A DATABASE MADE FOR THIS APPLICATION STARTS WITH. Azure SQL has the setting on
+    /// by default, and EF turns it on in a database it creates on any other SQL Server, which is
+    /// how <c>migrate</c> creates one (read in EF 10.0.1's generator of CREATE DATABASE; measured
+    /// on LocalDB: a database <c>MigrateAsync</c> had just created read
+    /// <c>is_read_committed_snapshot_on</c> 1). Off is SQL Server's own default: a database made
+    /// some other way has it, and so does one where somebody turned the setting off.
     /// </para>
     /// </remarks>
     private async Task<List<Candidate>> ReadCandidatesAsync(DateTime now, int maxFreeAgeHours, CancellationToken ct)

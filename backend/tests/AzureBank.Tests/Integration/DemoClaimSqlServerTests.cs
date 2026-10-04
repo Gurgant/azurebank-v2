@@ -106,8 +106,10 @@ public sealed class DemoClaimSqlServerTests
 
     /// <summary>
     /// Sets whether the scratch database reads committed data from row versions
-    /// (<c>READ_COMMITTED_SNAPSHOT</c>), and reads the setting back. On: Azure SQL's default. Off:
-    /// SQL Server's, which a database created under compose has.
+    /// (<c>READ_COMMITTED_SNAPSHOT</c>), and reads the setting back. On: Azure SQL's default, and
+    /// what a database EF creates on any other SQL Server starts with, the scratch database among
+    /// them (<c>DemoClaimService.ReadCandidatesAsync</c> says where that was read and measured).
+    /// Off: SQL Server's own default, which a database made some other way has.
     /// </summary>
     internal static async Task SetRowVersioningAsync(DemoPoolDatabase database, bool on)
     {
@@ -658,9 +660,14 @@ public sealed class DemoClaimSqlServerTests
     }
 
     // Two claims at once deadlock when each holds what the other waits for. The two theories above
-    // show that they do not, by running them; a deadlock that needs an unlucky moment can pass
-    // there. These two hold, on one claim's own statements, the two rules that leave no such
-    // moment, each found by a deadlock the theories did show (error 1205, with row versioning off).
+    // do not show that claims never do: a deadlock needs an unlucky moment, and without row
+    // versioning their host runs the refused claim again. These two hold, on one claim's own
+    // statements, two rules about what a claim asks for and when, each found by a deadlock the
+    // theories did show while their host ran nothing again (error 1205, with row versioning off).
+    // The rule about users leaves its deadlock no moment: a claim that has written a user reads no
+    // other user. The rule about the candidates does not: the read asks for nothing the index of
+    // free copies lacks, and the server goes from the index to the row all the same, so that
+    // deadlock is rare and not gone (DemoClaimService.ReadCandidatesAsync).
 
     [SqlServerFact]
     public async Task TheCandidatesRead_AsksOnlyForWhatTheIndexOfFreeCopiesHolds()
@@ -684,12 +691,16 @@ public sealed class DemoClaimSqlServerTests
 
         using (new AssertionScope())
         {
-            // A column the index does not hold is fetched from the row, with the index entry still
-            // locked. A claim taking that copy holds the row and waits for the index entry.
+            // The statement asks for nothing that is only in the row, and its condition is the
+            // index's own filter. A statement can do no more, and it does not keep SQL Server in
+            // the index: the index does not hold ClaimedAt, and the plan looks each row up to
+            // check it there (DemoClaimService.ReadCandidatesAsync says what was measured). Held
+            // all the same: a column asked for from the row would send the read there whatever
+            // the index held.
             asked.Should().NotBeEmpty().And.BeSubsetOf(
-                held, "the read is answered from the index of free copies alone, {0}, and never from the rows", string.Join(", ", held));
+                held, "the read asks only for what the index of free copies holds, {0}", string.Join(", ", held));
             Regex.Replace(condition, @"\[\w+\]\.", string.Empty).Should().Be(
-                free.GetFilter(), "the read's condition is the index's own, so the index answers all of it");
+                free.GetFilter(), "the read's condition is the index's own filter");
         }
     }
 
