@@ -49,8 +49,10 @@ services:
     environment:
       Demo__Enabled: "true"
 
-  # The API hands out the copies. The key is this service's alone: the pool's commands run
-  # without it.
+  # The API hands out the copies. The key is given to this service alone: the pool's containers
+  # do not get it. Compose asks for it all the same when it loads this file, whichever service is
+  # named: `run --rm recycle`, `run --rm seed seed-pool 5` and `down` stop, as `up` does, until
+  # DEMO_CLIENT_KEY_SECRET is set.
   api:
     environment:
       Demo__Enabled: "true"
