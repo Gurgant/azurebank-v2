@@ -16,7 +16,13 @@ twice before the users were made, as told under
 [the second reopened choice](#2-how-the-two-database-users-are-created), and then made them. The
 what-if of step 9 could not name the app, and the template's check of the app's values moved for
 that (decision 1); run again that day on the changed template, the same what-if listed the nine
-resources expected and nothing it could not work out. What ran on Azure before, on 2026-10-02,
+resources expected and nothing it could not work out. The second session ran the same day, steps
+12 to 21: the template created the app, `deploy.py` migrated the database and moved the app from
+the owner's terminal, the workflow did the same twice as the deployment identity, and a later
+commit with a 17th migration was deployed by the workflow. The demo is deployed. What that
+session showed has a table of its own below, and one decision changed with it: the alert on the
+log workspace does not count lines, was deleted, and is now left out unless it is asked for
+(decision 10). What ran on Azure before, on 2026-10-02,
 is a throwaway trial: a resource group in the same subscription and region, created and deleted
 that day, in which requests of the shapes these files make were sent by hand: not by these files,
 and not every one of them. What it measured has a table of its own below. Every other sentence
@@ -179,16 +185,37 @@ per row unless it says otherwise. The runbook's section "Measured on Azure" has 
 | 9, the app's what-if | On the template as it was then: 7 to create, the four `Modify` of step 3, and **two `Unsupported`: the app and the role assignment on it**, where nine creates were expected. Nothing was refused. The app's name went through `fail()` and the seven secure parameters, and a what-if works out no secure value. Fixed in the template (decision 1). Run again later that day on the changed template, answered "no" again: 9 to create, the same four `Modify`, nothing `Unsupported`, nothing to delete |
 | 10, end of the session | The probe's five lines in the workspace when read, 6 min 52 s to 8 min 51 s after they were written; the reads of step 1 as expected: one firewall rule, Entra-only, the log's cap taking data, no job, nothing attached, the mode `WorkloadProfiles`, the protected folder gone |
 
+**Measured on Azure on 2026-10-03, at the first deployment's second session**, with these files
+and the workflow on `main`, at commit `1fc4d131`. One run per row unless it says otherwise. The
+runbook's section "Measured on Azure" has each line in full, with its times.
+
+| Step | What happened |
+|---|---|
+| 12 and 13, before writing | The three identifiers set as secrets of `demo`. Every read as expected, the GitHub environment among them: a required reviewer, and `main` only |
+| 14, the images | `build-push` succeeded on its first run, without `first_publication`. **The three packages were readable anonymously as soon as the workflow had published them**: the runbook's check exited 0 three times, and with an anonymous token each manifest answered 200 where a package that does not exist answered 403. The owner's step, each package to Public, was not needed; the runbook keeps it for a check that answers `denied`. Why they were public was not looked into |
+| 15, the app | The what-if equal line for line to the second one of step 9, then `Succeeded`, with the Deny policy assigned. Every read as expected then: scale 0 to 1, the revision mode `Single`, ingress on 8080 with no other port, eight secret names on the app and one on the job, each database identity on one resource, two role assignments for the deployment identity and none for the other two, four alerts enabled, one e-mail receiver. **A request for two replicas was refused with `RequestDisallowedByPolicy`**, and the maximum read 1 afterwards. The test notification was refused by the offer, `(Conflict) Free subscription not supported`; what the owner's mailbox got is the message that asks to verify the address and, once verified, the one that says the address is in the action group |
+| 16, the first deployment, as the owner | The migration `Succeeded` in 34 s with exit code 0 and the reason `CompletionsReached`; the new revision ready 38 s after the verdict; the smoke test passed. What the migration printed, read 11 minutes after it was written: 16 migrations applied, the database at 16 of 16, 5.3 s. `--job-log` printed the 5 lines of the next execution with the 20 asked for; it now asks by the execution's container group as well |
+| 17, the workflow, twice | Both succeeded as the deployment identity: the listing of secrets refused, each verdict `Succeeded` with exit code 0 after 37 s, nothing to migrate, the smoke test passed with the address masked. In each raw log, 0 times: the server's name, the app's address, the three client IDs, the tenant and the subscription, anything shaped like an IPv4 address. A run of `deploy.py` from the owner's terminal, not planned, overlapped the second run for about 50 s with the same images; both ended well and one revision was active afterwards. Not tried with different images |
+| 18, the road back | `--app-only`: no job touched, the new revision ready after 39 s, the smoke test passed |
+| 19, the last-resort migration | The users file first, on the database with its 16 migrations: it passed. With the tool's connect timeout of 10 s the driver had no token in time and never reached the server (error 0, class 20), while `az` gave a token for the database in under a second. **With `Connect Timeout=60` in the string** the first try reached the server after 8 to 13 s, and through the temporary firewall rule the second ended with exit 0 and nothing to migrate |
+| 20, the alert on the workspace | The runbook's query was refused as written: a table of the workspace's schema already has a column of the name it gave its own. Under another name it ran. **The metric `Ingestion Volume` had no time series for an hour in which the workspace ingested 446 rows**, 395 of them in the hour's middle forty minutes; `Query Count` of the same workspace had one. The alert was deleted, and the three on the app read back enabled. The owner decided against a billed log search rule for now (decision 10) |
+| 21, from outside | `http://` answered 301 to `https://`; `/health/ready` answered `Healthy`; the proxied login path answered 404; port 5068 gave no connection |
+| A later deployment, at commit `8552f935` | The workflow applied a 17th migration, `AddDemoCopies`, on the live database: `Succeeded`, 25 s, exit code 0, 17 of 17, `migrate` 2.5 s. The smoke test passed, and the raw log held the same five counts of 0 |
+| The end of that day | One active revision, at 0 replicas; five executions of the job, all `Succeeded`; the firewall rule and the log's cap as before; the day's log volume 0.19 MB of the 50 MB cap |
+| Not done | No cold start was timed. No cost of the demo's resource group was read by meter. The portal's Test button on the action group was not tried |
+
 ## Decision
 
 **1. One resource group in Italy North, created by one template that a person runs, in two steps.**
 The first step needs no image: the environment, the log workspace, the SQL server and database,
 three identities, the custom role and the policy, fourteen things. The second adds the app, the
-migration job, two role assignments, the action group and four alerts, nine things. A run of the
-second step without the image tag, the alerts' address or one of the seven secrets is refused by a
-module of its own, `app-inputs.bicep`, whose parameters carry the lengths those values must have;
-the app, the job and the action group wait for it, and the app's name stays a plain value that a
-what-if can work out. The workflow never creates or changes infrastructure. The environment names
+migration job, two role assignments, the action group and ~~four alerts, nine things~~ three
+alerts, eight things *(struck 2026-10-03: the fourth alert is built only when it is asked for,
+decision 10; the first deployment created the nine)*. A run of the second step without the image
+tag, the alerts' address or one of the seven secrets is refused by a module of its own,
+`app-inputs.bicep`, whose parameters carry the lengths those values must have; the app, the job
+and the action group wait for it, and the app's name stays a plain value that a what-if can work
+out. The workflow never creates or changes infrastructure. The environment names
 its mode, `WorkloadProfiles`, on an API version that has the property: on this subscription a
 request that names none is taken as Express, which has neither jobs nor a second container, and is
 refused (`ExpressEnvironmentFeatureNotSupported`).
@@ -249,20 +276,29 @@ them. The two connection strings are secrets too, although they hold no password
 client ID. That keeps both out of the container that faces the internet. It is not a lock:
 neither is a secret.
 
-**10. Nothing stops the app automatically, and the owner accepts that.** Four alerts send an
+**10. Nothing stops the app automatically, and the owner accepts that.** ~~Four alerts send an
 e-mail: requests, data out and replica time on the app, and records ingested on the workspace,
-which are its log lines only if the metric counts one per record (not yet measured). The owner
-stops the app by hand. The logs are switched off by rule: any cost on their meter, a day above
-twice the cap, or no line ever arriving.
+which are its log lines only if the metric counts one per record (not yet measured).~~ *(struck
+2026-10-03: measured that day, at the runbook's step 20. For an hour in which the workspace
+ingested 446 rows, 395 of them in the hour's middle forty minutes, the metric `Ingestion Volume`
+had no time series at all, while `Query Count` of the same workspace had one. A rule on that
+metric cannot count lines here. The fourth alert, which the first deployment had created, was
+deleted, and the template builds it only with `logVolumeAlert=true`, for whoever measures again.
+A rule that does count lines is a log search rule, which is billed; the owner decided against
+one for now.)* Three alerts send an e-mail, all on the app: requests, data out and replica time.
+Nothing warns of the log's volume. The owner stops the app by hand. The logs are switched off by
+rule: any cost on their meter, a day above twice the cap, or no line ever arriving.
 
 **11. What Azure accepts was measured before the first run, and what to do when it refuses is
 decided before it too.** The tool has three ways to sign in, the user creation a second form, the
 logs an off switch, the policy and the fourth alert a switch each; each is written with the
-refusal that triggers it, and the fourth alert's also with the measurement that does. Anything
-else that is refused is a stop. The server has one shape and a user carries one kind of ID, its
-identity's client ID: the trial showed that the shape is accepted and which ID the server stores,
-so the two other shapes of the server and the switch for the object ID that this record first
-carried were taken out.
+refusal that triggers it, and the fourth alert's also with the measurement that does
+*(2026-10-03: that measurement was made and it triggered the switch, decision 10; the switch now
+works the other way, and the alert is left out unless it is asked for)*. Anything else that is
+refused is a stop. The server has one shape and a user carries one kind of ID, its identity's
+client ID: the trial showed that the shape is accepted and which ID the server stores, so the two
+other shapes of the server and the switch for the object ID that this record first carried were
+taken out.
 
 ## The three reopened choices
 
@@ -312,16 +348,28 @@ app's 10 s connect timeout: one cold run of a program whose string waits 30 s. T
 3,253 ms, the trial's first open 3,810 ms. It is nearer the timeout than the trial's, and it is
 not the app's own sign-in.
 
+**Measured at its second session, the same day.** The migration job ran `migrate` as its
+identity and applied the 16 migrations, and later a 17th from the next commit. After each
+deployment the smoke test's sign-in was refused by the API after it asked the database, which
+needs the app's own sign-in to the database. The workflow, as the deployment identity, changed
+the job and the app in three runs, each carrying its identity, and Azure asked for no right on
+either identity. The last-resort migration, signed in as the owner with
+`Active Directory Default`, got no token within the tool's connect timeout of 10 s, while `az`
+gave one for the database in under a second; with `Connect Timeout=60` in its string it reached
+the server after 8 to 13 s and ran, with nothing to migrate.
+
 **Not measured.** The app's own first sign-in after a cold start, with its 10 s. That a request for
-a token which names no identity gets none. Whether a change that touches no identity needs a
-right on the attached one.
+a token which names no identity gets none. ~~Whether a change that touches no identity needs a
+right on the attached one.~~ *(struck 2026-10-03: it does not, measured at step 17, above. No
+cold start was timed in the second session, so the first clause stands.)*
 
 **If Azure refuses.** The server refused, or disturbed by a second run of the template: a stop.
 This record first listed two more shapes of the server as steps down; they are gone, because the
 first shape was accepted, twice. A slow first token: nothing automatic. The timeout stays 10 s,
 one 503 after a cold start is accepted, and a larger value is a decision in ADR-0058, because that
 timeout also bounds each commit. The 6,390 ms of step 7 does not change that: the decision stands
-until the app's own first sign-in is measured, in the second session.
+until the app's own first sign-in is measured, ~~in the second session~~ *(struck 2026-10-03: the
+second session ran and timed no cold start)*.
 
 ### 2. How the two database users are created
 
@@ -467,20 +515,31 @@ Italy North. And a line could be read about six and a half minutes after it was 
 median), eight at the most: the workflow could not print a migration's text in time even if that
 were wanted.
 
-**Not measured.** That the free 5 GB apply: the cost view had no row on the same day. That the
+**Not measured.** That the free 5 GB apply: the cost view had no row on the same day. ~~That the
 alert on the workspace is accepted, and at no cost. That it counts lines: Microsoft's page on the
 workspace's metrics (2026-07-31) calls `Ingestion Volume` the number of records ingested and lists
 `Count` as its default aggregation, and says nowhere that one measurement is one record; if one
 stands for several, the rule counts measurements and may never fire. The runbook's step 20 reads
-the metric against a query of the rows over one hour. What a line of the app is billed. How far
-the cap overshoots.
+the metric against a query of the rows over one hour.~~ *(struck 2026-10-03: the alert was
+accepted at step 15, and what it cost was not read. It does not count lines here: at step 20 the
+metric had no time series for an hour in which the workspace ingested 446 rows. Decision 10.)*
+What a line of the app is billed. How far the cap overshoots.
+
+**Measured at the first deployment, on 2026-10-03.** The lines of the first migration were in
+the workspace when they were read, 11 minutes after they were written. In the table each line of
+the job carries its execution's name, a hyphen and a suffix as its container group. `--job-log`,
+which asked by the job's name and a period, had printed the next execution's lines with the ones
+asked for; it now asks by that group as well, a query tested offline and not yet sent. The day
+of both sessions read 0.19 MB in the workspace, of the 50 MB cap.
 
 **If Azure refuses.** The offer refuses any part: the logs are switched off and nothing is kept, as
 first approved, with the verdict line still printed. No line arrives: access by key is allowed
 again and the read repeated; still none, the logs go off. Any cost on the meter, or a day above
 twice the cap: the logs go off. The alert is refused: it is left out, one of four. The metric and
 the query disagree: the alert is left out too, and an alert that counts lines, a log search rule
-billed $0.50 a month or more, is the owner's decision.
+billed $0.50 a month or more, is the owner's decision. *(2026-10-03: the last of these
+happened. The alert was accepted, the metric and the query disagreed, the alert was deleted and
+is left out by default, and the owner decided against a log search rule for now.)*
 
 ## Rejected
 
@@ -578,7 +637,9 @@ billed $0.50 a month or more, is the owner's decision.
 - ADR-0058's first precondition, one replica, is what the template sets and what the policy is
   expected to refuse to exceed. Until the policy is seen refusing a second replica, that record's
   sentence that no code enforces it stands. The trial saw an earlier form of the rule refuse a job
-  above half a vCPU; it did not ask for a second replica.
+  above half a vCPU; it did not ask for a second replica. *(2026-10-03: seen. At step 15 a request
+  for two replicas, sent as the owner, was refused with `RequestDisallowedByPolicy`, and the
+  maximum read 1 afterwards. ADR-0058's sentence is that record's own to change.)*
 
 **Neutral**
 
@@ -599,12 +660,15 @@ billed $0.50 a month or more, is the owner's decision.
   its second package fails here instead of at the first open on Azure.
   `Unit/Tools/SeederCommandTests`: `migrate`'s line for a refused login names both ways to sign
   in.
-- `infra/test_scripts.py` and `infra/test_deploy.py`, 267 tests: the two PowerShell scripts run
+- `infra/test_scripts.py` and `infra/test_deploy.py`, 267 tests *(272 since 2026-10-03, with the
+  five added after the second session: four for `--job-log`, one for the alerts)*: the two
+  PowerShell scripts run
   for real against a stand-in for the Azure CLI and a stand-in for `sqlcmd`; the users file is
   read as text, to keep each guard, every `WHERE` and every `IF` where it is; the compiled
   templates are read (the two identities and the one each resource carries, no database
   credential anywhere, only the `api` container and the job handed a connection string, the
-  workspace and its cap, the environment's mode and API version, the four alerts, the role's nine
+  workspace and its cap, the environment's mode and API version, the four alerts *(since
+  2026-10-03: four rules written, three built, the fourth when it is asked for)*, the role's nine
   actions, every rule of the policy, the app's plain name and no resource ID that reads a secret,
   the check of the app's values and the three that wait for it); `bicep snapshot` works the
   template out offline (every ID worked out with the app; a tag that is not 40 characters and an
@@ -632,8 +696,9 @@ billed $0.50 a month or more, is the owner's decision.
 **Measured**, beyond the Context table.
 
 - The compiled template: 21 resources, 19 parameters of which 7 secure and 2 required, 8 outputs,
-  none secure; 14 resources without the app and 9 more with it, and with them the check of the
-  app's values, a nested deployment that creates nothing. `bicep build` and `bicep lint` exit 0
+  none secure; 14 resources without the app and 9 more with it *(2026-10-03: 8 more by default,
+  9 with `logVolumeAlert=true`, decision 10)*, and with them the check of the app's values, a
+  nested deployment that creates nothing. `bicep build` and `bicep lint` exit 0
   with nothing on standard error for the three templates; an unused parameter puts a warning
   there. One warning is silenced, on one line: BCP081, because Bicep 0.47.16 has no types for the
   environment's API version. Without that line the warning is back. `app-inputs.bicep` silences
@@ -642,8 +707,10 @@ billed $0.50 a month or more, is the owner's decision.
 - The check of the app's values, on this machine with Bicep 0.47.16. `bicep snapshot`, which works
   a template out offline as a what-if does, gave the template of step 9 the app's ID unworked, in
   the form that what-if printed, and the role assignment's ID around it; it names all 23 resources
-  of the changed one, and refuses a tag of 39 or 41 characters and an empty address with the
-  parameter named. It works out no secure value. `bicep local-deploy` (experimental) ran
+  of the changed one *(2026-10-03: 22 since the fourth alert is left out by default, and 23 with
+  `logVolumeAlert=true`, that alert as it was predicted before)*, and refuses a tag of 39 or 41
+  characters and an empty address with the parameter named. It works out no secure value.
+  `bicep local-deploy` (experimental) ran
   `app-inputs.bicep`, with only a local scope added, as a module with `main.bicep`'s condition and
   parameters and a second module waiting for it: the address and each secret empty, and the tag at
   39 and 41 characters, failed the check, and the waiting module never ran; all nine given, both
@@ -667,26 +734,46 @@ billed $0.50 a month or more, is the owner's decision.
   someone else is refused.
 - The last-resort migration's command line, with `Active Directory Default`, against a server name
   that does not resolve: the tool reads the string, tries once and exits 1 with the last answer on
-  its last line. No token was asked for.
+  its last line. No token was asked for. *(2026-10-03: run against the real server at step 19. It
+  needed `Connect Timeout=60` in the string to get its token in time, and then it ran.)*
 - The runbook: its 41 PowerShell blocks parse; every Azure CLI command and flag, every script
   parameter and every `deploy.py` option it names is in that tool's own help; the functions that
   list the identities, create the sign-in probe and read the environment's mode ran against a
   stand-in for the CLI. The sign-in probe's program ran against a local SQL Server and gave each
   of its exit codes but 3, which needs a token refused on Azure.
 
-**Not measured:** everything these files themselves do on Azure past the first deployment's first
-session: where Azure stops a run that lacks one of the app's values; what is listed under "Not
-measured" in the three sections above; the app with its two containers, its probes and its scale
-to zero; the deployment identity's nine actions against an app that carries an identity; the
-automatic put-back on a real failure; that the policy refuses a second replica; any alert firing;
-the meters after 48 hours; every command of the runbook's sections on switching the logs off, on
-a theft and on removal. The runbook's "Not measured yet" lists each with the step where it shows.
+**Not measured:** ~~everything these files themselves do on Azure past the first deployment's first
+session:~~ where Azure stops a run that lacks one of the app's values; what is listed under "Not
+measured" in the three sections above; ~~the app with its two containers, its probes and its scale
+to zero; the deployment identity's nine actions against an app that carries an identity;~~ the
+automatic put-back on a real failure; ~~that the policy refuses a second replica;~~ any alert
+firing; the meters after 48 hours; every command of the runbook's sections on switching the logs
+off, on a theft and on removal. The runbook's "Not measured yet" lists each with the step where
+it shows.
+*(Struck 2026-10-03: the second session ran that day, and the table of it under Context says what
+each step showed. Among it is what the struck clauses name: each new revision ready, with the
+smoke test answered through both containers, and the active revision at 0 replicas at the end of
+the day; the deployment identity changing an app and a job that carry an identity; the policy
+refusing a second replica. Not every one of the nine actions was exercised: `deploy.py` reads a
+revision's replicas only when a new revision does not get ready, and that day each one did. No
+container's state was read. Still not measured of the app: a cold start, with its probes and its
+first sign-in. Of the commands on switching the logs off, one has run: the deletion of the alert
+on the workspace.)*
 
 ## What would change this
 
 - **Azure refuses a step:** the switch written for it where there is one (the sign-in method, the
   second form of user creation, the logs, the policy, the fourth alert), a stop otherwise, and a
   dated note here saying which.
+  - *2026-10-03, the fourth alert. Not a refusal: Azure accepted the rule at step 15. Its
+    measurement at step 20 is what fired: the metric reported nothing for an hour in which the
+    workspace ingested 446 rows. The rule was deleted and is left out unless it is asked for
+    (decision 10).*
+  - *2026-10-03, the test notification of step 15. The offer refused it:
+    `(Conflict) Free subscription not supported`. No switch was written for it, and the session
+    did not stop: the message that asks the receiver to verify the address, and the one that
+    follows the verification, were taken as the proof that the e-mail road works. The runbook's
+    step now says so.*
 - **A cost on the log meter, or a day above twice the cap:** the logs go off, and decision 6
   becomes "nothing is kept".
 - **The first token regularly takes longer than 10 s:** the connect timeout, decided in ADR-0058

@@ -1454,14 +1454,20 @@ class TemplateTests(unittest.TestCase):
                          sorted([APP, JOB, 'Microsoft.Insights/actionGroups']))
 
     def test_a_what_if_can_name_everything_the_app_run_creates(self):
-        # Offline, with values of the shapes secrets.ps1 writes: fourteen things and nine more, and
-        # every ID worked out. The check creates nothing, and nothing of it is listed.
+        # Offline, with values of the shapes secrets.ps1 writes: fourteen things and eight more, and
+        # every ID worked out. The check creates nothing, and nothing of it is listed. Until
+        # 2026-10-03 it was nine more: the alert on the log workspace is now built only when it is
+        # asked for, and then the run is the 23 it was, with the nine step 9's what-if would create.
         with tempfile.TemporaryDirectory() as folder:
             copy_templates(folder)
-            code, said, predicted = snapshot(folder, APP_INPUTS)
+            code, said, predicted = snapshot(folder, {**APP_INPUTS, 'logVolumeAlert': True})
             self.assertEqual(code, 0, said)
             self.assertEqual([resource['id'] for resource in predicted if resource['id'].startswith('[')], [])
             self.assertEqual(len(predicted), 23)
+            code, said, predicted = snapshot(folder, APP_INPUTS)
+            self.assertEqual(code, 0, said)
+            self.assertEqual([resource['id'] for resource in predicted if resource['id'].startswith('[')], [])
+            self.assertEqual(len(predicted), 22)
             (app,) = [resource['id'] for resource in predicted if resource['type'] == APP]
             self.assertTrue(app.endswith('/resourceGroups/azurebank-demo/providers/' + APP + '/azurebank'), app)
             on_the_app = [resource for resource in predicted
@@ -1754,7 +1760,8 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(assignment['properties']['parameters'],
                          {'allowedJobTriggers': {'value': "[parameters('allowedJobTriggers')]"}})
 
-    def test_four_alerts_notify_one_action_group_and_stop_nothing(self):
+    def test_every_alert_rule_notifies_one_action_group_and_stops_nothing(self):
+        # Four rules are written. Three are built, and the fourth when it is asked for (below).
         (alerts,) = self.of_type('Microsoft.Insights/metricAlerts')
         self.assertEqual(alerts['copy']['count'], "[length(variables('alerts'))]")
         rules = self.main['variables']['alerts']
@@ -1770,14 +1777,16 @@ class TemplateTests(unittest.TestCase):
                          ["[parameters('alertEmail')]"])
         self.assertEqual(re.findall(r'[\w.+-]+@[\w-]+\.\w+', json.dumps(self.main)), [])
 
-    def test_the_alert_on_the_log_volume_watches_the_workspace_and_has_a_switch_of_its_own(self):
+    def test_the_alert_on_the_log_volume_watches_the_workspace_and_is_left_out_unless_asked_for(self):
         (alerts,) = self.of_type('Microsoft.Insights/metricAlerts')
         rules = self.main['variables']['alerts']
         self.assertEqual([rule['onLogs'] for rule in rules], [False, False, False, True])
         self.assertEqual({key: rules[3][key] for key in ('name', 'threshold', 'every')},
                          {'name': 'azurebank-log-volume', 'threshold': 50000, 'every': 'PT15M'})
         self.assertEqual(alerts['condition'], ALERTS_CONDITION)
-        self.assertIs(self.main['parameters']['logVolumeAlert']['defaultValue'], True)
+        # True until 2026-10-03, when the runbook's step 20 found that the rule's metric reported
+        # nothing for an hour in which the workspace ingested rows (README.md, "Measured on Azure").
+        self.assertIs(self.main['parameters']['logVolumeAlert']['defaultValue'], False)
         workspace = "resourceId('Microsoft.OperationalInsights/workspaces', 'azurebank-logs')"
         app = "resourceId('Microsoft.App/containerApps', 'azurebank')"
         self.assertEqual(alerts['properties']['scopes'],
@@ -1786,6 +1795,38 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(criterion['metricNamespace'],
                          "[if(variables('alerts')[copyIndex()].onLogs, 'Microsoft.OperationalInsights/workspaces', "
                          "'Microsoft.App/containerApps')]")
+
+    def test_three_alerts_are_built_and_the_fourth_as_it_was_when_it_is_asked_for(self):
+        # Offline, as a what-if works the template out. By default: the three rules on the app.
+        # With logVolumeAlert=true: the rule on the workspace as well, with the properties it was
+        # built with while the default was true. Without the logs there is no workspace to watch,
+        # whatever is asked.
+        on_the_app = ['azurebank-bytes-out', 'azurebank-replica-time', 'azurebank-requests']
+        group = f'/subscriptions/{SNAPSHOT_CONTEXT[1]}/resourceGroups/azurebank-demo/providers'
+        with tempfile.TemporaryDirectory() as folder:
+            copy_templates(folder)
+            built = {}
+            for case, values in (('by default', {}), ('asked for', {'logVolumeAlert': True}),
+                                 ('asked for, with no logs', {'logVolumeAlert': True, 'keepLogs': False})):
+                code, said, predicted = snapshot(folder, {**APP_INPUTS, **values})
+                self.assertEqual(code, 0, said)
+                built[case] = {resource['name']: resource for resource in predicted
+                               if resource['type'] == 'Microsoft.Insights/metricAlerts'}
+        self.assertEqual({case: sorted(rules) for case, rules in built.items()},
+                         {'by default': on_the_app, 'asked for': sorted([*on_the_app, 'azurebank-log-volume']),
+                          'asked for, with no logs': on_the_app})
+        for name in on_the_app:
+            self.assertEqual(built['by default'][name], built['asked for'][name], name)
+            self.assertEqual(built['by default'][name]['properties']['scopes'], [f'{group}/{APP}/azurebank'])
+        self.assertEqual(built['asked for']['azurebank-log-volume']['properties'], {
+            'description': 'More than 50,000 log lines in one hour.', 'severity': 2, 'enabled': True,
+            'scopes': [f'{group}/Microsoft.OperationalInsights/workspaces/azurebank-logs'],
+            'evaluationFrequency': 'PT15M', 'windowSize': 'PT1H', 'autoMitigate': True,
+            'criteria': {'odata.type': 'Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria', 'allOf': [{
+                'name': 'threshold', 'criterionType': 'StaticThresholdCriterion',
+                'metricNamespace': 'Microsoft.OperationalInsights/workspaces', 'metricName': 'Ingestion Volume',
+                'operator': 'GreaterThan', 'threshold': 50000, 'timeAggregation': 'Count'}]},
+            'actions': [{'actionGroupId': f'{group}/Microsoft.Insights/actionGroups/azurebank-owner'}]})
 
     @unittest.skipUnless(PWSH, 'PowerShell 7 (pwsh) is not installed')
     def test_every_name_the_secrets_script_writes_is_a_parameter_and_none_is_missing(self):
