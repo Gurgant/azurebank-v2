@@ -32,7 +32,8 @@ as the address. `.example.com` is a domain reserved by RFC 2606, so mail to it r
   comes over loopback with exactly one `X-AzureBank-Token-Road` header, besides the service key.
   _(Until 2026-10-04 this said five: the demo's claim, `POST /api/auth/demo/claim`, is the sixth,
   ADR-0063. It opens a session from no credential, so it rests on this rule alone; where
-  `Demo:Enabled` is false, which is the default, it answers 404 to every caller.)_
+  `Demo:Enabled` is false, which is the default, it answers 404 to every caller that holds the
+  key, and 401 to one that does not, as every operation does.)_
   A renewal only reads the
   grant, so a lost answer or a database outage has nothing to break. A grant whose session ended,
   presented again, is refused and recorded as a `RefreshTokenReuse` security event with an audit

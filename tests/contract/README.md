@@ -21,8 +21,8 @@ register, refresh, revoke, logout and the public demo's claim — and the sessio
 404 to a caller whose address is not loopback, and to one that does not send exactly one
 `X-AzureBank-Token-Road` (`TokenRoadMiddleware`). The document declares no 404 on six of the
 seven, so such a run fails rather than skipping them. The seventh, the demo's claim, declares
-one: it answers 404 to every request while `Demo:Enabled` is false, which is how this page and
-CI run the API (ADR-0063; measured below). *(Until 2026-10-04 this said five token endpoints, and
+one: it answers 404 to every request that carries the service key while `Demo:Enabled` is false,
+which is how this page and CI run the API (ADR-0063; measured below). *(Until 2026-10-04 this said five token endpoints, and
 that none of the six operations declared a 404.)* Measured on 2026-09-28 from loopback with the hooks as they were before the
 marker, which the API refuses with the same 404: run on the four anonymous operations, login,
 register, refresh and revoke each failed `Undocumented HTTP status code` (`4 failures`); run on an

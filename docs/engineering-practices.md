@@ -69,8 +69,8 @@ comes over loopback and
 carries exactly one `X-AzureBank-Token-Road`, the marker the BFF's own client adds; calling one by
 hand needs that header too, and the Bruno requests that call them send it. *(It said five until
 2026-10-04: `POST /api/auth/demo/claim` is the sixth, ADR-0063. It also answers 404 to every
-caller while `Demo:Enabled` is false, which is what this setup leaves it.)* In production the API
-also has no public address; the key is the second line behind that.
+caller that sends the key while `Demo:Enabled` is false, which is what this setup leaves it.)* In
+production the API also has no public address; the key is the second line behind that.
 
 `Demo:ClientKeySecret` is not among the secrets set above, and nothing in this setup needs it: the
 public demo is off unless `Demo:Enabled` is true. Where it is, the API refuses to start without 32
