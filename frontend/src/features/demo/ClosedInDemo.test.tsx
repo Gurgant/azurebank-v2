@@ -172,9 +172,13 @@ describe('a page the demo closes', () => {
   it('is wired into App: the /register route draws its page inside it, and no other route does', () => {
     // Against the source, as route-announcer.test.tsx does: App's router is module-scope and
     // unexported. Comments are stripped first, because App.tsx explains its routes in prose.
-    const app = readFileSync('src/App.tsx', 'utf8')
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/^\s*\/\/.*$/gm, '');
+    const sourceOf = (file: string) =>
+      readFileSync(file, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '');
+    const app = sourceOf('src/App.tsx');
+    // The index App names when it imports the wrapper: `./features/demo`, read from src/App.tsx.
+    const index = sourceOf('src/features/demo/index.ts');
     const pathOf = (route: string) => /path="([^"]+)"/.exec(route)?.[1] ?? null;
     const routes = app.split('<Route').filter((route) => pathOf(route) !== null);
     const register = routes.filter((route) => pathOf(route) === '/register');
@@ -186,10 +190,21 @@ describe('a page the demo closes', () => {
           /element=\{\s*([\s\S]*?)\s*\}\s*\/>/.exec(route)?.[1]?.replace(/\s+/g, '') ?? null,
       ),
       registerPagesInApp: app.split('<RegisterPage').length - 1,
+      // `closed` sees a route only where its path is typed between double quotes. The count sees
+      // the wrapper wherever App draws it.
+      wrappersInApp: app.split('<ClosedInDemo').length - 1,
+      // And the name App draws is the wrapper tested above, not another component of that name:
+      // App takes it from the demo folder's index, and the index takes it from the file this test
+      // imports it from.
+      appTakesTheWrapperFrom: /import \{ ClosedInDemo \} from '([^']+)';/.exec(app)?.[1] ?? null,
+      theIndexTakesItFrom: /export \{ ClosedInDemo \} from '([^']+)';/.exec(index)?.[1] ?? null,
     }).toStrictEqual({
       closed: ['/register'],
       registerDraws: ['<ClosedInDemo><RegisterPage/></ClosedInDemo>'],
       registerPagesInApp: 1,
+      wrappersInApp: 1,
+      appTakesTheWrapperFrom: './features/demo',
+      theIndexTakesItFrom: './ClosedInDemo',
     });
   });
 });
