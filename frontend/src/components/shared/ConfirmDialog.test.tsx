@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { makeStyles, tokens } from '@fluentui/react-components';
 import { cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -69,25 +70,84 @@ function focusIs(): string {
 }
 
 /**
- * The properties an element's `transition` runs on, as jsdom hands the declaration back: the
- * parts between its commas, each with its property first. A part that names no property (it
- * starts with a time) runs on `all`.
+ * The properties an element's transitions run on, as jsdom hands the declarations back.
+ *
+ * jsdom keeps the `transition` shorthand and its longhands apart. The shorthand comes back as it
+ * was written, empty when it was not. A longhand comes back as written, or at its initial value
+ * (`all`, `0s`) when it was not, whatever the shorthand said. So both are read:
+ *
+ *   - the shorthand: the parts between its commas, each with its property first. A part that
+ *     starts with anything but a name (a time, a token for one) names no property and runs on
+ *     `all`;
+ *   - the longhands: what `transition-property` names, when something gives it time to run in:
+ *     a duration or a delay of its own, or the shorthand. A time with no property named anywhere
+ *     runs on `all`. With no time from either, nothing runs, whatever is named.
+ *
+ * A time is any duration or delay but a zero: jsdom hands a token back as the `var()` it is, with
+ * no number to read. An `all` that was declared is told from the initial one by the names jsdom
+ * lists for the element, which are those that were declared.
  */
 function transitionsOn(element: Element): string[] {
-  const declared = getComputedStyle(element).transition;
-  if (declared === '' || declared === 'none') return [];
-  return (
-    declared
-      // Not the commas inside a timing function's brackets.
-      .split(/,(?![^(]*\))/)
-      .map((part) => part.trim().split(/\s+/)[0])
-      .map((first) => (/^[\d.]/.test(first) ? 'all' : first))
-  );
+  const style = getComputedStyle(element);
+  const whole = style.transition;
+  const byTheShorthand =
+    whole === '' || whole === 'none'
+      ? []
+      : whole
+          // Not the commas inside a timing function's brackets.
+          .split(/,(?![^(]*\))/)
+          .map((part) => part.trim().split(/\s+/)[0])
+          .map((first) => (/^-?[a-z][a-z-]*$/i.test(first) ? first : 'all'));
+  const givesTime = (times: string) => times.split(',').some((time) => parseFloat(time) !== 0);
+  const timed =
+    byTheShorthand.length > 0 ||
+    givesTime(style.transitionDuration) ||
+    givesTime(style.transitionDelay);
+  if (!timed) return [];
+  if (Array.from(style).includes('transition-property')) {
+    const named = style.transitionProperty.split(',').map((property) => property.trim());
+    return [...byTheShorthand, ...named];
+  }
+  return byTheShorthand.length > 0 ? byTheShorthand : ['all'];
 }
 
 /** A transition on `visibility`, by its name or as one of `all`. */
 const delaysVisibility = (element: Element) =>
   transitionsOn(element).some((property) => property === 'visibility' || property === 'all');
+
+/**
+ * The ways a component can declare a transition, each through the styling the dialog itself uses:
+ * what `transitionsOn` has to be able to read.
+ */
+const useDeclared = makeStyles({
+  nothing: {},
+  whole: { transition: 'opacity 200ms ease, visibility 200ms ease' },
+  wholeWithNoProperty: { transition: '150ms ease' },
+  wholeWithATokenFirst: { transition: `${tokens.durationNormal} ease` },
+  none: { transition: 'none' },
+  byParts: { transitionProperty: 'all', transitionDuration: '150ms' },
+  byPartsNamed: { transitionProperty: 'opacity, visibility', transitionDuration: '200ms' },
+  aDelayAlone: { transitionDelay: '150ms' },
+  aTimeFromAToken: { transitionProperty: 'visibility', transitionDuration: tokens.durationNormal },
+  aPropertyAlone: { transitionProperty: 'visibility' },
+  wholeAndAProperty: {
+    transition: 'background-color 150ms ease',
+    transitionProperty: 'visibility',
+  },
+  wholeAndAll: { transition: 'background-color 150ms ease', transitionProperty: 'all' },
+});
+
+/** One element for each of those ways, named by it. */
+function Declared() {
+  const styles = useDeclared();
+  return (
+    <>
+      {(Object.keys(styles) as (keyof typeof styles)[]).map((way) => (
+        <div key={way} data-declared={way} className={styles[way]} />
+      ))}
+    </>
+  );
+}
 
 /**
  * The dialog as a page keeps it: mounted and closed, opened by a button of the page, closed by its
@@ -178,6 +238,41 @@ describe('ConfirmDialog', () => {
       open: { looked: ['Close', 'div', 'alertdialog', 'the overlay'], delayed: [] },
       closedOverlayDelays: true,
       openWaiting: { looked: ['alertdialog', 'the overlay'], delayed: [] },
+    });
+  });
+
+  it('reads what a transition runs on, declared whole, by its parts, or both ways', () => {
+    /*
+      The test above asserts that nothing is found, and is worth what its reading can see. Here
+      the reading is given each way of declaring a transition, through the styling the dialog
+      uses, and has to name the properties.
+
+      What it takes as running is a property that something gives time to. A property named with
+      no time is not one. A time with no property named runs on `all`; a delay counts as a time,
+      and so does a time given by a token. Declared both ways, a property named by either counts:
+      which of the two a browser lets win is not jsdom's to say.
+    */
+    renderWithProviders(<Declared />);
+    const read = Object.fromEntries(
+      Array.from(document.querySelectorAll('[data-declared]'), (element) => [
+        element.getAttribute('data-declared'),
+        transitionsOn(element),
+      ]),
+    );
+
+    expect(read).toStrictEqual({
+      nothing: [],
+      whole: ['opacity', 'visibility'],
+      wholeWithNoProperty: ['all'],
+      wholeWithATokenFirst: ['all'],
+      none: [],
+      byParts: ['all'],
+      byPartsNamed: ['opacity', 'visibility'],
+      aDelayAlone: ['all'],
+      aTimeFromAToken: ['visibility'],
+      aPropertyAlone: [],
+      wholeAndAProperty: ['background-color', 'visibility'],
+      wholeAndAll: ['background-color', 'all'],
     });
   });
 
