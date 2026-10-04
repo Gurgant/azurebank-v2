@@ -47,8 +47,9 @@ export const DEMO_SUBTITLE = 'Try the demo with one click. No sign-up needed.';
 export const TRY_THE_DEMO = 'Try the demo';
 
 /**
- * What a visitor gets, said before the button that gets it is pressed. The first sentence alone
- * is what the button is described by; the rest is read under it.
+ * What a visitor gets, said before a button that gets it is pressed. The first sentence alone is
+ * what "Try the demo" is described by; the rest is read under it. Beside a copy the browser keeps
+ * the whole notice is words to read, and describes no button.
  */
 export const DEMO_NOTICE_FIRST =
   'You get a private copy of a demo bank account with invented money.';
@@ -69,3 +70,30 @@ export const CLAIM_POOL_EMPTY =
 /** This network has had its copies for the day. Not the server's sentence either. */
 export const CLAIM_DAILY_LIMIT =
   'This network has used its demo copies for today. Please try again tomorrow.';
+
+// The sign-in page, on the demo, in a browser that keeps a copy.
+
+/**
+ * What the browser keeps, and until when: one sentence with one blank. `until` is the copy's end,
+ * already written out as the app writes an instant (src/utils/format.ts): this file holds words,
+ * and how a date reads is not its to decide.
+ */
+export const rememberedCopy = (until: string) =>
+  `This browser remembers a demo copy. It works until ${until}.`;
+
+export const CONTINUE_WITH_MY_COPY = 'Continue with my copy';
+
+export const GET_A_NEW_COPY = 'Get a new copy';
+
+export const FORGET_THIS_COPY = 'Forget this copy';
+
+/** Said once "Forget this copy" has been pressed, in a polite region and not as an alert. */
+export const COPY_FORGOTTEN = 'This browser no longer remembers the copy.';
+
+/**
+ * "Continue with my copy" was answered as a wrong password is. For a pair the browser kept and
+ * nobody typed, that answer means the copy is gone, and this is said in the place of "Invalid
+ * email or password."
+ */
+export const COPY_NO_LONGER_AVAILABLE =
+  'That demo copy is no longer available. Copies are closed after 24 hours. You can get a new one.';

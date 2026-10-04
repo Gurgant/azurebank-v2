@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useReducer, useState, useSyncExternalStore } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   makeStyles,
@@ -19,11 +19,17 @@ import type { ApiProblem } from '../api/problemBaseQuery';
 import { RetryCountdown, WaitHint, retryDeadline } from '../components/feedback';
 import { AuthCrossLink, AuthDivider, AuthLayout } from '../components/layout/AuthLayout';
 import { useClaimDemoCopyMutation, useLoginMutation } from '../features/api/apiSlice';
-import { DemoEntry } from '../features/demo';
+import { DemoEntry, StartOverDialog } from '../features/demo';
+import {
+  forgetDemoCopy,
+  getDemoCopySnapshot,
+  subscribeDemoCopy,
+} from '../features/demo/demoCopyStorage';
 import { isDemoMode } from '../features/demo/demoMode';
 import {
   CLAIM_DAILY_LIMIT,
   CLAIM_POOL_EMPTY,
+  COPY_NO_LONGER_AVAILABLE,
   DEMO_SUBTITLE,
   HAVE_A_COPY_SIGN_IN,
 } from '../features/demo/demoWords';
@@ -103,8 +109,11 @@ const useStyles = makeStyles({
   },
 });
 
-/** Which of the page's controls sent a request: the form's "Sign in", or "Try the demo". */
-type LoginControl = 'form' | 'claim';
+/**
+ * Which of the page's controls sent a request: the form's "Sign in", "Continue with my copy", or
+ * "Try the demo". The first two send the same request, a sign-in, and are told apart only here.
+ */
+type LoginControl = 'form' | 'continue' | 'claim';
 
 export function LoginPage() {
   const styles = useStyles();
@@ -127,15 +136,57 @@ export function LoginPage() {
     records its control here, and from then on the other request's refusal is not read.
     src/pages/LoginPage.test.tsx refuses a sign-in and a claim, in both orders, and counts.
 
-    Off the demo nothing sends a claim, and `problem` is the sign-in's, as before.
+    The control also says WHOSE sign-in was refused. The form and "Continue with my copy" send
+    the same request and get the same answers, and two of those answers mean something else for a
+    pair the browser kept than for a pair somebody typed: see `continueWithMyCopy` below.
+
+    Off the demo nothing sends a claim and nothing but the form signs in, and `problem` is the
+    form's sign-in's, as before.
   */
   const [control, setControl] = useState<LoginControl | null>(null);
   const error = control === 'claim' ? claimError : signInError;
   // One flag over both requests: while either runs, every button that sends one waits for it.
   const busy = signingIn || claiming;
   // The form's own sign-in, in flight. Its button's spinner and its hint follow the control that
-  // sent the request, as the banners do: the form's button spins for the request the form sent.
+  // sent the request, as the banners do: the form's button spins for the request the form sent,
+  // and not for the sign-in "Continue with my copy" sent through the same hook.
   const formSigningIn = control === 'form' && signingIn;
+  const continuing = control === 'continue' && signingIn;
+
+  /*
+    THE COPY THIS BROWSER KEEPS, on the demo: the sign-in details a claim left in its storage
+    (src/features/demo/demoCopyStorage.ts). The page offers it in the place of "Try the demo".
+
+    Read from the storage at every render, through the storage module's snapshot. Nothing tells
+    this tab what another tab did, so a copy the other tab forgot or replaced is gone, or is the
+    other one, the next time this page is drawn, and not before. Off the demo the snapshot is
+    `null` and the storage is not touched.
+
+    A COPY PAST ITS END IS NOT OFFERED, AND IS FORGOTTEN. The end is the kept copy's own
+    `expiresAt`, compared with this browser's clock as it stood when the page opened. The clock
+    is read once, in a state initialiser, and that instant is kept: every later render compares
+    with it, so a copy the page offered when it opened is still offered after its end has passed
+    under the open page. That comparison is the browser's alone and it removes the copy: a browser
+    whose clock is ahead of the server's by more than the copy has left forgets a living copy
+    here, with nothing said, and offers "Try the demo". One whose clock is behind offers a copy
+    that has ended, and so does a page left open past the end: there the server's answer to
+    "Continue with my copy" is what says so.
+  */
+  const stored = useSyncExternalStore(subscribeDemoCopy, getDemoCopySnapshot);
+  const [openedAt] = useState(() => Date.now());
+  const ended = stored !== null && Date.parse(stored.expiresAt) <= openedAt;
+  const copy = ended ? null : stored;
+  useEffect(() => {
+    if (ended) forgetDemoCopy();
+  }, [ended]);
+  // "Forget this copy" was pressed here: the demo's block says so while it offers no copy. It
+  // stops being said at the next "Continue with my copy", which is a press on a copy that came
+  // back.
+  const [forgotten, setForgotten] = useState(false);
+  // The dialog that asks before a new copy takes the kept one's place.
+  const [startingOver, setStartingOver] = useState(false);
+  // A press that found nothing to send draws the page again, and nothing else: see below.
+  const [, drawAgain] = useReducer((draws: number) => draws + 1, 0);
 
   const [showPassword, setShowPassword] = useState(false);
   const [elapsedDeadline, setElapsedDeadline] = useState<number | null>(null);
@@ -158,6 +209,11 @@ export function LoginPage() {
   // lockout, and only the second replaces the submit entirely.
   const accountLocked = problem?.errorCode === 'ACCOUNT_LOCKED' && countdownActive;
   const rateLimited = problem?.errorCode === 'RATE_LIMIT_EXCEEDED' && countdownActive;
+  // Whose lock it is. Met by the form, it takes the form's submit away, as before. Met by
+  // "Continue with my copy", it is the kept copy's: that button waits its countdown out, and the
+  // form keeps its submit, because the form may be for another address.
+  const formLocked = accountLocked && control === 'form';
+  const continueLocked = accountLocked && control === 'continue';
 
   const {
     register,
@@ -202,6 +258,53 @@ export function LoginPage() {
     } catch {
       // Surfaced through the mutation's error state below.
     }
+  };
+
+  /*
+    "Continue with my copy": sign in with the pair this browser keeps, and land as the form's
+    sign-in lands.
+
+    THE PAIR IS READ FROM THE BROWSER AT THE PRESS, not taken from the copy the page was last
+    drawn with. Another tab may have started over or forgotten the copy since: the copy to sign in
+    to is the one the browser keeps now. If it keeps none any more, nothing is sent and the page
+    is drawn again, which then offers "Try the demo".
+
+    Two answers mean something else here than they do for the form, and the control recorded
+    above is how the page tells them apart:
+
+    - `INVALID_CREDENTIALS`. Nobody typed this pair, so it is not a typing mistake: a copy that
+      has ended, or was handed to someone else, answers exactly as a wrong password does. The copy
+      is forgotten, and the page says the copy is gone in the place of "Invalid email or
+      password.", and offers the demo again.
+    - `ACCOUNT_LOCKED`. The lock is the kept copy's: see `continueLocked` above.
+  */
+  const continueWithMyCopy = async () => {
+    const kept = getDemoCopySnapshot();
+    if (kept === null) {
+      drawAgain();
+      return;
+    }
+    setControl('continue');
+    // The page offers a copy again, and this press is about that copy: what was forgotten here
+    // before it is no longer the news. Without this, a copy found gone below would also be said
+    // to have been forgotten, on a page where "Forget this copy" was once pressed.
+    setForgotten(false);
+    try {
+      await login({ email: kept.email, password: kept.password }).unwrap();
+      navigate(navState.from?.pathname ?? '/dashboard', { replace: true });
+    } catch (refusal) {
+      // Every other refusal is surfaced through the mutation's error state below, and so is this
+      // one: forgetting the copy is what it has beside its sentence.
+      if ((refusal as Partial<ApiProblem> | undefined)?.errorCode === 'INVALID_CREDENTIALS') {
+        forgetDemoCopy();
+      }
+    }
+  };
+
+  // "Forget this copy": the browser keeps nothing of it from here on, and the page says so.
+  const forgetThisCopy = () => {
+    forgetDemoCopy();
+    setForgotten(true);
   };
 
   /*
@@ -250,7 +353,9 @@ export function LoginPage() {
 
       {problem?.errorCode === 'INVALID_CREDENTIALS' && (
         <MessageBar intent="error" role="alert" className={styles.errorMessage}>
-          <MessageBarBody>Invalid email or password.</MessageBarBody>
+          <MessageBarBody>
+            {control === 'continue' ? COPY_NO_LONGER_AVAILABLE : 'Invalid email or password.'}
+          </MessageBarBody>
         </MessageBar>
       )}
 
@@ -318,9 +423,15 @@ export function LoginPage() {
       {demo && (
         <>
           <DemoEntry
-            pending={claiming ? 'claim' : null}
+            copy={copy}
+            pending={claiming ? 'claim' : continuing ? 'continue' : null}
             disabled={busy || rateLimited}
+            continueLocked={continueLocked}
+            forgotten={forgotten}
             onTry={() => void tryTheDemo()}
+            onContinue={() => void continueWithMyCopy()}
+            onGetNew={() => setStartingOver(true)}
+            onForget={forgetThisCopy}
           />
           <AuthDivider />
           <Text as="p" className={styles.haveACopy}>
@@ -375,8 +486,9 @@ export function LoginPage() {
         </Field>
 
         {/* ACCOUNT_LOCKED replaces the submit entirely (D13); the banner above
-            carries the countdown. */}
-        {!accountLocked && (
+            carries the countdown. The form's own lock, that is: a lock "Continue with my copy"
+            met leaves this button where it is. */}
+        {!formLocked && (
           <Button
             appearance="primary"
             size="large"
@@ -392,6 +504,19 @@ export function LoginPage() {
 
         {!demo && limiterBanner}
       </form>
+
+      {/* "Get a new copy" asks first, in the one dialog that asks before a claim replaces a kept
+          copy. Kept in the page and opened by its flag, as the dialog under it is used
+          (src/components/shared/ConfirmDialog.tsx): focus goes back to the button that opened it
+          when it closes. A new copy starts at its dashboard, as one from "Try the demo" does. On
+          the demo only: off it the page has no dialog, open or closed. */}
+      {demo && (
+        <StartOverDialog
+          isOpen={startingOver}
+          onClose={() => setStartingOver(false)}
+          onStartedOver={() => navigate('/dashboard', { replace: true })}
+        />
+      )}
 
       {/* On the demo this page offers no registration: a visitor gets an account by claiming a
           copy. */}
