@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { problem } from '../../mocks/problem';
 import { server } from '../../mocks/server';
-import { MOCK_PASSWORD, MOCK_USER, mockState } from '../../mocks/state';
+import { MOCK_PASSWORD, MOCK_USER, mockState, seedMockDemoCopy } from '../../mocks/state';
 import { enableDemoMode } from '../../test/demoMode';
 import { makeTestStore, type TestStore } from '../../test/renderWithProviders';
 import { apiSlice } from '../api/apiSlice';
@@ -346,5 +346,36 @@ describe('a sign-in and the cache it finds', () => {
       signedInAs: store.getState().auth.user?.email,
       accountsAnswers: accountsAnswersIn(store),
     }).toStrictEqual({ signedInAs: MOCK_USER.email, accountsAnswers: 1 });
+  });
+
+  it('in the demo a sign-in leaves nothing of the cache it found', async () => {
+    enableDemoMode();
+    // Two copies claimed. The demo's own page offers two sign-ins, and they may be for two copies.
+    const first = seedMockDemoCopy();
+    const second = seedMockDemoCopy();
+    const store = makeTestStore();
+    const signIn = ({ copy: { email, password } }: typeof first) =>
+      store.dispatch(apiSlice.endpoints.login.initiate({ email, password })).unwrap();
+
+    await signIn(first);
+    await readAccounts(store);
+    const onTheFirstCopy = accountsAnswersIn(store);
+    await store.dispatch(apiSlice.endpoints.logout.initiate()).unwrap();
+    // A sign-out leaves the cache as it is: that is what the next sign-in finds.
+    const afterTheSignOut = accountsAnswersIn(store);
+    await signIn(second);
+    await Promise.all(store.dispatch(apiSlice.util.getRunningQueriesThunk()));
+
+    expect({
+      onTheFirstCopy,
+      afterTheSignOut,
+      signedInAs: store.getState().auth.user?.email,
+      onTheSecondCopy: accountsAnswersIn(store),
+    }).toStrictEqual({
+      onTheFirstCopy: 1,
+      afterTheSignOut: 1,
+      signedInAs: 'demo-4h9d2s7f1g6j3k8a@azurebank.example',
+      onTheSecondCopy: 0,
+    });
   });
 });
