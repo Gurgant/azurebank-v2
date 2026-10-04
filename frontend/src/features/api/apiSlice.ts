@@ -586,12 +586,18 @@ export const apiSlice = createApi({
      * The request is an empty JSON object, not a bare POST: `body: {}` is what makes
      * fetchBaseQuery write `{}` and a JSON content type, where a mutation written like `logout`
      * below sends neither. src/features/demo/claim.test.ts holds both.
+     *
+     * No `invalidatesTags`, where the sign-ins beside it each have one. A claim that succeeded
+     * drops the whole cache (src/features/auth/sessionMiddleware.ts), and with that reset in
+     * place a `Session` tag here asked for nothing: `/bff/auth/me` was asked again once after a
+     * claim with the tag and once without it. What asks is the app's mounted probe
+     * (src/features/auth/AuthBootstrap.tsx), for what the reset took from it. The same test file
+     * holds that count, and it is the reset it holds: take the reset out and the count stays put.
      */
     claimDemoCopy: builder.mutation<BffDemoClaimResponse, void>({
       query: () => ({ url: '/bff/auth/demo/claim', method: 'POST', body: {} }),
       transformResponse: (response: { data?: BffDemoClaimResponse | null }) =>
         unwrap(response, bffDemoClaimResponseSchema),
-      invalidatesTags: (_result, error) => (error ? [] : ['Session']),
     }),
 
     /**
