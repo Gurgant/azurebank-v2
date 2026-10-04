@@ -52,6 +52,48 @@ export const ApiResponseOfBalanceResponse = z
   .object({ data: BalanceResponse.nullable(), message: z.string().nullable() })
   .partial();
 
+export type TokenResponse = z.infer<typeof TokenResponse>;
+export const TokenResponse = z.object({
+  accessToken: z.string(),
+  refreshToken: z.string().nullable().optional(),
+  refreshTokenExpiresAt: z.iso.datetime().nullable().optional(),
+  sessionStamp: z.number().int(),
+  expiresIn: z.number().int(),
+  tokenType: z.string().optional(),
+  expiresAt: z.iso.datetime(),
+});
+
+export type UserLoginInfo = z.infer<typeof UserLoginInfo>;
+export const UserLoginInfo = z.object({
+  id: z.uuid(),
+  azureTag: z.string(),
+  email: z.string(),
+  firstName: z.string(),
+  lastName: z.string(),
+  hasPin: z.boolean(),
+});
+
+export type DemoCopyInfo = z.infer<typeof DemoCopyInfo>;
+export const DemoCopyInfo = z.object({
+  email: z.string(),
+  password: z.string(),
+  pin: z.string(),
+  contacts: z.array(z.string()),
+  expiresAt: z.iso.datetime(),
+});
+
+export type DemoClaimResponse = z.infer<typeof DemoClaimResponse>;
+export const DemoClaimResponse = z.object({
+  token: TokenResponse,
+  user: UserLoginInfo,
+  copy: DemoCopyInfo,
+});
+
+export type ApiResponseOfDemoClaimResponse = z.infer<typeof ApiResponseOfDemoClaimResponse>;
+export const ApiResponseOfDemoClaimResponse = z
+  .object({ data: DemoClaimResponse.nullable(), message: z.string().nullable() })
+  .partial();
+
 export type TransactionType = z.infer<typeof TransactionType>;
 export const TransactionType = z.enum(['Deposit', 'Withdrawal', 'TransferIn', 'TransferOut']);
 
@@ -107,27 +149,6 @@ export type ApiResponseOfListOfAccountResponse = z.infer<typeof ApiResponseOfLis
 export const ApiResponseOfListOfAccountResponse = z
   .object({ data: z.array(AccountResponse).nullable(), message: z.string().nullable() })
   .partial();
-
-export type TokenResponse = z.infer<typeof TokenResponse>;
-export const TokenResponse = z.object({
-  accessToken: z.string(),
-  refreshToken: z.string().nullable().optional(),
-  refreshTokenExpiresAt: z.iso.datetime().nullable().optional(),
-  sessionStamp: z.number().int(),
-  expiresIn: z.number().int(),
-  tokenType: z.string().optional(),
-  expiresAt: z.iso.datetime(),
-});
-
-export type UserLoginInfo = z.infer<typeof UserLoginInfo>;
-export const UserLoginInfo = z.object({
-  id: z.uuid(),
-  azureTag: z.string(),
-  email: z.string(),
-  firstName: z.string(),
-  lastName: z.string(),
-  hasPin: z.boolean(),
-});
 
 export type LoginResponse = z.infer<typeof LoginResponse>;
 export const LoginResponse = z.object({ token: TokenResponse, user: UserLoginInfo });
@@ -277,6 +298,9 @@ export const CreateAccountRequest = z.object({
   name: z.string().min(2).max(100),
   type: AccountType,
 });
+
+export type DemoClaimRequest = z.infer<typeof DemoClaimRequest>;
+export const DemoClaimRequest = z.object({ clientAddress: z.string().min(1).max(64) });
 
 export type DepositRequest = z.infer<typeof DepositRequest>;
 export const DepositRequest = z.object({

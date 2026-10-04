@@ -58,7 +58,9 @@ copy once, in its constructor, so a rotation is a deployment event on both sides
 applied the answer is the API's 401 — loud and closed, rather than quiet and open.
 
 *(Extended 2026-09-28, [ADR-0057](0057-the-bffs-refresh-token-is-one-reusable-grant-per-session.md)
-§4.2 and §4.7. On the five token endpoints — login, register, refresh, revoke and logout — and on
+§4.2 and §4.7. On the ~~five~~ token endpoints — login, register, refresh, revoke and logout
+*(six since 2026-10-04: the demo's claim, `POST /api/auth/demo/claim`, joined them,
+[ADR-0063](0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md))* — and on
 the session-stamp feed the BFF polls, `POST /api/auth/session-stamps` (ADR-0057 §5.3), the key is
 not enough: the API answers them 404 unless the request comes over loopback and carries exactly one
 `X-AzureBank-Token-Road` header whose value is the BFF's marker, compared exactly. The BFF's own

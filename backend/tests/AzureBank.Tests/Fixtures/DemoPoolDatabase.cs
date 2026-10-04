@@ -103,11 +103,30 @@ internal sealed class DemoPoolDatabase : IAsyncDisposable
     public AzureBankDbContext NewContext() =>
         new(new DbContextOptionsBuilder<AzureBankDbContext>().UseSqlServer(ConnectionString).Options);
 
-    /// <summary>The API, in process, on this database.</summary>
+    /// <summary>The API, in process, on this database, with the demo off.</summary>
+    /// <remarks>
+    /// Off here, and it stays off: the tests of the pool's commands register users and sign in
+    /// through this host as through any deployment that does not turn the demo on. A test of the
+    /// demo itself asks for <see cref="DemoApi"/>.
+    /// </remarks>
     public CustomWebApplicationFactory Api()
     {
         var factory = new CustomWebApplicationFactory();
         factory.SetConnectionString(ConnectionString);
+        _hosts.Add(factory);
+        return factory;
+    }
+
+    /// <summary>
+    /// The API, in process, on this database, with the demo on
+    /// (<see cref="CustomWebApplicationFactory.EnableDemo"/>). <paramref name="settings"/> are
+    /// configuration keys and their values, applied after the flag and the secret.
+    /// </summary>
+    public CustomWebApplicationFactory DemoApi(params (string Key, string Value)[] settings)
+    {
+        var factory = new CustomWebApplicationFactory();
+        factory.SetConnectionString(ConnectionString);
+        factory.EnableDemo(settings);
         _hosts.Add(factory);
         return factory;
     }
@@ -225,6 +244,13 @@ internal sealed class DemoPoolDatabase : IAsyncDisposable
     /// Marks a free copy claimed at <paramref name="claimedAt"/>, as a visitor's claim would: the
     /// instant, a claim id, and the client's key when one is given.
     /// </summary>
+    /// <remarks>
+    /// It stands in for the claim, and still does now that the API has one
+    /// (<c>DemoClaimService</c>): the pool's tests, and the sign-in gate's, need a copy claimed at
+    /// an instant they choose, with no request behind it. The statement is the claim's own
+    /// conditional update; nothing else of a claim happens here (no password, no grant). A test of
+    /// the claim itself goes through <see cref="DemoVisitor.ClaimAsync"/>.
+    /// </remarks>
     public async Task MarkClaimedAsync(Guid copyId, DateTime claimedAt, byte[]? clientKey = null)
     {
         await using var db = NewContext();
@@ -264,6 +290,12 @@ internal sealed class DemoPoolDatabase : IAsyncDisposable
     /// Gives a copy's owner a password through Identity, standing in for the claim: a free copy has
     /// none, and nothing can sign in to it.
     /// </summary>
+    /// <remarks>
+    /// Still a stand-in, for the tests that need no claim: the claim the API now has writes the
+    /// password another way, with one set-based statement, in the transaction that takes the copy
+    /// and writes the grant (<c>DemoClaimService</c>). Here Identity adds a password the test
+    /// chose, so the test knows it.
+    /// </remarks>
     public async Task GiveOwnerAPasswordAsync(BuiltCopy copy, string password = VisitorPassword)
     {
         using var scope = Seeder().CreateScope();

@@ -157,7 +157,8 @@ AzureBank.Api/
 | Endpoint | Method | Description | Auth Required |
 |----------|--------|-------------|---------------|
 | `/api/auth/login` | POST | Authenticate user, receive JWT | No |
-| `/api/auth/register` | POST | Register new user with account | No |
+| `/api/auth/register` | POST | Register new user with account. On the public demo (`Demo:Enabled`): 403 `REGISTRATION_CLOSED`, whatever the body | No |
+| `/api/auth/demo/claim` | POST | On the public demo only: take a free demo copy for a visitor, give its owner a password and sign in as that owner; answers the tokens, the user and what signs in to the copy again. 404 while `Demo:Enabled` is false (ADR-0063) | No (the BFF names the visitor's address) |
 | `/api/auth/refresh` | POST | Renew the access token with the session's grant; the grant is not rotated | No (the grant is the credential) |
 | `/api/auth/revoke` | POST | Revoke the grants of ended sessions; 200 for unknown grants too | No (the grant is the credential) |
 | `/api/auth/me` | GET | Get current user info | Yes |
@@ -166,10 +167,17 @@ AzureBank.Api/
 | `/api/auth/pin` | POST | Set or update PIN | Yes |
 | `/api/auth/pin/verify` | POST | Verify PIN for step-up auth | Yes |
 
-The five token endpoints (login, register, refresh, revoke and logout) and the stamp feed,
-session-stamps, answer only the BFF's own client: a request from loopback carrying exactly one
-`X-AzureBank-Token-Road` header, besides the service key. Anything else gets 404, as an unknown path
-would.
+The six token endpoints (login, register, refresh, revoke, logout and the demo's claim) and the
+stamp feed, session-stamps, answer only the BFF's own client: a request from loopback carrying
+exactly one `X-AzureBank-Token-Road` header, besides the service key. Anything else gets 404, as an
+unknown path would. *(It said five until 2026-10-04, before the claim: ADR-0063.)*
+
+On the public demo two more things hold, both in the API (ADR-0063): sign-in lets in only the
+owner of a claimed demo copy whose time is not over, and answers everybody else as an email nobody
+has; and each request of a signed-in user that could change something, and each reveal of an
+account number, is counted on that user's copy, the one past `Demo:Copy:MaxWrites` being 429
+`DEMO_COPY_LIMIT`. A token endpoint is never counted: of the six, only signing out everywhere
+asks for a signed-in user, and it is answered the same whatever the copy has spent.
 
 ### Accounts (`/api/accounts`)
 

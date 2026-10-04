@@ -120,6 +120,16 @@ public static class ErrorCodes
     public const string IdempotencyResultUnknown = "IDEMPOTENCY_RESULT_UNKNOWN";
     public const string IdempotencyPayloadTooLarge = "IDEMPOTENCY_PAYLOAD_TOO_LARGE";
 
+    // The public demo (Demo:Enabled). Three refusals share the 429 and differ in what a visitor
+    // can do about them: wait for a free copy, wait for the client's allowance of copies to come
+    // back, or start over with a fresh copy. Only the second knows when it ends, so only it says
+    // when to come back.
+    public const string DemoPoolEmpty = "DEMO_POOL_EMPTY";
+    public const string DemoDailyLimit = "DEMO_DAILY_LIMIT";
+    public const string DemoCopyLimit = "DEMO_COPY_LIMIT";
+    // On the demo nobody creates a user: a visitor is handed a prepared copy.
+    public const string RegistrationClosed = "REGISTRATION_CLOSED";
+
     // Exception defaults. These are the fallback codes AppException subclasses apply when a
     // thrower does not name one, and they go on the wire like any other — so they belong here
     // rather than inline in the exception's own signature, where ErrorCodeConstantTests could

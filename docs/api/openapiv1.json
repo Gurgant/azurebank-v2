@@ -1020,7 +1020,7 @@
           "Auth"
         ],
         "summary": "Register",
-        "description": "Register a new user account with initial bank account.",
+        "description": "Register a new user account with initial bank account. On the public demo registration is\r\nclosed: the answer is 403 with `errorCode` `REGISTRATION_CLOSED`, whatever the request\r\ncarries.",
         "requestBody": {
           "description": "Registration details",
           "content": {
@@ -1063,10 +1063,115 @@
               }
             }
           },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
           "409": {
             "description": "Conflict",
             "content": {
               "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (its Cache-Control includes no-store). Send the request again after that many seconds.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          { }
+        ]
+      }
+    },
+    "/api/auth/demo/claim": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Claim a demo copy",
+        "description": "On the public demo, take one free demo copy for a visitor and sign in to it: the answer\r\ncarries the tokens and the user a login answers, and what signs in to the copy again. The\r\ncopy's password exists in this answer only. A 429 names its reason in `errorCode`:\r\n`DEMO_POOL_EMPTY` when no copy is free, `DEMO_DAILY_LIMIT` when this client has claimed as\r\nmany copies as one client may in a day, with `retryAfterSeconds`.",
+        "requestBody": {
+          "description": "The visitor's address, as the BFF saw it",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DemoClaimRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DemoClaimRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/DemoClaimRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseOfDemoClaimResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found - the demo is off on this deployment (Demo:Enabled is false), where this endpoint does not exist. Answered as a path that matches no route is: by the framework, as application/problem+json with no errorCode, whatever the request's body.",
+            "content": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -3859,6 +3964,27 @@
           }
         }
       },
+      "ApiResponseOfDemoClaimResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DemoClaimResponse"
+              }
+            ]
+          },
+          "message": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
       "ApiResponseOfDepositResponse": {
         "type": "object",
         "properties": {
@@ -4236,6 +4362,78 @@
             "$ref": "#/components/schemas/AccountType"
           }
         }
+      },
+      "DemoClaimRequest": {
+        "required": [
+          "clientAddress"
+        ],
+        "type": "object",
+        "properties": {
+          "clientAddress": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string",
+            "description": "The visitor's address as the BFF saw it. The copies one client may claim in a day are\r\ncounted by it."
+          }
+        },
+        "description": "Request body for POST /api/auth/demo/claim: the BFF asks for a free demo copy for the visitor\r\nit is serving."
+      },
+      "DemoClaimResponse": {
+        "required": [
+          "token",
+          "user",
+          "copy"
+        ],
+        "type": "object",
+        "properties": {
+          "token": {
+            "$ref": "#/components/schemas/TokenResponse"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserLoginInfo"
+          },
+          "copy": {
+            "$ref": "#/components/schemas/DemoCopyInfo"
+          }
+        },
+        "description": "Result of a successful demo claim: the tokens and the user a login answers, and the copy the\r\nvisitor was given."
+      },
+      "DemoCopyInfo": {
+        "required": [
+          "email",
+          "password",
+          "pin",
+          "contacts",
+          "expiresAt"
+        ],
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "The email the copy's demo user signs in with."
+          },
+          "password": {
+            "type": "string",
+            "description": "The demo user's password, set by this claim."
+          },
+          "pin": {
+            "type": "string",
+            "description": "The demo user's PIN."
+          },
+          "contacts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The handles of the copy's other users, sorted: the payees a transfer can name."
+          },
+          "expiresAt": {
+            "type": "string",
+            "description": "The instant the copy ends, in UTC: the claim plus `Demo:CopyLifetimeHours`.",
+            "format": "date-time"
+          }
+        },
+        "description": "The demo copy a visitor was given: what signs in to it again, whom it can pay, and when it ends."
       },
       "DepositRequest": {
         "required": [

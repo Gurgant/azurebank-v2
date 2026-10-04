@@ -68,8 +68,9 @@ public sealed class RunbookSqlParsesSqlServerTests
         { "docs/runbooks/pin-enrolment-repudiated.md", 6, [] },
         // Its placeholders sit inside string literals too; ADR-0057 §5.4 decides what it does.
         { "docs/runbooks/refresh-token-reuse-recorded.md", 5, [] },
-        // Every block reads; its one placeholder, a copy's id, sits inside string literals.
-        { "docs/runbooks/demo-pool.md", 11, [] },
+        // Every block reads, and the runbook says so: RunbookSqlBindsSqlServerTests holds it to
+        // that. Its one placeholder, a copy's id, sits inside string literals.
+        { "docs/runbooks/demo-pool.md", 12, [] },
     };
 
     /// <summary>

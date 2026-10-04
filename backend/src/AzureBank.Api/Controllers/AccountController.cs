@@ -109,6 +109,7 @@ public class AccountController(
     /// <param name="id">Account ID</param>
     /// <returns>The full account number</returns>
     [HttpGet("{id:guid}/full-number")]
+    [CountedAsDemoWrite] // a GET that writes an audit row: on the demo it spends the copy's budget of changes
     [ProducesResponseType(typeof(ApiResponse<AccountNumberResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]

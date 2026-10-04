@@ -1,9 +1,11 @@
 using System.Globalization;
 using AzureBank.Bff.Options;
+using AzureBank.Shared.Options;
 using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace AzureBank.Bff.Tests;
 
@@ -270,5 +272,61 @@ public class BackendApiTimeoutPipelineTests : IClassFixture<WebApplicationFactor
         var client = factory.Services.GetRequiredService<IHttpClientFactory>().CreateClient("BackendApi");
 
         client.Timeout.Should().Be(TimeSpan.FromSeconds(BackendApiOptions.MaxTimeoutSeconds));
+    }
+}
+
+/// <summary>
+/// The BFF binds the public demo's settings and checks them at startup, as the API does: a value
+/// out of range stops the host whether or not the demo is on. It has no rule for the client-key
+/// secret, which is the API's, so it starts with the demo on and no secret.
+/// </summary>
+public class DemoOptionsPipelineTests : IClassFixture<WebApplicationFactory<Program>>
+{
+    private readonly WebApplicationFactory<Program> _factory;
+
+    public DemoOptionsPipelineTests(WebApplicationFactory<Program> factory) => _factory = factory;
+
+    private static DemoOptions DemoOf(WebApplicationFactory<Program> factory) =>
+        factory.Services.GetRequiredService<IOptions<DemoOptions>>().Value;
+
+    [Fact]
+    public void ADemoValueOutOfRange_StopsTheBff()
+    {
+        // 0 is one below the floor of Demo:Pool:TargetFree, a number the BFF never reads.
+        var outOfRange = _factory.WithWebHostBuilder(builder =>
+            builder.UseSetting("Demo:Pool:TargetFree", "0"));
+
+        var exception = Record.Exception(() => outOfRange.CreateClient());
+
+        exception.Should().NotBeNull(
+            "a demo setting out of range must fail ValidateOnStart in every host that reads the section");
+
+        // Any failure to start would satisfy the line above. So the same setting with a value in
+        // its range: that host starts, and what stopped the other one is the value.
+        var inRange = _factory.WithWebHostBuilder(builder =>
+            builder.UseSetting("Demo:Pool:TargetFree", "20"));
+        inRange.CreateClient();
+        DemoOf(inRange).Pool.TargetFree.Should().Be(20);
+    }
+
+    [Fact]
+    public void WithTheFlagOn_TheBffStartsWithoutAClientKeySecret()
+    {
+        var factory = _factory.WithWebHostBuilder(builder => builder.UseSetting("Demo:Enabled", "true"));
+        factory.CreateClient();
+
+        var demo = DemoOf(factory);
+
+        demo.Enabled.Should().BeTrue("the BFF binds the section, so the flag a deployment sets reaches it");
+        demo.ClientKeySecret.Should().BeNull();
+    }
+
+    // CONTROL: green before this change. Run with Demo__Enabled=true in the environment, a host
+    // no test asked the demo of has it on: this is the test that then fails by name.
+    [Fact]
+    public void TheDefaultBffHost_HasTheDemoOff()
+    {
+        DemoOf(_factory).Enabled.Should().BeFalse(
+            "no test asked for the demo, and no committed settings file sets it");
     }
 }

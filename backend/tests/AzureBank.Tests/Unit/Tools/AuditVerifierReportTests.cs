@@ -179,10 +179,11 @@ public class AuditVerifierReportTests
           with a SqlException instead (dotnet/SqlClient#26, open since 2016). So the guard covered
           the shape the test creates and the operator got the other one.
 
-          A SqlException cannot be constructed here -- it has no public constructor -- so this pins
-          the property that matters instead: the classification must not depend on the exception
+          This pins the property that matters: the classification must not depend on the exception
           TYPE at all. A chain that throws something entirely unrelated, with the token signalled,
-          must still be reported as an interruption.
+          must still be reported as an interruption. So no SqlException is built here. One can be:
+          it has no public constructor, and Fixtures/SqlErrors builds one as SqlClient builds its
+          own. (Until 2026-10-04 this said a SqlException cannot be constructed here.)
         */
         var services = new ServiceCollection();
         services.AddLogging();

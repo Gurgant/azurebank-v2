@@ -1,6 +1,5 @@
 extern alias seeder;
 
-using System.Reflection;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using FluentAssertions.Execution;
@@ -525,17 +524,6 @@ public class DatabaseGateTests
     }
 
     /// <summary>A <see cref="SqlException"/> carrying one error of the given number and class.</summary>
-    private static SqlException Sql(int number, byte errorClass, string? message = null)
-    {
-        const BindingFlags Any = BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static;
-        var collection = (SqlErrorCollection)Activator.CreateInstance(typeof(SqlErrorCollection), nonPublic: true)!;
-        var add = typeof(SqlErrorCollection).GetMethod("Add", Any)!;
-        var ctor = typeof(SqlError).GetConstructor(
-            Any, [typeof(int), typeof(byte), typeof(byte), typeof(string), typeof(string), typeof(string), typeof(int), typeof(Exception)])!;
-        add.Invoke(collection, [ctor.Invoke([number, (byte)0, errorClass, "server", message ?? $"error {number}", "", 0, null])]);
-
-        var create = typeof(SqlException).GetMethod(
-            "CreateException", Any, [typeof(SqlErrorCollection), typeof(string)])!;
-        return (SqlException)create.Invoke(null, [collection, "16.0"])!;
-    }
+    private static SqlException Sql(int number, byte errorClass, string? message = null) =>
+        SqlErrors.Of(number, errorClass, message);
 }

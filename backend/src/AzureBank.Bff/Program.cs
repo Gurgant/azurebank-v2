@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
-using System.Net.Sockets;
 using System.Threading.RateLimiting;
 using AzureBank.Bff;
 using AzureBank.Bff.Extensions;
@@ -128,6 +127,15 @@ try
         .Bind(builder.Configuration.GetSection(SpaOptions.SectionName))
         .ValidateOnStart();
     builder.Services.AddSingleton<IValidateOptions<SpaOptions>, SpaOptionsValidator>();
+
+    // The public demo's settings (the "Demo" section, which the API and the Seeder read too). Of
+    // the section this host needs the flag alone; the validator checks every range all the same,
+    // flag on or off, as it does in the other two. No rule for Demo:ClientKeySecret here: this
+    // host hashes no address and holds no secret.
+    builder.Services.AddOptions<DemoOptions>()
+        .Bind(builder.Configuration.GetSection(DemoOptions.SectionName))
+        .ValidateOnStart();
+    builder.Services.AddSingleton<IValidateOptions<DemoOptions>, DemoOptionsValidator>();
 
     // ═══════════════════════════════════════════════════════════════════════════
     // SERILOG CONFIGURATION (reads from appsettings.json)
@@ -295,33 +303,15 @@ try
     var rateLimiting = builder.Configuration
         .GetSection(RateLimitingOptions.SectionName).Get<RateLimitingOptions>() ?? new RateLimitingOptions();
 
-    // Partition key. IPv6 end sites are handed a whole /64 (often more), so keying on the
-    // full address would let an attacker rotate addresses inside their OWN allocation — no
-    // spoofing required — and the per-IP limit would evaporate. Key IPv6 on its /64 prefix;
-    // IPv4 keys on the full address.
-    static string ClientIp(HttpContext context)
-    {
-        var ip = context.Connection.RemoteIpAddress;
-        if (ip is null)
-        {
-            return "unknown";
-        }
-        if (ip.IsIPv4MappedToIPv6)
-        {
-            ip = ip.MapToIPv4();
-        }
-        if (ip.AddressFamily != AddressFamily.InterNetworkV6)
-        {
-            return ip.ToString();
-        }
-
-        var bytes = ip.GetAddressBytes();
-        Array.Clear(bytes, 8, 8); // zero the interface identifier -> the /64 prefix
-        return new IPAddress(bytes) + "/64";
-    }
+    // Partition key: ClientAddress.Of, which says why an IPv6 client is keyed on its /64 prefix
+    // and an IPv4 one on its full address. It is a type of its own because the demo claim sends
+    // the API the same key (BffAuthController.ClaimDemoCopy).
 
     // Recipient lookup is limited per AUTHENTICATED USER, not per IP: registration is open,
-    // so an attacker's cost unit is the throwaway account, not the address (ADR-0014).
+    // so an attacker's cost unit is the throwaway account, not the address (ADR-0014). On the
+    // public demo (Demo:Enabled) registration is closed and the throwaway account is a claimed
+    // demo copy, of which the API gives one client address Demo:Claim:MaxPerClientPerDay in a
+    // day: the unit is still the account.
     // Resolve the session cookie -> user id; fall back to the client IP for calls without a
     // session (which the API 401s regardless).
     static string LookupPartitionKey(HttpContext context)
@@ -337,13 +327,13 @@ try
                 return "user:" + session.UserId;
             }
         }
-        return "ip:" + ClientIp(context);
+        return "ip:" + ClientAddress.Of(context);
     }
 
     builder.Services.AddRateLimiter(options =>
     {
         options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
-            RateLimitPartition.GetFixedWindowLimiter(ClientIp(context), _ => new FixedWindowRateLimiterOptions
+            RateLimitPartition.GetFixedWindowLimiter(ClientAddress.Of(context), _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = rateLimiting.GlobalPermitLimit,
                 Window = TimeSpan.FromSeconds(rateLimiting.GlobalWindowSeconds),
@@ -358,7 +348,7 @@ try
         // bucket shared by bff/auth/{login,register} and the YARP /api/auth/* routes, which
         // is deliberate: that shared budget IS the per-IP enumeration/brute-force allowance.
         options.AddPolicy(RateLimitPolicies.Auth, context =>
-            RateLimitPartition.GetSlidingWindowLimiter(ClientIp(context), _ => new SlidingWindowRateLimiterOptions
+            RateLimitPartition.GetSlidingWindowLimiter(ClientAddress.Of(context), _ => new SlidingWindowRateLimiterOptions
             {
                 PermitLimit = rateLimiting.AuthPermitLimit,
                 Window = TimeSpan.FromSeconds(rateLimiting.AuthWindowSeconds),
@@ -411,7 +401,7 @@ try
                 context.HttpContext.Request.Method,
                 RequestLogRoute.Of(context.HttpContext),
                 RequestLogRoute.ResourceOf(context.HttpContext),
-                ClientIp(context.HttpContext));
+                ClientAddress.Of(context.HttpContext));
 
             var problem = new ProblemDetails
             {
@@ -493,6 +483,12 @@ try
 
     // 5. Rate limiting
     app.UseRateLimiter();
+
+    // 5b. What the public demo changes in this host's own doors (Demo:Enabled): while it is on,
+    // registration is closed; while it is off, the claim is answered as a path that is not there.
+    // After the limiter, so either door still spends the auth policy's allowance; before the
+    // controllers, so neither answer depends on the body.
+    app.UseDemoMode();
 
     // 6. Auth level enforcement for sensitive routes (step-up authentication)
     app.UseAuthLevelEnforcement();

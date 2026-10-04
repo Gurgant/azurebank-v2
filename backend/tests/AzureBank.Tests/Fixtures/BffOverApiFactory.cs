@@ -38,6 +38,7 @@ public sealed class BffOverApiFactory(CustomWebApplicationFactory api, string se
     : WebApplicationFactory<bff::Program>
 {
     private FakeTimeProvider? _clock;
+    private bool _demo;
 
     /// <summary>
     /// Gives the BFF a <see cref="FakeTimeProvider"/> and returns it. Call before the host starts.
@@ -53,10 +54,26 @@ public sealed class BffOverApiFactory(CustomWebApplicationFactory api, string se
         return _clock;
     }
 
+    /// <summary>
+    /// Turns the public demo on in the BFF: <c>Demo:Enabled</c>. Call before the host starts.
+    /// </summary>
+    /// <remarks>
+    /// The BFF's flag only: the API behind it has its own, which
+    /// <see cref="CustomWebApplicationFactory.EnableDemo"/> sets.
+    /// </remarks>
+    public void EnableDemo()
+    {
+        _demo = true;
+    }
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
         builder.UseSetting("ServiceCredential:BffKey", serviceKey);
+        if (_demo)
+        {
+            builder.UseSetting("Demo:Enabled", "true");
+        }
 
         builder.ConfigureTestServices(services =>
         {
