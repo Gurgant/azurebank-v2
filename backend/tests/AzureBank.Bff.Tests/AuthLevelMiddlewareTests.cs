@@ -654,6 +654,9 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
     [InlineData("/api/auth/logout")]
     // The stamp feed since the stamp (ADR-0057 §5.3): only the BFF's own watcher reads it.
     [InlineData("/api/auth/session-stamps")]
+    // The demo claim: the API's answer carries tokens, and the API believes the client address
+    // its caller names. A browser claims through the BFF's own door, /bff/auth/demo/claim.
+    [InlineData("/api/auth/demo/claim")]
     public async Task TheProxiedAuthPair_NeverReachesTheApi_AndHandsOutNothing(string path)
     {
         /*
@@ -688,6 +691,45 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
             "as if the route did not exist — the caller is told nothing about why");
         backend.ForwardedPaths.Should().BeEmpty("the request must never reach the API at all");
         body.Should().NotContain("token", "no credential may leave the BFF on this path");
+    }
+
+    [Theory]
+    [InlineData(false, "/api/auth/demo/claim")]
+    [InlineData(true, "/api/auth/demo/claim")]
+    [InlineData(true, "/api/auth/demo/claim/")]
+    public async Task TheProxiedDemoClaim_IsBlockedForASignedInBrowserToo_WithTheDemoOffOrOn(bool demoOn, string path)
+    {
+        /*
+          The row above has no session, and a request with no session is stopped by the session
+          gate whatever its path: 401, nothing forwarded. What only the block stops is a browser
+          that HAS a session. Without the block the catch-all route carries its request to the
+          API, where the claim would be the visitor's to shape: the API counts a client's copies
+          by the address its caller names, and the caller would be the browser.
+
+          (The API has its own answer to a proxied token endpoint, 404 off the token road, since
+          the proxy strips the BFF's marker. This is the BFF not sending the request at all.)
+
+          Red before the path joined the set: 200 from the recording backend, one forwarded path.
+        */
+        var (factory, backend) = WithRecorder(builder =>
+        {
+            if (demoOn)
+            {
+                builder.UseSetting("Demo:Enabled", "true");
+            }
+        });
+        var (sessionId, cookieName, _) = CreateSession(factory);
+        var client = factory.CreateClient();
+
+        var request = Request(HttpMethod.Post, path, cookieName, sessionId);
+        request.Content = JsonContent.Create(new { clientAddress = "198.51.100.200" });
+        var response = await client.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound,
+            "as if the route did not exist, for a signed-in browser as for anyone");
+        backend.ForwardedPaths.Should().BeEmpty("the request must never reach the API at all");
+        body.Should().BeEmpty();
     }
 
     [Fact]
