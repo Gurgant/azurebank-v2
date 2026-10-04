@@ -1,13 +1,16 @@
 import { isFulfilled, isRejectedWithValue, type Middleware } from '@reduxjs/toolkit';
+import type { BffDemoClaimResponse } from '../../api/bffTypes';
 import type { ApiProblem } from '../../api/problemBaseQuery';
 import { apiSlice } from '../api/apiSlice';
+import { writeDemoCopy } from '../demo/demoCopyStorage';
 import { sessionExpired } from './authSlice';
 import { learnSessionPolicy, markServerActivity } from './sessionActivity';
 
 /** RTK Query tags actions with the endpoint that produced them; that is the stable wire shape. */
-function isGetMeAction(action: unknown): boolean {
+function isActionOf(action: unknown, endpointName: string): boolean {
   return (
-    (action as { meta?: { arg?: { endpointName?: string } } }).meta?.arg?.endpointName === 'getMe'
+    (action as { meta?: { arg?: { endpointName?: string } } }).meta?.arg?.endpointName ===
+    endpointName
   );
 }
 
@@ -128,10 +131,39 @@ export const sessionMiddleware: Middleware = (middlewareApi) => (next) => (actio
 
   // The session policy is declared by the server, not guessed here. /bff/auth/me is the only
   // response carrying it, and it arrives at bootstrap and on every keep-alive.
-  if (isFulfilled(action) && isGetMeAction(action)) {
+  if (isFulfilled(action) && isActionOf(action, 'getMe')) {
     const session = (action.payload as { session?: Parameters<typeof learnSessionPolicy>[0] })
       ?.session;
     if (session) learnSessionPolicy(session);
+  }
+
+  /*
+    A demo claim that succeeded has opened a session on another copy, for a visitor who may have
+    been signed in to one a moment ago. Two things follow, and they follow HERE, in the dispatch
+    of the claim's own answer, so that every caller of the claim gets both and nothing is rendered
+    between the new owner and either of them. The reducers have already run by this line
+    (`next(action)` is the first statement above), so the auth slice already names the new owner.
+
+    1. The copy is kept: its sign-in details go into the browser's storage
+       (src/features/demo/demoCopyStorage.ts). What is kept is the answer's `copy`, so the end
+       kept with it is the COPY's, `copy.expiresAt`, and never the access token's `expiresAt`
+       beside `user`.
+    2. The whole cache is dropped. The accounts and the history in it were fetched for whoever was
+       signed in before, and no tag would take them out: they would be shown to the new owner as
+       their own. The claim's own entry goes with them, and that entry holds the answer, the
+       copy's password and PIN included: the reset is what takes them out of the store.
+
+    In that order. The reset is a dispatch, so the store's subscribers are told inside it; by then
+    the copy the browser keeps has to be the new owner's already, because who owns the kept copy
+    is decided by comparing the two. The other way round they would be told while the browser
+    still kept the copy that was just replaced.
+
+    A claim that was refused does neither: it opened no session, and the session it came with
+    is alive.
+  */
+  if (isFulfilled(action) && isActionOf(action, 'claimDemoCopy')) {
+    writeDemoCopy((action.payload as BffDemoClaimResponse).copy);
+    middlewareApi.dispatch(apiSlice.util.resetApiState());
   }
 
   if (isRejectedWithValue(action)) {

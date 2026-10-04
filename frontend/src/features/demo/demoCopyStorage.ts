@@ -73,7 +73,9 @@ function parseStored(raw: string): StoredDemoCopy | null {
 }
 
 /**
- * Keeps a claimed copy, in place of whatever copy was kept before.
+ * Keeps a claimed copy, in place of whatever copy was kept before. Called from one place, where
+ * a claim's answer arrives (src/features/auth/sessionMiddleware.ts), so every caller of the claim
+ * leaves the copy here and none has to remember to.
  *
  * The six members are written out one by one: what goes into the key is the kept shape and
  * nothing a caller happened to carry beside it.
