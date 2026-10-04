@@ -408,4 +408,26 @@ describe('a sign-in and the cache it finds', () => {
       onTheSecondCopy: 0,
     });
   });
+
+  it('in the demo a sign-in that was refused leaves the cache as it was', async () => {
+    // CONTROL: green before this change
+    enableDemoMode();
+    // Signed in to a copy, with its accounts in the cache, and then a sign-in with a wrong
+    // password for that copy: the mock answers 401 INVALID_CREDENTIALS and opens no session.
+    const { copy: onACopy } = seedMockDemoCopy();
+    const store = makeTestStore();
+    await readAccounts(store);
+    const before = accountsAnswersIn(store);
+
+    await expect(
+      store
+        .dispatch(
+          apiSlice.endpoints.login.initiate({ email: onACopy.email, password: 'Wrong-Pass-1!' }),
+        )
+        .unwrap(),
+    ).rejects.toMatchObject({ status: 401, errorCode: 'INVALID_CREDENTIALS' });
+    await Promise.all(store.dispatch(apiSlice.util.getRunningQueriesThunk()));
+
+    expect({ before, after: accountsAnswersIn(store) }).toStrictEqual({ before: 1, after: 1 });
+  });
 });
