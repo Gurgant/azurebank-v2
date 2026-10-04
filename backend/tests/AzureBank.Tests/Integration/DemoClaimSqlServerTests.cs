@@ -541,8 +541,9 @@ public sealed class DemoClaimSqlServerTests
     //
     // WITH ROW VERSIONING (READ_COMMITTED_SNAPSHOT on: Azure SQL's default, and what a database EF
     // creates starts with) the host is the plain test host, which runs nothing again: a claim the
-    // server refused as the victim of a deadlock would be answered 503 and fail the row. So the
-    // row shows that, read this way, no claim waits for another that waits for it.
+    // server refused as the victim of a deadlock would be answered 503 and fail the row. So a
+    // green row shows that, read this way, no claim of that run was refused as a deadlock's victim
+    // (DemoClaimService.ReadCandidatesAsync says in how many runs none was).
     //
     // WITHOUT IT (SQL Server's own default, for a database made some other way) two claims can
     // deadlock, rarely: the read of candidates goes from an entry of the index of free copies to

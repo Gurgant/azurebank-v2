@@ -297,8 +297,8 @@ public class DemoClaimService(
     /// recorded three deadlocks in those 150 runs (xml_deadlock_report: none among the eight, one
     /// among the twelve, two in the third load), each this read against the conditional update on
     /// those two indexes, and all 150 ended as they should. On a host that runs nothing again,
-    /// the same 150 runs met two (one among the twelve, one in the third load), and each left one
-    /// claim answered 503.
+    /// the same three loads run 50 times each once more met two (one among the twelve, one in the
+    /// third load), and each left one claim answered 503.
     /// </para>
     /// <para>
     /// WHAT ANSWERS IT IS THE HOST. Its execution strategy runs the whole claim again when the
