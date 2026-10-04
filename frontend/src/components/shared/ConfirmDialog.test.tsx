@@ -253,6 +253,10 @@ describe('ConfirmDialog', () => {
       afterTheMessage: follows(description, handed),
       afterTheAlert: follows(alert, handed),
       beforeTheButtons: follows(handed, cancelButton()),
+      // In the box that holds the message, not in the row of buttons under it: the first child of
+      // that row is also after the alert and before the buttons.
+      besideTheMessage: handed !== null && handed.parentElement === description?.parentElement,
+      inTheButtonsRow: cancelButton().parentElement?.contains(handed),
     }).toStrictEqual({
       inTheDialog: true,
       insideTheAlert: false,
@@ -262,6 +266,8 @@ describe('ConfirmDialog', () => {
       afterTheMessage: true,
       afterTheAlert: true,
       beforeTheButtons: true,
+      besideTheMessage: true,
+      inTheButtonsRow: false,
     });
   });
 
