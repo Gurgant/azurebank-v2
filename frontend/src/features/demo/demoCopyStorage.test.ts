@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { enableDemoMode, rememberDemoCopy, resetDemoMode } from '../../test/demoMode';
 import {
   forgetDemoCopy,
@@ -61,6 +61,16 @@ function deny(call: 'getItem' | 'setItem') {
     throw new Error('SecurityError');
   });
 }
+
+/*
+  Storage is put back after every test, whatever happened in it. Each test that denies a call
+  restores it itself, at the moment the denial is over; but a test that failed before that line
+  would hand its refusal to every test after it, and they would be red for a reason that is not
+  theirs.
+*/
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 // Written by the test that leaves a copy behind on purpose, read by the one after it.
 let theTestBeforeLeft = { aKey: false, aCopyInMemory: false };
