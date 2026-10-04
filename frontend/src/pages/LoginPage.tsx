@@ -110,8 +110,9 @@ export function LoginPage() {
   const styles = useStyles();
   const navigate = useNavigate();
   const location = useLocation();
-  // Asked at each render, not once: the page says whether it is the demo with a tag, and the
-  // answer is the tag's (src/features/demo/demoMode.ts).
+  // Asked here, in the component, and not when this module loads: the page says whether it is the
+  // demo with a tag, and a test puts that tag on the page after the modules are in
+  // (src/features/demo/demoMode.ts).
   const demo = isDemoMode();
   const [login, { isLoading: signingIn, error: signInError }] = useLoginMutation();
   const [claim, { isLoading: claiming, error: claimError }] = useClaimDemoCopyMutation();
