@@ -47,9 +47,11 @@ export const bffLoginResponseSchema = z.object({
  * The copy a demo claim hands the visitor: the five members of `DemoCopyInfo`
  * (backend/src/AzureBank.Shared/DTOs/Auth/DemoClaimResponse.cs).
  *
- * `password`, `pin` and `contacts` are checked for presence and type, and for nothing else. Their
- * shapes are the server's to choose, and this file fails closed: a pattern here would turn a
- * change of the seed into a claim the visitor cannot make.
+ * `password`, `pin` and `contacts` are checked for presence and type, and their texts for not
+ * being empty: for nothing else. Their shapes are the server's to choose, and this file fails
+ * closed: a pattern here would turn a change of what the server hands out into a claim the
+ * visitor cannot make. bffSchemas.test.ts holds both: an empty text is refused, and a password,
+ * a PIN and contacts shaped unlike today's are accepted.
  */
 export const demoCopyInfoSchema = z.object({
   email: z.email(),
