@@ -24,3 +24,39 @@ export function enableDemoMode(): void {
 export function resetDemoMode(): void {
   for (const tag of document.querySelectorAll(`meta[name="${DEMO_TAG_NAME}"]`)) tag.remove();
 }
+
+/*
+  The key the browser keeps a claimed copy under, typed out here for the same reason as the tag's
+  name: a helper that asked the product for it would follow the product to any key.
+*/
+const DEMO_COPY_KEY = 'azurebank.demoCopy';
+
+/**
+ * Leaves a claimed copy in the browser as the product would have: the key holds
+ * `{ v: 1, email, password, pin, contacts, expiresAt }`.
+ *
+ * A raw write, and that is the point. The product's storage module
+ * (`features/demo/demoCopyStorage.ts`) is not told and nobody who listens to it is called, so this
+ * is what a reload finds, or what another tab left. `setup.ts` removes the key again after every
+ * test. `demoMode.test.ts`, beside this file, compares what this leaves with what the product
+ * leaves.
+ */
+export function rememberDemoCopy(copy: {
+  email: string;
+  password: string;
+  pin: string;
+  contacts: string[];
+  expiresAt: string;
+}): void {
+  localStorage.setItem(
+    DEMO_COPY_KEY,
+    JSON.stringify({
+      v: 1,
+      email: copy.email,
+      password: copy.password,
+      pin: copy.pin,
+      contacts: copy.contacts,
+      expiresAt: copy.expiresAt,
+    }),
+  );
+}
