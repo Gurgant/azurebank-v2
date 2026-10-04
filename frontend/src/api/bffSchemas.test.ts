@@ -118,22 +118,43 @@ describe("a demo claim's answer", () => {
   });
 
   it('refuses a copy with a member missing or retyped', () => {
-    const noPin = {
-      email: copy.email,
-      password: copy.password,
-      contacts: copy.contacts,
-      expiresAt: copy.expiresAt,
-    };
-    const contactsAsText = { ...copy, contacts: 'jane_k7m2' };
+    // One comparison, so a red run prints every case: each of the five members taken out alone;
+    // the address not an address, the password a list, the PIN a number and the contacts a text,
+    // each alone; and each text left empty alone. The end's forms have two tests of their own
+    // below.
+    const without = (member: keyof typeof copy) =>
+      Object.fromEntries(Object.entries(copy).filter(([name]) => name !== member));
+    const passes = { alone: true, inAnAnswer: true };
+    const refused = { alone: false, inAnAnswer: false };
 
     expect({
       whole: accepts(copy),
-      noPin: accepts(noPin),
-      contactsAsText: accepts(contactsAsText),
+      noEmail: accepts(without('email')),
+      noPassword: accepts(without('password')),
+      noPin: accepts(without('pin')),
+      noContacts: accepts(without('contacts')),
+      noEnd: accepts(without('expiresAt')),
+      emailNotAnAddress: accepts({ ...copy, email: 'demo-k7m2x9q4w8e1r5t3' }),
+      passwordAsList: accepts({ ...copy, password: ['Fixture-Pass-7!'] }),
+      pinAsNumber: accepts({ ...copy, pin: 987654 }),
+      contactsAsText: accepts({ ...copy, contacts: 'jane_k7m2' }),
+      emptyPassword: accepts({ ...copy, password: '' }),
+      emptyPin: accepts({ ...copy, pin: '' }),
+      emptyHandle: accepts({ ...copy, contacts: ['jane_k7m2', ''] }),
     }).toStrictEqual({
-      whole: { alone: true, inAnAnswer: true },
-      noPin: { alone: false, inAnAnswer: false },
-      contactsAsText: { alone: false, inAnAnswer: false },
+      whole: passes,
+      noEmail: refused,
+      noPassword: refused,
+      noPin: refused,
+      noContacts: refused,
+      noEnd: refused,
+      emailNotAnAddress: refused,
+      passwordAsList: refused,
+      pinAsNumber: refused,
+      contactsAsText: refused,
+      emptyPassword: refused,
+      emptyPin: refused,
+      emptyHandle: refused,
     });
   });
 
