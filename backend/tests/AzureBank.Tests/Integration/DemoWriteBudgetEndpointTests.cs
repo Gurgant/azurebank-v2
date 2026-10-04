@@ -28,7 +28,8 @@ namespace AzureBank.Tests.Integration;
 /// statement: what is shown here is the pipeline and the answers. That the count holds when
 /// requests arrive together is shown on SQL Server (<c>DemoWriteBudgetSqlServerTests</c>). A copy
 /// here is made by hand (<see cref="HandMadeDemoCopy"/>): three users and no account, so the
-/// changes it makes are PIN verifications, and the account it asks about does not exist.
+/// changes it makes are PIN verifications, the account it asks about does not exist, and the
+/// deposit it sends carries no idempotency key and is refused for that.
 /// </para>
 /// </remarks>
 public sealed class DemoWriteBudgetEndpointTests : IDisposable
@@ -158,6 +159,36 @@ public sealed class DemoWriteBudgetEndpointTests : IDisposable
         }
 
         (await WritesOfAsync(_ordinary, copy)).Should().Be(0, "and nothing is counted");
+    }
+
+    // ── Before idempotency ───────────────────────────────────────────────────────────────────────
+
+    // The budget's place before idempotency, held without a database. A deposit with no
+    // idempotency key is refused by the idempotency middleware, which looks at nothing else of
+    // the request, so which of the two answers it says which is asked first. Under the limit the
+    // budget counts it and idempotency refuses it; at the limit the budget refuses it and the key
+    // is never asked for. With the two the other way round it is refused for its key both times
+    // and never counted.
+    [Fact]
+    public async Task WithTheDemoOn_ADepositWithNoKey_IsCountedBeforeItsKeyIsAskedFor()
+    {
+        using var client = _demo.CreateClient();
+        var (copy, owner) = await ClaimACopyAsync(client);
+
+        using var noKey = await owner.RequestAsync(HttpMethod.Post, "/api/transactions/deposit");
+        var counted = await WritesOfAsync(_demo, copy);
+        await SetWritesAsync(_demo, copy, Limit);
+        using var atTheLimit = await owner.RequestAsync(HttpMethod.Post, "/api/transactions/deposit");
+
+        using (new AssertionScope())
+        {
+            noKey.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+            (await DemoVisitor.ErrorCodeOfAsync(noKey)).Should().Be(ErrorCodes.IdempotencyKeyMissing);
+            counted.Should().Be(1, "the budget is asked before the key is");
+            atTheLimit.StatusCode.Should().Be(HttpStatusCode.TooManyRequests, "at the limit the budget answers before the key is asked for");
+            (await DemoVisitor.ErrorCodeOfAsync(atTheLimit)).Should().Be(ErrorCodes.DemoCopyLimit);
+            (await WritesOfAsync(_demo, copy)).Should().Be(Limit, "and the refused one is not counted");
+        }
     }
 
     // ── The reveal ───────────────────────────────────────────────────────────────────────────────
