@@ -478,10 +478,12 @@ const pathOf = (request: Request) => new URL(request.url).pathname;
  *
  * The cookie therefore comes from the two places that do NOT feed that store:
  *
- *   jsdom + dev:mock   `document.cookie`, stamped by `seedMockSession` / login / register and
- *                      cleared by logout and `resetMockState`. Verified with the MSW store empty:
- *                      a SAME-ORIGIN request carries it, a cross-origin one does not — which is
- *                      why the unit suite's relative URLs matter.
+ *   jsdom + dev:mock   `document.cookie`, stamped by `seedMockSession` and by a demo claim
+ *                      (`claimMockDemoCopy`) and cleared by `resetMockState`: the callers of
+ *                      `setMockSessionCookie`. The sign-in, registration and sign-out handlers
+ *                      are not among them. Verified with the MSW store empty: a SAME-ORIGIN
+ *                      request carries it, a cross-origin one does not — which is why the unit
+ *                      suite's relative URLs matter.
  *   node (contract)    the client's own jar, seeded for the mock target in `client.ts`. There is
  *                      no `document` there, so `anonymous: true` genuinely sends nothing.
  *
@@ -571,6 +573,14 @@ function authRateLimited(request: Request): Response | null {
   return null;
 }
 
+/** An account a sign-in can name: whose it is and what signs in to it. */
+interface LoginAccount {
+  /** The address as the account spells it: the key of the lockout's state. */
+  email: string;
+  user: MockSessionUser;
+  password: string;
+}
+
 /**
  * The password lockout, which announces itself ONLY when the password is right.
  *
@@ -619,13 +629,6 @@ function authRateLimited(request: Request): Response | null {
  * registered, and so is a copy of the pool that nobody has claimed: the 401 of a wrong password,
  * and no counter. Read, not measured: that a running stack answers those two this way.
  */
-interface LoginAccount {
-  /** The address as the account spells it: the key of the lockout's state. */
-  email: string;
-  user: MockSessionUser;
-  password: string;
-}
-
 function accountForLogin(email: string | undefined): LoginAccount | null {
   if (!email) return null;
   const spelling = email.toLowerCase();
@@ -4201,8 +4204,8 @@ const register = http.post('*/bff/auth/register', async ({ request }) => {
  * POST /bff/auth/demo/claim: on the public demo, take a free demo copy and sign in to it.
  *
  * The answer is a sign-in's with the copy beside it, `{ data: { user, expiresAt, copy }, message }`,
- * and it is never to be stored: the copy's password is in it. The API's side of the claim is
- * `ClaimDemoCopy` in backend/src/AzureBank.Api/Controllers/AuthController.cs.
+ * and no cache may keep it (`Cache-Control: no-store`): the copy's password is in it. The API's
+ * side of the claim is `ClaimDemoCopy` in backend/src/AzureBank.Api/Controllers/AuthController.cs.
  *
  * A refused claim leaves the session it came with as it was. A claim that succeeds replaces it.
  *

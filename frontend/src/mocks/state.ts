@@ -585,9 +585,12 @@ function poolCopy(n: number, suffix: string, address: string, password: string):
  * Each has the shape the seeder gives a copy
  * (backend/tools/AzureBank.Seeder/Pool/DemoCredentials.cs): the owner is John Smith, his handle
  * and his two contacts' share one suffix of four characters, and the address is `demo-` and
- * sixteen characters that have nothing to do with the suffix, all in lower case. The passwords
- * have the shape a claim draws (backend/src/AzureBank.Api/Security/DemoPasswordGenerator.cs):
- * four groups of four, joined by hyphens. They are fixtures: no server knows any of them.
+ * sixteen characters drawn apart from the suffix, all in lower case. The first fixture's address
+ * is the exception: it begins with its own suffix, because it is the pair
+ * src/api/bffSchemas.test.ts and src/features/demo/claim.test.ts already use, so a test that
+ * looks for `k7m2` finds the address as well as the handles. The passwords have the shape a claim
+ * draws (backend/src/AzureBank.Api/Security/DemoPasswordGenerator.cs): four groups of four,
+ * joined by hyphens. They are fixtures: no server knows any of them.
  */
 export const MOCK_DEMO_POOL: readonly MockDemoCopy[] = [
   poolCopy(1, 'k7m2', 'k7m2x9q4w8e1r5t3', 'Xk7p-Rm3w-Hn8d-Tq5v'),
@@ -653,10 +656,12 @@ const DEMO_CONTACT_DISPLAY_NAMES = ['Jane S.', 'Mike B.'];
  * test that starts on a copy starts where a claim would have left the mock.
  *
  * The session is opened as a sign-in opens one: the owner, level 1 whatever the session before
- * had reached, both clocks at now, and the cookie on the page. The mock's data then becomes the
- * copy's: its two accounts, the seeded ledger ending on their balances, its two contacts as the
- * only people it can pay, and the demo's PIN with no miss counted and no lock, since the copy is
- * another user and nothing the last one did to its PIN is this one's.
+ * had reached, and both clocks at now. The session's cookie is put on the page as well, which
+ * `seedMockSession` does and the mock's sign-in handler does not: the mock slides a session's
+ * clock only for a request that carries it. The mock's data then becomes the copy's: its two
+ * accounts, the seeded ledger ending on their balances, its two contacts as the only people it
+ * can pay, and the demo's PIN with no miss counted and no lock, since the copy is another user
+ * and nothing the last one did to its PIN is this one's.
  *
  * The mock keeps one set of accounts, so what it shows is always the last copy claimed: signing
  * in again to an earlier copy shows the later one's money.
