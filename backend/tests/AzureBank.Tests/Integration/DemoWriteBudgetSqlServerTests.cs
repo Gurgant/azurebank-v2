@@ -153,8 +153,10 @@ public sealed class DemoWriteBudgetSqlServerTests
             var accounts = (await read.Content.ReadFromJsonAsync<ApiResponse<List<AccountResponse>>>(DemoVisitor.Json))!.Data!;
             accounts.Single(a => a.Id == savings.Id).Balance.Should().Be(savings.Balance + (Limit * 5m));
 
-            // Nothing was written for the refused request: the budget is asked before the
-            // idempotency claim is made.
+            // No record is left for the refused request. That alone does not say where the budget
+            // sits: asked after the idempotency claim, the record would be written and released
+            // again, and these two lines would still hold. That none is ever written is shown by
+            // AChange_IsCountedByOneStatement..., which reads the statements the host sent.
             records.Should().HaveCount(Limit, "one record for each deposit that was made");
             records.Should().NotContain(r => r.Key == eleventhKey);
         }
