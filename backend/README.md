@@ -491,7 +491,8 @@ The API is documented using **Scalar**, available at:
 | Category         | Endpoint                     | Method | Description         | Auth      |
 | ---------------- | ---------------------------- | ------ | ------------------- | --------- |
 | **Auth**         | `/api/auth/login`            | POST   | Authenticate user   | No        |
-|                  | `/api/auth/register`         | POST   | Register new user   | No        |
+|                  | `/api/auth/register`         | POST   | Register new user (on the public demo: 403 `REGISTRATION_CLOSED`) | No        |
+|                  | `/api/auth/demo/claim`       | POST   | On the public demo only: claim a prepared demo copy (404 while `Demo:Enabled` is false; ADR-0063) | No (the BFF names the visitor's address) |
 |                  | `/api/auth/refresh`          | POST   | Renew the access token with the session's grant | No (the grant is the credential) |
 |                  | `/api/auth/revoke`           | POST   | Revoke the grants of ended sessions | No (the grant is the credential) |
 |                  | `/api/auth/me`               | GET    | Get current user    | Yes       |
@@ -517,7 +518,8 @@ The API is documented using **Scalar**, available at:
 | Endpoint                   | Method | Description                            |
 | -------------------------- | ------ | -------------------------------------- |
 | `/bff/auth/login`          | POST   | Login via BFF (returns session cookie) |
-| `/bff/auth/register`       | POST   | Register via BFF                       |
+| `/bff/auth/register`       | POST   | Register via BFF (on the public demo: 403 `REGISTRATION_CLOSED`) |
+| `/bff/auth/demo/claim`     | POST   | On the public demo only: claim a private demo copy and open a session on it |
 | `/bff/auth/logout`         | POST   | Logout and clear session               |
 | `/bff/auth/me`             | GET    | Get user info with session details     |
 | `/bff/auth/session-status` | GET    | Check authentication status            |
