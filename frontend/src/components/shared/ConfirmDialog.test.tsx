@@ -275,9 +275,9 @@ describe('ConfirmDialog', () => {
     focus to the page (src/test/outage.ts: measured in Chromium). From the page, Tab does not pass
     through the dialog's key handler at all, and the next stop is whatever the page behind has.
 
-    jsdom leaves focus on the disabled button, which is not where a browser leaves it. The two
-    tests below run the emulation of the browser's part, so the wait they describe starts where a
-    visitor's does: with focus on the page.
+    jsdom leaves focus on the disabled button, which is not where a browser leaves it. Each test
+    below that presses the confirm calls `emulateFocusFixup()`, the emulation of the browser's
+    part, so the wait it describes starts where a visitor's does: with focus on the page.
   */
   it('keeps Tab inside when it starts waiting under the button that was pressed', async () => {
     const stopFixup = emulateFocusFixup();
@@ -366,7 +366,11 @@ describe('ConfirmDialog', () => {
   });
 
   it('closed while its caller still says it waits, it does not take focus back', async () => {
-    // CONTROL: green before this change
+    // Not a control. Without the effect that takes focus for a wait
+    // (src/components/shared/ConfirmDialog.tsx) this fails on `whileItWaited`: focus is on the
+    // page. Without the `isOpen &&` of that effect's condition it fails on `afterItWasClosed`:
+    // focus is inside the closed dialog.
+    //
     // The dialog takes focus when a wait starts while it is open. Closed, it is hidden and still
     // in the page: a wait that is still said to run must not pull focus into it, away from the
     // control that focus was just given back to.
