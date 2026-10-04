@@ -291,6 +291,36 @@ describe('a demo claim, in the demo', () => {
     expect({ before, after: accountsAnswersIn(store) }).toStrictEqual({ before: 1, after: 0 });
   });
 
+  it('…and whoever the store tells that the cache is gone finds the copy already kept', async () => {
+    enableDemoMode();
+    const store = makeTestStore();
+    await readAccounts(store);
+    // How many accounts answers the cache holds, and whose copy the browser keeps.
+    const look = () => {
+      const kept = keptInTheBrowser() as { email: string } | null;
+      return { accountsAnswers: accountsAnswersIn(store), keptAddress: kept?.email ?? null };
+    };
+    const beforeTheClaim = look();
+    // What a subscriber of the store finds each time it is told something, from the claim on.
+    const found: ReturnType<typeof look>[] = [];
+    const stopListening = store.subscribe(() => found.push(look()));
+
+    await claim(store);
+    stopListening();
+
+    const keptWhenTheCacheWasGone = found
+      .filter(({ accountsAnswers }) => accountsAnswers === 0)
+      .map(({ keptAddress }) => keptAddress);
+    expect({
+      beforeTheClaim,
+      // Every time, and there was at least one: a list with nothing in it would not equal this.
+      keptWhenTheCacheWasGone: [...new Set(keptWhenTheCacheWasGone)],
+    }).toStrictEqual({
+      beforeTheClaim: { accountsAnswers: 1, keptAddress: null },
+      keptWhenTheCacheWasGone: ['demo-k7m2x9q4w8e1r5t3@azurebank.example'],
+    });
+  });
+
   it('…and its password nowhere in the store', async () => {
     enableDemoMode();
     const store = makeTestStore();

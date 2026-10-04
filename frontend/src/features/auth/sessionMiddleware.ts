@@ -140,27 +140,28 @@ export const sessionMiddleware: Middleware = (middlewareApi) => (next) => (actio
 
   /*
     A demo claim that succeeded has opened a session on another copy, for a visitor who may have
-    been signed in to one a moment ago. Two things follow, and they follow HERE, in the dispatch
-    of the claim's own answer, so that every caller of the claim gets both and nothing is rendered
-    between the new owner and either of them. The reducers have already run by this line
-    (`next(action)` is the first statement above), so the auth slice already names the new owner.
+    been signed in to one a moment ago. Two things follow, and they follow HERE, so that every
+    caller of the claim gets both, in the same dispatch that signed the new owner in. The reducers
+    have already run by this line (`next(action)` is the first statement above), so the auth slice
+    already names the new owner.
 
     1. The copy is kept: its sign-in details go into the browser's storage
        (src/features/demo/demoCopyStorage.ts). What is kept is the answer's `copy`, so the end
        kept with it is the COPY's, `copy.expiresAt`, and never the access token's `expiresAt`
        beside `user`.
     2. The whole cache is dropped. The accounts and the history in it were fetched for whoever was
-       signed in before, and no tag would take them out: they would be shown to the new owner as
-       their own. The claim's own entry goes with them, and that entry holds the answer, the
-       copy's password and PIN included: the reset is what takes them out of the store.
+       signed in before, and a sign-in's `Session` tag would not take them out: they would still
+       be in the cache when the new owner's pages ask for theirs. The claim's own entry goes with
+       them, and that entry holds the answer, the copy's password and PIN included: the reset is
+       what takes them out of the store.
 
-    In that order. The reset is a dispatch, so the store's subscribers are told inside it; by then
-    the copy the browser keeps has to be the new owner's already, because who owns the kept copy
-    is decided by comparing the two. The other way round they would be told while the browser
-    still kept the copy that was just replaced.
+    In that order. The reset is a dispatch, so the store's subscribers are told when the cache
+    goes. With the copy written first, they are told of a cache that is gone beside the new
+    owner's copy, already kept. The other way round they would be told of it beside the copy that
+    was just replaced, and would hear of the new one only if they listen to the storage too.
 
     A claim that was refused does neither: it opened no session, and the session it came with
-    is alive.
+    is alive. src/features/demo/claim.test.ts holds each of these.
   */
   if (isFulfilled(action) && isActionOf(action, 'claimDemoCopy')) {
     writeDemoCopy((action.payload as BffDemoClaimResponse).copy);
@@ -174,7 +175,7 @@ export const sessionMiddleware: Middleware = (middlewareApi) => (next) => (actio
     The reason is the claim's second one. In the demo every visitor signs in to a copy of their
     own, and one browser can sign in to a copy while its cache still holds another's: a sign-out
     drops nothing, and a sign-in invalidates the `Session` tag only. The accounts of the copy
-    before would be shown to the owner of the next as their own.
+    before would still be in the cache when the owner of the next asks for theirs.
 
     Off the demo a sign-in drops nothing, exactly as before this branch existed. A deployment with
     the demo off has to behave as it did, down to the requests it makes, and what a sign-out
