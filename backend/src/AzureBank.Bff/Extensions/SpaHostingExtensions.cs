@@ -32,9 +32,10 @@ public static class SpaHostingExtensions
     /// carry them; it does nothing when <c>Spa:RootPath</c> is unset.
     /// </summary>
     /// <remarks>
-    /// On the public demo the page is the shell with <see cref="DemoTag"/> in its head, wherever
-    /// the shell is served: for a navigation, and for <c>/index.html</c> by its name. The file is
-    /// read once, here, and a shell the tag cannot be put in stops the host
+    /// On the public demo the page is the shell with <see cref="DemoTag"/> in its head: for a
+    /// navigation, and for <c>index.html</c> asked for by its name
+    /// (<see cref="IsTheShellByName"/> says which spellings of the name, and which it does not
+    /// hold). The file is read once, here, and a shell the tag cannot be put in stops the host
     /// (<see cref="WithDemoTag"/>).
     /// </remarks>
     public static WebApplication UseSpaHosting(this WebApplication app)
@@ -59,8 +60,8 @@ public static class SpaHostingExtensions
             /*
               /index.html BY ITS NAME, before the static files: they would answer it with the
               file's own bytes, without the tag, and the fallback below never sees it, since a
-              path with an extension is not a navigation. Any spelling of the name: on a file
-              system that ignores case the static files would answer "/INDEX.HTML" too.
+              path with an extension is not a navigation. And under the other spellings of the
+              name the static files answer with the file: IsTheShellByName lists them.
             */
             app.Use(async (context, next) =>
             {
@@ -175,10 +176,34 @@ public static class SpaHostingExtensions
         }
     }
 
-    /// <summary>A GET or a HEAD of <c>/index.html</c>, the shell asked for by its file name.</summary>
+    /// <summary>
+    /// A GET or a HEAD of the shell by its file name: <c>index.html</c> in any case, behind any
+    /// number of slashes and backslashes.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Those are spellings the static files answer with the file. Another case, where the file
+    /// system ignores it (<c>/INDEX.HTML</c>). More separators in front, which the file provider
+    /// trims before it looks the file up: slashes (<c>//index.html</c>) and backslashes
+    /// (<c>/%5Cindex.html</c>), both seen on Windows. The comparison is of texts and asks the file
+    /// system nothing: where a spelling does not name the file, as another case does not in a
+    /// directory that tells the two apart, the tagged page answers it all the same, in place of
+    /// the 404 it gets with the demo off.
+    /// </para>
+    /// <para>
+    /// <b>Not every spelling, on Windows.</b> There the static files also answer the file under
+    /// names only the file system resolves, and those are served as the file, without the tag: a
+    /// step back written with a backslash (<c>/assets/..%5Cindex.html</c>, <c>/.%5Cindex.html</c>)
+    /// and the file's short name (<c>/INDEX~1.HTM</c>). Each was seen on Windows with the demo
+    /// on, through the test server and with <c>curl --path-as-is</c> against the built host: 200
+    /// and the file's own bytes. A step back written with slashes
+    /// (<c>/assets/../index.html</c>) was answered with the tagged page there: the server
+    /// resolves it before the path is read.
+    /// </para>
+    /// </remarks>
     private static bool IsTheShellByName(HttpRequest request) =>
         (HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method))
-        && request.Path.Equals("/index.html", StringComparison.OrdinalIgnoreCase);
+        && request.Path.Value.AsSpan().TrimStart("/\\").Equals("index.html", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// A page navigation: GET or HEAD, outside the server's prefixes, and not a file name — a missing

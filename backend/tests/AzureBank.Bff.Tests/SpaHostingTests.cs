@@ -195,6 +195,35 @@ public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Progra
         }
     }
 
+    // More separators in front of the file's name. The static files' provider trims them before
+    // it looks the file up: slashes on every system, and on Windows backslashes too ("%5C" is one,
+    // decoded before the path is read). Red before the branch trimmed them: 200 with the file's
+    // own bytes, no tag (on Windows, all four rows).
+    [Theory]
+    [InlineData("//index.html")]
+    [InlineData("///INDEX.html")]
+    [InlineData("/%5Cindex.html")]
+    [InlineData("//%5C/index.html")]
+    public async Task WithTheDemoOn_IndexHtmlBehindMoreSeparators_IsTheTaggedPageToo(string path)
+    {
+        using var host = HostServing(ShellWithAHead, demo: true);
+        var client = host.CreateClient();
+
+        // An absolute address: a relative "//index.html" would name a host, not a path.
+        var address = new Uri("http://localhost" + path);
+        var response = await client.GetAsync(address);
+        var head = await client.SendAsync(new HttpRequestMessage(HttpMethod.Head, address));
+
+        using (new AssertionScope())
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            (await response.Content.ReadAsByteArrayAsync()).Should().Equal(Encoding.UTF8.GetBytes(TaggedShell));
+            (response.Content.Headers.ContentType?.CharSet).Should().Be("utf-8");
+            (head.Content.Headers.ContentLength).Should().Be(
+                Encoding.UTF8.GetByteCount(TaggedShell), "a HEAD names the length a GET would send: the tagged page's");
+        }
+    }
+
     [Theory]
     [InlineData("/")]
     [InlineData("/index.html")]
