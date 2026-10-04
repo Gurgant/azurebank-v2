@@ -16,6 +16,7 @@ using FluentAssertions.Execution;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Serilog.Events;
 using Xunit;
 
 namespace AzureBank.Tests.Integration;
@@ -617,6 +618,89 @@ public sealed class DemoModeEndpointTests : IDisposable
         {
             response.StatusCode.Should().Be(HttpStatusCode.MethodNotAllowed);
             response.Content.Headers.Allow.Should().Equal("POST");
+        }
+    }
+
+    // ── Through the BFF ──────────────────────────────────────────────────────────────────────────
+
+    private const string BffRegisterPath = "/bff/auth/register";
+
+    /// <summary>The request lines the API wrote for the endpoint at <paramref name="routePattern"/>.</summary>
+    private static int RequestLinesFor(CustomWebApplicationFactory api, string routePattern) =>
+        api.CapturedEvents.Count(e =>
+            e.MessageTemplate.Text.StartsWith("HTTP {RequestMethod} {RoutePattern} responded", StringComparison.Ordinal)
+            && e.Properties.TryGetValue("RoutePattern", out var pattern)
+            && pattern is ScalarValue { Value: string value }
+            && value == routePattern);
+
+    private static async Task<bool> EventuallyAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (!condition())
+        {
+            if (DateTime.UtcNow >= deadline)
+            {
+                return false;
+            }
+
+            await Task.Delay(25);
+        }
+
+        return true;
+    }
+
+    [Fact]
+    public async Task ThroughTheBff_WithBothOn_RegistrationIs403_AndTheApiSawNothing()
+    {
+        _demo.CaptureLog(LogEventLevel.Information);
+        using var bffHost = new BffOverApiFactory(_demo, CustomWebApplicationFactory.ServiceCredentialKey);
+        bffHost.EnableDemo();
+        using var browser = bffHost.CreateClient();
+        using var apiClient = _demo.CreateClient();
+        var usersBefore = await UsersAsync(_demo);
+
+        using var throughTheBff = new HttpRequestMessage(HttpMethod.Post, BffRegisterPath)
+        {
+            Content = new StringContent(ARegistration, Encoding.UTF8, "application/json"),
+        };
+        using var response = await browser.SendAsync(throughTheBff);
+
+        // Then the API itself, asked as the BFF's own client asks it: its refusal is what the
+        // BFF's is written after, and its request line is the control for the count below.
+        using var theApis = await apiClient.SendAsync(RegistrationOf(ARegistration, "application/json"));
+
+        var text = await response.Content.ReadAsStringAsync();
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden, text);
+        theApis.StatusCode.Should().Be(HttpStatusCode.Forbidden, "CONTROL: asked, the API refuses a registration on the demo");
+        (await EventuallyAsync(() => RequestLinesFor(_demo, RegisterPath) >= 1)).Should().BeTrue(
+            "CONTROL: the API writes a request line for a registration it is asked for");
+
+        using var problem = JsonDocument.Parse(text);
+        using var theApisProblem = JsonDocument.Parse(await theApis.Content.ReadAsStringAsync());
+        using (new AssertionScope())
+        {
+            var root = problem.RootElement;
+            var theApisRoot = theApisProblem.RootElement;
+
+            // The API's refusal, member for member, with the path the browser asked for.
+            root.EnumerateObject().Select(p => p.Name).Should().Equal(theApisRoot.EnumerateObject().Select(p => p.Name));
+            foreach (var member in new[] { "type", "title", "detail", "errorCode" })
+            {
+                root.GetProperty(member).GetString().Should().Be(theApisRoot.GetProperty(member).GetString(), "member {0}", member);
+            }
+
+            root.GetProperty("status").GetInt32().Should().Be(theApisRoot.GetProperty("status").GetInt32());
+            root.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.RegistrationClosed);
+            root.GetProperty("detail").GetString().Should().Be(RegistrationClosedException.Detail);
+            (response.Content.Headers.ContentType?.MediaType).Should().Be(theApis.Content.Headers.ContentType?.MediaType);
+            root.GetProperty("instance").GetString().Should().Be(
+                BffRegisterPath, "the refusal is the BFF's own: the API's names the API's path");
+            theApisRoot.GetProperty("instance").GetString().Should().Be(RegisterPath);
+
+            // The API saw one registration, the one this test sent it directly.
+            RequestLinesFor(_demo, RegisterPath).Should().Be(1, "the BFF refused without asking the API");
+            (await UsersAsync(_demo)).Should().Be(usersBefore, "no user was written");
+            response.Headers.Contains("Set-Cookie").Should().BeFalse("no session is opened");
         }
     }
 }

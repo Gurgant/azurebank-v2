@@ -308,7 +308,10 @@ try
     // the API the same key (BffAuthController.ClaimDemoCopy).
 
     // Recipient lookup is limited per AUTHENTICATED USER, not per IP: registration is open,
-    // so an attacker's cost unit is the throwaway account, not the address (ADR-0014).
+    // so an attacker's cost unit is the throwaway account, not the address (ADR-0014). On the
+    // public demo (Demo:Enabled) registration is closed and the throwaway account is a claimed
+    // demo copy, of which the API gives one client address Demo:Claim:MaxPerClientPerDay in a
+    // day: the unit is still the account.
     // Resolve the session cookie -> user id; fall back to the client IP for calls without a
     // session (which the API 401s regardless).
     static string LookupPartitionKey(HttpContext context)
@@ -480,6 +483,11 @@ try
 
     // 5. Rate limiting
     app.UseRateLimiter();
+
+    // 5b. What the public demo changes in this host's own doors (Demo:Enabled): while it is on,
+    // registration is closed. After the limiter, so a closed door still spends the auth policy's
+    // allowance; before the controllers, so the refusal does not depend on the body.
+    app.UseDemoMode();
 
     // 6. Auth level enforcement for sensitive routes (step-up authentication)
     app.UseAuthLevelEnforcement();

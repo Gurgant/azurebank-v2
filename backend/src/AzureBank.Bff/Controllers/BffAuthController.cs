@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using AzureBank.Bff.DTOs;
 using AzureBank.Bff.Http;
+using AzureBank.Bff.Middleware;
 using AzureBank.Bff.Models;
 using AzureBank.Bff.Observability;
 using AzureBank.Bff.Options;
@@ -139,10 +140,17 @@ public class BffAuthController : ControllerBase
     /// <summary>
     /// Register - forwards to API, stores JWT server-side, returns session cookie.
     /// </summary>
+    /// <remarks>
+    /// On the public demo (<c>Demo:Enabled</c>) registration is closed: <c>DemoModeMiddleware</c>
+    /// answers 403 <c>REGISTRATION_CLOSED</c> before this action runs, whatever the request
+    /// carries, and the API is not called.
+    /// </remarks>
     [HttpPost("register")]
     [EnableRateLimiting(RateLimitPolicies.Auth)]
+    [ClosedInDemo]
     [ProducesResponseType(typeof(ApiResponse<BffLoginResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)] // REGISTRATION_CLOSED in demo mode
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
     public async Task<IActionResult> Register([FromBody] RegisterRequest request)
     {
