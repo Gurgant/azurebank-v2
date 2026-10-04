@@ -6,6 +6,8 @@
 # generates, spelled as environment variables:
 #   SQL_SA_PASSWORD, JWT_SECRET, IDEMPOTENCY_HASH_KEY, STEPUP_BINDING_KEY, SERVICE_KEY,
 #   AUDIT_CHAIN_KEY, AUDIT_ANCHOR_KEY, PIN_PEPPER
+# A ninth, DEMO_CLIENT_KEY_SECRET, is needed only with compose.demo.yaml, whose header says what it
+# is; nothing in this file reads it.
 # The three connection strings below put SQL_SA_PASSWORD in single quotes, so it may hold `;` or
 # `=`; a password that holds a single quote is not supported by this file.
 # The database starts empty, and two one-shot containers of the tools image fill it before the API

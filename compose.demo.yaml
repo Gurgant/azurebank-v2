@@ -1,11 +1,18 @@
-# compose.yaml with the public demo turned on, on one machine. With the same variables compose.yaml
-# asks for:
+# compose.yaml with the public demo turned on, on one machine. With the variables compose.yaml asks
+# for and one more, DEMO_CLIENT_KEY_SECRET (32 characters or more: the API refuses a shorter one at
+# start):
 #   docker compose -f compose.yaml -f compose.demo.yaml up --build
 #
-# What changes. The `seed` one-shot runs `seed-pool` in place of `seed`, with Demo__Enabled=true:
+# What changes. The API and the BFF run with Demo__Enabled=true: POST /bff/auth/demo/claim hands a
+# visitor a private copy and its password, registration is closed (403 REGISTRATION_CLOSED from
+# either), and only the owner of a claimed copy can sign in. The API alone is given
+# DEMO_CLIENT_KEY_SECRET, as Demo__ClientKeySecret: on the copy a client claims it stores that
+# client's address only as a hash under this key.
+# The `seed` one-shot runs `seed-pool` in place of `seed`, with Demo__Enabled=true:
 # the database gets the demo pool's free copies (Demo:Pool:TargetFree of them, 50 by default), not
 # the four users whose password and PIN are in this repository (ADR-0062). The API starts once it
-# has exited 0, as before. A free copy has no password, so none can be signed in to.
+# has exited 0, as before. A free copy has no password, so none can be signed in to until it is
+# claimed.
 #
 # One volume, one kind of database. A volume this file filled holds the pool, and `seed` and
 # `reset` refuse it (exit 2) under compose.yaml alone; a volume compose.yaml filled holds the four
@@ -14,9 +21,13 @@
 #
 # Every `up` runs `seed-pool` again. It builds nothing while the pool holds its free copies, and once
 # they are older than 44 hours (Demo:Pool:MaxFreeAgeHours) it builds a new set beside them: only
-# `recycle` deletes the old ones. The app's registration is still open here, and an account made
-# through it is a user outside every copy: `seed-pool` counts it on its line and fills the pool all
-# the same, and `recycle` exits 13 for it.
+# `recycle` deletes the old ones.
+#
+# No number of the demo is set here, so every service runs on the defaults
+# (backend/tools/AzureBank.Seeder/README.md lists them). A value given to one service is given to
+# every service that reads it: Demo__CopyLifetimeHours to `api`, which ends a copy by it, and to
+# `recycle`, which deletes by it; Demo__Claim__MaxPerClientPerDay to `api`, which refuses a client
+# by it, and to `seed` and `recycle`, whose line counts the clients at their cap by it.
 #
 # `recycle`, the job a deployment runs on a schedule, is a service here under the profile `pool`,
 # so `up` leaves it out and it runs when asked:
@@ -31,6 +42,19 @@ services:
     command: ["seed-pool"]
     environment:
       Demo__Enabled: "true"
+
+  # The page carries the demo's tag, the claim is answered and registration is closed. The BFF
+  # holds no key of the demo's.
+  bff:
+    environment:
+      Demo__Enabled: "true"
+
+  # The API hands out the copies. The key is this service's alone: the pool's commands run
+  # without it.
+  api:
+    environment:
+      Demo__Enabled: "true"
+      Demo__ClientKeySecret: ${DEMO_CLIENT_KEY_SECRET:?set DEMO_CLIENT_KEY_SECRET}
 
   recycle:
     # The tools image the other one-shots run; a path here is read from compose.yaml's folder.
