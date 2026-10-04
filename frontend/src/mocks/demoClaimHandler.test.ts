@@ -313,6 +313,10 @@ describe("the mock's demo claim", () => {
 
   it('a claim with no readable body takes nothing', async () => {
     enableDemoMode();
+    // A live session, last active a minute ago. A refused claim leaves it as it was but for its
+    // clock, which a request that carries the cookie slides on the demo as it does off it.
+    const aMinuteAgo = Date.now() - 60_000;
+    mockState.sessionLastActivity = aMinuteAgo;
 
     const withNone = await claim(null);
     const notJson = await claim('not json');
@@ -322,7 +326,14 @@ describe("the mock's demo claim", () => {
       notJson: notJson.status,
       claimed: mockState.demoCopies,
       session: mockState.session,
-    }).toEqual({ withNone: 400, notJson: 400, claimed: [], session: MOCK_USER });
+      theClockSlid: mockState.sessionLastActivity > aMinuteAgo,
+    }).toEqual({
+      withNone: 400,
+      notJson: 400,
+      claimed: [],
+      session: MOCK_USER,
+      theClockSlid: true,
+    });
     // The pool as before: the next claim is handed its first copy.
     expect((await claimed()).copy.email).toBe(MOCK_DEMO_POOL[0].user.email);
   });
