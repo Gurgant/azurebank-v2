@@ -103,10 +103,11 @@ public sealed class DemoPoolCommandSqlServerTests
     [SqlServerFact]
     public async Task BesideAPool_AUserOutsideEveryCopy_DoesNotStopSeedPool_AndRecycleReportsIt()
     {
-        // A registration made through the app under compose.demo.yaml leaves such a user. seed-pool
-        // is the one-shot the API waits for, so an exit 13 there kept the API down until the volume
-        // was removed. It fills the pool and names the user on its line; recycle, the job that runs
-        // on a schedule, exits 13 for it, every run.
+        // Until 2026-10-04 a registration made through the app under compose.demo.yaml left such a
+        // user: that file ran the API and the BFF with the demo off. seed-pool is the one-shot the
+        // API waits for, so an exit 13 there kept the API down until the volume was removed. It
+        // fills the pool and names the user on its line; recycle, the job that runs on a schedule,
+        // exits 13 for it, every run.
         await using var database = await DemoPoolDatabase.CreateAsync();
         await database.BuildCopiesAsync(1);
         await AddAUserOutsideEveryCopyAsync(database);
