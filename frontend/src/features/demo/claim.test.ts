@@ -51,7 +51,7 @@ function claim(store: TestStore) {
 }
 
 describe('a demo claim', () => {
-  it('sends an empty JSON object, as the BFF requires', async () => {
+  it('sends an empty JSON object with a JSON content type', async () => {
     const seen: { body?: string; contentType?: string | null } = {};
     server.use(
       http.post(CLAIM, async ({ request }) => {
