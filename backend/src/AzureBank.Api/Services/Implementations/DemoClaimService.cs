@@ -136,10 +136,14 @@ public class DemoClaimService(
                 if (!await SetThePasswordAsync(won.OwnerUserId, passwordHash, securityStamp, concurrencyStamp, ct))
                 {
                     // A free copy has no password: the pool's builder never sets one. This copy's
-                    // owner has one, so somebody can already sign in to it, and it is not handed
-                    // out. (An owner that is not there at all, which no command leaves behind,
-                    // ends here too.) Throwing rolls the claim back; the copy stays free until
-                    // the pool's job removes it as too old.
+                    // owner has one, so somebody holds a password for it, and it is not handed
+                    // out. On the demo the sign-in gate refuses that password while the copy is
+                    // free, and lets it through once the copy is claimed with the password still
+                    // in place (DemoClaimSqlServerTests: AUserOutsideEveryCopy_... for the first;
+                    // WithTheDemoOff_ASignInSendsNoStatement..., whose copy is claimed by hand,
+                    // for the second). (An owner that is not there at all, which no command leaves
+                    // behind, ends here too.) Throwing rolls the claim back; the copy stays free
+                    // until the pool's job removes it as too old.
                     logger.LogError(
                         "Demo copy {CopyId} is free and its owner has a password; the claim was rolled back", won.Id);
                     throw new InvalidOperationException("A free demo copy's owner already has a password.");

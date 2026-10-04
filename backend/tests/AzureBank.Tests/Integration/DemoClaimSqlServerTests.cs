@@ -810,7 +810,7 @@ public sealed class DemoClaimSqlServerTests
         var free = (await database.BuildCopiesAsync(1)).Single();
 
         // Something other than a claim gave the owner a password. Handing the copy out would hand
-        // a visitor a copy that somebody else can already sign in to.
+        // a visitor a copy that somebody else holds a password for.
         await database.GiveOwnerAPasswordAsync(free);
         var before = (await database.CopyAsync(free.Id))!;
         before.Owner.PasswordHash.Should().NotBeNullOrEmpty("ARRANGE");
