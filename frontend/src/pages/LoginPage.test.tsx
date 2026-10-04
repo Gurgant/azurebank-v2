@@ -1387,6 +1387,32 @@ describe('the sign-in page on the demo, in a browser that keeps a copy', () => {
     });
   });
 
+  it('a copy whose end is the very instant the page opens is not offered, and is forgotten', async () => {
+    // This browser's clock stands at the copy's end. Only the date is held still: the timers run,
+    // so requests are answered.
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date(A_FAR_END) });
+    rememberAClaimedCopy({ expiresAt: A_FAR_END });
+    const keptBefore = keptAddress();
+
+    await openSignInPage();
+
+    expect({
+      keptBefore,
+      // The clock has not moved since: the instant the page opened at is the copy's end, to the
+      // millisecond.
+      clock: new Date().toISOString(),
+      kept: keptAddress(),
+      continue: buttonsNamed(WORDS.continue).length,
+      tryTheDemo: disabledOf(WORDS.tryTheDemo),
+    }).toStrictEqual({
+      keptBefore: FIRST_COPY,
+      clock: A_FAR_END,
+      kept: null,
+      continue: 0,
+      tryTheDemo: [false],
+    });
+  });
+
   it('a copy whose end passes while the page is open is still offered: the end is looked at when the page opens', async () => {
     // Half a minute left, by this browser's clock, when the page opens.
     rememberAClaimedCopy({ expiresAt: new Date(Date.now() + 30_000).toISOString() });
