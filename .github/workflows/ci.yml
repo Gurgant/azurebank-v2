@@ -742,11 +742,12 @@ jobs:
             --report-junit-path "$RUNNER_TEMP/schemathesis.xml" \
             --no-color
 
-      # The guard on the guard: a run that tested nothing would be green. The document declares 30
+      # The guard on the guard: a run that tested nothing would be green. The document declares 31
       # operations (PublishedOperationTitlesTests holds that floor too) and the JUnit report carries
       # one test case per operation plus one for the stateful phase. 27 until 2026-09-21, when the
       # withdrawal mint joined the contract (ADR-0056); 28 until 2026-09-28, when revoke did, and 29
-      # until the session-stamp feed did, the same day (ADR-0057 §5.3).
+      # until the session-stamp feed did, the same day (ADR-0057 §5.3); 30 until 2026-10-03, when
+      # the demo's claim did.
       - name: Assert the run covered the document
         if: always()
         run: |
@@ -756,8 +757,8 @@ jobs:
           cases = [c.get("name") for c in root.iter("testcase")]
           operations = [c for c in cases if c != "Stateful tests"]
           print(f"{len(operations)} operations tested, {len(cases)} test cases in the report")
-          if len(operations) < 30:
-              print(f"::error::Schemathesis tested {len(operations)} operations; the document declares 30")
+          if len(operations) < 31:
+              print(f"::error::Schemathesis tested {len(operations)} operations; the document declares 31")
               sys.exit(1)
           PY
 
