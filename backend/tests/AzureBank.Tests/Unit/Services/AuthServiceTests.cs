@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 using AzureBank.Api.Mappers;
 using AzureBank.Api.Observability;
 using AzureBank.Api.Security;
@@ -537,11 +539,66 @@ public class AuthServiceTests : IDisposable
             call.Method.Name == nameof(ILoginTimingEqualizer.SpendVerifyCost) && (string)call.Arguments[0] == password);
 
     /// <summary>
+    /// Counts <c>azurebank.logins</c> on the API's meter, by outcome, for the sign-ins of the test
+    /// that made it and for no others.
+    /// </summary>
+    /// <remarks>
+    /// The counter is one for the process, and other classes sign in while this one runs. A
+    /// measurement is heard inside the call that counts it, on the flow of the sign-in it belongs
+    /// to, so a marker that flows from a test into its own calls tells its sign-ins from everybody
+    /// else's: a test can say "one", where a count of the whole process could only say "at least
+    /// one". <see cref="TheLoginsCounted_AreThoseOfTheTestThatListens_AndNoOtherFlows"/> holds it.
+    /// </remarks>
+    private sealed class LoginOutcomes : IDisposable
+    {
+        private readonly MeterListener _listener = new();
+        private readonly ConcurrentDictionary<string, long> _counts = new(StringComparer.Ordinal);
+        private readonly AsyncLocal<bool> _countedHere = new();
+
+        public LoginOutcomes()
+        {
+            _countedHere.Value = true;
+            _listener.InstrumentPublished = (instrument, listener) =>
+            {
+                if (instrument.Meter.Name == ApiMetrics.MeterName && instrument.Name == "azurebank.logins")
+                {
+                    listener.EnableMeasurementEvents(instrument);
+                }
+            };
+            _listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
+            {
+                if (!_countedHere.Value)
+                {
+                    return;
+                }
+
+                foreach (var tag in tags)
+                {
+                    if (tag.Key == "azurebank.outcome" && tag.Value is string outcome)
+                    {
+                        _counts.AddOrUpdate(outcome, value, (_, sum) => sum + value);
+                    }
+                }
+            });
+            _listener.Start();
+        }
+
+        /// <summary>The sign-ins counted so far, by outcome. An outcome that was never counted is not there.</summary>
+        public Dictionary<string, long> Counted => new(_counts, StringComparer.Ordinal);
+
+        public void Dispose() => _listener.Dispose();
+    }
+
+    private static Dictionary<string, long> Outcomes(params (string Outcome, long Count)[] counted) =>
+        counted.ToDictionary(c => c.Outcome, c => c.Count, StringComparer.Ordinal);
+
+    /// <summary>
     /// Signs in as <paramref name="user"/> with the right password and asserts the refusal an
     /// unknown email gets, with nothing of what a known user's attempt leaves behind.
     /// </summary>
     private async Task ShouldBeRefusedAsAnUnknownEmailIsAsync(AuthService service, ApplicationUser user, string reason)
     {
+        using var outcomes = new LoginOutcomes();
         var thrown = await Record.ExceptionAsync(() => service.LoginAsync(GateRequest(user)));
 
         var after = await ReloadAsync(user.Id);
@@ -563,6 +620,10 @@ public class AuthServiceTests : IDisposable
             // What an operator reads: which user, and which of the four reasons. Never the address.
             LoggedLines().Should().Equal(
                 [$"Information: Sign-in refused by the demo gate for user {user.Id} ({reason})"]);
+
+            // And what the logins counter is told: one failed sign-in, as for an unknown email.
+            outcomes.Counted.Should().Equal(
+                Outcomes(("failed", 1)), "a refusal by the gate is counted as one failed sign-in, and as nothing else");
         }
     }
 
@@ -576,6 +637,7 @@ public class AuthServiceTests : IDisposable
 
         // And beside it, an email nobody has: the two refusals are one.
         _userManagerMock.Setup(x => x.FindByEmailAsync("nobody@example.com")).ReturnsAsync((ApplicationUser?)null);
+        using var outcomes = new LoginOutcomes();
         var unknown = await Record.ExceptionAsync(
             () => service.LoginAsync(new LoginRequest { Email = "nobody@example.com", Password = "Another-Pass-1!" }));
         var gated = await Record.ExceptionAsync(() => service.LoginAsync(GateRequest(outsider)));
@@ -588,6 +650,8 @@ public class AuthServiceTests : IDisposable
             ((gated as AppException)?.ErrorCode).Should().Be((unknown as AppException)?.ErrorCode);
             ((gated as AppException)?.StatusCode).Should().Be((unknown as AppException)?.StatusCode).And.Be(401);
             VerifyCostsSpentOn("Another-Pass-1!").Should().Be(1, "CONTROL: the unknown email's attempt spends the cost once too");
+            outcomes.Counted.Should().Equal(
+                Outcomes(("failed", 2)), "the counter is told the same of each: two failed sign-ins, the unknown email's and the gated user's");
         }
     }
 
@@ -615,6 +679,7 @@ public class AuthServiceTests : IDisposable
         var owner = SeedCopyOwner("liveowner", claimedAt);
 
         // One second before the copy's end: the owner signs in.
+        using var outcomes = new LoginOutcomes();
         var signedIn = await service.LoginAsync(GateRequest(owner));
 
         using (new AssertionScope())
@@ -624,6 +689,8 @@ public class AuthServiceTests : IDisposable
             PasswordChecks().Should().Be(1, "inside the copy's time the password decides, as on any deployment");
             VerifyCostsSpentOn(GatePassword).Should().Be(0);
             (await ReloadAsync(owner.Id)).AccessFailedCount.Should().Be(0, "a sign-in clears the failed attempts, as it always did");
+            outcomes.Counted.Should().Equal(
+                Outcomes(("succeeded", 1)), "CONTROL: a sign-in the gate lets through is counted as one that succeeded");
         }
 
         // At the end exactly, to the second: the copy is over.
@@ -640,6 +707,9 @@ public class AuthServiceTests : IDisposable
             _refreshTokenServiceMock.Invocations.Should().HaveCount(1, "the one grant is the earlier sign-in's");
             LoggedLines().Should().Contain(
                 $"Information: Sign-in refused by the demo gate for user {owner.Id} (CopyEnded)");
+            outcomes.Counted.Should().Equal(
+                Outcomes(("succeeded", 1), ("failed", 1)),
+                "the refusal at the copy's end is one failed sign-in, beside the earlier one that succeeded");
         }
     }
 
@@ -671,6 +741,44 @@ public class AuthServiceTests : IDisposable
         // what refused the contact is the missing password.
         var signedIn = await service.LoginAsync(GateRequest(owner));
         signedIn.User.Id.Should().Be(owner.Id);
+    }
+
+    // CONTROL of the listener the tests above count with, and not of the gate: green as written.
+    // A sign-in counted on a flow that did not come from the test, as another class's is in a
+    // whole run, is not this test's, and each listener hears its own.
+    [Fact]
+    public async Task TheLoginsCounted_AreThoseOfTheTestThatListens_AndNoOtherFlows()
+    {
+        static void Count(string outcome) =>
+            ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("azurebank.outcome", outcome));
+
+        using var mine = new LoginOutcomes();
+
+        // As another test would: with a listener of its own, on a flow that is not this one's.
+        Task<Dictionary<string, long>> elsewhere;
+        using (ExecutionContext.SuppressFlow())
+        {
+            elsewhere = Task.Run(() =>
+            {
+                using var theirs = new LoginOutcomes();
+                Count("locked");
+                return theirs.Counted;
+            });
+        }
+
+        var theirsCounted = await elsewhere;
+        using (new AssertionScope())
+        {
+            theirsCounted.Should().Equal(
+                Outcomes(("locked", 1)), "CONTROL: the other flow's sign-in was counted, and its own listener heard it");
+            mine.Counted.Should().BeEmpty("a sign-in counted on another flow is another test's");
+        }
+
+        // This test's own, before and after it yields: the marker follows the flow across an await.
+        Count("failed");
+        await Task.Yield();
+        Count("failed");
+        mine.Counted.Should().Equal(Outcomes(("failed", 2)));
     }
 
     // CONTROL: green before this change. With the demo off the gate reads nothing: the same four
