@@ -359,6 +359,24 @@ describe('the demo block of the sign-in page, for a browser that keeps a copy', 
     });
   });
 
+  it('the focus is put on "Try the demo" once, when the block first says the copy was forgotten', () => {
+    const { control, drawAgain } = renderBlock({ copy: KEPT });
+    drawAgain({ copy: null, forgotten: true });
+    const atTheForgetting = document.activeElement === control(WORDS.tryTheDemo);
+
+    // The visitor moves on, and the page draws the block again for a reason of its own. The block
+    // still says the copy was forgotten: that it says so is not a reason to take the focus back.
+    control(WORDS.tryTheDemo).blur();
+    const movedOn = document.activeElement === document.body;
+    drawAgain({ copy: null, forgotten: true });
+
+    expect({
+      atTheForgetting,
+      movedOn,
+      afterALaterDraw: document.activeElement === control(WORDS.tryTheDemo),
+    }).toStrictEqual({ atTheForgetting: true, movedOn: true, afterALaterDraw: false });
+  });
+
   it('a copy the browser keeps again is not said to be forgotten, and takes no focus', () => {
     // "Forget this copy" was pressed on this page, and the browser has since been handed a copy
     // again: by a claim from this page, or by another tab.

@@ -1419,6 +1419,32 @@ describe('the sign-in page on the demo, in a browser that keeps a copy', () => {
     expectNoNestedLiveRegions();
   });
 
+  it('after "Forget this copy", the page drawn again leaves focus where the visitor put it', async () => {
+    rememberAClaimedCopy();
+    await openSignInPage();
+    await userEvent.click(forgetLink());
+    const atTheForgetting = document.activeElement === buttonsNamed(WORDS.tryTheDemo)[0];
+
+    // The visitor goes on to the form. The password's eye button draws the page again, for a
+    // reason of its own: its name changes with the press, so the page was drawn again.
+    await userEvent.click(screen.getByRole('button', { name: 'Show password' }));
+    const focused = document.activeElement;
+
+    expect({
+      atTheForgetting,
+      drawnAgain: buttonsNamed('Hide password').length,
+      // Still said, and that it is said does not take the focus back to "Try the demo".
+      said: forgetStatuses().map((region) => region.textContent),
+      // By its name: the eye button's is a label, a button with words is named by them.
+      focusOn: focused?.getAttribute('aria-label') ?? focused?.textContent,
+    }).toStrictEqual({
+      atTheForgetting: true,
+      drawnAgain: 1,
+      said: [WORDS.forgotten],
+      focusOn: 'Hide password',
+    });
+  });
+
   it('"Get a new copy" opens the one dialog, and "Keep this copy" keeps the copy', async () => {
     rememberAClaimedCopy();
     const { requests, settled } = await openSignInPage();
