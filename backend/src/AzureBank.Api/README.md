@@ -176,7 +176,8 @@ On the public demo two more things hold, both in the API (ADR-0063): sign-in let
 owner of a claimed demo copy whose time is not over, and answers everybody else as an email nobody
 has; and each request of a signed-in user that could change something, and each reveal of an
 account number, is counted on that user's copy, the one past `Demo:Copy:MaxWrites` being 429
-`DEMO_COPY_LIMIT`.
+`DEMO_COPY_LIMIT`. A token endpoint is never counted: of the six, only signing out everywhere
+asks for a signed-in user, and it is answered the same whatever the copy has spent.
 
 ### Accounts (`/api/accounts`)
 
