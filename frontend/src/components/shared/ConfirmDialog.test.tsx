@@ -483,6 +483,32 @@ describe('ConfirmDialog', () => {
     });
   });
 
+  it('gives its title a line of its own, with the message under it', () => {
+    /*
+      Fluent's `Text` draws inline whatever element it is asked for, a heading too. A title left
+      inline shares its line with the message that follows it in the document, with nothing
+      between the two ("Delete account?This can't be undone."), and the margin under it does
+      nothing. jsdom lays nothing out, so no line can be measured here. This holds the cause: what
+      the title's box is declared as, the space declared under it, and that the message is the
+      element right after it.
+    */
+    renderOpen();
+    const title = document.getElementById(dialog().getAttribute('aria-labelledby') ?? '');
+    const description = document.getElementById(dialog().getAttribute('aria-describedby') ?? '');
+
+    expect({
+      title: title?.textContent,
+      drawnAs: title ? getComputedStyle(title).display : null,
+      spaceUnderIt: title ? getComputedStyle(title).marginBottom : null,
+      thenTheMessage: title !== null && title.nextElementSibling === description,
+    }).toStrictEqual({
+      title: 'Delete account?',
+      drawnAs: 'block',
+      spaceUnderIt: '8px',
+      thenTheMessage: true,
+    });
+  });
+
   /*
     A WAIT THAT STARTS UNDER THE VISITOR'S HANDS, which is not the wait the tests above open the
     dialog in.

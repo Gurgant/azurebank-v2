@@ -154,7 +154,10 @@ const useStyles = makeStyles({
     padding: '16px 20px 24px',
   },
 
+  // A block: Fluent's `Text` draws inline whatever element it is asked for, and an inline title
+  // shares its line with the message that follows it, with the margin below doing nothing.
   title: {
+    display: 'block',
     fontSize: '18px',
     fontWeight: 600,
     color: colors.neutral[800],
