@@ -723,6 +723,22 @@ describe('the sign-in page on the demo, in a browser that keeps no copy', () => 
     }).toStrictEqual({ requests: [1, 1], saysAllCopiesInUse: 0 });
   });
 
+  it('a refused sign-in is no longer said while the claim that follows it runs', async () => {
+    await openSignInPage({ claim: never });
+    await fillTheForm(NOBODY, 'Wrong-Pass-1!');
+    await userEvent.click(signInButton());
+    await waitFor(() => expect(alerts()).toStrictEqual([WORDS.wrongPassword]));
+
+    await userEvent.click(tryTheDemo());
+
+    // The claim is on its way and has no answer: its button waits. The page reads the claim's
+    // refusal from the press on, not from the claim's answer on, and there is none to read yet.
+    await waitFor(() =>
+      expect(buttonsNamed(WORDS.tryTheDemo).map((button) => button.disabled)).toStrictEqual([true]),
+    );
+    expect(alerts()).toStrictEqual([]);
+  });
+
   it('the form still signs in on the demo, and lands where the visitor was going', async () => {
     // CONTROL: green before this change
     // A copy somebody claimed earlier, whose email and password the visitor types: on the demo
