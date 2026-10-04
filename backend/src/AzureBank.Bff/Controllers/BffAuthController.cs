@@ -208,6 +208,114 @@ public class BffAuthController : ControllerBase
     }
 
     /// <summary>
+    /// Claim a demo copy - asks the API for one, stores its JWT server-side, returns session cookie
+    /// and what signs in to the copy again.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Only on the public demo.</b> While <c>Demo:Enabled</c> is false,
+    /// <c>DemoModeMiddleware</c> answers 404 before this action runs, as for a path the BFF does
+    /// not have. The API has a flag of its own: with this one on and the API's off, the API
+    /// answers the claim 404 and that 404 is what the browser gets.
+    /// </para>
+    /// <para>
+    /// <b>The browser sends nothing the claim uses.</b> The body is an empty object (see
+    /// <see cref="BffDemoClaimRequest"/> for why it is a body at all). The one thing the API is
+    /// told is the visitor's address, and it is the key the rate limiters count this request under
+    /// (<see cref="ClientAddress.Of"/>): the copies one client may claim in a day are counted by
+    /// it, so a client is the same client to both.
+    /// </para>
+    /// <para>
+    /// <b>A door that opens a session, written as sign-in is.</b> The session holds the token, the
+    /// grant, the grant's expiry (its end, when that comes before the configured cap) and the
+    /// user's session stamp, all as the API answered them. The new cookie is set first, and only
+    /// then is the session the request's cookie named ended and its grant queued for revocation
+    /// (ADR-0026's order, ADR-0057 §4.6): a claim the API refuses never gets that far, so it
+    /// leaves the visitor in the session they had. That is also how a visitor starts over: a
+    /// second claim gives another copy and ends the session on the first; the first copy stays
+    /// claimed.
+    /// </para>
+    /// <para>
+    /// <b>The answer carries the copy's password and is never stored.</b> It is the only time
+    /// that password exists outside its hash, so the answer is marked <c>no-store</c>, as the
+    /// API's own is. The tokens stay here, as at every door.
+    /// </para>
+    /// </remarks>
+    [HttpPost("demo/claim")]
+    [EnableRateLimiting(RateLimitPolicies.Auth)]
+    [DemoOnly]
+    [ProducesResponseType(typeof(ApiResponse<BffDemoClaimResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)] // the demo is off: here (no body) or in the API (its problem body)
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)] // DEMO_POOL_EMPTY, DEMO_DAILY_LIMIT, RATE_LIMIT_EXCEEDED
+    public async Task<IActionResult> ClaimDemoCopy([FromBody] BffDemoClaimRequest request)
+    {
+        try
+        {
+            var response = await _httpClient.PostAsJsonAsync(
+                "/api/auth/demo/claim",
+                new DemoClaimRequest { ClientAddress = ClientAddress.Of(HttpContext) });
+            var content = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                // The API's refusal as it wrote it, with its Retry-After when it named a wait: no
+                // free copy, this client's copies for today used up, or a demo that is off there.
+                return ForwardUpstreamError(response, content);
+            }
+
+            var claim = ReadData<DemoClaimResponse>(content);
+
+            // The same token object sign-in answers, read the same way: the JWT, its grant (for
+            // renewals), the grant's expiry (the session's cap, ADR-0057 §4.1), the copy's owner
+            // and the owner's session stamp (ADR-0057 §5.3).
+            var sessionId = _sessionService.CreateSession(
+                claim.Token.AccessToken,
+                claim.Token.ExpiresAt,
+                claim.Token.RefreshToken,
+                claim.Token.RefreshTokenExpiresAt,
+                claim.User,
+                claim.Token.SessionStamp);
+
+            // Set HTTP-only session cookie
+            SetSessionCookie(sessionId);
+            EndTheSessionThisRequestCameWith(sessionId);
+
+            // The answer carries a password: it must never land in a cache, the rule the API's own
+            // answer and the unmasked account number follow (ASVS 14.3.2).
+            Response.Headers.CacheControl = "no-store";
+            Response.Headers.Pragma = "no-cache";
+
+            _logger.LogInformation("User {UserId} claimed a demo copy via BFF", claim.User.Id);
+
+            // Return the user and the copy (WITHOUT the JWT token)
+            return Ok(new ApiResponse<BffDemoClaimResponse>
+            {
+                Data = new BffDemoClaimResponse
+                {
+                    User = new UserSessionInfo
+                    {
+                        Id = claim.User.Id,
+                        Email = claim.User.Email,
+                        FirstName = claim.User.FirstName,
+                        LastName = claim.User.LastName,
+                        AzureTag = claim.User.AzureTag,
+                        HasPin = claim.User.HasPin
+                    },
+                    ExpiresAt = claim.Token.ExpiresAt,
+                    Copy = claim.Copy
+                },
+                Message = "Demo copy claimed"
+            });
+        }
+        catch (Exception ex) when (OutageReason(ex) is { } reason)
+        {
+            // Nothing was opened and nothing ended: the visitor is still in the session they came
+            // with, if they had one.
+            return ApiOutage(ex, reason);
+        }
+    }
+
+    /// <summary>
     /// Re-authenticate at the absolute session cap: proves the password, then starts a NEW session.
     /// </summary>
     /// <remarks>
@@ -896,8 +1004,8 @@ public class BffAuthController : ControllerBase
     }
 
     /// <summary>
-    /// A new sign-in or registration ends the session whose cookie came with it (ADR-0057 §4.6,
-    /// F13).
+    /// A new sign-in, registration or demo claim ends the session whose cookie came with it
+    /// (ADR-0057 §4.6, F13).
     /// </summary>
     /// <remarks>
     /// Called after the new session exists and its cookie is set, the order re-authentication keeps
@@ -999,8 +1107,8 @@ public class BffAuthController : ControllerBase
     /// One exception to "verbatim": the API refusing this host's service key becomes a 503 with
     /// <c>Retry-After</c> (ADR-0057 §4.7, F4). It is a key rotation applied on one side, not a
     /// verdict on the user, and forwarded as the 401 it is it would sign the user out of the SPA.
-    /// Every call site gets it here: sign-in, registration, re-authentication, verify-pin, set-pin
-    /// and rename.
+    /// Every call site gets it here: sign-in, registration, the demo claim, re-authentication,
+    /// verify-pin, set-pin and rename.
     /// <para>
     /// The API's <c>Retry-After</c> and <c>Cache-Control</c> are forwarded with its error whenever its
     /// status is: the outage 503's wait and <c>no-store</c> (ADR-0058), and a sign-in or PIN

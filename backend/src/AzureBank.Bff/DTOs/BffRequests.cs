@@ -31,3 +31,27 @@ public class BffReauthenticateRequest
     [MaxLength(ValidationRules.PasswordMaxLength)]
     public required string Password { get; set; }
 }
+
+/// <summary>
+/// The body of <c>POST /bff/auth/demo/claim</c>: an empty object.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>It has no member, and that is the point.</b> The claim needs nothing from the browser: a
+/// visitor has no account yet, and the address their copies are counted by is the connection's
+/// (<c>ClientAddress.Of</c>), never one a request names. A member here would be a place to name
+/// one.
+/// </para>
+/// <para>
+/// <b>It is still a body, and it has to be JSON.</b> <c>[FromBody]</c> on an
+/// <c>[ApiController]</c> action answers a request that is not JSON before the action runs: 415
+/// to a form, to plain text and to no body at all, 400 to JSON that is not an object
+/// (<c>DemoClaimTests.HostileBodies_...</c> holds each). A page of another site can make a
+/// browser post a form or plain text without asking first; it cannot make it send JSON. So a
+/// claim cannot be started from somebody else's page, also from a browser that sends no
+/// <c>Sec-Fetch-Site</c> for the Fetch-Metadata rule to judge by (ADR-0018).
+/// </para>
+/// </remarks>
+public class BffDemoClaimRequest
+{
+}

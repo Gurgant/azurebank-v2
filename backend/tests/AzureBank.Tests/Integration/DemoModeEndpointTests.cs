@@ -650,6 +650,40 @@ public sealed class DemoModeEndpointTests : IDisposable
     }
 
     [Fact]
+    public async Task ThroughTheBff_WithTheApisDemoOff_TheClaimIs404()
+    {
+        // The two hosts' flags are two settings. A BFF with the demo on in front of an API with it
+        // off has the door, asks, and is answered as for a path the API does not have: nobody is
+        // given a copy by half a demo. The copy below is free, so the 404 is not for lack of one.
+        _ordinary.CaptureLog(LogEventLevel.Information);
+        var copy = await HandMadeDemoCopy.CreateAsync(_ordinary);
+        using var bffHost = new BffOverApiFactory(_ordinary, CustomWebApplicationFactory.ServiceCredentialKey);
+        bffHost.EnableDemo();
+        using var browser = bffHost.CreateClient();
+
+        using var response = await browser.PostAsync(
+            "/bff/auth/demo/claim", new StringContent("{}", Encoding.UTF8, "application/json"));
+
+        var text = await response.Content.ReadAsStringAsync();
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound, text);
+        text.Should().NotBeEmpty("the answer is the API's, with the body it wrote: this BFF has the door and asked");
+        (await EventuallyAsync(() => RequestLinesFor(_ordinary, ClaimPath) >= 1)).Should().BeTrue(
+            "the API was asked: it writes a request line for the claim it refused");
+        using var body = JsonDocument.Parse(text);
+        using (new AssertionScope())
+        {
+            body.RootElement.GetProperty("status").GetInt32().Should().Be(404);
+            body.RootElement.GetProperty("title").GetString().Should().Be("Not Found");
+            RequestLinesFor(_ordinary, ClaimPath).Should().Be(1);
+            response.Headers.Contains("Set-Cookie").Should().BeFalse("no session is opened");
+
+            var row = await copy.RowAsync(_ordinary);
+            row.ClaimedAt.Should().BeNull("no copy was taken");
+            (await copy.OwnerPasswordHashAsync(_ordinary)).Should().BeNull();
+        }
+    }
+
+    [Fact]
     public async Task ThroughTheBff_WithBothOn_RegistrationIs403_AndTheApiSawNothing()
     {
         _demo.CaptureLog(LogEventLevel.Information);

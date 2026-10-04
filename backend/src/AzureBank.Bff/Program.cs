@@ -485,8 +485,9 @@ try
     app.UseRateLimiter();
 
     // 5b. What the public demo changes in this host's own doors (Demo:Enabled): while it is on,
-    // registration is closed. After the limiter, so a closed door still spends the auth policy's
-    // allowance; before the controllers, so the refusal does not depend on the body.
+    // registration is closed; while it is off, the claim is answered as a path that is not there.
+    // After the limiter, so either door still spends the auth policy's allowance; before the
+    // controllers, so neither answer depends on the body.
     app.UseDemoMode();
 
     // 6. Auth level enforcement for sensitive routes (step-up authentication)

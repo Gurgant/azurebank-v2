@@ -1,4 +1,5 @@
 using AzureBank.Bff.Models;
+using AzureBank.Shared.DTOs.Auth;
 
 namespace AzureBank.Bff.DTOs;
 
@@ -10,6 +11,28 @@ public class BffLoginResponse
 {
     public required UserSessionInfo User { get; set; }
     public required DateTime ExpiresAt { get; set; }
+}
+
+/// <summary>
+/// Response for /bff/auth/demo/claim: the user and the access token's expiry, as sign-in answers
+/// them, and the demo copy the visitor was given. Excludes the tokens, as every answer of this
+/// host does.
+/// </summary>
+public class BffDemoClaimResponse
+{
+    public required UserSessionInfo User { get; set; }
+
+    /// <summary>
+    /// When the access token expires, as <see cref="BffLoginResponse.ExpiresAt"/>. Not the copy's
+    /// end, which is <see cref="DemoCopyInfo.ExpiresAt"/> on <see cref="Copy"/>.
+    /// </summary>
+    public required DateTime ExpiresAt { get; set; }
+
+    /// <summary>
+    /// The copy, as the API answered it: what signs in to it again, whom it can pay, and when it
+    /// ends. The password is in this answer and nowhere else.
+    /// </summary>
+    public required DemoCopyInfo Copy { get; set; }
 }
 
 /// <summary>

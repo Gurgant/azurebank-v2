@@ -10,14 +10,17 @@ using AzureBank.Api.Observability;
 using AzureBank.Api.Security;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
+using AzureBank.Shared.DTOs.Account;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
+using AzureBank.Shared.DTOs.Transaction;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Options;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using FluentAssertions.Execution;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -1660,6 +1663,196 @@ public sealed class DemoClaimSqlServerTests
                 "CONTROL: and its grant was written");
             withTheDemoOff.Should().NotContain(
                 statement => ReadsOrWritesThePool(statement), "with the demo off the gate reads nothing");
+        }
+    }
+
+    // ── Through the BFF ──────────────────────────────────────────────────────────────────────────
+
+    /// <summary>The real BFF, with the demo on, in front of <paramref name="api"/>.</summary>
+    private static BffOverApiFactory DemoBffOver(CustomWebApplicationFactory api)
+    {
+        var bffHost = new BffOverApiFactory(api, CustomWebApplicationFactory.ServiceCredentialKey);
+        bffHost.EnableDemo();
+        return bffHost;
+    }
+
+    /// <summary>
+    /// A client that keeps no cookies of its own, so every request carries exactly the session the
+    /// test names.
+    /// </summary>
+    private static HttpClient BrowserOf(BffOverApiFactory bffHost) =>
+        bffHost.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+
+    /// <summary>A request as a browser sends it: the session cookie when it has one, JSON when it has a body.</summary>
+    private static HttpRequestMessage FromTheBrowser(HttpMethod method, string path, string? cookie = null, object? body = null)
+    {
+        var request = new HttpRequestMessage(method, path);
+        if (cookie is not null)
+        {
+            request.Headers.Add("Cookie", cookie);
+        }
+
+        if (body is not null)
+        {
+            request.Content = JsonContent.Create(body, body.GetType(), options: DemoVisitor.Json);
+        }
+
+        return request;
+    }
+
+    /// <summary>The claim as the application sends it: an empty object.</summary>
+    private static HttpRequestMessage BffClaim(string? cookie = null) =>
+        FromTheBrowser(HttpMethod.Post, "/bff/auth/demo/claim", cookie, new { });
+
+    /// <summary>The session cookie an answer of the BFF set, as the pair a browser sends back.</summary>
+    private static string SessionCookieOf(HttpResponseMessage response)
+    {
+        response.Headers.TryGetValues("Set-Cookie", out var cookies).Should().BeTrue("the answer sets the session cookie");
+        return cookies!.Single().Split(';')[0];
+    }
+
+    /// <summary>The accounts the session behind <paramref name="cookie"/> reads through the BFF's proxy.</summary>
+    private static async Task<List<AccountResponse>> AccountsThroughTheProxyAsync(HttpClient browser, string cookie)
+    {
+        using var response = await browser.SendAsync(FromTheBrowser(HttpMethod.Get, "/api/accounts", cookie));
+        response.StatusCode.Should().Be(
+            HttpStatusCode.OK, "the session reads its accounts through the proxy ({0})", await AnswerOfAsync(response));
+        return (await response.Content.ReadFromJsonAsync<ApiResponse<List<AccountResponse>>>(DemoVisitor.Json))!.Data!;
+    }
+
+    /// <summary>The balances every copy starts with, largest first: Main Savings and Checking.</summary>
+    private static readonly decimal[] StartingBalances = [12450.00m, 2300.00m];
+
+    [SqlServerFact]
+    public async Task ThroughTheBff_AClaim_OpensASession_AndTheProxyReadsTheCopysTwoAccounts()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var free = (await database.BuildCopiesAsync(1)).Single();
+        var api = database.DemoApi();
+        using var bffHost = DemoBffOver(api);
+        using var browser = BrowserOf(bffHost);
+
+        using var response = await browser.SendAsync(BffClaim());
+
+        var text = await response.Content.ReadAsStringAsync();
+        response.StatusCode.Should().Be(HttpStatusCode.OK, "a free copy is there to be claimed ({0})", await AnswerOfAsync(response));
+        var cookie = SessionCookieOf(response);
+        using var claim = JsonDocument.Parse(text);
+        var data = claim.RootElement.GetProperty("data");
+
+        using var me = await browser.SendAsync(FromTheBrowser(HttpMethod.Get, "/bff/auth/me", cookie));
+        var meText = await me.Content.ReadAsStringAsync();
+        me.StatusCode.Should().Be(HttpStatusCode.OK, "the cookie the claim set names a session ({0})", await AnswerOfAsync(me));
+        using var meBody = JsonDocument.Parse(meText);
+        var accounts = await AccountsThroughTheProxyAsync(browser, cookie);
+        var row = (await database.CopyAsync(free.Id))!.Row;
+
+        using (new AssertionScope())
+        {
+            // The answer: the copy's owner, what signs in to the copy again, and no token.
+            data.GetProperty("user").GetProperty("id").GetGuid().Should().Be(free.Owner.Id);
+            data.GetProperty("copy").GetProperty("email").GetString().Should().Be(free.Owner.Email);
+            data.GetProperty("copy").GetProperty("contacts").EnumerateArray().Select(c => c.GetString()).Should().Equal(
+                new[] { free.Jane.AzureTag, free.Mike.AzureTag }.Order(StringComparer.Ordinal));
+            text.Should().NotContain("oken", "the tokens stay in the BFF's store");
+            (response.Headers.CacheControl?.NoStore).Should().BeTrue("the answer carries a password");
+
+            // The session: the visitor is the copy's owner, and the proxy reads the owner's two accounts.
+            meBody.RootElement.GetProperty("data").GetProperty("user").GetProperty("id").GetGuid().Should().Be(free.Owner.Id);
+            accounts.Select(a => a.Balance).OrderDescending().Should().Equal(StartingBalances);
+            accounts.Select(a => a.Name).Should().BeEquivalentTo(["Main Savings", "Checking"]);
+
+            // The row: claimed, for the client the BFF named. Its test server gives a request no
+            // address, and the key of no address is "unknown".
+            row.ClaimedAt.Should().NotBeNull();
+            row.ClientKey.Should().Equal(KeyOf("unknown"));
+            row.ClientKey.Should().NotEqual(KeyOf(Visitor), "CONTROL: an address has another key");
+            (await GrantsOfAsync(database, free.Owner.Id)).Should().Be(1, "the claim opens one session");
+        }
+    }
+
+    [SqlServerFact]
+    public async Task ThroughTheBff_StartingOver_GivesAnotherCopy_AndTheOldCookieIs401()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        await database.BuildCopiesAsync(2);
+        var api = database.DemoApi();
+        using var bffHost = DemoBffOver(api);
+        using var browser = BrowserOf(bffHost);
+
+        // The first copy, and a change in it: 10.00 into its savings. "The starting balances" of
+        // the second copy below are then not what any copy would show.
+        using var first = await browser.SendAsync(BffClaim());
+        first.StatusCode.Should().Be(HttpStatusCode.OK, "ARRANGE: a free copy is there to be claimed ({0})", await AnswerOfAsync(first));
+        var firstCookie = SessionCookieOf(first);
+        using var firstClaim = JsonDocument.Parse(await first.Content.ReadAsStringAsync());
+        var firstOwner = firstClaim.RootElement.GetProperty("data").GetProperty("user").GetProperty("id").GetGuid();
+        var firstEmail = firstClaim.RootElement.GetProperty("data").GetProperty("copy").GetProperty("email").GetString();
+        var savings = (await AccountsThroughTheProxyAsync(browser, firstCookie)).Single(a => a.Balance == 12450.00m);
+        using var deposit = FromTheBrowser(
+            HttpMethod.Post,
+            "/api/transactions/deposit",
+            firstCookie,
+            new DepositRequest { AccountId = savings.Id, Amount = 10.00m, Description = "Before starting over" });
+        deposit.Headers.Add(IdempotencyConstants.HeaderName, Guid.NewGuid().ToString());
+        using var deposited = await browser.SendAsync(deposit);
+        deposited.IsSuccessStatusCode.Should().BeTrue("ARRANGE: the visitor changes the first copy ({0})", await AnswerOfAsync(deposited));
+        (await AccountsThroughTheProxyAsync(browser, firstCookie)).Select(a => a.Balance).OrderDescending()
+            .Should().Equal([12460.00m, 2300.00m], "ARRANGE: the first copy no longer shows the starting balances");
+
+        // Starting over: a claim that arrives with the first session's cookie.
+        using var second = await browser.SendAsync(BffClaim(firstCookie));
+
+        second.StatusCode.Should().Be(HttpStatusCode.OK, "another free copy is there ({0})", await AnswerOfAsync(second));
+        var secondCookie = SessionCookieOf(second);
+        using var secondClaim = JsonDocument.Parse(await second.Content.ReadAsStringAsync());
+        var secondOwner = secondClaim.RootElement.GetProperty("data").GetProperty("user").GetProperty("id").GetGuid();
+        var secondEmail = secondClaim.RootElement.GetProperty("data").GetProperty("copy").GetProperty("email").GetString();
+        var secondAccounts = await AccountsThroughTheProxyAsync(browser, secondCookie);
+        using var withTheOldCookie = await browser.SendAsync(FromTheBrowser(HttpMethod.Get, "/bff/auth/me", firstCookie));
+        using var withTheNewCookie = await browser.SendAsync(FromTheBrowser(HttpMethod.Get, "/bff/auth/me", secondCookie));
+        var copies = await database.CopiesAsync();
+
+        using (new AssertionScope())
+        {
+            secondCookie.Should().NotBe(firstCookie);
+            secondEmail.Should().NotBe(firstEmail, "starting over gives another copy, not the same one again");
+            secondOwner.Should().NotBe(firstOwner);
+            secondAccounts.Select(a => a.Balance).OrderDescending().Should().Equal(
+                StartingBalances, "the new copy is as every copy starts: the deposit was made in the other one");
+
+            withTheOldCookie.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "the session the old cookie named has ended");
+            withTheNewCookie.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            // Both copies stay claimed: the first is not handed back to the pool, with its deposit
+            // in it. The pool's job deletes it once its time is up.
+            copies.Should().HaveCount(2);
+            copies.Should().OnlyContain(c => c.Row.ClaimedAt != null);
+            copies.Select(c => c.Row.ClaimId).Distinct().Should().HaveCount(2);
+            copies.Select(c => c.Owner.Id).Should().BeEquivalentTo([firstOwner, secondOwner]);
+        }
+
+        // The first session's grant is revoked at the API, by the BFF's revoker on its own
+        // thread, and the second's is not.
+        async Task<int> LiveGrantsOfAsync(Guid userId)
+        {
+            await using var db = database.NewContext();
+            return await db.RefreshTokens.CountAsync(t => t.UserId == userId && t.RevokedAt == null);
+        }
+
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (await LiveGrantsOfAsync(firstOwner) != 0 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(50);
+        }
+
+        using (new AssertionScope())
+        {
+            (await LiveGrantsOfAsync(firstOwner)).Should().Be(0, "ending the first session revokes its grant");
+            (await LiveGrantsOfAsync(secondOwner)).Should().Be(1, "the new session's grant is left alone");
+            await using var db = database.NewContext();
+            (await db.Accounts.Where(a => a.UserId == firstOwner).Select(a => a.Balance).ToListAsync())
+                .OrderDescending().Should().Equal([12460.00m, 2300.00m], "the first copy keeps what was done in it");
         }
     }
 }
