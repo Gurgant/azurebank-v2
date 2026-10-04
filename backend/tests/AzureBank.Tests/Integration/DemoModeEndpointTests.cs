@@ -11,6 +11,7 @@ using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Exceptions;
+using AzureBank.Shared.Options;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using FluentAssertions.Execution;
@@ -180,6 +181,62 @@ public sealed class DemoModeEndpointTests : IDisposable
             login.StatusCode.Should().Be(HttpStatusCode.MethodNotAllowed, "CONTROL: sign-in's path answers another method the same way");
             login.Content.Headers.Allow.Should().Equal("POST");
             unknown.StatusCode.Should().Be(HttpStatusCode.NotFound, "CONTROL: a path with no route is 404 under any method");
+        }
+    }
+
+    /// <summary>
+    /// A path, the flag, a method, and what the host answers that request when it carries the
+    /// service key and the token road's marker, as every other test of this class sends it.
+    /// </summary>
+    public static TheoryData<string, bool, string, int> RequestsWithoutTheServiceKey() => new()
+    {
+        { ClaimPath, false, "POST", 404 },
+        { ClaimPath, false, "GET", 405 },
+        { ClaimPath, true, "POST", 429 },
+        { ClaimPath, true, "GET", 405 },
+        { RegisterPath, false, "POST", 400 },
+        { RegisterPath, false, "GET", 405 },
+        { RegisterPath, true, "POST", 403 },
+        { RegisterPath, true, "GET", 405 },
+    };
+
+    // CONTROL: green before this change. The answers this class pins on the claim's path and on
+    // registration's (the 404 of a deployment that is not the demo, the 405 of another method, the
+    // 403 of a closed registration) are what a caller that holds the service key is answered. A
+    // caller without it is answered 401 on these paths as on every other, whatever the method and
+    // the flag: the key is asked for before routing's own answer or any marker is looked at
+    // (ADR-0055), so none of those answers tells such a caller anything.
+    [Theory]
+    [MemberData(nameof(RequestsWithoutTheServiceKey))]
+    public async Task WithoutTheServiceKey_TheClaimsPathAndRegistrations_Are401_WhateverTheMethodAndTheFlag(
+        string path, bool demoOn, string method, int withTheKey)
+    {
+        static HttpRequestMessage Request(string method, string path)
+        {
+            var request = new HttpRequestMessage(new HttpMethod(method), path);
+            if (method == "POST")
+            {
+                // A claim's body. Registration reads it as a registration with nothing in it.
+                request.Content = JsonContent.Create(new DemoClaimRequest { ClientAddress = "203.0.113.7" });
+            }
+
+            return request;
+        }
+
+        using var client = (demoOn ? _demo : _ordinary).CreateClient();
+        using var asTheBffAsks = await client.SendAsync(Request(method, path));
+
+        client.DefaultRequestHeaders.Remove(ServiceCredentialOptions.HeaderName).Should().BeTrue(
+            "ARRANGE: the factory's clients carry the service key, and this one no longer does");
+        using var response = await client.SendAsync(Request(method, path));
+
+        using (new AssertionScope())
+        {
+            ((int)asTheBffAsks.StatusCode).Should().Be(
+                withTheKey, "CONTROL: with the key the same request is answered by what stands behind it");
+            response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            (await DemoVisitor.ErrorCodeOfAsync(response)).Should().Be(ErrorCodes.ServiceCredentialRequired);
+            response.Content.Headers.Allow.Should().BeEmpty("the refusal does not say which method the path takes");
         }
     }
 
