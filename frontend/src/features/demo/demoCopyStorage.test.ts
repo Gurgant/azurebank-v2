@@ -103,6 +103,13 @@ describe('the demo copy the browser keeps', () => {
     expect(getDemoCopySnapshot()).toStrictEqual(kept(copy));
   });
 
+  it('gives back the kept shape and nothing a key carried beside it', () => {
+    enableDemoMode();
+    localStorage.setItem(KEY, JSON.stringify({ ...kept(copy), somethingElse: 'not kept' }));
+
+    expect(getDemoCopySnapshot()).toStrictEqual(kept(copy));
+  });
+
   it('removes what it cannot read', () => {
     enableDemoMode();
     const noPassword = {
