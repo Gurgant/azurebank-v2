@@ -7,6 +7,7 @@ using AzureBank.Bff.Options;
 using AzureBank.Bff.Services.Interfaces;
 using AzureBank.Shared.DTOs.Auth;
 using FluentAssertions;
+using FluentAssertions.Execution;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -730,6 +731,44 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
             "as if the route did not exist, for a signed-in browser as for anyone");
         backend.ForwardedPaths.Should().BeEmpty("the request must never reach the API at all");
         body.Should().BeEmpty();
+    }
+
+    // CONTROL: green before this change. It pins what the block shows, so that it is known. With
+    // no session the proxied claim is 404 with no body, as sign-in's proxied path is, where a
+    // path under /api that names nothing is 401 with the API's own body. So the 404 tells that
+    // this build has the claim. It is the same with the demo off and on, so it does not tell
+    // which.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WithNoSession_TheProxiedDemoClaimIs404_WhereAPathThatNamesNothingIs401_WhateverTheFlag(bool demoOn)
+    {
+        var (factory, backend) = WithRecorder(builder =>
+        {
+            if (demoOn)
+            {
+                builder.UseSetting("Demo:Enabled", "true");
+            }
+        });
+        var client = factory.CreateClient();
+
+        HttpRequestMessage Post(string path) => new(HttpMethod.Post, path) { Content = JsonContent.Create(new { }) };
+
+        var claim = await client.SendAsync(Post("/api/auth/demo/claim"));
+        var login = await client.SendAsync(Post("/api/auth/login"));
+        var nothing = await client.SendAsync(Post("/api/auth/demo/other"));
+
+        using (new AssertionScope())
+        {
+            claim.StatusCode.Should().Be(HttpStatusCode.NotFound);
+            (await claim.Content.ReadAsStringAsync()).Should().BeEmpty();
+            login.StatusCode.Should().Be(HttpStatusCode.NotFound, "CONTROL: sign-in's proxied path answers the same way");
+            (await login.Content.ReadAsStringAsync()).Should().BeEmpty();
+            nothing.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "a path the block does not name is stopped for having no session");
+            backend.ForwardedPaths.Should().BeEmpty();
+        }
+
+        await AssertLooksLikeTheApisOwn401(nothing);
     }
 
     [Fact]

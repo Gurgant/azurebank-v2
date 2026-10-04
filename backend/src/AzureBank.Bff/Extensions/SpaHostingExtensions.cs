@@ -19,9 +19,9 @@ public static class SpaHostingExtensions
     private static readonly PathString[] ServerPrefixes = ["/api", "/bff", "/health"];
 
     /// <summary>
-    /// The tag the page carries on the public demo (<c>Demo:Enabled</c>): how the application,
-    /// which is one build for every deployment, learns before its first request that this one is
-    /// the demo. With the demo off the page is the file, and has no such tag.
+    /// The tag the page carries on the public demo (<c>Demo:Enabled</c>). It is there so that the
+    /// application, which is one build for every deployment, can learn before its first request
+    /// that this one is the demo. With the demo off the page is the file, and has no such tag.
     /// </summary>
     internal const string DemoTag = "<meta name=\"azurebank-demo\" content=\"true\">";
 

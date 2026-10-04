@@ -20,6 +20,12 @@ namespace AzureBank.Bff.Tests;
 /// an anonymous <c>/api</c> call. The server's paths are the point: with <c>MapFallbackToFile</c>
 /// in place of this middleware, <c>GET /bff/auth/login</c>, <c>/bff/nope</c> and
 /// <c>/health/nope</c> all answered 200 with the page.
+/// <para>
+/// The tests of the demo's tag, further down, are not among them. Theirs were observed on a later
+/// build, run as a process with <c>Demo:Enabled</c> true and serving <c>frontend/dist</c>
+/// (2026-10-04): <c>/</c>, <c>/index.html</c> and <c>/settings</c> each answered 200 with the tag
+/// once, 43 bytes longer than the file.
+/// </para>
 /// </remarks>
 public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Program>>, IDisposable
 {
@@ -173,8 +179,11 @@ public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Progra
     [InlineData("/settings")]
     [InlineData("/accounts/123")]
     [InlineData("/index.html")]
-    // Another spelling of the file's name. Where the file system ignores case the static files
-    // answer it with the file, which has no tag; where it does not, nothing answers it.
+    // Another spelling of the file's name. On Windows the static files answer it with the file,
+    // which has no tag: seen with the name compared exactly, 200 and the file's own bytes. In a
+    // directory that tells the two names apart nothing answers it with the demo off (404) and the
+    // tagged page does with it on: seen on Windows, in a directory marked case-sensitive. Not run
+    // on another system.
     [InlineData("/INDEX.HTML")]
     public async Task WithTheDemoOn_TheShellAndIndexHtml_CarryTheTagExactlyOnce_BeforeTheHeadCloses(string path)
     {
@@ -377,8 +386,9 @@ public sealed class SpaDemoTagTests
     private static string Tagged(string shell) =>
         Encoding.UTF8.GetString(SpaHostingExtensions.WithDemoTag(Encoding.UTF8.GetBytes(shell), IndexPath));
 
+    // It pins the text, for whatever comes to read it: a change to the text fails here.
     [Fact]
-    public void TheTag_IsTheOneThePageReads()
+    public void TheTagsText_IsPinned()
     {
         SpaHostingExtensions.DemoTag.Should().Be("<meta name=\"azurebank-demo\" content=\"true\">");
     }

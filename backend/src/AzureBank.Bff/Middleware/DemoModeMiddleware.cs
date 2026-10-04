@@ -74,7 +74,12 @@ public sealed class ClosedInDemoAttribute : Attribute
 /// (<c>DemoClaimTests.AnotherMethodOnTheClaimsPath_...</c> and
 /// <c>AnotherMethodOnRegistrationsPath_...</c> pin it, for six methods each). A path with no
 /// route is 404 under each of them, so the 405 and the 429 above tell that this build has the
-/// claim. Neither tells whether the demo is on.
+/// claim. Neither tells whether the demo is on. A third answer tells the same and no more, and
+/// it is not this middleware's: with no session, the API's claim asked for through the proxy
+/// (<c>/api/auth/demo/claim</c>) is 404 with no body, as sign-in's proxied path is, where a path
+/// under <c>/api</c> that names nothing is 401, with the demo off or on
+/// (<c>AuthLevelMiddleware</c>;
+/// <c>AuthLevelMiddlewareTests.WithNoSession_TheProxiedDemoClaimIs404_...</c> pins it).
 /// </para>
 /// <para>
 /// <b>The flag is read once,</b> when the pipeline is built: <c>Demo:Enabled</c> is a deployment's
