@@ -6,4 +6,5 @@
   this barrel it would pull every component in behind the storage module, and with each component
   whatever that component imports. Inside src/features a helper is imported from its own file.
 */
+export { DemoEntry } from './DemoEntry';
 export { StartOverDialog } from './StartOverDialog';

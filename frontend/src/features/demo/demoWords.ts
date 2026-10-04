@@ -38,3 +38,34 @@ export const START_OVER_FAILED = 'Something went wrong. Please try again.';
 
 /** Said once the dialog's claim has succeeded. */
 export const NEW_COPY_READY = 'You have a new copy.';
+
+// The sign-in page, on the demo.
+
+/** Under the page's title, in place of the line that asks for a sign-in. */
+export const DEMO_SUBTITLE = 'Try the demo with one click. No sign-up needed.';
+
+export const TRY_THE_DEMO = 'Try the demo';
+
+/**
+ * What a visitor gets, said before the button that gets it is pressed. The first sentence alone
+ * is what the button is described by; the rest is read under it.
+ */
+export const DEMO_NOTICE_FIRST =
+  'You get a private copy of a demo bank account with invented money.';
+
+export const DEMO_NOTICE_REST =
+  "It has two accounts, two months of history and two contacts you can pay. Don't enter real personal data. The copy works for 24 hours, then it is closed and deleted. This browser remembers the copy's sign-in details so you can come back to it. To limit abuse, a one-way code of your network address is kept with the copy and removed when the copy is deleted.";
+
+/** Above the form, which on the demo is the second way in. Words to read, not a control. */
+export const HAVE_A_COPY_SIGN_IN = "Already have a copy's email and password? Sign in here.";
+
+/**
+ * Every copy is taken, said to a visitor who has none yet. Not the server's sentence for it: this
+ * one adds that copies come back.
+ */
+export const CLAIM_POOL_EMPTY =
+  'All demo copies are in use right now. New ones are added regularly. Please try again later.';
+
+/** This network has had its copies for the day. Not the server's sentence either. */
+export const CLAIM_DAILY_LIMIT =
+  'This network has used its demo copies for today. Please try again tomorrow.';

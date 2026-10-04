@@ -9,6 +9,7 @@ import {
   MessageBar,
   MessageBarBody,
   Field,
+  Text,
 } from '@fluentui/react-components';
 import { Eye24Regular, EyeOff24Regular } from '@fluentui/react-icons';
 import { useForm } from 'react-hook-form';
@@ -17,7 +18,15 @@ import { z } from 'zod';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import { RetryCountdown, WaitHint, retryDeadline } from '../components/feedback';
 import { AuthCrossLink, AuthDivider, AuthLayout } from '../components/layout/AuthLayout';
-import { useLoginMutation } from '../features/api/apiSlice';
+import { useClaimDemoCopyMutation, useLoginMutation } from '../features/api/apiSlice';
+import { DemoEntry } from '../features/demo';
+import { isDemoMode } from '../features/demo/demoMode';
+import {
+  CLAIM_DAILY_LIMIT,
+  CLAIM_POOL_EMPTY,
+  DEMO_SUBTITLE,
+  HAVE_A_COPY_SIGN_IN,
+} from '../features/demo/demoWords';
 
 // Validation schema
 const loginSchema = z.object({
@@ -82,13 +91,50 @@ const useStyles = makeStyles({
   errorMessage: {
     marginBottom: '16px',
   },
+
+  // The line above the form on the demo, in the size and colour of the line under the form off it
+  // (AuthLayout's cross-link). `display: block` because Fluent's `Text` renders inline whatever
+  // element it is asked for.
+  haveACopy: {
+    display: 'block',
+    margin: '0 0 16px',
+    fontSize: '14px',
+    color: tokens.colorNeutralForeground2,
+  },
 });
+
+/** Which of the page's controls sent a request: the form's "Sign in", or "Try the demo". */
+type LoginControl = 'form' | 'claim';
 
 export function LoginPage() {
   const styles = useStyles();
   const navigate = useNavigate();
   const location = useLocation();
-  const [login, { isLoading, error }] = useLoginMutation();
+  // Asked at each render, not once: the page says whether it is the demo with a tag, and the
+  // answer is the tag's (src/features/demo/demoMode.ts).
+  const demo = isDemoMode();
+  const [login, { isLoading: signingIn, error: signInError }] = useLoginMutation();
+  const [claim, { isLoading: claiming, error: claimError }] = useClaimDemoCopyMutation();
+
+  /*
+    ONE PROBLEM ON THE PAGE, whichever control was refused.
+
+    The page sends two kinds of request, a sign-in and, on the demo, a claim, and each mutation
+    keeps its own last refusal: a sign-in refused and then a claim refused leaves two. Every
+    banner below reads one `problem`, so that they exclude one another as they did when there was
+    one request. Which one: the refusal of the request the last-pressed control sent. Each attempt
+    records its control here, and from then on the other request's refusal is not read.
+    src/pages/LoginPage.test.tsx refuses a sign-in and a claim, in both orders, and counts.
+
+    Off the demo nothing sends a claim, and `problem` is the sign-in's, as before.
+  */
+  const [control, setControl] = useState<LoginControl | null>(null);
+  const error = control === 'claim' ? claimError : signInError;
+  // One flag over both requests: while either runs, every button that sends one waits for it.
+  const busy = signingIn || claiming;
+  // The form's own sign-in, in flight. Its button's spinner and its hint follow the control that
+  // sent the request, as the banners do: the form's button spins for the request the form sent.
+  const formSigningIn = control === 'form' && signingIn;
 
   const [showPassword, setShowPassword] = useState(false);
   const [elapsedDeadline, setElapsedDeadline] = useState<number | null>(null);
@@ -125,6 +171,7 @@ export function LoginPage() {
   });
 
   const onSubmit = async (data: LoginFormData) => {
+    setControl('form');
     try {
       await login({ email: data.email, password: data.password }).unwrap();
       // returnTo: land where the guard interrupted, not always the dashboard.
@@ -134,12 +181,51 @@ export function LoginPage() {
     }
   };
 
+  /*
+    "Try the demo": claim a copy and go to it.
+
+    The claim is all this sends. What a claim that succeeded does to the visitor is done where its
+    answer arrives, for every caller of the claim alike: the new owner is signed in
+    (src/features/auth/authSlice.ts), the copy's sign-in details are kept in the browser and the
+    cache is dropped (src/features/auth/sessionMiddleware.ts). Nothing here reads the answer,
+    which holds the copy's password: that the promise resolved is all this goes on.
+
+    It lands on the dashboard whatever page the guard interrupted: a sign-in goes back to the page
+    its visitor was sent away from, and a new copy starts at its dashboard.
+  */
+  const tryTheDemo = async () => {
+    setControl('claim');
+    try {
+      await claim().unwrap();
+      navigate('/dashboard', { replace: true });
+    } catch {
+      // Surfaced through the mutation's error state below.
+    }
+  };
+
+  /*
+    The limiter's refusal (`RATE_LIMIT_EXCEEDED`), from whichever request it answered.
+
+    Off the demo it is said under "Sign in", inside the form, as before. On the demo it is said
+    with the page's other alerts, above the demo's block, whichever control was refused, and
+    every button that sends a request waits until its countdown ends.
+  */
+  const limiterBanner = rateLimited && lockDeadline !== null && (
+    <>
+      <MessageBar intent="warning" role="alert" className={demo ? styles.errorMessage : undefined}>
+        <MessageBarBody>Too many attempts from your connection.</MessageBarBody>
+      </MessageBar>
+      {/* Sibling, not child — see the account-lock banner below. */}
+      <RetryCountdown deadline={lockDeadline} onElapsed={() => setElapsedDeadline(lockDeadline)} />
+    </>
+  );
+
   return (
     <AuthLayout
       headline="Banking Made Simple, Secure, and Smart"
       intro="Manage your finances with confidence. Experience modern banking with powerful tools designed for your success."
       title="Welcome back"
-      subtitle="Sign in to your account to continue"
+      subtitle={demo ? DEMO_SUBTITLE : 'Sign in to your account to continue'}
       footer={
         <>
           Protected by bank-grade encryption. We never share your details.
@@ -188,16 +274,59 @@ export function LoginPage() {
         </>
       )}
 
+      {/* A claim's two refusals of its own, worded here by their code and never in the server's
+          words (backend/src/AzureBank.Shared/Exceptions/DemoRefusalException.cs): the server's
+          sentence for an empty pool does not say that copies come back, and its sentence for the
+          day's limit ends on "later". Neither is counted down, although the day's limit names a
+          wait: the countdowns on this page belong to the lock and to the limiter, by their
+          codes. */}
+      {problem?.errorCode === 'DEMO_POOL_EMPTY' && (
+        <MessageBar intent="error" role="alert" className={styles.errorMessage}>
+          <MessageBarBody>{CLAIM_POOL_EMPTY}</MessageBarBody>
+        </MessageBar>
+      )}
+
+      {problem?.errorCode === 'DEMO_DAILY_LIMIT' && (
+        <MessageBar intent="error" role="alert" className={styles.errorMessage}>
+          <MessageBarBody>{CLAIM_DAILY_LIMIT}</MessageBarBody>
+        </MessageBar>
+      )}
+
+      {/* Whatever has no banner of its own above. The list is what keeps a refusal to one alert:
+          a code that has its own banner and is missing here is said twice. */}
       {problem &&
-        !['INVALID_CREDENTIALS', 'ACCOUNT_LOCKED', 'RATE_LIMIT_EXCEEDED'].includes(
-          problem.errorCode,
-        ) && (
+        ![
+          'INVALID_CREDENTIALS',
+          'ACCOUNT_LOCKED',
+          'RATE_LIMIT_EXCEEDED',
+          'DEMO_POOL_EMPTY',
+          'DEMO_DAILY_LIMIT',
+        ].includes(problem.errorCode) && (
           <MessageBar intent="error" role="alert" className={styles.errorMessage}>
             <MessageBarBody>
               {problem.detail || 'Something went wrong. Please try again.'}
             </MessageBarBody>
           </MessageBar>
         )}
+
+      {demo && limiterBanner}
+
+      {/* On the demo the page leads with the demo, and the form is the second way in: for whoever
+          has a copy's email and password. The line above the form is words, not a link or a
+          button: the form's own button is the page's one control named "Sign in". */}
+      {demo && (
+        <>
+          <DemoEntry
+            pending={claiming ? 'claim' : null}
+            disabled={busy || rateLimited}
+            onTry={() => void tryTheDemo()}
+          />
+          <AuthDivider />
+          <Text as="p" className={styles.haveACopy}>
+            {HAVE_A_COPY_SIGN_IN}
+          </Text>
+        </>
+      )}
 
       <form className={styles.form} onSubmit={handleSubmit(onSubmit)}>
         <Field
@@ -252,31 +381,26 @@ export function LoginPage() {
             size="large"
             className={styles.submitButton}
             type="submit"
-            disabled={isLoading || rateLimited}
+            disabled={busy || rateLimited}
           >
-            {isLoading ? <Spinner size="tiny" /> : 'Sign in'}
+            {formSigningIn ? <Spinner size="tiny" /> : 'Sign in'}
           </Button>
         )}
         {/* Under the button that started the sign-in, and outside every alert. */}
-        <WaitHint active={isLoading} kind="write" />
+        <WaitHint active={formSigningIn} kind="write" />
 
-        {rateLimited && lockDeadline !== null && (
-          <>
-            <MessageBar intent="warning" role="alert">
-              <MessageBarBody>Too many attempts from your connection.</MessageBarBody>
-            </MessageBar>
-            {/* Sibling, not child — see the account-lock banner above. */}
-            <RetryCountdown
-              deadline={lockDeadline}
-              onElapsed={() => setElapsedDeadline(lockDeadline)}
-            />
-          </>
-        )}
+        {!demo && limiterBanner}
       </form>
 
-      <AuthDivider />
+      {/* On the demo this page offers no registration: a visitor gets an account by claiming a
+          copy. */}
+      {!demo && (
+        <>
+          <AuthDivider />
 
-      <AuthCrossLink prompt="Don't have an account?" to="/register" label="Create account" />
+          <AuthCrossLink prompt="Don't have an account?" to="/register" label="Create account" />
+        </>
+      )}
     </AuthLayout>
   );
 }
