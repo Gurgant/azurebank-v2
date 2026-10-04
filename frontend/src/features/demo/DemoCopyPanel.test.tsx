@@ -267,6 +267,7 @@ describe("the dashboard's panel about the demo copy", () => {
   it("the owner reads the copy's end, its PIN and its contacts", () => {
     const { copy } = renderPanel();
     const panel = panels()[0];
+    const heading = panel?.querySelector('h2');
     const lines = Array.from(panel?.querySelectorAll('p') ?? []);
 
     expect({
@@ -274,6 +275,9 @@ describe("the dashboard's panel about the demo copy", () => {
       // A section, named by its heading: a landmark a screen reader can go to.
       element: panel?.tagName,
       wearsThePagesCard: panel?.classList.contains('the-pages-card'),
+      // What the heading's own class declares its box as. Fluent's `Text` draws inline whatever
+      // element it is asked for, a heading too.
+      headingDrawnAs: heading ? getComputedStyle(heading).display : null,
       said: said(),
       // The instant printed is the kept copy's end, in the zone the suite runs in: read back from
       // the words, and never typed out as an hour.
@@ -288,6 +292,7 @@ describe("the dashboard's panel about the demo copy", () => {
       panels: 1,
       element: 'SECTION',
       wearsThePagesCard: true,
+      headingDrawnAs: 'block',
       said: {
         headings: [WORDS.heading],
         lines: [expect.stringMatching(OWNER), WORDS.pin, FIRST_CONTACTS],
@@ -309,7 +314,12 @@ describe("the dashboard's panel about the demo copy", () => {
 
     const closed = look();
     await userEvent.click(toggles()[0]);
-    const open = { ...look(), order: inOrder(toggles()[0], screen.queryAllByText(details)[0]) };
+    const shown = screen.queryAllByText(details)[0];
+    const open = {
+      ...look(),
+      order: inOrder(toggles()[0], shown),
+      breaks: shown ? getComputedStyle(shown).overflowWrap : null,
+    };
     await userEvent.click(toggles()[0]);
     const closedAgain = look();
 
@@ -344,6 +354,9 @@ describe("the dashboard's panel about the demo copy", () => {
         passwordOnThePage: 1,
         // Under the button that showed them, so they are read next.
         order: true,
+        // An address and a password have no space in them: the line is declared to break inside
+        // a word where it must.
+        breaks: 'anywhere',
       },
       closedAgain: shut,
     });
