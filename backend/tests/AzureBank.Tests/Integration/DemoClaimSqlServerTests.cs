@@ -984,7 +984,7 @@ public sealed class DemoClaimSqlServerTests
     [SqlServerFact]
     public async Task AClaimWhoseReadOfCandidatesIsRefusedOnce_IsRunAgain_AndClaimsOneCopy()
     {
-        // CONTROL: green before this change (the product already ran a claim again). Seen red with
+        // CONTROL: green as written (the product already ran a claim again). Seen red with
         // the strategy taken off this host: 503 where 200 was due.
         await using var database = await DemoPoolDatabase.CreateAsync();
         var copies = await database.BuildCopiesAsync(2);
@@ -1037,7 +1037,7 @@ public sealed class DemoClaimSqlServerTests
     [SqlServerFact]
     public async Task OnAHostThatRunsNothingAgain_TheSameRefusalIs503_AndNothingIsClaimed()
     {
-        // CONTROL: green before this change. The plain test host has no retrying strategy: the
+        // CONTROL: green as written. The plain test host has no retrying strategy: the
         // refusal the test above survives reaches the visitor here, as the outage 503, so what
         // answers 200 there is the strategy.
         await using var database = await DemoPoolDatabase.CreateAsync();

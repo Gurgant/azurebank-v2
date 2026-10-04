@@ -639,7 +639,7 @@ public class DemoClaimTests : IClassFixture<WebApplicationFactory<Program>>, IDi
         }
     }
 
-    // CONTROL: green before this change. The answer is the one place the copy's password is
+    // CONTROL: green as written. The answer is the one place the copy's password is
     // written to; the email and the two tokens stay out of the log as well. What the log does name
     // is the user's id.
     [Fact]

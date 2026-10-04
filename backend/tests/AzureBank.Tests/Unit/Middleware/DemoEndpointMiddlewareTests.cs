@@ -64,8 +64,8 @@ public class DemoEndpointMiddlewareTests
         }
     }
 
-    // CONTROL: green before this change. It is what fails if the middleware refuses a demo-only
-    // endpoint whatever the flag says.
+    // CONTROL: green on a middleware that does nothing. It is what fails if the middleware refuses
+    // a demo-only endpoint whatever the flag says.
     [Fact]
     public async Task WithTheDemoOn_ADemoOnlyEndpointRuns()
     {
@@ -78,8 +78,8 @@ public class DemoEndpointMiddlewareTests
         }
     }
 
-    // CONTROL: green before this change. It is what fails if the middleware refuses every endpoint
-    // while the demo is off, and not only the marked ones.
+    // CONTROL: green on a middleware that does nothing. It is what fails if the middleware refuses
+    // every endpoint while the demo is off, and not only the marked ones.
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -94,8 +94,9 @@ public class DemoEndpointMiddlewareTests
         }
     }
 
-    // CONTROL: green before this change. A path that matched no route has no endpoint to read a
-    // marker from, and must reach the rest of the pipeline to be answered as one.
+    // CONTROL: green on a middleware that does nothing. A path that matched no route has no
+    // endpoint to read a marker from, and must reach the rest of the pipeline to be answered as
+    // one.
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -142,8 +143,8 @@ public class DemoEndpointMiddlewareTests
         }
     }
 
-    // CONTROL: green before this change. It is what fails if the middleware closes the endpoint
-    // on a deployment that is not the demo, where registration is open.
+    // CONTROL: green on a middleware that does nothing. It is what fails if the middleware closes
+    // the endpoint on a deployment that is not the demo, where registration is open.
     [Fact]
     public async Task WithTheDemoOff_AnEndpointClosedInDemo_Runs()
     {

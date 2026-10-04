@@ -158,12 +158,12 @@ public sealed class DemoModeEndpointTests : IDisposable
         return rows;
     }
 
-    // CONTROL: green before this change. It pins what the host answers today, so that it is known:
-    // the 404 above hides the endpoint, which is POST, and not its path. Another method on the path
-    // never reaches the action, so no marker of the action's is read; it is answered 405 and told
-    // which method the path takes, with the demo off or on, as on the path of sign-in. What can
-    // turn it red in this code: a middleware that refuses, with the demo off, an endpoint that
-    // carries no marker (shown once: the six rows with the demo off then answer 404).
+    // It pins what the host answers today, so that it is known: the 404 above hides the endpoint,
+    // which is POST, and not its path. Another method on the path never reaches the action, so no
+    // marker of the action's is read; it is answered 405 and told which method the path takes, with
+    // the demo off or on, as on the path of sign-in. Red before the action existed: 404, no route.
+    // What can turn it red in this code: a middleware that refuses, with the demo off, an endpoint
+    // that carries no marker (shown once: the six rows with the demo off then answer 404).
     [Theory]
     [MemberData(nameof(OtherMethods))]
     public async Task AnotherMethodOnTheClaimsPath_Is405WhateverTheFlag_AsOnSignInsPath(bool demoOn, string method)
@@ -394,7 +394,7 @@ public sealed class DemoModeEndpointTests : IDisposable
         signedIn!.Data!.User.Id.Should().Be(copy.Owner.Id);
     }
 
-    // CONTROL: green before this change. This is the host that mints a claim's access token and
+    // CONTROL: green as written. This is the host that mints a claim's access token and
     // its grant, and the claim's answer is the one place either is written to, with the copy's
     // password. Each event of the host's log is read whole: its message, the value of every
     // property and its exception, since a value can ride on an event as a property its message

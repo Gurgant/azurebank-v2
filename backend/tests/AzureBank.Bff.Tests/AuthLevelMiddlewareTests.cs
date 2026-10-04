@@ -733,7 +733,7 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
         body.Should().BeEmpty();
     }
 
-    // CONTROL: green before this change. It pins what the block shows, so that it is known. With
+    // CONTROL: green as written. It pins what the block shows, so that it is known. With
     // no session the proxied claim is 404 with no body, as sign-in's proxied path is, where a
     // path under /api that names nothing is 401 with the API's own body. So the 404 tells that
     // this build has the claim. It is the same with the demo off and on, so it does not tell
