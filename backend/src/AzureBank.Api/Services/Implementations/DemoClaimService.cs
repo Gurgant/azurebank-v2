@@ -306,8 +306,8 @@ public class DemoClaimService(
     /// error 1205 is on the list EF retries), and a claim is built to be run again: what it makes
     /// up is made once, outside, and each attempt starts from nothing an earlier one read.
     /// <c>DemoClaimSqlServerTests.AClaimWhoseReadOfCandidatesIsRefusedOnce_...</c> holds that for
-    /// this read refused with a transient fault, and <c>OnAHostThatRunsNothingAgain_...</c> that
-    /// without the strategy the visitor is answered 503.
+    /// this read refused with error 1205, and <c>OnAHostThatRunsNothingAgain_...</c> that without
+    /// the strategy the visitor is answered 503.
     /// </para>
     /// <para>
     /// WITH READ_COMMITTED_SNAPSHOT ON, SQL Server answers a read from the last committed version

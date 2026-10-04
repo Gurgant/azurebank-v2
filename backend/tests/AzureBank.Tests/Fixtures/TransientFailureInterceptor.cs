@@ -8,11 +8,16 @@ namespace AzureBank.Tests.Fixtures;
 /// strategy re-runs the operation for real.
 ///
 /// <para>
-/// A bare <see cref="TimeoutException"/> is the injectable one. EF 10.0.1's
+/// A bare <see cref="TimeoutException"/> is the fault unless the test gives another. EF 10.0.1's
 /// <c>SqlServerTransientExceptionDetector</c> treats it as transient — unlike a command timeout,
 /// which arrives as <c>SqlException</c> with <c>Number == -2</c> and is deliberately NOT retried
-/// (see the note on <c>EnableRetryOnFailure</c> in <c>ServiceCollectionExtensions</c>). Fabricating a
-/// transient <c>SqlException</c> is not possible from test code: it has no public constructor.
+/// (see the note on <c>EnableRetryOnFailure</c> in <c>ServiceCollectionExtensions</c>).
+/// </para>
+/// <para>
+/// A test about one error of SQL Server's gives that error as the fault. <c>SqlException</c> has no
+/// public constructor, and one can be built all the same, as SqlClient builds its own:
+/// <see cref="SqlErrors"/> does, for the number and the class the test names. (Until 2026-10-04
+/// this said that could not be done from test code; two unit test classes already did it.)
 /// </para>
 /// <para>
 /// One-shot by design. It disarms after firing so the retry proceeds normally; permanently armed, it
@@ -22,10 +27,16 @@ namespace AzureBank.Tests.Fixtures;
 public sealed class TransientFailureInterceptor : DbCommandInterceptor
 {
     private readonly string _marker;
+    private readonly Func<Exception> _fault;
     private int _fired;
 
     /// <param name="marker">Substring of the command text to fail on, e.g. "INSERT INTO [Transactions]".</param>
-    public TransientFailureInterceptor(string marker) => _marker = marker;
+    /// <param name="fault">Makes what is thrown; a bare <see cref="TimeoutException"/> when not given.</param>
+    public TransientFailureInterceptor(string marker, Func<Exception>? fault = null)
+    {
+        _marker = marker;
+        _fault = fault ?? (() => new TimeoutException($"Injected transient fault on: {marker}"));
+    }
 
     /// <summary>True once the transient fault has actually been injected.</summary>
     public bool Fired => Volatile.Read(ref _fired) == 1;
@@ -65,6 +76,6 @@ public sealed class TransientFailureInterceptor : DbCommandInterceptor
             return;
         }
 
-        throw new TimeoutException($"Injected transient fault on: {_marker}");
+        throw _fault();
     }
 }

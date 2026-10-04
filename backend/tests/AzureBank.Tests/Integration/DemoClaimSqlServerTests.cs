@@ -968,22 +968,28 @@ public sealed class DemoClaimSqlServerTests
     // deadlock with another claim (the note above the two theories). To EF's retrying strategy
     // that refusal, error 1205, is a transient fault: one it runs the work again for
     // (ServiceUnavailableExceptionHandlerTests asks EF's own list about 1205). The two tests below
-    // do not make a deadlock. They refuse the read with the fault this suite injects for a
-    // transient failure (TransientFailureInterceptor: a TimeoutException, which is on the same
-    // list), and hold what a host does with a read refused that way. A deadlock of the server's
-    // own is met, when one happens, by the two theories.
+    // do not make a deadlock. They refuse the read with the error SqlClient reports to a
+    // deadlock's victim (number 1205, class 13), built as ServiceUnavailableExceptionHandlerTests
+    // builds its errors (SqlErrors) and thrown before the statement reaches the server, and hold
+    // what a host does with a read refused that way. A deadlock of the server's own is met, when
+    // one happens, by the two theories.
+
+    /// <summary>The error SqlClient reports to the victim of a deadlock, built here: no deadlock happens.</summary>
+    private static SqlException TheErrorOfADeadlocksVictim() => SqlErrors.Of(number: 1205, errorClass: 13);
 
     [SqlServerFact]
     public async Task AClaimWhoseReadOfCandidatesIsRefusedOnce_IsRunAgain_AndClaimsOneCopy()
     {
+        // CONTROL: green before this change (the product already ran a claim again). Seen red with
+        // the strategy taken off this host: 503 where 200 was due.
         await using var database = await DemoPoolDatabase.CreateAsync();
         var copies = await database.BuildCopiesAsync(2);
         var api = database.DemoApi();
 
-        // As a deployed host: work the database refuses for a transient reason is run again.
+        // As a deployed host: work the database refuses with an error on EF's list is run again.
         api.EnableSqlRetryOnFailure();
         var statements = new StatementsInOrder();
-        var fault = new TransientFailureInterceptor(OnlyInTheCandidatesRead);
+        var fault = new TransientFailureInterceptor(OnlyInTheCandidatesRead, TheErrorOfADeadlocksVictim);
 
         // In this order: a statement is recorded before it is refused.
         api.AddInterceptor(statements);
@@ -992,24 +998,25 @@ public sealed class DemoClaimSqlServerTests
 
         statements.Start();
         using var response = await DemoVisitor.ClaimAsync(client, Visitor);
-        var sent = statements.Texts;
+        var issued = statements.Texts;
 
         fault.Fired.Should().BeTrue("the read must actually have been refused once, else the test proves nothing");
         var claim = await DemoVisitor.ClaimedAsync(response);
         var rows = await RowsAsync(database);
         var after = await database.CopiesAsync();
 
-        // What the host sent about the pool, in order: the claim's statements that name it, and
-        // nothing a background service of the host sent in between (none of them names the pool).
-        var aboutThePool = sent.Where(t => t.Contains("[DemoCopies]", StringComparison.Ordinal)).ToList();
+        // What the host issued about the pool, in order: the claim's statements that name it, the
+        // refused one among them (recorded, and never sent), and nothing a background service of
+        // the host issued in between (none of them names the pool).
+        var aboutThePool = issued.Where(t => t.Contains("[DemoCopies]", StringComparison.Ordinal)).ToList();
         using (new AssertionScope())
         {
-            sent.Where(t => t.Contains(OnlyInTheCandidatesRead, StringComparison.Ordinal)).Should()
-                .HaveCount(2, "the statement that was refused is sent again")
+            issued.Where(t => t.Contains(OnlyInTheCandidatesRead, StringComparison.Ordinal)).Should()
+                .HaveCount(2, "the statement that was refused is issued a second time")
                 .And.OnlyContain(t => IsTheCandidatesRead(t), "and it is the read of candidates");
             aboutThePool.Skip(2).Take(2).Should().Equal(
                 aboutThePool.Take(2), "the claim is run again from its first statement, not from the one that was refused");
-            sent.Count(IsTheConditionalClaim).Should().Be(1, "the second attempt takes its first candidate, and the first took none");
+            issued.Count(IsTheConditionalClaim).Should().Be(1, "the second attempt takes its first candidate, and the first took none");
 
             rows.Where(row => row.ClaimedAt != null).Select(row => row.OwnerUserId).Should().Equal(
                 [claim.User.Id], "one copy is claimed, the one the answer is for");
@@ -1033,24 +1040,27 @@ public sealed class DemoClaimSqlServerTests
         var copies = await database.BuildCopiesAsync(2);
         var api = database.DemoApi();
         var statements = new StatementsInOrder();
-        var fault = new TransientFailureInterceptor(OnlyInTheCandidatesRead);
+        var fault = new TransientFailureInterceptor(OnlyInTheCandidatesRead, TheErrorOfADeadlocksVictim);
         api.AddInterceptor(statements);
         api.AddInterceptor(fault);
+        api.CaptureLog();
         using var client = api.CreateClient();
 
         statements.Start();
         using var response = await DemoVisitor.ClaimAsync(client, Visitor);
-        var sent = statements.Texts;
+        var issued = statements.Texts;
 
         fault.Fired.Should().BeTrue("the read must actually have been refused, else the test proves nothing");
         await DatabaseUnavailableSqlServerTests.AssertServiceUnavailableAsync(response, applied: null);
+        WhatTheApiSaidOfItsFailures(api).Should().Contain(
+            "SQL errors [1205]", "what the visitor was answered 503 for is the refusal of a deadlock's victim");
         var after = await database.CopiesAsync();
         using (new AssertionScope())
         {
-            sent.Where(t => t.Contains(OnlyInTheCandidatesRead, StringComparison.Ordinal)).Should()
-                .HaveCount(1, "the statement that was refused is not sent again")
+            issued.Where(t => t.Contains(OnlyInTheCandidatesRead, StringComparison.Ordinal)).Should()
+                .HaveCount(1, "the statement that was refused is not issued a second time")
                 .And.OnlyContain(t => IsTheCandidatesRead(t), "and it is the read of candidates");
-            sent.Count(IsTheConditionalClaim).Should().Be(0, "no copy was tried");
+            issued.Count(IsTheConditionalClaim).Should().Be(0, "no copy was tried");
 
             after.Should().HaveCount(2).And.OnlyContain(
                 copy => copy.Row.ClaimedAt == null && copy.Row.ClaimId == null && copy.Row.ClientKey == null,
