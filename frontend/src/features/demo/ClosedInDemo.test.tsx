@@ -59,8 +59,9 @@ function shown(): string[] {
  * One turn of the event loop, with whatever the router does in it drawn.
  *
  * A redirect is a navigation, and a router may finish one after the render that asked for it. Every
- * test here waits this same turn before it looks, the first one too, which sees its redirect: so
- * "still on /register" in the tests that expect no redirect is not a look taken too early.
+ * test here that opens the page waits this same turn before it looks, the first one too, which sees
+ * its redirect: so "still on /register" in the tests that expect no redirect is not a look taken
+ * too early.
  */
 async function aTurn() {
   await act(async () => {
