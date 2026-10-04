@@ -312,10 +312,14 @@ four reasons:
   answer (read; no test loses that answer): that too errs toward the cap.
 - **No copy, no budget.** A caller who belongs to no copy, or to the record of a deleted one, is
   refused as a copy at its limit is.
-- The 429 is declared on no operation of the contract. No guard of the document reads a 429, and
-  declaring it on the sixteen operations that can answer it (the fifteen of a signed-in user
-  that are not a GET, logout apart, and the reveal; counted from `docs/api/openapiv1.json`) would
-  say of every deployment what is true of the demo.
+- `DEMO_COPY_LIMIT` is named on no operation of the contract. Of the sixteen that can answer
+  it (the fifteen of a signed-in user that are not a GET, logout apart, and the reveal; counted
+  from `docs/api/openapiv1.json`), seven declare a 429 for another refusal and nine declare
+  none. No test of the document asks an operation to declare a 429 it can answer: the one
+  that names a 429 pins the claim's own list of answers, and the conformance run, which
+  reports a status an operation answers and does not declare, starts the API with the demo
+  off, where the budget answers nothing. Declaring the budget's 429 on the sixteen would say
+  of every deployment what is true of the demo.
 
 **12. The BFF's door.** `POST /bff/auth/demo/claim`, `[EnableRateLimiting(Auth)]`, `[DemoOnly]`.
 
@@ -431,10 +435,18 @@ ADR-0044's inventory and its pinned counts do not move:
 - the counter `azurebank.demo.claims`, tagged `azurebank.outcome`: `claimed`, `pool_empty`,
   `daily_limit`, `lost_races`.
 
-No line carries a copy's password, its email, an access token or a grant: asserted on both
-hosts' logs by tests, and searched for in the logs of the compose runs (Validation). The
-limiter's own rejection line names the client's address as its partition, as it did before;
-that no other line carries the address is not asserted.
+No line carries a copy's password, its email, an access token or a grant. A test asserts it
+on each host's log, reading every event whole (its message, its properties, its exception):
+`AClaim_WritesNoLogEventThatHoldsThePasswordTheEmailTheAccessTokenOrTheGrant` on the API's,
+the host that mints the token and the grant, and
+`AClaim_WritesNoLogLineThatHoldsThePasswordTheEmailOrAToken` on the BFF's, against the values
+its stand-in API answers. The logs of the compose runs were searched for every email the runs
+sent or were answered, every password, every whole cookie value and the stack's nine secret
+values (Validation), and not for a token or a grant: through the BFF a caller is given
+neither to search for. Counted afterwards in the logs kept from those runs: no text of a
+JWT's shape, and no run of 40 or more base64url characters but two event names (a grant is 43
+such characters). The limiter's own rejection line names the client's address as its
+partition, as it did before; that no other line carries the address is not asserted.
 
 **16. The claim is the first token endpoint that opens a session from no credential, and it
 rests on the API being on loopback.** Sign-in asks for a password, renewal for a grant; the claim
@@ -463,12 +475,13 @@ caps are worth nothing until that is answered.**
   to the `auth` limit. Under `compose.demo.yaml` every browser on the machine was one client when
   it was measured, on Docker Desktop for Windows: the BFF saw the compose network's gateway
   address for every request through the published port (Validation).
-- **Learn that this build has the claim, though not whether the demo is on.** Three answers tell
-  a caller with no key that the endpoint is there, with the demo off as with it on, and each is
-  pinned by a test and left as it is:
-  1. another method on the claim's path, or on registration's, is 405 with `Allow: POST`, in the
-     BFF and in the API, as on sign-in's path, where a path with no route is 404. The marker
-     hides the endpoint, not its path;
+- **Learn that this build has the claim, though not whether the demo is on.** Three answers of
+  the BFF tell a caller with no key and no session that the endpoint is there, with the demo
+  off as with it on, and each is pinned by a test and left as it is:
+  1. another method on the claim's path, or on registration's, is 405 with `Allow: POST`, as on
+     sign-in's path, where a path with no route is 404. The marker hides the endpoint, not its
+     path. The API answers the same 405, but only to a caller that holds the service key: one
+     without it is answered 401 on these paths under any method, as on every operation;
   2. with the demo off, the BFF's claim path still spends the `auth` limit, so past it the answer
      is 429 `RATE_LIMIT_EXCEEDED` where a path the BFF does not have is still 404;
   3. with no session, the proxied `/api/auth/demo/claim` is 404 with no body, as sign-in's
@@ -544,8 +557,8 @@ caps are worth nothing until that is answered.**
   by hand would.
 - **The daily cap is per address as the BFF sees it.** Behind an ingress the BFF is not told to
   trust it is one cap for everybody (decision 14).
-- **The budget counts requests that changed nothing** (decision 11), and its 429 is in no
-  operation of the contract.
+- **The budget counts requests that changed nothing** (decision 11), and the contract names
+  `DEMO_COPY_LIMIT` on no operation: nine of the sixteen that can answer it declare no 429.
 - **A deployment that turns the demo on needs the two flags and the secret together.** A flag on
   one of the app's containers only fails closed: on the BFF alone the claim is the API's 404 and
   registration is closed; on the API alone the page has no tag, the BFF's claim is 404 and the
@@ -559,8 +572,9 @@ caps are worth nothing until that is answered.**
   rolling 24 hours are all the stack hands out (decision 7's overshoot apart), unless the cap is
   raised on every service that reads it.
 - **The claim's retry is not free.** A claim that loses a deadlock waits for the server's search
-  for the cycle before it is run again: in the runs that staged one, the claim was answered 1.7
-  to 5.3 s after it was sent.
+  for the cycle before it is run again: in the runs that staged one at the read (Validation),
+  the claim was answered 3.2 to 3.8 s after it was sent; in the runs that staged one at the
+  conditional `UPDATE`, with `READ_COMMITTED_SNAPSHOT` on, 1.7 to 5.3 s.
 - The conformance run in CI starts the API with the demo off, so the claim answers its declared
   404 to every generated request and registration never answers the 403 it declares: neither is
   exercised there.
@@ -626,6 +640,12 @@ host):
   `WithTheDemoOff_AMalformedClaim_IsStill404`,
   `WithTheDemoOff_TheClaimsOwnCodeRefusesToo_AndTakesNoCopy`; and off the road,
   `WithTheDemoOn_AClaimFromOffTheTokenRoad_Is404_AndTakesNothing`.
+- **The log:** `AClaim_WritesNoLogEventThatHoldsThePasswordTheEmailTheAccessTokenOrTheGrant`,
+  on the in-memory host with the log captured from the lowest level: no event holds any of
+  the four in its message, its properties or its exception, and the claim's own event is
+  among those read. On SQL Server, `OnAPoolOfOne_TheFirstClaimIs200_AndTheSecond429PoolEmpty`
+  asserts the claim's line and that no line at Information or above holds the copy's email or
+  its password.
 - **The password and the key** (`DemoClaimPartsTests`): a thousand passwords match the pattern,
   pass sign-in's check and Identity's validators, differ, and use every one of the 56 characters
   and no other; each of the three redraw conditions with a chosen draw; the known answer of the
@@ -651,6 +671,9 @@ and wants the index key. The read's plan, from the server's cache: an index scan
 `IX_DemoCopies_Free` and a key lookup in `PK_DemoCopies` whose predicate is `ClaimedAt IS NULL`.
 With the setting off the read, sent beside a session that held one free row, ended with error
 1222 after its 1.5 s lock timeout (three runs of three); with it on it answered in 1 to 3 ms.
+The staging of the table's last two rows, run with the setting on (six runs with the
+strategy and five without), deadlocks at the conditional `UPDATE`, since the read does not
+wait: 200 six of six, and 503 five of five.
 
 **The gate and registration:**
 
@@ -667,9 +690,11 @@ With the setting off the read, sent beside a session that held one free row, end
   `AUserOutsideEveryCopy_AndAFreeCopysOwner_CannotSignInOnTheDemoHost`;
   `FiveWrongPasswords_OnAGatedUser_LockNothing`, four gated users, with the living copy's owner
   locked by the same five as its control;
-  `WithTheDemoOff_ASignInSendsNoStatementAboutThePool_AndWithItOn_OneReadOfTheCopyByItsKey`: a
-  sign-in sends two statements with the demo off and three with it on, the third
-  `SELECT TOP(1) ClaimedAt FROM DemoCopies WHERE Id = @copyId`.
+  `WithTheDemoOff_ASignInSendsNoStatementAboutThePool_AndWithItOn_OneReadOfTheCopyByItsKey`:
+  with the demo on exactly one statement of a sign-in names `DemoCopies`,
+  `SELECT TOP(1) ClaimedAt FROM DemoCopies WHERE Id = @copyId`, and with it off none. Recorded
+  once on LocalDB and not asserted: two statements with the demo off (the user by its email,
+  the grant's insert) and three with it on, the read between them.
 - Registration: `WithTheDemoOn_RegistrationIs403RegistrationClosed_WhateverTheBody`, five bodies,
   each first shown to be answered 201, 400 or 415 with the demo off;
   `WithTheDemoOn_RegistrationOffTheTokenRoad_IsStill404`;
@@ -717,8 +742,11 @@ With the setting off the read, sent beside a session that held one free row, end
   `InDemoMode_AClosedRegistration_StillSpendsTheAuthLimit`.
 - The three answers of "What a visitor can still do":
   `AnotherMethodOnTheClaimsPath_Is405WhateverTheFlag_AsOnSignInsPath` and
-  `AnotherMethodOnRegistrationsPath_Is405WhateverTheFlag_AsOnSignInsPath` (and their two
-  siblings in `DemoModeEndpointTests`, for the API);
+  `AnotherMethodOnRegistrationsPath_Is405WhateverTheFlag_AsOnSignInsPath` (and, in
+  `AzureBank.Tests`, their two siblings in `DemoModeEndpointTests` for the API, with
+  `WithoutTheServiceKey_TheClaimsPathAndRegistrations_Are401_WhateverTheMethodAndTheFlag`:
+  eight requests without the service key, each 401 where the same request with the key is
+  404, 405, 429, 400 or 403);
   `WithTheFlagOff_TheClaimsPath_StillSpendsTheAuthLimit`;
   `AuthLevelMiddlewareTests.WithNoSession_TheProxiedDemoClaimIs404_WhereAPathThatNamesNothingIs401_WhateverTheFlag`.
 - `ClientAddressTests`: an IPv4 address in full, an IPv6 address as its /64, `unknown` for none;
@@ -728,7 +756,7 @@ With the setting off the read, sent beside a session that held one free row, end
   security headers; a HEAD; what is not the page never gets the tagged shell (14 requests, each
   compared with a host with the demo off); a shell with no head stops the host; with the demo off
   the page is the file's own bytes.
-- Through both hosts, on SQL Server:
+- Through both hosts, on SQL Server (`DemoClaimSqlServerTests`, in `AzureBank.Tests`):
   `ThroughTheBff_AClaim_OpensASession_AndTheProxyReadsTheCopysTwoAccounts` and
   `ThroughTheBff_StartingOver_GivesAnotherCopy_AndTheOldCookieIs401`.
 - **The built BFF as a process** (Testing environment, `Demo__Enabled=true`): a shell with no
@@ -758,6 +786,7 @@ changes made on the committed bytes, by part:
 | The budget | 28, then 1 after review | 27, then 1 | the middleware between authentication and authorisation: nothing fails and nothing can today, since no policy of the API refuses a signed-in user |
 | Two claims at once | 13 | 13 | |
 | The BFF | 14, then 14 after review | 13, then 14 | the two lines "new cookie" and "end the old session" swapped |
+| The API's log, and the service key on the claim's path (two tests added when this record was corrected) | 9 | 9 | |
 
 Two statements of the claim are held by nothing and cannot be: the reset of the answer and of
 the copy's id at the start of an attempt, which nothing a caller sees depends on.
@@ -828,7 +857,7 @@ a parallel load on an index that holds `ClaimedAt`.
 - **Visitors turned away by the daily cap behind one shared address:** a higher
   `Demo:Claim:MaxPerClientPerDay`, on every service that reads it.
 - **A need to hide that a build has the claim:** the three answers of "What a visitor can still
-  do", each of which would then have to change in both hosts.
+  do" would then have to change, the first in both hosts and the other two in the BFF.
 - **A demo deployed on Windows,** where four spellings of the page's file answer it untagged.
 - **A claim whose lost answer strands copies often enough to see** on `recycle`'s line as claimed
   copies nobody used: a way to hand the same copy to the same request again.
