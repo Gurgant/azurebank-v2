@@ -68,10 +68,13 @@ async function aTurn() {
   });
 }
 
-/** Opens /register in a tab that was on another page before it. */
+/**
+ * Opens /register in a tab that was on another page before it. The address carries a query and a
+ * fragment, so that a test can say what became of them.
+ */
 async function openRegister() {
   const { router } = renderWithProviders(<ThreeRoutes />, {
-    routerEntries: ['/about', '/register'],
+    routerEntries: ['/about', '/register?next=%2Fdashboard#frag'],
   });
   await aTurn();
   return router;
@@ -85,6 +88,13 @@ describe('a page the demo closes', () => {
     const landed = {
       shown: shown(),
       path: router.state.location.pathname,
+      // Nothing goes along with the redirect: not the query and the fragment the closed address
+      // carried, and no state. The sign-in page sends a visitor who signs in to the `from` of the
+      // state it is handed (src/pages/LoginPage.test.tsx, "lands where the visitor was going"), so
+      // a state that named this address would send them back to the closed address.
+      search: router.state.location.search,
+      hash: router.state.location.hash,
+      carried: router.state.location.state,
       arrivedBy: router.state.historyAction,
       registerPagePut: put.theRegisterPage,
     };
@@ -101,6 +111,9 @@ describe('a page the demo closes', () => {
     }).toStrictEqual({
       shown: ['THE SIGN-IN PAGE'],
       path: '/login',
+      search: '',
+      hash: '',
+      carried: null,
       arrivedBy: 'REPLACE',
       registerPagePut: 0,
       backLeadsTo: { shown: ['ANOTHER PAGE'], path: '/about' },
@@ -115,12 +128,16 @@ describe('a page the demo closes', () => {
       demoTagsOnThePage: document.querySelectorAll('meta[name="azurebank-demo"]').length,
       shown: shown(),
       path: router.state.location.pathname,
+      search: router.state.location.search,
+      hash: router.state.location.hash,
       arrivedBy: router.state.historyAction,
       registerPagePut: put.theRegisterPage,
     }).toStrictEqual({
       demoTagsOnThePage: 0,
       shown: ['THE REGISTER PAGE'],
       path: '/register',
+      search: '?next=%2Fdashboard',
+      hash: '#frag',
       arrivedBy: 'POP',
       registerPagePut: 1,
     });
@@ -137,12 +154,16 @@ describe('a page the demo closes', () => {
       demoTagsOnThePage: document.querySelectorAll('meta[name="azurebank-demo"]').length,
       shown: shown(),
       path: router.state.location.pathname,
+      search: router.state.location.search,
+      hash: router.state.location.hash,
       arrivedBy: router.state.historyAction,
       registerPagePut: put.theRegisterPage,
     }).toStrictEqual({
       demoTagsOnThePage: 1,
       shown: ['THE REGISTER PAGE'],
       path: '/register',
+      search: '?next=%2Fdashboard',
+      hash: '#frag',
       arrivedBy: 'POP',
       registerPagePut: 1,
     });
