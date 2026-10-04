@@ -76,12 +76,14 @@ describe('whether the page is the demo', () => {
       noContent: withOnly('<meta name="azurebank-demo">'),
       emptyContent: withOnly('<meta name="azurebank-demo" content="">'),
       capitalised: withOnly('<meta name="azurebank-demo" content="True">'),
+      padded: withOnly('<meta name="azurebank-demo" content=" true ">'),
       one: withOnly('<meta name="azurebank-demo" content="1">'),
     }).toStrictEqual({
       saysFalse: off,
       noContent: off,
       emptyContent: off,
       capitalised: off,
+      padded: off,
       one: off,
     });
   });
@@ -92,5 +94,24 @@ describe('whether the page is the demo', () => {
 
     expect(document.head.contains(other)).toBe(true);
     expect(isDemoMode()).toBe(false);
+  });
+
+  it('is off for an element of that name that says true and is not a meta', () => {
+    // CONTROL: green before this change
+    const link = putInHead('<link name="azurebank-demo" content="true">');
+
+    expect({
+      inTheHead: document.head.contains(link),
+      element: link.localName,
+      name: link.getAttribute('name'),
+      content: link.getAttribute('content'),
+      on: isDemoMode(),
+    }).toStrictEqual({
+      inTheHead: true,
+      element: 'link',
+      name: 'azurebank-demo',
+      content: 'true',
+      on: false,
+    });
   });
 });
