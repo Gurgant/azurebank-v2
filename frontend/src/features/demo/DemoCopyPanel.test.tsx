@@ -167,15 +167,21 @@ function panelButtons(name: string): HTMLButtonElement[] {
 /** The details toggle, whichever of its two names it has. */
 const toggles = () => [...panelButtons(WORDS.show), ...panelButtons(WORDS.hide)];
 
-/** The toggle as the page has it: its name, its state, and what the element it names reads. */
+/**
+ * The toggle as the page has it: its name, its state, whether it says which element it shows and
+ * hides (`aria-controls`), whether an element of that id is in the page, and what that element
+ * reads.
+ */
 function toggleNow() {
   return toggles().map((toggle) => {
     const controls = toggle.getAttribute('aria-controls');
+    const controlled = controls ? document.getElementById(controls) : null;
     return {
       name: toggle.textContent,
       expanded: toggle.getAttribute('aria-expanded'),
-      namesAnElement: controls !== null && controls !== '',
-      controlled: controls ? (document.getElementById(controls)?.textContent ?? null) : null,
+      hasAriaControls: controls !== null && controls !== '',
+      controlledInThePage: controlled !== null,
+      controlled: controlled?.textContent ?? null,
     };
   });
 }
@@ -307,15 +313,33 @@ describe("the dashboard's panel about the demo copy", () => {
     await userEvent.click(toggles()[0]);
     const closedAgain = look();
 
+    // Closed, the toggle still carries the id, and no element of that id is in the page: the
+    // details are in the page only while they are shown.
     const shut = {
-      toggle: [{ name: WORDS.show, expanded: 'false', namesAnElement: true, controlled: null }],
+      toggle: [
+        {
+          name: WORDS.show,
+          expanded: 'false',
+          hasAriaControls: true,
+          controlledInThePage: false,
+          controlled: null,
+        },
+      ],
       lines: 3,
       passwordOnThePage: 0,
     };
     expect({ closed, open, closedAgain }).toStrictEqual({
       closed: shut,
       open: {
-        toggle: [{ name: WORDS.hide, expanded: 'true', namesAnElement: true, controlled: details }],
+        toggle: [
+          {
+            name: WORDS.hide,
+            expanded: 'true',
+            hasAriaControls: true,
+            controlledInThePage: true,
+            controlled: details,
+          },
+        ],
         lines: 4,
         passwordOnThePage: 1,
         // Under the button that showed them, so they are read next.
