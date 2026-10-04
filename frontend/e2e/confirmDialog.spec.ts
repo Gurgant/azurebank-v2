@@ -81,7 +81,11 @@ test.describe('the confirm dialog under the keyboard', () => {
     await expect.poll(() => focusOf(page)).toEqual({ on: 'Close', inTheDialog: true });
 
     // Tab goes round inside the dialog, both ways. "Leave anyway" is the last Tab stop of the
-    // whole document: from it Tab goes to the dialog's first control, not out to the page.
+    // whole document: from it Tab goes to the dialog's first control, not out to the page. That
+    // end of the document is the only one met here: this page's own controls come before the
+    // dialog, so "Close" is not the document's first Tab stop and Shift+Tab from it is an
+    // ordinary wrap. The wrap from a dialog that is first in the document is held by
+    // src/components/shared/ConfirmDialog.test.tsx, where a listener stands in for tabster.
     await page.keyboard.press('Tab');
     expect(await focusOf(page)).toEqual({ on: 'Stay on this page', inTheDialog: true });
     await page.keyboard.press('Tab');
