@@ -158,6 +158,28 @@ describe("a demo claim's answer", () => {
     });
   });
 
+  it("accepts a copy whose password, PIN and contacts are not shaped as today's", () => {
+    // Today's shapes are the server's: four groups of four characters joined by hyphens
+    // (backend/src/AzureBank.Api/Security/DemoPasswordGenerator.cs), six digits
+    // (`DemoCopyDefaults.Pin`, backend/src/AzureBank.Shared/Constants/DemoCopyDefaults.cs) and
+    // two handles (`DemoCredentials.Create`,
+    // backend/tools/AzureBank.Seeder/Pool/DemoCredentials.cs). None of them is pinned here: a
+    // copy shaped otherwise is still a copy, and a claim that hands one out is not refused.
+    const passes = { alone: true, inAnAnswer: true };
+
+    expect({
+      noContactsAtAll: accepts({ ...copy, contacts: [] }),
+      threeContacts: accepts({ ...copy, contacts: ['jane_k7m2', 'mike_k7m2', 'anna_k7m2'] }),
+      fourDigitPin: accepts({ ...copy, pin: '1234' }),
+      oneCharacterPassword: accepts({ ...copy, password: 'x' }),
+    }).toStrictEqual({
+      noContactsAtAll: passes,
+      threeContacts: passes,
+      fourDigitPin: passes,
+      oneCharacterPassword: passes,
+    });
+  });
+
   it("refuses a copy's end that names no zone", () => {
     // `new Date` reads this form as local time, so the copy's end would move by the viewer's
     // offset from UTC with nothing said. The same instant with a Z is the fixture's own.
