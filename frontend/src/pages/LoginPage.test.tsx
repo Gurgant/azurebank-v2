@@ -1083,6 +1083,37 @@ describe('the sign-in page on the demo, in a browser that keeps a copy', () => {
     });
   });
 
+  it('a press on "Continue with my copy" that finds no copy leaves what the page said as it was', async () => {
+    const kept = rememberAClaimedCopy();
+    const { requests, settled } = await openSignInPage();
+    // A wrong password typed into the form: the page says so, in the form's words.
+    await fillTheForm(kept.email, 'Wrong-Pass-1!');
+    await userEvent.click(signInButton());
+    await waitFor(() => expect(alerts()).toStrictEqual([WORDS.wrongPassword]));
+    // Another tab pressed "Forget this copy". This tab is told nothing: its button is still there.
+    localStorage.removeItem(KEY);
+    const stillOffered = buttonsNamed(WORDS.continue).length;
+
+    await userEvent.click(continueButton());
+    await settled();
+
+    // The press sent nothing, so there is no answer for the page to speak of: the sentence on the
+    // page is still the form's, and not one about a copy that was never asked for.
+    expect({
+      stillOffered,
+      signIns: requests.signIns,
+      alerts: alerts(),
+      continue: buttonsNamed(WORDS.continue).length,
+      tryTheDemo: disabledOf(WORDS.tryTheDemo),
+    }).toStrictEqual({
+      stillOffered: 1,
+      signIns: 1,
+      alerts: [WORDS.wrongPassword],
+      continue: 0,
+      tryTheDemo: [false],
+    });
+  });
+
   it('a copy that is gone: one sentence, the copy forgotten, the demo offered again', async () => {
     // The browser kept a password the server no longer takes: what a copy that ended, or one that
     // was handed to somebody else, answers. The same 401 as any wrong password.
