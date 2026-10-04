@@ -5,6 +5,7 @@ import { resetServerActivity } from '../features/auth/sessionActivity';
 import { __resetStepUpController } from '../features/auth/stepUpController';
 import { server } from '../mocks/server';
 import { resetMockState, seedMockSession } from '../mocks/state';
+import { resetDemoMode } from './demoMode';
 import { installKeyborgBeforeUserEvent } from './keyborg';
 import { installLayoutStubs } from './layout';
 import {
@@ -181,6 +182,10 @@ afterEach(() => {
   resetServerActivity();
   // Module-level step-up bridge (mirrors mockState.authLevel reset) — no inflight leak.
   __resetStepUpController();
+  // The demo's tag on the test page. The tests of a file share one page, so a test that turned
+  // the demo on would hand it to every test after it: `demoMode.test.ts` leaves the tag on in one
+  // test and reads the page in the next.
+  resetDemoMode();
   // A test that narrowed the viewport must not hand the next one a phone, and one that turned
   // animations back on must not hand it the flake the stub exists to prevent.
   //
