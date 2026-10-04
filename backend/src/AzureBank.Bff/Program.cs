@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
-using System.Net.Sockets;
 using System.Threading.RateLimiting;
 using AzureBank.Bff;
 using AzureBank.Bff.Extensions;
@@ -304,30 +303,9 @@ try
     var rateLimiting = builder.Configuration
         .GetSection(RateLimitingOptions.SectionName).Get<RateLimitingOptions>() ?? new RateLimitingOptions();
 
-    // Partition key. IPv6 end sites are handed a whole /64 (often more), so keying on the
-    // full address would let an attacker rotate addresses inside their OWN allocation — no
-    // spoofing required — and the per-IP limit would evaporate. Key IPv6 on its /64 prefix;
-    // IPv4 keys on the full address.
-    static string ClientIp(HttpContext context)
-    {
-        var ip = context.Connection.RemoteIpAddress;
-        if (ip is null)
-        {
-            return "unknown";
-        }
-        if (ip.IsIPv4MappedToIPv6)
-        {
-            ip = ip.MapToIPv4();
-        }
-        if (ip.AddressFamily != AddressFamily.InterNetworkV6)
-        {
-            return ip.ToString();
-        }
-
-        var bytes = ip.GetAddressBytes();
-        Array.Clear(bytes, 8, 8); // zero the interface identifier -> the /64 prefix
-        return new IPAddress(bytes) + "/64";
-    }
+    // Partition key: ClientAddress.Of, which says why an IPv6 client is keyed on its /64 prefix
+    // and an IPv4 one on its full address. It is a type of its own because the demo claim sends
+    // the API the same key (BffAuthController.ClaimDemoCopy).
 
     // Recipient lookup is limited per AUTHENTICATED USER, not per IP: registration is open,
     // so an attacker's cost unit is the throwaway account, not the address (ADR-0014).
@@ -346,13 +324,13 @@ try
                 return "user:" + session.UserId;
             }
         }
-        return "ip:" + ClientIp(context);
+        return "ip:" + ClientAddress.Of(context);
     }
 
     builder.Services.AddRateLimiter(options =>
     {
         options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
-            RateLimitPartition.GetFixedWindowLimiter(ClientIp(context), _ => new FixedWindowRateLimiterOptions
+            RateLimitPartition.GetFixedWindowLimiter(ClientAddress.Of(context), _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = rateLimiting.GlobalPermitLimit,
                 Window = TimeSpan.FromSeconds(rateLimiting.GlobalWindowSeconds),
@@ -367,7 +345,7 @@ try
         // bucket shared by bff/auth/{login,register} and the YARP /api/auth/* routes, which
         // is deliberate: that shared budget IS the per-IP enumeration/brute-force allowance.
         options.AddPolicy(RateLimitPolicies.Auth, context =>
-            RateLimitPartition.GetSlidingWindowLimiter(ClientIp(context), _ => new SlidingWindowRateLimiterOptions
+            RateLimitPartition.GetSlidingWindowLimiter(ClientAddress.Of(context), _ => new SlidingWindowRateLimiterOptions
             {
                 PermitLimit = rateLimiting.AuthPermitLimit,
                 Window = TimeSpan.FromSeconds(rateLimiting.AuthWindowSeconds),
@@ -420,7 +398,7 @@ try
                 context.HttpContext.Request.Method,
                 RequestLogRoute.Of(context.HttpContext),
                 RequestLogRoute.ResourceOf(context.HttpContext),
-                ClientIp(context.HttpContext));
+                ClientAddress.Of(context.HttpContext));
 
             var problem = new ProblemDetails
             {
