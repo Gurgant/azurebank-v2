@@ -272,13 +272,14 @@ tests pin the forwarded-path list empty for each (`AuthLevelMiddlewareTests`):
 
 ```csharp
 // These six auth paths are answered 404 — as if the routes did not exist — before the session is
-// read, so they answer 404 even to a valid session. The SPA signs in through the BFF's own
-// /bff/auth/* controller; a raw proxied login had no legitimate caller and handed out the very JWT
-// the BFF exists to withhold (measured 2026-08-19, ADR-0041 amendment). Revoke, logout and the
-// session-stamp feed are token endpoints the API answers only to the BFF's own client
-// (ADR-0057 §4.2, §5.3). The demo's claim joined them (ADR-0063): its answer carries the tokens,
-// and the API counts a client's copies by the address its caller names, which must be this host.
-// /api/auth/refresh is answered 404 by the branch just above this one.
+// read, so they answer 404 even to a valid session. /api/auth/refresh is the seventh of the table
+// above: the middleware answers it 404 in a branch of its own, before it looks at this set. The
+// SPA signs in through the BFF's own /bff/auth/* controller; a raw proxied login had no legitimate
+// caller and handed out the very JWT the BFF exists to withhold (measured 2026-08-19, ADR-0041
+// amendment). Revoke, logout and the session-stamp feed are token endpoints the API answers only
+// to the BFF's own client (ADR-0057 §4.2, §5.3). The demo's claim joined them (ADR-0063): its
+// answer carries the tokens, and the API counts a client's copies by the address its caller
+// names, which must be this host.
 private static readonly HashSet<string> BlockedProxiedAuthPaths =
     new(StringComparer.OrdinalIgnoreCase)
     {
