@@ -24,10 +24,11 @@
 # `recycle` deletes the old ones.
 #
 # No number of the demo is set here, so every service runs on the defaults
-# (backend/tools/AzureBank.Seeder/README.md lists them). A value given to one service is given to
-# every service that reads it: Demo__CopyLifetimeHours to `api`, which ends a copy by it, and to
-# `recycle`, which deletes by it; Demo__Claim__MaxPerClientPerDay to `api`, which refuses a client
-# by it, and to `seed` and `recycle`, whose line counts the clients at their cap by it.
+# (backend/tools/AzureBank.Seeder/README.md lists them). A value written under one service reaches
+# no other: give it to every service that reads it. Demo__CopyLifetimeHours goes to `api`, which
+# ends a copy by it, and to `recycle`, which deletes by it; Demo__Claim__MaxPerClientPerDay to
+# `api`, which refuses a client by it, and to `seed` and `recycle`, whose line counts the clients
+# at their cap by it.
 #
 # `recycle`, the job a deployment runs on a schedule, is a service here under the profile `pool`,
 # so `up` leaves it out and it runs when asked:
