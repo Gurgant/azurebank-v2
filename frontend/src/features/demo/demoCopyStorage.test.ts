@@ -152,6 +152,20 @@ describe('the demo copy the browser keeps', () => {
     });
   });
 
+  it('removes what it cannot read again when the same string comes back', () => {
+    enableDemoMode();
+    // The cases above are all different strings. This is one string, put in the key twice.
+    const ask = () => {
+      localStorage.setItem(KEY, '{"v":1,"email":');
+      return { snapshot: getDemoCopySnapshot(), keyAfter: localStorage.getItem(KEY) };
+    };
+
+    expect({ first: ask(), second: ask() }).toStrictEqual({
+      first: { snapshot: null, keyAfter: null },
+      second: { snapshot: null, keyAfter: null },
+    });
+  });
+
   it('forgets on request, and tells whoever listens', () => {
     enableDemoMode();
     rememberDemoCopy(copy);
