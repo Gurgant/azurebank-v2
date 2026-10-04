@@ -12,8 +12,11 @@ namespace AzureBank.Tests.Fixtures;
 /// stop that lands before a statement is sent ends it as a cancellation. One that lands after it
 /// was sent is answered by the server, and SqlClient reports that answer as the database's own
 /// error ("Operation cancelled by user"), not as a cancellation. Code that tells the two apart by
-/// the exception's type sees a stop as a failure. An interceptor cannot make that error: it has
-/// no public constructor, and what matters is that the statement really was on the server.
+/// the exception's type sees a stop as a failure. An interceptor that throws an error built to
+/// look like that one (<see cref="SqlErrors"/> builds a <c>SqlException</c> as SqlClient builds
+/// its own) would not do here: what matters is that the statement really was on the server when
+/// the stop reached it. (Until 2026-10-04 this said an interceptor cannot make that error, for
+/// want of a public constructor.)
 /// </para>
 /// <para>
 /// <see cref="AStatementWaitsAsync"/> asks the server which request waits behind this session, so
