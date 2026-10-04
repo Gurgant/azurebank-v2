@@ -11,6 +11,7 @@ import { store } from './app/store';
 import { ThemeProvider } from './theme/ThemeProvider';
 import { AppToaster } from './components/feedback';
 import { AuthBootstrap, SessionExpiryWarning, StepUpModal } from './features/auth';
+import { ClosedInDemo } from './features/demo';
 import {
   AppErrorBoundary,
   ProtectedRoute,
@@ -73,7 +74,17 @@ const router = createBrowserRouter(
       <>
         {/* Public Routes */}
         <Route path="/login" handle={{ title: 'Sign in' }} element={<LoginPage />} />
-        <Route path="/register" handle={{ title: 'Create Account' }} element={<RegisterPage />} />
+        {/* Nobody registers on the demo: there ClosedInDemo sends this address to the sign-in
+            page. Off the demo it draws the page, and the route is the one it was. */}
+        <Route
+          path="/register"
+          handle={{ title: 'Create Account' }}
+          element={
+            <ClosedInDemo>
+              <RegisterPage />
+            </ClosedInDemo>
+          }
+        />
 
         {/* Protected routes inside the shared app shell */}
         <Route
