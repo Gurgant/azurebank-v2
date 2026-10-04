@@ -845,11 +845,13 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
     [InlineData("/bff/auth/reauthenticate")]
     public async Task EveryDoorThatCreatesASession_CapsItAtTheGrantsExpiry_AndEndsTheSessionItsCookieNamed(string door)
     {
-        // ADR-0057 §4.1 (F5) at the three places a session is created from the API's answer: each
-        // must pass the grant's expiry on. The API reports a 15-minute grant here, so a door that
-        // dropped it would report sign-in + 60 and fail. Every other cap test builds its session
-        // directly. And ADR-0057 §4.6 (F13, ADR-0026): the session the request's cookie named ends
-        // through the revoke path, and only its grant is revoked.
+        // ADR-0057 §4.1 (F5) at three of the four places a session is created from the API's
+        // answer: each must pass the grant's expiry on. The API reports a 15-minute grant here, so a
+        // door that dropped it would report sign-in + 60 and fail. Every other cap test builds its
+        // session directly. And ADR-0057 §4.6 (F13, ADR-0026): the session the request's cookie
+        // named ends through the revoke path, and only its grant is revoked. The fourth place is
+        // the demo claim, which is 404 on this host, where the demo is off: DemoClaimTests holds
+        // the same two things for it, on a host with the demo on.
         var (host, upstream) = NewHost();
         var sessions = host.Services.GetRequiredService<ISessionService>();
         var cap = host.Services.GetRequiredService<IOptions<BffSessionOptions>>().Value.AbsoluteTimeoutMinutes;

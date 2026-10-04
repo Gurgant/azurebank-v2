@@ -4,19 +4,23 @@ using System.Diagnostics.Metrics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using AzureBank.Api.Observability;
 using AzureBank.Api.Security;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
+using AzureBank.Shared.DTOs.Account;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
+using AzureBank.Shared.DTOs.Transaction;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Options;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using FluentAssertions.Execution;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -105,10 +109,12 @@ public sealed class DemoClaimSqlServerTests
 
     /// <summary>
     /// Sets whether the scratch database reads committed data from row versions
-    /// (<c>READ_COMMITTED_SNAPSHOT</c>), and reads the setting back. On: Azure SQL's default. Off:
-    /// SQL Server's, which a database created under compose has.
+    /// (<c>READ_COMMITTED_SNAPSHOT</c>), and reads the setting back. On: Azure SQL's default, and
+    /// what a database EF creates on any other SQL Server starts with, the scratch database among
+    /// them (<c>DemoClaimService.ReadCandidatesAsync</c> says where that was read and measured).
+    /// Off: SQL Server's own default, which a database made some other way has.
     /// </summary>
-    private static async Task SetRowVersioningAsync(DemoPoolDatabase database, bool on)
+    internal static async Task SetRowVersioningAsync(DemoPoolDatabase database, bool on)
     {
         // The name is the fixture's own: "AzureBankPoolProof_" and 32 hexadecimal digits.
         var name = new SqlConnectionStringBuilder(database.ConnectionString).InitialCatalog;
@@ -129,7 +135,7 @@ public sealed class DemoClaimSqlServerTests
         (await RowVersioningAsync(database)).Should().Be(on, "ARRANGE: the database reads committed data the way this row of the theory says");
     }
 
-    private static async Task<bool> RowVersioningAsync(DemoPoolDatabase database)
+    internal static async Task<bool> RowVersioningAsync(DemoPoolDatabase database)
     {
         await using var db = database.NewContext();
         return await db.Database
@@ -159,8 +165,8 @@ public sealed class DemoClaimSqlServerTests
 
     /// <summary>
     /// The lines the API wrote for the requests it answered 5xx, for a failure's message: a claim
-    /// that deadlocks is answered 503 and says so only in the log (error 1205), and a 503 with
-    /// another cause must not be read as one.
+    /// that loses a deadlock on a host that does not run it again is answered 503 and says so only
+    /// in the log (error 1205), and a 503 with another cause must not be read as one.
     /// </summary>
     private static string WhatTheApiSaidOfItsFailures(CustomWebApplicationFactory api)
     {
@@ -327,6 +333,24 @@ public sealed class DemoClaimSqlServerTests
     }
 
     private static bool IsSelect(string statement) => statement.StartsWith("SELECT", StringComparison.Ordinal);
+
+    /// <summary>
+    /// A text that, of a claim's statements, only the read of candidates holds: it is the one that
+    /// sorts by the seed instant. For an interceptor that picks a statement by one text; the tests
+    /// that use it check what it picked with <see cref="IsTheCandidatesRead"/>.
+    /// </summary>
+    private const string OnlyInTheCandidatesRead = "[CreatedAt] DESC";
+
+    private static bool IsTheCandidatesRead(string statement) =>
+        IsSelect(statement)
+        && statement.Contains("[DemoCopies]", StringComparison.Ordinal)
+        && statement.Contains("[ClaimedAt] IS NULL", StringComparison.Ordinal);
+
+    /// <summary>The statement that takes a copy if nobody has: the conditional update of the pool's row.</summary>
+    private static bool IsTheConditionalClaim(string statement) =>
+        statement.StartsWith("UPDATE", StringComparison.Ordinal)
+        && statement.Contains("[DemoCopies]", StringComparison.Ordinal)
+        && statement.Contains("[ClaimedAt] IS NULL", StringComparison.Ordinal);
 
     // ── The hosts ────────────────────────────────────────────────────────────────────────────────
 
@@ -515,6 +539,25 @@ public sealed class DemoClaimSqlServerTests
 
     // ── Many claims at once ──────────────────────────────────────────────────────────────────────
 
+    // Each of the two theories runs under both ways a database reads committed data, and its two
+    // rows do not prove the same thing.
+    //
+    // WITH ROW VERSIONING (READ_COMMITTED_SNAPSHOT on: Azure SQL's default, and what a database EF
+    // creates starts with) the host is the plain test host, which runs nothing again: a claim the
+    // server refused as the victim of a deadlock would be answered 503 and fail the row. So a
+    // green row shows that, read this way, no claim of that run was refused as a deadlock's victim
+    // (DemoClaimService.ReadCandidatesAsync says in how many runs none was).
+    //
+    // WITHOUT IT (SQL Server's own default, for a database made some other way) two claims can
+    // deadlock, rarely: the read of candidates goes from an entry of the index of free copies to
+    // its row, and can hold the entry while it waits for a row that a claim taking that copy
+    // holds, which then waits for the entry. The server refuses the read with error 1205.
+    // DemoClaimService.ReadCandidatesAsync says what was measured. A deployed host runs the
+    // refused claim again, and so does the host of this row (EnableSqlRetryOnFailure). What the
+    // row proves is the outcome on such a host: each visitor is served or refused as the pool
+    // allows, and no copy is given twice, even when a claim was run again on the way. On the plain
+    // host the same row is red whenever the deadlock happens.
+
     [SqlServerTheory]
     [InlineData(true)]
     [InlineData(false)]
@@ -524,6 +567,13 @@ public sealed class DemoClaimSqlServerTests
         await SetRowVersioningAsync(database, rowVersioning);
         var copies = await database.BuildCopiesAsync(5);
         var api = database.DemoApi();
+        if (!rowVersioning)
+        {
+            // As a deployed host: a claim that lost a deadlock is run again. Five different copies
+            // and three refusals are due all the same.
+            api.EnableSqlRetryOnFailure();
+        }
+
         api.CaptureLog();
         using var client = api.CreateClient();
         var addresses = Enumerable.Range(1, 8).Select(i => $"198.51.100.{i}").ToList();
@@ -577,6 +627,12 @@ public sealed class DemoClaimSqlServerTests
         await SetRowVersioningAsync(database, rowVersioning);
         var copies = await database.BuildCopiesAsync(20);
         var api = database.DemoApi();
+        if (!rowVersioning)
+        {
+            // As a deployed host: a claim that lost a deadlock is run again. Twelve different
+            // copies are due all the same.
+            api.EnableSqlRetryOnFailure();
+        }
 
         // Twelve requests at once would each wait for one of the twelve connections the test host's
         // pool holds, which is another test's subject; this one is given room.
@@ -608,9 +664,14 @@ public sealed class DemoClaimSqlServerTests
     }
 
     // Two claims at once deadlock when each holds what the other waits for. The two theories above
-    // show that they do not, by running them; a deadlock that needs an unlucky moment can pass
-    // there. These two hold, on one claim's own statements, the two rules that leave no such
-    // moment, each found by a deadlock the theories did show (error 1205, with row versioning off).
+    // do not show that claims never do: a deadlock needs an unlucky moment, and without row
+    // versioning their host runs the refused claim again. These two hold, on one claim's own
+    // statements, two rules about what a claim asks for and when, each found by a deadlock the
+    // theories did show while their host ran nothing again (error 1205, with row versioning off).
+    // The rule about users leaves its deadlock no moment: a claim that has written a user reads no
+    // other user. The rule about the candidates does not: the read asks for nothing the index of
+    // free copies lacks, and the server goes from the index to the row all the same, so that
+    // deadlock is rare and not gone (DemoClaimService.ReadCandidatesAsync).
 
     [SqlServerFact]
     public async Task TheCandidatesRead_AsksOnlyForWhatTheIndexOfFreeCopiesHolds()
@@ -634,12 +695,16 @@ public sealed class DemoClaimSqlServerTests
 
         using (new AssertionScope())
         {
-            // A column the index does not hold is fetched from the row, with the index entry still
-            // locked. A claim taking that copy holds the row and waits for the index entry.
+            // The statement asks for nothing that is only in the row, and its condition is the
+            // index's own filter. A statement can do no more, and it does not keep SQL Server in
+            // the index: the index does not hold ClaimedAt, and the plan looks each row up to
+            // check it there (DemoClaimService.ReadCandidatesAsync says what was measured). Held
+            // all the same: a column asked for from the row would send the read there whatever
+            // the index held.
             asked.Should().NotBeEmpty().And.BeSubsetOf(
-                held, "the read is answered from the index of free copies alone, {0}, and never from the rows", string.Join(", ", held));
+                held, "the read asks only for what the index of free copies holds, {0}", string.Join(", ", held));
             Regex.Replace(condition, @"\[\w+\]\.", string.Empty).Should().Be(
-                free.GetFilter(), "the read's condition is the index's own, so the index answers all of it");
+                free.GetFilter(), "the read's condition is the index's own filter");
         }
     }
 
@@ -809,7 +874,7 @@ public sealed class DemoClaimSqlServerTests
         var free = (await database.BuildCopiesAsync(1)).Single();
 
         // Something other than a claim gave the owner a password. Handing the copy out would hand
-        // a visitor a copy that somebody else can already sign in to.
+        // a visitor a copy that somebody else holds a password for.
         await database.GiveOwnerAPasswordAsync(free);
         var before = (await database.CopyAsync(free.Id))!;
         before.Owner.PasswordHash.Should().NotBeNullOrEmpty("ARRANGE");
@@ -901,6 +966,112 @@ public sealed class DemoClaimSqlServerTests
 
         using var signIn = await DemoVisitor.TrySignInAsync(client, claim.Copy.Email, claim.Copy.Password);
         signIn.StatusCode.Should().Be(HttpStatusCode.OK, "the password answered is the one the second attempt committed");
+    }
+
+    // Without row versioning the server can refuse a claim's read of candidates as the victim of a
+    // deadlock with another claim (the note above the two theories). To EF's retrying strategy
+    // that refusal, error 1205, is a transient fault: one it runs the work again for
+    // (ServiceUnavailableExceptionHandlerTests asks EF's own list about 1205). The two tests below
+    // do not make a deadlock. They refuse the read with the error SqlClient reports to a
+    // deadlock's victim (number 1205, class 13), built as ServiceUnavailableExceptionHandlerTests
+    // builds its errors (SqlErrors) and thrown before the statement reaches the server, and hold
+    // what a host does with a read refused that way. A deadlock of the server's own is met, when
+    // one happens, by the two theories.
+
+    /// <summary>The error SqlClient reports to the victim of a deadlock, built here: no deadlock happens.</summary>
+    private static SqlException TheErrorOfADeadlocksVictim() => SqlErrors.Of(number: 1205, errorClass: 13);
+
+    [SqlServerFact]
+    public async Task AClaimWhoseReadOfCandidatesIsRefusedOnce_IsRunAgain_AndClaimsOneCopy()
+    {
+        // CONTROL: green as written (the product already ran a claim again). Seen red with
+        // the strategy taken off this host: 503 where 200 was due.
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copies = await database.BuildCopiesAsync(2);
+        var api = database.DemoApi();
+
+        // As a deployed host: work the database refuses with an error on EF's list is run again.
+        api.EnableSqlRetryOnFailure();
+        var statements = new StatementsInOrder();
+        var fault = new TransientFailureInterceptor(OnlyInTheCandidatesRead, TheErrorOfADeadlocksVictim);
+
+        // In this order: a statement is recorded before it is refused.
+        api.AddInterceptor(statements);
+        api.AddInterceptor(fault);
+        using var client = api.CreateClient();
+
+        statements.Start();
+        using var response = await DemoVisitor.ClaimAsync(client, Visitor);
+        var issued = statements.Texts;
+
+        fault.Fired.Should().BeTrue("the read must actually have been refused once, else the test proves nothing");
+        var claim = await DemoVisitor.ClaimedAsync(response);
+        var rows = await RowsAsync(database);
+        var after = await database.CopiesAsync();
+
+        // What the host issued about the pool, in order: the claim's statements that name it, the
+        // refused one among them (recorded, and never sent), and nothing a background service of
+        // the host issued in between (none of them names the pool).
+        var aboutThePool = issued.Where(t => t.Contains("[DemoCopies]", StringComparison.Ordinal)).ToList();
+        using (new AssertionScope())
+        {
+            issued.Where(t => t.Contains(OnlyInTheCandidatesRead, StringComparison.Ordinal)).Should()
+                .HaveCount(2, "the statement that was refused is issued a second time")
+                .And.OnlyContain(t => IsTheCandidatesRead(t), "and it is the read of candidates");
+            aboutThePool.Skip(2).Take(2).Should().Equal(
+                aboutThePool.Take(2), "the claim is run again from its first statement, not from the one that was refused");
+            issued.Count(IsTheConditionalClaim).Should().Be(1, "the second attempt takes its first candidate, and the first took none");
+
+            rows.Where(row => row.ClaimedAt != null).Select(row => row.OwnerUserId).Should().Equal(
+                [claim.User.Id], "one copy is claimed, the one the answer is for");
+            rows.Single(row => row.OwnerUserId == claim.User.Id).ClientKey.Should().Equal(KeyOf(Visitor));
+            after.Where(copy => copy.Owner.PasswordHash != null).Select(copy => copy.Owner.Id).Should().Equal(
+                [claim.User.Id], "one owner has a password, the answer's");
+            (await GrantsOfAsync(database, [.. copies.Select(c => c.Owner.Id)])).Should().Be(1, "and one session is open");
+        }
+
+        using var signIn = await DemoVisitor.TrySignInAsync(client, claim.Copy.Email, claim.Copy.Password);
+        signIn.StatusCode.Should().Be(HttpStatusCode.OK, "the answered password signs in");
+    }
+
+    [SqlServerFact]
+    public async Task OnAHostThatRunsNothingAgain_TheSameRefusalIs503_AndNothingIsClaimed()
+    {
+        // CONTROL: green as written. The plain test host has no retrying strategy: the
+        // refusal the test above survives reaches the visitor here, as the outage 503, so what
+        // answers 200 there is the strategy.
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copies = await database.BuildCopiesAsync(2);
+        var api = database.DemoApi();
+        var statements = new StatementsInOrder();
+        var fault = new TransientFailureInterceptor(OnlyInTheCandidatesRead, TheErrorOfADeadlocksVictim);
+        api.AddInterceptor(statements);
+        api.AddInterceptor(fault);
+        api.CaptureLog();
+        using var client = api.CreateClient();
+
+        statements.Start();
+        using var response = await DemoVisitor.ClaimAsync(client, Visitor);
+        var issued = statements.Texts;
+
+        fault.Fired.Should().BeTrue("the read must actually have been refused, else the test proves nothing");
+        await DatabaseUnavailableSqlServerTests.AssertServiceUnavailableAsync(response, applied: null);
+        WhatTheApiSaidOfItsFailures(api).Should().Contain(
+            "SQL errors [1205]", "what the visitor was answered 503 for is the refusal of a deadlock's victim");
+        var after = await database.CopiesAsync();
+        using (new AssertionScope())
+        {
+            issued.Where(t => t.Contains(OnlyInTheCandidatesRead, StringComparison.Ordinal)).Should()
+                .HaveCount(1, "the statement that was refused is not issued a second time")
+                .And.OnlyContain(t => IsTheCandidatesRead(t), "and it is the read of candidates");
+            issued.Count(IsTheConditionalClaim).Should().Be(0, "no copy was tried");
+
+            after.Should().HaveCount(2).And.OnlyContain(
+                copy => copy.Row.ClaimedAt == null && copy.Row.ClaimId == null && copy.Row.ClientKey == null,
+                "both copies are still free");
+            after.Should().OnlyContain(copy => copy.Owner.PasswordHash == null, "and no owner has a password");
+            (await GrantsOfAsync(database, [.. copies.Select(c => c.Owner.Id)])).Should().Be(0, "and no session is open");
+        }
     }
 
     [SqlServerFact]
@@ -1184,6 +1355,504 @@ public sealed class DemoClaimSqlServerTests
             // same copy first. A shuffle of ten leaves them as they were read once in 3,628,800.
             tried.Take(10).Should().NotEqual(fresh.Select(row => row.Id), "the fresh candidates are not tried in the order they were read");
             tried.Skip(10).Should().NotEqual(old.Select(row => row.Id), "nor are the old ones");
+        }
+    }
+
+    // ── Who can sign in ──────────────────────────────────────────────────────────────────────────
+
+    // On the demo, sign-in is for the owner of a claimed copy while the copy lives. Anybody else
+    // the database holds is answered as an email nobody has, before the password is looked at.
+    // Through the host and on SQL Server, because two of the things promised are rows: no grant is
+    // written for a refused sign-in, and no failed attempt is counted.
+
+    /// <summary>A password that passes the sign-in request's own rule and is nobody's.</summary>
+    private const string WrongPassword = "Wrong-Pass-2026!";
+
+    /// <summary>A response as status, media type and body, without the trace id, which differs between two requests.</summary>
+    /// <remarks>
+    /// With parentheses where the body has braces: a brace in a text the assertion library compares
+    /// makes a comparison that fails throw <see cref="FormatException"/> in place of its message
+    /// (<c>DemoModeEndpointTests.ShapeOfAsync</c> says how it was measured).
+    /// </remarks>
+    private static async Task<string> AnswerOfAsync(HttpResponseMessage response)
+    {
+        var body = await response.Content.ReadAsStringAsync();
+        if (body.Length > 0 && JsonNode.Parse(body) is JsonObject json)
+        {
+            json.Remove("traceId");
+            body = json.ToJsonString();
+        }
+
+        return $"{(int)response.StatusCode} {response.Content.Headers.ContentType?.MediaType} {body}"
+            .Replace('{', '(').Replace('}', ')');
+    }
+
+    /// <summary>A user no failed sign-in was counted for, and whom nothing locks.</summary>
+    private static readonly (int AccessFailedCount, DateTimeOffset? LockoutEnd) NothingCounted = (0, null);
+
+    /// <summary>What the lock on sign-in holds for a user, read from the row.</summary>
+    private static async Task<(int AccessFailedCount, DateTimeOffset? LockoutEnd)> LockOfAsync(DemoPoolDatabase database, Guid userId)
+    {
+        await using var db = database.NewContext();
+        var row = await db.Users.AsNoTracking()
+            .Where(u => u.Id == userId)
+            .Select(u => new { u.AccessFailedCount, u.LockoutEnd })
+            .SingleAsync();
+        return (row.AccessFailedCount, row.LockoutEnd);
+    }
+
+    /// <summary>
+    /// Registers a user of no copy through <paramref name="ordinary"/>, a host with the demo off,
+    /// and returns what signs in as it.
+    /// </summary>
+    private static async Task<(Guid Id, string Email, string Password)> RegisterOutsideEveryCopyAsync(HttpClient ordinary)
+    {
+        const string password = "Outside-Pass-2026!";
+        var unique = Guid.NewGuid().ToString("N")[..8];
+        var email = $"outsider{unique}@example.com";
+        using var response = await ordinary.PostAsJsonAsync(
+            "/api/auth/register",
+            new RegisterRequest
+            {
+                AzureTag = $"outsider_{unique}",
+                Email = email,
+                Password = password,
+                FirstName = "Outside",
+                LastName = "Anycopy",
+            },
+            DemoVisitor.Json);
+        response.StatusCode.Should().Be(
+            HttpStatusCode.Created, "ARRANGE: registration is open on a host with the demo off ({0})", await response.Content.ReadAsStringAsync());
+        var registered = await response.Content.ReadFromJsonAsync<ApiResponse<RegisterResponse>>(DemoVisitor.Json);
+        return (registered!.Data!.User.Id, email, password);
+    }
+
+    [SqlServerFact]
+    public async Task ACopyPastItsLifetime_CannotSignIn_AndRecycleThenDeletesIt_WithoutTheBackstop()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var free = (await database.BuildCopiesAsync(1)).Single();
+        var api = database.DemoApi();
+        api.CaptureLog(LogEventLevel.Information);
+        using var client = api.CreateClient();
+        using var claimed = await DemoVisitor.ClaimAsync(client, Visitor);
+        var claim = await DemoVisitor.ClaimedAsync(claimed);
+
+        // While the copy lives: a wrong password is refused, and the right one signs in.
+        using var wrongPassword = await DemoVisitor.TrySignInAsync(client, claim.Copy.Email, WrongPassword);
+        wrongPassword.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "ARRANGE: a wrong password is refused");
+        using (var live = await DemoVisitor.TrySignInAsync(client, claim.Copy.Email, claim.Copy.Password))
+        {
+            live.StatusCode.Should().Be(HttpStatusCode.OK, "CONTROL: inside its 24 hours the copy's password signs in");
+        }
+
+        // The copy's 24 hours ended six minutes ago, and the sessions opened in it ended with them:
+        // a grant that is neither revoked nor expired would keep the copy from being deleted.
+        await database.BackdateClaimAsync(free.Id, DateTime.UtcNow.AddHours(-24).AddMinutes(-6));
+        await database.ExpireGrantsAsync(free.UserIds);
+        var grantsBefore = await GrantsOfAsync(database, free.UserIds);
+        grantsBefore.Should().Be(2, "ARRANGE: the claim's grant and the sign-in's");
+
+        using var response = await DemoVisitor.TrySignInAsync(client, claim.Copy.Email, claim.Copy.Password);
+
+        using (new AssertionScope())
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "the copy's time is over, and its password signs nobody in");
+            (await DemoVisitor.ErrorCodeOfAsync(response)).Should().Be(ErrorCodes.InvalidCredentials);
+            (await AnswerOfAsync(response)).Should().Be(
+                await AnswerOfAsync(wrongPassword), "the answer says nothing a wrong password's does not: not that the copy was there, not that it ended");
+            (await GrantsOfAsync(database, free.UserIds)).Should().Be(grantsBefore, "no session is opened past the copy's end");
+
+            // What is logged: the user by its id and the reason, and not the address. (The host's
+            // logger writes a text value in quotes.)
+            api.CapturedLog.Should().Contain(line =>
+                line.Contains($"Sign-in refused by the demo gate for user {free.Owner.Id} (\"CopyEnded\")", StringComparison.Ordinal));
+            api.CapturedLog.Should().NotContain(line => line.Contains(claim.Copy.Email, StringComparison.OrdinalIgnoreCase));
+        }
+
+        // So the pool's job finds no live session in the copy and deletes it as a copy whose time
+        // is over. The backstop, which deletes a copy under a live session and counts it apart, is
+        // for a sign-in that went on being accepted past the end: there was none.
+        var summary = await database.RecycleAsync();
+
+        var after = await database.CopyAsync(free.Id);
+        using (new AssertionScope())
+        {
+            summary.Failures.Should().BeEmpty();
+            (summary.DeletedExpired, summary.DeletedHardStop, summary.DeleteFailed).Should().Be((1, 0, 0));
+            after.Should().NotBeNull("a claimed copy that was deleted leaves its pool row as the record of it");
+            (after?.Users).Should().BeEmpty();
+            (after?.Row.DeletedAt).Should().NotBeNull();
+        }
+    }
+
+    [SqlServerFact]
+    public async Task AUserOutsideEveryCopy_AndAFreeCopysOwner_CannotSignInOnTheDemoHost()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var free = (await database.BuildCopiesAsync(1)).Single();
+
+        // A free copy's owner has no password. This one was given one by something other than a
+        // claim, so the password below is right, and what refuses it is that nobody claimed the copy.
+        await database.GiveOwnerAPasswordAsync(free);
+        using var ordinary = database.Api().CreateClient();
+        var outsider = await RegisterOutsideEveryCopyAsync(ordinary);
+        var demoApi = database.DemoApi();
+        demoApi.CaptureLog(LogEventLevel.Information);
+        using var demo = demoApi.CreateClient();
+
+        using var unknownEmail = await DemoVisitor.TrySignInAsync(demo, "nobody@example.com", outsider.Password);
+        using var asTheOutsider = await DemoVisitor.TrySignInAsync(demo, outsider.Email, outsider.Password);
+        using var asTheFreeOwner = await DemoVisitor.TrySignInAsync(demo, free.Owner.Email!, DemoPoolDatabase.VisitorPassword);
+
+        using (new AssertionScope())
+        {
+            unknownEmail.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "CONTROL: an email nobody has is refused");
+            (await DemoVisitor.ErrorCodeOfAsync(unknownEmail)).Should().Be(ErrorCodes.InvalidCredentials);
+
+            asTheOutsider.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "a user of no copy does not sign in on the demo, with the right password");
+            (await AnswerOfAsync(asTheOutsider)).Should().Be(await AnswerOfAsync(unknownEmail), "and is answered as an email nobody has");
+
+            asTheFreeOwner.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "nor does the owner of a copy nobody claimed");
+            (await AnswerOfAsync(asTheFreeOwner)).Should().Be(await AnswerOfAsync(unknownEmail));
+
+            (await GrantsOfAsync(database, outsider.Id)).Should().Be(1, "the one grant is registration's: the refusal wrote none");
+            (await GrantsOfAsync(database, free.UserIds)).Should().Be(0);
+            (await LockOfAsync(database, outsider.Id)).Should().Be(NothingCounted, "and counted no failed attempt");
+            (await LockOfAsync(database, free.Owner.Id)).Should().Be(NothingCounted);
+
+            demoApi.CapturedLog.Should().Contain(line =>
+                line.Contains($"Sign-in refused by the demo gate for user {outsider.Id} (\"OutsideEveryCopy\")", StringComparison.Ordinal));
+            demoApi.CapturedLog.Should().Contain(line =>
+                line.Contains($"Sign-in refused by the demo gate for user {free.Owner.Id} (\"CopyNotClaimed\")", StringComparison.Ordinal));
+        }
+
+        // CONTROL: the same two sign-ins through the host with the demo off, on the same database.
+        // Both passwords were right, so what refused them above was the demo's gate.
+        using var outsiderThere = await DemoVisitor.TrySignInAsync(ordinary, outsider.Email, outsider.Password);
+        using var freeOwnerThere = await DemoVisitor.TrySignInAsync(ordinary, free.Owner.Email!, DemoPoolDatabase.VisitorPassword);
+        using (new AssertionScope())
+        {
+            outsiderThere.StatusCode.Should().Be(HttpStatusCode.OK, await outsiderThere.Content.ReadAsStringAsync());
+            freeOwnerThere.StatusCode.Should().Be(HttpStatusCode.OK, await freeOwnerThere.Content.ReadAsStringAsync());
+        }
+    }
+
+    [SqlServerFact]
+    public async Task FiveWrongPasswords_OnAGatedUser_LockNothing()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copies = await database.BuildCopiesAsync(3);
+        var (free, live, ended) = (copies[0], copies[1], copies[2]);
+
+        // One user for each reason the gate refuses for: a user of no copy; the owner of a copy
+        // nobody claimed, who was given a password; a contact of a claimed, living copy, who has
+        // none; and the owner of a copy whose 24 hours ended an hour ago.
+        await database.GiveOwnerAPasswordAsync(free);
+        await database.ClaimForAVisitorAsync(live, DateTime.UtcNow);
+        await database.ClaimForAVisitorAsync(ended, DateTime.UtcNow.AddHours(-25));
+        Guid outsider;
+        using (var ordinary = database.Api().CreateClient())
+        {
+            outsider = (await RegisterOutsideEveryCopyAsync(ordinary)).Id;
+        }
+
+        var gated = new (string Who, Guid Id)[]
+        {
+            ("a user of no copy", outsider),
+            ("a free copy's owner", free.Owner.Id),
+            ("a living copy's contact", live.Jane.Id),
+            ("an ended copy's owner", ended.Owner.Id),
+        };
+        ValidationRules.MaxLoginAttempts.Should().Be(5, "ARRANGE: the fifth wrong password in a row is the one that locks");
+        using var client = database.DemoApi().CreateClient();
+
+        await using (var db = database.NewContext())
+        {
+            foreach (var (who, id) in gated)
+            {
+                var email = await db.Users.Where(u => u.Id == id).Select(u => u.Email).SingleAsync();
+                for (var attempt = 1; attempt <= ValidationRules.MaxLoginAttempts; attempt++)
+                {
+                    using var refused = await DemoVisitor.TrySignInAsync(client, email!, WrongPassword);
+                    refused.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "{0}, wrong password {1} of 5", who, attempt);
+                }
+            }
+        }
+
+        using (new AssertionScope())
+        {
+            foreach (var (who, id) in gated)
+            {
+                (await LockOfAsync(database, id)).Should().Be(
+                    NothingCounted, "{0} is refused before the password is looked at, so no attempt is counted and nothing is locked", who);
+            }
+        }
+
+        // CONTROL: the living copy's owner, whom the gate lets through. The same five wrong
+        // passwords on the same host lock it, so the count is alive there and the zeros above are
+        // the gate's.
+        for (var attempt = 1; attempt <= ValidationRules.MaxLoginAttempts; attempt++)
+        {
+            using var refused = await DemoVisitor.TrySignInAsync(client, live.Owner.Email!, WrongPassword);
+            refused.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        }
+
+        (await LockOfAsync(database, live.Owner.Id)).LockoutEnd.Should().NotBeNull(
+            "five wrong passwords lock a user whose password is looked at");
+    }
+
+    // What the gate costs a sign-in, counted in the statements the host sends.
+
+    /// <summary>
+    /// The statements a host sends for one sign-in of <paramref name="copy"/>'s owner, a sign-in
+    /// that is answered 200.
+    /// </summary>
+    private static async Task<IReadOnlyList<string>> StatementsOfOneSignInAsync(CustomWebApplicationFactory api, BuiltCopy copy)
+    {
+        var statements = new StatementsInOrder();
+        api.AddInterceptor(statements);
+        using var client = api.CreateClient();
+
+        // One request first: what the host sends while it starts is not the sign-in's.
+        using (await client.GetAsync("/health/live"))
+        {
+        }
+
+        statements.Start();
+        using var response = await DemoVisitor.TrySignInAsync(client, copy.Owner.Email!, DemoPoolDatabase.VisitorPassword);
+        response.StatusCode.Should().Be(
+            HttpStatusCode.OK, "ARRANGE: the owner of a claimed, living copy signs in, with the demo on or off ({0})", await AnswerOfAsync(response));
+        return statements.Texts;
+    }
+
+    private static bool ReadsOrWritesThePool(string statement) => statement.Contains("[DemoCopies]", StringComparison.Ordinal);
+
+    [SqlServerFact]
+    public async Task WithTheDemoOff_ASignInSendsNoStatementAboutThePool_AndWithItOn_OneReadOfTheCopyByItsKey()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var copy = (await database.BuildCopiesAsync(1)).Single();
+        await database.ClaimForAVisitorAsync(copy, DateTime.UtcNow);
+
+        // The same user, the same password and the same database, through a host with the demo
+        // off and through one with it on.
+        var withTheDemoOff = await StatementsOfOneSignInAsync(database.Api(), copy);
+        var withTheDemoOn = await StatementsOfOneSignInAsync(database.DemoApi(), copy);
+
+        // CONTROL: with the demo on the gate asks when the copy was claimed, once, by the copy's
+        // key. So the read is there to be heard, and its absence below is the flag's doing.
+        // Recorded on LocalDB, between the read of the user and the grant's insert:
+        //   SELECT TOP(1) [d].[ClaimedAt] FROM [DemoCopies] AS [d] WHERE [d].[Id] = @copyId
+        var read = withTheDemoOn.Where(ReadsOrWritesThePool).Should().ContainSingle(
+            "CONTROL: on the demo a sign-in reads its copy's row, once").Subject;
+        read.Should().MatchRegex(
+            @"^SELECT TOP\(1\) \[d\]\.\[ClaimedAt\]\s+FROM \[DemoCopies\] AS \[d\]\s+WHERE \[d\]\.\[Id\] = @\w+$",
+            "CONTROL: one column of one row, found by the primary key");
+
+        using (new AssertionScope())
+        {
+            // CONTROL: the recorder heard this sign-in from before the gate's place to after it,
+            // the read of the user by its email and the grant's insert.
+            withTheDemoOff.Should().Contain(
+                statement => statement.Contains("FROM [AspNetUsers]", StringComparison.Ordinal)
+                    && statement.Contains("[NormalizedEmail] = @", StringComparison.Ordinal),
+                "CONTROL: the user was read while the recorder listened");
+            withTheDemoOff.Should().Contain(
+                statement => statement.Contains("INSERT INTO [RefreshTokens]", StringComparison.Ordinal),
+                "CONTROL: and its grant was written");
+            withTheDemoOff.Should().NotContain(
+                statement => ReadsOrWritesThePool(statement), "with the demo off the gate reads nothing");
+        }
+    }
+
+    // ── Through the BFF ──────────────────────────────────────────────────────────────────────────
+
+    /// <summary>The real BFF, with the demo on, in front of <paramref name="api"/>.</summary>
+    private static BffOverApiFactory DemoBffOver(CustomWebApplicationFactory api)
+    {
+        var bffHost = new BffOverApiFactory(api, CustomWebApplicationFactory.ServiceCredentialKey);
+        bffHost.EnableDemo();
+        return bffHost;
+    }
+
+    /// <summary>
+    /// A client that keeps no cookies of its own, so every request carries exactly the session the
+    /// test names.
+    /// </summary>
+    private static HttpClient BrowserOf(BffOverApiFactory bffHost) =>
+        bffHost.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+
+    /// <summary>A request as a browser sends it: the session cookie when it has one, JSON when it has a body.</summary>
+    private static HttpRequestMessage FromTheBrowser(HttpMethod method, string path, string? cookie = null, object? body = null)
+    {
+        var request = new HttpRequestMessage(method, path);
+        if (cookie is not null)
+        {
+            request.Headers.Add("Cookie", cookie);
+        }
+
+        if (body is not null)
+        {
+            request.Content = JsonContent.Create(body, body.GetType(), options: DemoVisitor.Json);
+        }
+
+        return request;
+    }
+
+    /// <summary>The claim as the application sends it: an empty object.</summary>
+    private static HttpRequestMessage BffClaim(string? cookie = null) =>
+        FromTheBrowser(HttpMethod.Post, "/bff/auth/demo/claim", cookie, new { });
+
+    /// <summary>The session cookie an answer of the BFF set, as the pair a browser sends back.</summary>
+    private static string SessionCookieOf(HttpResponseMessage response)
+    {
+        response.Headers.TryGetValues("Set-Cookie", out var cookies).Should().BeTrue("the answer sets the session cookie");
+        return cookies!.Single().Split(';')[0];
+    }
+
+    /// <summary>The accounts the session behind <paramref name="cookie"/> reads through the BFF's proxy.</summary>
+    private static async Task<List<AccountResponse>> AccountsThroughTheProxyAsync(HttpClient browser, string cookie)
+    {
+        using var response = await browser.SendAsync(FromTheBrowser(HttpMethod.Get, "/api/accounts", cookie));
+        response.StatusCode.Should().Be(
+            HttpStatusCode.OK, "the session reads its accounts through the proxy ({0})", await AnswerOfAsync(response));
+        return (await response.Content.ReadFromJsonAsync<ApiResponse<List<AccountResponse>>>(DemoVisitor.Json))!.Data!;
+    }
+
+    /// <summary>The balances every copy starts with, largest first: Main Savings and Checking.</summary>
+    private static readonly decimal[] StartingBalances = [12450.00m, 2300.00m];
+
+    [SqlServerFact]
+    public async Task ThroughTheBff_AClaim_OpensASession_AndTheProxyReadsTheCopysTwoAccounts()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var free = (await database.BuildCopiesAsync(1)).Single();
+        var api = database.DemoApi();
+        using var bffHost = DemoBffOver(api);
+        using var browser = BrowserOf(bffHost);
+
+        using var response = await browser.SendAsync(BffClaim());
+
+        var text = await response.Content.ReadAsStringAsync();
+        response.StatusCode.Should().Be(HttpStatusCode.OK, "a free copy is there to be claimed ({0})", await AnswerOfAsync(response));
+        var cookie = SessionCookieOf(response);
+        using var claim = JsonDocument.Parse(text);
+        var data = claim.RootElement.GetProperty("data");
+
+        using var me = await browser.SendAsync(FromTheBrowser(HttpMethod.Get, "/bff/auth/me", cookie));
+        var meText = await me.Content.ReadAsStringAsync();
+        me.StatusCode.Should().Be(HttpStatusCode.OK, "the cookie the claim set names a session ({0})", await AnswerOfAsync(me));
+        using var meBody = JsonDocument.Parse(meText);
+        var accounts = await AccountsThroughTheProxyAsync(browser, cookie);
+        var row = (await database.CopyAsync(free.Id))!.Row;
+
+        using (new AssertionScope())
+        {
+            // The answer: the copy's owner, what signs in to the copy again, and no token.
+            data.GetProperty("user").GetProperty("id").GetGuid().Should().Be(free.Owner.Id);
+            data.GetProperty("copy").GetProperty("email").GetString().Should().Be(free.Owner.Email);
+            data.GetProperty("copy").GetProperty("contacts").EnumerateArray().Select(c => c.GetString()).Should().Equal(
+                new[] { free.Jane.AzureTag, free.Mike.AzureTag }.Order(StringComparer.Ordinal));
+            text.Should().NotContain("oken", "the tokens stay in the BFF's store");
+            (response.Headers.CacheControl?.NoStore).Should().BeTrue("the answer carries a password");
+
+            // The session: the visitor is the copy's owner, and the proxy reads the owner's two accounts.
+            meBody.RootElement.GetProperty("data").GetProperty("user").GetProperty("id").GetGuid().Should().Be(free.Owner.Id);
+            accounts.Select(a => a.Balance).OrderDescending().Should().Equal(StartingBalances);
+            accounts.Select(a => a.Name).Should().BeEquivalentTo(["Main Savings", "Checking"]);
+
+            // The row: claimed, for the client the BFF named. Its test server gives a request no
+            // address, and the key of no address is "unknown".
+            row.ClaimedAt.Should().NotBeNull();
+            row.ClientKey.Should().Equal(KeyOf("unknown"));
+            row.ClientKey.Should().NotEqual(KeyOf(Visitor), "CONTROL: an address has another key");
+            (await GrantsOfAsync(database, free.Owner.Id)).Should().Be(1, "the claim opens one session");
+        }
+    }
+
+    [SqlServerFact]
+    public async Task ThroughTheBff_StartingOver_GivesAnotherCopy_AndTheOldCookieIs401()
+    {
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        await database.BuildCopiesAsync(2);
+        var api = database.DemoApi();
+        using var bffHost = DemoBffOver(api);
+        using var browser = BrowserOf(bffHost);
+
+        // The first copy, and a change in it: 10.00 into its savings. "The starting balances" of
+        // the second copy below are then not what any copy would show.
+        using var first = await browser.SendAsync(BffClaim());
+        first.StatusCode.Should().Be(HttpStatusCode.OK, "ARRANGE: a free copy is there to be claimed ({0})", await AnswerOfAsync(first));
+        var firstCookie = SessionCookieOf(first);
+        using var firstClaim = JsonDocument.Parse(await first.Content.ReadAsStringAsync());
+        var firstOwner = firstClaim.RootElement.GetProperty("data").GetProperty("user").GetProperty("id").GetGuid();
+        var firstEmail = firstClaim.RootElement.GetProperty("data").GetProperty("copy").GetProperty("email").GetString();
+        var savings = (await AccountsThroughTheProxyAsync(browser, firstCookie)).Single(a => a.Balance == 12450.00m);
+        using var deposit = FromTheBrowser(
+            HttpMethod.Post,
+            "/api/transactions/deposit",
+            firstCookie,
+            new DepositRequest { AccountId = savings.Id, Amount = 10.00m, Description = "Before starting over" });
+        deposit.Headers.Add(IdempotencyConstants.HeaderName, Guid.NewGuid().ToString());
+        using var deposited = await browser.SendAsync(deposit);
+        deposited.IsSuccessStatusCode.Should().BeTrue("ARRANGE: the visitor changes the first copy ({0})", await AnswerOfAsync(deposited));
+        (await AccountsThroughTheProxyAsync(browser, firstCookie)).Select(a => a.Balance).OrderDescending()
+            .Should().Equal([12460.00m, 2300.00m], "ARRANGE: the first copy no longer shows the starting balances");
+
+        // Starting over: a claim that arrives with the first session's cookie.
+        using var second = await browser.SendAsync(BffClaim(firstCookie));
+
+        second.StatusCode.Should().Be(HttpStatusCode.OK, "another free copy is there ({0})", await AnswerOfAsync(second));
+        var secondCookie = SessionCookieOf(second);
+        using var secondClaim = JsonDocument.Parse(await second.Content.ReadAsStringAsync());
+        var secondOwner = secondClaim.RootElement.GetProperty("data").GetProperty("user").GetProperty("id").GetGuid();
+        var secondEmail = secondClaim.RootElement.GetProperty("data").GetProperty("copy").GetProperty("email").GetString();
+        var secondAccounts = await AccountsThroughTheProxyAsync(browser, secondCookie);
+        using var withTheOldCookie = await browser.SendAsync(FromTheBrowser(HttpMethod.Get, "/bff/auth/me", firstCookie));
+        using var withTheNewCookie = await browser.SendAsync(FromTheBrowser(HttpMethod.Get, "/bff/auth/me", secondCookie));
+        var copies = await database.CopiesAsync();
+
+        using (new AssertionScope())
+        {
+            secondCookie.Should().NotBe(firstCookie);
+            secondEmail.Should().NotBe(firstEmail, "starting over gives another copy, not the same one again");
+            secondOwner.Should().NotBe(firstOwner);
+            secondAccounts.Select(a => a.Balance).OrderDescending().Should().Equal(
+                StartingBalances, "the new copy is as every copy starts: the deposit was made in the other one");
+
+            withTheOldCookie.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "the session the old cookie named has ended");
+            withTheNewCookie.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            // Both copies stay claimed: the first is not handed back to the pool, with its deposit
+            // in it. The pool's job deletes it once its time is up.
+            copies.Should().HaveCount(2);
+            copies.Should().OnlyContain(c => c.Row.ClaimedAt != null);
+            copies.Select(c => c.Row.ClaimId).Distinct().Should().HaveCount(2);
+            copies.Select(c => c.Owner.Id).Should().BeEquivalentTo([firstOwner, secondOwner]);
+        }
+
+        // The first session's grant is revoked at the API, by the BFF's revoker on its own
+        // thread, and the second's is not.
+        async Task<int> LiveGrantsOfAsync(Guid userId)
+        {
+            await using var db = database.NewContext();
+            return await db.RefreshTokens.CountAsync(t => t.UserId == userId && t.RevokedAt == null);
+        }
+
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (await LiveGrantsOfAsync(firstOwner) != 0 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(50);
+        }
+
+        using (new AssertionScope())
+        {
+            (await LiveGrantsOfAsync(firstOwner)).Should().Be(0, "ending the first session revokes its grant");
+            (await LiveGrantsOfAsync(secondOwner)).Should().Be(1, "the new session's grant is left alone");
+            await using var db = database.NewContext();
+            (await db.Accounts.Where(a => a.UserId == firstOwner).Select(a => a.Balance).ToListAsync())
+                .OrderDescending().Should().Equal([12460.00m, 2300.00m], "the first copy keeps what was done in it");
         }
     }
 }

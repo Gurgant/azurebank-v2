@@ -59,8 +59,10 @@ would rather not turn verification off.
 `BrunoEnvironmentSecretTests` fails the build if that value stops being empty in `local.bru`, or if
 this file starts telling you to write it there.
 
-The five token endpoints — login, register, refresh, revoke and logout — and the BFF's
-session-stamp feed, which no request here calls, take one thing more. They answer 404 unless the
+The six token endpoints — login, register, refresh, revoke, logout and the public demo's claim —
+and the BFF's session-stamp feed take one thing more; no request here calls the claim or the
+feed. *(It said five until 2026-10-04: the claim, `POST /api/auth/demo/claim`, is the sixth, and
+answers 404 while the demo is off.)* They answer 404 unless the
 request carries exactly one `X-AzureBank-Token-Road`, the marker the BFF's own client sends, and
 comes from the machine the API listens on (loopback). So the requests that call them — register,
 login, revoke, logout and the transfers folder's register-recipient — send

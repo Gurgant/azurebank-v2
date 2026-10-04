@@ -912,7 +912,9 @@ export interface paths {
         put?: never;
         /**
          * Register
-         * @description Register a new user account with initial bank account.
+         * @description Register a new user account with initial bank account. On the public demo registration is
+         *     closed: the answer is 403 with `errorCode` `REGISTRATION_CLOSED`, whatever the request
+         *     carries.
          */
         post: {
             parameters: {
@@ -941,6 +943,15 @@ export interface paths {
                 };
                 /** @description Bad Request */
                 400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Forbidden */
+                403: {
                     headers: {
                         [name: string]: unknown;
                     };

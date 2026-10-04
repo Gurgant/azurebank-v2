@@ -58,11 +58,20 @@ public class AuthLevelMiddleware
       (ADR-0057 §5.3): the API answers it only to the BFF's own watcher, and no browser has a reason
       to read who holds a session.
     */
+    /*
+      THE DEMO CLAIM JOINED WITH THE PUBLIC DEMO, for login's reason and one of its own. Its answer
+      carries the tokens this host exists to withhold. And the API counts the copies one client
+      may claim in a day by the address its caller names: the caller is meant to be this host,
+      which names the connection's (BffAuthController.ClaimDemoCopy), never a browser, which could
+      name any. A browser claims through /bff/auth/demo/claim. It has no dedicated YARP route
+      either, so without this line the catch-all would carry a signed-in browser's request to the
+      API. Blocked with the demo off as with it on: the path has no browser caller in either.
+    */
     private static readonly HashSet<string> BlockedProxiedAuthPaths =
         new(StringComparer.OrdinalIgnoreCase)
         {
             "/api/auth/login", "/api/auth/register", "/api/auth/revoke", "/api/auth/logout",
-            "/api/auth/session-stamps"
+            "/api/auth/session-stamps", "/api/auth/demo/claim"
         };
 
     /*

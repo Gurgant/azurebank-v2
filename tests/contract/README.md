@@ -16,11 +16,14 @@ pip install 'schemathesis==4.27.1'
 docker pull schemathesis/schemathesis:stable
 ```
 
-Whichever you use, run it on the machine the API listens on. The five token endpoints — login,
-register, refresh, revoke and logout — and the session-stamp feed answer 404 to a caller whose
-address is not loopback, and to one that does not send exactly one `X-AzureBank-Token-Road`
-(`TokenRoadMiddleware`). The document declares no 404 on any of the six, so such a run fails rather
-than skipping them. Measured on 2026-09-28 from loopback with the hooks as they were before the
+Whichever you use, run it on the machine the API listens on. The six token endpoints — login,
+register, refresh, revoke, logout and the public demo's claim — and the session-stamp feed answer
+404 to a caller whose address is not loopback, and to one that does not send exactly one
+`X-AzureBank-Token-Road` (`TokenRoadMiddleware`). The document declares no 404 on six of the
+seven, so such a run fails rather than skipping them. The seventh, the demo's claim, declares
+one: it answers 404 to every request that carries the service key while `Demo:Enabled` is false,
+which is how this page and CI run the API (ADR-0063; measured below). *(Until 2026-10-04 this said five token endpoints, and
+that none of the six operations declared a 404.)* Measured on 2026-09-28 from loopback with the hooks as they were before the
 marker, which the API refuses with the same 404: run on the four anonymous operations, login,
 register, refresh and revoke each failed `Undocumented HTTP status code` (`4 failures`); run on an
 operation that needs a token, with none handed over, it stopped at the throwaway user's registration
@@ -54,10 +57,10 @@ schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapi
 What the two files add to that line:
 
 - **`hooks.py`** sends `X-AzureBank-Service-Key` on every request (ADR-0055), and with it exactly
-  one `X-AzureBank-Token-Road`, the marker the BFF's own client sends: the five token endpoints and
+  one `X-AzureBank-Token-Road`, the marker the BFF's own client sends: the six token endpoints and
   the session-stamp feed answer 404 without it. It also sends a bearer token on every operation the
-  contract does not declare anonymous — register, login, refresh, revoke and session-stamps go
-  without — for a throwaway user it registers itself, unless `AZUREBANK_CONTRACT_TOKEN` hands over
+  contract does not declare anonymous — register, login, the demo's claim, refresh, revoke and
+  session-stamps go without — for a throwaway user it registers itself, unless `AZUREBANK_CONTRACT_TOKEN` hands over
   the token of a user who already exists. CI hands over the seeded demo user's.
 - **`schemathesis.toml`** sets the base URL and the shape of the run (one worker, 100 examples
   per operation, positive and negative inputs, all four phases, seed 42), loads `hooks.py`, and
@@ -105,6 +108,22 @@ checkout each reported `8544 generated, 8544 passed, 2879 skipped`, and one run 
 in the same checkout reported `8184 generated, 8184 passed, 2586 skipped`. That failed run was the
 first of the day, on revoke: `{"refreshTokens": [null]}` answered 200, and the API now refuses a
 null grant with 400.
+
+**Measured again on 2026-10-04**, with the public demo's claim in the contract
+(`POST /api/auth/demo/claim`, ADR-0063), the way CI's conformance job runs it but for the machine:
+Windows, a LocalDB database just migrated and seeded, the API started with `dotnet run` in
+Development with no `Demo__` variable, the demo user's token handed over. Two runs, each exit 0,
+`Selected: 31/31`, `Tested: 31`, `8880 generated, 8880 passed, 2879 skipped`, and a JUnit report of
+32 test cases (the 31 operations and the stateful phase). Two warnings, the same in both runs:
+
+- `Missing test data: 1 operation repeatedly returned 404 Not Found, preventing tests from
+  reaching your API's core logic`: the claim. With the demo off it answered its declared 404 to
+  each of its 152 requests, so nothing behind that 404 was tested, and nothing failed.
+- `Schema validation mismatch: 4 operations mostly rejected generated data`: the claim, login,
+  refresh and register (three of them before the claim, as above).
+
+Registration answered 400, 409, 201 and 415 in those runs and never the 403 it declares: that
+answer exists only with the demo on. Not run: Schemathesis against an API with the demo on.
 
 ⚠️ **A run writes to the database it runs against.** One run on 2026-09-23 added 1 user, 97
 accounts and 137 audit events. Point it at a database you can throw away. Run as the seeded demo
@@ -253,9 +272,12 @@ run rather than an illustration:
 The operation count comes from the committed document, so it moves when the contract does; the
 step after the run fails the job if it drops below the floor. **It has moved since that run**: the
 withdrawal mint took the document to 28 operations on 2026-09-21 (ADR-0056), revoke took it
-to 29 on 2026-09-28, and `POST /api/auth/session-stamps` to 30 the same day (ADR-0057 §5.3); the
+to 29 on 2026-09-28, `POST /api/auth/session-stamps` to 30 the same day (ADR-0057 §5.3), and the
+public demo's claim to 31 on 2026-10-03 (ADR-0063); the
 floor was raised with each, so the 27 above is what THAT run tested and not what a run tests today.
-No full run has been measured since session-stamps joined. The transcript is left as it was
+A full run at 31 was measured by hand on 2026-10-04 (Quick Start, above); CI's own job had not
+run at 31 when this was written. *(Until 2026-10-04 this said no full run had been measured since
+session-stamps joined.)* The transcript is left as it was
 recorded rather than edited to match, because a quoted run that is quietly updated stops being
 evidence.
 

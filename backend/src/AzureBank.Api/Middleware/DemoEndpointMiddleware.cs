@@ -1,4 +1,5 @@
 using AzureBank.Api.Attributes;
+using AzureBank.Shared.Exceptions;
 using AzureBank.Shared.Options;
 using Microsoft.Extensions.Options;
 
@@ -6,7 +7,8 @@ namespace AzureBank.Api.Middleware;
 
 /// <summary>
 /// Answers 404 to an endpoint that exists only on the public demo
-/// (<see cref="DemoOnlyAttribute"/>) while <c>Demo:Enabled</c> is false.
+/// (<see cref="DemoOnlyAttribute"/>) while <c>Demo:Enabled</c> is false, and refuses with 403 an
+/// endpoint the demo closes (<see cref="ClosedInDemoAttribute"/>) while it is true.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -25,8 +27,17 @@ namespace AzureBank.Api.Middleware;
 /// endpoint. It does not tell whether the demo is on.
 /// </para>
 /// <para>
-/// <b>Before model binding.</b> The marker is read from the endpoint's metadata, so the 404 does
-/// not depend on the body: a malformed body is not answered 400, nor a form post 415.
+/// <b>403, as a refusal of the application's.</b> On the demo registration is closed, and says
+/// so: the middleware throws <see cref="RegistrationClosedException"/>, and the exception handler
+/// above it writes the 403 with its code, its one sentence and a trace id, as it writes every
+/// refusal. Only on the token road: a caller off it was answered 404 by
+/// <see cref="TokenRoadMiddleware"/> before this one ran. Another method on the path is 405 here
+/// too, with the demo off or on
+/// (<c>DemoModeEndpointTests.AnotherMethodOnRegistrationsPath_...</c>).
+/// </para>
+/// <para>
+/// <b>Before model binding.</b> A marker is read from the endpoint's metadata, so neither answer
+/// depends on the body: a malformed body is not answered 400, nor a form post 415.
 /// </para>
 /// <para>
 /// <b>The flag is read once,</b> when the pipeline is built: <c>Demo:Enabled</c> is a deployment's
@@ -46,10 +57,16 @@ public sealed class DemoEndpointMiddleware
 
     public Task InvokeAsync(HttpContext context)
     {
-        if (!_demoEnabled && context.GetEndpoint()?.Metadata.GetMetadata<DemoOnlyAttribute>() is not null)
+        var metadata = context.GetEndpoint()?.Metadata;
+        if (!_demoEnabled && metadata?.GetMetadata<DemoOnlyAttribute>() is not null)
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
             return Task.CompletedTask;
+        }
+
+        if (_demoEnabled && metadata?.GetMetadata<ClosedInDemoAttribute>() is not null)
+        {
+            throw new RegistrationClosedException();
         }
 
         return _next(context);
@@ -62,8 +79,8 @@ public sealed class DemoEndpointMiddleware
 public static class DemoEndpointMiddlewareExtensions
 {
     /// <summary>
-    /// Refuses the demo's own endpoints while the demo is off. After the token road, before
-    /// authentication.
+    /// Refuses the demo's own endpoints while the demo is off, and the endpoints the demo closes
+    /// while it is on. After the token road, before authentication.
     /// </summary>
     public static IApplicationBuilder UseDemoEndpoints(this IApplicationBuilder app) =>
         app.UseMiddleware<DemoEndpointMiddleware>();

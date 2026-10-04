@@ -9,12 +9,14 @@ using AzureBank.Shared.DTOs.User;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
 using AzureBank.Shared.Exceptions;
+using AzureBank.Shared.Options;
 using AzureBank.Shared.Services.Interfaces;
 using AzureBank.Shared.Utilities;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Compliance.Classification;
 using Microsoft.Extensions.Compliance.Redaction;
+using Microsoft.Extensions.Options;
 
 namespace AzureBank.Api.Services.Implementations;
 
@@ -36,6 +38,8 @@ public class AuthService : IAuthService
     private readonly ILogger<AuthService> _logger;
     private readonly IAuditService _audit;
     private readonly Redactor _piiRedactor;
+    private readonly DemoOptions _demo;
+    private readonly TimeProvider _clock;
 
     public AuthService(
         UserManager<ApplicationUser> userManager,
@@ -49,8 +53,12 @@ public class AuthService : IAuthService
         ILoginTimingEqualizer timingEqualizer,
         ILogger<AuthService> logger,
         IRedactorProvider redactorProvider,
-        IAuditService audit)
+        IAuditService audit,
+        IOptions<DemoOptions> demo,
+        TimeProvider clock)
     {
+        _demo = demo.Value;
+        _clock = clock;
         _audit = audit;
         _userManager = userManager;
         _context = context;
@@ -73,17 +81,34 @@ public class AuthService : IAuthService
     public async Task<LoginResponse> LoginAsync(LoginRequest request, CancellationToken cancellationToken = default)
     {
         var user = await _userManager.FindByEmailAsync(request.Email);
-        if (user is null)
+
+        // On the public demo, a user the gate refuses is answered as an email nobody has, HERE,
+        // before the password is looked at: the same cost spent, the same exception, and neither
+        // the password check nor the lockout below ever runs for it. Null wherever the demo is off.
+        var gateRefusal = user is null ? null : await DemoGateRefusalAsync(user, cancellationToken);
+        if (user is null || gateRefusal is not null)
         {
             // Spend the same DOMINANT (PBKDF2) password-hash cost a real account would, so
             // an unknown email can't be told apart by that latency; the response body is
             // already identical to a wrong password. A smaller write-latency residual on
             // the account-exists path remains (ADR-0012) — bounded by upstream rate limiting.
             _timingEqualizer.SpendVerifyCost(request.Password);
-            // Unknown account, so there is no stable user id to log — mask the email (PII)
-            // instead of dropping it: logs are exported over OTLP, and "j***@example.com"
-            // still lets an operator correlate a credential-stuffing burst.
-            _logger.LogWarning("Failed login attempt for email {Email}", _piiRedactor.Redact(request.Email));
+            if (user is null)
+            {
+                // Unknown account, so there is no stable user id to log — mask the email (PII)
+                // instead of dropping it: logs are exported over OTLP, and "j***@example.com"
+                // still lets an operator correlate a credential-stuffing burst.
+                _logger.LogWarning("Failed login attempt for email {Email}", _piiRedactor.Redact(request.Email));
+            }
+            else
+            {
+                // A user the database holds: its stable id and which of the gate's reasons, never
+                // the address. Information, not Warning: on the demo this is what every sign-in
+                // to a copy that has ended looks like, and nobody guessed anything.
+                _logger.LogInformation(
+                    "Sign-in refused by the demo gate for user {UserId} ({Reason})", user.Id, gateRefusal);
+            }
+
             ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("azurebank.outcome", "failed"));
             throw new AuthenticationException("Invalid email or password.");
         }
@@ -147,6 +172,74 @@ public class AuthService : IAuthService
         _logger.LogWarning("Failed login attempt for account {UserId}", user.Id);
         ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("azurebank.outcome", "failed"));
         throw new AuthenticationException("Invalid email or password.");
+    }
+
+    // ---- The public demo's sign-in gate ----
+
+    /// <summary>A user that belongs to no demo copy.</summary>
+    private const string OutsideEveryCopy = nameof(OutsideEveryCopy);
+
+    /// <summary>A user of a copy that has no password: a copy's two contacts, and a free copy's owner.</summary>
+    private const string NoPassword = nameof(NoPassword);
+
+    /// <summary>A user with a password whose copy nobody has claimed.</summary>
+    private const string CopyNotClaimed = nameof(CopyNotClaimed);
+
+    /// <summary>A user whose copy was claimed <c>Demo:CopyLifetimeHours</c> ago or more.</summary>
+    private const string CopyEnded = nameof(CopyEnded);
+
+    /// <summary>
+    /// On the public demo, why <paramref name="user"/> cannot sign in whatever the password, as one
+    /// of the four names above; null when the password decides, which is always while
+    /// <c>Demo:Enabled</c> is false.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The demo signs in one kind of user: the owner of a copy a visitor claimed, from the claim
+    /// until <c>Demo:CopyLifetimeHours</c> later. A copy's end is not a column: it is the claim's
+    /// instant plus that lifetime, read on the clock the claim was stamped with, and the copy is
+    /// over from that instant on. The pool's job leaves a copy alone until five minutes past its
+    /// end, and longer while a session opened in it is running
+    /// (<c>DemoPoolRecycleSqlServerTests.ACopy_IsLeftAloneUntilFiveMinutesPastItsLifetime</c>,
+    /// <c>ACopyWithALiveGrant_IsSkipped_...</c>), so the gate is what stops a new session from being
+    /// opened in a copy whose time is over.
+    /// </para>
+    /// <para>
+    /// A user with no password could never sign in anyway. It is refused here so that its attempt
+    /// is not counted toward a lock: everybody the demo does not sign in is answered one way.
+    /// </para>
+    /// <para>
+    /// One read of the copy's row by its key, and only for a user that has a copy and a password:
+    /// a refusal from here takes that read longer than an unknown email's.
+    /// </para>
+    /// </remarks>
+    private async Task<string?> DemoGateRefusalAsync(ApplicationUser user, CancellationToken cancellationToken)
+    {
+        if (!_demo.Enabled)
+        {
+            return null;
+        }
+
+        if (user.DemoCopyId is not { } copyId)
+        {
+            return OutsideEveryCopy;
+        }
+
+        if (user.PasswordHash is null)
+        {
+            return NoPassword;
+        }
+
+        var claimedAt = await _context.DemoCopies.AsNoTracking()
+            .Where(c => c.Id == copyId)
+            .Select(c => c.ClaimedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (claimedAt is not { } claimed)
+        {
+            return CopyNotClaimed;
+        }
+
+        return claimed.AddHours(_demo.CopyLifetimeHours) <= _clock.GetUtcNow().UtcDateTime ? CopyEnded : null;
     }
 
     // ---- Atomic login-lockout writers (Identity's native AccessFailedCount / LockoutEnd) ----

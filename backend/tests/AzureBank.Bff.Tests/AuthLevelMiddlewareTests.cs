@@ -7,6 +7,7 @@ using AzureBank.Bff.Options;
 using AzureBank.Bff.Services.Interfaces;
 using AzureBank.Shared.DTOs.Auth;
 using FluentAssertions;
+using FluentAssertions.Execution;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -654,6 +655,9 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
     [InlineData("/api/auth/logout")]
     // The stamp feed since the stamp (ADR-0057 §5.3): only the BFF's own watcher reads it.
     [InlineData("/api/auth/session-stamps")]
+    // The demo claim: the API's answer carries tokens, and the API believes the client address
+    // its caller names. A browser claims through the BFF's own door, /bff/auth/demo/claim.
+    [InlineData("/api/auth/demo/claim")]
     public async Task TheProxiedAuthPair_NeverReachesTheApi_AndHandsOutNothing(string path)
     {
         /*
@@ -688,6 +692,83 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
             "as if the route did not exist — the caller is told nothing about why");
         backend.ForwardedPaths.Should().BeEmpty("the request must never reach the API at all");
         body.Should().NotContain("token", "no credential may leave the BFF on this path");
+    }
+
+    [Theory]
+    [InlineData(false, "/api/auth/demo/claim")]
+    [InlineData(true, "/api/auth/demo/claim")]
+    [InlineData(true, "/api/auth/demo/claim/")]
+    public async Task TheProxiedDemoClaim_IsBlockedForASignedInBrowserToo_WithTheDemoOffOrOn(bool demoOn, string path)
+    {
+        /*
+          The row above has no session, and a request with no session is stopped by the session
+          gate whatever its path: 401, nothing forwarded. What only the block stops is a browser
+          that HAS a session. Without the block the catch-all route carries its request to the
+          API, where the claim would be the visitor's to shape: the API counts a client's copies
+          by the address its caller names, and the caller would be the browser.
+
+          (The API has its own answer to a proxied token endpoint, 404 off the token road, since
+          the proxy strips the BFF's marker. This is the BFF not sending the request at all.)
+
+          Red before the path joined the set: 200 from the recording backend, one forwarded path.
+        */
+        var (factory, backend) = WithRecorder(builder =>
+        {
+            if (demoOn)
+            {
+                builder.UseSetting("Demo:Enabled", "true");
+            }
+        });
+        var (sessionId, cookieName, _) = CreateSession(factory);
+        var client = factory.CreateClient();
+
+        var request = Request(HttpMethod.Post, path, cookieName, sessionId);
+        request.Content = JsonContent.Create(new { clientAddress = "198.51.100.200" });
+        var response = await client.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound,
+            "as if the route did not exist, for a signed-in browser as for anyone");
+        backend.ForwardedPaths.Should().BeEmpty("the request must never reach the API at all");
+        body.Should().BeEmpty();
+    }
+
+    // CONTROL: green as written. It pins what the block shows, so that it is known. With
+    // no session the proxied claim is 404 with no body, as sign-in's proxied path is, where a
+    // path under /api that names nothing is 401 with the API's own body. So the 404 tells that
+    // this build has the claim. It is the same with the demo off and on, so it does not tell
+    // which.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WithNoSession_TheProxiedDemoClaimIs404_WhereAPathThatNamesNothingIs401_WhateverTheFlag(bool demoOn)
+    {
+        var (factory, backend) = WithRecorder(builder =>
+        {
+            if (demoOn)
+            {
+                builder.UseSetting("Demo:Enabled", "true");
+            }
+        });
+        var client = factory.CreateClient();
+
+        HttpRequestMessage Post(string path) => new(HttpMethod.Post, path) { Content = JsonContent.Create(new { }) };
+
+        var claim = await client.SendAsync(Post("/api/auth/demo/claim"));
+        var login = await client.SendAsync(Post("/api/auth/login"));
+        var nothing = await client.SendAsync(Post("/api/auth/demo/other"));
+
+        using (new AssertionScope())
+        {
+            claim.StatusCode.Should().Be(HttpStatusCode.NotFound);
+            (await claim.Content.ReadAsStringAsync()).Should().BeEmpty();
+            login.StatusCode.Should().Be(HttpStatusCode.NotFound, "CONTROL: sign-in's proxied path answers the same way");
+            (await login.Content.ReadAsStringAsync()).Should().BeEmpty();
+            nothing.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "a path the block does not name is stopped for having no session");
+            backend.ForwardedPaths.Should().BeEmpty();
+        }
+
+        await AssertLooksLikeTheApisOwn401(nothing);
     }
 
     [Fact]

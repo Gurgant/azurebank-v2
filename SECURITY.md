@@ -27,9 +27,14 @@ as the address. `.example.com` is a domain reserved by RFC 2606, so mail to it r
   by its grant: the grant lives 60 minutes from sign-in, fixed then and never extended, and no
   access token minted from it outlives it (ADR-0057).
 - **One grant per session, which does not rotate, and which only the BFF's own client can
-  present.** The API answers its five token endpoints (login, register, refresh, revoke and logout),
-  and the session-stamp feed the BFF polls, with 404 unless the request comes over loopback with
-  exactly one `X-AzureBank-Token-Road` header, besides the service key. A renewal only reads the
+  present.** The API answers its six token endpoints (login, register, refresh, revoke, logout and
+  the public demo's claim), and the session-stamp feed the BFF polls, with 404 unless the request
+  comes over loopback with exactly one `X-AzureBank-Token-Road` header, besides the service key.
+  _(Until 2026-10-04 this said five: the demo's claim, `POST /api/auth/demo/claim`, is the sixth,
+  ADR-0063. It opens a session from no credential, so it rests on this rule alone; where
+  `Demo:Enabled` is false, which is the default, it answers 404 to every caller that holds the
+  key, and 401 to one that does not, as every operation does.)_
+  A renewal only reads the
   grant, so a lost answer or a database outage has nothing to break. A grant whose session ended,
   presented again, is refused and recorded as a `RefreshTokenReuse` security event with an audit
   row. It revokes nothing: only code inside the API's own replica can present a grant, and
@@ -101,7 +106,8 @@ by "the BFF's host and nobody else".)_ The last row's residual is closed by this
 check inside the API, which ADR-0055 records as decided against.
 
 Since 2026-09-28 (ADR-0057 §4.2) the key alone is not enough on the token endpoints. Login,
-register, refresh, revoke, logout and the session-stamp feed answer 404 unless the request also
+register, refresh, revoke, logout, the session-stamp feed and, since 2026-10-04, the public
+demo's claim (ADR-0063) answer 404 unless the request also
 comes over loopback and carries exactly one `X-AzureBank-Token-Road` header whose value is `bff`.
 A caller holding only the key gets that 404 from any address, so it can neither sign in nor renew,
 and the API issues it no bearer token. The marker is not a secret — its value is in this
@@ -114,18 +120,26 @@ the JWT. _(Until 2026-09-25 that said "accepts" and "answers": the API now refus
 without the service key, as above.)_ Several of the controls on this page live in the BFF process,
 and a caller who presents a token to the API directly never meets them. The table says which.
 Measured on 2026-09-15 with both hosts running `main` (f1b3509) and the same requests sent to each
-origin; the values are what came back, not what the code reads as.
+origin; the values are what came back, not what the code reads as. Four rows are the public
+demo's (ADR-0063) and exist only where `Demo:Enabled` is true: those were measured on 2026-10-04
+on the compose stack with the demo on, both hosts as Production, through the BFF's published
+port, in two runs, and each says what was and was not sent to the API's own address. A value is
+the one both runs gave unless its row names a run.
 
 | Control | Enforced in | What a bearer caller on the API gets | ADR |
 |---|---|---|---|
 | Anti-harvest limit on the handle lookup (`lookup` policy, 20 per 60 s per user) | BFF | 21 × `GET /api/users/{handle}`: BFF 200 ×20 then 429; API 200 ×21 | 0014 |
 | Login attempt limiter (`auth` policy, 10 per 60 s per IP) | BFF | 11 wrong passwords: BFF 401 ×9 then 429 ×2, because the probe's own BFF sign-in just before them had taken the first of the ten permits the IP shares; API 401 ×11 — the API's own control is the silent lockout, which answered the next correct password with 429 `ACCOUNT_LOCKED` | 0012, 0013 |
 | Cross-site state changes refused on Fetch-Metadata | BFF | `POST /api/accounts` with `Sec-Fetch-Site: cross-site`: BFF 403; API 201, account created — moot there: a bearer is presented, not ambient, so there is no cross-site request to refuse | 0018 |
-| Raw auth entries closed (`/api/auth/login`, `/register` and `/refresh` answer 404 through the proxy) | BFF | login 200 with a bearer for anyone with the password; refresh is live (401 on a bogus token). _Since 2026-09-28 (ADR-0057), with the key and no marker, or off loopback: 404 on both, and on revoke, logout and session-stamps_ | 0038 |
+| Raw auth entries closed (`/api/auth/login`, `/register` and `/refresh` answer 404 through the proxy) | BFF | login 200 with a bearer for anyone with the password; refresh is live (401 on a bogus token). _Since 2026-09-28 (ADR-0057), with the key and no marker, or off loopback: 404 on both, and on revoke, logout and session-stamps. Since 2026-10-04 (ADR-0063) `/api/auth/demo/claim` is closed through the proxy too, with the demo off as with it on: on the compose stack with the demo on, sent with a live session, 404 with no body_ | 0038, 0063 |
 | Security headers: CSP, `nosniff`, `X-Frame-Options: DENY`, Referrer-Policy, Permissions-Policy, `X-XSS-Protection: 0`, and `Strict-Transport-Security` in every environment but Development (since 2026-09-25) | BFF | none of them; neither host sends HSTS or COOP on the http development profile | 0018, 0054 |
 | Global limit (300 per 60 s per IP) | BFF | 120 × `GET /api/accounts`: 200 ×120 on both origins; the API registers no rate limiter at all | 0013 |
 | Session inactivity and absolute caps | BFF | not measured; the API's only bound is the token's fifteen minutes and a refresh endpoint it answers directly. _Since 2026-09-28 (ADR-0057) the API bounds the session too: the grant lives 60 minutes from sign-in, fixed and never extended, no access token minted from it outlives it, and refresh answers only the BFF's own client over loopback_ | 0021, 0026 |
 | PIN on a transfer | API | `POST /api/transfers` without an authorisation: 401 on both origins, the same problem body | 0041, 0042 |
+| The demo's caps on claiming a copy: 10 a minute for one client (the `auth` policy), `Demo:Claim:MaxPerClientPerDay` in 24 hours (10; 2 in these runs), and the pool | BFF for the `auth` policy and for naming the client; API for the day's count and the pool | Through the BFF: the eleventh sign-in of a minute 429 `RATE_LIMIT_EXCEEDED`; the third claim of one client 429 `DEMO_DAILY_LIMIT`, `retryAfterSeconds` 86394 in the first run and 86395 in the second, each with the same `Retry-After`; on a pool of one, the second claim 429 `DEMO_POOL_EMPTY`. The claim was not sent to the API's own address on the stack. A caller there, with the key and the marker, names the client's address itself, and each address it names is another client (`DemoClaimSqlServerTests`, on the API's own host: another address still claims): the day's cap is the BFF's to make true | 0063 |
+| Registration closed on the demo | API and BFF, each by itself | BFF: `POST /bff/auth/register` 403 `REGISTRATION_CLOSED` for a valid body and for `{}`, the API not called. API, from inside the BFF's network namespace: 403 with the key and the marker, 404 without the marker, 401 without the key | 0063 |
+| The demo's sign-in gate: only the owner of a claimed copy whose time is not over signs in | API | Through the BFF: 401 `INVALID_CREDENTIALS` for an owner taken out of its copy, for a copy past its lifetime with its right password and with a wrong one, and, in the second run, for a free copy's owner; in that run each was equal to a wrong password on a living copy in status, headers and body, but for the trace id, `Date` and the correlation id, and nothing was counted towards a lock. Not sent to the API's own address on the stack; the gate is in the API's sign-in, which is what the BFF calls | 0063 |
+| A demo copy's budget of changes (`Demo:Copy:MaxWrites`, 200; 10 in these runs) | API | Through the BFF's proxy: ten deposits 201, the eleventh 429 `DEMO_COPY_LIMIT`, a read still 200, another copy's deposit 201. Not sent to the API's own address on the stack; the count is an API middleware, held on the API's own host by `DemoWriteBudgetSqlServerTests` | 0063 |
 | **PIN on the account-number reveal** | **BFF only** | `GET /api/accounts/{id}/full-number` with no PIN ever entered: **API 200 with the full number**; BFF 403 with `X-Auth-Level-Required: 2` | 0008, 0020, 0041 |
 
 The last row is the one to read twice. A browser has no bearer token to present to the API's own

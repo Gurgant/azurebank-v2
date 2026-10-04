@@ -1,5 +1,7 @@
 using AzureBank.Api.Attributes;
 using AzureBank.Api.Middleware;
+using AzureBank.Shared.Constants;
+using AzureBank.Shared.Exceptions;
 using AzureBank.Shared.Options;
 using FluentAssertions;
 using FluentAssertions.Execution;
@@ -11,13 +13,16 @@ namespace AzureBank.Tests.Unit.Middleware;
 
 /// <summary>
 /// The middleware that keeps the public demo's own endpoints out of a deployment that is not the
-/// demo: with <c>Demo:Enabled</c> false, an endpoint marked <see cref="DemoOnlyAttribute"/> is 404
-/// and nothing behind the middleware runs; everything else passes.
+/// demo, and closes on the demo the endpoints it has no use for: with <c>Demo:Enabled</c> false, an
+/// endpoint marked <see cref="DemoOnlyAttribute"/> is 404; with it true, one marked
+/// <see cref="ClosedInDemoAttribute"/> is refused as closed. Nothing behind the middleware runs
+/// for either, and everything else passes.
 /// </summary>
 /// <remarks>
 /// On a bare <see cref="DefaultHttpContext"/>, so each of the two conditions is shown alone: the
-/// flag, and the marker. What the 404 looks like once the status-code pages have filled it, and
-/// that it comes before model binding, is shown through the host (<c>DemoModeEndpointTests</c>).
+/// flag, and the marker. What the 404 looks like once the status-code pages have filled it, what
+/// the refusal looks like once the exception handler has written it, and that both come before
+/// model binding, is shown through the host (<c>DemoModeEndpointTests</c>).
 /// </remarks>
 public class DemoEndpointMiddlewareTests
 {
@@ -59,8 +64,8 @@ public class DemoEndpointMiddlewareTests
         }
     }
 
-    // CONTROL: green before this change. It is what fails if the middleware refuses a demo-only
-    // endpoint whatever the flag says.
+    // CONTROL: green on a middleware that does nothing. It is what fails if the middleware refuses
+    // a demo-only endpoint whatever the flag says.
     [Fact]
     public async Task WithTheDemoOn_ADemoOnlyEndpointRuns()
     {
@@ -73,8 +78,8 @@ public class DemoEndpointMiddlewareTests
         }
     }
 
-    // CONTROL: green before this change. It is what fails if the middleware refuses every endpoint
-    // while the demo is off, and not only the marked ones.
+    // CONTROL: green on a middleware that does nothing. It is what fails if the middleware refuses
+    // every endpoint while the demo is off, and not only the marked ones.
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -89,8 +94,9 @@ public class DemoEndpointMiddlewareTests
         }
     }
 
-    // CONTROL: green before this change. A path that matched no route has no endpoint to read a
-    // marker from, and must reach the rest of the pipeline to be answered as one.
+    // CONTROL: green on a middleware that does nothing. A path that matched no route has no
+    // endpoint to read a marker from, and must reach the rest of the pipeline to be answered as
+    // one.
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -101,6 +107,52 @@ public class DemoEndpointMiddlewareTests
         using (new AssertionScope())
         {
             nextRan.Should().BeTrue();
+            context.Response.StatusCode.Should().Be(StatusCodes.Status200OK);
+        }
+    }
+
+    // ── An endpoint the demo closes ──────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task WithTheDemoOn_AnEndpointClosedInDemo_IsRefusedAsRegistrationClosed_AndNothingBehindItRuns()
+    {
+        var nextRan = false;
+        var middleware = new DemoEndpointMiddleware(
+            _ =>
+            {
+                nextRan = true;
+                return Task.CompletedTask;
+            },
+            Options.Create(new DemoOptions { Enabled = true }));
+        var context = new DefaultHttpContext();
+        context.Response.Body = new MemoryStream();
+        context.SetEndpoint(EndpointWith(new ClosedInDemoAttribute()));
+
+        var thrown = await Record.ExceptionAsync(() => middleware.InvokeAsync(context));
+
+        using (new AssertionScope())
+        {
+            // An exception, not a response: the exception handler above the middleware writes the
+            // 403, with the code, the sentence and the trace id every refusal of the API carries.
+            thrown.Should().BeOfType<RegistrationClosedException>("on the demo the endpoint is closed, whatever the request carries");
+            ((thrown as AppException)?.StatusCode).Should().Be(StatusCodes.Status403Forbidden);
+            ((thrown as AppException)?.ErrorCode).Should().Be(ErrorCodes.RegistrationClosed);
+            (thrown?.Message).Should().Be(RegistrationClosedException.Detail);
+            nextRan.Should().BeFalse("no binding, no validation, no action");
+            context.Response.Body.Length.Should().Be(0, "the middleware writes nothing itself");
+        }
+    }
+
+    // CONTROL: green on a middleware that does nothing. It is what fails if the middleware closes
+    // the endpoint on a deployment that is not the demo, where registration is open.
+    [Fact]
+    public async Task WithTheDemoOff_AnEndpointClosedInDemo_Runs()
+    {
+        var (context, nextRan) = await SendAsync(demoEnabled: false, EndpointWith(new ClosedInDemoAttribute()));
+
+        using (new AssertionScope())
+        {
+            nextRan.Should().BeTrue("the marker closes an endpoint on the demo only");
             context.Response.StatusCode.Should().Be(StatusCodes.Status200OK);
         }
     }

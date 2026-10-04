@@ -1,7 +1,9 @@
 # Runbook — the demo pool
 
 **Symptom:** a run of `recycle` ended with a code from 10 to 15, or its line shows `hardStop` or
-`failed` above 0, or it ended with no line at all, with exit 1 or 2. Or the demo's database is
+`failed` above 0, or it ended with no line at all, with exit 1 or 2. Or a visitor is refused a
+copy with 429 `DEMO_POOL_EMPTY` or `DEMO_DAILY_LIMIT` (section 1), or is told their copy reached
+its limit of changes, 429 `DEMO_COPY_LIMIT` (section 9). Or the demo's database is
 filling up: on Azure it is Basic, 2 GB at most (`infra/main.bicep`), and none of the
 deployment's four alerts watches its size (ADR-0061, decision 10).
 
@@ -9,7 +11,9 @@ deployment's four alerts watches its size (ADR-0061, decision 10).
 found in one line and one exit code
 ([ADR-0062](../adr/0062-demo-visitors-get-private-copies-from-a-prepared-pool.md), decision 12).
 The code names one signal; the line carries every count. This page says what each one means, and
-gives the SQL that looks behind it.
+gives the SQL that looks behind it. How a visitor takes a copy, what the API refuses them with
+and what each copy may change is
+[ADR-0063](../adr/0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md).
 
 **How a run is started.** The pool's job is the tools image with the argument `recycle`; a first
 fill, or a refill by hand, is `seed-pool`, or `seed-pool <N>` to top up to N free copies. Each
@@ -140,12 +144,26 @@ GROUP BY c.ClientKey
 ORDER BY Claims DESC;
 ```
 
-- **A few keys hold most of the claims:** a drain. A key is one address, so an office behind one
-  address counts as one client.
+- **A few keys hold most of the claims:** a drain. A key is one client as the BFF counts
+  clients: an IPv4 address in full, an IPv6 address by its /64 prefix, and one key for every
+  connection that shows no address. So an office behind one address counts as one client. And
+  behind a proxy the BFF is not told to trust (`ForwardedHeaders:KnownProxies`), every visitor
+  has the proxy's address: one key for everybody. Under `compose.demo.yaml` on one machine it
+  was so when measured (Docker Desktop on Windows, 2026-10-04): the BFF saw the compose network's
+  gateway address for every request, and every claim carried one key.
 - **Many keys with one or two claims each:** a busy day. The pool's size is
   `Demo:Pool:TargetFree`, and a run tops it up to that.
 - **A row with no key** counts claims whose copies were deleted already: the key leaves with the
   copy. Inside 24 hours that happens only when `Demo:CopyLifetimeHours` is below 24.
+
+**What a visitor reads.** A client with `Demo:Claim:MaxPerClientPerDay` claims or more in those
+24 hours is refused the next one with 429 `DEMO_DAILY_LIMIT`. The answer's `retryAfterSeconds`,
+and its `Retry-After` header, are the seconds until that client is back under its cap; the line's
+`clientsAtCap` counts such clients by the same rule. When no copy is free, however old, the
+answer is 429 `DEMO_POOL_EMPTY`, with no wait named: the next run's top-up is what ends it,
+unless the day's ceiling holds that top-up back (15, below). Give
+a changed `Demo__Claim__MaxPerClientPerDay` to the API, which refuses by it, and to the job,
+which counts by it.
 
 **15 is the ceiling doing its job.** A run builds no more than `Demo:Pool:MaxClaimsPerDay` minus
 the day's claims, so a pool drained again and again cannot grow the database without end.
@@ -181,6 +199,15 @@ before its first fill, after somebody registered through the app: on Azure the a
 an empty database with its registration open (`infra/README.md`, "What is not here"). Either way
 it wrote nothing, not even a sweep. Check the connection string the run was given, then the
 users below. **Pool rows and users outside them:** these users are not the pool's.
+
+**Where such a user comes from.** Where the API and the BFF run with `Demo__Enabled=true`,
+registration answers 403 `REGISTRATION_CLOSED` and sign-in lets in only the owner of a claimed
+copy (ADR-0063), so the app creates no user outside the pool. The flag is one setting per
+container, and registration through the app is refused when either the `api` or the `bff` has
+it on. A user outside every copy that registered beside the pool says the job had the flag on
+while neither of the app's two containers did: compare `Demo__Enabled` on the three. That is
+how the Azure deployment stands until the change that adds the pool's job turns the demo on
+there, and how `compose.demo.yaml` ran the app until 2026-10-04.
 
 ```sql
 SELECT u.Id, u.AzureTag, u.CreatedAt
@@ -256,7 +283,11 @@ Each is deleted by the first run more than five minutes after its `LiveUntil`. *
 hours past its time with a grant still live, and was deleted anyway. A grant lives at most
 `Jwt:RefreshTokenLifetimeMinutes` from sign-in (60 minutes by default, 24 hours at most), so that
 grant was issued after the copy's time was over: sign-in went on being accepted for it. The cause
-is wherever sign-in is decided, not the pool; the run only reports it. The session of that grant
+is where sign-in is decided, not the pool; the run only reports it. With `Demo__Enabled=true` the
+API's sign-in gate refuses the owner of a copy claimed `Demo:CopyLifetimeHours` ago or more, as
+it refuses an email nobody has (ADR-0063, decision 10). So a `hardStop` says the API ran without
+the gate, or with another lifetime than the job's: compare `Demo__Enabled` and
+`Demo__CopyLifetimeHours` on the `api` container with the job's. The session of that grant
 ends at its next renewal, which is answered 401 and writes a `RefreshTokenUnknown` audit row with
 no actor.
 
@@ -288,6 +319,14 @@ verify, and refuses, until the API holds it. A hash made with the old pepper is 
 PIN is next used, and the copies built before the rotation leave as the pool turns over. **The old
 pepper is removed when its key id's count here is 0, and not before:** a pepper removed while a
 hash still carries its key id makes that PIN unusable.
+
+A `Security:PreviousPinPeppers` key that is not a whole number >= 1, has surrounding whitespace,
+shares its id with another key (`1` and `01`) or does not hold exactly one value is refused at API
+startup and at the start of the Seeder commands that write PINs, before any database work, naming
+the key and never its pepper. A key of 32 characters or more, long enough to be a pepper, is named
+by its length only, and so is a key that is not a whole number and has a section under it: the
+first part of a pepper that holds `:`, or `__` in a variable's name. A value set on
+`Security__PreviousPinPeppers` itself, with no key id after it, is refused the same way.
 
 On the Azure deployment (ADR-0061) the template gives the `api` container one pepper,
 `Security__PinPepper`, with no key id (so 1) and no previous pepper, and `infra/README.md` says
@@ -342,6 +381,37 @@ A run deletes only a copy's users, and keeps the copy's record, whose `OwnerUser
 of the copy's audit rows. A row listed here names a user that something other than a run deleted.
 **The record is the operator's word, not proof:** anyone who can write to the database can add a
 record that takes a row off this list (ADR-0062, decision 11).
+
+## 9. A copy at its limit of changes (429 `DEMO_COPY_LIMIT`)
+
+The copies that have made the most changes, with how many:
+
+```sql
+SELECT TOP (20) c.Id, c.ClaimedAt, c.Writes
+FROM DemoCopies c
+WHERE c.DeletedAt IS NULL
+ORDER BY c.Writes DESC, c.ClaimedAt;
+```
+
+`Writes` is what the API has counted on the copy, and the request that finds it at
+`Demo:Copy:MaxWrites` (200 unless the `api` container sets `Demo__Copy__MaxWrites`) is answered
+429 `DEMO_COPY_LIMIT`: "This demo copy has reached its limit of changes. Start over to get a
+fresh copy." Reads still answer, and so does signing out everywhere. Nothing resets the count:
+the visitor claims another copy, and this one ends at its time.
+
+- **It counts requests, not changes.** Every request of the copy's signed-in user that is not a
+  GET, HEAD, OPTIONS or TRACE spends one, whatever the API then answers: a wrong PIN, a refused
+  transfer and a retry answered from the idempotency store are each counted. So is each reveal
+  of an account number, which is a GET. Sign-in, renewal, sign-out and the claim itself are not.
+  A copy at its limit has sent that many requests, not written that many rows.
+- **One copy at the limit** is a visitor who used the demo a lot, or a script. **Many copies at
+  the limit under one `ClientKey`** (section 1's statement) is one client working through its
+  copies of the day: the per-client cap is what bounds it.
+- **The same answer with no copy to count on.** A signed-in caller who belongs to no copy, or
+  to the record of a deleted one, is refused with this code too. With the demo on, a session is
+  opened only for the owner of a claimed copy, so this takes a session opened before the `api`
+  container was given the flag, or a copy deleted at the backstop while a session was still
+  live in it (section 5).
 
 ## Afterwards
 

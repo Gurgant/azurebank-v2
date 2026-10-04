@@ -22,8 +22,8 @@ public class DemoClaimRequestTests
         return (valid, results);
     }
 
-    // CONTROL: green before this change. An address the refusals below would be wrong to refuse:
-    // without it they would also pass on a rule that refused everything.
+    // CONTROL: green on a request that has no annotation. An address the refusals below would be
+    // wrong to refuse: without it they would also pass on a rule that refused everything.
     [Theory]
     [InlineData("7")]
     [InlineData("203.0.113.7")]
