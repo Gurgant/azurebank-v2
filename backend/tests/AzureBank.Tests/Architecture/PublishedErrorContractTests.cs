@@ -1,6 +1,11 @@
 using System.Reflection;
 using System.Text.Json;
+using AzureBank.Api.Attributes;
+using AzureBank.Api.Controllers;
 using FluentAssertions;
+using FluentAssertions.Execution;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Xunit;
 
 namespace AzureBank.Tests.Architecture;
@@ -30,6 +35,11 @@ namespace AzureBank.Tests.Architecture;
 /// downstream generation consumes, so it is the artefact whose truth matters here. Whether it still
 /// matches a running API is a different question, answered by
 /// <c>node scripts/openapi-spec.mjs check</c>.
+/// </para>
+/// <para>
+/// Two of them read the code as well, by reflection, for registration's 403 on the public demo: it
+/// is declared by an attribute that stands beside the marker that answers it, and neither the file
+/// nor the generator can say that the two are still together.
 /// </para>
 /// </remarks>
 public class PublishedErrorContractTests
@@ -249,6 +259,36 @@ public class PublishedErrorContractTests
 
         // The code a client branches on, named where the operation is described.
         register.GetProperty("description").GetString().Should().Contain("REGISTRATION_CLOSED");
+
+        // And the answer the file declares is one the code gives: the action carries the marker
+        // the demo closes it by. Measured before this assertion was here: with the marker taken
+        // off the action, this class and CommittedOpenApiDocumentTests passed, 12 of 12, on a
+        // file declaring a 403 that no deployment would answer.
+        typeof(AuthController).GetMethod(nameof(AuthController.Register))!
+            .GetCustomAttribute<ClosedInDemoAttribute>()
+            .Should().NotBeNull("the 403 declared for registration is the one this marker makes the demo answer");
+    }
+
+    [Fact]
+    public void Every_action_the_demo_closes_declares_the_403_it_answers_there()
+    {
+        // The other way round, from the code. The 403 is declared by an attribute written beside
+        // the marker and not derived from it, so an action can gain the marker and answer a 403
+        // the document does not have.
+        var closed = typeof(AuthController).Assembly.GetTypes()
+            .Where(type => typeof(ControllerBase).IsAssignableFrom(type))
+            .SelectMany(type => type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly))
+            .Where(action => action.GetCustomAttribute<ClosedInDemoAttribute>() is not null)
+            .ToList();
+
+        using var scope = new AssertionScope();
+        closed.Select(action => $"{action.DeclaringType!.Name}.{action.Name}").Should().Equal(
+            ["AuthController.Register"],
+            "registration is the one endpoint the demo closes, and a scan that finds none checks nothing");
+        closed.Should().OnlyContain(
+            action => action.GetCustomAttributes<ProducesResponseTypeAttribute>()
+                .Any(declared => declared.StatusCode == StatusCodes.Status403Forbidden),
+            "an endpoint the demo closes declares the 403 it answers there");
     }
 
     [Fact]
