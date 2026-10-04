@@ -68,7 +68,9 @@ describe('whether the page is the demo', () => {
   it('is off for a tag that does not say true', () => {
     // CONTROL: green before this change
     // Each tag is on the page while the function is asked (`demoTagsOnThePage: 1`), so an "off"
-    // here is an answer about that tag and not about an empty head.
+    // here is an answer about that tag and not about an empty head. `truest` and `untrue` hold
+    // `true` at one end and are longer: a comparison of the content's start, of its end or of a
+    // part of it would take one of them for `true`.
     const off = { demoTagsOnThePage: 1, on: false };
 
     expect({
@@ -77,6 +79,8 @@ describe('whether the page is the demo', () => {
       emptyContent: withOnly('<meta name="azurebank-demo" content="">'),
       capitalised: withOnly('<meta name="azurebank-demo" content="True">'),
       padded: withOnly('<meta name="azurebank-demo" content=" true ">'),
+      startsWithTrue: withOnly('<meta name="azurebank-demo" content="truest">'),
+      endsWithTrue: withOnly('<meta name="azurebank-demo" content="untrue">'),
       one: withOnly('<meta name="azurebank-demo" content="1">'),
     }).toStrictEqual({
       saysFalse: off,
@@ -84,6 +88,8 @@ describe('whether the page is the demo', () => {
       emptyContent: off,
       capitalised: off,
       padded: off,
+      startsWithTrue: off,
+      endsWithTrue: off,
       one: off,
     });
   });
