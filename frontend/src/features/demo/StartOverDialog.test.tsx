@@ -371,6 +371,18 @@ describe('the dialog that asks before starting over', () => {
 
   it('any other refusal: what the server said, or the fallback', async () => {
     const answers = [
+      // A 429 that is none of the dialog's three: the API's refusal of a copy that has used up its
+      // changes, with the API's sentence
+      // (backend/src/AzureBank.Shared/Exceptions/DemoRefusalException.cs). The limiter's sentence
+      // is for the limiter's code, not for every 429.
+      () =>
+        problem({
+          status: 429,
+          errorCode: 'DEMO_COPY_LIMIT',
+          detail:
+            'This demo copy has reached its limit of changes. Start over to get a fresh copy.',
+          instance: '/api/auth/demo/claim',
+        }),
       // The API's own 500, with its sentence.
       () =>
         problem({
@@ -386,14 +398,21 @@ describe('the dialog that asks before starting over', () => {
     await userEvent.click(startOver());
     await waitFor(() =>
       expect(alertsIn(dialog)).toStrictEqual([
+        'This demo copy has reached its limit of changes. Start over to get a fresh copy.',
+      ]),
+    );
+
+    // Pressed again: each refusal takes the place of the one before it.
+    await userEvent.click(startOver());
+    await waitFor(() =>
+      expect(alertsIn(dialog)).toStrictEqual([
         'An unexpected error occurred. Please try again later.',
       ]),
     );
 
-    // Pressed again: the second refusal takes the first one's place.
     await userEvent.click(startOver());
     await waitFor(() => expect(alertsIn(dialog)).toStrictEqual([WORDS.fallback]));
-    expect(claims.sent).toBe(2);
+    expect(claims.sent).toBe(3);
   });
 
   it('an answer the app will not accept: the fallback, and the copy kept is still the first', async () => {
