@@ -97,3 +97,45 @@ export const COPY_FORGOTTEN = 'This browser no longer remembers the copy.';
  */
 export const COPY_NO_LONGER_AVAILABLE =
   'That demo copy is no longer available. Copies are closed after 24 hours. You can get a new one.';
+
+// The dashboard's panel about the copy the visitor is signed in to.
+
+export const YOUR_PRIVATE_COPY = 'Your private copy';
+
+/**
+ * Said to the copy's owner: one sentence with one blank. `until` is the copy's end, already
+ * written out as the app writes an instant (src/utils/format.ts).
+ */
+export const copyIsYours = (until: string) =>
+  `Other visitors can't see this copy. It works until ${until}, then it is closed and deleted.`;
+
+/**
+ * Said to whoever is signed in to a copy on a browser that does not keep it. That browser has no
+ * end to print, so the sentence gives the copy's life instead. "24 hours" is typed out: it is the
+ * life a copy has unless a deployment sets another (`Demo:CopyLifetimeHours`,
+ * backend/src/AzureBank.Shared/Options/DemoOptions.cs), and the sentence does not follow that
+ * setting.
+ */
+export const COPY_IS_A_DEMO =
+  'This is a private demo copy. It works for 24 hours from its first use, then it is closed and deleted.';
+
+/**
+ * The copy's PIN, for everyone signed in to it. A line of the panel and not a sentence, so it
+ * ends on no full stop. `pin` is the digits (src/features/demo/demoPin.ts).
+ */
+export const copyPin = (pin: string) => `PIN: ${pin}, unless you changed it`;
+
+/**
+ * Whom the copy can pay: each handle with its `@`, joined by " and ", however many there are.
+ * The caller leaves the line out when there are none.
+ */
+export const contactsYouCanPay = (handles: readonly string[]) =>
+  `Contacts you can pay: ${handles.map((handle) => `@${handle}`).join(' and ')}`;
+
+export const SHOW_SIGN_IN_DETAILS = 'Show sign-in details';
+
+export const HIDE_SIGN_IN_DETAILS = 'Hide sign-in details';
+
+/** What signs in to the copy, shown to its owner once asked for. */
+export const signInDetails = (email: string, password: string) =>
+  `Email: ${email} · Password: ${password}`;

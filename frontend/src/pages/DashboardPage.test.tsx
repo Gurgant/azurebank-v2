@@ -1,12 +1,17 @@
 import { Route, Routes } from 'react-router-dom';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { http } from 'msw';
+import { AppToaster } from '../components/feedback';
+import { apiSlice } from '../features/api/apiSlice';
+import { AuthBootstrap } from '../features/auth';
 import { server } from '../mocks/server';
-import { mockState } from '../mocks/state';
-import { problem } from '../mocks/problem';
-import { renderWithProviders } from '../test/renderWithProviders';
+import { MOCK_USER, mockState, seedMockDemoCopy } from '../mocks/state';
+import { problem, serviceUnavailable } from '../mocks/problem';
+import { enableDemoMode, rememberDemoCopy } from '../test/demoMode';
+import { emulateFocusFixup, never } from '../test/outage';
+import { makeTestStore, renderWithProviders, type TestStore } from '../test/renderWithProviders';
 import { DashboardPage } from './DashboardPage';
 import { resolveScopedAccountId } from './dashboardScope';
 
@@ -257,5 +262,451 @@ describe('a partial failure', () => {
       await screen.findByText(/Could not load your accounts|Accounts unavailable/),
     ).toBeInTheDocument();
     expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+  });
+});
+
+/*
+  The dashboard on the demo: the panel that says what the visitor holds, where it sits, and what
+  starting over from it does to the page around it.
+
+  The words are typed out here and not imported from the product, so a test fails the day the words
+  on screen are no longer these. The address is the second copy's of the mock's pool
+  (src/mocks/state.ts): a fixture no server knows.
+*/
+const DEMO = {
+  heading: 'Your private copy',
+  notTheOwner:
+    'This is a private demo copy. It works for 24 hours from its first use, then it is closed and deleted.',
+  startOver: 'Start over',
+  startOverTitle: 'Start over with a new copy?',
+  newCopy: 'You have a new copy.',
+  welcome: 'Welcome to AzureBank',
+} as const;
+
+const CLAIM = '*/bff/auth/demo/claim';
+const ACCOUNTS = '*/api/accounts';
+const KEY = 'azurebank.demoCopy';
+const SECOND_COPY = 'demo-4h9d2s7f1g6j3k8a@azurebank.example';
+/** What a demo copy starts with, 12,450.00 and 2,300.00, and that sum with ten more in it. */
+const STARTING_SUM = '€14,750.00';
+const SUM_WITH_TEN_MORE = '€14,760.00';
+
+/**
+ * The dashboard as the app draws it for whoever is signed in: the app asks who that is from its
+ * root, beside its routes, and mounts the toasts' outlet there (src/App.tsx).
+ */
+function renderSignedInDashboard(store?: TestStore) {
+  return renderWithProviders(
+    <>
+      <AuthBootstrap />
+      <AppToaster />
+      <Routes>
+        <Route path="/" element={<DashboardPage />} />
+        <Route path="/accounts" element={<div>ACCOUNTS PAGE</div>} />
+      </Routes>
+    </>,
+    { routerEntries: ['/'], store },
+  );
+}
+
+/** Every panel on the page: the region its heading names. None is `[]`, not an error. */
+const panels = () => screen.queryAllByRole('region', { name: DEMO.heading });
+
+/** What the page's one level-1 heading reads: the balance, or the welcome. `null` for none. */
+const levelOne = () => document.querySelector('h1')?.textContent ?? null;
+
+/** The panel's "Start over". With the dialog open the page has a second button of that name. */
+function panelStartOver(): HTMLButtonElement[] {
+  const panel = panels()[0];
+  return panel
+    ? (within(panel).queryAllByRole('button', { name: DEMO.startOver }) as HTMLButtonElement[])
+    : [];
+}
+
+/** Where focus is: the focused control by its name, and whether it is the panel's "Start over". */
+function focus() {
+  const active = document.activeElement;
+  const on =
+    active === null || active === document.body
+      ? 'the page'
+      : active.getAttribute('role') === 'alertdialog'
+        ? 'the dialog itself'
+        : (active.getAttribute('aria-label') ?? active.textContent);
+  return { on, onThePanelsButton: active !== null && active === panelStartOver()[0] };
+}
+
+/** The title of each dialog that is open. A closed one is in the page, hidden, and is not one. */
+const openDialogs = () =>
+  screen
+    .queryAllByRole('alertdialog')
+    .map((dialog) => within(dialog).queryByRole('heading')?.textContent);
+
+/** Whether each element is in the page and comes after the one before it, in document order. */
+function inOrder(...elements: (Element | null | undefined)[]): boolean {
+  return elements.every((element, index) => {
+    if (!element) return false;
+    const before = elements[index - 1];
+    return (
+      index === 0 ||
+      (!!before &&
+        (before.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0)
+    );
+  });
+}
+
+/** The accounts are in the cache and no read of the page is on its way. */
+function readsAtRest(store: TestStore): boolean {
+  const reads = Object.values(store.getState().api.queries);
+  return (
+    reads.some((read) => read?.endpointName === 'getAccounts' && read.status === 'fulfilled') &&
+    reads.every((read) => read?.status !== 'pending')
+  );
+}
+
+/**
+ * The owner of the mock's first copy on the dashboard, with ten more in the copy's first account
+ * than a copy starts with: a sum on the page that no new copy has.
+ */
+async function openTheOwnersDashboard() {
+  enableDemoMode();
+  rememberDemoCopy(seedMockDemoCopy().copy);
+  mockState.accounts[0].balance += 10;
+  const requests = { accounts: 0, claims: 0 };
+  server.use(
+    http.get(ACCOUNTS, () => {
+      requests.accounts += 1;
+    }),
+    http.post(CLAIM, () => {
+      requests.claims += 1;
+    }),
+  );
+  const view = renderSignedInDashboard();
+  await waitFor(() =>
+    expect({ balance: levelOne(), panels: panels().length }).toStrictEqual({
+      balance: SUM_WITH_TEN_MORE,
+      panels: 1,
+    }),
+  );
+  return { ...view, requests };
+}
+
+/**
+ * "Start over" in the panel, then in the dialog, and the page left to come to rest.
+ *
+ * Returns what the page showed each time it changed on the way, with who the store said was
+ * signed in at that moment. A change of the page is the only moment looked at: between two of
+ * them a visitor sees what the last one drew.
+ */
+async function startOverFromThePanel(store: TestStore) {
+  const seen: {
+    signedInAs: string | null;
+    balance: string | null;
+    panels: number;
+    saysSomeoneElses: number;
+  }[] = [];
+  const look = () =>
+    seen.push({
+      signedInAs: store.getState().auth.user?.email ?? null,
+      balance: levelOne(),
+      panels: panels().length,
+      saysSomeoneElses: screen.queryAllByText(DEMO.notTheOwner).length,
+    });
+  const watcher = new MutationObserver(look);
+  watcher.observe(document.body, {
+    subtree: true,
+    childList: true,
+    characterData: true,
+    attributes: true,
+  });
+  try {
+    await userEvent.click(panelStartOver()[0]);
+    await waitFor(() => expect(openDialogs()).toStrictEqual([DEMO.startOverTitle]));
+    // Inside the dialog: "Start over" is also the panel's button, and the first words of the
+    // dialog's title.
+    await userEvent.click(
+      within(screen.getByRole('alertdialog', { name: DEMO.startOverTitle })).getByRole('button', {
+        name: DEMO.startOver,
+      }),
+    );
+    await screen.findAllByText(DEMO.newCopy);
+    await waitFor(() =>
+      expect({
+        signedInAs: store.getState().auth.user?.email,
+        dialogs: openDialogs(),
+        readsAtRest: readsAtRest(store),
+      }).toStrictEqual({ signedInAs: SECOND_COPY, dialogs: [], readsAtRest: true }),
+    );
+  } finally {
+    watcher.disconnect();
+  }
+  look();
+  return seen;
+}
+
+describe("on the demo: the panel about the visitor's copy", () => {
+  afterEach(() => {
+    // A test that spied on storage puts it back itself; one that failed before that line would
+    // hand its spy to every test after it.
+    vi.restoreAllMocks();
+  });
+
+  it('without the tag the dashboard has no "Your private copy", and nothing reads the demo\'s key', async () => {
+    // A copy under the key for the very address that is signed in, as a visit to the demo on this
+    // origin would have left one: everything an owner has, but for the tag.
+    rememberDemoCopy({
+      email: MOCK_USER.email,
+      password: 'Xk7p-Rm3w-Hn8d-Tq5v',
+      pin: '123456',
+      contacts: ['jane_k7m2', 'mike_k7m2'],
+      expiresAt: '2031-07-15T12:30:00.000Z',
+    });
+    const reads = vi.spyOn(Storage.prototype, 'getItem');
+    const readsOfTheKey = () => reads.mock.calls.filter(([key]) => key === KEY).length;
+    const signedInAndLoaded = async (store: TestStore) => {
+      await waitFor(() => expect(store.getState().auth.user?.email).toBe(MOCK_USER.email));
+      await screen.findByRole('heading', { level: 1 });
+    };
+    try {
+      const off = renderSignedInDashboard();
+      await signedInAndLoaded(off.store);
+      const offTheDemo = {
+        panels: panels().length,
+        readsOfTheKey: readsOfTheKey(),
+        // No dialog in the page either, open or closed: the one the panel opens is the demo's.
+        dialogs: document.querySelectorAll('[role="alertdialog"]').length,
+        // And nothing is left where the panel would be: no child of the page's column is an
+        // empty box, but for the alert, which is there, empty, on purpose.
+        emptyBoxes: Array.from(
+          document.querySelector('[role="alert"]')?.parentElement?.children ?? [],
+        ).filter((box) => box.getAttribute('role') !== 'alert' && box.innerHTML === '').length,
+      };
+      off.unmount();
+
+      // The same visitor on the same browser, on a page that says it is the demo.
+      enableDemoMode();
+      const on = renderSignedInDashboard();
+      await signedInAndLoaded(on.store);
+      await waitFor(() =>
+        expect({
+          offTheDemo,
+          onTheDemo: { panels: panels().length, keyWasRead: readsOfTheKey() > 0 },
+        }).toStrictEqual({
+          offTheDemo: { panels: 0, readsOfTheKey: 0, dialogs: 0, emptyBoxes: 0 },
+          onTheDemo: { panels: 1, keyWasRead: true },
+        }),
+      );
+    } finally {
+      reads.mockRestore();
+    }
+  });
+
+  it("the panel sits between the page's alert and its sections, and wears the page's card", async () => {
+    await openTheOwnersDashboard();
+    const panel = panels()[0];
+    const alert = document.querySelector('[role="alert"]');
+    const hero = document.querySelector('h1')?.closest('section');
+    // What makes a card of a box on this page, as the browser would compute it.
+    const card = (box: Element | null | undefined) => {
+      if (!box) return null;
+      const style = getComputedStyle(box);
+      return {
+        radius: style.borderRadius,
+        padding: style.paddingTop,
+        shadow: style.boxShadow,
+        background: style.backgroundColor,
+      };
+    };
+
+    expect({
+      // A child of the page's column, as the alert and the sections' grid are: not inside either.
+      besideTheAlert: panel.parentElement === alert?.parentElement,
+      order: inOrder(alert, panel, hero),
+      heroIsACard: card(hero)?.radius,
+      wearsTheSameCard: card(panel),
+    }).toStrictEqual({
+      besideTheAlert: true,
+      order: true,
+      heroIsACard: '14px',
+      wearsTheSameCard: card(hero),
+    });
+  });
+
+  it("starting over shows the new copy's balance and never the old one's", async () => {
+    const { store, requests } = await openTheOwnersDashboard();
+    const accountsReadsBefore = requests.accounts;
+    // A browser hands a disabled button's focus to the page; jsdom does not (src/test/outage.ts).
+    // The dialog's confirm is disabled while the claim runs, with focus on it.
+    const stopEmulating = emulateFocusFixup();
+    try {
+      const seen = await startOverFromThePanel(store);
+
+      const asTheNewOwner = seen.filter(({ signedInAs }) => signedInAs === SECOND_COPY);
+      expect({
+        claims: requests.claims,
+        // The page asked for the accounts again, after the claim: the sum is the new copy's own.
+        accountsReads: { before: accountsReadsBefore, after: requests.accounts },
+        // Every balance the page showed from the moment the store named the new owner. There was
+        // at least one such moment, and the old copy's sum is in none: where it stood there was
+        // no sum at all until the new one came.
+        balancesAsTheNewOwner: [...new Set(asTheNewOwner.map(({ balance }) => balance))],
+        endsAt: levelOne(),
+        // Once the dialog has closed. No route changed, so nothing else moves focus.
+        focus: focus(),
+      }).toStrictEqual({
+        claims: 1,
+        accountsReads: { before: 1, after: 2 },
+        balancesAsTheNewOwner: [null, STARTING_SUM],
+        endsAt: STARTING_SUM,
+        focus: { on: DEMO.startOver, onThePanelsButton: true },
+      });
+    } finally {
+      stopEmulating();
+    }
+  });
+
+  it("after starting over the panel never reads as someone else's", async () => {
+    const { store } = await openTheOwnersDashboard();
+    const buttonBefore = panelStartOver()[0];
+
+    const seen = await startOverFromThePanel(store);
+
+    const asTheNewOwner = seen.filter(({ signedInAs }) => signedInAs === SECOND_COPY);
+    expect({
+      // The page changed at least once while the store named the new owner, so the two lists
+      // below are about moments that were looked at.
+      lookedAsTheNewOwner: asTheNewOwner.length > 0,
+      saidSomeoneElses: [...new Set(seen.map(({ saysSomeoneElses }) => saysSomeoneElses))],
+      // One panel all the way through: it never left the page, so neither did its button.
+      panels: [...new Set(seen.map(({ panels: count }) => count))],
+      sameButton: panelStartOver()[0] === buttonBefore,
+      // And it is the new copy's panel: the contacts are the second copy's.
+      contacts: Array.from(panels()[0].querySelectorAll('p'))
+        .map((line) => line.textContent)
+        .filter((line) => line?.startsWith('Contacts you can pay:')),
+      kept: (JSON.parse(localStorage.getItem(KEY) ?? '{}') as { email?: string }).email,
+    }).toStrictEqual({
+      lookedAsTheNewOwner: true,
+      saidSomeoneElses: [0],
+      panels: [1],
+      sameButton: true,
+      contacts: ['Contacts you can pay: @jane_p3x8 and @mike_p3x8'],
+      kept: SECOND_COPY,
+    });
+  });
+
+  it("in the demo, signing in to another copy never shows the last one's balance", async () => {
+    // CONTROL: green before this change
+    enableDemoMode();
+    // Two copies claimed, as the demo's own sign-in page can sign in to either.
+    const first = seedMockDemoCopy();
+    const second = seedMockDemoCopy();
+    const store = makeTestStore();
+    const signIn = ({ copy: { email, password } }: typeof first) =>
+      store.dispatch(apiSlice.endpoints.login.initiate({ email, password })).unwrap();
+
+    // Before the page is drawn: on the first copy, its accounts read with ten more in them than a
+    // copy starts with; signed out, which drops nothing; the starting sums back; on the second.
+    await signIn(first);
+    mockState.accounts[0].balance += 10;
+    const readOnTheFirstCopy = await store
+      .dispatch(apiSlice.endpoints.getAccounts.initiate())
+      .unwrap();
+    await store.dispatch(apiSlice.endpoints.logout.initiate()).unwrap();
+    mockState.accounts[0].balance -= 10;
+    await signIn(second);
+
+    // Every balance the page shows, from its first render on.
+    const seen: (string | null)[] = [];
+    const watcher = new MutationObserver(() => seen.push(levelOne()));
+    watcher.observe(document.body, { subtree: true, childList: true, characterData: true });
+    try {
+      renderSignedInDashboard(store);
+      await waitFor(() =>
+        expect({ aSumIsShown: levelOne() !== null, readsAtRest: readsAtRest(store) }).toStrictEqual(
+          { aSumIsShown: true, readsAtRest: true },
+        ),
+      );
+    } finally {
+      watcher.disconnect();
+    }
+
+    expect({
+      readOnTheFirstCopy: readOnTheFirstCopy.reduce((sum, account) => sum + account.balance, 0),
+      signedInAs: store.getState().auth.user?.email,
+      seen: [...new Set(seen)],
+      endsAt: levelOne(),
+    }).toStrictEqual({
+      readOnTheFirstCopy: 14760,
+      signedInAs: SECOND_COPY,
+      seen: [null, STARTING_SUM],
+      endsAt: STARTING_SUM,
+    });
+  });
+
+  it("the panel is there whatever the page's reads are doing", async () => {
+    enableDemoMode();
+    rememberDemoCopy(seedMockDemoCopy().copy);
+    /** The page once the panel is on it and `ready` holds: what leads it, and in which order. */
+    const look = async (ready: () => boolean) => {
+      await waitFor(() =>
+        expect({ panels: panels().length, ready: ready() }).toStrictEqual({
+          panels: 1,
+          ready: true,
+        }),
+      );
+      const alert = document.querySelector('[role="alert"]');
+      return {
+        levelOne: levelOne(),
+        retries: screen.queryAllByRole('button', { name: 'Retry' }).length,
+        alertThenPanel: inOrder(alert, panels()[0]),
+        panelThenLevelOne: inOrder(panels()[0], document.querySelector('h1')),
+      };
+    };
+
+    // The accounts are on their way, and stay there.
+    server.use(http.get(ACCOUNTS, never));
+    const loading = renderSignedInDashboard();
+    const whileTheAccountsLoad = await look(() => true);
+    loading.unmount();
+    server.resetHandlers();
+
+    // The accounts cannot be read: their bar stands in for the page's sections.
+    server.use(
+      http.get(ACCOUNTS, () =>
+        serviceUnavailable({ via: 'api', instance: '/api/accounts', retryAfterSeconds: 1 }),
+      ),
+    );
+    const down = renderSignedInDashboard();
+    const whenTheAccountsFailed = await look(
+      () => screen.queryAllByRole('button', { name: 'Retry' }).length === 1,
+    );
+    down.unmount();
+    server.resetHandlers();
+
+    // No account at all: the page is its welcome.
+    mockState.accounts = [];
+    renderSignedInDashboard();
+    const withNoAccounts = await look(() => levelOne() !== null);
+
+    expect({ whileTheAccountsLoad, whenTheAccountsFailed, withNoAccounts }).toStrictEqual({
+      whileTheAccountsLoad: {
+        levelOne: null,
+        retries: 0,
+        alertThenPanel: true,
+        panelThenLevelOne: false,
+      },
+      whenTheAccountsFailed: {
+        levelOne: null,
+        retries: 1,
+        alertThenPanel: true,
+        panelThenLevelOne: false,
+      },
+      withNoAccounts: {
+        levelOne: DEMO.welcome,
+        retries: 0,
+        alertThenPanel: true,
+        panelThenLevelOne: true,
+      },
+    });
   });
 });

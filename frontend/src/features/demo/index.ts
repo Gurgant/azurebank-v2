@@ -7,5 +7,6 @@
   whatever that component imports. Inside src/features a helper is imported from its own file.
 */
 export { ClosedInDemo } from './ClosedInDemo';
+export { DemoCopyPanel } from './DemoCopyPanel';
 export { DemoEntry } from './DemoEntry';
 export { StartOverDialog } from './StartOverDialog';
