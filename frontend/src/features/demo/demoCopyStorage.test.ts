@@ -11,9 +11,9 @@ import {
 /*
   What the browser keeps of a claimed demo copy, and how it is read back.
 
-  Every test turns the demo on for itself, except the one that says it does not: off the demo the
-  module answers "no copy" before it looks anywhere, so a test that forgot the tag would be
-  asserting that and nothing else.
+  Every test turns the demo on for itself, except the two whose names say the tag is off: off the
+  demo the module answers "no copy" before it looks anywhere, so a test that forgot the tag would
+  be asserting that and nothing else.
 
   Two ways of putting a copy in the browser are used, and they are not the same thing.
   `writeDemoCopy` is the product's own write. `rememberDemoCopy` and a bare
@@ -248,6 +248,21 @@ describe('the demo copy the browser keeps', () => {
       readsWhileOn: 1,
     });
     expect(localStorage.getItem(KEY)).toBe(whole);
+  });
+
+  it('with the tag off a copy the browser would not store is not handed back either', () => {
+    const denied = deny('setItem');
+    writeDemoCopy(copy);
+    denied.mockRestore();
+
+    const whileOff = getDemoCopySnapshot();
+    // The same question with the tag on: the copy was there to be handed back.
+    enableDemoMode();
+
+    expect({ whileOff, whileOn: getDemoCopySnapshot() }).toStrictEqual({
+      whileOff: null,
+      whileOn: kept(copy),
+    });
   });
 
   it('a browser that refuses to store still remembers the copy while the page lives', () => {
