@@ -21,10 +21,11 @@ alternative record is running the same experiment again.
 
 ## If you read four, read these
 
-Sixty-two decisions is more than anyone reads cold. These four carry the architecture; the rest
+Sixty-three decisions is more than anyone reads cold. These four carry the architecture; the rest
 is detail hanging off them. *(It said fifty until 2026-09-24, fifty-six until 2026-09-28,
 fifty-seven until 2026-09-29, fifty-eight until 2026-10-01, fifty-nine until ADR-0060, the same
-day, sixty until 2026-10-02, and sixty-one until ADR-0062, 2026-10-03.)*
+day, sixty until 2026-10-02, sixty-one until ADR-0062, 2026-10-03, and sixty-two until ADR-0063,
+2026-10-04.)*
 
 | | Why this one |
 |---|---|
@@ -115,6 +116,7 @@ day, sixty until 2026-10-02, and sixty-one until ADR-0062, 2026-10-03.)*
 **The public demo** — how each visitor gets a demo of their own, and how it ends.
 
 - [ADR-0062](0062-demo-visitors-get-private-copies-from-a-prepared-pool.md) demo visitors get private copies from a prepared pool: free copies have no password, a handle resolves only inside its copy, and a copy whose time is over is deleted whole while its audit rows stay
+- [ADR-0063](0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md) a visitor claims a prepared copy instead of registering: one conditional statement decides who has a copy, sign-in lets in only the owner of a claimed copy whose time is not over, registration is closed, and a client, a copy and a day each have a cap
 
 **Operations** — telemetry, and keeping personal data out of it.
 
@@ -200,7 +202,7 @@ to `public` on that view, which it now keeps.)*
 
 </details>
 
-The next free number is **0063**.
+The next free number is **0064**.
 
 <details>
 <summary>Full list in numeric order</summary>
@@ -270,6 +272,7 @@ The next free number is **0063**.
 | [ADR-0060](0060-migrations-run-as-a-one-shot-container-before-the-app.md) | Migrations run as a one-shot container before the app | Accepted | 2026-10-01 |
 | [ADR-0061](0061-the-demo-is-deployed-to-azure-container-apps-with-no-database-password.md) | The demo is deployed to Azure Container Apps with no database password | Accepted | 2026-10-02 |
 | [ADR-0062](0062-demo-visitors-get-private-copies-from-a-prepared-pool.md) | Demo visitors get private copies from a prepared pool | Accepted | 2026-10-03 |
+| [ADR-0063](0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md) | A visitor claims a prepared copy instead of registering | Accepted | 2026-10-04 |
 
 </details>
 
