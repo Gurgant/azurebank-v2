@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text;
@@ -333,6 +334,57 @@ public sealed class DemoModeEndpointTests : IDisposable
             HttpStatusCode.OK, "the answered password signs in to the copy ({0})", await signIn.Content.ReadAsStringAsync());
         var signedIn = await signIn.Content.ReadFromJsonAsync<ApiResponse<LoginResponse>>(DemoVisitor.Json);
         signedIn!.Data!.User.Id.Should().Be(copy.Owner.Id);
+    }
+
+    // CONTROL: green before this change. This is the host that mints a claim's access token and
+    // its grant, and the claim's answer is the one place either is written to, with the copy's
+    // password. Each event of the host's log is read whole: its message, the value of every
+    // property and its exception, since a value can ride on an event as a property its message
+    // never names. The log is captured from the lowest level, so what is read is whatever this
+    // host is set to write.
+    [Fact]
+    public async Task AClaim_WritesNoLogEventThatHoldsThePasswordTheEmailTheAccessTokenOrTheGrant()
+    {
+        _demo.CaptureLog(LogEventLevel.Verbose);
+        var copy = await HandMadeDemoCopy.CreateAsync(_demo);
+        using var client = _demo.CreateClient();
+
+        using var response = await DemoVisitor.ClaimAsync(client);
+
+        var claim = await DemoVisitor.ClaimedAsync(response);
+        (await EventuallyAsync(() => RequestLinesFor(_demo, ClaimPath) >= 1)).Should().BeTrue(
+            "ARRANGE: the request's own line is written last, so the claim's events are all in");
+
+        // With parentheses for braces, as ShapeOfAsync does and for its reason.
+        var written = _demo.CapturedEvents
+            .Select(e => string.Join(
+                " ",
+                e.Properties.Select(p => p.Value.ToString())
+                    .Prepend(e.RenderMessage(CultureInfo.InvariantCulture))
+                    .Append(e.Exception?.ToString())))
+            .Select(line => line.Replace('{', '(').Replace('}', ')'))
+            .ToList();
+        var kept = new (string What, string? Value)[]
+        {
+            ("the copy's password", claim.Copy.Password),
+            ("the copy's email", claim.Copy.Email),
+            ("the access token", claim.Token.AccessToken),
+            ("the grant", claim.Token.RefreshToken),
+        };
+        kept.Where(one => string.IsNullOrWhiteSpace(one.Value)).Select(one => one.What).Should().BeEmpty(
+            "ARRANGE: the answer carries all four, so each is a value to look for");
+
+        using (new AssertionScope())
+        {
+            written.Should().Contain(
+                line => line.Contains($"Demo copy {copy.Id} claimed for user {copy.Owner.Id}", StringComparison.Ordinal),
+                "CONTROL: the claim's own event is among those read, and names the copy and the user by id");
+            foreach (var (what, value) in kept)
+            {
+                written.Should().NotContain(
+                    line => line.Contains(value!, StringComparison.OrdinalIgnoreCase), "{0} stays out of the log", what);
+            }
+        }
     }
 
     // ── Who can sign in, with the demo on ────────────────────────────────────────────────────────
