@@ -5,6 +5,7 @@ answer; what Azure and the app really answer is read on the first deployment (RE
 measured yet"). Time is a counter: a wait of fifteen minutes costs nothing.
 """
 
+import ast
 import contextlib
 import copy
 import datetime
@@ -4616,6 +4617,180 @@ class SmokeInTheGateTests(Offline):
             deploy.deploy(SUBSCRIPTION, GROUP, NEW)
         self.assertEqual(str(raised.exception), registration_unproven('429 (rate limited)'))
         self.assertEqual(len(self.azure.app_patches()), 1, 'nothing is put back')
+
+
+# --- The pages the script sends its reader to ---
+
+def document(*path):
+    """A document of this repository, as text, from the checkout these tests are in. A sentence of
+    the script that sends its reader to a page is held to that page, and a page that quotes the
+    script is held to the script: nothing is read but the two files."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(here, os.pardir, *path), encoding='utf-8') as source:
+        return source.read()
+
+
+def headings(text):
+    """The headings of a Markdown document, as (line, level, title). A fenced block is left out:
+    there a line that starts with a hash is a comment of the commands shown."""
+    fenced, found = False, []
+    for index, line in enumerate(text.splitlines()):
+        if line.lstrip().startswith('```'):
+            fenced = not fenced
+        elif not fenced:
+            match = re.fullmatch(r'(#{1,6}) (.+)', line)
+            if match:
+                found.append((index, len(match.group(1)), match.group(2)))
+    return found
+
+
+def under(text, heading):
+    """What a Markdown document holds under one heading, down to the next heading of its level or
+    of a higher one, with every run of blanks and line ends as one blank: a sentence that is
+    wrapped is still found. A heading that is not there once fails the test that asked for it."""
+    found = headings(text)
+    at = [entry for entry in found if entry[2] == heading]
+    if len(at) != 1:
+        raise AssertionError(f'{len(at)} headings are named {heading!r}, not one')
+    (start, level, _), = at
+    end = next((index for index, depth, _ in found if index > start and depth <= level), None)
+    return ' '.join(' '.join(text.splitlines()[start:end]).split())
+
+
+def said(node):
+    """The text of one string expression of the script: a literal, an f-string, or two of them
+    joined by a plus. A zero byte stands where a value is put in. Anything else has no text."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        return ''.join(part.value if isinstance(part, ast.Constant) else '\x00' for part in node.values)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = said(node.left), said(node.right)
+        return None if left is None or right is None else left + right
+    return None
+
+
+def texts_of_the_script():
+    """What infra/deploy.py can say, read from its source and never run: each string expression
+    whole, and each run of literal text, which is what stands between two values put in."""
+    with open(deploy.__file__, encoding='utf-8') as source:
+        tree = ast.parse(source.read())
+    whole = []
+
+    def visit(node):
+        text = said(node)
+        if text is None:
+            for child in ast.iter_child_nodes(node):
+                visit(child)
+        else:
+            whole.append(text)
+
+    visit(tree)
+    runs = [node.value for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)]
+    return whole, runs
+
+
+class RunbookTests(unittest.TestCase):
+    """The script and the two pages it names, each held to the other: infra/README.md and
+    docs/runbooks/demo-pool.md, read as text. What a page says of Azure is a person's sentence:
+    these tests hold only that a heading the script names is there, that a refusal which sends its
+    reader to a section has a row in it, and that the commands and the exit codes the pages tell
+    are the script's."""
+
+    PAGES = ('infra/README.md', 'docs/runbooks/demo-pool.md')
+    FAILS = 'infra/README.md, "When something fails"'
+    # What a row of "When something fails" quotes of a sentence of the script: a run of its
+    # literal text, word for word, so that whoever reads the sentence on a terminal finds its row
+    # by searching the page for it. The first is the put-back's, which had its row before the
+    # demo; every other is a sentence the demo added to the script.
+    ROWS = (
+        'The app may be serving a broken revision',
+        'is true in',
+        'is something the template never writes',
+        'The app says the demo is on, and the job',
+        'could not be read, so whether a pool run is in progress is not known',
+        'a pool run may still be in progress',
+        'the tag of the public demo',
+        'the registration probe expected 403',
+        'the registration probe got',
+        'not in a state to be checked',
+        'an answer could still come from another revision',
+        'came with a link to a next page',
+        'reports no address',
+        "from the app's",
+        "secrets could not be compared with the app's",
+        'could not be listed',
+        'no value was shown',
+        'This was --check, not a deployment',
+        'writes that job only with the demo on',
+        'was asked to start once',
+        'failed while its end was waited for',
+        "(the job's timeout and two minutes)",
+        'The pool run did not end well',
+        'Azure reported no exit code for it',
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        cls.pages = {page: document(*page.split('/')) for page in cls.PAGES}
+        cls.runbook, cls.pool = (cls.pages[page] for page in cls.PAGES)
+        cls.whole, cls.runs = texts_of_the_script()
+
+    def test_a_section_the_script_names_is_a_heading_of_the_page_it_names(self):
+        # CONTROL: green before this change. Seen red with a heading of either page renamed.
+        named = {pointer for text in self.whole
+                 for pointer in re.findall(r'(%s), "([^"\x00]+)"' % '|'.join(map(re.escape, self.PAGES)), text)}
+        # That the search finds anything: the three the script named when this was written.
+        self.assertLessEqual({(self.PAGES[0], 'When something fails'), (self.PAGES[0], 'Reading the logs'),
+                              (self.PAGES[1], 'The line')}, named)
+        for page, heading in sorted(named):
+            with self.subTest(page=page, heading=heading):
+                self.assertEqual([title for _, _, title in headings(self.pages[page])].count(heading), 1)
+
+    def test_a_refusal_that_sends_its_reader_to_when_something_fails_has_a_row_there(self):
+        section = under(self.runbook, 'When something fails')
+        for words in self.ROWS:
+            with self.subTest(words=words):
+                self.assertTrue(any(words in run for run in self.runs), 'the script no longer says this')
+                self.assertIn(words, section)
+        # And no sentence of the script names the section without one of them: a new refusal that
+        # points there gets its row, and its words above, in the change that adds it.
+        sent = [text for text in self.whole if self.FAILS in text]
+        self.assertGreaterEqual(len(sent), 8, 'the search no longer finds the sentences')
+        for text in sent:
+            with self.subTest(sentence=text.replace('\x00', '{}')[:70]):
+                self.assertTrue(any(words in text for words in self.ROWS),
+                                'a sentence names the section and no row quotes it')
+
+    def test_every_command_of_the_script_is_told_in_the_runbook_and_the_pools_in_the_pools_page(self):
+        with open(deploy.__file__, encoding='utf-8') as source:
+            options = re.findall(r"modes\.add_argument\('(--[a-z-]+)'", source.read())
+        self.assertEqual(options, ['--app-only', '--check', '--pool-run', '--pool-log', '--job-log', '--app-log'])
+        for option in options:
+            with self.subTest(option=option, page=self.PAGES[0]):
+                self.assertIn(f'python infra/deploy.py {option}', self.runbook)
+        # The five that read: where a reader looks for how a run is read.
+        reading = under(self.runbook, 'Reading the logs')
+        for option in options[1:]:
+            with self.subTest(option=option, section='Reading the logs'):
+                self.assertIn(f'python infra/deploy.py {option}', reading)
+        # The page of the pool's own symptoms names the three that are about the pool.
+        for option in ('--check', '--pool-run', '--pool-log'):
+            with self.subTest(option=option, page=self.PAGES[1]):
+                self.assertIn(f'python infra/deploy.py {option}', self.pool)
+
+    def test_the_runbooks_table_of_a_pool_runs_exit_codes_is_the_scripts(self):
+        # A row: the code, the script's own words for it, and how `--pool-run` ends on it.
+        rows = re.findall(r'^\| (\d+) \| (.+?) \| (ends well|fails) \|$', self.runbook, re.M)
+        self.assertEqual({int(code): (words, ends) for code, words, ends in rows},
+                         {code: (words, 'ends well' if code in deploy.POOL_RUN_ENDS_WELL else 'fails')
+                          for code, words in deploy.POOL_EXIT_CODES.items()})
+        self.assertEqual(len(rows), len(deploy.POOL_EXIT_CODES), 'a code has two rows')
+        # Where a reader looks for it, and with the one row that has no number.
+        reading = under(self.runbook, 'Reading the logs')
+        self.assertIn(f'| 13 | {deploy.POOL_EXIT_CODES[13]} | fails |', reading)
+        self.assertIn('| not reported |', reading)
 
 
 if __name__ == '__main__':
