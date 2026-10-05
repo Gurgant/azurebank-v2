@@ -291,8 +291,10 @@ Offline, on one machine (Windows, Python 3.14, PowerShell 7.6, Bicep 0.47.16), o
   jobs and the demo's settings, held to one another; the refusals the demo added to `deploy.py`,
   compared as whole sentences; that no line and no error of `--check` holds eight characters in
   a row of a listed secret; that a test of `deploy.py` which reaches for the network fails; and
-  that the runbook has a row for each refusal that sends its reader there, and quotes the lines
-  of a good run as the scripts print them.
+  that the runbook has a row for each refusal that sends its reader there, and that the quotes
+  of a good run which the tests list are words the scripts print: eleven of `deploy.py` at that
+  run, twelve since 2026-10-06 with the line printed before a start by hand is sent, and three
+  of `secrets.ps1`. A step's other quotes are held by no test of `infra/`.
 - **`bicep build` and `bicep lint`** of the three templates: nothing on standard error.
 - **The backend's gate**, since documents its tests read were edited: the Release build, the
   whitespace check, and `dotnet test` with and without a SQL Server, each with no failure, on

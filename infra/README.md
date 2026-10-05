@@ -3809,7 +3809,8 @@ cannot drift on one. It reads three things of `deploy.py` as text, the pool job'
 bounds of its timeout and the names of its two secrets, to hold each equal to the template's;
 one source file of the backend, `backend/src/AzureBank.Shared/Options/DemoOptions.cs`, to hold
 every setting the template writes under the demo's section to a name the backend binds; and this
-page, for the lines of `secrets.ps1` about the demo's switch that a step quotes.
+page, for four quotes of `secrets.ps1` about the demo's switch: three lines of its report, and
+its refusal of two containers that disagree.
 `test_deploy.py` reads seven source files of the backend as text, never built or run: three of
 the BFF, for the page's tag, the route of a registration, and the status and the member of the
 refusal that closes it; one of the shared library, for the error code; and three of the tool the
@@ -3817,7 +3818,10 @@ pool job runs, for its exit codes, the counts of its summary line and the name o
 `recycle`.
 And it reads this page and `docs/runbooks/demo-pool.md`: a heading the script names is there; a
 refusal that sends its reader to [When something fails](#when-something-fails) has a row there
-that quotes it, in words that stand in one sentence of the script and no other; a line a step
-gives as what a good run prints is one the script prints; every command of the script is told;
-and the table of a pool run's exit codes is the script's own. So the tests need the whole
-checkout, not this folder alone, and a page that drops one of those quotes fails a test.
+that quotes it, in words that stand in one sentence of the script and no other; twelve quotes
+that the steps give of what a good run prints are held, each a run of words that one sentence of
+the script prints and that this page holds; every command of the script is told; and the table
+of a pool run's exit codes is the script's own. A step's other quotes of `deploy.py` are held by
+no test of this folder: among them "Pool run execution ... started." in step 26 and the two
+lines that start with "Moving" in step 28. So the tests need the whole checkout, not this folder
+alone, and a page that drops one of the quotes that are held fails a test.

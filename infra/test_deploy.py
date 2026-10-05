@@ -4921,8 +4921,10 @@ class RunbookTests(unittest.TestCase):
     """The script and the two pages it names, each held to the other: infra/README.md and
     docs/runbooks/demo-pool.md, read as text. What a page says of Azure is a person's sentence:
     these tests hold only that a heading the script names is there, that a refusal which sends its
-    reader to a section has a row in it, that a line a step gives as what a good run prints is one
-    the script prints, and that the commands and the exit codes the pages tell are the script's."""
+    reader to a section has a row in it, that the quotes listed in GOOD, which the steps give of
+    what a good run prints, are words the script prints, and that the commands and the exit codes
+    the pages tell are the script's. A quote of a step that is in neither list is held by nothing
+    here."""
 
     PAGES = ('infra/README.md', 'docs/runbooks/demo-pool.md')
     FAILS = (PAGES[0], 'When something fails')
