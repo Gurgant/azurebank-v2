@@ -429,9 +429,10 @@ describe("the dashboard's panel about the demo copy", () => {
         beforeTheClaim: '',
         refusedWrites: 1,
         key: null,
-        // The claim's own string: the mock writes a copy's end as the stack does, with seven
-        // fractional digits (src/mocks/state.ts). The instant is A_FAR_END's, which is what
-        // the page prints and `until` below reads back.
+        // The claim's own string: the mock writes a copy's end with seven fractional digits
+        // (src/mocks/state.ts), where the stack would write this instant with none, as
+        // 2031-07-15T12:30:00Z. The instant is A_FAR_END's, which is what the page prints and
+        // `until` below reads back.
         claimedUntil: '2031-07-15T12:30:00.0000000Z',
         said: {
           headings: [WORDS.heading],

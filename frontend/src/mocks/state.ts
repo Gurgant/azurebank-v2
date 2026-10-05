@@ -710,13 +710,19 @@ export function claimMockDemoCopy(): { user: MockSessionUser; copy: MockDemoCopy
       pin: MOCK_PIN,
       // Bare and sorted, which is how the pool holds them.
       contacts: [...claimed.contacts],
-      // The copy's end, counted from the claim, in the form the stack writes it: seven fractional
-      // digits and a `Z`. Measured 2026-10-05 on compose.yaml with compose.demo.yaml (Production),
-      // in an answer whose `Date` header was 09:25:46 GMT:
-      // "expiresAt":"2026-10-06T09:25:47.0900766Z" in `data.copy`, 24 hours on. (The access
-      // token's end beside `user` came in that answer with whole seconds and a `Z`,
-      // "2026-10-05T09:40:47Z"; `mockAccessTokenExpiry` below is sign-in's too and writes three
-      // digits.)
+      // The copy's end, counted from the claim, with seven fractional digits and a `Z`: the
+      // longest form the stack writes, and not the only one. The BFF writes a claim's answer
+      // with ASP.NET's own JSON writer and no date converter of its own
+      // (backend/src/AzureBank.Bff/Controllers/BffAuthController.cs), and that writer writes no
+      // trailing zero of a fraction: a real end has from no fraction to seven digits. Measured
+      // 2026-10-05 on compose.yaml with compose.demo.yaml (Production), in an answer whose
+      // `Date` header was 09:25:46 GMT: "expiresAt":"2026-10-06T09:25:47.0900766Z" in
+      // `data.copy`, 24 hours on, and beside `user` in the same answer the access token's end
+      // with no fraction, "2026-10-05T09:40:47Z". `/bff/auth/me`, asked next, gave the
+      // session's end six digits: "2026-10-05T10:25:47.635338Z". The mock always writes seven,
+      // four of them zeros, which is a string the stack does not write; src/api/bffSchemas.test.ts
+      // holds that the app takes the shorter forms. (`mockAccessTokenExpiry` below is sign-in's
+      // too and writes three digits.)
       expiresAt: new Date(now + MOCK_DEMO_COPY_LIFETIME_MS)
         .toISOString()
         .replace(/\.(\d{3})Z$/, '.$10000Z'),

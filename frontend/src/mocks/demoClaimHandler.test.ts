@@ -199,9 +199,10 @@ describe("the mock's demo claim", () => {
     expect(Date.parse(data.copy.expiresAt) - Date.parse(data.expiresAt)).toBe(
       24 * 60 * 60_000 - 15 * 60_000,
     );
-    // The copy's end as the stack writes it: seven fractional digits and a Z. Measured
-    // 2026-10-05 on compose.yaml with compose.demo.yaml (Production):
-    // "expiresAt": "2026-10-06T09:22:42.2604692Z" in `data.copy`.
+    // The mock's form for a copy's end: seven fractional digits and a Z, the longest the stack
+    // writes. Measured 2026-10-05 on compose.yaml with compose.demo.yaml (Production):
+    // "expiresAt": "2026-10-06T09:22:42.2604692Z" in `data.copy`. The stack writes fewer digits
+    // when the last ones are zeros (src/mocks/state.ts), and the mock does not.
     expect(data.copy.expiresAt).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{7}Z$/);
 
     expect(await whoAmI()).toEqual({ status: 200, email: data.copy.email, authLevel: 1 });

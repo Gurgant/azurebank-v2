@@ -193,17 +193,29 @@ describe("a demo claim's answer", () => {
   });
 
   it("accepts a copy's end written with a Z or with an offset", () => {
-    // Seven fractional digits, as .NET writes an instant; the offset form is the one
+    // Seven fractional digits is the most .NET writes for an instant; the offset form is the one
     // `apiOffsetInstant` in src/mocks/handlers.ts records for a `DateTimeOffset`.
     //
     // The third is what the stack wrote, letter for letter: `data.copy.expiresAt` of a claim made
     // in Chromium on 2026-10-05 against compose.yaml with compose.demo.yaml (Production). A `Z`,
     // so the form this schema was written for is the one that arrives. The row was green when it
     // was added: it holds the measured string, it did not change the schema.
+    //
+    // Seven is the most and not the rule. The BFF writes a claim's answer with ASP.NET's own
+    // JSON writer, which writes no trailing zero of a fraction, so a copy's end whose last
+    // digits are zeros arrives shorter (src/mocks/state.ts). The fourth and the fifth are that
+    // writer's strings from the same stack on the same day, for two other instants: a session's
+    // end with six digits and an access token's end with none. The sixth, one digit, is made up
+    // for the form. All three were green when they were added, as the third was: a schema
+    // tightened to seven digits would refuse them, and the mock, which always writes seven,
+    // would not say so.
     const ends = [
       '2026-10-05T09:00:00.1234567Z',
       '2026-10-05T09:00:00.1234567+00:00',
       '2026-10-06T09:22:42.2604692Z',
+      '2026-10-05T10:25:47.635338Z',
+      '2026-10-05T09:40:47Z',
+      '2026-10-06T09:25:47.5Z',
     ];
 
     const parsedCopies = ends.map((end) => {
@@ -218,6 +230,9 @@ describe("a demo claim's answer", () => {
       { ...copy, expiresAt: '2026-10-05T09:00:00.1234567Z' },
       { ...copy, expiresAt: '2026-10-05T09:00:00.1234567+00:00' },
       { ...copy, expiresAt: '2026-10-06T09:22:42.2604692Z' },
+      { ...copy, expiresAt: '2026-10-05T10:25:47.635338Z' },
+      { ...copy, expiresAt: '2026-10-05T09:40:47Z' },
+      { ...copy, expiresAt: '2026-10-06T09:25:47.5Z' },
     ]);
   });
 
