@@ -1362,13 +1362,17 @@ def where_it_printed(name):
             "run's lines, once the log workspace has them: a line takes minutes to arrive.")
 
 
-def end_pool_run(name, code):
+def end_pool_run(name, code, status=None):
     """Say how a run of the pool job that is over ended, by the exit code of its container and
     never by the execution's status alone: how Azure words an execution whose container exited
     with a signal's code has not been seen. 0, 10, 11 and 15 end well, the last three with a
     signal (POOL_RUN_ENDS_WELL). Any other code, and a code Azure did not report, is a failure:
     nothing is guessed, and nothing is started again. A signal names the count of the run's
-    summary line that it says to read."""
+    summary line that it says to read.
+
+    `status` is the one the run's verdict showed. A run that ends well is told that the exit code
+    decided wherever the line above could make it doubted: for a signal, and for a status that
+    says the run failed."""
     label = told_name(name)
     if code is None:
         raise RuntimeError(f'The pool run ended and Azure reported no exit code for it ({label}: exit '
@@ -1381,7 +1385,8 @@ def end_pool_run(name, code):
     if code not in POOL_RUN_ENDS_WELL:
         raise RuntimeError(f'The pool run did not end well ({how}). It was not started again.'
                            f'{points_at} {where_it_printed(name)}')
-    decides = ' The exit code decides here, whatever status Azure gave the execution.' if count else ''
+    decides = (' The exit code decides here, whatever status Azure gave the execution.'
+               if count or status in FAILED else '')
     say(f'The pool run ended well ({how}).{decides}{points_at} {where_it_printed(name)}')
 
 
@@ -1460,7 +1465,8 @@ def pool_run(subscription, resource_group, in_actions=False):
         if status in FINISHED:
             properties = detailed(job_id, name, match[0])
             say(verdict(name, properties, container=JOBS[POOL_JOB], codes=POOL_EXIT_CODES))
-            end_pool_run(name, exit_code(properties, JOBS[POOL_JOB])[0])
+            # The status as that line showed it: one of the states this script knows, or words.
+            end_pool_run(name, exit_code(properties, JOBS[POOL_JOB])[0], told_status(properties.get('status')))
             return name
         time.sleep(5)
     raise RuntimeError(f'Timed out waiting for {label} of the job {POOL_JOB}: it had not ended '

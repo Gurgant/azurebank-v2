@@ -2752,11 +2752,14 @@ def where_printed(name):
     return READ_WITH if name == 'execution pool-run' else LINE_KEPT
 
 
-def ended_well(code=0, words='done', count=None, name='execution pool-run'):
-    """The last line of a start by hand whose run ended well, whole."""
+def ended_well(code=0, words='done', count=None, name='execution pool-run', status='Succeeded'):
+    """The last line of a start by hand whose run ended well, whole. That the exit code decided
+    is said where it could be doubted: of a signal, and of a run whose verdict shows a status
+    that says it failed."""
     decides = ' The exit code decides here, whatever status Azure gave the execution.'
     return (f'The pool run ended well ({name}: exit code {code}, {words}).'
-            + (decides + points_at(count) if count else '') + f' {where_printed(name)}')
+            + (decides if count or status in ('Failed', 'Stopped', 'Degraded') else '')
+            + (points_at(count) if count else '') + f' {where_printed(name)}')
 
 
 def not_well(code, words, count=None, name='execution pool-run'):
@@ -2903,12 +2906,40 @@ class PoolRunTests(DeployCase):
             with self.subTest(status=status, code=0):
                 self.again(*ends_as(pool_finished(status=status)))
                 self.assertEqual(self.ended(), 'pool-run')
-                self.assertEqual(self.said()[-1], ended_well())
+                # A run that ended well under a status that says it failed is told so: the line
+                # above it shows that status, and the two would read as a contradiction.
+                self.assertEqual(self.said()[-2:], [pool_verdict(status), ended_well(status=status)])
+                self.assertEqual('The exit code decides here, whatever status' in self.said()[-1],
+                                 status != 'Succeeded')
             with self.subTest(status=status, code=13):
                 self.again(*ends_as(pool_finished(status=status, code=13)))
                 with self.assertRaises(RuntimeError) as raised:
                     self.pool_run()
                 self.assertEqual(str(raised.exception), not_well(13, *FOREIGN))
+        # The status in question is the one the verdict's line shows, read with the later version:
+        # the last line follows the line above it, whatever the polling saw.
+        with self.subTest('the polling saw Succeeded and the verdict shows Failed'):
+            self.again(execution('pool-run', 'Succeeded'), pool_finished(status='Failed'))
+            self.assertEqual(self.ended(), 'pool-run')
+            self.assertEqual(self.said()[-2:], [pool_verdict('Failed'), ended_well(status='Failed')])
+        with self.subTest('the polling saw Failed and the verdict shows Succeeded'):
+            # CONTROL: green as written. Seen red with the polling's status in the verdict's place.
+            self.again(execution('pool-run', 'Failed'), pool_finished())
+            self.assertEqual(self.ended(), 'pool-run')
+            self.assertEqual(self.said()[-2:], [pool_verdict(), ended_well()])
+        with self.subTest('the verdict shows a status that is not text'):
+            # CONTROL: green as written. A status of another shape is not one that says the run
+            # failed, and is not compared as one. Seen red with the status taken as Azure gave it.
+            odd = pool_finished()
+            odd['properties']['status'] = ['Failed']
+            self.again(execution('pool-run', 'Succeeded'), odd)
+            try:
+                end = self.pool_run()
+            except Exception as error:  # a TypeError is what this half is for
+                end = error
+            self.assertEqual(end, 'pool-run')
+            self.assertIn(' execution pool-run: status not reported, ', self.said()[-2])
+            self.assertEqual(self.said()[-1], ended_well())
 
     def test_the_code_that_decides_is_the_one_of_the_jobs_own_container(self):
         # CONTROL: green as written. An execution that lists a second container, which nothing in
