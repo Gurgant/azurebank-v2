@@ -1894,6 +1894,12 @@ Then `az logout`, and what the session measured replaces every "expected" of ste
   run as it is written here. At the end of the second session, on 2026-10-03, the day's volume
   read 0.19 MB by table ([Measured on Azure](#measured-on-azure)); the billed size of a line of
   the app and the count of lines with an `@` were not read.
+- **48 hours after step 26: the cost by meter once more.** The pool job's seconds are expected
+  on the two meters of vCPU and memory while active, inside the free amounts, so those two rows
+  are expected to read 0 as before
+  ([What it costs, and what bounds it](#what-it-costs-and-what-bounds-it)). A cost on either,
+  or a meter that is a job's alone, is a finding: the numbers of that section are then worked
+  again. "No rows" is "not run", as above.
 
 ## If Azure says no
 
@@ -1980,7 +1986,7 @@ what-if shows the `Modify`. The demo's switch is not one of them: the app rememb
 
 | If | Then |
 | --- | --- |
-| The what-if or the deployment with `deployApp=true` is refused on a parameter of `azurebank-app-inputs` (a length) | A value the app needs is missing or the wrong length: run `secrets.ps1 -Action New -DeployApp -ImageTag <the full SHA>` again, as the step does, and read its report. The app, the job and the action group wait for that check, so none of them was sent |
+| The what-if or the deployment with `deployApp=true` is refused on a parameter of `azurebank-app-inputs` (a length) | A value the app needs is missing or the wrong length: run `secrets.ps1 -Action New -DeployApp -ImageTag <the full SHA>` again, as the step does, and read its report. The app, the migrate job, the pool job when it is built, and the action group wait for that check, so none of them was sent. Until 2026-10-05 this row named three: the app, the job and the action group |
 | The what-if lists anything as `Unsupported` | Answer "no" and stop: an ID of the template reads something a what-if cannot work out again, as on 2026-10-03 at step 9 |
 | The alert on the workspace is refused, in a run that asks for it with `logVolumeAlert=true` | Leave the override out: without it the template does not build that rule. Until 2026-10-03 the rule was built by default, and this row said to pass `logVolumeAlert=false` and that no request for it had ever been sent. At step 15 that day Azure accepted it, one of four rules then; step 20 is why it is left out now |
 | The policy accepts two replicas | Put 1 back at once and stop: the policy does not work |
@@ -2000,6 +2006,7 @@ been sent, so every row is a refusal that has not been seen.
 | The start by hand of step 26 is refused | Wait for the job's next run and read that execution |
 | A deployment as the identity is refused naming `userAssignedIdentities/assign/action` on the pool job (step 28) | Stop, as for the migrate job and the app: no role is created |
 | A scheduled job under another name is accepted, or two runs at once on the pool job are (step 29) | The job of the first is deleted, the parallelism of the second put back to 1, each at once and on the owner's word; then stop |
+| A start that carries a setting is refused (step 31) | Not a stop: the signal is recorded as not provoked, and the metrics are read all the same |
 
 ## Deploy a commit
 
@@ -2067,9 +2074,11 @@ more request is sent, only with the demo on: `POST /bff/auth/register` with the 
 must be answered 403 with the code `REGISTRATION_CLOSED`. It is tried and waited for as the
 sign-in is, and an answer that is not the refusal is told by its status and its error code,
 never by its body. With the demo off no registration is ever sent: the door is open then, and
-the request would register somebody. Both answers are read from the BFF's code and its tests,
-not from a running stack. With the demo on a deployment sends four requests and no cookie, and
-spends two permits of the ten a minute that sign-ins share.
+the request would register somebody. Both answers were measured on the compose stack with the
+demo on, on 2026-10-04 (ADR-0063, Validation; `SECURITY.md`, "Registration closed on the demo"):
+by hand, not by this script, whose two checks have met invented answers only, and not through
+the Azure ingress. With the demo on a deployment sends four requests and no cookie, and is
+expected to spend two permits of the ten a minute that sign-ins share.
 
 **What those two checks do not prove, and what does.** Both are answered by the BFF alone. That
 the `api` container carries the flag is read from the app, in step 2. That the pool job's PIN
@@ -2542,14 +2551,17 @@ to), the steps are these, in this order. They have not been rehearsed.
    three places an identity can be used from. The pool job is one of them: it carries
    `azurebank-app`, the app's connection string and the PIN pepper, and the deployment identity
    can write it and start it. Until 2026-10-05 this step named the app and one job. First, and
-   kept: `Show-Executions azurebank-pool`. Whether the pool job has ever run decides step 4, and
-   once the job is deleted its executions are not expected to be readable: a job that was deleted
-   and made again is expected to show only its own.
+   kept: `Show-Executions azurebank-pool`, with its control, as in
+   [Turning the demo back](#turning-the-demo-back): the control cannot be taken afterwards,
+   since the next lines delete the job it reads. Whether the pool job has ever run decides
+   step 4, and once the job is deleted its executions are not expected to be readable: a job
+   that was deleted and made again is expected to show only its own.
 
    ```powershell
    # Kept. Nothing printed means this job never ran: it says nothing of a job of that name that
    # was deleted before it.
    Show-Executions azurebank-pool
+   Show-Executions azurebank-migrate            # its control: this one must print its executions
    az containerapp delete --name azurebank --resource-group $group --yes
    az containerapp job delete --name azurebank-migrate --resource-group $group --yes
    az containerapp job delete --name azurebank-pool --resource-group $group --yes   # if the demo was turned on
@@ -3646,7 +3658,7 @@ fourth alert does not count lines (step 20).
 
 | What | Where it shows |
 | --- | --- |
-| Azure refusing a run with a value missing, through `app-inputs.bicep` (seen offline and on a local engine only, under [Checking these files](#checking-these-files)), and whether it refuses before the foundation's resources are sent again or only when the check's own deployment starts (the app, the job and the action group wait for it either way). The what-if run again at step 9 was given every value | not provoked |
+| Azure refusing a run with a value missing, through `app-inputs.bicep` (seen offline and on a local engine only, under [Checking these files](#checking-these-files)), and whether it refuses before the foundation's resources are sent again or only when the check's own deployment starts (the app, the migrate job, the pool job when it is built, and the action group wait for it either way; until 2026-10-05 this row named three of them). The what-if run again at step 9 was given every value | not provoked |
 | The four conditions of the policy named above at work: an init container on an app or on a job, and parallel runs under a schedule or an event trigger. The definition is deployed and assigned, and none of the four has been seen refusing | not provoked; step 29, which has not been run, makes the one on a schedule due |
 | That a second run of the users file on Azure SQL changes nothing. The second run of step 6 ended with the same lines as the first, and the file prints those lines whether or not it replaced a user | no step reads it |
 | The users file dropping and creating a user inside its transaction, which it does when an identity has been made again; its second form, `FROM EXTERNAL PROVIDER WITH OBJECT_ID` | not provoked; the second form only if it is asked for |
@@ -3697,7 +3709,7 @@ against stand-ins and invented answers, and steps 22 to 33 are where each line w
 | What a right that `azurebank_app` lacks looks like on a first fill: exit 1 with SQL Server's 229, by the code | not provoked |
 | `--pool-log` against the workspace: the pool job's lines under its `JobName`, and the query by execution, which has not been sent for either job | step 26 |
 | `--check` on Azure: that the owner may list the secrets of the app and of a job, that a job answers that listing in the shape the app does, and that an app at rest after a run of the template reads `Succeeded` with its latest revision ready | step 25 |
-| The demo's two answers through the ingress: the tag in the page, and 403 `REGISTRATION_CLOSED` for a registration with the body `{}`. Both are read from the BFF's code and its tests; the 400 for that body with the demo off was seen on a local stack on 2026-10-05, above. That a closed registration spends a permit of the ten sign-ins share | step 25's `--check`; the permit is not provoked |
+| The demo's two answers through the ingress: the tag in the page, and 403 `REGISTRATION_CLOSED` for a registration with the body `{}`. Both were measured on the compose stack with the demo on, on 2026-10-04 (ADR-0063, Validation), and not by `deploy.py`, whose two checks have met invented answers only; the 400 for that body with the demo off was seen on a local stack on 2026-10-05, above. That a closed registration spends a permit of the ten sign-ins share | step 25's `--check`; the permit is not provoked |
 | The claim, the session and a PIN on the deployed demo, from a browser | step 27 |
 | A job of another name refused a schedule, and the pool job refused two runs at once. That anything refuses a changed expression: nothing does, and `deploy.py`'s shape check is its only read | step 29 |
 | What a stopped app answers, which property says it is stopped, and that the two calls are the ones written here; what a deployment, a `--check` or a run of the template does with a stopped app | step 32; the last three are not provoked |
