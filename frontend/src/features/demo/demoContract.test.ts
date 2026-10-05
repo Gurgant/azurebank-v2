@@ -208,6 +208,7 @@ describe("the claim's two refusals the app words", () => {
 
 describe("the demo's PIN", () => {
   it('as the page prints it is the one the server seeds every copy with', () => {
+    // CONTROL: green before this change
     /*
       The page's digits are a constant of the app's (src/features/demo/demoPin.ts), typed from the
       server's and not read from a claim's answer: a visitor signed in to a copy on a browser that
