@@ -198,6 +198,13 @@ refused there (`accountForLogin` in `src/mocks/handlers.ts`).
 function where a sentence has a blank. The digits of the demo PIN are one constant of
 `demoPin.ts` beside it, and the `pin` a kept copy carries is never rendered.
 
+**What the demo spells as the backend does is held against the backend's source** by
+`src/features/demo/demoContract.test.ts`: the tag, the claim's route, the two refusals the app
+words, the sentences a fixture types out for a refusal, and the demo PIN's digits. It finds the
+app's side by walking `src`. A file that is not a test and names one of the demo's codes in a
+string, and any file that types a refusal out with its sentence, has to be written into that
+test's expectations: until it is, the test fails and names the file.
+
 ## Testing with Fluent and jsdom
 
 These five have each cost a debugging session, and none of them fails in a way that points at the

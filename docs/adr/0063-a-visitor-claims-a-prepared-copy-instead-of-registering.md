@@ -1053,10 +1053,15 @@ shows that the dialog prints a `detail` it has no sentence for, with an answer m
 test: what the dialog sends is the claim, a token endpoint, which the budget never counts
 (decision 11). What the surfaces the code can reach would show, every change a copy's owner
 sends, is read from the code; no kept test and no run on the stack met it.) One
-test reads `ErrorCodes.cs`, `BffAuthController.cs`, `SpaHostingExtensions.cs` and
-`DemoRefusalException.cs` as text (`frontend/src/features/demo/demoContract.test.ts`): it fails
-if the two codes, the claim's route or the tag's name stop being what the application spells,
-or if a refusal's sentence in a test's fixture stops being the API's.
+test reads `ErrorCodes.cs`, `BffAuthController.cs`, `SpaHostingExtensions.cs`,
+`DemoRefusalException.cs` and `DemoCopyDefaults.cs` as text
+(`frontend/src/features/demo/demoContract.test.ts`): it fails if the two codes, the claim's
+route or the tag's name stop being what the application spells, if a refusal's sentence in a
+fixture stops being the API's, or if the PIN the page prints stops being the one the server
+seeds every copy with. It finds the application's side by walking `frontend/src`, and not by a
+list of names: a file there that is not a test and starts to name one of the demo's codes in a
+string, or any file there that starts to type a refusal out with its sentence, fails the test
+until it is written into what the test expects.
 
 **Held by tests of the application** (`frontend/src`, against the mock): in
 `features/demo/demoCopyStorage.test.ts`, `keeps a claimed copy under one key, in one shape`,
@@ -1069,12 +1074,12 @@ claim that was refused changes neither`, `an ordinary sign-in resets nothing` an
 a sign-in leaves nothing of the cache it found`; in `pages/LoginPage.test.tsx`, `a copy past
 its end is not offered, and is forgotten`, `a copy whose end passes while the page is open is
 still offered: the end is looked at when the page opens` and `without the tag nothing reads the
-demo's key`, and the three that point 6 names; in `features/demo/DemoCopyPanel.test.tsx`, `a stored copy is shown as text,
-whatever it holds` and `a kept copy past its end is still its owner's here, and is not
-removed`; in `features/auth/SessionExpiryWarning.test.tsx`, `a copy that has ended says so, and
-stays remembered`. On `925974ee`, the last commit of this change that touches the application's
-code, its specs or their comments, `npm test` passed 92 files and 1,363 tests and
-`npm run test:contract:mock` 7 files and 79.
+demo's key`, and the three that point 6 names; in `features/demo/DemoCopyPanel.test.tsx`, `a
+stored copy is shown as text, whatever it holds` and `a kept copy past its end is still its
+owner's here, and is not removed`; in `features/auth/SessionExpiryWarning.test.tsx`, `a copy
+that has ended says so, and stays remembered`. On `925974ee`, the last commit of this change
+that touches the application's code, its specs or their comments, `npm test` passed 92 files
+and 1,363 tests and `npm run test:contract:mock` 7 files and 79.
 
 **Measured on 2026-10-05 on the compose stack, twice** (`compose.yaml` with `compose.demo.yaml`,
 Production, Docker Desktop on Windows, a pool of 50 nobody had claimed from, the BFF on
