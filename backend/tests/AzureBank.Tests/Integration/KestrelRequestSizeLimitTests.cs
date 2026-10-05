@@ -38,7 +38,7 @@ public sealed class KestrelRequestSizeLimitTests : IDisposable
     {
         _output = output;
         _factory.CaptureLog(LogEventLevel.Debug);
-        _factory.UseKestrel(0);
+        _factory.UseKestrel();
         _factory.StartServer();
         _client = _factory.CreateClient();
     }
@@ -236,6 +236,16 @@ public sealed class KestrelRequestSizeLimitTests : IDisposable
         {
             base.ConfigureWebHost(builder);
             builder.UseSetting("Serilog:MinimumLevel:Override:Microsoft.AspNetCore", "Debug");
+
+            // The address is configuration, in place before the host is built. UseKestrel(0) assigns
+            // the port on the built host from this thread while the application's own thread goes
+            // on to start the server: when that thread got there first, Kestrel went for its default
+            // address, port 5000, and where that port was taken the start failed. Measured with
+            // this thread held back three seconds: "Failed to bind to address
+            // http://127.0.0.1:5000: address already in use", and StartServer threw
+            // ObjectDisposedException. Held back the same way with the address set here, the host
+            // came up on a free port.
+            builder.UseUrls("http://127.0.0.1:0");
         }
     }
 
