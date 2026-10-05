@@ -227,11 +227,16 @@ First, whether this is the demo's database at all:
 SELECT COUNT(*) AS PoolRows FROM DemoCopies;
 ```
 
-**0 pool rows:** the run was pointed at a database that is not the demo's, or at the demo's
-before its first fill, after somebody registered through the app: on Azure the app goes live on
-an empty database with its registration open (`infra/README.md`, "What is not here"). Either way
-it wrote nothing, not even a sweep. Check the connection string the run was given, then the
-users below. **Pool rows and users outside them:** these users are not the pool's.
+**0 pool rows:** the run was pointed at a database that is not the demo's: one `seed` filled, or
+one people registered on. It wrote nothing, not even a sweep. Check the connection string the
+run was given, then the users below. Until 2026-10-05 this line gave a second cause, the demo's
+own database before its first fill, after somebody registered through the app. On a database
+that only `migrate` has touched that cannot happen: the role a new user is given does not exist
+yet, so the registration fails. Measured on a local stack that day: it answered 500 and left no
+user and no role, and the same request answered 201 once the roles were there (`infra/README.md`,
+"Not measured yet", has the run). On Azure the app does go live on such a database with its
+registration not closed; the roles come with the pool's first run, which creates them before its
+first copy. **Pool rows and users outside them:** these users are not the pool's.
 
 **Where such a user comes from.** Where the API and the BFF run with `Demo__Enabled=true`,
 registration answers 403 `REGISTRATION_CLOSED` and sign-in lets in only the owner of a claimed

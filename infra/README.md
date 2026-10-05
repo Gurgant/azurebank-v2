@@ -2757,7 +2757,10 @@ users go with the group. On this machine, if it is no longer wanted:
 - No deployment by image digest; no rollback of the schema.
 - No rotation of application secrets, no Key Vault, no private endpoint, no custom domain.
 - No demo data: the database a first deployment leaves has a schema and no rows, and on Azure the
-  app goes live on it with its registration open, reachable by anyone who has its address. Until
+  app goes live on it with its registration open, reachable by anyone who has its address. Open
+  is not usable there: until something has created the roles, a registration is expected to
+  answer 500 and to leave no row, as it did on a local stack
+  ([Not measured yet](#not-measured-yet)). Until
   2026-10-05 this line also said "No scheduled job" and "The app's registration endpoint is not
   closed by anything in this folder". Of the folder that is no longer so: it holds a scheduled
   job, behind the switch `demo`, and that switch closes registration on both containers. Of

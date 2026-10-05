@@ -146,7 +146,11 @@ and then migrated an empty database):
   it on its own scope first, or a stop does nothing until the process is killed (`seed` before
   this: exit 137 and no line).
 - **`migrate` leaves a schema with no rows**: no roles, no users. The roles come from `seed`. Where
-  `seed` never runs, whatever creates the first user has to create the roles.
+  `seed` never runs, whatever creates the first user has to create the roles. `seed-pool` and
+  `recycle` do, before their first copy. A registration through the app does not, and fails:
+  measured on 2026-10-05 on the compose stack, with a database only `migrate` had touched, it was
+  answered 500 and left no user and no role; after `seed` had run, the same request was answered
+  201 ([infra/README.md](../../../infra/README.md), "Not measured yet").
 - **`seed` fills an empty database only.** The seeders skip what is already there, so a seed that
   was cut short is not completed by running it again: it exits 1 every time, and `reset` starts
   over.

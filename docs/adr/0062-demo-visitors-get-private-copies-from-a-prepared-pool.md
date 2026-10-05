@@ -309,10 +309,23 @@ that looks behind it, is in [`docs/runbooks/demo-pool.md`](../runbooks/demo-pool
   ends by the run's exit code and not by the execution's status, since how Azure shows the
   signals is still not tried. No job runs the commands on Azure until that session has.)*
 - **On Azure the app goes live on an empty database with its registration open**
-  (`infra/README.md`, "What is not here"). A user who registers before the first `seed-pool`
+  (`infra/README.md`, "What is not here"). ~~A user who registers before the first `seed-pool`
   makes it exit 13 on the demo's own database and write nothing, as on any database with users
-  and no pool row, until a person removes that user. Whether registration closes before the first
-  fill is for the change that adds the job.
+  and no pool row, until a person removes that user.~~ *(struck 2026-10-05,
+  [ADR-0064](0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md): on the
+  database a first deployment leaves, nobody can register before the first fill. Measured that
+  day on a local stack whose database only `migrate` had touched, 17 migrations and no row: one
+  registration with a body that passes the rules was answered 500 and left 0 users and 0 roles,
+  and the API's console said why, `Role USER does not exist.` After `seed` had run on that
+  database the same body was answered 201. The registration gives the new user a role inside
+  its one transaction, and `migrate` creates none: the roles come with the pool's first run,
+  which creates them before its first copy. So the user that makes a run exit 13 is one who
+  registers after that run, through an app whose flags are off. The exit 13 on a database with
+  users and no pool row stands as it was measured. Not measured on Azure.)* ~~Whether
+  registration closes before the first fill is for the change that adds the job.~~ *(struck
+  2026-10-05, ADR-0064: it does. One run of the template turns the flag on in both containers
+  and builds the job, the job after the app, and the runbook starts the first fill only once
+  the app has been read as the demo. Not run on Azure.)*
 - **`seed` and `reset` refuse demo mode** (exit 2, nothing opened): `seed`'s four users have a
   password and a PIN in this repository, and `reset` drops the database. **Both also refuse a
   database that holds any pool row**, a record included, whatever the flag says: a job whose
