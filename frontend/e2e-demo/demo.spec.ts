@@ -63,6 +63,10 @@ import {
  * changed: the name of the session's cookie, which only the stack gives. Each value that is the
  * stack's to say and the mock's only to imitate is marked MEASURED where it stands, with what
  * the stack said. A test added since that run says so where it stands, with where it has run.
+ * Later that day the file ran again with its fifteen tests, in the same browser against the same
+ * two compose files, on images built from commit `340813a5` and a pool nobody had claimed from:
+ * fifteen passed, and each MEASURED value below was met again. This file has changed since that
+ * commit in its comments only.
  */
 
 // The words a visitor reads, typed out and not imported from the product: a test fails the day
@@ -281,8 +285,9 @@ test.describe('the demo, from the first click', () => {
       the two files would be written beside a folder nobody told git about. So both are whole
       paths, under this folder, and this is where that is held.
 
-      Added after the run of 2026-10-05 on the stack. It asks nothing of a stack, and has run
-      by itself, started from `frontend/` and from `frontend/e2e-demo`.
+      Added after the first run of 2026-10-05 on the stack. It asks nothing of a stack, and has
+      run by itself, started from `frontend/` and from `frontend/e2e-demo`; in the day's second
+      run on the stack it passed in its place.
     */
     const auth = join(test.info().config.rootDir, '.auth');
     expect({ state: DEMO_STATE, values: SCAN_VALUES }).toEqual({
@@ -799,9 +804,11 @@ test.describe('the demo, from the first click', () => {
       dev server, which sends none, this test fails on that line, as it should: nothing there
       was under a policy.
 
-      Added after the run of 2026-10-05 on the stack, and NOT YET RUN ON ONE. Against the dev
-      server with the mock and the demo's tag: the canary's violation was heard, the shared
-      context's list was empty, and the test failed on the missing policy.
+      Added after the first run of 2026-10-05 on the stack. Against the dev server with the mock
+      and the demo's tag: the canary's violation was heard, the shared context's list was empty,
+      and the test failed on the missing policy. MEASURED on the stack in the day's second run
+      (Production, the images of commit `340813a5`): the canary's violation was heard, the page
+      came under a policy, the list was empty, and the test passed.
     */
     const canaryContext = await browser.newContext();
     try {

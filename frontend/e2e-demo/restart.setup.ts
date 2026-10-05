@@ -41,10 +41,14 @@ import { note } from './demoRun';
  * on Windows, the project named with `-p`), one run: the control answered 200; each lookup found
  * one container; after the two restarts docker's own `StartedAt` of both had moved, the BFF's
  * 2.4 s before the API's; the wait asked three times and met a request that threw, then
- * `200 Degraded`, then `200 Healthy`; the step took 6.1 s. The two times below are ceilings
- * chosen well above that, not measurements. The refusals above (no session, no container, two
- * containers, no docker) were met against stand-ins for the port and for the `docker` command,
- * not on that stack.
+ * `200 Degraded`, then `200 Healthy`; the step took 6.1 s. A second run that day, on the same
+ * stack built anew: the control 200; the step passed, so each lookup found its one container;
+ * the BFF's `StartedAt` 1.0 s before the API's; the wait asked three times and met
+ * `200 Degraded` twice, then `200 Healthy`, and no request threw; the step took 4.2 s. So a
+ * request that throws is what a wait can meet, not what every wait meets. The two times below
+ * are ceilings chosen well above both, not measurements. The refusals above (no session, no
+ * container, two containers, no docker) were met against stand-ins for the port and for the
+ * `docker` command, not on either stack.
  */
 
 /** The compose project whose containers these are: compose.yaml's `name:`, unless `-p` was used. */

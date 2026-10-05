@@ -33,9 +33,11 @@ import {
  * answers that press 401. Started there from a claim made in the page, it ran from the kept
  * copy on to its end.
  *
- * ADDED AFTER THAT RUN, AND NOT RUN SINCE, here or against the mock: the listening for
- * Content-Security-Policy violations at the top of the test and the expectation at its end.
- * The listener is `demo.spec.ts`'s, whose last test holds that it hears.
+ * ADDED AFTER THAT RUN: the listening for Content-Security-Policy violations at the top of the
+ * test and the expectation at its end. The listener is `demo.spec.ts`'s, whose last test holds
+ * that it hears. MEASURED later that day, on the same stack built anew from commit `340813a5`:
+ * this file ran with both and passed, with the same three answers (401, 200, 200) and no
+ * violation. It has changed since that commit in its comments only.
  */
 
 const CONTINUE = 'Continue with my copy';
