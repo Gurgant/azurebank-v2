@@ -148,3 +148,20 @@ export const signInDetails = (email: string, password: string) =>
  * (src/features/demo/demoPin.ts).
  */
 export const demoPinHint = (pin: string) => `Demo PIN: ${pin}, unless you changed it.`;
+
+// The dialog at a session's fixed end, for the owner of the copy this browser keeps.
+
+/**
+ * The one button in the place of the password field: it signs in again with the kept password.
+ * Where a session is ending for lack of activity the same dialog has a button of the same words
+ * that keeps the session alive; those words are that dialog's own
+ * (src/features/auth/SessionExpiryWarning.tsx).
+ */
+export const STAY_SIGNED_IN = 'Stay signed in';
+
+/**
+ * That button's request was answered as a wrong password is. For a password the browser kept and
+ * nobody typed, that answer means the copy has ended, and this is said in the place of "That
+ * password didn't match."
+ */
+export const COPY_HAS_ENDED = 'This demo copy has ended. Sign out to get a new one.';

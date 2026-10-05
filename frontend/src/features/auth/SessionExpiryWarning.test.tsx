@@ -1,9 +1,10 @@
-import { act, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
-import { MOCK_PASSWORD, mockState, seedMockSession } from '../../mocks/state';
+import { MOCK_PASSWORD, mockState, seedMockDemoCopy, seedMockSession } from '../../mocks/state';
+import { enableDemoMode, rememberDemoCopy } from '../../test/demoMode';
 import { makeTestStore, renderWithProviders, type TestStore } from '../../test/renderWithProviders';
 import { apiSlice } from '../api/apiSlice';
 import { AuthBootstrap } from './AuthBootstrap';
@@ -374,6 +375,327 @@ describe('SessionExpiryWarning', () => {
         .dispatch(apiSlice.endpoints.getSessionStatus.initiate(undefined, { forceRefetch: true }))
         .unwrap();
       expect(probe.authLevel).toBe(1);
+    });
+  });
+
+  /*
+    On the demo, at the cap.
+
+    Nobody chose a demo copy's password: the claim drew it, and the browser that claimed the copy
+    keeps it (src/features/demo/demoCopyStorage.ts). So the copy's owner, on that browser, is asked
+    for nothing: one button sends the kept password. Anyone else gets the password field of the
+    tests above: a page without the demo's tag, a browser that keeps no copy, a browser that keeps
+    another copy than the one that is signed in.
+
+    Every test starts signed in to the first copy of the mock's pool (src/mocks/state.ts), claimed
+    there. The two passwords and the second address typed out below are the pool's: fixtures no
+    server knows. The words are typed out too, and not imported from the product, so a test fails
+    the day the words on screen are no longer these.
+  */
+  describe('at the cap, on the demo', () => {
+    const KEY = 'azurebank.demoCopy';
+    const REAUTH = '*/bff/auth/reauthenticate';
+    const FIRST_PASSWORD = 'Xk7p-Rm3w-Hn8d-Tq5v';
+    const SECOND_COPY = 'demo-4h9d2s7f1g6j3k8a@azurebank.example';
+    const SECOND_PASSWORD = 'Fb4t-Wy9c-Kz2g-Ne6s';
+    const WORDS = {
+      field: 'Enter your password to continue',
+      stay: 'Stay signed in',
+      signInAgain: 'Sign in again',
+      signOut: 'Sign out now',
+      ended: 'This demo copy has ended. Sign out to get a new one.',
+      tooManyAttempts: 'Too many attempts just now. Wait a moment and try again.',
+    } as const;
+    /** What the dialog is operated with, top to bottom, for the copy's owner and for anyone else. */
+    const THE_OWNERS = [`button: ${WORDS.stay}`, `button: ${WORDS.signOut}`];
+    const ANYONE_ELSES = [
+      `field: ${WORDS.field}`,
+      `button: ${WORDS.signOut}`,
+      `button: ${WORDS.signInAgain}`,
+    ];
+
+    type KeptCopy = Parameters<typeof rememberDemoCopy>[0];
+
+    /**
+     * `bootAbsolute`, signed in to the first copy of the mock's pool.
+     *
+     * `kept` is what the browser keeps. Left out, it is that copy as its claim left it; an object
+     * changes members of it; `null` is a browser that keeps nothing. `demo: false` leaves the tag
+     * off the page.
+     */
+    async function bootOnACopy({
+      demo = true,
+      kept,
+    }: { demo?: boolean; kept?: Partial<KeptCopy> | null } = {}) {
+      if (demo) enableDemoMode();
+      const claimed = seedMockDemoCopy();
+      if (kept !== null) rememberDemoCopy({ ...claimed.copy, ...kept });
+      mockState.sessionInactivityWindowMs = 30 * 60_000;
+      mockState.sessionAbsoluteWindowMs = ABSOLUTE_SOON_MS;
+      const store = makeTestStore();
+      await store.dispatch(apiSlice.endpoints.getMe.initiate()).unwrap();
+      return { store, claimed };
+    }
+
+    /** A control as one line: a field by its label, a button by its words. */
+    const asLine = (control: Element | null) =>
+      control instanceof HTMLInputElement
+        ? `field: ${control.labels?.[0]?.textContent ?? ''}`
+        : control instanceof HTMLButtonElement
+          ? `button: ${control.textContent}`
+          : null;
+
+    /** Every field and button of the open dialog, in the order of the page. `null`: no dialog. */
+    const offered = () => {
+      const open = dialog();
+      return open ? Array.from(open.querySelectorAll('input, button')).map(asLine) : null;
+    };
+
+    /** Where focus is: on that field or button, or `null` for anything else. */
+    const focused = () => asLine(document.activeElement);
+
+    /** The owner's button, when the dialog draws it. None is `[]`, not an error. */
+    const stayButtons = () =>
+      within(screen.getByRole('alertdialog')).queryAllByRole<HTMLButtonElement>('button', {
+        name: WORDS.stay,
+      });
+
+    /** What each alert on the page says. */
+    const alerts = () => screen.queryAllByRole('alert').map((alert) => alert.textContent);
+
+    /** The body of every re-authentication sent from here on. The mock still answers each. */
+    function reauthsSent(): unknown[] {
+      const bodies: unknown[] = [];
+      server.use(
+        http.post(REAUTH, async ({ request }) => {
+          bodies.push(await request.clone().json());
+          // No answer from here, so the mock's own handler gives it.
+          return undefined;
+        }),
+      );
+      return bodies;
+    }
+
+    /** Every re-authentication the store has sent has its answer. */
+    const settled = (store: TestStore) =>
+      act(async () => {
+        await Promise.all(store.dispatch(apiSlice.util.getRunningMutationsThunk()));
+      });
+
+    /** Every sign-in state the store passes through from here on, starting with the one it is in. */
+    function statusesSeen(store: TestStore): string[] {
+      const seen: string[] = [store.getState().auth.status];
+      store.subscribe(() => {
+        const next = store.getState().auth.status;
+        if (seen[seen.length - 1] !== next) seen.push(next);
+      });
+      return seen;
+    }
+
+    it("demo, the copy's owner: one button in place of the password field", async () => {
+      const { store } = await bootOnACopy();
+      await reachTheWarning(store);
+
+      // No field and no "Sign in again"; "Stay signed in" first, with focus, and "Sign out now".
+      await waitFor(() =>
+        expect({ offered: offered(), focused: focused() }).toStrictEqual({
+          offered: THE_OWNERS,
+          focused: THE_OWNERS[0],
+        }),
+      );
+      // The button is found by its role and name too, once, and it is the form's submit: Enter
+      // and Space press it where it stands.
+      expect(stayButtons().map((button) => button.type)).toStrictEqual(['submit']);
+      // The sentence above it is the cap's own, as for everyone else.
+      expect(screen.getByRole('alertdialog')).toHaveAccessibleDescription(
+        /^This session has reached its maximum length\. For your security it ends on a fixed schedule, whether or not you are using it\. You will be signed out in \d:\d\d\.$/,
+      );
+    });
+
+    it("it sends the stored password, and the dialog closes because the session's end moved", async () => {
+      const { store } = await bootOnACopy();
+      const before = await absoluteExpiry(store);
+      const sent = reauthsSent();
+      await reachTheWarning(store);
+      await waitFor(() =>
+        expect({ offered: offered(), focused: focused() }).toStrictEqual({
+          offered: THE_OWNERS,
+          focused: THE_OWNERS[0],
+        }),
+      );
+
+      // From the keyboard, with focus where the dialog put it.
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      await user.keyboard('{Enter}');
+
+      // The password alone: the BFF takes the address from the session.
+      await waitFor(() => expect(sent).toStrictEqual([{ password: FIRST_PASSWORD }]));
+      // As for a typed password: the cap is a new one, and that is what closes the dialog.
+      await waitFor(async () => expect(await absoluteExpiry(store)).toBeGreaterThan(before));
+      await waitFor(() => expect(dialog()).not.toBeInTheDocument());
+      expect(store.getState().auth.status).toBe('authenticated');
+      expect(sent).toHaveLength(1);
+    });
+
+    it('while it waits the button keeps its name', async () => {
+      const { store } = await bootOnACopy();
+      server.use(http.post(REAUTH, () => new Promise<Response>(() => {})));
+      await reachTheWarning(store);
+      expect(offered()).toStrictEqual(THE_OWNERS);
+
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      await user.click(stayButtons()[0]);
+
+      // Still found by its name, so its words are still its name; and it says that it is busy.
+      await waitFor(() =>
+        expect({
+          stay: stayButtons().map((button) => ({
+            disabled: button.disabled,
+            spinners: within(button).queryAllByRole('progressbar').length,
+          })),
+          signingIn: screen.queryAllByRole('button', { name: /signing in/i }).length,
+          offered: offered(),
+        }).toStrictEqual({
+          stay: [{ disabled: true, spinners: 1 }],
+          signingIn: 0,
+          offered: THE_OWNERS,
+        }),
+      );
+    });
+
+    it('a copy another tab replaced while the dialog is open: the password field at the next tick', async () => {
+      const { store, claimed } = await bootOnACopy();
+      const sent = reauthsSent();
+      await reachTheWarning(store);
+      expect(offered()).toStrictEqual(THE_OWNERS);
+
+      // What "Start over" in another tab leaves behind: the key holds another copy, and nothing on
+      // this page was told (src/test/demoMode.ts). The dialog draws itself again at each tick of
+      // its countdown, a second apart.
+      rememberDemoCopy({ ...claimed.copy, email: SECOND_COPY, password: SECOND_PASSWORD });
+      await advance(1_000);
+
+      await waitFor(() => expect(offered()).toStrictEqual(ANYONE_ELSES));
+      expect({ sent, alerts: alerts() }).toStrictEqual({ sent: [], alerts: [] });
+    });
+
+    it('a copy another tab replaced, pressed before the next tick: nothing is sent', async () => {
+      const { store, claimed } = await bootOnACopy();
+      const sent = reauthsSent();
+      await reachTheWarning(store);
+      expect(offered()).toStrictEqual(THE_OWNERS);
+
+      // In one turn, so that no tick and no draw comes between the two lines: the button pressed
+      // is the one drawn for the owner, over a key that is no longer the owner's. The password
+      // kept for the first copy would be sent under the second copy's session, be refused, and be
+      // worded as a copy that has ended.
+      rememberDemoCopy({ ...claimed.copy, email: SECOND_COPY, password: SECOND_PASSWORD });
+      fireEvent.click(stayButtons()[0]);
+
+      await advance(1_000);
+      await settled(store);
+      expect({ sent, offered: offered(), alerts: alerts() }).toStrictEqual({
+        sent: [],
+        offered: ANYONE_ELSES,
+        alerts: [],
+      });
+    });
+
+    it('a copy that has ended says so, and stays remembered', async () => {
+      const { store } = await bootOnACopy();
+      const sent = reauthsSent();
+      const kept = localStorage.getItem(KEY);
+      expect(kept).toContain(FIRST_PASSWORD);
+      await reachTheWarning(store);
+      expect(offered()).toStrictEqual(THE_OWNERS);
+      // The copy has ended on the server and its session has not: the mock no longer counts the
+      // copy among the claimed ones, and answers its session's re-authentication as it answers a
+      // wrong password, whatever the password (`reauthenticate` in src/mocks/handlers.ts).
+      mockState.demoCopies = [];
+      const statuses = statusesSeen(store);
+
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      await user.click(stayButtons()[0]);
+
+      await waitFor(() => expect(alerts()).toStrictEqual([WORDS.ended]));
+      // The right password was sent and refused. The button is still there, the browser still
+      // keeps the copy, and the session was never taken for one that ended.
+      expect({
+        sent,
+        offered: offered(),
+        kept: localStorage.getItem(KEY),
+        statuses,
+      }).toStrictEqual({
+        sent: [{ password: FIRST_PASSWORD }],
+        offered: THE_OWNERS,
+        kept,
+        statuses: ['authenticated'],
+      });
+    });
+
+    it("the owner's other failures keep the dialog's own words", async () => {
+      const { store } = await bootOnACopy();
+      await reachTheWarning(store);
+      expect(offered()).toStrictEqual(THE_OWNERS);
+      // The mock's own limiter, with its budget spent (`AUTH_PERMIT_LIMIT` in src/mocks/handlers.ts,
+      // ten): it answers before anybody looks at the password.
+      mockState.authCallTimes = Array.from({ length: 10 }, () => Date.now());
+
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      await user.click(stayButtons()[0]);
+
+      await waitFor(() => expect(alerts()).toStrictEqual([WORDS.tooManyAttempts]));
+      expect(offered()).toStrictEqual(THE_OWNERS);
+    });
+
+    it('demo, a stored copy for another address: the password field, as today', async () => {
+      // CONTROL: green before this change
+      const { store } = await bootOnACopy({
+        kept: { email: SECOND_COPY, password: SECOND_PASSWORD },
+      });
+      await reachTheWarning(store);
+
+      expect(offered()).toStrictEqual(ANYONE_ELSES);
+      // The browser does keep that copy: a key the page could not read as a copy would be gone
+      // by now, and this would be the test below.
+      expect(localStorage.getItem(KEY)).toContain(SECOND_COPY);
+    });
+
+    it('demo, no stored copy: the password field, as today', async () => {
+      // CONTROL: green before this change
+      const { store } = await bootOnACopy({ kept: null });
+      await reachTheWarning(store);
+
+      expect(offered()).toStrictEqual(ANYONE_ELSES);
+      expect(localStorage.getItem(KEY)).toBeNull();
+    });
+
+    it("without the tag nothing reads the demo's key", async () => {
+      const reads = vi.spyOn(Storage.prototype, 'getItem');
+      const readsOfTheKey = () => reads.mock.calls.filter(([key]) => key === KEY).length;
+      try {
+        // Signed in to a copy this browser keeps: everything the owner has, but for the tag.
+        const { store } = await bootOnACopy({ demo: false });
+        await reachTheWarning(store);
+        const offTheDemo = { offered: offered(), readsOfTheKey: readsOfTheKey() };
+
+        // The same dialog once the page says it is the demo, so the silence above is this spy's
+        // to report: the dialog reads the key at its next draw, a tick away, and is the owner's.
+        enableDemoMode();
+        await advance(1_000);
+
+        await waitFor(() =>
+          expect({
+            offTheDemo,
+            onTheDemo: { offered: offered(), readTheKey: readsOfTheKey() > 0 },
+          }).toStrictEqual({
+            offTheDemo: { offered: ANYONE_ELSES, readsOfTheKey: 0 },
+            onTheDemo: { offered: THE_OWNERS, readTheKey: true },
+          }),
+        );
+      } finally {
+        reads.mockRestore();
+      }
     });
   });
 });

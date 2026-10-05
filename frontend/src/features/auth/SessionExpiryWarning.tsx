@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useId, useState, type FormEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useState,
+  useSyncExternalStore,
+  type FormEvent,
+} from 'react';
 import {
   Button,
   Dialog,
@@ -18,10 +25,13 @@ import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
 import { CONNECTION_FAILED, SERVICE_UNAVAILABLE, SIGN_OUT_FAILED } from '../../api/problemMessages';
 import { WaitHint } from '../../components/feedback';
 import { useWaitLanding } from '../../hooks/useWaitLanding';
+import { atMedia } from '../../theme/breakpoints';
 import { formatLockHorizon } from '../../utils/format';
 import { useAppDispatch, useAppSelector } from '../../app/hooks';
 import { apiSlice, useReauthenticateMutation } from '../api/apiSlice';
-import { selectAuthStatus, sessionExpired, signedOut } from './authSlice';
+import { getDemoCopySnapshot, isDemoCopyOwner, subscribeDemoCopy } from '../demo/demoCopyStorage';
+import { COPY_HAS_ENDED, STAY_SIGNED_IN } from '../demo/demoWords';
+import { selectAuthStatus, selectCurrentUser, sessionExpired, signedOut } from './authSlice';
 import {
   WARNING_LEAD_MS,
   getSessionDeadline,
@@ -63,8 +73,24 @@ import {
  * called impossible.
  *
  * The answer is not to make the cap extendable; a cap you can push is decoration. It is to
- * RE-AUTHENTICATE, which starts a different session. So the absolute branch asks for the password
- * and the inactivity branch keeps its keep-alive, and neither shows the other's action.
+ * RE-AUTHENTICATE, which starts a different session. So each branch offers the one way to stay
+ * that works there, and no branch shows another's:
+ *
+ * - the INACTIVITY branch keeps its keep-alive, "Stay signed in";
+ * - the ABSOLUTE branch asks for the password, with "Sign in again";
+ * - the ABSOLUTE branch on the demo, for the owner of the copy this browser keeps, has one button
+ *   where the password field would be, and no "Sign in again". It is named "Stay signed in" too,
+ *   and it is not the keep-alive: it signs in again with the kept password. Nobody chose that
+ *   password or knows it by heart. The claim drew it and the browser kept it
+ *   (src/features/demo/demoCopyStorage.ts), so a field would only send the owner to look for it.
+ *
+ * THE OWNER is decided as the dashboard's panel decides it (src/features/demo/DemoCopyPanel.tsx):
+ * the page is the demo, and the kept copy's address is the signed-in user's. Anyone else at the
+ * cap is asked for the password: off the demo, on a browser that keeps no copy, on a browser that
+ * keeps another copy than the one signed in. The kept copy is read each time the dialog is drawn
+ * and once more when the button is pressed, and it is never held here. A copy that another tab
+ * replaced since is not this session's copy: its password is not sent, and the dialog's next
+ * draw, a tick of the countdown away, asks for the password.
  *
  * The third property above is what makes this honest for free: re-authentication does not dismiss
  * anything either. It succeeds, the session's `Session` tag is invalidated, `AuthBootstrap`'s live
@@ -76,6 +102,10 @@ const TICK_MS = 1_000;
 
 const useStyles = makeStyles({
   reauth: { display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px' },
+  // On a narrow screen as wide as the dialog, as "Sign out now" is under it there: Fluent stacks a
+  // dialog's actions at full width up to 480px. From there up, as wide as its words: left to the
+  // column it would be a bar across the dialog over a "Sign out now" of ordinary size.
+  stay: { [atMedia.sm]: { alignSelf: 'flex-start' } },
   signOutError: { marginTop: '16px' },
   hint: { marginTop: '12px' },
 });
@@ -87,15 +117,22 @@ const useStyles = makeStyles({
  * CORRECT — a wrong password against a locked account still answers the generic 401, so the lock is
  * never an oracle for a guesser. That is why these two are separate messages and why neither hints
  * at the other's condition.
+ *
+ * `owner` says who asked: the owner of the demo copy this browser keeps, whose button sent the
+ * kept password. It changes the 401's line and no other. A password nobody typed was not
+ * mistyped: the API answers a copy that has ended as it answers a wrong password, so for the
+ * owner that answer means the copy has ended. The copy stays kept all the same. Forgetting it
+ * here would put a password field in front of the owner in the open dialog; the sign-in page
+ * forgets it, when it is offered there and refused or once it is past its end.
  */
-function reauthMessage(problem: ApiProblem): string {
+function reauthMessage(problem: ApiProblem, owner: boolean): string {
   if (problem.errorCode === 'ACCOUNT_LOCKED') {
     return `Too many failed attempts. Try again in about ${formatLockHorizon(
       problem.retryAfterSeconds ?? 15 * 60,
     )}.`;
   }
   if (problem.status === 401) {
-    return "That password didn't match. Please try again.";
+    return owner ? COPY_HAS_ENDED : "That password didn't match. Please try again.";
   }
   if (problem.status === 429) {
     // The BFF's own auth rate limiter rather than the account lock: no unlock time to quote.
@@ -152,6 +189,12 @@ export function SessionExpiryWarning() {
   const [reauthError, setReauthError] = useState<string | null>(null);
   const [signOutError, setSignOutError] = useState<string | null>(null);
   const [reauthenticate, { isLoading: reauthPending }] = useReauthenticateMutation();
+  // The demo copy this browser keeps, read from its key each time this is drawn, and whether the
+  // signed-in visitor is its owner. Off the demo there is no copy and no owner, and the key is not
+  // read to find that out (src/features/demo/demoCopyStorage.ts).
+  const user = useAppSelector(selectCurrentUser);
+  const keptCopy = useSyncExternalStore(subscribeDemoCopy, getDemoCopySnapshot);
+  const owner = isDemoCopyOwner(keptCopy, user);
 
   // A failed sign-out belongs to the session it failed in. Should that session end some other way
   // (a 401 elsewhere), its words must not greet the visitor in the next one.
@@ -299,17 +342,30 @@ export function SessionExpiryWarning() {
   // Re-authenticate. Deliberately does NOT close the dialog or clear the countdown on success:
   // the tag invalidation refetches /me, that response moves the deadline, and the deadline is what
   // unmounts this. An optimistic close would hide the warning after a request that never landed.
+  //
+  // What is sent is what the form that was drawn stands for: the typed password, or, from the
+  // owner's button, the password the browser keeps.
   const submitReauth = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setReauthError(null);
     setSignOutError(null);
+    let sent = password;
+    if (owner) {
+      // Read from the key now, and not taken from the last draw, which can be a second old.
+      // Another tab may have started over since: the session is then the new copy's, and the
+      // password kept for the old one would be refused and worded as a copy that has ended, which
+      // would be false. Nothing is sent then. The next draw, a tick away, asks for the password.
+      const kept = getDemoCopySnapshot();
+      if (kept === null || !isDemoCopyOwner(kept, user)) return;
+      sent = kept.password;
+    }
     try {
-      await reauthenticate({ password }).unwrap();
+      await reauthenticate({ password: sent }).unwrap();
       setPassword('');
     } catch (caught) {
       // A 401 INVALID_CREDENTIALS is exempt from the global session-expiry rule (D3), which is what
       // lets a typo stay a typo instead of ending the session it was meant to save.
-      setReauthError(reauthMessage(caught as ApiProblem));
+      setReauthError(reauthMessage(caught as ApiProblem, owner));
     }
   };
 
@@ -356,23 +412,49 @@ export function SessionExpiryWarning() {
                   {/* The cap cannot be extended, so the way to keep working is to start a new
                       session. Only the password: the BFF reads the identity from the session, so
                       this cannot sign a different person in behind this page. */}
-                  {/* No `aria-describedby` here on purpose. `Field` wires the hint to the input
-                      through that very attribute, so setting it would REPLACE the hint's linkage and
-                      silently stop it being announced — trading one message for another. The error
-                      announces itself instead: it is a `role="alert"`, so it is read when it appears
-                      rather than only when the field is next focused. */}
-                  <Field label="Enter your password to continue" hint="This starts a new session.">
-                    <Input
-                      type="password"
-                      autoComplete="current-password"
-                      value={password}
-                      onChange={(_, data) => {
-                        setPassword(data.value);
-                        setReauthError(null);
-                      }}
+                  {owner ? (
+                    // The owner of the demo copy this browser keeps has no password to type: this
+                    // submits the form in the field's place, and the kept password is what is
+                    // sent. Here, in the content, and not among the actions below: where the
+                    // field would be, it is the dialog's first control, so the dialog opens with
+                    // focus on it and Space or Enter, pressed by someone who meant to stay, signs
+                    // in again and does not sign out.
+                    //
+                    // While it waits it keeps its words and shows its spinner beside them, as its
+                    // icon. "Sign in again", below, puts its spinner in its words' place and has
+                    // to be given a name for the wait; this one is found by the same name
+                    // throughout.
+                    <Button
+                      className={styles.stay}
+                      appearance="primary"
+                      type="submit"
+                      icon={reauthPending ? <Spinner size="tiny" /> : undefined}
                       disabled={reauthPending || ending}
-                    />
-                  </Field>
+                    >
+                      {STAY_SIGNED_IN}
+                    </Button>
+                  ) : (
+                    // No `aria-describedby` here on purpose. `Field` wires the hint to the input
+                    // through that very attribute, so setting it would REPLACE the hint's linkage
+                    // and silently stop it being announced — trading one message for another. The
+                    // error announces itself instead: it is a `role="alert"`, so it is read when it
+                    // appears rather than only when the field is next focused.
+                    <Field
+                      label="Enter your password to continue"
+                      hint="This starts a new session."
+                    >
+                      <Input
+                        type="password"
+                        autoComplete="current-password"
+                        value={password}
+                        onChange={(_, data) => {
+                          setPassword(data.value);
+                          setReauthError(null);
+                        }}
+                        disabled={reauthPending || ending}
+                      />
+                    </Field>
+                  )}
                   {reauthError && (
                     <MessageBar intent="error" role="alert" id={errorId}>
                       <MessageBarBody>{reauthError}</MessageBarBody>
@@ -398,7 +480,8 @@ export function SessionExpiryWarning() {
                   dialog opens with focus on its first control, so Space or Enter, pressed by
                   someone who meant to stay, keeps the session instead of ending it. Kept ONLY here:
                   this is the branch where a keep-alive genuinely moves the deadline it claims to
-                  move. At the cap the password field comes first. */}
+                  move. At the cap the password field comes first, or, for the owner of a demo
+                  copy, the button that stands in its place. */}
               {!absolute && (
                 <Button appearance="primary" type="button" onClick={staySignedIn} disabled={ending}>
                   Stay signed in
@@ -416,7 +499,7 @@ export function SessionExpiryWarning() {
               >
                 Sign out now
               </Button>
-              {absolute && (
+              {absolute && !owner && (
                 <Button
                   appearance="primary"
                   type="submit"
