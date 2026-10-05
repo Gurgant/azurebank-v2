@@ -11,7 +11,8 @@ namespace AzureBank.Tests.Fixtures;
 /// in place of the message that shows where they differ. A short JSON text fails inside a
 /// warning that the message could not be formatted. A text with a <c>{Name}</c> in it is shown
 /// without that name, so two that differ only there are shown alike. The price: a brace and a
-/// parenthesis in the same place compare equal.
+/// parenthesis in the same place compare equal. Where a test claims the very text (a replay,
+/// a file that must not change), an exact comparison follows this one.
 /// </remarks>
 internal static class ComparableText
 {

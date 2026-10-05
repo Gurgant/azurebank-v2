@@ -185,6 +185,9 @@ internal static class IdempotencyConcurrencyProof
         {
             ComparableText.Of(replay.Body).Should().Be(ComparableText.Of(winners[0].Body),
                 "replays are byte-identical to the original response");
+            // The comparison above reads a brace and a parenthesis alike: this one is exact.
+            (replay.Body == winners[0].Body).Should().BeTrue(
+                "a replay must be the same text, brace for brace");
         }
 
         foreach (var conflict in conflicts)

@@ -179,9 +179,12 @@ public class ExportCommandTests : IDisposable
             AnchorCommand.NotRecorded,
             "the chain was fine and nothing came of the run, which is neither success nor no-verdict");
         string.Join(" ", lines).Should().Contain("NOT EXPORTED");
-        ComparableText.Of(await File.ReadAllTextAsync(path)).Should().Be(
+        var kept = await File.ReadAllTextAsync(path);
+        ComparableText.Of(kept).Should().Be(
             ComparableText.Of(sentinel),
             "the earlier copy is the reference; this verb must never be able to destroy it");
+        // The comparison above reads a brace and a parenthesis alike: this one is exact.
+        (kept == sentinel).Should().BeTrue("the earlier copy must be the same text, brace for brace");
     }
 
     /// <summary>

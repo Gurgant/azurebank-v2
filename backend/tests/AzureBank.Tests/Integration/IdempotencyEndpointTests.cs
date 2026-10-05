@@ -107,8 +107,11 @@ public class IdempotencyEndpointTests : IntegrationTestBase
         second.Headers.TryGetValues(IdempotencyConstants.ReplayedHeaderName, out var values)
             .Should().BeTrue();
         values!.Single().Should().Be("true");
-        ComparableText.Of(await second.Content.ReadAsStringAsync()).Should().Be(ComparableText.Of(firstBody),
+        var secondBody = await second.Content.ReadAsStringAsync();
+        ComparableText.Of(secondBody).Should().Be(ComparableText.Of(firstBody),
             "the stored response is replayed byte-identically");
+        // The comparison above reads a brace and a parenthesis alike: this one is exact.
+        (secondBody == firstBody).Should().BeTrue("the replay must be the same text, brace for brace");
 
         // The money moved exactly once
         (await GetBalanceAsync(accountId)).Should().Be(250m);
