@@ -310,10 +310,11 @@ private static readonly string[] PinRequiredSuffixes = { "/full-number" };
 ```
 
 What a caller observes, measured through the BFF (:5000 → API :7215, Development) — rows 3–5 on
-2026-09-03 (`070803f`) for GET and POST, row 1 on 2026-08-19 (ADR-0041 amendment), and the PATCH and
-DELETE verbs of row 3 on 2026-08-20 (`d74603c`):
-*(Until 2026-10-05 this sentence said rows 2–4 and row 2: the table's numbers before `e5107f0`
-(2026-10-04) put the demo claim's row second.)*
+2026-09-03 (`070803f`) for GET and POST, row 1's login, register and refresh on 2026-08-19
+(ADR-0041 amendment), and the PATCH and DELETE verbs of row 3 on 2026-08-20 (`d74603c`):
+*(Until 2026-10-05 this sentence said rows 2–4 and row 2, the table's numbers until `e5107f0`
+(2026-10-04) put the demo claim's row second; and it dated all of row 1 2026-08-19, whose last
+three paths joined it with `bd4fa39` (2026-09-29).)*
 
 | Request | Session cookie | Answer |
 |---|---|---|
@@ -323,10 +324,11 @@ DELETE verbs of row 3 on 2026-08-20 (`d74603c`):
 | `GET /api/accounts/{id}/full-number` | live, level 1 | `403 STEP_UP_REQUIRED`, `X-Auth-Level-Required: 2`, `X-Auth-Level-Current: 1` |
 | `POST /api/transfers` | live, level 1 | proxied — `400` model-state from the API on `{}`; its proof is the one-shot authorisation in the `Step-Up-Authorization` header, which the API binds and spends (ADR-0042) |
 
-The 401 carries the API's own members (apart from `traceId`), on purpose: a caller probing for the
-step-up gate learns nothing from the answer, and the SPA already knows the shape. 401 and 403 are
-different states — no session routes to login, level 1 opens the PIN modal — so a cookie the store
-cannot resolve is a 401, never a level-0 step-up (ADR-0038).
+The 401 carries the API's own members, with a `traceId` of its own, on purpose: a caller probing
+for the step-up gate learns nothing from the answer, and the SPA already knows the shape. 401 and
+403 are different states — no session routes to login, level 1 opens the PIN modal — so a cookie
+the store cannot resolve is a 401, never a level-0 step-up (ADR-0038).
+*(Until 2026-10-05 this said "(apart from `traceId`)", which read as if the 401 had none.)*
 
 ---
 
