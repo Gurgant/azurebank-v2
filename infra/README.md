@@ -1497,7 +1497,7 @@ the time noted at the top of the step, and before any diagnosis:
 #### 26. The first fill (operator, **writes**: the pool's rows and the two roles)
 
 ```powershell
-python infra/deploy.py --pool-run
+python infra/deploy.py --pool-run             # not while a deployment is under way: it does not read the migrate job
 Show-Executions azurebank-pool
 python infra/deploy.py --pool-log             # when the lines are due
 python infra/deploy.py --check
@@ -1883,7 +1883,8 @@ written once: an image that is already published is left as it is, and only the 
    one container named `pool` whose arguments are `recycle` and which has no command, and the
    identity `azurebank-app`. Then it reads that job's executions once and stops if a run is, or
    may still be, in progress: the migration is about to change the schema that run works on. A
-   run the schedule starts after that read is not seen;
+   run the schedule starts after that read is not seen, and neither is one listed only on a
+   later page, if Azure gives that list in pages ([Not measured yet](#not-measured-yet));
 4. tries to list the app's secrets and goes on only if Azure refuses;
 5. moves the tools image on the migrate job, starts the migration once, and waits for that exact
    execution. When it ends, either way, it prints the verdict: the execution's name, status, start,
@@ -1893,8 +1894,10 @@ written once: an image that is already published is left as it is, and only the 
    starts that job: the template gives it a schedule;
 7. moves both app images in one request, waits up to 15 minutes for the new revision to be ready,
    and reads the app's shape again, as in step 2;
-8. waits until the revision that ran before is inactive, so that the answers below come from the
-   new code;
+8. waits until the revision that was the app's latest at step 2 is inactive, so that the answers
+   below come from the new code. If that revision was not also the app's latest ready one, the
+   revision that was answering is another, and it is not waited for: read in the script, not
+   provoked. Until 2026-10-05 this step said "the revision that ran before";
 9. smoke test: `/` is the built page; `/health/ready` answers `Healthy` (not merely 200: the BFF
    answers 200 `Degraded` when the API is down); one sign-in for an address nobody can register,
    sent to `/bff/auth/login`, must be refused with 401 and the code `INVALID_CREDENTIALS`. That
@@ -2087,7 +2090,8 @@ secrets, which Azure asks for as a POST; a wrong answer puts nothing back. In or
    string are compared with the app's, and one line says "The pool job's PIN pepper and
    connection string are the app's", or the check fails and names which of the two differs. No
    value, no part of one and no length is printed or put into an error. With the demo off the
-   pool job is not read and no secret is listed;
+   pool job is not read and no secret is listed, and whether a pool job exists is not asked: one
+   left beside flags that are off is shown by the job list of step 1, not by this command;
 5. the smoke test of a deployment, with the demo as the app says it.
 
 It ends "Checked: ... the smoke test passed; nothing was moved." It is the one mode of the script
@@ -2151,10 +2155,15 @@ refuses or fails is told apart from it: the command prints the verdict as the wa
 on which no exit code is expected, and then fails with "the read of its exit code failed" and
 Azure's own words ([When something fails](#when-something-fails)).
 
-Three things this command does not do. It asks the app nothing: the job's container carries the
+Four things this command does not do. It asks the app nothing: the job's container carries the
 demo's flag as a plain word, so a run is expected to build the pool whatever the app's two
 containers say, and whether the app is the demo is `--check`'s to say before a run is started by
-hand. It does not see a run the schedule starts after its one read of the executions. And it does
+hand. It does not see a run the schedule starts after its one read of the executions, nor one
+listed only on a later page, if Azure gives that list in pages. It does not read the migrate
+job: a deployment refuses to start beside a pool run, and this command does not refuse to start
+beside a migration, which may be changing the schema the run works on. So it is not run while a
+deployment is under way: the read under [Deploy a commit](#deploy-a-commit), "One deployment at
+a time", comes first. And it does
 not keep what it read: the exit code is Azure's to keep and the line the workspace's, 30 days;
 `Show-Executions azurebank-pool` (under [Create it once](#create-it-once)) prints the codes
 Azure still holds, in brackets, and on 2026-10-03 an older execution of the migrate job no longer
@@ -3510,7 +3519,7 @@ against stand-ins and invented answers, and steps 22 to 33 are where each line w
 | That a job on a schedule can be started by hand; that a start takes a body which changes one setting for that execution, and leaves the job's own configuration and secrets as they were | steps 26 and 31 |
 | What Azure answers the deployment identity for a pool job that is not there, "not found" or "not authorised"; what it answers its PATCH of a job that carries `azurebank-app`; that its role lets it read that job's executions | step 28; the first is not provoked |
 | How Azure words an execution whose container exits 10, 11 or 15; whether its exit code is reported at the moment the run ends; whether a status and a code can disagree | step 31 |
-| Whether Azure gives the list of a job's executions, or of an app's revisions, in pages, and in which order; what `active` says for the latest revision of an app scaled to zero. `--check` stops on a link to a next page of revisions; nothing follows one | one read of each list at step 33 |
+| Whether Azure gives the list of a job's executions, or of an app's revisions, in pages, and in which order; what `active` says for the latest revision of an app scaled to zero. `--check` stops on a link to a next page of revisions; nothing follows one. For a job's executions that means, until the list has been read: a deployment and `--pool-run` do not see a run listed only on a later page; a deployment or `--pool-run` can wait out its whole wait and end "Timed out waiting" for a run of its own that has ended, if that run is not in the answer it reads; and `--job-log` or `--pool-log` can take an older run for the latest, or say that a named run does not exist. `Show-Executions` reads one answer as well. The pool job gains six executions a day | one read of each list at step 33 |
 | The seconds of a first fill on Basic; the first open as the app's identity from the tools image; the first write this folder asks of `azurebank_app` on Azure SQL | step 26 |
 | What a right that `azurebank_app` lacks looks like on a first fill: exit 1 with SQL Server's 229, by the code | not provoked |
 | `--pool-log` against the workspace: the pool job's lines under its `JobName`, and the query by execution, which has not been sent for either job | step 26 |
