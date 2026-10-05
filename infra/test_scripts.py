@@ -1772,9 +1772,9 @@ class TemplateTests(unittest.TestCase):
                           'scheduledJobs': {'value': "[parameters('scheduledJobs')]"}})
 
     def test_the_policy_is_named_for_what_it_refuses_and_the_removal_finds_it(self):
-        # The name is what a refusal shows, so the definition and its assignment carry the same
-        # one. The runbook's removal looks for the words the name opens with and not for the whole
-        # of it: the name it had before this one opens with them too.
+        # The name is what a refusal is expected to show (not yet read on Azure), so the definition
+        # and its assignment carry the same one. The runbook's removal looks for the words the name
+        # opens with and not for the whole of it: the name it had before this one opens with them too.
         opens_with = 'AzureBank: one small replica'
         name = opens_with + ', manual jobs, the pool job scheduled'
         definition = self.compiled['guardrails']['resources'][0]['properties']
