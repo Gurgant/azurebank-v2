@@ -3,7 +3,8 @@ import { useState } from 'react';
 import { fireEvent, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { enableDemoMode, resetDemoMode } from '../test/demoMode';
+import { getDemoCopySnapshot } from '../features/demo/demoCopyStorage';
+import { enableDemoMode, rememberDemoCopy, resetDemoMode } from '../test/demoMode';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { PinInput, type PinInputProps } from './PinInput';
 
@@ -259,6 +260,35 @@ describe('PinInput on the demo', () => {
       // Between the boxes and the button that shows the digits.
       column: ['boxes: PIN', DEMO_PIN_HINT, 'button: Show PIN'],
       described: [DEMO_PIN_HINT],
+    });
+  });
+
+  /*
+    The digits are one constant (src/features/demo/demoPin.ts), never the PIN inside the copy this
+    browser keeps: a visitor who signed in to a copy on another browser has no kept copy to read
+    them from, and two sources for one line could disagree.
+  */
+  it('prints the demo PIN, not the PIN of a copy this browser keeps', () => {
+    enableDemoMode();
+    // A kept copy whose PIN is not the demo's: the line is no reading of the key.
+    rememberDemoCopy({
+      email: 'demo-k7m2x9q4w8e1r5t3@azurebank.example',
+      password: 'Xk7p-Rm3w-Hn8d-Tq5v',
+      pin: '987654',
+      contacts: ['jane_k7m2', 'mike_k7m2'],
+      expiresAt: '2031-07-15T12:30:00.000Z',
+    });
+    renderWithProviders(<Boxes />);
+
+    expect({
+      // The product reads this copy when it is asked for one, so its PIN was there to be printed.
+      keptPin: getDemoCopySnapshot()?.pin ?? null,
+      column: column(),
+      keptPinOnThePage: document.documentElement.outerHTML.includes('987654'),
+    }).toEqual({
+      keptPin: '987654',
+      column: ['boxes: PIN', DEMO_PIN_HINT, 'button: Show PIN'],
+      keptPinOnThePage: false,
     });
   });
 
