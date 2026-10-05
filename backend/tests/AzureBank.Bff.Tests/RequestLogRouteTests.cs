@@ -55,8 +55,10 @@ public class RequestLogRouteTests : IClassFixture<WebApplicationFactory<Program>
     /// <summary>The line's template and its three named properties, read as values, not as a rendering.</summary>
     private static void IsTheRequestLine(LogEvent line, string routePattern, HttpStatusCode status)
     {
-        line.MessageTemplate.Text.Should().Be(
-            "HTTP {RequestMethod} {RoutePattern} responded {StatusCode} in {Elapsed:0.0000}ms");
+        // xUnit's comparison: exact, and its message shows both templates where they differ, braces as they are.
+        Xunit.Assert.Equal(
+            "HTTP {RequestMethod} {RoutePattern} responded {StatusCode} in {Elapsed:0.0000}ms",
+            line.MessageTemplate.Text);
         line.Properties["RequestMethod"].Should().Be(new ScalarValue("GET"));
         line.Properties["RoutePattern"].Should().Be(new ScalarValue(routePattern));
         line.Properties["StatusCode"].Should().Be(new ScalarValue((int)status));

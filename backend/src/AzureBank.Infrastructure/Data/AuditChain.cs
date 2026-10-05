@@ -841,6 +841,19 @@ public sealed class AuditChain : IAuditChain
       RESTORED IN A finally, because the timeout lives on the DbContext and the DbContext is shared
       by everything else in the request. Leaving it set would quietly impose an audit-shaped deadline
       on every unrelated query the request makes afterwards.
+
+      THE ORDER IS STATED TWICE, AND THE SECOND TIME IS FOR EF. TailSql already picks the newest
+      row: its ORDER BY is what TOP 1 and the two locks act on. EF does not read inside raw SQL, so
+      to EF this was a FirstOrDefault with no ordering and no filter, and it logged the warning it
+      has for one (event 10103, about a First with no OrderBy and no filter operators): measured
+      on SQL Server, on a process's first deposit and not on its second, nor on the first deposit
+      of a second host in that process. OrderByDescending says the same order where EF can read
+      it, here and in ReadTail, the synchronous twin. Measured on SQL Server: still one command,
+      TailSql whole inside it, with ORDER BY [a].[Sequence] DESC after the one-row subquery; the
+      same plan as before (two Tops over a backward scan of the Sequence index, no sort) and the
+      same locks held by the read; and, with the warning turned into an exception, a deposit
+      answered 201 and a synchronous save that returns. AuditTailOrderingSqlServerTests holds
+      those two, and that the read stays one command with TailSql whole inside it.
     */
     private static async Task<(long Sequence, string Hash)?> ReadTailAsync(
         DbContext context, int timeoutSeconds, CancellationToken cancellationToken)
@@ -854,6 +867,7 @@ public sealed class AuditChain : IAuditChain
                 var row = await context.Set<AuditEvent>()
                     .FromSqlRaw(TailSql)
                     .AsNoTracking()
+                    .OrderByDescending(e => e.Sequence)
                     .Select(e => new { e.Sequence, e.RowHash })
                     .FirstOrDefaultAsync(cancellationToken);
                 return row is null ? null : (row.Sequence, row.RowHash);
@@ -957,9 +971,11 @@ public sealed class AuditChain : IAuditChain
             context.Database.SetCommandTimeout(timeoutSeconds);
             try
             {
+                // Ordered here as well as in TailSql, for the reason ReadTailAsync gives.
                 var row = context.Set<AuditEvent>()
                     .FromSqlRaw(TailSql)
                     .AsNoTracking()
+                    .OrderByDescending(e => e.Sequence)
                     .Select(e => new { e.Sequence, e.RowHash })
                     .FirstOrDefault();
                 return row is null ? null : (row.Sequence, row.RowHash);

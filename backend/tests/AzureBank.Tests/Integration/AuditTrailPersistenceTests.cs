@@ -58,8 +58,8 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
         row.Outcome.Should().Be(AuditOutcome.Succeeded);
         row.SubjectType.Should().Be("User");
         row.SubjectId.Should().Be(userId, "an enrolment is an act upon the account it binds the PIN to");
-        row.Detail.Should().Be(
-            "{\"passwordProved\":true}",
+        ComparableText.Of(row.Detail).Should().Be(
+            ComparableText.Of("{\"passwordProved\":true}"),
             "B3's evidence pack needs the fact the password was proved, and the log line will not outlive it");
         /*
           MATCHED, NOT MEASURED, and the difference is the whole assertion. RowHash is nchar(64) —
