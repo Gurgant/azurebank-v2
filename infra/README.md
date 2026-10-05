@@ -1283,6 +1283,33 @@ $env:AZURE_SUBSCRIPTION_ID = az account show --query id --output tsv
 $env:AZURE_RESOURCE_GROUP  = $group
 ```
 
+Two functions more, for the reads of steps 25 and 33. Neither has been sent to Azure
+([Not measured yet](#not-measured-yet) says how far each was tried).
+
+```powershell
+# One answer of a list as Azure gives it, read with the API version deploy.py asks with: whether
+# it holds a list at all, how many entries, whether a link to a next page came with it, and its
+# first and its last entry by $When. Names and times only.
+function Show-List([string]$Path, [string]$When) {
+    $scope = az group show --name $group --query id --output tsv
+    $answer = az rest --method get --url "https://management.azure.com$scope/providers/Microsoft.App/${Path}?api-version=2025-01-01" |
+        ConvertFrom-Json
+    if (-not $answer) { throw 'No answer.' }
+    $entries = @($answer.value | Where-Object { $null -ne $_ })
+    'a list: {0}; entries: {1}; a link to a next page: {2}' -f ($null -ne $answer.PSObject.Properties['value']), $entries.Count, [bool]$answer.nextLink
+    if ($entries.Count) {
+        'first: {0}, {1}; last: {2}, {3}' -f $entries[0].name, $entries[0].properties.$When, $entries[-1].name, $entries[-1].properties.$When
+    }
+}
+
+# The app's revisions, as deploy.py lists them: each name, whether it is active, and its replicas.
+function Show-Revisions {
+    $app = az containerapp show --name azurebank --resource-group $group --query id --output tsv
+    (az rest --method get --url "https://management.azure.com${app}/revisions?api-version=2025-01-01" | ConvertFrom-Json).value |
+        ForEach-Object { '{0}: active {1}, replicas {2}' -f $_.name, $_.properties.active, $_.properties.replicas }
+}
+```
+
 #### 22. Look before writing (operator; reads, and one sign-in that is refused)
 
 ```powershell
@@ -1428,6 +1455,7 @@ Test-Path $folder                                              # False
 python infra/deploy.py --check
 Show-Executions azurebank-pool                                 # nothing
 Show-Executions azurebank-migrate                              # the control: its executions
+Show-List jobs/azurebank-pool/executions startTime             # what a job that never ran answers
 ```
 
 `-DemoOn` is passed once. From then on the script reads the switch from the app's two containers
@@ -1446,6 +1474,7 @@ and keeps it, as it keeps the tag and the secrets
 | The role assignments, as step 22 reads them | Three rows, the custom role on `containerApps/azurebank`, `jobs/azurebank-migrate` and `jobs/azurebank-pool` |
 | `--check` | It waits until the revision that answered before this step is inactive, and says so: "no other revision is active: what answers now is that revision". Then "The pool job's PIN pepper and connection string are the app's"; "It is the public demo: the page carries the demo's tag, and a registration with an empty body was refused as closed."; and at the end "the demo is on and the job azurebank-pool is in shape; the smoke test passed; nothing was moved." |
 | The two `Show-Executions` | Nothing for the pool job; the migrate job's executions, so that the silence is the function's answer and not its failure |
+| `Show-List` | `entries: 0`. Whether the answer of a job that never ran holds a list at all is what this read is for: it is recorded nowhere. `deploy.py` reads an answer with no list as no execution, so a deployment and a start by hand go on after it. If the line says `a list: False`, the `Show-Executions` above it prints one line with no name and no code where "nothing" is expected: that line is the function's print of such an answer, not an execution. Write down which it was |
 
 ```powershell
 (az containerapp show --name azurebank --resource-group $group --output json | ConvertFrom-Json).properties.template.containers |
@@ -1490,7 +1519,7 @@ the time noted at the top of the step, and before any diagnosis:
    ([Stop the app by hand](#stop-the-app-by-hand)). From here the roads are the ones
    [Turning the demo back](#turning-the-demo-back) has for a pool job that has run: never
    `demo=false`.
-4. Only then the diagnosis: the app's revisions with their `active` flag, and
+4. Only then the diagnosis: the app's revisions with their `active` flag (`Show-Revisions`), and
    `python infra/deploy.py --app-log 15`. Then the step again, which brings the job back, or,
    after case 2 only, the first road of [Turning the demo back](#turning-the-demo-back).
 
@@ -1599,38 +1628,89 @@ tag step 24 deployed, never the one step 22 read: those images do not read the f
 
 #### 29. The policy must still refuse: another name on a schedule, and two runs at once (operator; two **writes** that must change nothing)
 
-**First.** As the owner, one request for a job `azurebank-not-the-pool` in the environment, its
-body in a file: the trigger `Schedule`, an expression that fires once a year, one small container
-of the image step 7's probe used. The body is step 7's `$job` without its `identity` block, with
-the name, the trigger and a `scheduleTriggerConfig` changed, and a container that has neither
-`command` nor `env`: no program, no connection string and no database identity is in it.
+**First.** As the owner, one request for a job named `azurebank-pool-2` in the environment, its
+body in a file: the trigger `Schedule`, an expression that fires once a year, and one small
+container of the image step 7's probe used, with no identity, no `command` and no `env`: no
+program, no connection string and no database identity is in it. The name begins with the
+excepted one on purpose: the same refusal then also shows that the exception is by the whole
+name and not by its first letters. Every other rule of the policy is kept by this body, a
+quarter of a vCPU, one replica at a time and no init container, so a refusal by the policy can
+only be for the trigger. The block has not been sent.
+
+```powershell
+$scope = az group show --name $group --query id --output tsv
+$body = Join-Path $env:TEMP 'pool-2.json'
+try {
+    @{
+        location = 'italynorth'
+        properties = @{
+            environmentId = "$scope/providers/Microsoft.App/managedEnvironments/azurebank-env"
+            workloadProfileName = 'Consumption'
+            configuration = @{ triggerType = 'Schedule'; replicaTimeout = 60; replicaRetryLimit = 0
+                               scheduleTriggerConfig = @{ cronExpression = '0 0 1 1 *'; parallelism = 1; replicaCompletionCount = 1 } }
+            template = @{ containers = @(@{ name = 'probe'; image = 'mcr.microsoft.com/dotnet/sdk:10.0'
+                                            resources = @{ cpu = 0.25; memory = '0.5Gi' } }) }
+        }
+    } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $body
+    az rest --method put --body "@$body" `
+        --url "https://management.azure.com$scope/providers/Microsoft.App/jobs/azurebank-pool-2?api-version=2025-01-01"
+} finally {
+    Remove-Item -LiteralPath $body -ErrorAction Ignore
+}
+az containerapp job list --resource-group $group --query '[].name' --output tsv
+```
 
 | Read back | Expected |
 | --- | --- |
-| The answer | A failure with `RequestDisallowedByPolicy` |
-| `az containerapp job list --resource-group $group --query '[].name' --output tsv` | Two names, as before |
+| The answer | A failure with `RequestDisallowedByPolicy`. Any other failure, a 400 for the body among them, says nothing of the policy: stop, and bring it |
+| The job list | Two names, as before |
 
-**If it is accepted:** on the owner's word, given at once, that job is deleted (it is this step's
-own and has not run), its absence is read back, and the session stops: the exception is wider
-than a name. The policy goes back by step 23's way back until a change has put it right. With the
-pool job in place, that is expected to refuse every later write of it: a deployment with the demo
-on would stop when it moves the pool job, after its migration, and only `--app-only` would still
-move the app. So it is taken on the owner's word, and the change that puts the rule right comes
-before the next deployment. A run of the template without that override writes the exception
-again: no file remembers `scheduledJobs=[]`. Expected, not seen.
+**If it is accepted:** on the owner's word, given at once, that job is deleted
+(`az containerapp job delete --name azurebank-pool-2 --resource-group $group --yes`; it is this
+step's own and has not run), its absence is read back, and the session stops: the exception is
+wider than a name. The policy goes back by step 23's way back until a change has put it right.
+With the pool job in place, that is expected to refuse every later write of it: a deployment
+with the demo on would stop when it moves the pool job, after its migration, and only
+`--app-only` would still move the app. So it is taken on the owner's word, and the change that
+puts the rule right comes before the next deployment. A run of the template without that
+override writes the exception again: no file remembers `scheduledJobs=[]`. Expected, not seen.
 
 **Second.** Not within ten minutes of a run of the job. As the owner, one PATCH of the pool job
-that asks for two runs at once, as step 15 asks for two replicas: the body in a file, holding
-`scheduleTriggerConfig` with the expression and the completion count step 25 read, and
-`parallelism` 2.
+that asks for two runs at once, as step 15 asks for two replicas. The function reads the job and
+sends back its location and, of its configuration, the trigger, the timeout, the retry limit,
+the expression and the completion count as it read them, with `parallelism` as asked. Nothing
+else is in the body: no container, no secret, no identity. It has not been sent.
+
+```powershell
+# Asks the pool job for $Runs replicas of one execution, and for nothing else.
+function Set-PoolParallelism([int]$Runs) {
+    $job = az containerapp job show --name azurebank-pool --resource-group $group --output json | ConvertFrom-Json
+    $now = $job.properties.configuration
+    $body = Join-Path $env:TEMP 'pool-parallelism.json'
+    try {
+        @{ location = $job.location
+           properties = @{ configuration = @{
+               triggerType = $now.triggerType; replicaTimeout = $now.replicaTimeout; replicaRetryLimit = $now.replicaRetryLimit
+               scheduleTriggerConfig = @{ cronExpression = $now.scheduleTriggerConfig.cronExpression; parallelism = $Runs
+                                          replicaCompletionCount = $now.scheduleTriggerConfig.replicaCompletionCount } } } } |
+            ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $body
+        az rest --method patch --body "@$body" --url "https://management.azure.com$($job.id)?api-version=2025-01-01"
+    } finally {
+        Remove-Item -LiteralPath $body -ErrorAction Ignore
+    }
+}
+Set-PoolParallelism 2
+az containerapp job show --name azurebank-pool --resource-group $group --query properties.configuration
+python infra/deploy.py --check
+```
 
 | Read back | Expected |
 | --- | --- |
-| The answer | A failure with `RequestDisallowedByPolicy`. It would be the first time the rule on a schedule's parallelism is seen at work ([Not measured yet](#not-measured-yet)) |
+| The answer | A failure with `RequestDisallowedByPolicy`. It would be the first time the rule on a schedule's parallelism is seen at work ([Not measured yet](#not-measured-yet)). Any other failure says nothing of the policy: stop, and bring it |
 | The job's `properties.configuration` | As step 25 read it, whole |
-| `--check` | The job in shape |
+| `--check` | The job in shape, and its two secrets the app's |
 
-**If it is accepted:** put 1 back at once with the same request, read the configuration back
+**If it is accepted:** `Set-PoolParallelism 1` at once, read the configuration back
 whole against step 25's, and stop. The one rule that bounds a scheduled job does not hold, and
 until it does, two runs at once are bounded by `deploy.py`'s shape check alone, at a deployment
 and at a `--check`.
@@ -1647,7 +1727,18 @@ alone: its one read before a deployment or a `--pool-run`, and its shape check.
 
 Network A is this machine's own connection. Network B is this machine through a phone's mobile
 data. The request is the smoke test's own sign-in, for an address nobody has, so nothing is
-written.
+written. Its body is taken from the script itself, into a file. The block has not been run.
+
+```powershell
+$site = az containerapp show --name azurebank --resource-group $group --query properties.configuration.ingress.fqdn --output tsv
+python -B -c "import json, sys; sys.path.insert(0, 'infra'); import deploy; print(json.dumps(deploy.SMOKE_LOGIN))" |
+    Set-Content "$env:TEMP\sign-in.json"
+$signIn = { curl.exe --silent --output NUL --write-out '%{http_code}' --request POST --header 'Content-Type: application/json' `
+                --data-binary "@$env:TEMP\sign-in.json" "https://$site/bff/auth/login" }
+1..12 | ForEach-Object { & $signIn }         # from network A: twelve statuses
+& $signIn                                    # at once, from network B: one
+Remove-Item "$env:TEMP\sign-in.json"
+```
 
 | Measurement | How | What is read |
 | --- | --- | --- |
@@ -1678,14 +1769,44 @@ before the job's next run tops the pool up again: after step 27 the pool is expe
 free copies until then, and if a run came in between, one more claim from the browser comes
 first. As the owner, one start of the pool job whose execution carries the job's own container
 with one more setting, `Demo__Pool__LowMark=50`: the low mark may be as high as the target
-(ADR-0062). The body travels in a file. No secret is in it: the two secrets stay references.
+(ADR-0062). The body travels in a file. No secret is in it: the two secrets stay references,
+and a read of a job holds no secret's value. Not while a run is listed as running: this start
+does not look, as `--pool-run` does, so `Show-Executions azurebank-pool` comes first. The block
+has not been sent; it prints the name of the execution it started.
+
+```powershell
+$job = az containerapp job show --name azurebank-pool --resource-group $group --output json | ConvertFrom-Json
+$container = $job.properties.template.containers[0]
+$body = Join-Path $env:TEMP 'pool-start.json'
+try {
+    @{ containers = @(@{
+        name = $container.name; image = $container.image; args = @($container.args)
+        resources = @{ cpu = $container.resources.cpu; memory = $container.resources.memory }
+        env = @($container.env) + @(@{ name = 'Demo__Pool__LowMark'; value = '50' }) }) } |
+        ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $body
+    az rest --method post --body "@$body" --query name --output tsv `
+        --url "https://management.azure.com$($job.id)/start?api-version=2025-01-01"
+} finally {
+    Remove-Item -LiteralPath $body -ErrorAction Ignore
+}
+```
 
 | Read back | Expected |
 | --- | --- |
 | `Show-Executions azurebank-pool` | That execution, with exit code `[10]`. Its status is what this step is for: how Azure words an execution whose container exits with a code that is not 0 and is not a failure. `Failed` is expected, since an execution that exited 7 read `Failed` in the trial |
 | `python infra/deploy.py --pool-log '<that execution>'` | "exit code 10 (done, with a signal: the pool was low (PoolLow))"; the summary line with `was` below 50, `seeded` the difference and `result=PoolLow` |
 | `python infra/deploy.py --check` | The job in shape, and its two secrets the app's. Expected and not measured: a start whose body was written by hand changes that execution and not the job |
-| Reads only: `az monitor metrics list-definitions` for the pool job and for the database; one `az monitor metrics list` of the job's execution metric over the last hour, and of the database's size | The names and the dimensions, and whether a time series exists at all. An alert on a failed pool run, or on the database's size, is built on what these show and not before ([What is not here](#what-is-not-here)) |
+| Reads only: the block below, which prints the metrics of the pool job and of the database by name, unit and dimensions; then, by the names it printed, one `az monitor metrics list` of the job's metric of executions over the last hour, and of the database's size, as step 20 reads a metric | The names and the dimensions, and whether a time series exists at all. An alert on a failed pool run, or on the database's size, is built on what these show and not before ([What is not here](#what-is-not-here)) |
+
+```powershell
+# Names, units and dimensions only: the definitions themselves hold the resource's ID. Not run yet.
+$pool = az containerapp job show --name azurebank-pool --resource-group $group --query id --output tsv
+$database = az sql db show --resource-group $group --server $server --name AzureBank --query id --output tsv
+foreach ($resource in $pool, $database) {
+    az monitor metrics list-definitions --resource $resource --output json | ConvertFrom-Json |
+        ForEach-Object { '{0} ({1}): {2}' -f $_.name.value, $_.unit, (@($_.dimensions.value) -join ', ') }
+}
+```
 
 **If Azure refuses a start that carries a setting:** the signal is recorded as not provoked, and
 the metrics are read all the same.
@@ -1709,6 +1830,21 @@ identities, nine secret names, three role assignments, three alerts, the policy 
 name with `scheduledJobs`. Then the day's log volume by table ([Afterwards](#afterwards)),
 `Show-Executions` for both jobs, and `Test-Path $folder`, `False`.
 
+**The lists, as Azure gives them.** `deploy.py` reads one answer of a job's executions and of
+the app's revisions, and follows no link to a next page.
+
+```powershell
+Show-List jobs/azurebank-pool/executions startTime
+Show-List jobs/azurebank-migrate/executions startTime
+Show-List containerApps/azurebank/revisions createdTime
+Show-Revisions                               # and once more after five minutes with no request
+```
+
+| Read back | Expected |
+| --- | --- |
+| The three `Show-List` | For each list: whether a link to a next page came with the answer, and whether its first entry is the oldest or the newest. Not measured, and these reads settle it for lists of this length: with a link, a run or a revision can be on a page the script does not read ([Not measured yet](#not-measured-yet)) |
+| `Show-Revisions`, twice | Which revisions the list holds, and what `active` says for the latest one once it has 0 replicas |
+
 **A run that nobody started.** A job on a schedule has never been seen accepted here, and never
 seen starting by itself. The session started the pool job twice by hand, at steps 26 and 31, and
 knows those two executions by name. This step is not closed before one run of the schedule after
@@ -1718,13 +1854,24 @@ step 25 has been read:
 | --- | --- |
 | `Show-Executions azurebank-pool` | An execution whose name is neither step 26's nor step 31's, started at minute 0 of an hour that is a multiple of four, UTC, with the status `Succeeded` and the exit code 0. A 10 is not expected: it means the run found fewer than 20 free copies (`Demo:Pool:LowMark`, 20 by default, and the job sets none), which is more claims than this session made. Stop, and read its line: `was`, `claims24h`, `clientsAtCap` |
 | `python infra/deploy.py --pool-log '<that execution>'` | Its summary line, when it is due |
-| The subscription's activity log for the resource group over the last eight hours, read through `ConvertFrom-Json`: for each event whose operation is `Microsoft.App/jobs/start/action`, its time, its status, and one word for its caller ("the owner", "another", "none"). Never the caller itself, and no resource ID | One event for each start by hand. For the run of the schedule: one, or none. Not measured, and this read settles it: it is what an alert on job starts could or could not see |
+| The subscription's activity log for the resource group over the last eight hours, by the block below: for each event whose operation is `Microsoft.App/jobs/start/action`, its time, the job's name, its status, and one word for its caller ("the owner", "another", "none"). Never the caller itself, and no resource ID | Events for each start by hand, as "the owner": a request is expected to leave one for each status it went through. The workflow's start of the migration at step 28, as "another". For the run of the schedule: events, or none. Not measured, and this read settles it: it is what an alert on job starts could or could not see |
+
+```powershell
+# Not run yet.
+$me = az account show --query user.name --output tsv
+az monitor activity-log list --resource-group $group --offset 8h --max-events 1000 --output json | ConvertFrom-Json |
+    Where-Object { $_.operationName.value -eq 'Microsoft.App/jobs/start/action' } | Sort-Object eventTimestamp |
+    ForEach-Object {
+        $who = if (-not $_.caller) { 'none' } elseif ($_.caller -eq $me) { 'the owner' } else { 'another' }
+        '{0}  {1}  {2}  {3}' -f $_.eventTimestamp, ($_.resourceId -split '/')[-1], $_.status.value, $who
+    }
+```
 
 **If the session ends before a run of the schedule has passed,** "a scheduled run, and its start
-event" stay under [Not measured yet](#not-measured-yet), with these three reads as what settles
-them, and they are taken at the owner's next sign-in. A schedule that never fires changes nothing
-a visitor sees until the free copies are gone, and no alert is built on the job: without this
-read nobody is due to notice.
+event" stay under [Not measured yet](#not-measured-yet), with the three reads of the table above
+as what settles them, and they are taken at the owner's next sign-in. A schedule that never
+fires changes nothing a visitor sees until the free copies are gone, and no alert is built on
+the job: without this read nobody is due to notice.
 
 Then `az logout`, and what the session measured replaces every "expected" of steps 22 to 33.
 
@@ -2278,7 +2425,7 @@ the code of the app.
 | "Smoke test unproven: in 4 tries the registration probe got 429 (rate limited) last", or "got no answer last" | The page, the readiness answer and the sign-in were right, and the last try of the registration proved nothing. The limit it met is the one sign-ins share, ten a minute, which a closed registration is expected to spend from too. The new revision is serving and was not put back | Deploy again later; or `python infra/deploy.py --check` from a terminal, which asks the address the same four questions and moves nothing |
 | `--check`: "The app is not in a state to be checked", or "After 300 s the app was not in a state to be checked (its last update: ...; its latest revision: ...; its latest ready revision: ...)" | The app's last update has not succeeded, or its latest revision is not its latest ready one. Until it is, an answer could still come from another revision: nothing was proved, nothing was moved | Look at the app's revisions, then check again. After a run of the template that turned the demo on, step 25 says what is done before the pool job's next run |
 | `--check`: "After 180 s the list of the app's revisions did not show ... answering alone (...), so an answer could still come from another revision" | Another revision had not gone inactive, or the latest was not in the list. Nothing was proved, nothing was moved | The same |
-| `--check`: "The list of the app's revisions came with a link to a next page, and this script reads one answer" | Whether Azure gives that list in pages is recorded nowhere here. A page that was not read could hold a revision that is still active, so the check stops and proves nothing | Read the revisions by hand, names and `active` only. If Azure always sends that link, `--check` cannot pass until the script reads on: a change of `deploy.py` |
+| `--check`: "The list of the app's revisions came with a link to a next page, and this script reads one answer" | Whether Azure gives that list in pages is recorded nowhere here. A page that was not read could hold a revision that is still active, so the check stops and proves nothing | Read the revisions by hand, names and `active` only (`Show-Revisions`, among the functions of the third session; `Show-List` says whether the link is there). If Azure always sends that link, `--check` cannot pass until the script reads on: a change of `deploy.py` |
 | `--check`: "The app is in shape and reports no address (its ingress holds no host name), so there is nothing to ask" | The shape check passed and the app's answer names no host. Nothing was proved, nothing was moved | Read the app's ingress; run the template again |
 | `--check`: "The pool job's PIN pepper (its secret pin-pepper) differs from the app's. Nothing was moved, and no value was shown.", or "connection string (its secret app-connection)", or both | The job holds another pepper than the API verifies with, or signs in with another string than the app. With another pepper no copy that job built takes a PIN, and every status stays good | For the pepper: on the owner's word, stop the app, so that no visitor meets a copy whose PIN fails ([Stop the app by hand](#stop-the-app-by-hand)). Making the two equal again is a run of the template, which writes the job's two secrets from the app's, and then `--check`. Both need the app started again: what a run of the template or a `--check` does with a stopped app has not been seen, and while the app is up a visitor can be given such a copy. Equal secrets do not repair the pool: a free copy built with the other pepper is still handed out, with a PIN that fails, until a run deletes it, and none does before the copy is too old to count (`Demo:Pool:MaxFreeAgeHours`, 44 hours by default); a claimed one goes when its time is over. So before visitors are let back the owner chooses: those hours with the app stopped, or the new database of [Turning the demo back](#turning-the-demo-back). A secret that changed outside the template is a change nobody ordered: read [If something was stolen](#if-something-was-stolen). Reasoned, not rehearsed |
 | `--check`: "The pool job's secrets could not be compared with the app's: ... lists no single value of text for ..." | One side lists that secret twice, not at all, empty, or as something that is not text. Two that hold nothing are not "the app's" | Read the secret names of the app and of the job; run the template again; check again |
@@ -3454,7 +3601,16 @@ database (error 4060). Exit 3 needs a token refused on Azure. The helper functio
 for `az`: the requests they send are the ones written here, and no Azure answered them.
 `Assert-EnvironmentMode` passed `WorkloadProfiles`, and an answer with no mode whose logs go to
 `azure-monitor`; it threw on `Express`, `Archived` and `ConsumptionOnly`, on no mode with the
-logs off or elsewhere, and on no answer. On 2026-10-03 the tests also ran on Linux, in WSL
+logs off or elsewhere, and on no answer. On 2026-10-05 the same was done for the blocks of the
+third session that build a request or filter an answer: `Show-List`, `Show-Revisions`, the job
+of step 29, `Set-PoolParallelism`, the sign-ins of step 30, the start and the metric definitions
+of step 31, the activity log's filter of step 33, and the three blocks of steps 22 and 25 that
+print names only. Every PowerShell block of this page parses, and those ran against functions
+standing in for `az`, `python` and `curl.exe`, with invented answers: each sent the request
+written here, with the body its step describes, and removed its body file. `Show-Executions`,
+given an answer that holds no list, printed one line with no name and no code. No Azure answered
+any of them: the shape of every answer in that run was invented. On 2026-10-03 the tests also
+ran on Linux, in WSL
 (Ubuntu 24.04, Python 3.12, PowerShell 7.6.6 and Bicep 0.47.16), from an archive of the branch:
 all passed, among them the Linux half of two (the folder's and the file's modes, and the
 signature check that says it checked nothing), and the two that hold only on Windows were
@@ -3531,6 +3687,8 @@ against stand-ins and invented answers, and steps 22 to 33 are where each line w
 | That a job on a schedule is accepted, with `scheduleTriggerConfig` as the template writes it; that Azure reads the expression in UTC; that it starts with nobody typing, what such a run exits with, and whether the activity log holds a start event for it | steps 25 and 33 |
 | That a job which waits for the app is not created when the app's own update fails; whether the revision before keeps answering when a new one never gets ready | not provoked; step 25's rule does not rest on either |
 | That a job on a schedule can be started by hand; that a start takes a body which changes one setting for that execution, and leaves the job's own configuration and secrets as they were | steps 26 and 31 |
+| What the list of a job's executions holds for a job that has never run: an empty list, or no list at all. `deploy.py` reads an answer with no list as no execution, so a deployment and a start by hand go on after it | step 25, `Show-List` |
+| The requests of steps 29, 31 and 33 as they are written: that Azure takes a PATCH of a job that holds a configuration and no template, and leaves the job's secrets as they were; that a start's body may hold the container alone; the fields of the activity log's events and of the metric definitions as the two filters read them. Each block was run offline against stand-ins, above | steps 29, 31 and 33 |
 | What Azure answers the deployment identity for a pool job that is not there, "not found" or "not authorised"; what it answers its PATCH of a job that carries `azurebank-app`; that its role lets it read that job's executions | step 28; the first is not provoked |
 | How Azure words an execution whose container exits 10, 11 or 15; whether its exit code is reported at the moment the run ends; whether a status and a code can disagree | step 31 |
 | Whether Azure gives the list of a job's executions, or of an app's revisions, in pages, and in which order; what `active` says for the latest revision of an app scaled to zero. `--check` stops on a link to a next page of revisions; nothing follows one. For a job's executions that means, until the list has been read: a deployment and `--pool-run` do not see a run listed only on a later page; a deployment or `--pool-run` can wait out its whole wait and end "Timed out waiting" for a run of its own that has ended, if that run is not in the answer it reads; and `--job-log` or `--pool-log` can take an older run for the latest, or say that a named run does not exist. `Show-Executions` reads one answer as well. The pool job gains six executions a day | one read of each list at step 33 |
