@@ -5,6 +5,7 @@ import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
 import { MOCK_PASSWORD, mockState, seedMockDemoCopy, seedMockSession } from '../../mocks/state';
 import { enableDemoMode, rememberDemoCopy } from '../../test/demoMode';
+import { emulateFocusFixup } from '../../test/outage';
 import { makeTestStore, renderWithProviders, type TestStore } from '../../test/renderWithProviders';
 import { apiSlice } from '../api/apiSlice';
 import { AuthBootstrap } from './AuthBootstrap';
@@ -631,6 +632,52 @@ describe('SessionExpiryWarning', () => {
         kept,
         statuses: ['authenticated'],
       });
+    });
+
+    it('after a refused request focus is back on "Stay signed in"', async () => {
+      const { store } = await bootOnACopy();
+      // The copy has ended on the server, as in the test above, and the answer is held until the
+      // wait has been drawn: an answer that came at once would never show the button waiting.
+      mockState.demoCopies = [];
+      let answer = () => {};
+      const held = new Promise<void>((resolve) => {
+        answer = resolve;
+      });
+      server.use(
+        http.post(REAUTH, async () => {
+          await held;
+          // No answer from here, so the mock's own handler gives it.
+          return undefined;
+        }),
+      );
+      // While it waits the button is disabled, and a browser then hands its focus to the page.
+      const stopFixup = emulateFocusFixup();
+      try {
+        await reachTheWarning(store);
+        await waitFor(() => expect(focused()).toBe(THE_OWNERS[0]));
+
+        const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+        await user.keyboard('{Enter}');
+        await waitFor(() =>
+          expect({
+            disabled: stayButtons().map((button) => button.disabled),
+            focusIsOnThePage: document.activeElement === document.body,
+          }).toStrictEqual({ disabled: [true], focusIsOnThePage: true }),
+        );
+
+        answer();
+        await waitFor(() => expect(alerts()).toStrictEqual([WORDS.ended]));
+        // On the button that was pressed, which can be pressed again, with "Sign out now" one
+        // Tab away. Left on the page, the next key a visitor pressed would act on nothing.
+        await waitFor(() =>
+          expect({ offered: offered(), focused: focused() }).toStrictEqual({
+            offered: THE_OWNERS,
+            focused: THE_OWNERS[0],
+          }),
+        );
+      } finally {
+        stopFixup();
+      }
     });
 
     it("the owner's other failures keep the dialog's own words", async () => {

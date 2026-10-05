@@ -188,7 +188,12 @@ export function SessionExpiryWarning() {
   const [password, setPassword] = useState('');
   const [reauthError, setReauthError] = useState<string | null>(null);
   const [signOutError, setSignOutError] = useState<string | null>(null);
-  const [reauthenticate, { isLoading: reauthPending }] = useReauthenticateMutation();
+  const [reauthenticate, { isLoading: reauthPending, requestId: reauthRequest }] =
+    useReauthenticateMutation();
+  // The owner's "Stay signed in" is disabled while its request is on its way, as "Sign out now"
+  // is, and loses focus to the page the same way. When the request is refused the dialog stays,
+  // so focus goes back to the button: it can be pressed again, and "Sign out now" is one Tab on.
+  const stayLanding = useWaitLanding<HTMLButtonElement>(reauthPending, reauthRequest);
   // The demo copy this browser keeps, read from its key each time this is drawn, and whether the
   // signed-in visitor is its owner. Off the demo there is no copy and no owner, and the key is not
   // read to find that out (src/features/demo/demoCopyStorage.ts).
@@ -358,6 +363,8 @@ export function SessionExpiryWarning() {
       const kept = getDemoCopySnapshot();
       if (kept === null || !isDemoCopyOwner(kept, user)) return;
       sent = kept.password;
+      // The press whose wait hands focus back when it ends.
+      stayLanding.arm();
     }
     try {
       await reauthenticate({ password: sent }).unwrap();
@@ -425,6 +432,7 @@ export function SessionExpiryWarning() {
                     // to be given a name for the wait; this one is found by the same name
                     // throughout.
                     <Button
+                      ref={stayLanding.landingRef}
                       className={styles.stay}
                       appearance="primary"
                       type="submit"
