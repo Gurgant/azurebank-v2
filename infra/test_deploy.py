@@ -1145,9 +1145,14 @@ class PoolDeployTests(DeployCase):
         self.smoke.assert_not_called()
 
     def test_a_pool_run_in_progress_stops_the_deployment_before_any_change(self):
-        recent = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        for state, started in (('Running', None), ('Processing', None), ('Unknown', recent)):
-            with self.subTest(state=state):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        # CONTROL: green as written, the last case. A run in a state nobody named is taken for
+        # alive for the pool job's own timeout and two minutes, 720 s here: one that began five
+        # minutes ago still stops the deployment. Seen red with no timeout handed to the rule.
+        five_minutes_ago = (now - datetime.timedelta(seconds=300)).isoformat()
+        for state, started in (('Running', None), ('Processing', None), ('Unknown', now.isoformat()),
+                               ('Unknown', five_minutes_ago)):
+            with self.subTest(state=state, started=started):
                 self.azure.pool_runs = [finished('an-earlier-run'), execution('pool-run', state, started)]
                 with self.assertRaises(RuntimeError) as raised:
                     self.deploy()
@@ -1345,6 +1350,10 @@ POOL_DRIFTS = {
     # type taken out of pool_drift.
     'timeout_that_is_text': ("configuration.replicaTimeout is '600'",
                              lambda a: pool_configuration(a).update(replicaTimeout='600')),
+    # CONTROL: green as written. A job with no timeout is refused for its shape, before its
+    # executions are read against that timeout: seen ending in a KeyError with the two swapped.
+    'missing_timeout': ('configuration.replicaTimeout is None',
+                        lambda a: pool_configuration(a).pop('replicaTimeout')),
     'schedule_that_is_text': ("configuration.scheduleTriggerConfig.cronExpression is not '0 */4 * * *'",
                               lambda a: pool_configuration(a).update(scheduleTriggerConfig='0 */4 * * *')),
     'missing_schedule': ("configuration.scheduleTriggerConfig.cronExpression is not '0 */4 * * *'",
@@ -1801,6 +1810,9 @@ class AppOnlyTests(DeployCase):
         self.assertEqual(deploy.images(self.azure.app),
                          {name: f'ghcr.io/gurgant/azurebank-{name}:{NEW}' for name in ('bff', 'api')})
         self.smoke.assert_called_once_with(f'https://{ADDRESS}', demo=False)
+        # CONTROL: green as written. This road says that no job is touched, and nothing of the
+        # pool job: seen red with the demo-off line said here too.
+        self.assertNotIn('azurebank-pool', self.printed())
 
     def test_with_the_demo_on_it_still_reads_no_job_and_tells_the_smoke_test_what_the_app_says(self):
         self.azure.turn_the_demo_on()
