@@ -222,8 +222,8 @@ money movement. `/full-number` is the only route behind the level-2 gate. The no
 not transfer-specific either: since `d74603c` (2026-08-20) every `/api/*` request that is not one of
 the seven 404'd auth paths above, any method, is refused at the BFF with the API's own 401 shape
 unless a live session resolves.
-*(Until 2026-09-22 this paragraph said a withdrawal was the one money move that still sends its PIN
-in the body.)*
+*(Until 2026-10-05 this paragraph said a withdrawal was the one money move that still sends its PIN
+in the body; that had been false since ADR-0056, `267d33e` (2026-09-22).)*
 
 ---
 
@@ -298,10 +298,10 @@ private static readonly HashSet<string> BlockedProxiedAuthPaths =
 private static bool RequiresSession(string path) =>
     path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase);
 
-// Level 2 has two branches. The exact-path set is EMPTY since ADR-0041 — the API verifies transfer
-// authorisations (ADR-0042) rather than the BFF gating them — and is kept only as the place a
-// future exact-path route would go. The prefix x suffix pair, checked for ANY method, is the only
-// level-2 enforcement left.
+// Level 2 has two branches. The exact-path set is EMPTY since ADR-0041 — a transfer is authorised
+// at the API (since ADR-0042 by a one-shot authorisation the API binds and spends) and is not
+// gated here — and is kept only as the place a future exact-path route would go. The prefix x
+// suffix pair, checked for ANY method, is the only level-2 enforcement left.
 // (Until 2026-10-05 this comment said transfers carry their PIN in-band and the API verifies it;
 // since ADR-0042 a transfer carries no PIN.)
 private static readonly HashSet<string> PinRequiredPaths = new(StringComparer.OrdinalIgnoreCase);
@@ -312,6 +312,8 @@ private static readonly string[] PinRequiredSuffixes = { "/full-number" };
 What a caller observes, measured through the BFF (:5000 → API :7215, Development) — rows 3–5 on
 2026-09-03 (`070803f`) for GET and POST, row 1 on 2026-08-19 (ADR-0041 amendment), and the PATCH and
 DELETE verbs of row 3 on 2026-08-20 (`d74603c`):
+*(Until 2026-10-05 this sentence said rows 2–4 and row 2: the table's numbers before `e5107f0`
+(2026-10-04) put the demo claim's row second.)*
 
 | Request | Session cookie | Answer |
 |---|---|---|
