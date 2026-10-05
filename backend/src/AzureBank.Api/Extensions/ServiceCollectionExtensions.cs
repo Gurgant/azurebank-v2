@@ -758,6 +758,9 @@ public static class ServiceCollectionExtensions
             // undocumented until the Schemathesis gate's first run (2026-09-15).
             options.AddOperationTransformer<UnsupportedMediaTypeResponseTransformer>();
 
+            // 413 on [RefuseOversizedBody] endpoints: body exceeds the 32 KB limit.
+            options.AddOperationTransformer<PayloadTooLargeResponseTransformer>();
+
             // 503 on every operation: the database cannot be reached, or the request ran past its
             // deadline (ADR-0058). The four money operations' body adds applied, and only theirs.
             options.AddOperationTransformer<ServiceUnavailableResponseTransformer>();
