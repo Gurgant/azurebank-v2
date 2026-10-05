@@ -733,8 +733,14 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
         body.Should().BeEmpty();
     }
 
-    // CONTROL: green on today's code. Refuses the seven proxied auth paths in any letter case for a
-    // signed-in browser, before reading the session or reaching the API.
+    // CONTROL: green as written. A signed-in browser that asks for one of the seven proxied auth
+    // paths in another letter case is answered 404 with no body, and nothing is forwarded. The
+    // session is live on purpose: with none, the session gate answers a path the block does not
+    // name with 401 and forwards nothing (the theory below), so only a signed-in row can show a
+    // request reaching the API. Falsified one comparison at a time, never committed (2026-10-05,
+    // the whole project): with the set compared by Ordinal the six rows of the set go red, 200
+    // from the recording backend and one forwarded path, and the refresh row stays green; with
+    // the refresh branch compared by Ordinal that row alone goes red, the same way.
     [Theory]
     [InlineData("/API/AUTH/DEMO/CLAIM")]
     [InlineData("/Api/Auth/Login")]
