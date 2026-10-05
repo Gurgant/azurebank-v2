@@ -139,7 +139,8 @@ public class TokenRoadTests : IntegrationTestBase
         var unknown = await Client.SendAsync(Post("/api/auth/no-such-endpoint", grant, access, from: "10.0.0.7"));
 
         refused.StatusCode.Should().Be(unknown.StatusCode);
-        refused.Content.Headers.ContentType?.MediaType.Should().Be(unknown.Content.Headers.ContentType?.MediaType);
+        // In parentheses: without them a response with no content type would skip the assertion.
+        (refused.Content.Headers.ContentType?.MediaType).Should().Be(unknown.Content.Headers.ContentType?.MediaType);
         using var refusedBody = JsonDocument.Parse(await refused.Content.ReadAsStringAsync());
         using var unknownBody = JsonDocument.Parse(await unknown.Content.ReadAsStringAsync());
         refusedBody.RootElement.EnumerateObject().Select(p => p.Name)
