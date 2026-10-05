@@ -1473,12 +1473,14 @@ which is the state ADR-0063 warns of, and the one road back from it is a new dat
 the time noted at the top of the step, and before any diagnosis:
 
 1. `Show-Executions azurebank-pool`, and its control, `Show-Executions azurebank-migrate`.
-2. **Nothing is printed for the pool job:** on the owner's word,
+2. **Nothing is printed for the pool job, and no run was listed before an earlier deletion of
+   it:** on the owner's word,
    `az containerapp job delete --name azurebank-pool --resource-group $group --yes`, and its
    absence is read back: one job in the list, two role assignments. No run can now fill
    anything.
-3. **An execution is printed, in any state:** the pool may exist. On the owner's word the app is
-   stopped ([Stop the app by hand](#stop-the-app-by-hand)). From here the roads are the ones
+3. **An execution is printed, in any state, or one was listed before the job was deleted and
+   made again:** the pool may exist. On the owner's word the app is stopped
+   ([Stop the app by hand](#stop-the-app-by-hand)). From here the roads are the ones
    [Turning the demo back](#turning-the-demo-back) has for a pool job that has run: never
    `demo=false`.
 4. Only then the diagnosis: the app's revisions with their `active` flag, and
@@ -1587,8 +1589,9 @@ added ([If Azure says no](#if-azure-says-no)).
 
 **First.** As the owner, one request for a job `azurebank-not-the-pool` in the environment, its
 body in a file: the trigger `Schedule`, an expression that fires once a year, one small container
-of the image step 7's probe used. The body is step 7's `$job` with the name, the trigger and a
-`scheduleTriggerConfig` changed, and no program in it.
+of the image step 7's probe used. The body is step 7's `$job` without its `identity` block, with
+the name, the trigger and a `scheduleTriggerConfig` changed, and a container that has neither
+`command` nor `env`: no program, no connection string and no database identity is in it.
 
 | Read back | Expected |
 | --- | --- |
@@ -1597,7 +1600,12 @@ of the image step 7's probe used. The body is step 7's `$job` with the name, the
 
 **If it is accepted:** on the owner's word, given at once, that job is deleted (it is this step's
 own and has not run), its absence is read back, and the session stops: the exception is wider
-than a name. The policy goes back by step 23's way back until a change has put it right.
+than a name. The policy goes back by step 23's way back until a change has put it right. With the
+pool job in place, that is expected to refuse every later write of it: a deployment with the demo
+on would stop when it moves the pool job, after its migration, and only `--app-only` would still
+move the app. So it is taken on the owner's word, and the change that puts the rule right comes
+before the next deployment. A run of the template without that override writes the exception
+again: no file remembers `scheduledJobs=[]`. Expected, not seen.
 
 **Second.** Not within ten minutes of a run of the job. As the owner, one PATCH of the pool job
 that asks for two runs at once, as step 15 asks for two replicas: the body in a file, holding
@@ -1820,7 +1828,7 @@ been sent, so every row is a refusal that has not been seen.
 | --- | --- |
 | The policy definition with its exception by name is refused, or the what-if of step 23 would touch the app, a job, the action group or an alert | Answer "no" where it is the what-if, and stop. The parameter `allowedJobTriggers` with `Schedule` in it is not used to get round it: it would let the migrate job be scheduled too |
 | The run of step 25 is refused by the policy | Step 25's table: three reads say whether the app's part was applied; wait 15 minutes and run the step again as written. The third refusal is a stop |
-| Step 25's deployment answers `Succeeded` and `--check` does not pass | Before the job's next run: the pool job is deleted if it has no execution, the app is stopped if it has one (step 25). Only then the diagnosis |
+| Step 25's deployment answers `Succeeded` and `--check` does not pass | Before the job's next run: the pool job is deleted if no run of it was ever listed, the app is stopped if one was (step 25). Only then the diagnosis |
 | The start by hand of step 26 is refused | Wait for the job's next run and read that execution |
 | A deployment as the identity is refused naming `userAssignedIdentities/assign/action` on the pool job (step 28) | Stop, as for the migrate job and the app: no role is created |
 | A scheduled job under another name is accepted, or two runs at once on the pool job are (step 29) | The job of the first is deleted, the parallelism of the second put back to 1, each at once and on the owner's word; then stop |
@@ -2183,7 +2191,7 @@ the code of the app.
 
 | What you see | What it means | What to do |
 | --- | --- | --- |
-| "The app is not in the shape this script deploys onto", then "Demo__Enabled is true in ['bff'] and not in ['api']", either way round, or "Demo__Enabled in the container ... is something the template never writes" | The app's two containers do not say the same thing about the demo, or one carries the setting with something other than the plain `true` or `false`. The template writes both from one switch, so somebody changed a setting by hand. No side is chosen: nothing was changed, and a `--check` that meets it says "(nothing was moved)" | `secrets.ps1` refuses such an app as well ("The two containers of the deployed app disagree about Demo__Enabled. Nothing was written."), so the owner first puts the setting right on the app itself, then runs the template and `--check`. Which value is right is not a guess: if the pool job has an execution, it is on ([Turning the demo back](#turning-the-demo-back)). This repair has not been rehearsed |
+| "The app is not in the shape this script deploys onto", then "Demo__Enabled is true in ['bff'] and not in ['api']", either way round, or "Demo__Enabled in the container ... is something the template never writes" | The app's two containers do not say the same thing about the demo, or one carries the setting with something other than the plain `true` or `false`. The template writes both from one switch, so somebody changed a setting by hand. No side is chosen: nothing was changed, and a `--check` that meets it says "(nothing was moved)" | `secrets.ps1` refuses such an app as well ("The two containers of the deployed app disagree about Demo__Enabled. Nothing was written."), so the owner first puts the setting right on the app itself, then runs the template and `--check`. Which value is right is not a guess: if a run of the pool job was ever listed, it is on ([Turning the demo back](#turning-the-demo-back)). This repair has not been rehearsed |
 | "The app says the demo is on, and the job azurebank-pool could not be read: ..." | With the demo on, a deployment and a `--check` need that job, and no answer of Azure's is read as "there is no pool job": what Azure answers for a job that is not there has not been seen. Nothing was changed. Every workflow deployment stops here until the job is back, and only `--app-only`, which runs no migration, still moves the app | If the job was never created or is gone by accident: a run of the template creates it again, since `secrets.ps1` keeps the switch. If it was deleted on purpose, that is the first step of a road of [Turning the demo back](#turning-the-demo-back): finish that road. If it is there and Azure refuses the read: the role assignments, which must be three |
 | `--pool-run`: "The job azurebank-pool could not be read: ... Nothing was started. infra/main.bicep writes that job only with the demo on" | The same read, by the command that asks the app nothing. On a deployment where the demo was never turned on there is no such job to start. `--pool-log` has no sentence of its own for it: there the read of the executions ends in Azure's words | Turn the demo on first (step 25), or read the refusal as above |
 | "The executions of the job azurebank-pool could not be read, so whether a pool run is in progress is not known: ..." | The job was read a moment before, and the read of its executions failed. Nothing was changed, or with `--pool-run` nothing was started | Run it again. Refused again: `Show-Executions azurebank-pool` as the owner, and the role assignment on the pool job |
@@ -2195,7 +2203,7 @@ the code of the app.
 | `--check`: "After 180 s the list of the app's revisions did not show ... answering alone (...), so an answer could still come from another revision" | Another revision had not gone inactive, or the latest was not in the list. Nothing was proved, nothing was moved | The same |
 | `--check`: "The list of the app's revisions came with a link to a next page, and this script reads one answer" | Whether Azure gives that list in pages is recorded nowhere here. A page that was not read could hold a revision that is still active, so the check stops and proves nothing | Read the revisions by hand, names and `active` only. If Azure always sends that link, `--check` cannot pass until the script reads on: a change of `deploy.py` |
 | `--check`: "The app is in shape and reports no address (its ingress holds no host name), so there is nothing to ask" | The shape check passed and the app's answer names no host. Nothing was proved, nothing was moved | Read the app's ingress; run the template again |
-| `--check`: "The pool job's PIN pepper (its secret pin-pepper) differs from the app's. Nothing was moved, and no value was shown.", or "connection string (its secret app-connection)", or both | The job holds another pepper than the API verifies with, or signs in with another string than the app. With another pepper no copy that job built takes a PIN, and every status stays good | For the pepper: on the owner's word, stop the app, so that no visitor meets a copy whose PIN fails. Then a run of the template, which writes the job's two secrets from the app's again, and `--check`. A secret that changed outside the template is a change nobody ordered: read [If something was stolen](#if-something-was-stolen). The copies built with the other pepper are not repaired by any of this: a run deletes a claimed one when its time is over, and a free one once it is too old to hand out. Reasoned, not rehearsed |
+| `--check`: "The pool job's PIN pepper (its secret pin-pepper) differs from the app's. Nothing was moved, and no value was shown.", or "connection string (its secret app-connection)", or both | The job holds another pepper than the API verifies with, or signs in with another string than the app. With another pepper no copy that job built takes a PIN, and every status stays good | For the pepper: on the owner's word, stop the app, so that no visitor meets a copy whose PIN fails ([Stop the app by hand](#stop-the-app-by-hand)). Making the two equal again is a run of the template, which writes the job's two secrets from the app's, and then `--check`. Both need the app started again: what a run of the template or a `--check` does with a stopped app has not been seen, and while the app is up a visitor can be given such a copy. Equal secrets do not repair the pool: a free copy built with the other pepper is still handed out, with a PIN that fails, until a run deletes it, and none does before the copy is too old to count (`Demo:Pool:MaxFreeAgeHours`, 44 hours by default); a claimed one goes when its time is over. So before visitors are let back the owner chooses: those hours with the app stopped, or the new database of [Turning the demo back](#turning-the-demo-back). A secret that changed outside the template is a change nobody ordered: read [If something was stolen](#if-something-was-stolen). Reasoned, not rehearsed |
 | `--check`: "The pool job's secrets could not be compared with the app's: ... lists no single value of text for ..." | One side lists that secret twice, not at all, empty, or as something that is not text. Two that hold nothing are not "the app's" | Read the secret names of the app and of the job; run the template again; check again |
 | `--check`: "The secrets of ... could not be listed, so the pool job's secrets could not be compared with the app's: ..." | Azure refused a listing, or its answer could not be read. Listing the app's and the job's secrets takes the owner's sign-in: it is the one thing the deployment identity is refused on purpose | Run it as the owner. An answer that "could not be read" is the CLI's output, not Azure's refusal: run it again |
 | `--check`: "... This was --check, not a deployment: nothing was moved and nothing is put back; where that says to deploy again, check again." | The smoke test failed or was unproven inside a check. Its own words are a deployment's; this sentence corrects them | The row of that smoke test's sentence, with "check again" for "deploy again" |
@@ -2296,11 +2304,14 @@ to), the steps are these, in this order. They have not been rehearsed.
    three places an identity can be used from. The pool job is one of them: it carries
    `azurebank-app`, the app's connection string and the PIN pepper, and the deployment identity
    can write it and start it. Until 2026-10-05 this step named the app and one job. First, and
-   kept: `Show-Executions azurebank-pool`. Whether the pool job has run decides step 4, and once
-   the job is deleted its executions are not expected to be readable.
+   kept: `Show-Executions azurebank-pool`. Whether the pool job has ever run decides step 4, and
+   once the job is deleted its executions are not expected to be readable: a job that was deleted
+   and made again is expected to show only its own.
 
    ```powershell
-   Show-Executions azurebank-pool             # kept: nothing printed means the pool job never ran
+   # Kept. Nothing printed means this job never ran: it says nothing of a job of that name that
+   # was deleted before it.
+   Show-Executions azurebank-pool
    az containerapp delete --name azurebank --resource-group $group --yes
    az containerapp job delete --name azurebank-migrate --resource-group $group --yes
    az containerapp job delete --name azurebank-pool --resource-group $group --yes   # if the demo was turned on
@@ -2340,13 +2351,15 @@ to), the steps are these, in this order. They have not been rehearsed.
    `demo: not written, the template's default applies`, and the app comes back with both flags
    off. On a database that holds the pool that is the state
    [Turning the demo back](#turning-the-demo-back) forbids: registration open beside the pool.
-   The script cannot know what the database holds and does not guess. **So if the pool job had
-   run (step 1's read), pass `-DemoOn`**, which also brings the pool job back:
+   The script cannot know what the database holds and does not guess. **So if a run of the pool
+   job was ever listed on this database (step 1's read, or a read kept before an earlier deletion
+   of the job), pass `-DemoOn`**, which also brings the pool job back. Where the demo was turned
+   on and no such read was kept, pass it too: with it registration stays closed.
 
    ```powershell
    try {
-       ./infra/secrets.ps1 -Action New -DeployApp -ImageTag '<a known commit>'            # the pool job never ran
-       # ./infra/secrets.ps1 -Action New -DeployApp -ImageTag '<a known commit>' -DemoOn  # the pool job had run
+       ./infra/secrets.ps1 -Action New -DeployApp -ImageTag '<a known commit>'            # no run was ever listed
+       # ./infra/secrets.ps1 -Action New -DeployApp -ImageTag '<a known commit>' -DemoOn  # one was, or no read was kept
        Invoke-Template 'after-a-theft'
    } finally {
        ./infra/secrets.ps1 -Action Remove
@@ -2608,6 +2621,13 @@ Show-Executions azurebank-migrate            # its control: this one must print 
 Not "whether step 26 has run": the job fills the pool by itself at its next run. And the control
 comes with it, so that a silence is the function's answer and not its failure.
 
+**The read holds only for a job that was never deleted.** A pool job that was deleted and made
+again is expected to have no execution of its own, while the roles and the copies an earlier run
+wrote are still in the database. After any road that deleted the job once a run had been listed
+(below, "If it is the job itself that must not run again";
+[If something was stolen](#if-something-was-stolen)), nothing printed is not the line: what
+counts is the read that was kept before that deletion, and the roads are the two further down.
+
 **Why an execution is the line.** The first run of the pool job creates the two roles a
 registration needs. Before it, a registration on this database cannot commit
 ([Not measured yet](#not-measured-yet) has the local measurement). After it, an app whose flags
@@ -2620,7 +2640,8 @@ claimed copy signs in past its time.
 
 1. The read above prints nothing for the pool job, and the control prints. Both are kept before
    anything is deleted: once the job is gone, its executions are not expected to be readable.
-   **An execution, in any state, ends this road:** the roads are then the two further down.
+   **An execution, in any state, ends this road, and so does one that was listed before an
+   earlier deletion of the job:** the roads are then the two further down.
 2. On the owner's word, `az containerapp job delete --name azurebank-pool --resource-group $group --yes`,
    and its absence is read back: one job in the list, and two role assignments, since the third
    is expected to go with the job.
