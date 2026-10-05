@@ -211,13 +211,19 @@ a transfer's PIN rather than the BFF, and since
 [ADR-0042](../../../docs/adr/0042-a-transfer-authorisation-is-bound-and-spent-once.md) the PIN does
 not travel with the transfer at all: it is presented to the authorisation mint
 (`POST /api/transfers[/internal]/authorizations`), which returns a one-shot id the transfer carries
-in the `Step-Up-Authorization` header for the API to bind and spend. A withdrawal is the one money
-move that still sends its PIN in the body. The BFF no longer gates a transfer at level 2, because
-double-gating would leave the weaker of the two checks in the path and keep the five-minute session
-window alive for money movement. `/full-number` is the only route behind the level-2 gate. The
-no-session refusal is not transfer-specific either: since `d74603c` (2026-08-20) every `/api/*`
-request that is not one of the seven 404'd auth paths above, any method, is refused at the BFF with
-the API's own 401 shape unless a live session resolves.
+in the `Step-Up-Authorization` header for the API to bind and spend. Since
+[ADR-0056](../../../docs/adr/0056-a-withdrawal-is-authorised-like-a-transfer.md) a withdrawal sends
+no PIN either: its PIN is presented to its own mint
+(`POST /api/transactions/withdraw/authorizations`), and the withdrawal carries the one-shot
+authorisation in the `Step-Up-Authorization` header, as a transfer does; no money move sends its PIN
+in its own body any more. The BFF no longer gates a transfer at level 2, because double-gating would
+leave the weaker of the two checks in the path and keep the five-minute session window alive for
+money movement. `/full-number` is the only route behind the level-2 gate. The no-session refusal is
+not transfer-specific either: since `d74603c` (2026-08-20) every `/api/*` request that is not one of
+the seven 404'd auth paths above, any method, is refused at the BFF with the API's own 401 shape
+unless a live session resolves.
+*(Until 2026-09-22 this paragraph said a withdrawal was the one money move that still sends its PIN
+in the body.)*
 
 ---
 
@@ -292,17 +298,20 @@ private static readonly HashSet<string> BlockedProxiedAuthPaths =
 private static bool RequiresSession(string path) =>
     path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase);
 
-// Level 2 has two branches. The exact-path set is EMPTY since ADR-0041 — transfers carry their PIN
-// in-band and the API verifies it — and is kept only as the place a future exact-path route would
-// go. The prefix x suffix pair, checked for ANY method, is the only level-2 enforcement left.
+// Level 2 has two branches. The exact-path set is EMPTY since ADR-0041 — the API verifies transfer
+// authorisations (ADR-0042) rather than the BFF gating them — and is kept only as the place a
+// future exact-path route would go. The prefix x suffix pair, checked for ANY method, is the only
+// level-2 enforcement left.
+// (Until 2026-10-05 this comment said transfers carry their PIN in-band and the API verifies it;
+// since ADR-0042 a transfer carries no PIN.)
 private static readonly HashSet<string> PinRequiredPaths = new(StringComparer.OrdinalIgnoreCase);
 private static readonly string[] PinRequiredPrefixes = { "/api/accounts/" };
 private static readonly string[] PinRequiredSuffixes = { "/full-number" };
 ```
 
-What a caller observes, measured through the BFF (:5000 → API :7215, Development) — rows 2–4 on
+What a caller observes, measured through the BFF (:5000 → API :7215, Development) — rows 3–5 on
 2026-09-03 (`070803f`) for GET and POST, row 1 on 2026-08-19 (ADR-0041 amendment), and the PATCH and
-DELETE verbs of row 2 on 2026-08-20 (`d74603c`):
+DELETE verbs of row 3 on 2026-08-20 (`d74603c`):
 
 | Request | Session cookie | Answer |
 |---|---|---|
