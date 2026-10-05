@@ -2,7 +2,8 @@
 
 Every Azure and HTTP answer below is invented here. The tests prove what the script does with an
 answer; what Azure and the app really answer is read on the first deployment (README.md, "Not
-measured yet"). Time is a counter: a wait of fifteen minutes costs nothing.
+measured yet"). Time is a counter: a wait of fifteen minutes costs nothing. One thing is read
+from the real clock: how old an execution is, against the start time a test gives it.
 """
 
 import ast
@@ -751,8 +752,10 @@ class InProgressTests(Offline):
         ended = execution('ended', 'Succeeded', self.ago(30))
         for blocking in (execution('running', 'Running'), execution('processing', 'Processing'),
                          # A state that is neither running nor finished, on a run young enough: the
-                         # timeout and two minutes.
-                         execution('young', 'Unknown', self.ago(700)), execution('no-state', None, self.ago(5)),
+                         # timeout and two minutes. Its age is read from the real clock, so it is
+                         # a minute from either bound, the timeout alone and the timeout and two
+                         # minutes: a pause of the machine shorter than that changes nothing.
+                         execution('young', 'Unknown', self.ago(660)), execution('no-state', None, self.ago(5)),
                          execution('strange', {'state': 'x'}, self.ago(5)),
                          # No start time, or one nobody can read, is not proof of age.
                          execution('no-start', 'Unknown'), execution('unreadable', 'Unknown', 'yesterday')):
