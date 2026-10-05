@@ -1,7 +1,7 @@
 // What a run with deployApp=true must be given, checked by Azure on the values main.bicep hands
 // over: the full commit SHA of the images, the address the alerts write to, and the eight
 // application secrets (infra/secrets.ps1 -DeployApp writes them all). main.bicep deploys this only
-// when deployApp is true, and the app, the job and the action group wait for it. It creates
+// when deployApp is true, and the app, its jobs and the action group wait for it. It creates
 // nothing.
 //
 // The check was once the app's name, made to fail() when a value was missing. A what-if works out

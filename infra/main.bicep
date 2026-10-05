@@ -5,7 +5,7 @@ param location string = 'italynorth'
 param imageTag string = ''
 @description('False creates what needs no image: the environment, the log workspace, SQL, the three identities and the deployment role. True adds the app, the migrate job and the two role assignments; with demo true as well, the pool job and a third role assignment.')
 param deployApp bool = false
-@description('True turns the public demo on: the flag on both containers of the app, and the pool job with its role assignment. infra/secrets.ps1 writes it: what the deployed app does now, or true with -DemoOn.')
+@description('True turns the public demo on: the flag on both containers of the app, and the pool job with its role assignment. infra/secrets.ps1 writes it: what the deployed app does now, or true with -DemoOn. False removes nothing: a pool job that already exists is expected to stay and to keep its schedule.')
 param demo bool = false
 param entraAdminObjectId string
 param entraAdminLogin string
@@ -80,7 +80,7 @@ resource environment 'Microsoft.App/managedEnvironments@2026-07-01' = {
   }
 }
 
-// What the app and the job print, kept 30 days. The daily cap is the one bound on this meter, and
+// What the app and its jobs print, kept 30 days. The daily cap is the one bound on this meter, and
 // not a hard one: the workspace stops taking lines some time after the cap is reached, and what
 // got through by then is billed. No shared key: nothing here sends or reads with one.
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (keepLogs) {
@@ -453,8 +453,11 @@ resource pool 'Microsoft.App/jobs@2025-01-01' = if (deployApp && demo) {
           env: [
             { name: 'ConnectionStrings__DefaultConnection', secretRef: 'app-connection' }
             { name: 'Security__PinPepper', secretRef: 'pin-pepper' }
-            // A plain word and not the switch: the job exists only while the demo is on, and the
-            // pool's commands refuse to run with it off (backend/tools/AzureBank.Seeder/README.md).
+            // A plain word and not the switch: this template writes the job only with the demo on,
+            // and the pool's commands refuse to run with it off
+            // (backend/tools/AzureBank.Seeder/README.md). A later run with demo false sends no job
+            // and is not expected to delete this one: it would keep this word, and its schedule,
+            // beside an app whose two flags are off, the state named over the job.
             { name: 'Demo__Enabled', value: 'true' }
             { name: 'Demo__Claim__MaxPerClientPerDay', value: demoClaimsPerClient }
           ]

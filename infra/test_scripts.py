@@ -1755,7 +1755,7 @@ class TemplateTests(unittest.TestCase):
                          ('Schedule', 600, {'cronExpression': '0 */4 * * *', 'parallelism': 1,
                                             'replicaCompletionCount': 1}))
 
-        # And the job is there exactly when both containers of the app are told that the demo is on.
+        # And a run sends the job exactly when it tells both containers of the app that the demo is on.
         def told(run):
             return {(resource['name'], container['name']): entry['value']
                     for resource in run.values() if resource['type'] in (APP, JOB)
@@ -2147,8 +2147,8 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(sorted(configuration),
                          ['replicaRetryLimit', 'replicaTimeout', 'scheduleTriggerConfig', 'secrets', 'triggerType'])
         # What it is told: where the database is and the pepper, by reference; that the demo is
-        # on, as a plain word, because the job exists only while it is; and the cap on one
-        # address's claims, the one expression the api container has.
+        # on, as a plain word, because the template writes the job only with the demo on; and the
+        # cap on one address's claims, the one expression the api container has.
         (cap,) = [entry for entry in self.container('api')['env'] if entry['name'] == 'Demo__Claim__MaxPerClientPerDay']
         self.assertEqual(container.get('env'), [
             {'name': 'ConnectionStrings__DefaultConnection', 'secretRef': 'app-connection'},
