@@ -3063,9 +3063,15 @@ class PoolRunTests(DeployCase):
         self.assertEqual(self.clock.now - before, 180)
 
     def test_an_exit_1_says_to_read_the_line_before_a_second_start(self):
-        self.azure.pool_outcome = ends_as(pool_finished(status='Failed', code=1))
+        self.azure.pool_outcome = ends_as(pool_finished(status='Failed', code=1, message='Container pool failed'))
         with self.assertRaises(RuntimeError) as raised:
             self.pool_run()
+        # CONTROL: green as written. The verdict is the line of the owner's terminal: what Azure
+        # says of the run follows it, as it never does inside GitHub Actions. On exit 1 it is the
+        # first thing there is to read, before the log workspace has a line. Seen red with the
+        # verdict printed as a workflow run prints it.
+        self.assertEqual(self.said()[-1],
+                         pool_verdict('Failed', 1, NOT_FINISHED[0]) + ' Azure says: Container pool failed')
         message = str(raised.exception)
         self.assertIn('exit code 1, did not finish, and left no summary line; read its last line before it is '
                       'started again). It was not started again.', message)
