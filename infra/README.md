@@ -1635,7 +1635,10 @@ and at a `--check`.
 **What this step does not make due.** Nothing on Azure refuses a changed expression: the policy
 has no rule for one, and the deployment identity may write the whole job. A schedule changed to
 every minute is caught by `deploy.py`'s shape check, at the next deployment or `--check`, and by
-nothing sooner.
+nothing sooner. Nor does any rule refuse a second execution beside one that is running: the
+policy's rule is on `parallelism`, which is the replicas of one execution. A start by hand, or a
+schedule or a timeout changed so that two executions overlap, is looked for by `deploy.py`
+alone: its one read before a deployment or a `--pool-run`, and its shape check.
 
 #### 30. The address the app sees (operator; **writes** nothing in the database; spends the shared sign-in limit for a minute)
 
@@ -1759,7 +1762,7 @@ database's $0.161 a day), and the road to remove it all is
 | If | Then |
 | --- | --- |
 | The environment is refused with `ExpressEnvironmentFeatureNotSupported`, or `Assert-EnvironmentMode` throws, here or at the start of a later session: a mode other than `WorkloadProfiles`, or no mode with the logs not on `azure-monitor` | Stop. The template names the mode because a request that names none was refused that way; if it is refused all the same, that line was lost or is not honoured |
-| The deployment is refused on the **policy definition** | Run it again with the policy off (`Invoke-Template 'foundation' @('denyPolicy=false')`), pass the same override on every later run, and write down that the shape then rests on `deploy.py`'s own check alone. The trial's definition was an earlier one, without four of this rule's conditions; this rule, all of them in it, was accepted at step 2 on 2026-10-03 ([Measured on Azure](#measured-on-azure)) |
+| The deployment is refused on the **policy definition** | Run it again with the policy off (`Invoke-Template 'foundation' @('denyPolicy=false')`), pass the same override on every later run, and write down that the shape then rests on `deploy.py`'s own check alone. The trial's definition was an earlier one, without four of this rule's conditions; the rule with those four, as it was until 2026-10-05, was accepted at step 2 on 2026-10-03 ([Measured on Azure](#measured-on-azure)). Since 2026-10-05 the rule also holds an exception by name, which has not been sent to Azure: a refusal of the definition for that exception is a stop, not a run with the policy off (the last table of this section; ADR-0064, decision 4). Until 2026-10-05 this row said that this rule, all of them in it, was accepted |
 | It is refused on the **custom role** or on the **SQL server**; or the **second run** is refused, or its what-if shows the administrator changed or removed | Stop. There is one shape of the server in this folder and no other is written down: sent by hand it was accepted, twice, and so it was from the template at steps 2 and 3 on 2026-10-03. And there is no fallback that keeps the deployment identity away from the secrets |
 | It is refused on the **workspace**, the destination, the diagnostic setting or the cap | `./infra/secrets.ps1 -Action New -LogsOff`, run again, and say so: nothing is kept then. If a workspace or a setting was created on the way, [Switching the logs off](#switching-the-logs-off) |
 | A read in step 4 differs | A defect in the template: fix it before going on |
@@ -2989,10 +2992,13 @@ and a connect timeout of 10 s.
 - A custom policy definition at the subscription, assigned to the resource group, with the effect
   Deny: accepted. **It refused at once**: a job at 0.75 vCPU got `RequestDisallowedByPolicy` on the
   first try, within seconds of the assignment, and a job at 0.5 vCPU was accepted. The rule sent
-  was an earlier one than this folder's: it had every condition of `guardrails.bicep` but four
-  (an init container on an app, an init container on a job, parallel runs under a schedule
-  trigger and under an event trigger). Those four were first sent in the definition step 2 of the
-  first deployment created on 2026-10-03; none of them has been seen refusing.
+  was an earlier one than this folder's: it had every condition `guardrails.bicep` had on
+  2026-10-03 but four (an init container on an app, an init container on a job, parallel runs
+  under a schedule trigger and under an event trigger). Those four were first sent in the
+  definition step 2 of the first deployment created on 2026-10-03; none of them has been seen
+  refusing. The exception by name that the file has held since 2026-10-05 was in neither rule
+  and has not been sent to Azure. Until 2026-10-05 this line said "every condition of
+  `guardrails.bicep`".
 - A budget on the subscription, 20 a month, with four e-mail notifications to one mailbox:
   accepted and read back. No e-mail was due in the seconds it existed.
 

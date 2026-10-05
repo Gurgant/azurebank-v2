@@ -204,7 +204,12 @@ wrong with the copies, and the extra ones are deleted when they grow too old to 
 whose runs end before the next starts keeps it from happening again. On the Azure deployment
 the job's runs are four hours apart and a run may take 14 minutes at most; `infra/deploy.py`
 starts nothing beside a run that is in progress, and the resource group's policy is expected to
-refuse the job two runs at once (`infra/README.md`; none of it seen on Azure yet).
+refuse the job a parallelism above 1, which is two replicas of one execution. No rule of that
+policy refuses a second execution beside one that is running. A run started some other way than
+`--pool-run` is seen only by `deploy.py`'s one read of the executions, before a deployment or a
+`--pool-run`; a schedule or a timeout changed on the deployed job only by its shape check, at a
+deployment, a `--check` or a `--pool-run` (`infra/README.md`, "What each identity can do"; none
+of it seen on Azure yet).
 
 ## 2. A copy could not be built (12)
 
