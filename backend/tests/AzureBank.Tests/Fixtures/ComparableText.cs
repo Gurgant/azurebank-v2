@@ -21,7 +21,9 @@ namespace AzureBank.Tests.Fixtures;
 /// so gives back the one text it came from. Two encoded texts are equal exactly when the two
 /// texts are: the comparison is exact, and a parenthesis where a brace belongs fails it
 /// (<c>ComparableTextTests</c> holds the helper to this on a few pairs). A failure shows both
-/// texts with <c>%7B</c> and <c>%7D</c> where their braces are.
+/// texts with <c>%7B</c> and <c>%7D</c> where their braces are. The index the message names
+/// counts the encoded text, and the stretch it prints can begin inside a token (<c>…7B</c> for
+/// a brace).
 /// </para>
 /// </remarks>
 internal static class ComparableText
