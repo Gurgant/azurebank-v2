@@ -322,15 +322,17 @@ public class AuthLevelMiddleware
     /// <summary>
     /// EVERY proxied request must have a live session before it leaves the BFF — no method
     /// condition, no exception list.
+    /// (Until 2026-10-05 that was not true of the bare path /api, which the proxy's catch-all route
+    /// takes too: only the "/api/" prefix was tested, and with no session a request for /api was
+    /// forwarded.)
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Scoped to /api/ deliberately: the BFF's own controllers live under /bff/ and are mapped after
-    /// this middleware, so a wider prefix would lock the front door. The test uses the RAW path
-    /// matching "/api/" or the bare "/api" so neither can slip through a trim; there is no longer
-    /// anything matched on the normalized one, because there is nothing left to exempt.
-    /// (Until 2026-10-05 this claimed "so \"/api/\" itself cannot slip through a trim", which missed
-    /// the bare /api path.)
+    /// Scoped to /api and the paths under it deliberately: the BFF's own controllers live under
+    /// /bff/ and are mapped after this middleware, so a wider prefix would lock the front door.
+    /// The prefix test uses the RAW path so "/api/" itself cannot slip through a trim; there is no
+    /// longer anything matched on the normalized one, because there is nothing left to exempt.
+    /// (Until 2026-10-05 this said "Scoped to /api/ deliberately": the bare /api was outside it.)
     /// </para>
     /// </remarks>
     /*

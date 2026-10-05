@@ -194,8 +194,9 @@ AzureBank.Bff/
 
 ### Proxied Routes
 
-The bare `/api` path and `/api/*` are proxied to the backend API with the session's JWT injected — once the request has passed
-`AuthLevelMiddleware`, which refuses three things locally (see Middleware Pipeline below):
+The bare `/api` path and `/api/*` are proxied to the backend API with the session's JWT injected —
+once the request has passed `AuthLevelMiddleware`, which refuses three things locally (see
+Middleware Pipeline below):
 
 | BFF Route | Backend Route | What the BFF requires |
 |-----------|---------------|-----------------------|
@@ -220,10 +221,12 @@ in its own body any more. The BFF no longer gates a transfer at level 2, because
 leave the weaker of the two checks in the path and keep the five-minute session window alive for
 money movement. `/full-number` is the only route behind the level-2 gate. The no-session refusal is
 not transfer-specific either: since `d74603c` (2026-08-20) every `/api/*` request that is not one of
-the seven 404'd auth paths above, and the bare `/api` path itself (since 2026-10-05), any method, is refused at the BFF with the API's own 401 shape
-unless a live session resolves.
+the seven 404'd auth paths above, and since 2026-10-05 the bare `/api` path too, any method, is
+refused at the BFF with the API's own 401 shape unless a live session resolves.
 *(Until 2026-10-05 this paragraph said a withdrawal was the one money move that still sends its PIN
-in the body; that had been false since ADR-0056, `267d33e` (2026-09-22). And until 2026-10-05 it said "every /api/* request" without naming the bare /api path.)*
+in the body; that had been false since ADR-0056, `267d33e` (2026-09-22). Until the same day it did
+not name the bare `/api` path, which the proxy's catch-all route takes too: with no session a
+request for that path was forwarded.)*
 
 ---
 
@@ -323,7 +326,7 @@ three paths joined it with `bd4fa39` (2026-09-29).)*
 |---|---|---|
 | `/api/auth/login`, `/api/auth/register`, `/api/auth/refresh`, `/api/auth/revoke`, `/api/auth/logout`, `/api/auth/session-stamps` | any, even a live one | `404` |
 | `/api/auth/demo/claim` (not in the measurements above: on the compose stack, Production, the demo on, 2026-10-04) | live | `404`, no body. With no session it is `404` too, where a path under `/api` that names nothing is `401` (`AuthLevelMiddlewareTests`) |
-| `/api` (not in the measurements above: on the test host, 2026-10-05) and any other `/api/*` route, any method | none, never issued, or replayed after logout | `401` — the API's own `AUTH_TOKEN_MISSING` body, no `X-Auth-Level-*` header |
+| `/api` itself (not in the measurements above: on the test host, 2026-10-05) and any other `/api/*` route, any method | none, never issued, or replayed after logout | `401` — the API's own `AUTH_TOKEN_MISSING` body, no `X-Auth-Level-*` header |
 | `GET /api/accounts/{id}/full-number` | live, level 1 | `403 STEP_UP_REQUIRED`, `X-Auth-Level-Required: 2`, `X-Auth-Level-Current: 1` |
 | `POST /api/transfers` | live, level 1 | proxied — `400` model-state from the API on `{}`; its proof is the one-shot authorisation in the `Step-Up-Authorization` header, which the API binds and spends (ADR-0042) |
 
