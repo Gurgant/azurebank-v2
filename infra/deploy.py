@@ -416,11 +416,13 @@ def pool_drift(job):
     return drift + identity_drift(job, APP_IDENTITY)
 
 
-def assert_shape(what, drift, when):
+def assert_shape(what, drift, when, before='deploying'):
+    """Refuse a shape that drifted. `before` ends the sentence with what whoever is refused had
+    asked for: a deployment, unless the caller says otherwise."""
     if drift:
         raise ShapeError(f'{what} is not in the shape this script deploys onto ({when}): '
                          f'{"; ".join(drift)}. Put it right with the template (infra/README.md) '
-                         'before deploying.')
+                         f'before {before}.')
 
 
 def demo_says(container):
@@ -1419,7 +1421,7 @@ def pool_run(subscription, resource_group, in_actions=False):
         raise RuntimeError(f"The job {POOL_JOB} could not be read: {str(error).rstrip('.')}. Nothing "
                            'was started. infra/main.bicep writes that job only with the demo on: see '
                            'infra/README.md, "When something fails".') from None
-    assert_shape(f'The job {POOL_JOB}', pool_drift(job), 'nothing was started')
+    assert_shape(f'The job {POOL_JOB}', pool_drift(job), 'nothing was started', before='it is started')
     timeout = job['properties']['configuration']['replicaTimeout']
     known = {execution['name'] for execution in refuse_beside_a_pool_run(job_id, job, starting=True)}
     try:

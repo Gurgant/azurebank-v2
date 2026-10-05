@@ -1182,11 +1182,12 @@ class DeploymentTests(DeployCase):
         self.assertEqual(before.count(BEFORE), 2, 'the latest revision and the latest ready one')
 
 
-def out_of_shape(what, *drift, when='nothing was changed'):
+def out_of_shape(what, *drift, when='nothing was changed', before='deploying'):
     """The whole sentence of a refusal for a shape, so that a test holds every word of it: what
-    was found is in it only where the drift itself says so."""
+    was found is in it only where the drift itself says so. `before` is what whoever was refused
+    had asked for: a deployment, unless the test says otherwise."""
     return (f'{what} is not in the shape this script deploys onto ({when}): {"; ".join(drift)}. '
-            'Put it right with the template (infra/README.md) before deploying.')
+            f'Put it right with the template (infra/README.md) before {before}.')
 
 
 def disagree(on, off):
@@ -3064,8 +3065,11 @@ class PoolRunTests(DeployCase):
                 drift(self.azure)
                 with self.assertRaises(deploy.ShapeError) as raised:
                     self.pool_run()
-                self.assertEqual(str(raised.exception),
-                                 out_of_shape('The job azurebank-pool', named, when='nothing was started'))
+                # The last words are a start's: nobody was deploying.
+                self.assertEqual(str(raised.exception), out_of_shape(
+                    'The job azurebank-pool', named, when='nothing was started', before='it is started'))
+                self.assertTrue(str(raised.exception).endswith(
+                    ' Put it right with the template (infra/README.md) before it is started.'), raised.exception)
                 self.assertEqual(self.asked(), [('GET', POOL_ID)], 'not even its executions are read')
                 for hidden in ('MARKER', '* * * * *'):
                     self.assertNotIn(hidden, str(raised.exception) + self.printed())
