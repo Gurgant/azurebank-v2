@@ -296,8 +296,8 @@ SELECT DeliveredAt, DeliveryReceipt FROM SubscriberNotices
 ```
 
 *(2026-10-05: the directory on the NOTIFIED line is shortened as the command line above it already
-was; it carried the name of a Windows account. Shortened, not struck, so the name is no longer
-published.)*
+was; it carried the name of a Windows account. Shortened, not struck, so this record no longer
+prints the name.)*
 
 The file is `docs/notices/pin-enrolled.sample.eml`, byte for byte. Then every statement in
 `docs/runbooks/pin-enrolment-repudiated.md`, run once against the same store with that reference:
