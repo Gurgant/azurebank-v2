@@ -1910,9 +1910,20 @@ class TemplateTests(unittest.TestCase):
         # One role, the nine actions above, and each assignment is named for the resource it is on.
         self.assertEqual({resource['properties']['roleDefinitionId'] for resource in assignments},
                          {"[variables('deployRoleId')]"})
+        # CONTROL, the last two lines of the loop: green as written (the three assignments had
+        # both). The role's ID in an assignment is a variable, and Bicep works out no wait from
+        # one: the wait for the role definition is written by hand, once for each. Expected of
+        # Azure and not provoked: in a run that creates the definition and an assignment
+        # together, an assignment that does not wait can be sent first. And each says its
+        # principal is a service principal. Seen red with the pool job's assignment without its
+        # wait, which Bicep compiles and lints with no warning, and with its principal made a user.
+        (role,) = self.of_type('Microsoft.Authorization/roleDefinitions')
+        after_the_role = f"[resourceId('{role['type']}', {role['name'][1:-1]})]"
         for resource in assignments:
             self.assertEqual(resource['name'], f"[guid({resource['scope'][1:-1]}, "
                              f"resourceId('{IDENTITIES}', 'azurebank-deploy'), variables('deployRoleId'))]")
+            self.assertIn(after_the_role, resource['dependsOn'], resource['scope'])
+            self.assertEqual(resource['properties']['principalType'], 'ServicePrincipal', resource['scope'])
 
     def test_the_lock_is_on_the_database_not_on_the_server(self):
         (lock,) = self.of_type('Microsoft.Authorization/locks')
@@ -2114,13 +2125,27 @@ class TemplateTests(unittest.TestCase):
                          ['configuration', 'environmentId', 'template', 'workloadProfileName'])
         for key in ('environmentId', 'workloadProfileName'):
             self.assertEqual(pool['properties'][key], migrate['properties'][key], key)
-        # One container: the tools image at the commit every other image is at, `recycle`, a
-        # quarter of a vCPU. The policy refuses an init container and anything above half a vCPU.
+        # One container: the tools image at the commit a run names (`imageTag`), which is the
+        # migrate job's image; `recycle`; a quarter of a vCPU. The policy refuses an init
+        # container and anything above half a vCPU.
         (container,) = template['containers']
         (tool,) = migrate['properties']['template']['containers']
+        # CONTROL: green as written. The text itself, once: compared with each other only, the
+        # two jobs' images could both be another image, or the tools image at no commit. Seen
+        # red with both made the api's image, and with both made the tools image at `latest`.
+        self.assertEqual(tool['image'], "[format('ghcr.io/gurgant/azurebank-tools:{0}', parameters('imageTag'))]")
         self.assertEqual((container['name'], container.get('image'), container.get('args'), container.get('resources')),
                          ('pool', tool['image'], ['recycle'], {'cpu': "[json('0.25')]", 'memory': '0.5Gi'}))
         self.assertEqual(sorted(template), ['containers'])
+        # CONTROL: green as written. Nothing else is set on the container or in the
+        # configuration: the job carries the app's database identity and the pepper, so what it
+        # runs is held whole. A `command` is expected to replace the image's entry point
+        # (backend/tools/AzureBank.Seeder/Dockerfile) and to leave `recycle` an argument of
+        # something else. Seen red with a `command` on the container, and with an empty
+        # `registries` in the configuration.
+        self.assertEqual(sorted(container), ['args', 'env', 'image', 'name', 'resources'])
+        self.assertEqual(sorted(configuration),
+                         ['replicaRetryLimit', 'replicaTimeout', 'scheduleTriggerConfig', 'secrets', 'triggerType'])
         # What it is told: where the database is and the pepper, by reference; that the demo is
         # on, as a plain word, because the job exists only while it is; and the cap on one
         # address's claims, the one expression the api container has.
