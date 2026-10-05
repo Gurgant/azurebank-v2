@@ -2838,6 +2838,11 @@ class PoolRunTests(DeployCase):
         self.assertEqual(self.ended(), 'pool-run')
         # The job, its executions once, the one start, and its executions until that run ended.
         self.assertEqual(self.asked(), [('GET', POOL_ID), RUNS, START, RUNS, RUNS, RUNS])
+        # CONTROL: green as written. The start carries no body. A start is expected to take a
+        # container for that one execution, which the shape check before the start never reads:
+        # what runs is the job as the template wrote it, with no argument and no setting of the
+        # start's own. Seen red with a start of the pool job that carries a container.
+        self.assertEqual([body for method, _, body in self.azure.calls if method == 'POST'], [None])
         self.assertEqual(self.said(), ['Pool run execution pool-run started.',
                                        'Pool run execution pool-run: Running.',
                                        'Pool run execution pool-run: Succeeded.',
