@@ -249,8 +249,21 @@ export function LoginPage() {
 
     It lands on the dashboard whatever page the guard interrupted: a sign-in goes back to the page
     its visitor was sent away from, and a new copy starts at its dashboard.
+
+    THE KEY IS READ AT THE PRESS, as "Continue with my copy" reads it below. The button is drawn
+    for a browser that keeps no copy, and another tab may have claimed one since. A claim sent
+    then would put a second copy in that one's place with nobody asked, and end the session the
+    other tab is signed in with. So a copy the page would offer is offered: nothing is sent, and
+    the page is drawn again with "Continue with my copy" and "Get a new copy", which asks first.
+    "Would offer" is the rule above, the copy's end against the instant the page opened: a copy
+    past its end that the browser would not remove is still under the key, and is not in the way.
   */
   const tryTheDemo = async () => {
+    const kept = getDemoCopySnapshot();
+    if (kept !== null && Date.parse(kept.expiresAt) > openedAt) {
+      drawAgain();
+      return;
+    }
     setControl('claim');
     try {
       await claim().unwrap();

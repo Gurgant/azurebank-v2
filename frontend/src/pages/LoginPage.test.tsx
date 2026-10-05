@@ -505,6 +505,73 @@ describe('the sign-in page on the demo, in a browser that keeps no copy', () => 
     });
   });
 
+  it('a copy another tab claimed before "Try the demo" is pressed: nothing is sent, and the copy is offered', async () => {
+    const { requests, settled } = await openSignInPage();
+    const offered = buttonsNamed(WORDS.tryTheDemo).length;
+    // Another tab pressed "Try the demo": the key now holds the pool's first copy. This tab is
+    // told nothing and has drawn nothing since, so its button is still there.
+    rememberAClaimedCopy({ expiresAt: A_FAR_END });
+    const stillOffered = buttonsNamed(WORDS.tryTheDemo).length;
+
+    await userEvent.click(tryTheDemo());
+    await settled();
+
+    // A claim here would put a second copy in the first one's place with nobody asked, and end
+    // the other tab's session. The page offers the copy the browser keeps, which is where the
+    // one question before a new copy is asked.
+    expect({
+      offered,
+      stillOffered,
+      claims: requests.claims,
+      signIns: requests.signIns,
+      tryTheDemo: buttonsNamed(WORDS.tryTheDemo).length,
+      continue: disabledOf(WORDS.continue),
+      getNew: disabledOf(WORDS.getNew),
+      alerts: alerts(),
+      dialogs: openDialogs(),
+      where: where(),
+      kept: keptAddress(),
+    }).toStrictEqual({
+      offered: 1,
+      stillOffered: 1,
+      claims: 0,
+      signIns: 0,
+      tryTheDemo: 0,
+      continue: [false],
+      getNew: [false],
+      alerts: [],
+      dialogs: [],
+      where: 'the sign-in page',
+      kept: FIRST_COPY,
+    });
+  });
+
+  it('"Try the demo" still claims over a copy past its end that the browser would not remove', async () => {
+    // Ended a minute ago, by this browser's clock, and the removal throws: the ended copy stays
+    // under the key, and the page offers "Try the demo" all the same.
+    rememberAClaimedCopy({ expiresAt: new Date(Date.now() - 60_000).toISOString() });
+    const removals = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+      throw new Error('SecurityError');
+    });
+    try {
+      const { requests } = await openSignInPage();
+      const keptBefore = keptAddress();
+
+      await userEvent.click(tryTheDemo());
+
+      // The copy under the key is one the page would not offer, so it is not in the way of a
+      // new one: a button that found it there and did nothing would be this browser's only way in.
+      await waitFor(() => expect(where()).toBe('the dashboard'));
+      expect({ keptBefore, claims: requests.claims, kept: keptAddress() }).toStrictEqual({
+        keptBefore: FIRST_COPY,
+        claims: 1,
+        kept: SECOND_COPY,
+      });
+    } finally {
+      removals.mockRestore();
+    }
+  });
+
   it('while the claim runs every control waits, and the pressed one still has its name', async () => {
     const { requests } = await openSignInPage({ claim: never });
     installFakeClock();
