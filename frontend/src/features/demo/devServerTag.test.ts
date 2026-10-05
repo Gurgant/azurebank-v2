@@ -9,7 +9,10 @@ import { isDemoMode } from './demoMode';
   No other file under `src` names `vite.config.ts` (`grep -rl 'vite\.config' src` finds this one
   alone), and `vitest.config.ts` is a config of its own. So this file is the one that fails when
   the plugin loses its `apply: 'serve'`, hands vite another tag, or starts answering a value of
-  the variable that is not exactly `true`.
+  the variable that is not exactly `true`. It asks the plugin named `azurebank-demo-tag` and no
+  other: a second plugin that added the same tag under another name, with no `apply`, would pass
+  here, and the commands below would show it (tried: the build prints 1, the dev server has the
+  tag twice).
 
   What is held here is what the plugin says of itself and what it hands vite. What vite then does
   with it is vite's and is not held here: that a build leaves a `serve` plugin out, where a tag
