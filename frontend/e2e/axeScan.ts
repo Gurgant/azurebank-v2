@@ -52,7 +52,9 @@ const SENTINEL_SHAPES = ['0', '-1']
  * and has no `html` member. A report quotes the markup of what it found, and colour contrast is
  * found and never gated, so a scan of a page that shows what no file may keep would write it
  * down, in the report and in the attachment, on a green run as on a red one. Left out, or `true`,
- * the report is the one the sweep has always written.
+ * the report is the one the sweep has always written. The demo's run asks for it where it scans
+ * a dashboard that shows a copy's email and password, and its first test holds that the report
+ * then quotes nothing (`../e2e-demo/demo.spec.ts`).
  */
 export async function scan(
   page: Page,
