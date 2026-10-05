@@ -1780,6 +1780,8 @@ class TemplateTests(unittest.TestCase):
         definition = self.compiled['guardrails']['resources'][0]['properties']
         (assignment,) = self.of_type('Microsoft.Authorization/policyAssignments')
         self.assertEqual((definition['displayName'], assignment['properties']['displayName']), (name, name))
+        # The description says what is refused, and so it says the exception too.
+        self.assertIn('a job with another trigger, unless it is named for a schedule', definition['description'])
         runbook = (HERE / 'README.md').read_text(encoding='utf-8')
         self.assertNotIn(f"-eq '{opens_with}, manual jobs'", runbook)
         self.assertIn(f"Where-Object {{ $_.policyType -eq 'Custom' -and $_.displayName -like '{opens_with}*' }} |",
