@@ -1155,6 +1155,26 @@ class PoolDeployTests(DeployCase):
         self.migration.assert_not_called()
         self.smoke.assert_not_called()
 
+    def test_runs_of_the_pool_job_that_cannot_be_read_stop_the_run_in_its_own_words(self):
+        # The job itself was read, and the list of its executions is refused or never answered:
+        # whether a pool run is in progress is then not known. Azure's words alone would not say
+        # that nothing was changed, nor where to look.
+        self.azure.refuse = lambda method, resource_id, body: resource_id == POOL_ID + '/executions'
+        for refusal in ('Forbidden: AuthorizationFailed.',
+                        'The Azure CLI gave no answer in 180 s (GET /jobs/azurebank-pool/executions).'):
+            with self.subTest(refusal=refusal):
+                self.azure.refusal = refusal
+                with self.assertRaises(RuntimeError) as raised:
+                    self.deploy()
+                self.assertIs(type(raised.exception), RuntimeError, 'the run says what it means, in its own words')
+                self.assertEqual(str(raised.exception), (
+                    'The executions of the job azurebank-pool could not be read, so whether a pool run is '
+                    f'in progress is not known: {refusal.rstrip(".")}. Nothing was changed. See '
+                    'infra/README.md, "When something fails".'))
+        self.assertEqual(self.azure.writes(), [])
+        self.migration.assert_not_called()
+        self.smoke.assert_not_called()
+
     def test_a_pool_run_in_progress_stops_the_deployment_before_any_change(self):
         now = datetime.datetime.now(datetime.timezone.utc)
         # CONTROL: green as written, the last case. A run in a state nobody named is taken for

@@ -879,7 +879,15 @@ def refuse_beside_a_pool_run(job_id, job):
     read, before anything is changed: a run the schedule starts after it is not seen, and nothing
     here holds the schedule back."""
     timeout = job['properties']['configuration']['replicaTimeout']
-    running = in_progress(executions(job_id), timeout)
+    try:
+        runs = executions(job_id)
+    except AzError as error:
+        # The job itself was read a moment ago. Azure's words alone would not say that nothing
+        # was changed, nor that the question left open is whether a pool run is in progress.
+        raise RuntimeError(f'The executions of the job {POOL_JOB} could not be read, so whether a '
+                           f"pool run is in progress is not known: {str(error).rstrip('.')}. Nothing "
+                           'was changed. See infra/README.md, "When something fails".') from None
+    running = in_progress(runs, timeout)
     if running:
         state = told_status(state_of(running), 'in a state this script does not know')
         raise RuntimeError(f"Execution {named(running['name']) or 'whose name is withheld'} of the "
