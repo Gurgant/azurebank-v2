@@ -505,6 +505,50 @@ describe('the sign-in page on the demo, in a browser that keeps no copy', () => 
     });
   });
 
+  it('from the press on "Try the demo" to the dashboard the page never offers the copy it has just claimed', async () => {
+    const { requests } = await openSignInPage();
+    // What the demo's block offered each time the page changed while the sign-in page was on
+    // screen, by the names of its buttons. A change of the page is the only moment looked at:
+    // between two of them a visitor sees what the last one drew.
+    const offered: string[] = [];
+    const look = () => {
+      if (where() !== 'the sign-in page') return;
+      const names = Array.from(demoBlock()?.querySelectorAll('button') ?? []).map(
+        (button) => button.textContent,
+      );
+      offered.push(names.join(' / '));
+    };
+    const watcher = new MutationObserver(look);
+    watcher.observe(document.body, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
+    });
+    try {
+      await userEvent.click(tryTheDemo());
+      await waitFor(() => expect(where()).toBe('the dashboard'));
+    } finally {
+      watcher.disconnect();
+    }
+
+    // The claim's answer puts the copy under the key before the page has left for the dashboard.
+    // The page that sent the claim is still the page of the press: it does not turn into the page
+    // of a browser that "remembers a demo copy", with three buttons that can be pressed, for the
+    // moment in between.
+    expect({
+      claims: requests.claims,
+      kept: keptAddress(),
+      looked: offered.length > 0,
+      offered: [...new Set(offered)],
+    }).toStrictEqual({
+      claims: 1,
+      kept: FIRST_COPY,
+      looked: true,
+      offered: [WORDS.tryTheDemo],
+    });
+  });
+
   it('a copy another tab claimed before "Try the demo" is pressed: nothing is sent, and the copy is offered', async () => {
     const { requests, settled } = await openSignInPage();
     const offered = buttonsNamed(WORDS.tryTheDemo).length;

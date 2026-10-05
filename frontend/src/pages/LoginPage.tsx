@@ -183,6 +183,18 @@ export function LoginPage() {
   // stops being said at the next "Continue with my copy", which is a press on a copy that came
   // back.
   const [forgotten, setForgotten] = useState(false);
+  /*
+    "Try the demo" was pressed here and its claim has not been refused: the page is waiting for
+    the answer, or has it and is on its way to the dashboard.
+
+    The answer puts the new copy under the key (src/features/auth/sessionMiddleware.ts) and this
+    page is drawn again at once, before the dashboard is: the router changes the address and
+    draws the next page when it is ready. Left to `copy` above, the page would be, for that
+    moment, the page of a browser that "remembers a demo copy", with "Continue with my copy",
+    "Get a new copy" and "Forget this copy" all ready to be pressed. So from the press until a
+    refusal the demo's block stays as it was pressed, waiting, and so does the form's button.
+  */
+  const [claimSent, setClaimSent] = useState(false);
   // The dialog that asks before a new copy takes the kept one's place.
   const [startingOver, setStartingOver] = useState(false);
   // A press that found nothing to send draws the page again, and nothing else: see below.
@@ -265,11 +277,13 @@ export function LoginPage() {
       return;
     }
     setControl('claim');
+    setClaimSent(true);
     try {
       await claim().unwrap();
       navigate('/dashboard', { replace: true });
     } catch {
-      // Surfaced through the mutation's error state below.
+      // Surfaced through the mutation's error state below. The page is the one to press again.
+      setClaimSent(false);
     }
   };
 
@@ -436,9 +450,9 @@ export function LoginPage() {
       {demo && (
         <>
           <DemoEntry
-            copy={copy}
-            pending={claiming ? 'claim' : continuing ? 'continue' : null}
-            disabled={busy || rateLimited}
+            copy={claimSent ? null : copy}
+            pending={claimSent || claiming ? 'claim' : continuing ? 'continue' : null}
+            disabled={busy || rateLimited || claimSent}
             continueLocked={continueLocked}
             forgotten={forgotten}
             onTry={() => void tryTheDemo()}
@@ -507,7 +521,7 @@ export function LoginPage() {
             size="large"
             className={styles.submitButton}
             type="submit"
-            disabled={busy || rateLimited}
+            disabled={busy || rateLimited || claimSent}
           >
             {formSigningIn ? <Spinner size="tiny" /> : 'Sign in'}
           </Button>
