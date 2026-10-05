@@ -1247,10 +1247,11 @@ def check(subscription, resource_group, in_actions=False):
     back.
 
     In order: the app, read until its last update has succeeded with its latest revision as its
-    latest ready one; from that read its address, whether it is the public demo, and its shape;
-    its revisions, until no other one is active; with the demo on the pool job and its shape,
-    then the job's two secrets against the app's; then the smoke test, with the demo as the app
-    says it. With the demo off the pool job is not read and no secret is listed."""
+    latest ready one; from that read its address, whether it is the public demo, and its shape,
+    and an app in shape that reports no address ends the check there; its revisions, until no
+    other one is active; with the demo on the pool job and its shape, then the job's two secrets
+    against the app's; then the smoke test, with the demo as the app says it. With the demo off
+    the pool job is not read and no secret is listed."""
     if in_actions:
         raise ValueError("--check is refused inside GitHub Actions: it is the owner's read of the "
                          'running app, from a terminal. A workflow run checks the app at the end of '
@@ -1261,6 +1262,10 @@ def check(subscription, resource_group, in_actions=False):
     fqdn = address_of(app)
     demo = demo_of(app, when='nothing was moved')
     assert_shape('The app', app_drift(app), 'nothing was moved')
+    if not fqdn:
+        # The shape check does not read the host name: an ingress in shape may still hold none.
+        raise RuntimeError('The app is in shape and reports no address (its ingress holds no host '
+                           'name), so there is nothing to ask: nothing was proved, nothing was moved.')
     latest = app['properties']['latestRevisionName']
     wait_alone(app_id, latest)
     if demo:

@@ -2002,6 +2002,8 @@ ANOTHER_REVISION = ('an answer could still come from another revision: nothing w
                     "moved. Look at the app's revisions, then check again.")
 ALONE = 'is the latest ready one and no other revision is active: what answers now is that revision.'
 DEMO_OFF = 'The app says the demo is off: the job azurebank-pool is not read and no secret is listed.'
+NO_ADDRESS = ('The app is in shape and reports no address (its ingress holds no host name), so there is '
+              'nothing to ask: nothing was proved, nothing was moved.')
 EQUAL = ("The pool job's PIN pepper and connection string are the app's: each was listed on both and "
          'compared here, and no value was shown.')
 NOT_SHOWN = 'Nothing was moved, and no value was shown. See infra/README.md, "When something fails".'
@@ -2151,6 +2153,27 @@ class CheckTests(DeployCase):
         self.assertNotIn('add-mask', str(raised.exception) + self.printed())
         self.smoke.assert_not_called()
         self.assert_nothing_was_moved()
+
+    def test_an_app_in_shape_that_reports_no_address_is_not_asked_anything(self):
+        # An ingress that is in shape and holds no host name passes the shape check and leaves no
+        # address to build a request from: the check ends there, before it reads the revisions.
+        for what, change in (('no host name', lambda ingress: ingress.pop('fqdn')),
+                             ('a host name that is nothing', lambda ingress: ingress.update(fqdn=None))):
+            for demo in (False, True):
+                with self.subTest(what=what, demo=demo):
+                    self.azure.app = app_resource()
+                    if demo:
+                        self.azure.turn_the_demo_on()
+                    change(app_part(self.azure, 'configuration', 'ingress'))
+                    self.azure.calls.clear()
+                    with self.assertRaises(RuntimeError) as raised:
+                        self.check()
+                    self.assertIs(type(raised.exception), RuntimeError)
+                    self.assertEqual(str(raised.exception), NO_ADDRESS)
+                    self.assertEqual(self.asked(), [('GET', APP_ID)], 'nothing else is read of such an app')
+        self.smoke.assert_not_called()
+        self.assert_nothing_was_moved()
+        self.assertEqual(self.printed(), '')
 
     def test_it_waits_until_no_other_revision_is_active_before_it_asks_the_address(self):
         # A run of the template made a revision, and the one before is still active for a while:
