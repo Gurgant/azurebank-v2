@@ -88,8 +88,9 @@ test('after a restart the session is gone, the kept copy still signs in, and it 
   expect(await focusOf(page)).toEqual({ on: FORGET, inTheDialog: false });
   await page.keyboard.press('Enter');
 
+  // The whole of what the status says: a text given as words would be looked for as a part.
   await expect(
-    page.getByRole('status').filter({ hasText: 'This browser no longer remembers the copy.' }),
+    page.getByRole('status').filter({ hasText: /^This browser no longer remembers the copy\.$/ }),
   ).toBeVisible();
   expect({
     tryTheDemo: await buttons(TRY_THE_DEMO).count(),

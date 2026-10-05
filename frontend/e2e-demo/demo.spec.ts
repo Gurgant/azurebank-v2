@@ -48,7 +48,11 @@ import {
  *
  * NAMES ARE EXACT. Playwright matches a role's name as a substring unless told otherwise, and
  * "Start over" is the first words of the dialog's title, the name of the panel's button and the
- * name of the dialog's confirm.
+ * name of the dialog's confirm. A text is looked for as a part too. So the names and sentences
+ * the demo adds are asked for whole, with `exact` or a pattern that ends where they end,
+ * wherever a page that said more than the words typed here would otherwise pass. The
+ * transfer's names are the app's older ones, asked as the screenshot capture asks them
+ * (`screenshots/app.capture.ts`).
  *
  * WHAT HAS BEEN SEEN WHERE, as of 2026-10-05. This file has not run against the stack. Every
  * name in it was read from the components and then met in Chromium on this tree's dev server
@@ -485,7 +489,9 @@ test.describe('the demo, from the first click', () => {
     expect(sums.sort()).toEqual(STARTING_SUMS);
 
     const panel = panelOf(page);
-    await expect(panel.getByRole('heading', { level: 2, name: 'Your private copy' })).toBeVisible();
+    await expect(
+      panel.getByRole('heading', { level: 2, name: 'Your private copy', exact: true }),
+    ).toBeVisible();
     expect(await panel.locator('p').allTextContents()).toEqual([
       expect.stringMatching(
         /^Other visitors can't see this copy\. It works until .+ · .+, then it is closed and deleted\.$/,
@@ -597,7 +603,7 @@ test.describe('the demo, from the first click', () => {
     await panelOf(page).getByRole('button', { name: START_OVER, exact: true }).focus();
     expect(await focusOf(page)).toEqual({ on: START_OVER, inTheDialog: false });
     await page.keyboard.press('Enter');
-    const dialog = page.getByRole('alertdialog', { name: START_OVER_TITLE });
+    const dialog = page.getByRole('alertdialog', { name: START_OVER_TITLE, exact: true });
     await expect(dialog).toBeVisible();
 
     // Focus is in the dialog, on its first control, and Tab goes round inside it, both ways.
@@ -645,7 +651,7 @@ test.describe('the demo, from the first click', () => {
     expect(answer.status()).toBe(200);
 
     await expect(dialog).toBeHidden();
-    await expect(page.getByText(NEW_COPY).first()).toBeVisible();
+    await expect(page.getByText(NEW_COPY, { exact: true }).first()).toBeVisible();
     // Focus is given back to the button the dialog was opened from.
     await expect.poll(() => focusOf(page)).toEqual({ on: START_OVER, inTheDialog: false });
 

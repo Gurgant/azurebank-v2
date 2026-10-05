@@ -23,8 +23,12 @@ export const KEPT_COPY_KEY = 'azurebank.demoCopy';
  */
 export const POOL_ADDRESS = /^demo-[a-z0-9]{16}@azurebank\.example$/;
 
-/** The panel the dashboard shows about the copy the visitor is signed in to. */
-export const panelOf = (page: Page) => page.getByRole('region', { name: 'Your private copy' });
+/**
+ * The panel the dashboard shows about the copy the visitor is signed in to. By its whole name:
+ * Playwright takes a name for a part of one unless told otherwise.
+ */
+export const panelOf = (page: Page) =>
+  page.getByRole('region', { name: 'Your private copy', exact: true });
 
 /**
  * Writes down what a step observed: one line, attached to the test and printed.
