@@ -2077,9 +2077,9 @@ sign-in is, and an answer that is not the refusal is told by its status and its 
 never by its body. With the demo off no registration is ever sent: the door is open then, and
 the request would register somebody. Both answers were measured on the compose stack with the
 demo on, on 2026-10-04 (ADR-0063, Validation; `SECURITY.md`, "Registration closed on the demo"):
-by hand, not by this script, whose two checks have met invented answers only, and not through
-the Azure ingress. With the demo on a deployment sends four requests and no cookie, and is
-expected to spend two permits of the ten a minute that sign-ins share.
+not by this script, whose two checks have met invented answers only, and not through the Azure
+ingress. With the demo on a deployment sends four requests and no cookie, and is expected to
+spend two permits of the ten a minute that sign-ins share.
 
 **What those two checks do not prove, and what does.** Both are answered by the BFF alone. That
 the `api` container carries the flag is read from the app, in step 2. That the pool job's PIN
