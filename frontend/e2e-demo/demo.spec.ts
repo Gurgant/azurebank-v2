@@ -465,7 +465,7 @@ test.describe('the demo, from the first click', () => {
       // READ, from the BFF's source (backend/src/AzureBank.Bff/Program.cs: the prefix outside
       // Development), not yet seen in this browser on the stack: the session's cookie is a
       // `__Host-` one, and Chromium keeps it although the page came over http from localhost.
-      sessionCookieIsHostOnly: cookies.some((name) => name.startsWith('__Host-')),
+      sessionCookieHasTheHostPrefix: cookies.some((name) => name.startsWith('__Host-')),
     }).toEqual({
       status: 200,
       cacheControl: 'no-store',
@@ -473,7 +473,7 @@ test.describe('the demo, from the first click', () => {
       keepsTheCopysEnd: true,
       keepsTheCopysPassword: true,
       theSearchKnowsTheKeptPassword: true,
-      sessionCookieIsHostOnly: true,
+      sessionCookieHasTheHostPrefix: true,
     });
   });
 
