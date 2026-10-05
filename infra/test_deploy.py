@@ -405,6 +405,19 @@ class Offline(unittest.TestCase):
         # it would send a real request.
         self.start(patch('deploy.subprocess.run',
                          side_effect=AssertionError('a test tried to start a process')))
+        # Nor may a test reach the network. The smoke test takes a silence for an answer of its
+        # own kind (deploy.NO_ANSWER): a test whose stand-in for deploy.fetch was missed would
+        # ask a real resolver for a name, and could pass on what came back. Only this machine is
+        # let through, for the tests that need a real connection (LocalSite). The failure is one
+        # the smoke test does not catch and urllib does not wrap.
+        connect = socket.create_connection
+
+        def to_this_machine_only(address, *arguments, **options):
+            if address[0] != '127.0.0.1':
+                raise AssertionError(f'a test tried to open a connection to {address[0]}')
+            return connect(address, *arguments, **options)
+
+        self.start(patch('socket.create_connection', to_this_machine_only))
         # Under Actions the verdict is also written to the run's summary: never from a test.
         self.start(patch.dict(deploy.os.environ))
         deploy.os.environ.pop('GITHUB_STEP_SUMMARY', None)
@@ -445,6 +458,51 @@ class DeployCase(Offline):
     def steps(self):
         """The writes, the migration and the smoke test, in the order they happened."""
         return [event for event in self.azure.events if not event.startswith('read ')]
+
+
+class OfflineTests(Offline):
+    """What `Offline` holds for every test built on it: nothing leaves this machine."""
+
+    @staticmethod
+    def met(reach, *arguments):
+        """What a call ended in: the error it raised, or None."""
+        try:
+            reach(*arguments)
+        except BaseException as error:  # whatever it is: the test says which one it must be
+            return error
+        return None
+
+    def test_a_connection_to_anything_but_this_machine_fails_the_test_that_opens_it(self):
+        # Another address of this machine first, so that nothing leaves it even where the guard
+        # is missing: there the connection is refused, which is an OSError and not this failure.
+        refused = self.met(socket.create_connection, ('127.0.0.2', 9), 1)
+        self.assertIsInstance(refused, AssertionError, 'a test could open a connection that is not to 127.0.0.1')
+        self.assertEqual(str(refused), 'a test tried to open a connection to 127.0.0.2')
+        # CONTROL: green as written, from here on: the guard was in place. The real fetch, and
+        # the real smoke test with no stand-in for it, as a test that forgot one would run them:
+        # each ends in the guard's failure, which is no kind of silence (deploy.NO_ANSWER), and
+        # not in a verdict of the smoke test's. Seen red with that failure counted among the
+        # silences: the smoke test then asked until its deadline and ended "Smoke test failed".
+        # (With the guard raising an OSError, which urllib wraps, the lines above fail first.)
+        opener = deploy.urllib.request.build_opener(deploy.NoRedirect)
+        for url, host in ((f'https://{ADDRESS}/', ADDRESS), ('http://example.invalid/health/ready', 'example.invalid')):
+            with self.subTest(url=url):
+                asked = self.met(deploy.fetch, opener, url)
+                self.assertIsInstance(asked, AssertionError)
+                self.assertNotIsInstance(asked, deploy.NO_ANSWER)
+                self.assertEqual(str(asked), f'a test tried to open a connection to {host}')
+        smoked = self.met(deploy.smoke, f'https://{ADDRESS}')
+        self.assertIsInstance(smoked, AssertionError, 'the smoke test ended in a verdict of its own')
+        self.assertEqual(str(smoked), f'a test tried to open a connection to {ADDRESS}')
+        self.assertEqual(self.clock.sleeps, [], 'and it did not go on asking')
+
+    def test_a_connection_to_this_machine_is_let_through(self):
+        # CONTROL: green before the guard. The tests that need a real connection open one to a
+        # listener of their own, on 127.0.0.1 (LocalSite).
+        listener = socket.create_server(('127.0.0.1', 0))
+        self.addCleanup(listener.close)
+        with socket.create_connection(listener.getsockname(), 5) as connection:
+            self.assertEqual(connection.getpeername(), listener.getsockname())
 
 
 class AzTests(unittest.TestCase):
