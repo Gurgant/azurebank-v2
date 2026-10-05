@@ -1173,7 +1173,9 @@ same three files (SHA-256, three of three), and each of the eight source files c
 
 **Not measured:** why the browser's context did not close in two runs of the default suite; on
 the stack, the three things a visitor meets that changed between the two runs, which the demo
-run does not single out and which are held against the mock; in a browser, the two refusals of
+run does not single out and which are held against the mock; on the stack, Tab in the confirm
+dialog while it waits, which neither the demo run nor the default suite presses; in a browser,
+the two refusals of
 a claim (`DEMO_POOL_EMPTY`, `DEMO_DAILY_LIMIT`), whose sentences are held against the mock, and
 `DEMO_COPY_LIMIT`; on the stack, "Continue with my copy" on a copy past its end, and "Stay
 signed in", which needs a session at its fixed end; a browser that refuses storage; a browser
@@ -1225,22 +1227,37 @@ run's `"Start over" asks first, takes the keyboard, and brings a new copy`.
   then it also held that "Leave anyway" is the document's last Tab stop before it presses Tab,
   which is what makes its third Tab a test of the trap against tabster, and it scanned the open
   prompt: `transfer-leave-prompt`, no violation.
-- **Measured and not built: while it waits, a dialog that is the first or the last Tab stop of
-  its document still loses Tab.** Every control is disabled then, focus is on the dialog
-  itself, and the trap leaves focus where tabster put it. **One page is in that state: the
-  dashboard at the desktop width when its accounts could not be read.** It then draws its
-  alert and the demo's panel and nothing after them, so the dialog's controls are the
-  document's last. Measured on 2026-10-05 in Chromium 151.0.7922.34 on the dev server with the
-  mock and the demo's tag, at 1280 x 720, the claim left unanswered, in two runs, one with the
-  accounts read answered 503 twice and one with every read of the page answered so: ten
-  controls before the dialog, three in it, none after. With "Start over" confirmed and waiting,
-  the first Tab put focus on tabster's own element, the second on the page, the third on a
-  "Transfer" button of the page behind; Shift+Tab then reached the panel's "Start over" and
-  "Show sign-in details", behind the waiting dialog. With the accounts read (nine controls
-  before the dialog, fifteen after), and at 390 x 844 with the read failed (three before, five
-  after), three Tabs and three Shift+Tabs left focus on the dialog. The transfer prompts never
-  wait, and on the sign-in page the dialog is neither first nor last (seven controls before
-  it, one after). No kept test reaches the state.
+- **While it waits it keeps Tab too, also where its controls are the first or the last Tab
+  stops of its document: one more line, built later that day.** Every control is disabled
+  then, and focus is on the dialog itself. Where no stop follows the dialog, tabster hears Tab
+  first, finds none to go on to and moves focus to an element of its own. The trap refused the
+  key and left focus there, one Tab from the page behind the waiting dialog. Its branch for a
+  dialog with no control now gives focus back to the dialog after it refuses the key. **One
+  page is in that state: the dashboard at the desktop width when its accounts could not be
+  read.** It then draws its alert and the demo's panel and nothing after them, so the dialog's
+  controls are the document's last. Before the line, measured on 2026-10-05 in Chromium
+  151.0.7922.34 on the dev server with the mock and the demo's tag, at 1280 x 720, the claim
+  left unanswered, in two runs, one with the accounts read answered 503 twice and one with
+  every read of the page answered so: ten controls before the dialog, three in it, none after.
+  With "Start over" confirmed and waiting, the first Tab put focus on tabster's own element,
+  the second on the page, the third on a "Transfer" button of the page behind; Shift+Tab then
+  reached the panel's "Start over" and "Show sign-in details", behind the waiting dialog. With
+  the accounts read (nine controls before the dialog, fifteen after), and at 390 x 844 with
+  the read failed (three before, five after), three Tabs and three Shift+Tabs left focus on
+  the dialog. Measured again that day around the line, in the same browser at the same size,
+  the accounts read answered 503 twice: with the line out the six keys put focus where they
+  had, and with it in, on the dialog itself, six times of six. With the accounts read: on the
+  dialog itself six times, with the line out and with it in. Not measured with the line: the
+  page with every read failed, and 390 x 844. The transfer prompts never wait, and on the
+  sign-in page the dialog is neither first nor last (seven controls before it, one after).
+  Held in jsdom by `ConfirmDialog.test.tsx`, `waiting, it keeps Tab also where it is the last
+  or the first Tab stop of the document`, which runs tabster itself and puts the waiting
+  dialog last in its document, first, and between two stops, with three Tabs and three
+  Shift+Tabs each. With the line out it fails where the dialog is last and where it is first,
+  on focus that tabster moved. One thing there is not as in a browser: after the first key
+  jsdom has focus on the page, where the browser has it on tabster's element. No kept browser
+  test presses Tab in a waiting dialog, and the dialog as the first stop was met in jsdom
+  only.
 
 **Closed, it takes no press.** The dialog stays in the page when it closes and stays drawn
 while it fades, and until this change its buttons acted for that long. Before, measured in
@@ -1280,8 +1297,9 @@ it starts waiting under the button that was pressed`, `closed while its caller s
 waits, it does not take focus back`), with the browser's hand-off emulated
 (`frontend/src/test/outage.ts`). Seen on 2026-10-05 in Chromium 151.0.7922.34 against the
 mock, with the claim left unanswered: after the press on the confirm, focus was on the dialog
-itself, in each of the four runs of the bullet above. No kept browser test meets a wait: the
-demo run looks only once its claim is answered. The transfer prompts never wait.
+itself, in each of the eight runs of the bullet above, the four before the line and the four
+around it. No kept browser test meets a wait: the demo run looks only once its claim is
+answered. The transfer prompts never wait.
 
 ## Related
 
