@@ -4,10 +4,11 @@
     python infra/deploy.py --app-only         move the app only: the owner's road back
     python infra/deploy.py --check            read the running app and check it: nothing is moved
     python infra/deploy.py --pool-run         start the pool job once, by hand, and wait for that run
+    python infra/deploy.py --pool-log [NAME]  print what one run of the pool job printed
     python infra/deploy.py --job-log [NAME]   print what one migration printed (the latest, or NAME)
     python infra/deploy.py --app-log MINUTES  print what the app printed in the last MINUTES
 
-The last five are for the owner's terminal and are refused inside GitHub Actions.
+The last six are for the owner's terminal and are refused inside GitHub Actions.
 
 It needs the Azure CLI signed in and on PATH, and the environment variables AZURE_SUBSCRIPTION_ID
 and AZURE_RESOURCE_GROUP. A deployment also needs IMAGE_TAG (the full SHA of a commit whose three
@@ -62,13 +63,15 @@ exact execution for the job's timeout and two minutes. How the run ended is told
 code of its container, never by the execution's status alone: 0 ends well, and so do 10, 11 and
 15, which say the run finished and found the pool short; any other code, and a code Azure did
 not report, ends the command as failed. It reads nothing of the app: whether the app is the demo
-is --check's to say, before a run is started by hand.
+is --check's to say, before a run is started by hand. What the run printed, its one summary line
+among it, is not fetched here: --pool-log reads it afterwards.
 
 A migration leaves one line here, its verdict: the execution's name, status, times, exit code and
 a one-word reason. What it printed is never fetched by a deployment: the log of a public
 repository is public, and that text can name the server, an address, or a value from a database
 error. It is kept in the log workspace, where --job-log reads it as the owner, the lines of one
-execution at a time.
+execution at a time. --pool-log reads a run of the pool job the same way: its verdict, worded
+with that job's own exit codes, then its lines.
 
 In a deployment every Azure call is `az rest` on the app or on a job. The deployment identity can
 reach nothing else, so it could not follow the status URL of a long-running operation, and this
@@ -160,7 +163,7 @@ NOT_THE_TOOLS_CODE = 'not a code the tool itself exits with'
 # (backend/tools/AzureBank.Seeder/Pool/PoolExitCodes.cs; docs/runbooks/demo-pool.md, "The exit
 # code"). A code from 10 to 15 is a signal: the run finished, and the code names the count somebody
 # should read. A deployment never starts the pool job and reads no exit code of it: --pool-run
-# does, for the one run it started.
+# does, for the one run it started, and --pool-log for the run it is asked about.
 POOL_EXIT_CODES = {
     0: 'done',
     1: 'did not finish, and left no summary line; read its last line before it is started again',
@@ -1349,8 +1352,14 @@ def check(subscription, resource_group, in_actions=False):
 # The template gives the pool job a schedule, and a deployment never starts it. This starts it
 # once beside the schedule, as whoever is signed in: the first fill, or a refill by hand.
 
-# Where what a run of the pool job printed is read: the last sentence of a start by hand.
-WHERE_IT_PRINTED = 'What it printed is kept in the log workspace (infra/README.md, "Reading the logs").'
+def where_it_printed(name):
+    """Where what a run of the pool job printed is read: the last sentence of a start by hand.
+    The command is named only with a name it takes: --pool-log asks for the lines of one
+    execution by its name, and a name of another shape is refused there and never printed here."""
+    if not named(name):
+        return 'What it printed is kept in the log workspace (infra/README.md, "Reading the logs").'
+    return (f'`python infra/deploy.py --pool-log {name}` reads its verdict again and prints what it '
+            'printed, once the log workspace has the lines: a line takes minutes to arrive.')
 
 
 def end_pool_run(name, code):
@@ -1364,16 +1373,16 @@ def end_pool_run(name, code):
     if code is None:
         raise RuntimeError(f'The pool run ended and Azure reported no exit code for it ({label}: exit '
                            'code not reported). How it ended is not guessed from its status, and it '
-                           f'was not started again. {WHERE_IT_PRINTED}')
+                           f'was not started again. {where_it_printed(name)}')
     how = f'{label}: exit code {code}, {POOL_EXIT_CODES.get(code, NOT_THE_TOOLS_CODE)}'
     count = POOL_COUNTS.get(code)
     points_at = (f" The code is a signal to read the count '{count}' on the run's summary line "
                  '(docs/runbooks/demo-pool.md, "The line").' if count else '')
     if code not in POOL_RUN_ENDS_WELL:
         raise RuntimeError(f'The pool run did not end well ({how}). It was not started again.'
-                           f'{points_at} {WHERE_IT_PRINTED}')
+                           f'{points_at} {where_it_printed(name)}')
     decides = ' The exit code decides here, whatever status Azure gave the execution.' if count else ''
-    say(f'The pool run ended well ({how}).{decides}{points_at} {WHERE_IT_PRINTED}')
+    say(f'The pool run ended well ({how}).{decides}{points_at} {where_it_printed(name)}')
 
 
 def pool_run(subscription, resource_group, in_actions=False):
@@ -1434,15 +1443,21 @@ def pool_run(subscription, resource_group, in_actions=False):
             end_pool_run(name, exit_code(properties, JOBS[POOL_JOB])[0])
             return name
         time.sleep(5)
+    reads = f'How it ends is read with `python infra/deploy.py --pool-log {name}`. ' if named(name) else ''
     raise RuntimeError(f'Timed out waiting for {label} of the job {POOL_JOB}: it had not ended '
                        f"{waited} s after it was started here (the job's timeout and two minutes). "
                        'It was not started again. While it is listed as running, a deployment and a '
-                       f'second start are refused. The owner can stop it: {stop_command(job_id, name)}')
+                       f'second start are refused. {reads}The owner can stop it: '
+                       f'{stop_command(job_id, name)}')
 
 
 # --- Reading the log workspace: the owner's terminal only ---
 # The deployment identity has no right on the workspace, and a public log must never hold this
-# text. Both commands sign in as whoever ran `az login`.
+# text. The three commands sign in as whoever ran `az login`.
+
+# The option that reads each job's lines, and the map its exit code is worded with.
+JOB_LOGS = {MIGRATE_JOB: ('--job-log', EXIT_CODES), POOL_JOB: ('--pool-log', POOL_EXIT_CODES)}
+
 
 def prefix_of(subscription, resource_group):
     if not subscription or not resource_group:
@@ -1509,7 +1524,7 @@ def print_lines(rows, columns):
             'workspace takes none until its reset.')
 
 
-def job_log(subscription, resource_group, execution='', in_actions=False):
+def job_log(subscription, resource_group, execution='', in_actions=False, job=MIGRATE_JOB):
     """Print one execution's verdict, then what that execution printed: the latest one, or the one
     named. Its lines are told from another execution's by ContainerGroupName, which holds the
     execution's name, a hyphen and a suffix. The job's name and a period are not enough: on
@@ -1517,13 +1532,21 @@ def job_log(subscription, resource_group, execution='', in_actions=False):
     (README.md, "Measured on Azure"). The name goes into the query between quotes, so only the
     shape of an execution's name may: one given on the command line in another shape is refused
     before anything is read, and one Azure lists in another shape is never asked for. The query
-    with this filter is tested offline and has not been sent to the workspace yet."""
-    refuse_in_actions('--job-log', in_actions)
+    with this filter is tested offline and has not been sent to the workspace yet.
+
+    `job` is the migrate job, or the pool job for --pool-log: the executions read, the name in
+    the query, the container whose exit code is on the verdict's line and the map that words it
+    all follow it. It goes into the query between quotes too, so no other job is ever asked for."""
+    if job not in JOB_LOGS:
+        raise ValueError('A log is read for the migrate job or for the pool job, and for no other. '
+                         'Nothing was read.')
+    option, codes = JOB_LOGS[job]
+    refuse_in_actions(option, in_actions)
     if execution and not named(execution):
-        raise ValueError("--job-log takes an execution's name: letters, digits and hyphens, 100 at "
+        raise ValueError(f"{option} takes an execution's name: letters, digits and hyphens, 100 at "
                          'most. Nothing was read.')
     prefix = prefix_of(subscription, resource_group)
-    job_id = f'{prefix}/Microsoft.App/jobs/{MIGRATE_JOB}'
+    job_id = f'{prefix}/Microsoft.App/jobs/{job}'
     customer_id = workspace_id(prefix)
     known = listed(rest('GET', job_id + '/executions', api_version=VERDICT_API_VERSION), 'value')
     if execution:
@@ -1532,10 +1555,10 @@ def job_log(subscription, resource_group, execution='', in_actions=False):
         known.sort(key=lambda entry: str((entry.get('properties') or {}).get('startTime')))
         chosen = known[-1:]
     if not chosen:
-        raise RuntimeError(f'The job {MIGRATE_JOB} has no execution'
+        raise RuntimeError(f'The job {job} has no execution'
                            + (f' named {execution}.' if execution else ' yet.'))
     properties = chosen[0].get('properties') or {}
-    say(verdict(chosen[0].get('name'), properties))
+    say(verdict(chosen[0].get('name'), properties, container=JOBS[job], codes=codes))
     name = named(chosen[0].get('name'))
     if not name:
         raise RuntimeError("The execution's name is not the shape of one, so its lines cannot be "
@@ -1548,7 +1571,7 @@ def job_log(subscription, resource_group, execution='', in_actions=False):
     # bounds the read; the group's name is what keeps another execution's lines out.
     since, until = began - datetime.timedelta(minutes=2), ended + datetime.timedelta(minutes=5)
     rows = query(customer_id,
-                 f"ContainerAppConsoleLogs | where JobName == '{MIGRATE_JOB}' "
+                 f"ContainerAppConsoleLogs | where JobName == '{job}' "
                  f"| where ContainerGroupName startswith '{name}-' "
                  f'| where TimeGenerated between (datetime({stamp(since)}) .. datetime({stamp(until)})) '
                  f'| order by TimeGenerated asc | take {MAX_LOG_LINES} | project TimeGenerated, Log',
@@ -1581,6 +1604,9 @@ def main(arguments=None):
     modes.add_argument('--pool-run', action='store_true',
                        help='start the pool job once, beside its schedule, and wait for that run: the '
                             'first fill, or a refill by hand; refused inside GitHub Actions')
+    modes.add_argument('--pool-log', nargs='?', const='', metavar='EXECUTION',
+                       help='print what a run of the pool job printed, from the log workspace: the '
+                            'latest execution, or the one named; refused inside GitHub Actions')
     modes.add_argument('--job-log', nargs='?', const='', metavar='EXECUTION',
                        help='print what a migration printed, from the log workspace: the latest '
                             'execution, or the one named; refused inside GitHub Actions')
@@ -1596,6 +1622,8 @@ def main(arguments=None):
             check(subscription, resource_group, in_actions=in_actions)
         elif options.pool_run:
             pool_run(subscription, resource_group, in_actions=in_actions)
+        elif options.pool_log is not None:
+            job_log(subscription, resource_group, options.pool_log, in_actions=in_actions, job=POOL_JOB)
         elif options.job_log is not None:
             job_log(subscription, resource_group, options.job_log, in_actions=in_actions)
         elif options.app_log is not None:
