@@ -4930,9 +4930,10 @@ class RunbookTests(unittest.TestCase):
     # What a row of "When something fails" quotes of a sentence of the script: a run of its
     # literal text, word for word, so that whoever reads the sentence on a terminal finds its row
     # by searching the page for it. The first is the put-back's, which had its row before the
-    # demo; every other is a sentence the demo added to the script. Each stands in one sentence
-    # of the script and in no other: words that two sentences share would go on being found in
-    # the one while the other, and the row that quotes it, came apart.
+    # demo; every other is a sentence added to the script with the demo, the last of them the one
+    # an interrupt ends in, whatever the mode. Each stands in one sentence of the script and in no
+    # other: words that two sentences share would go on being found in the one while the other,
+    # and the row that quotes it, came apart.
     ROWS = (
         'The app may be serving a broken revision',
         'is true in',
@@ -4958,6 +4959,8 @@ class RunbookTests(unittest.TestCase):
         "(the job's timeout and two minutes)",
         'The pool run did not end well',
         'Azure reported no exit code for it',
+        'and the read of its exit code failed',
+        'Interrupted. Nothing is put back and nothing is stopped by this',
     )
     # What the runbook quotes of a line that says a run went well: its steps give each as what
     # is good to read, and a read that differs is a stop there. Held as a row is: one sentence of
@@ -4975,6 +4978,7 @@ class RunbookTests(unittest.TestCase):
         'Checked: ',
         '; the smoke test passed; nothing was moved.',
         'The pool run ended well',
+        'Starting the job ',
     )
 
     @classmethod
@@ -5027,8 +5031,8 @@ class RunbookTests(unittest.TestCase):
     def test_a_line_the_runbook_gives_as_good_is_one_the_script_prints(self):
         # CONTROL: green as written: each quote was the script's when this was written. Seen red
         # with a line reworded in the script and in its own test, the page left as it was (the
-        # line of a pool run that ended well; the line of a deployment with the demo off), and
-        # with a quote taken out of the page.
+        # line of a pool run that ended well; the line of a deployment with the demo off; the
+        # line that says a start is about to be sent), and with a quote taken out of the page.
         page = ' '.join(self.runbook.split())
         for words in self.GOOD:
             with self.subTest(words=words):
