@@ -25,6 +25,8 @@ namespace AzureBank.Bff.Tests;
 /// build, run as a process with <c>Demo:Enabled</c> true and serving <c>frontend/dist</c>
 /// (2026-10-04): <c>/</c>, <c>/index.html</c> and <c>/settings</c> each answered 200 with the tag
 /// once, 43 bytes longer than the file.
+/// Nor are the rows behind extra slashes (<c>//api/accounts</c>, <c>//settings</c>): each of those
+/// two theories says where its statuses were observed.
 /// </para>
 /// </remarks>
 public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Program>>, IDisposable
@@ -103,9 +105,11 @@ public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Progra
         (await response.Content.ReadAsStringAsync()).Should().NotContain("stand-in shell");
     }
 
-    // CONTROL: green before and after this change. Paths whose first non-empty segment is not a server
-    // prefix still get the shell, even behind extra slashes. Observed in the test host and against
-    // Kestrel on 127.0.0.1 with curl --path-as-is.
+    // CONTROL: green before and after this change. What is not a server path stays a page: a page
+    // behind extra slashes (//settings), a server prefix that is not the first segment
+    // (/settings//api), and a first segment that only begins like a prefix (//apix/thing). Not
+    // among the statuses the class's remarks date: observed in the test host, and after the change
+    // on the built host run as a process on 127.0.0.1, asked with curl --path-as-is (2026-10-05).
     [Theory]
     [InlineData("//settings")]
     [InlineData("/settings//api")]
@@ -357,10 +361,12 @@ public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Progra
         }
     }
 
-    // These statuses were observed in the test host and against Kestrel on 127.0.0.1 with
-    // curl --path-as-is (recorded as left as-is in ADR-0063 lines 589-591).
-    // A path whose first non-empty segment is a server prefix is never answered with the shell,
-    // with the demo off or on.
+    // A server path behind extra slashes is not the page: 404 with no body, with the demo off or
+    // on, as a path the server does not have. Not among the statuses the class's remarks date.
+    // Red before the change: each row 200 text/html, the shell's answer (test host), which
+    // ADR-0063, Consequences, "Neutral", had recorded as seen and left. The 404s were observed in
+    // the test host and on the built host run as a process on 127.0.0.1, asked with
+    // curl --path-as-is (2026-10-05).
     [Theory]
     [InlineData("GET", "//api/accounts")]
     [InlineData("GET", "///api/accounts")]

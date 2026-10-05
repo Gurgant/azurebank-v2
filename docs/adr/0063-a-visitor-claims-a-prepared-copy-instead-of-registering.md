@@ -588,9 +588,10 @@ caps are worth nothing until that is answered.**
   a 403.
 - Seen while this was measured, older than this change and left as it is: ~~a doubled slash in
   front of a server path (`//api/accounts`, `//bff/nope`) answers the page shell, with the demo
-  off as with it on;~~ *(Corrected 2026-10-05: a path whose first non-empty segment is a server
-  prefix now answers 404 with no body, with the demo off as with it on.)* and the BFF's log names
-  the first 8 characters of an ended session's id.
+  off as with it on;~~ *(struck 2026-10-05: true when written. A GET or a HEAD of a server path
+  behind extra slashes is no longer answered with the shell: it is 404 with no body, with the
+  demo off as with it on, `SpaHostingTests`.)* and the BFF's log names the first 8 characters of
+  an ended session's id.
 
 ## Validation
 
