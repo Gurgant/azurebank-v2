@@ -2,10 +2,11 @@
 
     python infra/deploy.py                    migrate the database, then move the app, then check it
     python infra/deploy.py --app-only         move the app only: the owner's road back
+    python infra/deploy.py --check            read the running app and check it: nothing is moved
     python infra/deploy.py --job-log [NAME]   print what one migration printed (the latest, or NAME)
     python infra/deploy.py --app-log MINUTES  print what the app printed in the last MINUTES
 
-The last three are for the owner's terminal and are refused inside GitHub Actions.
+The last four are for the owner's terminal and are refused inside GitHub Actions.
 
 It needs the Azure CLI signed in and on PATH, and the environment variables AZURE_SUBSCRIPTION_ID
 and AZURE_RESOURCE_GROUP. A deployment also needs IMAGE_TAG (the full SHA of a commit whose three
@@ -33,6 +34,13 @@ does not with the demo off. With the demo on there is a fourth request, one regi
 empty body, which the BFF must refuse as closed; with the demo off no registration is ever sent.
 The tag and the closed registration are both the BFF's alone, and neither spends a copy of the
 pool: no deployment claims a copy, and none proves that a PIN is taken.
+
+--check moves nothing. It is the read-back of a run of the template, which makes a revision
+outside this script. It reads the app until its last update has succeeded with its latest
+revision as its latest ready one, and the app's revisions until no other one is active, so that
+what answers is that revision; it reads from the app whether the demo is on, and checks the
+app's shape; with the demo on it reads the pool job and checks its shape; then it runs the same
+smoke test, and a wrong answer puts nothing back.
 
 The pool job is the app's to announce. With the demo off it is neither read nor moved, and
 whether it exists is not asked: no answer of Azure's is read as "there is no pool job". With the
@@ -1090,6 +1098,119 @@ def deploy(subscription, resource_group, tag, app_only=False, in_actions=False,
                            ) from failure
 
 
+# --- The check that moves nothing: the owner's terminal only ---
+# A run of the template makes a revision outside this script: no migration, no smoke test and no
+# put-back follow it. This is its read-back. Every request it sends is a read.
+
+def settled_app(app_id, timeout=300):
+    """The app, read until its last update has succeeded and its latest revision is its latest
+    ready one: what wait_revision waits for after a deployment's own request, here for a
+    revision somebody else made. An update that ended Failed or Canceled is not waited out."""
+    deadline = time.monotonic() + timeout
+    while True:
+        app = rest('GET', app_id)
+        properties = app.get('properties') or {}
+        state = properties.get('provisioningState')
+        latest, ready = properties.get('latestRevisionName'), properties.get('latestReadyRevisionName')
+        if state == 'Succeeded' and latest and ready == latest:
+            return app
+        ended = state in {'Failed', 'Canceled'}
+        if ended or time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"{'The app is' if ended else f'After {timeout} s the app was'} not in a state to be "
+                f'checked (its last update: {state!r}; its latest revision: {latest!r}; its latest '
+                f'ready revision: {ready!r}). Until the latest revision is the latest ready one, an '
+                'answer could still come from another revision: nothing was proved, nothing was '
+                "moved. Look at the app's revisions, then check again.")
+        time.sleep(5)
+
+
+def is_inactive(revision):
+    """True only for a revision that says so. An entry of another shape, and one that does not
+    say, is not taken for inactive."""
+    properties = revision.get('properties') if isinstance(revision, dict) else None
+    return isinstance(properties, dict) and properties.get('active') is False
+
+
+def wait_alone(app_id, latest, timeout=180):
+    """Until every other revision is inactive, an answer could still come from one of them: what
+    wait_inactive waits for after a deployment, for the one revision it knows ran before. Here
+    no earlier revision is known, so the app's revisions are listed. The latest must be in the
+    list, or the list is not one that could have shown an active revision; every other entry
+    must say it is inactive.
+
+    It is one answer. Whether Azure gives the list of an app's revisions in pages is recorded
+    nowhere in this repository: a list that comes with a link to a next page does not show every
+    revision, the link is not followed, and the check stops there."""
+    deadline = time.monotonic() + timeout
+    while True:
+        answer = rest('GET', f'{app_id}/revisions')
+        if isinstance(answer, dict) and answer.get('nextLink'):
+            raise RuntimeError(
+                "The list of the app's revisions came with a link to a next page, and this script "
+                'reads one answer: a revision that is still active could be on a page it did not '
+                'read. An answer could then still come from another revision: nothing was proved, '
+                'nothing was moved.')
+        entries = listed(answer, 'value')
+        names = [entry.get('name') if isinstance(entry, dict) else None for entry in entries]
+        awake = [entry for entry, name in zip(entries, names) if name != latest and not is_inactive(entry)]
+        if latest in names and not awake:
+            say(f'Revision {latest} is the latest ready one and no other revision is active: what '
+                'answers now is that revision.')
+            return
+        if time.monotonic() >= deadline:
+            found = []
+            if awake:
+                found.append(f"{len(awake)} other revision{'' if len(awake) == 1 else 's'} had not "
+                             'gone inactive')
+            if latest not in names:
+                found.append('the latest ready revision was not in the list')
+            raise RuntimeError(
+                f"After {timeout} s the list of the app's revisions did not show {latest} answering "
+                f"alone ({', and '.join(found)}), so an answer could still come from another "
+                "revision: nothing was proved, nothing was moved. Look at the app's revisions, "
+                'then check again.')
+        time.sleep(5)
+
+
+def check(subscription, resource_group, in_actions=False):
+    """Read the running app and ask its address what a deployment asks at its end. Nothing is
+    moved: no request here changes a resource or starts a job, and a wrong answer puts nothing
+    back.
+
+    In order: the app, read until its last update has succeeded with its latest revision as its
+    latest ready one; from that read its address, whether it is the public demo, and its shape;
+    its revisions, until no other one is active; with the demo on the pool job and its shape;
+    then the smoke test, with the demo as the app says it. With the demo off the pool job is not
+    read."""
+    if in_actions:
+        raise ValueError("--check is refused inside GitHub Actions: it is the owner's read of the "
+                         'running app, from a terminal. A workflow run checks the app at the end of '
+                         'its own deployment.')
+    prefix = f'{prefix_of(subscription, resource_group)}/Microsoft.App'
+    app_id = f'{prefix}/containerApps/{APP}'
+    app = settled_app(app_id)
+    fqdn = address_of(app)
+    demo = demo_of(app, when='nothing was moved')
+    assert_shape('The app', app_drift(app), 'nothing was moved')
+    latest = app['properties']['latestRevisionName']
+    wait_alone(app_id, latest)
+    if demo:
+        pool_id = f'{prefix}/jobs/{POOL_JOB}'
+        assert_shape(f'The job {POOL_JOB}', pool_drift(read_pool_job(pool_id)), 'nothing was moved')
+    else:
+        say(f'The app says the demo is off: the job {POOL_JOB} is not read.')
+    try:
+        smoke(f'https://{fqdn}', demo=demo)
+    except (SmokeFailed, SmokeUnproven) as failure:
+        # The smoke test words its verdicts for a deployment, and nothing was deployed here.
+        raise type(failure)(f'{failure} This was --check, not a deployment: nothing was moved and '
+                            'nothing is put back; where that says to deploy again, check again.') from None
+    say(f'Checked: {latest} is the latest ready revision and no other is active; '
+        + (f'the demo is on and the job {POOL_JOB} is in shape' if demo else 'the demo is off')
+        + '; the smoke test passed; nothing was moved.')
+
+
 # --- Reading the log workspace: the owner's terminal only ---
 # The deployment identity has no right on the workspace, and a public log must never hold this
 # text. Both commands sign in as whoever ran `az login`.
@@ -1225,6 +1346,9 @@ def main(arguments=None):
     modes.add_argument('--app-only', action='store_true',
                        help='move the app to IMAGE_TAG without touching any job: the road back, '
                             'by hand; refused inside GitHub Actions')
+    modes.add_argument('--check', action='store_true',
+                       help='read the running app, and with the demo on the pool job, then '
+                            'smoke-test the address: nothing is moved; refused inside GitHub Actions')
     modes.add_argument('--job-log', nargs='?', const='', metavar='EXECUTION',
                        help='print what a migration printed, from the log workspace: the latest '
                             'execution, or the one named; refused inside GitHub Actions')
@@ -1236,7 +1360,9 @@ def main(arguments=None):
     resource_group = os.environ.get('AZURE_RESOURCE_GROUP', '')
     in_actions = os.environ.get('GITHUB_ACTIONS') == 'true'
     try:
-        if options.job_log is not None:
+        if options.check:
+            check(subscription, resource_group, in_actions=in_actions)
+        elif options.job_log is not None:
             job_log(subscription, resource_group, options.job_log, in_actions=in_actions)
         elif options.app_log is not None:
             app_log(subscription, resource_group, options.app_log, in_actions=in_actions)

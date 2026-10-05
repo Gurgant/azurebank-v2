@@ -178,6 +178,8 @@ class FakeAzure:
         self.jobs = {'azurebank-migrate': job_resource()}
         self.revisions = {BEFORE: {'active': True, 'provisioningState': 'Provisioned',
                                    'runningState': 'Running', 'healthState': 'Healthy'}}
+        # True: the list of the app's revisions comes with a link to a next page.
+        self.more_revisions = False
         self.replicas = [{'name': 'azurebank--replica-1', 'properties': {'containers': [
             {'name': 'bff', 'ready': False, 'started': False, 'restartCount': 7,
              'runningState': 'Waiting', 'runningStateDetails': 'CrashLoopBackOff'}]}}]
@@ -206,6 +208,17 @@ class FakeAzure:
         self.app = flagged('true', 'true')
         self.jobs['azurebank-pool'] = pool_resource()
 
+    def a_new_revision_is_ready(self, name='azurebank--after'):
+        """What a run of the template leaves when it made a revision: a new one that is the latest
+        and the latest ready one. The one before stays active for as long as these tests say
+        (keep_old_active, reads_before_old_is_inactive)."""
+        self.revisions[name] = {'active': True, 'provisioningState': 'Provisioned',
+                                'runningState': 'Running', 'healthState': 'Healthy'}
+        self.app['properties'].update(latestRevisionName=name, latestReadyRevisionName=name)
+        if not self.keep_old_active and not self.reads_before_old_is_inactive:
+            self.deactivate_all_but(name)
+        return name
+
     def writes(self):
         return [(method, resource_id) for method, resource_id, _ in self.calls if method != 'GET']
 
@@ -222,6 +235,8 @@ class FakeAzure:
             raise deploy.AzError(self.refusal)
         if resource_id == APP_ID:
             return self.app_call(method, body)
+        if (method, resource_id) == ('GET', APP_ID + '/revisions'):
+            return self.revisions_call()
         if resource_id.startswith(APP_ID + '/revisions/'):
             return self.revision_call(resource_id[len(APP_ID + '/revisions/'):])
         if resource_id.startswith(PREFIX + '/jobs/'):
@@ -267,12 +282,25 @@ class FakeAzure:
             return {'value': copy.deepcopy(self.replicas)}
         if tail not in self.revisions:
             raise deploy.AzError('Not Found: ResourceNotFound')
+        self.count_a_read_of_the_revisions()
+        self.events.append(f'read {tail}')
+        return {'name': tail, 'properties': copy.deepcopy(self.revisions[tail])}
+
+    def count_a_read_of_the_revisions(self):
         if self.reads_before_old_is_inactive:
             self.reads_before_old_is_inactive -= 1
             if not self.reads_before_old_is_inactive:
                 self.deactivate_all_but(self.app['properties']['latestReadyRevisionName'])
-        self.events.append(f'read {tail}')
-        return {'name': tail, 'properties': copy.deepcopy(self.revisions[tail])}
+
+    def revisions_call(self):
+        """The list of the app's revisions, each as a read of it alone answers."""
+        self.count_a_read_of_the_revisions()
+        self.events.append('read revisions')
+        answer = {'value': [{'name': name, 'properties': copy.deepcopy(state)}
+                            for name, state in self.revisions.items()]}
+        if self.more_revisions:
+            answer['nextLink'] = f'https://management.azure.com{APP_ID}/revisions?page=2'
+        return answer
 
     def job_call(self, method, tail, body):
         name, _, rest = tail.partition('/')
@@ -1939,6 +1967,371 @@ class AppOnlyTests(DeployCase):
         self.assertEqual(self.steps(), ['app d', 'app b'])
 
 
+CHECK_REFUSED = ("--check is refused inside GitHub Actions: it is the owner's read of the running app, "
+                 'from a terminal. A workflow run checks the app at the end of its own deployment.')
+ANOTHER_REVISION = ('an answer could still come from another revision: nothing was proved, nothing was '
+                    "moved. Look at the app's revisions, then check again.")
+ALONE = 'is the latest ready one and no other revision is active: what answers now is that revision.'
+DEMO_OFF = 'The app says the demo is off: the job azurebank-pool is not read.'
+
+
+def checked(latest, demo):
+    """The last line of a check that passed."""
+    return (f'Checked: {latest} is the latest ready revision and no other is active; '
+            + ('the demo is on and the job azurebank-pool is in shape' if demo else 'the demo is off')
+            + '; the smoke test passed; nothing was moved.')
+
+
+def not_settled(state, latest, ready, waited=True):
+    """The whole sentence of a check that found the app in no state to be checked."""
+    return (f"{'After 300 s the app was' if waited else 'The app is'} not in a state to be checked "
+            f'(its last update: {state!r}; its latest revision: {latest!r}; its latest ready '
+            f'revision: {ready!r}). Until the latest revision is the latest ready one, {ANOTHER_REVISION}')
+
+
+def not_alone(found, latest):
+    """The whole sentence of a check that could not see the latest revision answering alone."""
+    return (f"After 180 s the list of the app's revisions did not show {latest} answering alone "
+            f'({found}), so {ANOTHER_REVISION}')
+
+
+NOT_LISTED = 'the latest ready revision was not in the list'
+
+
+class CheckTests(DeployCase):
+    """`deploy.check`: the owner reads the running app and asks its address what a deployment asks
+    at its end, and nothing is moved. It is the read-back of a run of the template, which makes a
+    revision outside the script: no migration, no smoke test and no put-back follow one."""
+
+    def check(self, **options):
+        return deploy.check(SUBSCRIPTION, GROUP, **options)
+
+    def said(self):
+        """What was printed, without the clock in front of each line."""
+        return [line.split(' ', 1)[1] for line in self.printed().splitlines()]
+
+    def asked(self):
+        return [(method, resource_id) for method, resource_id, _ in self.azure.calls]
+
+    def assert_nothing_was_moved(self):
+        # No PATCH and no start: every request was a read.
+        self.assertEqual(self.azure.writes(), [])
+        self.migration.assert_not_called()
+
+    def test_it_reads_the_app_runs_the_smoke_test_and_writes_nothing(self):
+        self.check()
+        self.assertEqual(self.asked(), [('GET', APP_ID), ('GET', APP_ID + '/revisions')])
+        self.smoke.assert_called_once_with(f'https://{ADDRESS}', demo=False)
+        self.assertEqual(self.azure.writes(), [])
+        self.migration.assert_not_called()
+        self.assertEqual(self.said(), [f'Revision {BEFORE} {ALONE}', DEMO_OFF, checked(BEFORE, demo=False)])
+        self.assertEqual(self.clock.sleeps, [], 'an app at rest is not waited for')
+
+    def test_with_the_demo_on_it_reads_the_pool_job_too_and_still_moves_nothing(self):
+        self.azure.turn_the_demo_on()
+        self.check()
+        self.assertEqual([call for call in self.asked() if call[0] == 'GET'],
+                         [('GET', APP_ID), ('GET', APP_ID + '/revisions'), ('GET', POOL_ID)])
+        self.assert_nothing_was_moved()
+        self.smoke.assert_called_once_with(f'https://{ADDRESS}', demo=True)
+        self.assertEqual(self.said()[-1], checked(BEFORE, demo=True))
+        self.assertNotIn('the demo is off', self.printed())
+
+    def test_it_is_refused_inside_actions_before_any_call(self):
+        with self.assertRaises(ValueError) as raised:
+            self.check(in_actions=True)
+        self.assertEqual(str(raised.exception), CHECK_REFUSED)
+        self.assertEqual(self.azure.calls, [])
+        self.smoke.assert_not_called()
+        self.assertEqual(self.printed(), '')
+
+    def test_it_needs_the_subscription_and_the_resource_group(self):
+        for subscription, group in (('', GROUP), (SUBSCRIPTION, '')):
+            with self.assertRaisesRegex(ValueError, 'AZURE_SUBSCRIPTION_ID and AZURE_RESOURCE_GROUP must be set'):
+                deploy.check(subscription, group)
+        self.assertEqual(self.azure.calls, [])
+
+    def test_it_checks_the_demo_as_the_app_says_it(self):
+        self.check()
+        self.azure.turn_the_demo_on()
+        self.check()
+        self.assertEqual([call.kwargs for call in self.smoke.call_args_list], [{'demo': False}, {'demo': True}])
+        # Two containers that disagree, and a value the template never writes, stop the check as
+        # they stop a deployment, before the address is asked anything.
+        for app, drift in ((flagged('true', 'false'), disagree(['bff'], ['api'])),
+                           (flagged('true', 'VALUE-MARKER'), neither('api'))):
+            with self.subTest(drift=drift):
+                self.azure.app = app
+                with self.assertRaises(deploy.ShapeError) as raised:
+                    self.check()
+                self.assertEqual(str(raised.exception), out_of_shape('The app', drift, when='nothing was moved'))
+        self.assertNotIn('VALUE-MARKER', self.printed())
+        self.assertEqual(self.smoke.call_count, 2)
+        self.assert_nothing_was_moved()
+
+    def test_an_app_out_of_shape_or_with_no_address_is_not_checked(self):
+        APP_DRIFTS['template.scale.maxReplicas'](self.azure)
+        with self.assertRaises(deploy.ShapeError) as raised:
+            self.check()
+        self.assertEqual(str(raised.exception), out_of_shape(
+            'The app', 'template.scale.maxReplicas is 2', when='nothing was moved'))
+        self.azure.app = app_resource()
+        app_part(self.azure, 'configuration').update(ingress=None)
+        with self.assertRaises(deploy.ShapeError) as raised:
+            self.check()
+        self.assertEqual(str(raised.exception), out_of_shape(
+            'The app', 'configuration.ingress.external is None', 'configuration.ingress.targetPort is None',
+            when='nothing was moved'))
+        self.azure.app = app_resource()
+        app_part(self.azure, 'configuration', 'ingress').update(fqdn='x.invalid\n::add-mask::something')
+        with self.assertRaisesRegex(RuntimeError, 'Unexpected application address') as raised:
+            self.check()
+        self.assertNotIn('add-mask', str(raised.exception) + self.printed())
+        self.smoke.assert_not_called()
+        self.assert_nothing_was_moved()
+
+    def test_it_waits_until_no_other_revision_is_active_before_it_asks_the_address(self):
+        # A run of the template made a revision, and the one before is still active for a while:
+        # until it is not, an answer could come from it.
+        self.azure.reads_before_old_is_inactive = 3
+        after = self.azure.a_new_revision_is_ready()
+        self.check()
+        events = self.azure.events
+        self.assertEqual(events, ['read revisions'] * 3 + ['smoke'])
+        self.assertEqual(self.clock.sleeps, [5, 5])
+        self.assertEqual(self.said()[0], f'Revision {after} {ALONE}')
+        self.smoke.assert_called_once_with(f'https://{ADDRESS}', demo=False)
+
+    def test_another_revision_still_active_at_the_deadline_ends_the_check(self):
+        self.azure.keep_old_active = True
+        after = self.azure.a_new_revision_is_ready()
+        with self.assertRaises(RuntimeError) as raised:
+            self.check()
+        self.assertIs(type(raised.exception), RuntimeError)
+        self.assertEqual(str(raised.exception), not_alone('1 other revision had not gone inactive', after))
+        self.assertGreaterEqual(self.clock.now, 180)
+        self.smoke.assert_not_called()
+        self.assert_nothing_was_moved()
+        self.assertNotIn('Checked', self.printed())
+
+    def test_a_revision_that_does_not_say_it_is_inactive_is_not_taken_for_inactive(self):
+        after = self.azure.a_new_revision_is_ready()
+        self.assertIs(self.azure.revisions[BEFORE]['active'], False, 'ARRANGE: the one before is inactive')
+        latest = {'name': after, 'properties': {'active': True}}
+        lists = {
+            'no word of it': [latest, {'name': BEFORE, 'properties': {}}],
+            'nothing': [latest, {'name': BEFORE, 'properties': {'active': None}}],
+            'text': [latest, {'name': BEFORE, 'properties': {'active': 'false'}}],
+            'zero': [latest, {'name': BEFORE, 'properties': {'active': 0}}],
+            'properties that are not an object': [latest, {'name': BEFORE, 'properties': 'inactive'}],
+            'no properties': [latest, {'name': BEFORE}],
+            'an entry that is not an object': [latest, 'azurebank--before'],
+            'an entry with no name that is active': [latest, {'properties': {'active': True}}],
+        }
+        for what, entries in lists.items():
+            with self.subTest(what=what), patch.object(self.azure, 'revisions_call', return_value={'value': entries}):
+                with self.assertRaises(RuntimeError) as raised:
+                    self.check()
+                self.assertEqual(str(raised.exception),
+                                 not_alone('1 other revision had not gone inactive', after))
+        two = [latest, {'name': BEFORE, 'properties': {'active': True}}, {'name': 'azurebank--older', 'properties': {}}]
+        with patch.object(self.azure, 'revisions_call', return_value={'value': two}):
+            with self.assertRaises(RuntimeError) as raised:
+                self.check()
+        self.assertEqual(str(raised.exception), not_alone('2 other revisions had not gone inactive', after))
+        self.smoke.assert_not_called()
+
+    def test_a_list_that_does_not_hold_the_latest_revision_proves_nothing(self):
+        # No entry is active in any of these answers, and none is the list of this app's
+        # revisions: a list that could not have shown an active revision does not show there is none.
+        inactive = {'name': 'azurebank--older', 'properties': {'active': False}}
+        answers = {'an empty list': {'value': []}, 'no list': {}, 'text for a list': {'value': 'x'},
+                   'an answer that is a list': [inactive], 'only another revision': {'value': [inactive]}}
+        for what, answer in answers.items():
+            with self.subTest(what=what), patch.object(self.azure, 'revisions_call', return_value=answer):
+                began = self.clock.now
+                with self.assertRaises(RuntimeError) as raised:
+                    self.check()
+                self.assertEqual(str(raised.exception), not_alone(NOT_LISTED, BEFORE))
+                self.assertGreaterEqual(self.clock.now - began, 180)
+        # Both at once: another revision that is active, and no entry for the latest.
+        active = {'name': 'azurebank--older', 'properties': {'active': True}}
+        with patch.object(self.azure, 'revisions_call', return_value={'value': [active]}):
+            with self.assertRaises(RuntimeError) as raised:
+                self.check()
+        self.assertEqual(str(raised.exception),
+                         not_alone(f'1 other revision had not gone inactive, and {NOT_LISTED}', BEFORE))
+        self.smoke.assert_not_called()
+
+    def test_a_list_of_revisions_that_goes_on_on_another_page_proves_nothing(self):
+        # The one answer shows no other revision active, and says there is more to read.
+        self.azure.more_revisions = True
+        with self.assertRaises(RuntimeError) as raised:
+            self.check()
+        self.assertIs(type(raised.exception), RuntimeError)
+        self.assertEqual(str(raised.exception), (
+            "The list of the app's revisions came with a link to a next page, and this script reads one "
+            'answer: a revision that is still active could be on a page it did not read. An answer could '
+            'then still come from another revision: nothing was proved, nothing was moved.'))
+        self.assertEqual(self.clock.sleeps, [], 'reading the same page again would show nothing more')
+        self.assertEqual(self.asked(), [('GET', APP_ID), ('GET', APP_ID + '/revisions')], 'the link is not followed')
+        self.smoke.assert_not_called()
+
+    def test_a_latest_revision_that_is_not_ready_is_not_checked(self):
+        states = {
+            'the latest is not the latest ready one': ({'latestRevisionName': 'azurebank--after'},
+                                                       ('Succeeded', 'azurebank--after', BEFORE)),
+            'an update still in progress': ({'provisioningState': 'InProgress'}, ('InProgress', BEFORE, BEFORE)),
+            'no revision is ready': ({'latestReadyRevisionName': None}, ('Succeeded', BEFORE, None)),
+            'no revision at all': ({'latestRevisionName': None, 'latestReadyRevisionName': None},
+                                   ('Succeeded', None, None)),
+        }
+        for what, (found, told) in states.items():
+            with self.subTest(what=what):
+                self.azure.app = app_resource()
+                self.azure.app['properties'].update(found)
+                began = self.clock.now
+                with self.assertRaises(RuntimeError) as raised:
+                    self.check()
+                self.assertIs(type(raised.exception), RuntimeError)
+                self.assertEqual(str(raised.exception), not_settled(*told))
+                self.assertGreaterEqual(self.clock.now - began, 300)
+        self.assertEqual([call for call in self.asked() if call != ('GET', APP_ID)], [],
+                         'nothing else is read of an app that is in no state to be checked')
+        self.smoke.assert_not_called()
+        self.assert_nothing_was_moved()
+
+    def test_an_update_that_ended_failed_is_not_waited_out(self):
+        for state in ('Failed', 'Canceled'):
+            with self.subTest(state=state):
+                self.azure.app['properties'].update(provisioningState=state)
+                with self.assertRaises(RuntimeError) as raised:
+                    self.check()
+                self.assertEqual(str(raised.exception), not_settled(state, BEFORE, BEFORE, waited=False))
+        self.assertEqual(self.clock.sleeps, [])
+        self.smoke.assert_not_called()
+
+    def test_an_update_that_ends_while_it_is_waited_for_is_checked_as_it_ended(self):
+        # The run of the template that turns the demo on is still going when the check starts: the
+        # app is read again until it has settled, and what it says then is what is checked.
+        self.azure.turn_the_demo_on()
+        settled = self.azure.app_call
+        unsettled = flagged('false', 'false')
+        unsettled['properties'].update(provisioningState='InProgress')
+        answers = [unsettled, unsettled]
+        with patch.object(self.azure, 'app_call',
+                          side_effect=lambda method, body: answers.pop() if answers else settled(method, body)):
+            self.check()
+        self.assertEqual(self.asked()[:4], [('GET', APP_ID)] * 3 + [('GET', APP_ID + '/revisions')])
+        self.assertEqual(self.clock.sleeps, [5, 5])
+        self.smoke.assert_called_once_with(f'https://{ADDRESS}', demo=True)
+        self.assertNotIn('the demo is off', self.printed())
+
+    def test_with_the_demo_on_it_checks_the_pool_jobs_shape(self):
+        self.azure.turn_the_demo_on()
+        named, drift = POOL_DRIFTS['schedules_expression']
+        drift(self.azure)
+        with self.assertRaises(deploy.ShapeError) as raised:
+            self.check()
+        self.assertEqual(str(raised.exception),
+                         out_of_shape('The job azurebank-pool', named, when='nothing was moved'))
+        self.assertNotIn('* * * * *', str(raised.exception) + self.printed())
+        self.smoke.assert_not_called()
+        self.assert_nothing_was_moved()
+
+    def test_with_the_demo_on_a_pool_job_that_cannot_be_read_ends_the_check(self):
+        self.azure.turn_the_demo_on()
+        self.azure.refuse = lambda method, resource_id, body: resource_id == POOL_ID
+        self.azure.refusal = 'Not Found: ResourceNotFound'
+        with self.assertRaises(RuntimeError) as raised:
+            self.check()
+        self.assertEqual(str(raised.exception), (
+            'The app says the demo is on, and the job azurebank-pool could not be read: Not Found: '
+            'ResourceNotFound. Nothing was changed. See infra/README.md, "When something fails".'))
+        self.smoke.assert_not_called()
+        self.assert_nothing_was_moved()
+
+    def test_with_the_demo_off_no_job_is_read_and_no_secret_is_listed(self):
+        # CONTROL: green before this change: a check that does nothing passes it. It is the guard
+        # that a check of an app with the demo off lists nothing. Whether a job of that name
+        # exists is not asked: here one does.
+        self.azure.jobs['azurebank-pool'] = pool_resource()
+        self.check()
+        self.assertEqual([call for call in self.asked() if 'azurebank-pool' in call[1] or 'listSecrets' in call[1]],
+                         [])
+        self.assertEqual(self.azure.writes(), [])
+
+    def test_a_smoke_test_that_fails_or_proves_nothing_ends_the_check_and_nothing_is_put_back(self):
+        # The smoke test words its verdicts for a deployment. A check deployed nothing.
+        for failure in (deploy.SmokeFailed('Smoke test failed: the sign-in probe got 500.'),
+                        deploy.SmokeUnproven('Smoke test unproven: only 429. Deploy again.')):
+            with self.subTest(failure=type(failure).__name__):
+                self.smoke.side_effect = failure
+                with self.assertRaises(type(failure)) as raised:
+                    self.check()
+                self.assertEqual(str(raised.exception), (
+                    f'{failure} This was --check, not a deployment: nothing was moved and nothing is put '
+                    'back; where that says to deploy again, check again.'))
+        self.assertEqual(self.azure.writes(), [])
+        self.assertNotIn('Checked', self.printed())
+
+    def test_from_the_command_line_it_needs_no_image_tag_and_a_check_that_fails_exits_with_its_sentence(self):
+        # CONTROL: green as written: it was written after the check. Seen red with the wait for
+        # the other revisions taken out of the check (SystemExit not raised).
+        environment = {'AZURE_SUBSCRIPTION_ID': SUBSCRIPTION, 'AZURE_RESOURCE_GROUP': GROUP}
+        with patch.dict(deploy.os.environ, environment, clear=True):
+            self.assertIsNone(deploy.main(['--check']))
+            self.assertEqual(self.said()[-1], checked(BEFORE, demo=False))
+            self.azure.keep_old_active = True
+            after = self.azure.a_new_revision_is_ready()
+            with self.assertRaises(SystemExit) as raised:
+                deploy.main(['--check'])
+        self.assertEqual(raised.exception.code, not_alone('1 other revision had not gone inactive', after))
+        self.assertEqual(self.azure.writes(), [])
+
+
+class SmokeInTheCheckTests(Offline):
+    """The real smoke test inside the real check: what the address answers decides how the check
+    ends, and whatever it answers nothing is moved and nothing is put back."""
+
+    def setUp(self):
+        super().setUp()
+        self.azure = FakeAzure(self.out)
+        self.start(patch('deploy.rest', self.azure.rest))
+
+    def test_the_four_answers_of_a_demo_pass_and_the_check_says_what_it_checked(self):
+        self.azure.turn_the_demo_on()
+        site = demo_site(REFUSED)
+        self.start(patch('deploy.fetch', site.fetch))
+        deploy.check(SUBSCRIPTION, GROUP)
+        self.assertEqual([path for path, _ in site.requests],
+                         ['/', '/health/ready', '/bff/auth/login', '/bff/auth/register'])
+        lines = [line.split(' ', 1)[1] for line in self.printed().splitlines()]
+        self.assertIn('It is the public demo', lines[-2])
+        self.assertEqual(lines[-1], checked(BEFORE, demo=True))
+        self.assertEqual(self.azure.writes(), [])
+
+    def test_an_answer_that_is_wrong_ends_the_check_and_the_app_is_left_as_it_is(self):
+        self.azure.turn_the_demo_on()
+        before = copy.deepcopy(self.azure.app)
+        for site, verdict, said in (
+                (demo_site(REFUSED, register=OPEN), deploy.SmokeFailed, 'the registration probe expected 403'),
+                (demo_site(REFUSED, page=(200, 'text/html', SPA)), deploy.SmokeFailed, 'does not carry the tag'),
+                (demo_site(LIMITED), deploy.SmokeUnproven, 'the sign-in probe got 429')):
+            with self.subTest(said=said):
+                self.start(patch('deploy.fetch', site.fetch))
+                with self.assertRaises(verdict) as raised:
+                    deploy.check(SUBSCRIPTION, GROUP)
+                self.assertIn(said, str(raised.exception))
+                self.assertTrue(str(raised.exception).endswith(
+                    'This was --check, not a deployment: nothing was moved and nothing is put back; where '
+                    'that says to deploy again, check again.'), str(raised.exception))
+                self.assertNotIn('PLANTED', str(raised.exception) + self.printed())
+        self.assertEqual(self.azure.writes(), [])
+        self.assertEqual(self.azure.app, before)
+        self.assertNotIn('Checked', self.printed())
+
+
 class MainTests(Offline):
     ENVIRONMENT = {'AZURE_SUBSCRIPTION_ID': SUBSCRIPTION, 'AZURE_RESOURCE_GROUP': GROUP, 'IMAGE_TAG': NEW}
 
@@ -1961,6 +2354,33 @@ class MainTests(Offline):
         app_log.assert_called_once_with(SUBSCRIPTION, GROUP, 15, in_actions=False)
         run.assert_not_called()
 
+    @patch('deploy.check')
+    @patch('deploy.deploy')
+    def test_the_check_deploys_nothing_and_needs_no_image_tag(self, run, check):
+        environment = {'AZURE_SUBSCRIPTION_ID': SUBSCRIPTION, 'AZURE_RESOURCE_GROUP': GROUP}
+        with patch.dict(deploy.os.environ, environment, clear=True):
+            deploy.main(['--check'])
+        check.assert_called_once_with(SUBSCRIPTION, GROUP, in_actions=False)
+        run.assert_not_called()
+
+    @patch('deploy.rest')
+    @patch('deploy.deploy')
+    def test_the_check_inside_actions_exits_non_zero_without_calling_azure(self, run, rest):
+        with self.assertRaises(SystemExit) as raised:
+            self.run_main(['--check'], GITHUB_ACTIONS='true')
+        self.assertEqual(raised.exception.code, CHECK_REFUSED)
+        rest.assert_not_called()
+        run.assert_not_called()
+
+    @patch('deploy.check')
+    @patch('deploy.deploy')
+    def test_a_deployment_and_the_road_back_run_no_check_of_their_own(self, run, check):
+        # CONTROL: green before this change. Without the option the command line deploys, as it did.
+        self.run_main([])
+        self.run_main(['--app-only'])
+        self.assertEqual(run.call_count, 2)
+        check.assert_not_called()
+
     @patch('deploy.rest')
     @patch('deploy.az')
     def test_the_two_log_commands_inside_actions_exit_non_zero_without_calling_azure(self, az, rest):
@@ -1982,8 +2402,10 @@ class MainTests(Offline):
         rest.assert_not_called()
 
     def test_two_modes_at_once_are_refused_by_the_command_line(self):
+        # The two cases with --check were green before the option existed: a command line the
+        # parser does not know ends the same way. They hold the option in the one group of modes.
         for arguments in (['--app-only', '--job-log'], ['--job-log', '--app-log', '5'],
-                          ['--app-log', 'soon']):
+                          ['--app-log', 'soon'], ['--check', '--app-only'], ['--check', '--job-log']):
             with self.subTest(arguments=arguments), contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit) as raised:
                     self.run_main(arguments)
