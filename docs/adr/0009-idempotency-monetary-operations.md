@@ -274,7 +274,15 @@ minute longer than `RequestDeadline:Seconds`.)*
   connection. The middleware now reads and discards a body of up to 1 MiB before
   the 413, never buffering or hashing it, and for five seconds at most; above
   that size, or once the five seconds are up, it answers `Connection: close`.
-  `docs/engineering-traps.md` has the measurements.)*
+  `docs/engineering-traps.md` has the measurements.)* *(Amended 2026-10-06:
+  the four PIN mints answer 413 `PAYLOAD_TOO_LARGE` ProblemDetails when sent a
+  body over 32 KB, where until then they answered a malformed 400 with
+  `Connection: close`, with a Content-Length and chunked alike. A body with a
+  Content-Length is read and discarded before the 413 (up to 1 MiB, five seconds
+  at most; else `Connection: close`), sharing the bounded drain implementation
+  (`OversizedBodyDrain`) with this middleware; an oversized chunked body is
+  refused with `Connection: close`. Verified on Kestrel by
+  `KestrelRequestSizeLimitTests` and in memory by `MintOversizedBodyDrainTests`.)*
 - The BFF needs no changes: YARP forwards `Idempotency-Key` and
   `Idempotency-Replayed` by default (verified; its transform only adds
   `Authorization`).

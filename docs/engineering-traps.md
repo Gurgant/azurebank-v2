@@ -786,8 +786,12 @@ about to go. Without the deadline the read had no bound of its own: a 60 KB body
 got its 413 after 60 s, and at Kestrel's minimum data rate of 240 bytes a second 1 MiB would take 73
 minutes. With it the 413 left at 5.07 s. Through the BFF a sender that slow gets a 502 instead, at
 13 s: YARP was still copying the body when the API reset the connection, and did not pass the 413
-on. The four mints refuse an oversized body elsewhere — MVC reading past the limit — and are not
-covered yet.
+on. ~~The four mints refuse an oversized body elsewhere — MVC reading past the limit — and are not
+covered yet.~~ *(Amended 2026-10-06: the four PIN mints share the bounded drain with the idempotency
+middleware; an oversized body with a Content-Length is drained up to 1 MiB in 5 s before answering
+413 `PAYLOAD_TOO_LARGE` without `Connection: close`, while an oversized chunked body answers 413 with
+`Connection: close`, verified on Kestrel by `KestrelRequestSizeLimitTests` and in memory by
+`MintOversizedBodyDrainTests`; ADR-0009 "Placement & limits".)*
 
 Two more traps on the way, both measured on 2026-09-24:
 
