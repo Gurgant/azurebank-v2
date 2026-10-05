@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Xunit;
 using static AzureBank.Tests.Architecture.LogPlaceholderClassTests.PlaceholderClass;
@@ -413,9 +414,9 @@ public class LogPlaceholderClassTests
         sites[1].Values!.Select(v => v.Trim()).Should().Equal("a", "b");
         sites[2].HasLiteralTemplate.Should().BeFalse("a variable is a template this parser cannot read");
         sites[3].Values!.Select(v => v.Trim()).Should().Equal("sessionId", "SecretPrefix.Of(token)");
-        Offenders([sites[3]], SecretPrefix, SecretPrefixCall)
+        ComparableText.Of(Offenders([sites[3]], SecretPrefix, SecretPrefixCall)
             .Should().ContainSingle("the helper guards the token, not the session id: the old Contains passed this")
-            .Which.Should().Be("{SessionId} at snippet.cs:4");
+            .Which).Should().Be(ComparableText.Of("{SessionId} at snippet.cs:4"));
         sites[4].Templates.Should().Equal("HTTP {RequestMethod} {RequestPath}");
         sites[4].Values.Should().BeNull("the middleware supplies the values, not an argument list");
         sites[5].HasLiteralTemplate.Should().BeFalse("an interpolated string is built at the call; its holes are not Serilog's");
@@ -430,12 +431,12 @@ public class LogPlaceholderClassTests
         sites[10].Values!.Select(v => v.Trim()).Should().Equal("tag", "count");
         sites[11].Templates.Should().Equal("HTTP {RequestMethod} {RequestPath} responded {StatusCode}");
         sites[12].HasLiteralTemplate.Should().BeFalse("a request-log template held in a constant is not readable here");
-        Offenders([sites[13]], SecretPrefix, SecretPrefixCall)
+        ComparableText.Of(Offenders([sites[13]], SecretPrefix, SecretPrefixCall)
             .Should().ContainSingle("the helper plus a bare value is a bare value: a prefix test passed this")
-            .Which.Should().Be("{SessionId} at snippet.cs:16");
-        Offenders([sites[14]], MaskedPii, RedactCall)
+            .Which).Should().Be(ComparableText.Of("{SessionId} at snippet.cs:16"));
+        ComparableText.Of(Offenders([sites[14]], MaskedPii, RedactCall)
             .Should().ContainSingle("the redactor plus a bare value is a bare value: a substring test passed this")
-            .Which.Should().Be("{Email} at snippet.cs:17");
+            .Which).Should().Be(ComparableText.Of("{Email} at snippet.cs:17"));
         Offenders([sites[15]], MaskedPii, RedactCall).Should().BeEmpty("one call to the redactor, nothing else");
     }
 

@@ -5,6 +5,7 @@ using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
 using AzureBank.Shared.Options;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -178,8 +179,8 @@ public class ExportCommandTests : IDisposable
             AnchorCommand.NotRecorded,
             "the chain was fine and nothing came of the run, which is neither success nor no-verdict");
         string.Join(" ", lines).Should().Contain("NOT EXPORTED");
-        (await File.ReadAllTextAsync(path)).Should().Be(
-            sentinel, "the earlier copy is the reference; this verb must never be able to destroy it");
+        ComparableText.Of(await File.ReadAllTextAsync(path)).Should().Be(
+            ComparableText.Of(sentinel), "the earlier copy is the reference; this verb must never be able to destroy it");
     }
 
     /// <summary>
