@@ -10,6 +10,7 @@ import {
   modelStateProblem,
   problem,
   unreadableBodyProblem,
+  unsupportedMediaTypeProblem,
 } from './problem';
 import { LOGIN_REQUEST, REGISTER_REQUEST, bindMembers, modelStateFor } from './dataAnnotations';
 import {
@@ -627,7 +628,11 @@ interface LoginAccount {
  * address in any spelling, and what signs in to it is its own password. While the page is the
  * demo nobody else has one. The mock's own user is then answered as an address nobody
  * registered, and so is a copy of the pool that nobody has claimed: the 401 of a wrong password,
- * and no counter. Read, not measured: that a running stack answers those two this way.
+ * and no counter. Measured 2026-10-05 on compose.yaml with compose.demo.yaml (Production), with a
+ * made-up password each time: an address nobody has, and the owner of a free copy (found in the
+ * database, where a free copy's owner has no password), each answered
+ * 401 `INVALID_CREDENTIALS`, the body of a wrong password on a claimed copy but for `traceId`.
+ * Read, not measured there: that neither is counted towards a lock.
  */
 function accountForLogin(email: string | undefined): LoginAccount | null {
   if (!email) return null;
@@ -4201,6 +4206,24 @@ const register = http.post('*/bff/auth/register', async ({ request }) => {
 });
 
 /**
+ * Whether a request's Content-Type names JSON, as the framework's JSON reader takes it.
+ *
+ * Measured 2026-10-05 on the claim (see `claimDemoCopy`): `application/json` was read, and
+ * `text/plain` and no Content-Type at all were each a 415. Read, not measured there: that the
+ * reader also takes `text/json` and any `application/...+json`, with or without parameters.
+ * They are let through here so that the mock is not stricter than the server on a type the app
+ * never sends.
+ */
+function isJsonMediaType(contentType: string | null): boolean {
+  const mediaType = (contentType ?? '').split(';')[0].trim().toLowerCase();
+  return (
+    mediaType === 'application/json' ||
+    mediaType === 'text/json' ||
+    /^application\/[^/]+\+json$/.test(mediaType)
+  );
+}
+
+/**
  * POST /bff/auth/demo/claim: on the public demo, take a free demo copy and sign in to it.
  *
  * The answer is a sign-in's with the copy beside it, `{ data: { user, expiresAt, copy }, message }`,
@@ -4212,13 +4235,16 @@ const register = http.post('*/bff/auth/register', async ({ request }) => {
  * NOT MODELLED: `DEMO_DAILY_LIMIT`. The mock counts no claims per address, so a test that needs
  * that refusal arms the answer itself.
  *
- * What is READ, NOT MEASURED below says so where it stands, in those words: put what a running
- * stack answers in its place.
+ * MEASURED 2026-10-05, on compose.yaml with compose.demo.yaml and then on compose.yaml alone, both
+ * as Production, the images of one build: each answer below says which. The order of the four
+ * refusals is the order they were met in: the limiter, the 404, the media type, the body.
  */
 const claimDemoCopy = http.post('*/bff/auth/demo/claim', async ({ request }) => {
   // The BFF's `auth` limiter, the budget that sign-in, registration and re-authentication draw
   // on: a claim spends a permit of it, and past the budget the limiter answers and no copy is
-  // taken. Read, not measured: that the limiter answers before the 404 below.
+  // taken. It answers before the 404 below. Measured with the demo off, eleven claims in a row
+  // from one address: 404 ten times, then 429 `RATE_LIMIT_EXCEEDED` with `Retry-After: 60` and
+  // the BFF's own path as `instance`. So a claim spends a permit with the demo off as well.
   const limited = authRateLimited(request);
   if (limited) return limited;
   // Middleware, as on the routes above: a claim that arrives with a live session slides its clock
@@ -4226,14 +4252,21 @@ const claimDemoCopy = http.post('*/bff/auth/demo/claim', async ({ request }) => 
   // a path the BFF does not have was measured sliding it.
   runSessionActivityMiddleware(request);
   if (!mockDemoEnabled()) {
-    // Off the demo the claim is a path the BFF does not have, whatever was sent.
-    // Read, not measured: the body, empty here.
+    // Off the demo the claim is a path the BFF does not have, whatever was sent. Measured with
+    // the demo off, with `{}` and with no body at all: 404, `Content-Length: 0`, no
+    // Content-Type and no cookie, the header names of `POST /bff/nope`'s answer.
     return new HttpResponse(null, { status: 404 });
+  }
+  // What the body is called comes before what it holds. Measured with the demo on: no body and
+  // no Content-Type, and `Content-Type: text/plain` with `{}`, were each 415.
+  if (!isJsonMediaType(request.headers.get('Content-Type'))) {
+    return unsupportedMediaTypeProblem();
   }
   const claimBody = await readJsonBody(request);
   if (!claimBody) {
-    // Read, not measured: the status. 400 here, as the other `/bff/auth` actions answer a body
-    // they cannot read; a media type the BFF does not take may be a 415 instead.
+    // Called JSON and not readable as an object: 400, as the other `/bff/auth` actions answer.
+    // Measured with the demo on and `Content-Type: application/json`: an empty body and `null`
+    // were keyed `""` and `request`; `not json` and `[]` were keyed `$` and `request`.
     return unreadableBodyProblem(await request.clone().text());
   }
   const claimed = claimMockDemoCopy();
@@ -4254,7 +4287,9 @@ const claimDemoCopy = http.post('*/bff/auth/demo/claim', async ({ request }) => 
       // Two ends, and they are not one value: `expiresAt` here is the access token's, as a
       // sign-in's is, and `copy.expiresAt` is the copy's.
       data: { user: claimed.user, expiresAt: mockAccessTokenExpiry(), copy: claimed.copy },
-      // Read, not measured: the BFF's own sentence. This one is the API's.
+      // The BFF's own sentence (backend/src/AzureBank.Bff/Controllers/BffAuthController.cs).
+      // Measured with the demo on: "message":"Demo copy claimed", after `data`, whose members
+      // came as `user`, `expiresAt`, `copy`.
       message: 'Demo copy claimed',
     },
     { headers: { 'Cache-Control': 'no-store' } },

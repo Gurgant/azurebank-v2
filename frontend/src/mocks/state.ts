@@ -710,10 +710,16 @@ export function claimMockDemoCopy(): { user: MockSessionUser; copy: MockDemoCopy
       pin: MOCK_PIN,
       // Bare and sorted, which is how the pool holds them.
       contacts: [...claimed.contacts],
-      // The copy's end, counted from the claim. Read, not measured: the form of the instant.
-      // Three digits and a `Z` here, as `mockAccessTokenExpiry` below writes the access token's;
-      // put what a running stack writes in its place.
-      expiresAt: new Date(now + MOCK_DEMO_COPY_LIFETIME_MS).toISOString(),
+      // The copy's end, counted from the claim, in the form the stack writes it: seven fractional
+      // digits and a `Z`. Measured 2026-10-05 on compose.yaml with compose.demo.yaml (Production),
+      // in an answer whose `Date` header was 09:25:46 GMT:
+      // "expiresAt":"2026-10-06T09:25:47.0900766Z" in `data.copy`, 24 hours on. (The access
+      // token's end beside `user` came in that answer with whole seconds and a `Z`,
+      // "2026-10-05T09:40:47Z"; `mockAccessTokenExpiry` below is sign-in's too and writes three
+      // digits.)
+      expiresAt: new Date(now + MOCK_DEMO_COPY_LIFETIME_MS)
+        .toISOString()
+        .replace(/\.(\d{3})Z$/, '.$10000Z'),
     },
   };
 }

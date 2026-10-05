@@ -195,7 +195,16 @@ describe("a demo claim's answer", () => {
   it("accepts a copy's end written with a Z or with an offset", () => {
     // Seven fractional digits, as .NET writes an instant; the offset form is the one
     // `apiOffsetInstant` in src/mocks/handlers.ts records for a `DateTimeOffset`.
-    const ends = ['2026-10-05T09:00:00.1234567Z', '2026-10-05T09:00:00.1234567+00:00'];
+    //
+    // The third is what the stack wrote, letter for letter: `data.copy.expiresAt` of a claim made
+    // in Chromium on 2026-10-05 against compose.yaml with compose.demo.yaml (Production). A `Z`,
+    // so the form this schema was written for is the one that arrives. The row was green when it
+    // was added: it holds the measured string, it did not change the schema.
+    const ends = [
+      '2026-10-05T09:00:00.1234567Z',
+      '2026-10-05T09:00:00.1234567+00:00',
+      '2026-10-06T09:22:42.2604692Z',
+    ];
 
     const parsedCopies = ends.map((end) => {
       const result = bffDemoClaimResponseSchema.safeParse({
@@ -208,6 +217,7 @@ describe("a demo claim's answer", () => {
     expect(parsedCopies).toStrictEqual([
       { ...copy, expiresAt: '2026-10-05T09:00:00.1234567Z' },
       { ...copy, expiresAt: '2026-10-05T09:00:00.1234567+00:00' },
+      { ...copy, expiresAt: '2026-10-06T09:22:42.2604692Z' },
     ]);
   });
 

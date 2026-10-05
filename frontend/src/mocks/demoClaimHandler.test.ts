@@ -25,17 +25,21 @@ import {
   backend/tools/AzureBank.Seeder/Pool/DemoCopyBuilder.cs, and the refusal's sentence in
   backend/src/AzureBank.Shared/Exceptions/DemoRefusalException.cs.
 
-  This file pins what the mock answers, not what a server was seen to answer. Where the mock's
-  answer is read and not measured, handlers.ts and state.ts say so beside the value, in the words
-  "Read, not measured": a value replaced there is replaced here with it.
+  This file pins what the mock answers. Where that is what a running stack was seen to answer,
+  handlers.ts and state.ts say so beside the value, with the day and what it was measured against;
+  where it is read and not measured they say that, in the words "Read, not measured". A value
+  replaced there is replaced here with it.
 */
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
-/** A claim as the app sends it: an empty JSON object. `null` sends no body and no content type. */
-function claim(body: string | null = '{}') {
+/**
+ * A claim as the app sends it: an empty JSON object, called JSON. `null` sends no body and no
+ * content type; a second argument sends the body as that type instead.
+ */
+function claim(body: string | null = '{}', contentType = JSON_HEADERS['Content-Type']) {
   return fetch('/bff/auth/demo/claim', {
     method: 'POST',
-    ...(body === null ? {} : { headers: JSON_HEADERS, body }),
+    ...(body === null ? {} : { headers: { 'Content-Type': contentType }, body }),
   });
 }
 
@@ -195,6 +199,10 @@ describe("the mock's demo claim", () => {
     expect(Date.parse(data.copy.expiresAt) - Date.parse(data.expiresAt)).toBe(
       24 * 60 * 60_000 - 15 * 60_000,
     );
+    // The copy's end as the stack writes it: seven fractional digits and a Z. Measured
+    // 2026-10-05 on compose.yaml with compose.demo.yaml (Production):
+    // "expiresAt": "2026-10-06T09:22:42.2604692Z" in `data.copy`.
+    expect(data.copy.expiresAt).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{7}Z$/);
 
     expect(await whoAmI()).toEqual({ status: 200, email: data.copy.email, authLevel: 1 });
     expect(await accounts()).toEqual(STARTING_ACCOUNTS);
@@ -332,18 +340,63 @@ describe("the mock's demo claim", () => {
     const aMinuteAgo = Date.now() - 60_000;
     mockState.sessionLastActivity = aMinuteAgo;
 
-    const withNone = await claim(null);
-    const notJson = await claim('not json');
+    /*
+      Two refusals, and which one depends on what the body is called before on what it holds.
+      Measured 2026-10-05 on compose.yaml with compose.demo.yaml (Production), six requests to
+      POST /bff/auth/demo/claim:
+
+        no body, no Content-Type              415
+        Content-Type: text/plain, {}          415
+        Content-Type: application/json, ""    400, errors keyed "" and "request"
+        Content-Type: application/json, null  400, errors keyed "" and "request"
+        ... "not json"                        400, errors keyed "$" and "request"
+        ... []                                400, errors keyed "$" and "request"
+
+      All six are the framework's own answers: application/problem+json, no errorCode, no
+      cookie. The 415's body has no `errors` member.
+    */
+    const refused = async (res: Response) => {
+      const body = await res.json();
+      return {
+        status: res.status,
+        type: res.headers.get('Content-Type'),
+        title: body.title,
+        keyedBy: body.errors ? Object.keys(body.errors) : 'no errors member',
+        errorCode: 'errorCode' in body,
+      };
+    };
+    const unsupported = {
+      status: 415,
+      type: 'application/problem+json',
+      title: 'Unsupported Media Type',
+      keyedBy: 'no errors member',
+      errorCode: false,
+    };
+    const unreadable = (...keyedBy: string[]) => ({
+      status: 400,
+      type: 'application/problem+json',
+      title: 'One or more validation errors occurred.',
+      keyedBy,
+      errorCode: false,
+    });
 
     expect({
-      withNone: withNone.status,
-      notJson: notJson.status,
+      withNone: await refused(await claim(null)),
+      asPlainText: await refused(await claim('{}', 'text/plain')),
+      empty: await refused(await claim('')),
+      aNull: await refused(await claim('null')),
+      notJson: await refused(await claim('not json')),
+      aList: await refused(await claim('[]')),
       claimed: mockState.demoCopies,
       session: mockState.session,
       theClockSlid: mockState.sessionLastActivity > aMinuteAgo,
     }).toEqual({
-      withNone: 400,
-      notJson: 400,
+      withNone: unsupported,
+      asPlainText: unsupported,
+      empty: unreadable('', 'request'),
+      aNull: unreadable('', 'request'),
+      notJson: unreadable('$', 'request'),
+      aList: unreadable('$', 'request'),
       claimed: [],
       session: MOCK_USER,
       theClockSlid: true,
