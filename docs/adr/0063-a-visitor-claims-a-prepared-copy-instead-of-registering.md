@@ -187,8 +187,11 @@ off by hand.
   (`python -c "print((48/56)**16)"` prints 0.0848…, the share with no digit); that costs a
   fraction of one bit (computed; no test counts the redraws). The hyphens are the pattern's
   fourth kind of character.
-- **The password exists in the claim's answer and nowhere else.** The database holds Identity's
-  hash; no log line carries it (decision 15).
+- **The password exists in the claim's answer ~~and nowhere else~~.** *(Struck 2026-10-05:
+  nowhere else on the server. Since the application's change the browser that made the claim
+  keeps it too, under one `localStorage` key, and the dashboard shows it to the copy's owner
+  when asked: "What the browser keeps in demo mode", points 1, 3 and 4.)* The database holds
+  Identity's hash; no log line carries it (decision 15).
 - **The client's key** is `HMAC-SHA256(Demo:ClientKeySecret, "demo-claim:" + address)`, 32 bytes,
   in `DemoCopies.ClientKey`. An address is personal data, and all the row needs of it is to tell
   one client from another. A plain hash would not do: there are few enough IPv4 addresses to hash
@@ -937,8 +940,16 @@ registered for. The key holds no token, no session identifier and nothing of a r
 address is one the pool made up.
 A script running in the page could already drive that copy through the page, with the session
 cookie the browser sends for it. What the key adds is that the sign-in outlives the session and
-can be carried to another browser. The owner reads the same details on the dashboard, under
-"Show sign-in details". The page is served under `script-src 'self'` and `connect-src 'self'`
+can be carried to another browser. The application uses it that way itself: at a session's
+fixed end the owner's dialog signs in again with the kept password, on one press of "Stay
+signed in" and with nothing typed (`frontend/src/features/auth/SessionExpiryWarning.tsx`; held
+against the mock by `SessionExpiryWarning.test.tsx`, `demo, the copy's owner: one button in
+place of the password field` and `it sends the stored password, and the dialog closes because
+the session's end moved`; not run on the stack). So for that owner the fixed end asks no person
+for the password ([ADR-0026](0026-absolute-session-cap-reauthentication.md), decision 2),
+until the copy's end, from which the gate refuses the pair (decision 10). The owner reads the
+same details on the dashboard, under "Show sign-in details". The page is served under
+`script-src 'self'` and `connect-src 'self'`
 (`backend/src/AzureBank.Bff/README.md`, "Security Headers Middleware"; the header was read back
 from the compose stack on 2026-10-05), so no inline script runs and none is loaded from another
 origin.

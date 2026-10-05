@@ -38,6 +38,15 @@ that a future reviewer will otherwise read as a bug.
    Proving the person at the keyboard still holds the password is precisely what the cap is there to
    re-establish.
 
+   *(2026-10-05,
+   [ADR-0063](0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md#what-the-browser-keeps-in-demo-mode-added-2026-10-05),
+   point 4: on the public demo, for the owner of a claimed copy on the browser that keeps its
+   sign-in details, the dialog has one button, "Stay signed in", in the place of the password
+   field, and the password sent is the one that browser keeps. The credential and the endpoint
+   are unchanged. What the cap re-establishes there is that the browser still holds the copy's
+   password, not that a person typed it. A visitor signed in to a copy on another browser, and
+   everybody with the demo off, types it as before.)*
+
 3. **`POST /bff/auth/reauthenticate` takes a password and no identity.** The email comes from the
    server-side session. This is a construction rather than a check: re-authentication happens *in
    place*, with the route, the page and any half-filled form still mounted, so an endpoint that
