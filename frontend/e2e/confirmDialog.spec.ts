@@ -1,5 +1,6 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import { USER } from './fixtures';
+import { focusOf } from './focusOf';
 
 /**
  * The confirm dialog under the keyboard, in a real browser.
@@ -22,18 +23,6 @@ import { USER } from './fixtures';
  * the key, says it could not reach the server and offers "Check again". The authorisation is
  * minted for real, with the right PIN, and expires unused.
  */
-
-/** What has focus, by its name, and whether the dialog holds it. */
-function focusOf(page: Page) {
-  return page.evaluate(() => {
-    const active = document.activeElement;
-    if (active === null || active === document.body) return { on: 'the page', inTheDialog: false };
-    return {
-      on: active.getAttribute('aria-label') ?? active.textContent,
-      inTheDialog: active.closest('[role="alertdialog"]') !== null,
-    };
-  });
-}
 
 test.describe('the confirm dialog under the keyboard', () => {
   test('the leave prompt of a transfer takes focus when it opens, keeps Tab inside, and gives focus back', async ({
