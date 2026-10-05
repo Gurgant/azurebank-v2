@@ -54,7 +54,12 @@ const KEY = 'azurebank.demoCopy';
 const FIRST_COPY = 'demo-k7m2x9q4w8e1r5t3@azurebank.example';
 const SECOND_COPY = 'demo-4h9d2s7f1g6j3k8a@azurebank.example';
 
-/** The API's refusal for an empty pool, with the API's own sentence. */
+/**
+ * The API's refusal for an empty pool, with the API's own sentence: `PoolEmptyDetail` in
+ * backend/src/AzureBank.Shared/Exceptions/DemoRefusalException.cs, as the day's limit further
+ * down gives `DailyLimitDetail`. src/features/demo/demoContract.test.ts holds both against that
+ * file.
+ */
 const poolEmpty = () =>
   problem({
     status: 429,

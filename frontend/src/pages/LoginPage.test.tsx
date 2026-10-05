@@ -98,7 +98,12 @@ const NOBODY = 'visitor@azurebank.example';
 
 type Answer = () => Response | Promise<Response> | undefined;
 
-/** The API's refusal for an empty pool, with the API's own sentence: not the page's. */
+/**
+ * The API's refusal for an empty pool, with the API's own sentence: not the page's. The sentence
+ * is `PoolEmptyDetail` in backend/src/AzureBank.Shared/Exceptions/DemoRefusalException.cs, and the
+ * day's limit further down gives `DailyLimitDetail`; src/features/demo/demoContract.test.ts holds
+ * both against that file.
+ */
 const poolEmpty = () =>
   problem({
     status: 429,
