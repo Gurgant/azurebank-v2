@@ -477,10 +477,11 @@ describe('SessionExpiryWarning', () => {
       return bodies;
     }
 
-    /** Every re-authentication the store has sent has its answer. */
+    /** Every request the store has sent has its answer, the reads among them. */
     const settled = (store: TestStore) =>
       act(async () => {
         await Promise.all(store.dispatch(apiSlice.util.getRunningMutationsThunk()));
+        await Promise.all(store.dispatch(apiSlice.util.getRunningQueriesThunk()));
       });
 
     /** Every sign-in state the store passes through from here on, starting with the one it is in. */
@@ -680,13 +681,23 @@ describe('SessionExpiryWarning', () => {
       }
     });
 
-    /** A new session on the same page, brought to its own cap: what signing in again leaves. */
+    /**
+     * A new session on the same page, brought to its own cap: what signing in again leaves.
+     *
+     * Between two sessions the dialog draws nothing and no clock wakes it, so it learns of the
+     * new one only when the store tells its subscribers. The store hands a request's answer to
+     * them on the next animation frame, and in this file jsdom's frames may have stopped with an
+     * earlier test's fake clock (src/test/outage.ts has the chain and the measurement). An
+     * ordinary action is handed over at once, with everything dispatched before it. The one
+     * dispatched here changes nothing and is there for that.
+     */
     async function signedInAgain(store: TestStore, signIn: () => void) {
       signIn();
       mockState.sessionInactivityWindowMs = 30 * 60_000;
       mockState.sessionAbsoluteWindowMs = ABSOLUTE_SOON_MS;
       await act(async () => {
         await store.dispatch(apiSlice.endpoints.getMe.initiate(undefined, { forceRefetch: true }));
+        store.dispatch({ type: 'test/toldToTheSubscribers' });
       });
       expect(store.getState().auth.status).toBe('authenticated');
       await advance(35_000);
