@@ -1467,8 +1467,8 @@ is read, not assumed:
 
 | What is seen | Then read | What it is, and what is done |
 | --- | --- | --- |
-| `Invoke-Template` stops with "The what-if failed." and Azure's text names the policy | The app's secret names; `--check`; the job list | Nothing was sent: the what-if comes before the deployment. Expected: eight names, no tag, one job. Wait 15 minutes, then the step again as written |
-| The deployment fails with `RequestDisallowedByPolicy` | The same three, and the app's latest revision | Nine names, the tag, a new revision and one job: the app's part was applied and the job was refused. The app is the demo with an empty pool and no job, which fails closed. Eight names, no tag and the revision step 24 left: it was refused before anything was applied. Either way wait 15 minutes and run the step again as written: with nine names the script keeps the eight keys and the switch, with eight it generates the client key again. Anything else: stop |
+| `Invoke-Template` stops with "The what-if failed." and Azure's text names the policy | The app's secret names; `--check`; the job list | Nothing was sent: the what-if comes before the deployment. Expected: eight names; `--check` passing, with "the demo is off" in its last line, which it says only of a page without the tag; one job. Wait 15 minutes, then the step again as written |
+| The deployment fails with `RequestDisallowedByPolicy` | The same three, and the app's latest revision | Nine names, a new revision and one job, and `--check` ends with "The app says the demo is on, and the job azurebank-pool could not be read": the app's part was applied and the job was refused. That sentence is the read: `--check` stops at the job before it asks the address anything, so it cannot show the tag here. The app is the demo with an empty pool and no job, which fails closed. Eight names, the revision step 24 left and `--check` passing with "the demo is off": it was refused before anything was applied. Either way wait 15 minutes and run the step again as written: with nine names the script keeps the eight keys and the switch, with eight it generates the client key again. Anything else: stop |
 
 The third refusal is a stop.
 
@@ -1652,8 +1652,8 @@ written.
 | Measurement | How | What is read |
 | --- | --- | --- |
 | The first | From A: twelve sign-ins inside a minute, each status printed. Then, at once, from B: one | From A: how many answer 401 before the first 429. From B: 401 or 429 |
-| The second | `python infra/deploy.py --app-log 15`, its first run against the workspace, its output kept in no file | The rate limiter's warning names the client it rejected. It is compared with A's own public address, and what is written down is "A's own address" or "another, the same for A and B", and the count of warnings: never the value. If the log's cap was reached that day, the read is "not run" |
-| The third | The first two again, after the app has been at zero replicas, and after step 28's new revision | The same client, or another |
+| The second | `python infra/deploy.py --app-log 15`, not sooner than eight minutes after the twelve sign-ins and inside the fifteen it reads: a line takes minutes to arrive ([Reading the logs](#reading-the-logs)). It is the command's first run against the workspace, and its output is kept in no file | The rate limiter's warning names the client it rejected. It is compared with A's own public address, and what is written down is "A's own address" or "another, the same for A and B", and the count of warnings: never the value. If the log's cap was reached that day, the read is "not run" |
+| The third | The first two again once the app has been at zero replicas, and once more after step 32's start or after a later deployment, whichever comes first: write down which, and whether the revision's name changed. Step 28's revision is the one the first measurement already ran on | The same client, or another |
 
 Twelve sign-ins are enough for the two of the BFF's three limits that count by the caller's
 address: one function of it feeds the ten a minute and the 300 a minute alike
@@ -1666,7 +1666,7 @@ What follows from each answer:
 | B is answered 429, and the warning names one client that is not A's own address | Stays | A change of the BFF's code is needed, and this is its measurement | Not published before that change is deployed and the first measurement, run again, answers 401 for B |
 | A needs more than eleven requests to meet a 429, or B's answer changes between repeats | Stays | Needed; it must take a range of addresses, not one | The same |
 | B is answered 401 every time, and the warning names A's own public address | Goes back to its default of 10: a change takes the setting out of the `api` container and of the job, and one run of the template applies it | Not needed for the link | Its other preconditions only |
-| The third measurement names another client than the second | As the first row | Needed; a range, or a rule that survives a new revision | The same |
+| The third measurement names another client than the second | As the first row | Needed; a range, or a rule that survives a new replica and a new revision | The same |
 
 Whatever is read replaces "not provoked" in the row of [Not measured yet](#not-measured-yet)
 about the shared sign-in limit: in words, never the address.
@@ -1716,7 +1716,7 @@ step 25 has been read:
 
 | Read back | Expected |
 | --- | --- |
-| `Show-Executions azurebank-pool` | An execution whose name is neither step 26's nor step 31's, started at minute 0 of an hour that is a multiple of four, UTC, with its status and its exit code: 0, or 10 if copies were claimed since the run before |
+| `Show-Executions azurebank-pool` | An execution whose name is neither step 26's nor step 31's, started at minute 0 of an hour that is a multiple of four, UTC, with the status `Succeeded` and the exit code 0. A 10 is not expected: it means the run found fewer than 20 free copies (`Demo:Pool:LowMark`, 20 by default, and the job sets none), which is more claims than this session made. Stop, and read its line: `was`, `claims24h`, `clientsAtCap` |
 | `python infra/deploy.py --pool-log '<that execution>'` | Its summary line, when it is due |
 | The subscription's activity log for the resource group over the last eight hours, read through `ConvertFrom-Json`: for each event whose operation is `Microsoft.App/jobs/start/action`, its time, its status, and one word for its caller ("the owner", "another", "none"). Never the caller itself, and no resource ID | One event for each start by hand. For the run of the schedule: one, or none. Not measured, and this read settles it: it is what an alert on job starts could or could not see |
 
