@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 
 /**
  * What the files of the demo's run share: the two names they look the copy up by, the one way a
@@ -29,6 +29,33 @@ export const POOL_ADDRESS = /^demo-[a-z0-9]{16}@azurebank\.example$/;
  */
 export const panelOf = (page: Page) =>
   page.getByRole('region', { name: 'Your private copy', exact: true });
+
+/**
+ * Listens for Content-Security-Policy violations on a page, or on every page of a context, from
+ * before the page's first script runs, and hands back the list they are added to.
+ *
+ * The BFF serves the built page under a policy (ADR-0054), and a refused style or script does not
+ * show in a spec that asks for controls by role and name: the page works and is drawn wrong, or
+ * not at all where the policy bit. The default run listens on its own walk
+ * (`../e2e/csp.spec.ts`), which is of a stack with the demo off and never draws the demo's
+ * screens. This is the same listener for the demo's run, which draws them.
+ *
+ * A violation is written down as the directive, what was blocked and the page's path: none of
+ * the three is a copy's password. Call it before the first page is opened.
+ */
+export async function hearPolicyViolations(where: BrowserContext | Page): Promise<string[]> {
+  const violations: string[] = [];
+  await where.exposeFunction('__cspViolation', (violation: string) => {
+    violations.push(violation);
+  });
+  await where.addInitScript(() => {
+    document.addEventListener('securitypolicyviolation', (event) => {
+      const report = (window as unknown as { __cspViolation: (v: string) => void }).__cspViolation;
+      report(`${event.violatedDirective} blocked ${event.blockedURI} on ${location.pathname}`);
+    });
+  });
+  return violations;
+}
 
 /**
  * Writes down what a step observed: one line, attached to the test and printed.

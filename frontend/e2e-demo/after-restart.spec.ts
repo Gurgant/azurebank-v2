@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import { focusOf } from '../e2e/focusOf';
 import {
   answerTo,
+  hearPolicyViolations,
   keptCopy,
   leaveNoSignInDetails,
   note,
@@ -25,12 +26,16 @@ import {
  * (`e2e-demo/demoRun.ts`).
  *
  * MEASURED on 2026-10-05, in Chromium 151 against compose.yaml with compose.demo.yaml
- * (Production), after the restart of `e2e-demo/restart.setup.ts`: this file ran as it stands
- * and passed. `GET /bff/auth/me` with the saved cookie answered 401, the sign-in with the kept
- * pair 200, the sign-out 200. It cannot run whole against the mock: the mock keeps its copies
- * in the page, so a page opened from a saved state has none to sign in to, and the mock answers
- * that press 401. Started there from a claim made in the page, it ran from the kept copy on to
- * its end.
+ * (Production), after the restart of `e2e-demo/restart.setup.ts`: this file ran, as it then
+ * stood, and passed. `GET /bff/auth/me` with the saved cookie answered 401, the sign-in with
+ * the kept pair 200, the sign-out 200. It cannot run whole against the mock: the mock keeps its
+ * copies in the page, so a page opened from a saved state has none to sign in to, and the mock
+ * answers that press 401. Started there from a claim made in the page, it ran from the kept
+ * copy on to its end.
+ *
+ * ADDED AFTER THAT RUN, AND NOT RUN SINCE, here or against the mock: the listening for
+ * Content-Security-Policy violations at the top of the test and the expectation at its end.
+ * The listener is `demo.spec.ts`'s, whose last test holds that it hears.
  */
 
 const CONTINUE = 'Continue with my copy';
@@ -45,6 +50,8 @@ test('after a restart the session is gone, the kept copy still signs in, and it 
   page,
 }) => {
   const buttons = (name: string) => page.getByRole('button', { name, exact: true });
+  // From the page's first script to the end of the test (`e2e-demo/demoRun.ts`).
+  const policyViolations = await hearPolicyViolations(page);
 
   // The saved cookie is sent, and the restarted BFF does not know it.
   const asked = answerTo(page, 'GET', '/bff/auth/me');
@@ -109,4 +116,13 @@ test('after a restart the session is gone, the kept copy still signs in, and it 
     keepsNoCopy: true,
     focus: { on: TRY_THE_DEMO, inTheDialog: false },
   });
+
+  // Every screen this test drew was under the stack's policy and broke none of it: the sign-in
+  // page offering a kept copy, the dashboard, and the sign-in page once the copy is forgotten,
+  // with the status that says so. An empty list is an answer only where a policy was served.
+  const served = await page.request.get('/login');
+  expect({
+    servedUnderAPolicy: Boolean(served.headers()['content-security-policy']),
+    violations: policyViolations,
+  }).toEqual({ servedUnderAPolicy: true, violations: [] });
 });

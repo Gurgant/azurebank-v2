@@ -8,6 +8,7 @@ import {
   KEPT_COPY_KEY,
   POOL_ADDRESS,
   answerTo,
+  hearPolicyViolations,
   keptCopy,
   leaveNoSignInDetails,
   note,
@@ -158,6 +159,27 @@ const DETAILS_PAGES = {
 const THE_PAGE_WAS_LEFT =
   'The sign-in details could not be taken off the page, so the page was left.';
 
+/**
+ * A page of this file's own for the policy's listener, answered here under a policy that its one
+ * styled paragraph breaks: a violation that is due, so that a listener that hears none on the
+ * demo's screens is known to hear.
+ */
+const POLICY_CANARY_PATH = '/policy-canary';
+const POLICY_CANARY_POLICY = "default-src 'self'";
+const POLICY_CANARY_PAGE = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>The policy's canary</title>
+  </head>
+  <body>
+    <main>
+      <h1>The policy's canary</h1>
+      <p style="color: gray">A style the policy refuses.</p>
+    </main>
+  </body>
+</html>`;
+
 test.describe.configure({ mode: 'serial' });
 
 test.describe('the demo, from the first click', () => {
@@ -166,10 +188,14 @@ test.describe('the demo, from the first click', () => {
   /** The address of the copy the first claim handed out, and of the one "Start over" did. */
   let firstAddress = '';
   let secondAddress = '';
+  /** Every Content-Security-Policy violation a page of the shared context raised, as it came. */
+  let policyViolations: string[] = [];
 
   test.beforeAll(async ({ browser }) => {
     // A context made by hand takes the config's `use` as a test's own does: the base URL too.
     context = await browser.newContext();
+    // Before the first page: the listener is in every page of the context from its first script.
+    policyViolations = await hearPolicyViolations(context);
     page = await context.newPage();
   });
 
@@ -755,5 +781,52 @@ test.describe('the demo, from the first click', () => {
         origin.localStorage.some((entry) => entry.name === KEPT_COPY_KEY),
       ),
     }).toEqual({ cookies: true, keepsTheCopy: true });
+  });
+
+  test("no screen of the demo's raised a Content-Security-Policy violation", async ({
+    browser,
+  }) => {
+    /*
+      LAST, after the state is saved, so that a violation fails the run and still leaves the
+      state for whoever reads it. Every page the tests above drew was listened to from its first
+      script: the sign-in page with no copy and with one, the dashboard with its panel, the
+      sign-in details, the transfer, the dialog and the toast.
+
+      A list with nothing in it is an answer only if two things hold, and both are held first.
+      The listener hears: in a second context listened to as the shared one is, a page of this
+      test's own, served under a policy its one styled paragraph breaks, is heard breaking it.
+      And there was a policy to break: the page the stack serves carries one. Against vite's
+      dev server, which sends none, this test fails on that line, as it should: nothing there
+      was under a policy.
+
+      Added after the run of 2026-10-05 on the stack, and NOT YET RUN ON ONE. Against the dev
+      server with the mock and the demo's tag: the canary's violation was heard, the shared
+      context's list was empty, and the test failed on the missing policy.
+    */
+    const canaryContext = await browser.newContext();
+    try {
+      const heard = await hearPolicyViolations(canaryContext);
+      const canaryPage = await canaryContext.newPage();
+      await canaryPage.route(`**${POLICY_CANARY_PATH}`, (route) =>
+        route.fulfill({
+          contentType: 'text/html',
+          headers: { 'Content-Security-Policy': POLICY_CANARY_POLICY },
+          body: POLICY_CANARY_PAGE,
+        }),
+      );
+      await canaryPage.goto(POLICY_CANARY_PATH);
+      await expect(canaryPage.getByRole('heading', { level: 1 })).toBeVisible();
+      await expect
+        .poll(() => heard)
+        .toEqual([`style-src-attr blocked inline on ${POLICY_CANARY_PATH}`]);
+    } finally {
+      await canaryContext.close();
+    }
+
+    const served = await context.request.get('/login');
+    expect({
+      servedUnderAPolicy: Boolean(served.headers()['content-security-policy']),
+      violations: policyViolations,
+    }).toEqual({ servedUnderAPolicy: true, violations: [] });
   });
 });
