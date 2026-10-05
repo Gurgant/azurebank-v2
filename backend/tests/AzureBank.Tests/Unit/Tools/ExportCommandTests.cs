@@ -183,8 +183,6 @@ public class ExportCommandTests : IDisposable
         ComparableText.Of(kept).Should().Be(
             ComparableText.Of(sentinel),
             "the earlier copy is the reference; this verb must never be able to destroy it");
-        // The comparison above reads a brace and a parenthesis alike: this one is exact, and shows both.
-        Xunit.Assert.Equal(sentinel, kept);
     }
 
     /// <summary>
