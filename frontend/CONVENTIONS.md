@@ -243,6 +243,10 @@ Five commands, not one. `vitest run` covers the unit and component tests; the `c
 `integration/` directories are excluded by configuration, so a green `vitest run` is not a green
 suite and has never been one.
 
+A sixth command, `npm run test:e2e:demo`, is no part of that suite. It is run by hand, against
+the compose stack with the demo on (`playwright.demo.config.ts`), where the suite's own
+`test:e2e` holds that its stack has the demo off.
+
 The last three need the real stack up: seed `AzureBankE2E`, the API on **`https://localhost:7215`**,
 and the BFF on `:5000` via `dotnet run --project backend/src/AzureBank.Bff --launch-profile http`.
 

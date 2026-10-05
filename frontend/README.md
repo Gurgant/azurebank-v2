@@ -21,7 +21,12 @@ PIN `123456`. The mock's state resets on every page reload.
 
 Either loop shows the public demo's screens when it is started with `AZUREBANK_DEMO=true` in its
 environment: the dev server then puts the demo's tag on the page, and under `dev:mock` the mock
-hands out demo copies and no longer signs its own user in.
+hands out demo copies and no longer signs its own user in. The console says so there:
+`[MSW] Mock backend ON, as the public demo: press "Try the demo" (PIN 123456)`. The copies the
+mock hands out live as long as the page, three to a page load. After a reload the browser still
+keeps its copy and the mock no longer knows it: "Continue with my copy" is refused as a copy
+that is gone, and the page offers "Try the demo" again (seen on 2026-10-05 in Chromium, where
+the fourth claim of one page load was refused with every demo copy in use).
 [`CONVENTIONS.md`](CONVENTIONS.md#demo-mode) has the tag, the key the demo keeps in the browser and
 how a test turns the demo on.
 
@@ -60,7 +65,11 @@ the body and then aborted the connection, which the BFF passed on. The API now r
 ## Accessibility
 
 axe-core (WCAG 2.0 A/AA, 2.1 AA and 2.2 AA) runs in the e2e step of CI's `real-stack` job over nine
-pages, the deposit dialog and the Change PIN dialog, and fails that job on any serious or critical
+pages, the deposit dialog, the Change PIN dialog, the accounts page while its read is slow (light,
+dark and 375 px wide) and the open leave prompt of a transfer: fifteen scans. _(Until 2026-10-05
+this named the nine pages and the two dialogs only. The three scans of the slow read were in the
+run already; the leave prompt's is new that day, in `e2e/confirmDialog.spec.ts`.)_ It fails that
+job on any serious or critical
 finding except colour contrast, which it reports and leaves to the UI/UX phase: on 2026-09-17 that
 was 25 nodes on theme tokens (muted secondary text, the sidebar avatar, a button group and the
 danger-zone button) on seven pages and the deposit dialog, a count that moves with the data a page

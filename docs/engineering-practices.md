@@ -209,8 +209,10 @@ set, in a rolling 24 hours, and through the one published port every browser on 
 one client (ADR-0063, "What a visitor can still do"); a run claims twice, so five runs fit in a
 day on one volume (arithmetic, not run). That count is rows of the database (ADR-0063, decision
 7), so `docker compose … down -v` and a fresh `up` start it again (read, not run as a sequence).
-The BFF also takes ten sign-ins and claims in 60 s from one address; a run spends four, and only
-the minute gives them back. **In the dev loop no BFF serves the page,** so nothing puts the tag
+The BFF also takes ten sign-ins and claims in 60 s from one address, counted in its own memory:
+a run spends four, three before it restarts the BFF, which starts that count again, and one
+after (read from the specs and from the limiter's registration in the BFF's `Program.cs`; no
+run counted them). **In the dev loop no BFF serves the page,** so nothing puts the tag
 there unless the dev server is started with `AZUREBANK_DEMO=true` in its environment:
 `AZUREBANK_DEMO=true npm run dev` in bash, `$env:AZUREBANK_DEMO = 'true'` and then `npm run dev`
 in PowerShell, and `npm run dev:mock` in place of `npm run dev` for the demo's screens with no
