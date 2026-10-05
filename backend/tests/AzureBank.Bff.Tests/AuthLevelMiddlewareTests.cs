@@ -733,6 +733,35 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
         body.Should().BeEmpty();
     }
 
+    // CONTROL: green on today's code. Refuses the seven proxied auth paths in any letter case for a
+    // signed-in browser, before reading the session or reaching the API.
+    [Theory]
+    [InlineData("/API/AUTH/DEMO/CLAIM")]
+    [InlineData("/Api/Auth/Login")]
+    [InlineData("/API/AUTH/REGISTER")]
+    [InlineData("/api/auth/REVOKE")]
+    [InlineData("/api/Auth/Logout")]
+    [InlineData("/API/auth/session-STAMPS")]
+    [InlineData("/API/AUTH/REFRESH")]
+    public async Task TheProxiedAuthPaths_AreBlockedInAnyLetterCase_ForASignedInBrowser(string path)
+    {
+        var (factory, backend) = WithRecorder();
+        var (sessionId, cookieName, _) = CreateSession(factory);
+        var client = factory.CreateClient();
+
+        var request = Request(HttpMethod.Post, path, cookieName, sessionId);
+        request.Content = JsonContent.Create(new { any = "body" });
+        var response = await client.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+
+        using (new AssertionScope())
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+            backend.ForwardedPaths.Should().BeEmpty();
+            body.Should().BeEmpty();
+        }
+    }
+
     // CONTROL: green as written. It pins what the block shows, so that it is known. With
     // no session the proxied claim is 404 with no body, as sign-in's proxied path is, where a
     // path under /api that names nothing is 401 with the API's own body. So the 404 tells that
