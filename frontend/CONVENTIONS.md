@@ -57,8 +57,11 @@ test and no run on a stack met it.)
 _(This paragraph was added on 2026-10-05. The three places above are the 429s the app meets
 with the demo off; until that day this section knew no 429 without a countdown.)_
 
-**One place does compare a server instant with the browser's clock: a kept demo copy's end, on
-the sign-in page.** It is not a countdown. The page reads the clock once, when it opens, and a
+**One place holds an instant the server gave against the browser's clock and acts on it for
+good: a kept demo copy's end, on the sign-in page.** It is not a countdown. (A wait has one such
+comparison too: a `Retry-After` header that is a date, and not a number of seconds, is turned
+into seconds against the browser's clock in `src/api/problemBaseQuery.ts`. The BFF's own limiter
+sends seconds.) The page reads the clock once, when it opens, and a
 copy whose `expiresAt` is not after that instant is not offered and is removed from the browser.
 So a browser whose clock is ahead of the server's by more than the copy has left forgets a living
 copy for good, with nothing said, and that copy is never sent to the server; one whose clock is

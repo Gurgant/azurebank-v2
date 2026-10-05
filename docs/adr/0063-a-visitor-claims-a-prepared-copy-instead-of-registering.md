@@ -980,12 +980,16 @@ demo" is pressed (6 below).
 
 The application's rule against trusting a server instant on the browser's clock
 (`frontend/CONVENTIONS.md`, "429 appears in three places") is about countdowns. This is the one
-place where it does compare the two, and it is done there and nowhere else for two reasons. A
+place where it holds an instant it kept from the server against the browser's clock, and it is
+done there and nowhere else for two reasons. A
 copy that is over is not worth offering, nor its password worth keeping. And a check at every
 read would take the panel and "Start over" from an owner whose session outlives the copy. The
 other way was not taken: never remove on the browser's clock, always offer, and let the
 server's 401 judge, at the price of one refused press. What the way taken costs is the first
-bullet, and no tolerance was added for it.
+bullet, and no tolerance was added for it. (One wait is worked out against that clock as well,
+and is older than the demo: a `Retry-After` header that is a date, and not a number of seconds,
+becomes seconds in `frontend/src/api/problemBaseQuery.ts`. The BFF's limiter sends seconds: the
+`Retry-After: 60` of the table below.)
 
 **6. The key is the source, read each time it is asked for.** Nothing is loaded once and kept,
 and nothing listens for another tab: there is no `storage` listener. So another tab's "Forget
