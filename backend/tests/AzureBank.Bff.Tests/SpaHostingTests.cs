@@ -370,6 +370,11 @@ public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Progra
     [InlineData("GET", "//health/live")]
     [InlineData("GET", "//health/nope")]
     [InlineData("HEAD", "//api/accounts")]
+    // The prefix alone behind extra slashes. With a slash asked for after the prefix these three
+    // rows go red and the eight above stay green: 200 text/html, the page (test host, 2026-10-05).
+    [InlineData("GET", "//api")]
+    [InlineData("GET", "//bff")]
+    [InlineData("GET", "//health")]
     public async Task ServerPrefixPaths_BehindExtraSlashes_NeverGetTheShell_WithDemoOffOrOn(string method, string path)
     {
         using var host = HostServing(ShellWithAHead, demo: true);
@@ -388,6 +393,11 @@ public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Progra
             there.StatusCode.Should().Be(HttpStatusCode.NotFound);
             (await there.Content.ReadAsStringAsync()).Should().BeEmpty();
             (there.Content.Headers.ContentType?.MediaType).Should().NotBe("text/html");
+
+            // CONTROL: green before the change too. The answer changed hands, from the shell's
+            // 200 to the 404 at the pipeline's end, and carries the security headers as before.
+            SecurityHeadersTests.AssertTheWholeSet(response);
+            SecurityHeadersTests.AssertTheWholeSet(there);
         }
     }
 
