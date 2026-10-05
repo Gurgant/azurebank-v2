@@ -128,7 +128,7 @@ public class TransferController : ControllerBase
     [HttpPost]
     [RequireIdempotency]
     [RequireStepUpAuthorization]
-    [RequestSizeLimit(32_768)] // monetary bodies are <2KB; caps hash/buffer work (ADR-0009)
+    [EndpointRequestSizeLimit(32_768)] // routing caps hash/buffer work before idempotency reads (ADR-0009)
     [ProducesResponseType(typeof(ApiResponse<TransferResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
@@ -168,7 +168,7 @@ public class TransferController : ControllerBase
     [HttpPost("internal")]
     [RequireIdempotency]
     [RequireStepUpAuthorization]
-    [RequestSizeLimit(32_768)] // monetary bodies are <2KB; caps hash/buffer work (ADR-0009)
+    [EndpointRequestSizeLimit(32_768)] // routing caps hash/buffer work before idempotency reads (ADR-0009)
     [ProducesResponseType(typeof(ApiResponse<InternalTransferResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
