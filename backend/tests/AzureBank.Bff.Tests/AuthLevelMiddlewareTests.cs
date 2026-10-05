@@ -806,6 +806,12 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
         await AssertLooksLikeTheApisOwn401(nothing);
     }
 
+    // The bare prefix, with nothing after it, is a proxied path too: the proxy's catch-all route
+    // takes it. With no live session it gets the session gate's answer: 401 with the API's own
+    // body, no step-up header, nothing forwarded. Red before RequiresSession named the bare path:
+    // each row 200 from the recording backend, and the path forwarded as it was sent. Falsified,
+    // never committed: with the bare path compared with its letter case kept, the /API and /Api
+    // rows alone go red, the same way. Observed on the test host (2026-10-06, the whole project).
     [Theory]
     [InlineData("GET", "/api", "none")]
     [InlineData("HEAD", "/api", "none")]
@@ -861,9 +867,9 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
         await AssertLooksLikeTheApisOwn401(response);
     }
 
-    // CONTROL: green before and after. With a live session, the bare /api prefix (with any query
-    // string or letter case) is forwarded to the API with the session's bearer token. Observed on
-    // the test host (2026-10-05).
+    // CONTROL: green before and after. With a live session the bare /api is forwarded as before:
+    // one forwarded path, carrying the session's token; the same for /api?x=1 and for /API.
+    // Observed on the test host (2026-10-06).
     [Theory]
     [InlineData("GET", "/api")]
     [InlineData("HEAD", "/api")]
@@ -888,9 +894,12 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
         }
     }
 
-    // CONTROL: green before and after. Without a session and without Spa:RootPath configured,
-    // ungated paths and server routes outside /api answer 404 with an empty body, and nothing is
-    // forwarded. Observed on the test host (2026-10-05).
+    // CONTROL: green before and after. The gate keeps its segment boundary and its one prefix.
+    // With no session, and no Spa:RootPath (WithRecorder sets none), a path that only begins like
+    // the prefix (/apix, /api-docs, /api.json) and the bare /bff and /health are answered 404 with
+    // an empty body, and nothing is forwarded. Falsified, never committed: with the prefix tested
+    // with no boundary (starts with "/api"), the five /apix, /api-docs and /api.json rows alone go
+    // red, 401 where 404 is expected. Observed on the test host (2026-10-06, the whole project).
     [Theory]
     [InlineData("GET", "/apix")]
     [InlineData("GET", "/apix/thing")]
@@ -915,6 +924,35 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
             backend.ForwardedPaths.Should().BeEmpty();
             body.Should().BeEmpty();
         }
+    }
+
+    // CONTROL: green before and after. The prefix with nothing after its slash, in either letter
+    // case, and a path under it that names nothing were under the gate already: with no session,
+    // 401 with the API's own body and nothing forwarded. Falsified, never committed: with a path
+    // under the prefix gated only when something follows the slash, the /api/ and /API/ rows alone
+    // go red; with the prefix compared with its letter case kept, the /API/ row alone; each 200
+    // from the recording backend and the path forwarded as it was sent. Observed on the test host
+    // (2026-10-06, the whole project).
+    [Theory]
+    [InlineData("GET", "/api/")]
+    [InlineData("GET", "/API/")]
+    [InlineData("GET", "/api/nope")]
+    public async Task ApiPrefixWithItsSlash_AndUnderIt_WithoutSession_Answer401AndForwardNothing(
+        string method, string path)
+    {
+        var (factory, backend) = WithRecorder();
+        var client = factory.CreateClient();
+
+        var response = await client.SendAsync(new HttpRequestMessage(new HttpMethod(method), path));
+
+        using (new AssertionScope())
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            backend.ForwardedPaths.Should().BeEmpty();
+        }
+
+        AssertNoStepUpHeaders(response);
+        await AssertLooksLikeTheApisOwn401(response);
     }
 
     [Fact]
