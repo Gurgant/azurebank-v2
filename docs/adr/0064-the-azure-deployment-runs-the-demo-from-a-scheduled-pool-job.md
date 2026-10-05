@@ -66,8 +66,8 @@ value of the demo.
 **1. The template has one switch, `demo`, off by default, and the app is what remembers it.**
 With it off the template creates the resources it created before and no other; what its next
 run changes on them all the same, the policy's exception among it, is under Consequences.
-`infra/secrets.ps1` writes the switch
-the way it writes what the environment does with its logs: `true` with `-DemoOn`, else what the
+`infra/secrets.ps1` writes the switch the way it writes what the environment does with its
+logs: `true` with `-DemoOn`, else what the
 deployed app's two containers say, else nothing, and the template's default applies. Two
 containers that disagree stop the script, and so does a container that carries the setting any
 other way than the template writes it. So no later run turns the demo off by forgetting an
@@ -161,9 +161,10 @@ copy. Both are answered by the BFF alone: what they do not prove is said in deci
 **11. Three commands for the owner's terminal, refused inside GitHub Actions.**
 
 - **`--check` moves nothing.** A run of the template is expected to make a revision outside
-  `deploy.py`, with no migration, no smoke test and no put-back: this is its read-back. It waits until the app's
-  latest revision is its latest ready one and no other revision is active, since "ready" is not
-  "the one before has stopped answering". With the demo on it checks the pool job's shape, then
+  `deploy.py`, with no migration, no smoke test and no put-back: this is its read-back. It
+  waits until the app's latest revision is its latest ready one and no other revision is
+  active, since "ready" is not "the one before has stopped answering". With the demo on it
+  checks the pool job's shape, then
   lists the secrets of the app and of the job as whoever is signed in and compares the job's PIN
   pepper and connection string with the app's. It says they are the app's, or which one
   differs, and shows no value, no part of one and no length. Then the smoke test. It is the one
@@ -238,8 +239,8 @@ demo off.
 - **Nothing on Azure changes with the merge, and the next run of the template changes the app
   whatever it is for.** With the switch off the template still writes the ninth secret and four
   settings on the app, the flag as `false` on both containers among them: that is expected to
-  make a new revision, and a new revision ends every session. The role definition's description changed too, so a run without the app
-  shows a change on it. Nothing is created or deleted.
+  make a new revision, and a new revision ends every session. The role definition's description
+  changed too, so a run without the app shows a change on it. Nothing is created or deleted.
 - **The same run changes the policy, with the switch off as with it on.** Its definition gets
   the new name, the new description, a second parameter and the exception in the rule; its
   assignment gets the new name and `scheduledJobs` holding `azurebank-pool`. The exception is

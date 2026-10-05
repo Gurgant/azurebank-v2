@@ -1483,8 +1483,8 @@ and keeps it, as it keeps the tag and the secrets
 
 **Step 26 is not started unless `--check` passed.** "Ready" is not enough. The revision is
 expected to be made by the run of the template, outside `deploy.py`, and until the one that ran
-before is inactive an answer could still come from it. That one has its registration open, and step 26 is the run that
-creates the roles a registration needs.
+before is inactive an answer could still come from it. That one has its registration open, and
+step 26 is the run that creates the roles a registration needs.
 
 From here the app is the demo with an empty pool: a claim is answered 429 `DEMO_POOL_EMPTY` and
 registration is closed. That state fails closed and may be left standing until the job's next
@@ -1727,7 +1727,8 @@ alone: its one read before a deployment or a `--pool-run`, and its shape check.
 
 Network A is this machine's own connection. Network B is this machine through a phone's mobile
 data. The request is the smoke test's own sign-in, for an address nobody has, so nothing is
-written. Its body is taken from the script itself, into a file. The block has not been run.
+written. Its body is taken from the script itself, into a file. No request of the block has
+been sent.
 
 ```powershell
 $site = az containerapp show --name azurebank --resource-group $group --query properties.configuration.ingress.fqdn --output tsv
@@ -1799,7 +1800,7 @@ try {
 | Reads only: the block below, which prints the metrics of the pool job and of the database by name, unit and dimensions; then, by the names it printed, one `az monitor metrics list` of the job's metric of executions over the last hour, and of the database's size, as step 20 reads a metric | The names and the dimensions, and whether a time series exists at all. An alert on a failed pool run, or on the database's size, is built on what these show and not before ([What is not here](#what-is-not-here)) |
 
 ```powershell
-# Names, units and dimensions only: the definitions themselves hold the resource's ID. Not run yet.
+# Names, units and dimensions only: the definitions themselves hold the resource's ID. Not sent yet.
 $pool = az containerapp job show --name azurebank-pool --resource-group $group --query id --output tsv
 $database = az sql db show --resource-group $group --server $server --name AzureBank --query id --output tsv
 foreach ($resource in $pool, $database) {
@@ -1857,7 +1858,7 @@ step 25 has been read:
 | The subscription's activity log for the resource group over the last eight hours, by the block below: for each event whose operation is `Microsoft.App/jobs/start/action`, its time, the job's name, its status, and one word for its caller ("the owner", "another", "none"). Never the caller itself, and no resource ID | Events for each start by hand, as "the owner": a request is expected to leave one for each status it went through. The workflow's start of the migration at step 28, as "another". For the run of the schedule: events, or none. Not measured, and this read settles it: it is what an alert on job starts could or could not see |
 
 ```powershell
-# Not run yet.
+# Not sent yet.
 $me = az account show --query user.name --output tsv
 az monitor activity-log list --resource-group $group --offset 8h --max-events 1000 --output json | ConvertFrom-Json |
     Where-Object { $_.operationName.value -eq 'Microsoft.App/jobs/start/action' } | Sort-Object eventTimestamp |
@@ -2232,9 +2233,10 @@ python infra/deploy.py --check
 
 A run of the template that changes the app is expected to make a revision outside `deploy.py`:
 no migration, no smoke test and no put-back follow it. No record shows one yet: step 15 created
-the app, and every revision since was made by the script's own request. `--check` is its read-back, and the read-back of any other step that could
-change the app or the pool job. Every request it sends is a read, but for two listings of
-secrets, which Azure asks for as a POST; a wrong answer puts nothing back. In order:
+the app, and every revision since was made by the script's own request. `--check` is its
+read-back, and the read-back of any other step that could change the app or the pool job. Every
+request it sends is a read, but for two listings of secrets, which Azure asks for as a POST; a
+wrong answer puts nothing back. In order:
 
 1. the app, read until its last update has succeeded and its latest revision is its latest ready
    one, for up to 300 s. An update that ended `Failed` or `Canceled` is not waited out;
@@ -2322,11 +2324,10 @@ listed only on a later page, if Azure gives that list in pages. It does not read
 job: a deployment refuses to start beside a pool run, and this command does not refuse to start
 beside a migration, which may be changing the schema the run works on. So it is not run while a
 deployment is under way: the read under [Deploy a commit](#deploy-a-commit), "One deployment at
-a time", comes first. And it does
-not keep what it read: the exit code is Azure's to keep and the line the workspace's, 30 days;
-`Show-Executions azurebank-pool` (under [Create it once](#create-it-once)) prints the codes
-Azure still holds, in brackets, and on 2026-10-03 an older execution of the migrate job no longer
-carried its own (step 16).
+a time", comes first. And it does not keep what it read: the exit code is Azure's to keep and
+the line the workspace's, 30 days; `Show-Executions azurebank-pool` (under
+[Create it once](#create-it-once)) prints the codes Azure still holds, in brackets, and on
+2026-10-03 an older execution of the migrate job no longer carried its own (step 16).
 
 ## Switching the logs off
 
@@ -2824,11 +2825,11 @@ try {
   four settings (`Demo__Enabled`, written as `false`, on both containers; `Demo__ClientKeySecret`
   and `Demo__Claim__MaxPerClientPerDay` on `api`), and the script's report says
   `demoClientKeySecret: generated`. A change of the app's template is expected to make a new
-  revision, and a new revision ends every session held in the replica's memory. Also expected, in a run without
-  the app too: `Modify` on the role definition, whose description changed, and on the policy
-  definition and its assignment. Nothing is created and nothing deleted by it: offline, a run
-  with the switch off predicts the 22 resources it predicted before, and 14 without the app
-  ([Checking these files](#checking-these-files)).
+  revision, and a new revision ends every session held in the replica's memory. Also expected,
+  in a run without the app too: `Modify` on the role definition, whose description changed, and
+  on the policy definition and its assignment. Nothing is created and nothing deleted by it:
+  offline, a run with the switch off predicts the 22 resources it predicted before, and 14
+  without the app ([Checking these files](#checking-these-files)).
 - **The demo's switch is passed once.** `-DemoOn` at step 25; afterwards the script reads
   `Demo__Enabled` on the app's two containers and writes what they say, and its report says
   `demo: kept from the deployed resource`, on or off. Two containers that disagree stop it, and
@@ -3617,9 +3618,9 @@ for `az`: the requests they send are the ones written here, and no Azure answere
 logs off or elsewhere, and on no answer. On 2026-10-05 the same was done for the blocks of the
 third session that build a request or filter an answer: `Show-List`, `Show-Revisions`, the job
 of step 29, `Set-PoolParallelism`, the sign-ins of step 30, the start and the metric definitions
-of step 31, the activity log's filter of step 33, and the three blocks of steps 22 and 25 that
-print names only. Every PowerShell block of this page parses, and those ran against functions
-standing in for `az`, `python` and `curl.exe`, with invented answers: each sent the request
+of step 31, the activity log's filter of step 33, and the blocks of steps 22 and 25 that print
+names only. Every PowerShell block of this page parses, and those ran against functions standing
+in for `az`, `git`, `python` and `curl.exe`, with invented answers: each sent the request
 written here, with the body its step describes, and removed its body file. `Show-Executions`,
 given an answer that holds no list, printed one line with no name and no code. No Azure answered
 any of them: the shape of every answer in that run was invented. On 2026-10-03 the tests also
