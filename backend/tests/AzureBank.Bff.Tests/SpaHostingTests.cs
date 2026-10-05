@@ -25,6 +25,8 @@ namespace AzureBank.Bff.Tests;
 /// build, run as a process with <c>Demo:Enabled</c> true and serving <c>frontend/dist</c>
 /// (2026-10-04): <c>/</c>, <c>/index.html</c> and <c>/settings</c> each answered 200 with the tag
 /// once, 43 bytes longer than the file.
+/// The rows behind extra slashes (<c>//api/accounts</c>, <c>//settings</c>) are not among them
+/// either: the comment over each of their two theories says where its statuses were observed.
 /// </para>
 /// </remarks>
 public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Program>>, IDisposable
@@ -101,6 +103,25 @@ public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Progra
 
         response.StatusCode.Should().Be(expected);
         (await response.Content.ReadAsStringAsync()).Should().NotContain("stand-in shell");
+    }
+
+    // CONTROL: green before and after this change. What is not a server path stays a page: a page
+    // behind extra slashes (//settings), a server prefix that is not the first segment
+    // (/settings//api), and a first segment that only begins like a prefix (//apix/thing). Not
+    // among the statuses the class's remarks date: observed in the test host, and after the change
+    // on the built host run as a process on 127.0.0.1, asked with curl --path-as-is (2026-10-05).
+    [Theory]
+    [InlineData("//settings")]
+    [InlineData("/settings//api")]
+    [InlineData("//apix/thing")]
+    public async Task PathsOutsideServerPrefixes_BehindExtraSlashes_StillGetTheShell(string path)
+    {
+        var address = new Uri("http://localhost" + path);
+        var response = await _factory.CreateClient().GetAsync(address);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        (response.Content.Headers.ContentType?.MediaType).Should().Be("text/html");
+        (await response.Content.ReadAsStringAsync()).Should().Be(Shell);
     }
 
     [Fact]
@@ -337,6 +358,53 @@ public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Progra
             (response.Content.Headers.ContentType?.ToString()).Should().Be(
                 there.Content.Headers.ContentType?.ToString(), "the answer's type is the one a host with the demo off gives");
             there.StatusCode.Should().Be(expected, "CONTROL: a host with the demo off answers the same status");
+        }
+    }
+
+    // A server path behind extra slashes is not the page: 404 with no body, with the demo off or
+    // on, as a path the server does not have. Not among the statuses the class's remarks date.
+    // Red before the change: each row 200 text/html, the shell's answer (test host), which
+    // ADR-0063, Consequences, "Neutral", had recorded as seen and left. The 404s were observed in
+    // the test host and on the built host run as a process on 127.0.0.1, asked with
+    // curl --path-as-is (2026-10-05).
+    [Theory]
+    [InlineData("GET", "//api/accounts")]
+    [InlineData("GET", "///api/accounts")]
+    [InlineData("GET", "//API/accounts")]
+    [InlineData("GET", "//bff/nope")]
+    [InlineData("GET", "//bff/auth/login")]
+    [InlineData("GET", "//health/live")]
+    [InlineData("GET", "//health/nope")]
+    [InlineData("HEAD", "//api/accounts")]
+    // The prefix alone behind extra slashes. Were the rule to match a prefix only when a slash
+    // follows it, these three rows would go red and the eight above stay green: 200 text/html,
+    // the page (tried in the test host, 2026-10-05).
+    [InlineData("GET", "//api")]
+    [InlineData("GET", "//bff")]
+    [InlineData("GET", "//health")]
+    public async Task ServerPrefixPaths_BehindExtraSlashes_NeverGetTheShell_WithDemoOffOrOn(string method, string path)
+    {
+        using var host = HostServing(ShellWithAHead, demo: true);
+        using var ordinary = HostServing(ShellWithAHead, demo: false);
+
+        var address = new Uri("http://localhost" + path);
+        var response = await host.CreateClient().SendAsync(new HttpRequestMessage(new HttpMethod(method), address));
+        var there = await ordinary.CreateClient().SendAsync(new HttpRequestMessage(new HttpMethod(method), address));
+
+        using (new AssertionScope())
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+            (await response.Content.ReadAsStringAsync()).Should().BeEmpty();
+            (response.Content.Headers.ContentType?.MediaType).Should().NotBe("text/html");
+
+            there.StatusCode.Should().Be(HttpStatusCode.NotFound);
+            (await there.Content.ReadAsStringAsync()).Should().BeEmpty();
+            (there.Content.Headers.ContentType?.MediaType).Should().NotBe("text/html");
+
+            // CONTROL: green before the change too. The answer changed hands, from the shell's
+            // 200 to the 404 at the pipeline's end, and carries the security headers as before.
+            SecurityHeadersTests.AssertTheWholeSet(response);
+            SecurityHeadersTests.AssertTheWholeSet(there);
         }
     }
 
