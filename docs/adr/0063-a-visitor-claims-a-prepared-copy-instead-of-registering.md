@@ -896,7 +896,9 @@ the access token's `data.expiresAt` beside it. The key is written in one place, 
 same dispatch then drops the application's whole cache of answers, the claim's own entry and
 its password with it: what was fetched for whoever was signed in before is not drawn for the
 copy's owner. In demo mode a sign-in that succeeds drops the cache too. With the demo off a
-sign-in drops nothing, as before.
+sign-in drops nothing, as before. The demo keeps nothing else in web storage. The application
+writes one other key there, with the demo on or off: `azurebank.theme`, the theme preference
+(`frontend/src/theme/themePreference.ts`).
 
 **2. What comes back from the key is input.** Anything on the page's origin can write to it. It
 is parsed as JSON and checked with the definition the claim's answer is checked by, with `v`
@@ -920,9 +922,19 @@ kept and never rendered: the digits a page prints are one constant of the applic
 | The session dialog's "Stay signed in" is answered 401 | **Kept.** The dialog says "This demo copy has ended. Sign out to get a new one."; the sign-in page's own 401 is what removes it |
 | The page is not the demo | Never read, and no screen sends the claim that would write it |
 
-**4. What a script that read the key would gain.** A sign-in, for no longer than the copy has
-left, to one throwaway copy of invented money that nobody registered for. The key holds no
-token, no session identifier and nothing of a real person; the address is one the pool made up.
+Nothing else removes it, and the key has no life of its own: no timer runs, and nothing but the
+sign-in page compares a kept copy's end with a clock. So a browser that never opens the sign-in
+page again keeps the address and the password after the copy is over, for as long as it keeps
+its storage, although by then the server refuses the pair (decision 10). And on an origin whose
+demo is later turned off the key is never read, and so never removed. (Read from the code: the
+removals are the three of `frontend/src/pages/LoginPage.tsx` and the two of
+`frontend/src/features/demo/demoCopyStorage.ts`, the five rows above that say "Removed".)
+
+**4. What a script that read the key would gain.** A sign-in, possible for no longer than the
+copy has left, and the session that sign-in opens, which runs to its grant's end (decision 10:
+60 minutes by default, 24 hours at most), to one throwaway copy of invented money that nobody
+registered for. The key holds no token, no session identifier and nothing of a real person; the
+address is one the pool made up.
 A script running in the page could already drive that copy through the page, with the session
 cookie the browser sends for it. What the key adds is that the sign-in outlives the session and
 can be carried to another browser. The owner reads the same details on the dashboard, under
@@ -943,9 +955,16 @@ removes the key.
 - **A clock behind offers a copy that is over,** and so does a page left open past the copy's
   end. There the server is the judge: its 401 to "Continue with my copy" removes the key, and
   the page words it.
-- **A signed-in owner's copy is never removed by the clock.** A session opened before a copy's
-  end runs to its grant's end (decision 10), and through it the dashboard still says whose the
-  copy is and offers "Start over", printing an end that has passed as it is.
+- **On the dashboard a signed-in owner's copy is not removed by the clock.** A session opened
+  before a copy's end runs to its grant's end (decision 10), and through it the dashboard still
+  says whose the copy is and offers "Start over", printing an end that has passed as it is.
+- **The sign-in page asks nothing about the session, though.** An owner who opens `/login`
+  while signed in, or `/register`, which leads there on the demo, with a copy past its end has
+  the key removed like anyone else. The dashboard then gives that visitor, still signed in, the
+  sentence for one who is not the owner, and no "Start over". Measured on 2026-10-05 in the
+  unit environment against the mock, by a test written for it and not kept: both addresses, and
+  the dashboard's panel after each; with a copy that had not ended the key stayed. No kept test
+  holds this, and it was not run in a browser.
 
 The application's rule against trusting a server instant on the browser's clock
 (`frontend/CONVENTIONS.md`, "429 appears in three places") is about countdowns. This is the one
@@ -972,16 +991,27 @@ another life those three are wrong. The owner's sentences print the copy's own e
 
 **8. Beside the key.** The claim's answer is one more through the `unwrap` seam of
 [ADR-0023](0023-runtime-response-validation.md): checked whole when it arrives, in production
-too, and a claim whose answer fails the check signs nobody in and keeps nothing. `/register`
-leads to the sign-in page in demo mode, so the application never sends the registration
-decision 1 closes. Of the four codes of decision 8 the application words two itself,
-`DEMO_POOL_EMPTY` and `DEMO_DAILY_LIMIT`, in sentences of its own and with no countdown; for
-`DEMO_COPY_LIMIT` nothing is built, and a surface that prints a refusal's `detail` prints the
-API's sentence (read; no run met it). One test reads `ErrorCodes.cs`, `BffAuthController.cs`,
-`SpaHostingExtensions.cs` and `DemoRefusalException.cs` as text
-(`frontend/src/features/demo/demoContract.test.ts`): it fails if the two codes, the claim's
-route or the tag's name stop being what the application spells, or if a refusal's sentence in
-a test's fixture stops being the API's.
+too. A claim whose answer fails the check changes neither who the page says is signed in nor
+the key. The session cookie that came with that 200 is in the browser all the same, so the next
+load of the application finds a session on a copy the browser holds no password for. (The BFF
+sets the cookie, and ends the session the request came with, before it writes its answer: read
+from `BffAuthController.ClaimDemoCopy`, not run on the stack. The application's half was
+measured on 2026-10-05 in the unit environment, with an answer made for it and tests not kept.
+From a page with nobody signed in, the refused answer left nobody signed in and no key. From a
+page signed in to a first copy, it left that copy's owner on the page and that copy in the key.
+Each time a new store's first question found the new copy's owner signed in. Of this, one kept
+test holds that the key stays as it was: `StartOverDialog.test.tsx`, `an answer the app will
+not accept: the fallback, and the copy kept is still the first`.) `/register` leads to the
+sign-in page in demo mode, so the application never sends the registration decision 1 closes.
+Of the four codes of decision 8 the application words two itself, `DEMO_POOL_EMPTY` and
+`DEMO_DAILY_LIMIT`, in sentences of its own and with no countdown; for `DEMO_COPY_LIMIT`
+nothing is built, and a surface that prints a refusal's `detail` prints the API's sentence
+(held for the "Start over" dialog by `StartOverDialog.test.tsx`, `any other refusal: what the
+server said, or the fallback`; read for the other surfaces; no run on the stack met it). One
+test reads `ErrorCodes.cs`, `BffAuthController.cs`, `SpaHostingExtensions.cs` and
+`DemoRefusalException.cs` as text (`frontend/src/features/demo/demoContract.test.ts`): it fails
+if the two codes, the claim's route or the tag's name stop being what the application spells,
+or if a refusal's sentence in a test's fixture stops being the API's.
 
 **Held by tests of the application** (`frontend/src`, against the mock): in
 `features/demo/demoCopyStorage.test.ts`, `keeps a claimed copy under one key, in one shape`,
@@ -1035,19 +1065,23 @@ scans of the sign-in and registration pages, with no violation in either. The ot
 dialog's keyboard test.
 
 **The demo run was made once, on `d8787a2b`, and not again on the change's last commit.**
-Thirteen files changed after it: the mock, tests, a compile-time check of the copy's shape, and
-comments in the three spec files. Measured in its place, and not a run: `npm run build` on the
-last commit gives the page, the script and the stylesheet that the container of the image
-served, byte for byte (SHA-256, three of three), and the three spec files, with their comments
-taken out, transpile to what they did at `d8787a2b`.
+Thirteen files of the application changed after it, under `frontend/src` and
+`frontend/e2e-demo`: the mock, tests, a compile-time check of the copy's shape, and comments in
+the three spec files. After those, the eight documents of this change, this record among them.
+Measured in its place, and not a run: `npm run build` on the last commit that changes the
+application's code gives the page, the script and the stylesheet that the container of the
+image served, byte for byte (SHA-256, three of three), and the three spec files, with their
+comments taken out, transpile to what they did at `d8787a2b`.
 
 **Not measured:** the default suite with the demo off, but for the four tests above; the demo
 run on the last commit; in a browser, the two refusals of a claim (`DEMO_POOL_EMPTY`,
 `DEMO_DAILY_LIMIT`), whose sentences are held against the mock, and `DEMO_COPY_LIMIT`; on the
 stack, "Continue with my copy" on a copy past its end, and "Stay signed in", which needs a
 session at its fixed end; a browser that refuses storage; a browser whose clock is ahead or
-behind, which the unit tests reach with a date held still; a second open tab between two of
-its renders; heading order on the dashboard (in the unit environment the panel's `h2` comes
+behind, which the unit tests reach with a date held still; in a browser, a signed-in owner who
+opens the sign-in page with a copy past its end; on the stack, a claim whose 200 the
+application refuses; a second open tab between two of its renders; heading order on the
+dashboard (in the unit environment the panel's `h2` comes
 before the page's `h1`); what a screen reader says; on the stack, any browser but headless
 Chromium at 1280 x 720 in the light theme; anything on Azure, where the demo is still off
 (decision 14).
