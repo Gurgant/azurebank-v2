@@ -3071,6 +3071,15 @@ WRONG_PAGE = ("Smoke test failed: the page or the readiness answer was wrong aft
 TAG = '<meta name="azurebank-demo" content="true">'
 
 
+def backend_source(*path):
+    """A source file of the backend, as text, from the checkout these tests are in. Nothing is
+    built or run: it is read so that what the script expects of the BFF is held to what the BFF's
+    own code writes."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(here, os.pardir, 'backend', 'src', *path), encoding='utf-8') as source:
+        return source.read()
+
+
 def not_closed(got):
     """The whole sentence of a registration that was not refused as closed."""
     return ('Smoke test failed: the registration probe expected 403 REGISTRATION_CLOSED and got '
@@ -3124,9 +3133,22 @@ class SmokeTests(Offline):
                      'with an empty body was refused as closed.'])
 
     def test_the_tag_and_the_refusal_are_the_ones_the_bff_writes(self):
-        # backend/src/AzureBank.Bff/Extensions/SpaHostingExtensions.cs (DemoTag);
-        # backend/src/AzureBank.Shared/Constants/ErrorCodes.cs (RegistrationClosed);
-        # backend/src/AzureBank.Bff/Controllers/BffAuthController.cs (the route).
+        # CONTROL: green as written. The three are read in the BFF's own sources, as text: a tag,
+        # a code or a route changed there fails here, and not at a deployment with the demo on,
+        # whose smoke test would take the new one for a wrong answer. Seen red with each of the
+        # three sources changed.
+        spa = backend_source('AzureBank.Bff', 'Extensions', 'SpaHostingExtensions.cs')
+        self.assertEqual(re.findall(r'const string DemoTag = "((?:[^"\\]|\\.)*)";', spa),
+                         [deploy.DEMO_TAG.replace('"', '\\"')])
+        codes = backend_source('AzureBank.Shared', 'Constants', 'ErrorCodes.cs')
+        self.assertEqual(re.findall(r'const string RegistrationClosed = "([^"]*)";', codes),
+                         [deploy.REGISTRATION_CLOSED])
+        # The route: the controller's one prefix, and the word of its one action for a registration.
+        controller = backend_source('AzureBank.Bff', 'Controllers', 'BffAuthController.cs')
+        self.assertEqual(controller.count('[HttpPost("register")]'), 1)
+        self.assertEqual([f'/{prefix}/register' for prefix in re.findall(r'(?m)^\[Route\("([^"]*)"\)\]', controller)],
+                         [deploy.REGISTER_PATH])
+        # And what these tests type is what the script holds.
         self.assertEqual((deploy.DEMO_TAG, deploy.REGISTRATION_CLOSED, deploy.REGISTER_PATH),
                          (TAG, 'REGISTRATION_CLOSED', '/bff/auth/register'))
         self.assertTrue(deploy.is_closed(*CLOSED))
