@@ -94,7 +94,8 @@ FAKE_AZ = textwrap.dedent('''
     if 'containerApps/azurebank?' in url:
         # What the bff and the api container say about the demo, by state, or as FAKE_AZ_DEMO has
         # it: a value for Demo__Enabled, "-" for a container that does not carry the setting,
-        # "nothing" for one with no settings at all, "secret" for the setting as a reference.
+        # "nothing" for one with no settings at all, "secret" for the setting as a reference,
+        # "twice" for the setting carried twice.
         by_state = {'deployed-demo': 'true,true', 'demo-key-missing': 'true,true',
                     'deployed-demo-off': 'false,false', 'demo-disagrees': 'true,false'}
         says = os.environ.get('FAKE_AZ_DEMO', by_state.get(state, '-,-')).split(',')
@@ -102,6 +103,9 @@ FAKE_AZ = textwrap.dedent('''
             settings = [{'name': 'ASPNETCORE_ENVIRONMENT', 'value': 'Production'}, own]
             if flag == 'secret':
                 settings.append({'name': 'Demo__Enabled', 'secretRef': 'a-secret'})
+            elif flag == 'twice':
+                # Off, then on: which of the two a container reads is not this script's to guess.
+                settings += [{'name': 'Demo__Enabled', 'value': value} for value in ('false', 'true')]
             elif flag not in ('-', 'nothing'):
                 settings.append({'name': 'Demo__Enabled', 'value': flag})
             described = {'name': name, 'image': 'ghcr.io/gurgant/azurebank-' + name + ':' + live['tag']}
@@ -516,13 +520,19 @@ class SecretsScriptTests(ScriptCase):
 
     def test_a_deployed_demo_without_its_client_key_stops_the_run(self):
         # The exception is for an app whose demo is off. A demo that is on has hashed addresses
-        # with its key: a new one would be another key, so this is the seven's refusal.
-        result = self.secrets('-Action', 'New', '-DeployApp', state='demo-key-missing')
-        self.assertIn(f'{CLIENT_KEY} could not be read from the deployed resource. Nothing was written.',
-                      self.said(result))
-        self.assertNotEqual(result.returncode, 0)
-        self.assertFalse((self.folder / 'parameters.json').exists())
-        self.assertNotIn('generated', result.stderr)
+        # with its key: a new one would be another key, so this is the seven's refusal, and
+        # -DemoOn does not get past it.
+        # CONTROL, the case with -DemoOn: green as written (the script already refused it). Seen
+        # red with -DemoOn let through the exception: the run ended well, with a new key.
+        for more in ([], ['-DemoOn']):
+            with self.subTest(more=more):
+                (self.folder / 'parameters.json').unlink(missing_ok=True)
+                result = self.secrets('-Action', 'New', '-DeployApp', *more, state='demo-key-missing')
+                self.assertIn(f'{CLIENT_KEY} could not be read from the deployed resource. Nothing was written.',
+                              self.said(result))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse((self.folder / 'parameters.json').exists())
+                self.assertNotIn('generated', result.stderr)
 
     def test_demo_on_is_written_when_asked_for(self):
         # Against the app as it is deployed today, and against one whose demo is already on.
@@ -561,6 +571,14 @@ class SecretsScriptTests(ScriptCase):
         self.assertIn('demo: true, asked for with -DemoOn', result.stderr)
         self.assertNotIn('demo: not written', result.stderr)
         self.assertEqual(result.stderr.count(': generated'), 8)
+        # CONTROL: green as written (the script already forgot it). Nor does the file an earlier
+        # run left remember the switch: its eight secrets are kept, its demo is not. Seen red with
+        # the demo taken from that file: the third run wrote it as on.
+        result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG, state='foundation')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('demo', self.parameters())
+        self.assertIn("demo: not written, the template's default applies", result.stderr)
+        self.assertEqual(result.stderr.count(': kept from the earlier file'), 8)
 
     def test_containers_that_disagree_about_the_demo_stop_the_run(self):
         # On in one container and off in the other is an app nobody deployed from this folder:
@@ -592,7 +610,11 @@ class SecretsScriptTests(ScriptCase):
     def test_a_demo_setting_the_template_never_writes_stops_the_run_and_is_not_shown(self):
         # The template writes the text true or false, as a plain value, once. Anything else was
         # set by hand: it is not read as on or as off, and what it holds is not repeated.
-        for says in ('planted-value,planted-value', 'True,True', 'true,secret', 'secret,secret', ',false'):
+        # CONTROL, the two cases with the setting twice: green as written (the script already
+        # refused them). Seen red with the count of one taken out of the script: both runs ended
+        # well, the demo "kept from the deployed resource".
+        for says in ('planted-value,planted-value', 'True,True', 'true,secret', 'secret,secret', ',false',
+                     'twice,twice', 'false,twice'):
             with self.subTest(says=says):
                 (self.folder / 'parameters.json').unlink(missing_ok=True)
                 result = self.secrets('-Action', 'New', '-DeployApp', state='deployed-demo', FAKE_AZ_DEMO=says)
