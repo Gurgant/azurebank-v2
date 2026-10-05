@@ -29,7 +29,9 @@ and answer every page with 404.
 
 **D2. The shell fallback is a middleware, and it never answers for the server's own paths.** It acts
 only when routing selected no endpoint, only for GET and HEAD, never under `/api`, `/bff` or
-`/health`, and never for a file name. Measured with `MapFallbackToFile` in its place:
+`/health`, and never for a file name.
+*(Amended 2026-10-05: a server path is one whose first non-empty segment is a prefix, behind any run of leading slashes and backslashes; an encoded slash is not a separator, and such a path still gets the page.)*
+Measured with `MapFallbackToFile` in its place:
 `GET /bff/auth/login` — a POST-only route, 405 on main — answered 200 with the page, and so did
 `GET /bff/nope` and `GET /health/nope`. With the middleware they answer 405, 404 and 404.
 

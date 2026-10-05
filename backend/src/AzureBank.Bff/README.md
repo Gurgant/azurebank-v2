@@ -247,10 +247,11 @@ Adds OWASP-recommended security headers to all responses:
 
 When `Spa:RootPath` names a Vite build (`frontend/dist`), the BFF serves it: fingerprinted files
 under `/assets` as `immutable`, everything else revalidated, and the page shell for any GET
-navigation no endpoint claimed. Never under `/api`, `/bff` or `/health`, and never for a file name,
-so an unknown API route stays a 404 and a POST-only route stays a 405. Unset, the BFF serves no
-pages and vite does, as in the dev loop; set to a directory with no `index.html`, the host refuses
-to start. ADR-0054.
+navigation no endpoint claimed. Never under `/api`, `/bff` or `/health` behind any run of leading
+slashes and backslashes, and never for a file name, so an unknown API route stays a 404 and a
+POST-only route stays a 405. Unset, the BFF serves no pages and vite does, as in the dev loop; set to
+a directory with no `index.html`, the host refuses to start. ADR-0054.
+*(Until 2026-10-05 this did not name leading backslashes, which were answered with the shell.)*
 
 On the public demo (`Demo:Enabled`) the page carries one tag,
 `<meta name="azurebank-demo" content="true">`, put right before its `</head>` when the host

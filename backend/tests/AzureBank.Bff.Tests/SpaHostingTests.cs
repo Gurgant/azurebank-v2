@@ -408,6 +408,94 @@ public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Progra
         }
     }
 
+    // A server path behind leading backslashes (and mixes of slashes and backslashes) is not the
+    // page: 404 with no body, with the demo off or on, as a path the server does not have.
+    // Red before the change: GET rows returned 200 text/html with the shell body; HEAD returned
+    // 200 text/html with empty body on the demo-on host and shell body on the demo-off host.
+    // Observed in the test host (2026-10-05).
+    [Theory]
+    [InlineData("GET", "/%5Capi/accounts")]
+    [InlineData("GET", "/%5C%5Capi/x")]
+    [InlineData("GET", "/%5CAPI/accounts")]
+    [InlineData("GET", "/%5Capi")]
+    [InlineData("GET", "/%5Cbff")]
+    [InlineData("GET", "/%5Chealth")]
+    [InlineData("GET", "/%5Cbff/nope")]
+    [InlineData("GET", "/%5Cbff/auth/login")]
+    [InlineData("GET", "/%5Chealth/live")]
+    [InlineData("GET", "/%5Chealth/nope")]
+    [InlineData("GET", "/%5C/api/accounts")]
+    [InlineData("GET", "//%5Capi/accounts")]
+    [InlineData("HEAD", "/%5Capi/accounts")]
+    public async Task ServerPrefixPaths_BehindLeadingBackslashes_NeverGetTheShell_WithDemoOffOrOn(string method, string path)
+    {
+        using var host = HostServing(ShellWithAHead, demo: true);
+        using var ordinary = HostServing(ShellWithAHead, demo: false);
+
+        var address = new Uri("http://localhost" + path);
+        var response = await host.CreateClient().SendAsync(new HttpRequestMessage(new HttpMethod(method), address));
+        var there = await ordinary.CreateClient().SendAsync(new HttpRequestMessage(new HttpMethod(method), address));
+
+        using (new AssertionScope())
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+            (await response.Content.ReadAsStringAsync()).Should().BeEmpty();
+            (response.Content.Headers.ContentType?.MediaType).Should().NotBe("text/html");
+
+            there.StatusCode.Should().Be(HttpStatusCode.NotFound);
+            (await there.Content.ReadAsStringAsync()).Should().BeEmpty();
+            (there.Content.Headers.ContentType?.MediaType).Should().NotBe("text/html");
+
+            SecurityHeadersTests.AssertTheWholeSet(response);
+            SecurityHeadersTests.AssertTheWholeSet(there);
+        }
+    }
+
+    // CONTROL: green before and after. Paths where the prefix is mid-path, paths outside server
+    // prefixes, and paths with encoded slashes (%2F) still get the shell. Observed in the test host
+    // (2026-10-05).
+    [Theory]
+    // Row 1: encoded slashes stay encoded in the request path, so the first segment is not a server prefix
+    [InlineData("/%2Fapi/accounts")]
+    [InlineData("/%2f%2fapi/x")]
+    [InlineData("/%2Fapi")]
+    [InlineData("/%2Fbff/nope")]
+    [InlineData("/%2Fhealth/live")]
+    [InlineData("/api%2Faccounts")]
+    [InlineData("/%5C%2Fapi/accounts")]
+    [InlineData("/%255Capi/accounts")]
+    // Row 2: leading separators only; backslash later in the path is not a separator
+    [InlineData("/api%5Caccounts")]
+    [InlineData("/api%5C")]
+    [InlineData("/settings/%5Capi")]
+    [InlineData("/settings%5Capi")]
+    // Row 3: non-server paths or paths not matching prefixes
+    [InlineData("/%5Csettings")]
+    [InlineData("/%5Capix/thing")]
+    [InlineData("/api;x/accounts")]
+    [InlineData("/api./accounts")]
+    [InlineData("/api%20/accounts")]
+    public async Task PathsOutsideServerPrefixRules_StillGetTheShell_WithDemoOffOrOn(string path)
+    {
+        using var host = HostServing(ShellWithAHead, demo: true);
+        using var ordinary = HostServing(ShellWithAHead, demo: false);
+
+        var address = new Uri("http://localhost" + path);
+        var response = await host.CreateClient().GetAsync(address);
+        var there = await ordinary.CreateClient().GetAsync(address);
+
+        using (new AssertionScope())
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            (response.Content.Headers.ContentType?.MediaType).Should().Be("text/html");
+            (await response.Content.ReadAsByteArrayAsync()).Should().Equal(Encoding.UTF8.GetBytes(TaggedShell));
+
+            there.StatusCode.Should().Be(HttpStatusCode.OK);
+            (there.Content.Headers.ContentType?.MediaType).Should().Be("text/html");
+            (await there.Content.ReadAsByteArrayAsync()).Should().Equal(Encoding.UTF8.GetBytes(ShellWithAHead));
+        }
+    }
+
     [Fact]
     public async Task WithTheDemoOn_AShellWithNoHead_StopsTheHost()
     {
