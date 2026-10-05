@@ -149,7 +149,7 @@ export async function login(): Promise<Wire> {
 }
 
 /**
- * End the session. Not under the auth rate-limit policy — measured 2026-09-03 (the transcript
+ * End the session. Not under the auth rate-limit policy — measured 2026-09-03 (the run
  * `rejectIfRateLimited` cites): twelve logouts in a row with a dead cookie all answered 200, never
  * 429. On the real target the deleting Set-Cookie replaces the jar with an empty value, and the
  * BFF ends this session alone: its grant is revoked in the background through

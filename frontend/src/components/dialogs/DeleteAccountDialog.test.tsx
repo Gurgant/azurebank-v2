@@ -38,8 +38,9 @@ afterEach(() => {
  * presents it in the header. Where a case pins the MOCK (the guards, M0, the happy path) the real
  * handlers answer; where it pins the DIALOG's own branch (INVALID_PIN, PIN_LOCKED, EXPIRED,
  * NETWORK, ACCOUNT_NOT_FOUND) a `server.use` override does, and the test's comment quotes the
- * measured row of the re-measurement on main (2026-09-06T19:16Z, main 19742ff)
- * the branch exists for.
+ * measured row the branch exists for, where there is one: M1 and D10/D11 from the re-measurement on
+ * main (2026-09-06T19:16Z, main 19742ff), E2 from the first "after" run that day. (Until 2026-10-06
+ * this said every such row was the re-measurement's.)
  */
 
 const TEMP_FUND = { id: '019f7b3f-0000-7000-8000-0000000000a3', name: 'Temp Fund' };
