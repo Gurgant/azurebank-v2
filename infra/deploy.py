@@ -35,12 +35,12 @@ empty body, which the BFF must refuse as closed; with the demo off no registrati
 The tag and the closed registration are both the BFF's alone, and neither spends a copy of the
 pool: no deployment claims a copy, and none proves that a PIN is taken.
 
---check moves nothing. It is the read-back of a run of the template, which makes a revision
-outside this script. It reads the app until its last update has succeeded with its latest
-revision as its latest ready one, and the app's revisions until no other one is active, so that
-what answers is that revision; it reads from the app whether the demo is on, and checks the
-app's shape; with the demo on it reads the pool job and checks its shape; then it runs the same
-smoke test, and a wrong answer puts nothing back.
+--check moves nothing. It is the read-back of a run of the template, which is expected to make
+a revision outside this script. It reads the app until its last update has succeeded with its
+latest revision as its latest ready one, and the app's revisions until no other one is active,
+so that what answers is that revision; it reads from the app whether the demo is on, and checks
+the app's shape; with the demo on it reads the pool job and checks its shape; then it runs the
+same smoke test, and a wrong answer puts nothing back.
 
 With the demo on --check also lists the secrets of the app and of the pool job, as whoever is
 signed in, and compares the job's PIN pepper and connection string with the app's. It says that
@@ -816,11 +816,13 @@ def is_closed(status, content_type, body):
 def prove_registration_is_closed(opener, url):
     """With the demo on, one registration that must be refused as closed. The body is an empty
     object: it holds nothing that could register anybody, wherever it lands. It is tried and
-    waited for as the sign-in is, and it spends a permit of the same shared limit. Three verdicts:
-    the refusal passes; any other definite answer on the last try fails; a 429 or a silence on
-    the last try proves nothing either way. An answer that is not the refusal is told by its
-    status and its error code, never by its body: a door that is open answers a registration
-    with the data of whoever it registered."""
+    waited for as the sign-in is. By the BFF's code it is expected to spend a permit of the
+    limit sign-ins share even when it is refused as closed: the limiter stands before the
+    demo's refusal (backend/src/AzureBank.Bff/Program.cs). Three verdicts: the refusal passes;
+    any other definite answer on the last try fails; a 429 or a silence on the last try proves
+    nothing either way. An answer that is not the refusal is told by its status and its error
+    code, never by its body: a door that is open answers a registration with the data of
+    whoever it registered."""
     answer = None
     for attempt in range(SIGN_IN_TRIES):
         if attempt:
@@ -1106,9 +1108,9 @@ def deploy(subscription, resource_group, tag, app_only=False, in_actions=False,
 
 
 # --- The check that moves nothing: the owner's terminal only ---
-# A run of the template makes a revision outside this script: no migration, no smoke test and no
-# put-back follow it. This is its read-back. Every request it sends is a read, but for the two
-# listings of secrets, which change nothing either.
+# A run of the template is expected to make a revision outside this script: no migration, no
+# smoke test and no put-back follow it. This is its read-back. Every request it sends is a read,
+# but for the two listings of secrets, which ask for no change either.
 
 def settled_app(app_id, timeout=300):
     """The app, read until its last update has succeeded and its latest revision is its latest
@@ -1183,7 +1185,8 @@ def wait_alone(app_id, latest, timeout=180):
 
 # The pool job's two secrets, by what a line calls each. infra/main.bicep writes them from the
 # two expressions it writes the app's secrets of the same names from, so a run of the template
-# leaves them equal. A secret of the app written again by itself leaves the job's copy as it was.
+# is expected to leave them equal. The job holds a copy of its own: a secret of the app that is
+# written again by itself is not expected to change it.
 POOL_SECRETS = {'pin-pepper': 'PIN pepper', 'app-connection': 'connection string'}
 
 

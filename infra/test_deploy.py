@@ -2047,8 +2047,9 @@ def no_single_value(whose, name):
 
 class CheckTests(DeployCase):
     """`deploy.check`: the owner reads the running app and asks its address what a deployment asks
-    at its end, and nothing is moved. It is the read-back of a run of the template, which makes a
-    revision outside the script: no migration, no smoke test and no put-back follow one."""
+    at its end, and nothing is moved. It is the read-back of a run of the template, which is
+    expected to make a revision outside the script: no migration, no smoke test and no put-back
+    follow one."""
 
     def check(self, **options):
         return deploy.check(SUBSCRIPTION, GROUP, **options)
@@ -2061,7 +2062,7 @@ class CheckTests(DeployCase):
         return [(method, resource_id) for method, resource_id, _ in self.azure.calls]
 
     def assert_nothing_was_moved(self):
-        # No PATCH and no start. A listing of secrets is a POST, and it changes nothing.
+        # No PATCH and no start. A listing of secrets is a POST too, and it asks for no change.
         self.assertEqual([call for call in self.azure.writes() if not call[1].endswith('/listSecrets')], [])
         self.migration.assert_not_called()
 
