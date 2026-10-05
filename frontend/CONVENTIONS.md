@@ -39,9 +39,35 @@ in all three the countdown is **computed client-side from the response's `retryA
 Never trust an absolute `lockedUntil` timestamp from the server: the browser's clock is not the
 server's, and a skewed clock either unlocks early or hangs forever.
 
+**In demo mode a claim adds three 429s, and two of them are worded with no countdown, by
+decision.** `RATE_LIMIT_EXCEEDED` is the BFF's limiter, which the claim shares with sign-in: on the
+sign-in page it is counted down as sign-in's is, and in the "Start over" dialog it is one fixed
+sentence. `DEMO_POOL_EMPTY` and `DEMO_DAILY_LIMIT` are each worded by their code, in the app's
+sentences and never the server's, and neither is counted down, although the day's limit names a
+wait in `retryAfterSeconds`: the countdowns of the sign-in page belong to the lock and to the
+limiter, by their codes (`src/pages/LoginPage.tsx`). A fourth code, `DEMO_COPY_LIMIT`, can answer
+any change made in a copy that is past its budget of changes (ADR-0063, decision 11). Nothing is
+built for it: each surface shows the fallback it has, which where that prints the problem's
+`detail` is the API's own sentence (read from the code; no test and no run of the app met it).
+_(Until 2026-10-05 this section counted three places and knew no 429 without a countdown.)_
+
+**One place does compare a server instant with the browser's clock: a kept demo copy's end, on
+the sign-in page.** It is not a countdown. The page reads the clock once, when it opens, and a
+copy whose `expiresAt` is not after that instant is not offered and is removed from the browser.
+So a browser whose clock is ahead of the server's by more than the copy has left forgets a living
+copy for good, with nothing said, and that copy is never sent to the server; one whose clock is
+behind offers a copy that has ended, and there the server's 401 to "Continue with my copy" is
+what says so. ADR-0063's section "What the browser keeps in demo mode" has why it is built that
+way and what it costs.
+
 **Errors surface through one root `<Toaster>`.** Error toasts persist rather than auto-dismissing,
 and they carry a copyable `traceId` — that identifier is the only bridge between what a user saw and
 the server-side trace (ADR-0016, ADR-0017). A toast that drops the traceId breaks the only link.
+**One toast is a success:** "You have a new copy.", said through the same outlet once the
+"Start over" dialog's claim has succeeded and the dialog has closed
+(`src/features/demo/useNewCopyToast.tsx`). It names no timeout, so it leaves by itself, and it
+carries no `traceId`: nothing in it has to be read or reported. _(Until 2026-10-05 the outlet
+carried errors only.)_
 
 **Region discipline for async state**: a first load renders a skeleton shaped like the content it
 replaces; a background refetch keeps the stale data and shows a small inline indicator; a failed
@@ -113,6 +139,50 @@ two sets of accessibility behaviour.
 **MSW is a test tool.** `dev:mock` exists for click-throughs and demos; it must never become *the*
 development path, because a frontend developed only against mocks drifts from the real contract and
 nobody finds out until integration.
+
+## Demo mode
+
+The public demo is one build with one switch, and the switch is not in the build (ADR-0063).
+
+**The page says whether it is the demo, with one tag, and `isDemoMode()` is its only reader.**
+`<meta name="azurebank-demo" content="true">` in the page's head turns the demo on. A page with no
+such tag is not the demo, and neither is one whose `content` is anything but exactly `true`. The
+BFF puts the tag in where it serves the page with `Demo:Enabled` set (ADR-0063, decision 13). The
+Vite dev server adds the same tag only when it was started with `AZUREBANK_DEMO=true` in its
+environment, and a build never carries it (`vite.config.ts`, whose comment says why the variable
+has no `VITE_` prefix). `isDemoMode()` (`src/features/demo/demoMode.ts`) reads the page each time
+it is asked, never once when a module loads: ask it in the component or the handler that needs
+the answer. The app has no second place to learn the mode from.
+
+**One key in `localStorage`, `azurebank.demoCopy`, and only a claimed copy's sign-in details go
+under it:** `{ v: 1, email, password, pin, contacts, expiresAt }`. It is written in one place,
+where a claim's answer arrives (`src/features/auth/sessionMiddleware.ts`), and read through
+`src/features/demo/demoCopyStorage.ts` alone. Nothing else is stored there or beside it: no
+token, no session identifier, nothing a visitor typed. `SECURITY.md`'s storage invariant names
+this key as its one exception. What comes back from the key is input: it is parsed with the
+definition the claim's answer is checked by, and a string that fails is removed, not repaired.
+The key is read at each ask, so never copy the snapshot into a state or a module variable: a copy
+held that way is how a second tab would go on holding a password the first was told to forget.
+Off the demo the key is never read. Every kept value is rendered as text. ADR-0063's section
+"What the browser keeps in demo mode" has when the key is removed.
+
+**Inside `src/features`, the demo's helpers are imported by file** (`../demo/demoCopyStorage`,
+`../demo/demoMode`). `src/features/demo/index.ts` hands out the four components and nothing else:
+the session middleware imports the storage module, and through the barrel it would pull every
+component in behind it.
+
+**A test turns the demo on with `enableDemoMode()`** (`src/test/demoMode.ts`), which puts the tag
+on the test page, and leaves a kept copy with `rememberDemoCopy(...)`, a raw write of the key as
+the product would have left it. `src/test/setup.ts` takes the tag off and empties the key after
+every test, so no test hands the demo to the next. That helper types the tag's name and the key
+out and imports neither from the product: a helper that asked the product for a name would follow
+it to any name. With the tag on the page the mock is the demo too: it hands out three fixed
+copies and signs in the owner of a claimed copy and nobody else, so the mock's own user is
+refused there (`accountForLogin` in `src/mocks/handlers.ts`).
+
+**The demo's own sentences live in `src/features/demo/demoWords.ts`,** a constant each, or a
+function where a sentence has a blank. The digits of the demo PIN are one constant of
+`demoPin.ts` beside it, and the `pin` a kept copy carries is never rendered.
 
 ## Testing with Fluent and jsdom
 

@@ -383,8 +383,12 @@ not know.
   number of slashes and backslashes, the spellings the static files would answer with the file's
   own bytes. The comparison is of texts and asks the file system nothing ("What a visitor can
   still do" has what that leaves).
-- **In the Vite development loop the BFF serves no page,** so nothing carries the tag there. How
-  the demo's screens are seen in that loop belongs to the change that builds them.
+- **In the Vite development loop the BFF serves no page,** ~~so nothing carries the tag there. How
+  the demo's screens are seen in that loop belongs to the change that builds them.~~ *(Struck
+  2026-10-05: that change is in. The dev server adds the same tag itself when its environment
+  holds `AZUREBANK_DEMO=true`, and only then, and a build never carries it
+  (`frontend/vite.config.ts`); measured that day, `docs/engineering-practices.md` has the
+  commands. "What the browser keeps in demo mode", below, is that change's record.)*
 
 **14. The settings, and where the demo is on.**
 
@@ -566,8 +570,11 @@ caps are worth nothing until that is answered.**
   With the flag on the job and on neither container, as
   `compose.demo.yaml` ran until this change and as Azure would after a job that sets it for
   itself alone, visitors register beside the pool and every `recycle` exits 13.
-- **`compose.demo.yaml` starts a stack whose page has no screen for the claim yet.** Until the
-  application's change lands, a copy is claimed there by sending the request by hand.
+- ~~**`compose.demo.yaml` starts a stack whose page has no screen for the claim yet.** Until the
+  application's change lands, a copy is claimed there by sending the request by hand.~~ *(Struck
+  2026-10-05: the application's change is in. The sign-in page of that stack leads with "Try the
+  demo", which sends the claim; measured that day in a browser, under "What the browser keeps in
+  demo mode".)*
 - **Under compose, and on any deployment where the BFF sees one address,** ten claims in a
   rolling 24 hours are all the stack hands out (decision 7's overshoot apart), unless the cap is
   raised on every service that reads it.
@@ -837,7 +844,9 @@ host: 31 characters do not start it, 32 do.
 
 **Not measured here:** anything on Azure, what the BFF sees as a visitor's address behind the
 ingress among it; another client address than the one a published port gives; two claims at
-once on the compose stack; a claim from a browser, since no screen calls it yet; the gate's
+once on the compose stack; ~~a claim from a browser, since no screen calls it yet;~~ *(struck
+2026-10-05: measured that day, from the sign-in page's "Try the demo" and from the dashboard's
+"Start over", under "What the browser keeps in demo mode")* the gate's
 `CopyNotClaimed` on a running stack; the time any of this takes (single readings: the first
 claim of a fresh stack about 1.5 s, later ones about 0.1 to 0.2 s); a host with
 `Database:MaxRetryCount` 0; a claim that loses a deadlock more often than the strategy retries;
@@ -867,6 +876,245 @@ a parallel load on an index that holds `ClaimedAt`.
   a closed one a declared 403, which `PublishedErrorContractTests` asks for.
 - **A `Demo:*` value a host should not have to carry:** today either host refuses to start on
   any of them out of range.
+
+## What the browser keeps in demo mode (added 2026-10-05)
+
+Decision 13 left "how the demo's screens are seen" to the change that builds them, and the
+Consequences said the stack's page had no screen for the claim. That change is the application's,
+and with it the browser keeps something it never kept: what signs in to the copy a visitor
+claimed. This section is its record, written after the screens ran on the compose stack. The
+code is under `frontend/`: `src/features/demo/` (`demoMode.ts`, `demoCopyStorage.ts`,
+`demoWords.ts`, `demoPin.ts` and four components), the claim's two effects in
+`src/features/auth/sessionMiddleware.ts`, the sign-in page, the dashboard's panel, the session
+dialog and the PIN boxes. The run is `playwright.demo.config.ts`, with its specs in `e2e-demo/`.
+
+**1. One key, one shape.** `localStorage["azurebank.demoCopy"]` holds
+`{ "v": 1, "email", "password", "pin", "contacts": [..], "expiresAt" }`: the five members of the
+claim's `data.copy` (decision 12) and the shape's number. `expiresAt` is the copy's end, never
+the access token's `data.expiresAt` beside it. The key is written in one place, where a claim's
+200 arrives, so every caller of the claim leaves the copy there and none has to remember to. The
+same dispatch then drops the application's whole cache of answers, the claim's own entry and
+its password with it: what was fetched for whoever was signed in before is not drawn for the
+copy's owner. In demo mode a sign-in that succeeds drops the cache too. With the demo off a
+sign-in drops nothing, as before.
+
+**2. What comes back from the key is input.** Anything on the page's origin can write to it. It
+is parsed as JSON and checked with the definition the claim's answer is checked by, with `v`
+exactly 1, and a string that fails either is removed, not repaired. `expiresAt` has to name its
+zone, a `Z` or an offset: a string that names none is refused, since a browser would read it as
+its own local time. Every kept value reaches the page as text, never as markup. The `pin` is
+kept and never rendered: the digits a page prints are one constant of the application,
+`123456`, the pool's (ADR-0062, decision 4).
+
+**3. When the key goes, and when it does not.**
+
+| What happens | The key |
+|---|---|
+| A claim succeeds: "Try the demo", "Get a new copy", "Start over" | Written, in place of whatever copy it held |
+| "Forget this copy", on the sign-in page | Removed. The page says "This browser no longer remembers the copy." and offers "Try the demo" |
+| "Continue with my copy" is answered 401 `INVALID_CREDENTIALS` | Removed. Nobody typed that pair, so the answer a wrong password gets (decision 10) means the copy is over or gone, and the page says that in place of "Invalid email or password." |
+| The sign-in page opens, and the copy's end is not after the browser's clock | Removed, and the copy is not offered (5 below) |
+| The string does not parse, or is not a kept copy | Removed |
+| The browser refuses to store a new copy | Removed, so that a reload does not bring back the copy the new one replaced. The new copy is held in memory while the page lives |
+| A sign-out | **Kept.** That is what the key is for: the visitor comes back to the copy |
+| The session dialog's "Stay signed in" is answered 401 | **Kept.** The dialog says "This demo copy has ended. Sign out to get a new one."; the sign-in page's own 401 is what removes it |
+| The page is not the demo | Never read, and no screen sends the claim that would write it |
+
+**4. What a script that read the key would gain.** A sign-in, for no longer than the copy has
+left, to one throwaway copy of invented money that nobody registered for. The key holds no
+token, no session identifier and nothing of a real person; the address is one the pool made up.
+A script running in the page could already drive that copy through the page, with the session
+cookie the browser sends for it. What the key adds is that the sign-in outlives the session and
+can be carried to another browser. The owner reads the same details on the dashboard, under
+"Show sign-in details". The page is served under `script-src 'self'` and `connect-src 'self'`
+(`backend/src/AzureBank.Bff/README.md`, "Security headers"; the header was read back from the
+compose stack on 2026-10-05), so no inline script runs and none is loaded from another origin.
+That is why no such script is expected. It is not a wall around the value: no directive of that
+header stops a page from navigating away with it (read, not tried).
+
+**5. What the browser's clock does.** The sign-in page compares the kept copy's end with the
+browser's clock once, when it opens. That one comparison both decides what is offered and
+removes the key.
+
+- **A clock ahead of the server's by more than the copy has left forgets a living copy for
+  good,** with no sentence shown, and offers "Try the demo". That copy is never sent to the
+  server, so no 401 judges it.
+- **A clock behind offers a copy that is over,** and so does a page left open past the copy's
+  end. There the server is the judge: its 401 to "Continue with my copy" removes the key, and
+  the page words it.
+- **A signed-in owner's copy is never removed by the clock.** A session opened before a copy's
+  end runs to its grant's end (decision 10), and through it the dashboard still says whose the
+  copy is and offers "Start over", printing an end that has passed as it is.
+
+The application's rule against trusting a server instant on the browser's clock
+(`frontend/CONVENTIONS.md`, "429 appears in three places") is about countdowns. This is the one
+place where it does compare the two, and it is done there and nowhere else for two reasons. A
+copy that is over is not worth offering, nor its password worth keeping. And a check at every
+read would take the panel and "Start over" from an owner whose session outlives the copy. The
+other way was not taken: never remove on the browser's clock, always offer, and let the
+server's 401 judge, at the price of one refused press. What the way taken costs is the first
+bullet, and no tolerance was added for it.
+
+**6. The key is the source, read each time it is asked for.** Nothing is loaded once and kept,
+and nothing listens for another tab: there is no `storage` listener. So another tab's "Forget
+this copy" or "Start over" reaches a tab at its next render and not before, and until then that
+tab shows the copy it drew, with the balances it had fetched. What it cannot do is send a
+forgotten or replaced copy's password: "Continue with my copy" and "Stay signed in" read the
+pair from the key when they are pressed. While the key's string is unchanged the same object is
+handed back, which is what lets a component ask at every render.
+
+**7. Three sentences assume the default lifetime.** "24 hours" is typed out in the notice under
+"Try the demo", in the sentence for a copy that is gone, and in the dashboard's sentence for a
+visitor signed in on a browser that does not keep the copy, which has no end to print.
+`Demo:CopyLifetimeHours` may be anything from 1 to 168 (decision 14): on a deployment that sets
+another life those three are wrong. The owner's sentences print the copy's own end.
+
+**8. Beside the key.** The claim's answer is one more through the `unwrap` seam of
+[ADR-0023](0023-runtime-response-validation.md): checked whole when it arrives, in production
+too, and a claim whose answer fails the check signs nobody in and keeps nothing. `/register`
+leads to the sign-in page in demo mode, so the application never sends the registration
+decision 1 closes. Of the four codes of decision 8 the application words two itself,
+`DEMO_POOL_EMPTY` and `DEMO_DAILY_LIMIT`, in sentences of its own and with no countdown; for
+`DEMO_COPY_LIMIT` nothing is built, and a surface that prints a refusal's `detail` prints the
+API's sentence (read; no run met it). One test reads `ErrorCodes.cs`, `BffAuthController.cs`,
+`SpaHostingExtensions.cs` and `DemoRefusalException.cs` as text
+(`frontend/src/features/demo/demoContract.test.ts`): it fails if the two codes, the claim's
+route or the tag's name stop being what the application spells, or if a refusal's sentence in
+a test's fixture stops being the API's.
+
+**Held by tests of the application** (`frontend/src`, against the mock): in
+`features/demo/demoCopyStorage.test.ts`, `keeps a claimed copy under one key, in one shape`,
+`removes what it cannot read` (eight strings), `what another tab forgot is gone at the next
+read`, `with the tag off nothing is read`, `a browser that refuses to store still remembers the
+copy while the page lives` and `a write the browser refuses does not leave the copy before it
+in the key`; in `features/demo/claim.test.ts`, `a claim that succeeded leaves the copy in the
+browser, with the copy's end and not the token's`, `…and its password nowhere in the store`, `a
+claim that was refused changes neither`, `an ordinary sign-in resets nothing` and `in the demo
+a sign-in leaves nothing of the cache it found`; in `pages/LoginPage.test.tsx`, `a copy past
+its end is not offered, and is forgotten`, `a copy whose end passes while the page is open is
+still offered: the end is looked at when the page opens` and `without the tag nothing reads the
+demo's key`; in `features/demo/DemoCopyPanel.test.tsx`, `a stored copy is shown as text,
+whatever it holds` and `a kept copy past its end is still its owner's here, and is not
+removed`; in `features/auth/SessionExpiryWarning.test.tsx`, `a copy that has ended says so, and
+stays remembered`. On the last commit that changes the application's code, `npm test` passed 91
+files and 1,356 tests and `npm run test:contract:mock` 7 files and 79.
+
+**Measured on 2026-10-05 on the compose stack** (`compose.yaml` with `compose.demo.yaml`,
+Production, the three images built from commit `d8787a2b` of the application's branch, Docker
+Desktop on Windows, a pool of 50, the BFF on `http://localhost:5000`; headless Chromium
+151.0.7922.34 under Playwright 1.62.1, 1280 x 720, the light theme). One run of
+`npm run test:e2e:demo`, with `E2E_DEMO_COMPOSE_PROJECT` naming the compose project:
+`15 passed (35.6s)`, exit 0, and no name the specs ask for had to change from what the mock had
+shown.
+
+| What was done | What was observed | Not run |
+|---|---|---|
+| `GET /` | 200, `text/html; charset=utf-8`, the tag once, before the end of the head | |
+| The sign-in page in a fresh browser context; then `/register` with a query and a fragment | "Try the demo" and no "Create account". The address ends at `/login`, with neither the query nor the fragment | |
+| "Try the demo" | `POST /bff/auth/demo/claim` 200, `Cache-Control: no-store`, `message` `Demo copy claimed`. `data.copy.expiresAt` was `2026-10-06T09:22:42.2604692Z`: seven fractional digits and a `Z`, which the check of 2 took on the first press. Two contacts; a password of 19 characters in four groups of four. The browser's cookie is `__Host-AzureBank.Session` (`Secure`, `HttpOnly`, `SameSite=Strict`, host `localhost`): Chromium kept it and sent it on `http://localhost:5000`. The page landed on `/dashboard` | |
+| The dashboard | The total reads €14,750.00, with €12,450.00 and €2,300.00 in the buttons of the group "Account scope". The panel "Your private copy" has its three lines, "Show sign-in details" and "Start over"; the details show the address and the password the key holds | |
+| One euro sent to the copy's first contact, with the PIN the page prints | `POST /api/transfers/authorizations` 201, `POST /api/transfers` 201, "Transfer Complete", and the total €14,749.00 | |
+| "Start over", from the keyboard, confirmed in the dialog | A second claim, 200, `no-store`; "You have a new copy."; another address in the panel and in the key; the total €14,750.00 again; focus back on the panel's "Start over" | Any instant between the press and that end. That no draw in between shows the first copy's total is held against the mock (`pages/DashboardPage.test.tsx`), not measured on the stack |
+| Sign out; "Continue with my copy" | `/login` offers "Continue with my copy", "Get a new copy" and "Forget this copy", and no "Try the demo"; the key still holds the second copy. `POST /bff/auth/login` 200, and the dashboard | |
+| The BFF's container restarted and then the API's, each found by its two compose labels | Before: `GET /bff/auth/me` 200 with the saved state. Docker's `StartedAt` of both moved, the BFF's 2.4 s before the API's. `/health/ready` was asked three times: a request that threw, `200 Degraded`, `200 Healthy`. The step took 6.1 s | The step's refusals (no session, no container, two containers, no `docker`) on that stack |
+| From the saved state, after the restart | `GET /bff/auth/me` 401. `/dashboard` leads to `/login` with no "Your session has expired" note and the kept copy offered. "Continue with my copy": `POST /bff/auth/login` 200, and the panel shows the kept address and password. Signed out, "Forget this copy" pressed from the keyboard: the status says "This browser no longer remembers the copy.", "Try the demo" alone is offered, with focus on it, and the key is gone | |
+| Four scans with the gate of the default run (`e2e/axeScan.ts`) | The sign-in page and the open "Start over" dialog: no violation. The dashboard, with the sign-in details closed and with them open: colour contrast alone, two nodes, which the gate reports and does not fail on. With the details closed axe says nothing of the toggle's `aria-controls`. The report of the scan with the details open holds no markup of the page (`grep -c '"html"'`: 0, and 2 in the closed one's) | Heading order, which no scan checks |
+| The default run's own check that the demo is off, pointed at this stack (`npx playwright test e2e/auth.spec.ts --project chromium --no-deps -g 'are offered "Create account"'`) | It fails, as it must: `createAccount` 0 where 1, `tryTheDemo` 1 where 0 | |
+| The claim's door, asked by hand | No body and no `Content-Type`: 415. `text/plain` with `{}`: 415. `application/json` with an empty body or with `null`: 400. With `not json` or `[]`: 400 | `text/json` and `application/…+json` |
+| The same three images with `compose.yaml` alone | `GET /`: 200, 3,020 bytes, no tag, and the bytes of the flag-on page with its tag taken out (SHA-256). The claim, with `{}` and with no body: 404, `Content-Length: 0`, the headers of a path the BFF does not have. Eleven claims in a row: 404 ten times, then 429 `RATE_LIMIT_EXCEEDED` with `Retry-After: 60` | **The default suite, `npm run test:e2e`, whole.** See below |
+| A search of what the runs left on disk for the passwords of the copies claimed and for the stack's nine secret values | Twelve patterns. The search named the two files planted for it, and then no file | |
+
+**The default suite was not run whole with the demo off on those images.** The Docker engine
+stopped answering while the stack was starting with `compose.yaml` alone: the database and the
+BFF were up, the API was not, and `/health/ready` said `200 Degraded`. Against that BFF the four
+tests of the suite that need no session ran and passed (`4 passed (19.3s)`): that a visitor is
+offered "Create account" and no "Try the demo", the redirect from a protected route, and the
+scans of the sign-in and registration pages, with no violation in either. The other 44 of its
+48 tests did not run there: every signed-in spec, twelve of its fourteen scans, and the confirm
+dialog's keyboard test.
+
+**The demo run was made once, on `d8787a2b`, and not again on the change's last commit.**
+Thirteen files changed after it: the mock, tests, a compile-time check of the copy's shape, and
+comments in the three spec files. Measured in its place, and not a run: `npm run build` on the
+last commit gives the page, the script and the stylesheet that the container of the image
+served, byte for byte (SHA-256, three of three), and the three spec files, with their comments
+taken out, transpile to what they did at `d8787a2b`.
+
+**Not measured:** the default suite with the demo off, but for the four tests above; the demo
+run on the last commit; in a browser, the two refusals of a claim (`DEMO_POOL_EMPTY`,
+`DEMO_DAILY_LIMIT`), whose sentences are held against the mock, and `DEMO_COPY_LIMIT`; on the
+stack, "Continue with my copy" on a copy past its end, and "Stay signed in", which needs a
+session at its fixed end; a browser that refuses storage; a browser whose clock is ahead or
+behind, which the unit tests reach with a date held still; a second open tab between two of
+its renders; heading order on the dashboard (in the unit environment the panel's `h2` comes
+before the page's `h1`); what a screen reader says; on the stack, any browser but headless
+Chromium at 1280 x 720 in the light theme; anything on Azure, where the demo is still off
+(decision 14).
+
+### Two changes to the shared confirm dialog (added 2026-10-05)
+
+"Start over" asks before it claims, in `ConfirmDialog`
+(`frontend/src/components/shared/ConfirmDialog.tsx`), the application's one hand-rolled modal,
+which the two transfer pages also open for "Leave without finishing?". Opening the demo's
+dialog in a real browser showed two defects of that component that were older than this change
+and on every page that opens it, with the demo off too. Both were corrected in the shared
+component, so the transfer prompts changed with the demo's dialog. They are recorded here
+because this is the change that made them.
+
+**It takes focus when it opens, and keeps Tab inside.** Before, measured in Chrome 154 and in
+Chromium 151 against the mock: the dialog opened and focus stayed on the control that had
+opened it, and the next Tab walked the page behind the open dialog, whose controls were live.
+The unit tests were green all the while, because jsdom gives focus to an element whatever its
+`visibility`. Three lines changed. The open overlay now transitions `opacity` alone, so it is
+`visible` at the instant it opens: under the transition on `visibility` it was still `hidden`
+then, and a browser gives a hidden element no focus. "Close", the control that takes focus,
+transitions its two colours where it transitioned `all`, which covers the `visibility` it
+inherits. And the trap reads the element the key was pressed on, not the focused one: where
+the dialog's last control is the document's last Tab stop, as on the transfer pages, Fluent's
+tabster hears Tab first and moves focus to an element of its own, and a trap that asked where
+focus was let the third Tab leave the dialog (measured with the first two lines alone). After,
+in both browsers, on the sign-in page's "Get a new copy" and on a transfer's leave prompt with
+no demo tag on the page: focus on "Close" at the open; Tab, Tab, Tab and Shift+Tab stay inside;
+Escape closes and gives focus back. The fade is still there, sampled frame by frame: the
+opening is visible from its first frame, where it had one hidden frame, and the closing is as
+it was. Held in jsdom by `ConfirmDialog.test.tsx` (`open, nothing from the control that takes
+focus up to the overlay delays its visibility`, `wraps Tab by where it was pressed, also when a
+listener before the dialog has moved focus`) and in a browser by two specs:
+`frontend/e2e/confirmDialog.spec.ts`, in the default run, on the leave prompt, and the demo
+run's `"Start over" asks first, takes the keyboard, and brings a new copy`.
+
+- **On the compose stack, 2026-10-05:** the demo run's test passed: focus on "Close" at the
+  open, Tab round the three controls and Shift+Tab back, all inside, and focus on the panel's
+  "Start over" once the new copy was there. `e2e/confirmDialog.spec.ts` has not run on the real
+  stack, since the default suite was not run whole there; against the mock, in Chromium 151, a
+  copy of it passed five times of five.
+- **Measured and not built: while it waits, a dialog that is the first or the last Tab stop of
+  its document still loses Tab.** Every control is disabled then, and the trap leaves focus
+  where tabster put it. No page is in that state: the transfer prompts never wait, and the
+  dialog is neither first nor last on the sign-in page (seven controls before it, one after)
+  or on the dashboard (fourteen before and fifteen after at 1280 px wide).
+- **Measured and not built: a dialog closed with Escape still takes Enter while it fades,**
+  when it was opened with no control holding focus. In Chromium 151 on the mock the closed
+  "Start over" dialog sent a claim six times of six for an Enter 9 to 143 ms after the Escape,
+  and never at 420 ms. Opened by a click or from the keyboard, Escape gives focus back to the
+  opener and Enter opens the dialog again. A browser in which a click gives a button no focus
+  would reach the first state with a mouse (read, not run).
+
+**Its title sits on a line of its own.** Before, measured in Chromium 151 on all four pages
+that open the dialog: the title's computed `display` was `inline`, and the message began on
+the title's own line, right after it ("Start over with a new copy?You'll get a …", "Leave
+without finishing?This transfer has …"); the 8 px the style declares under the title did
+nothing on an inline box. One style line makes the title a block. After, on all four pages:
+the title on its own line, the message under it at the content's edge, and the dialog 6 px
+taller (263 px where 257 on the dashboard and the sign-in page, 284 where 278 on the two
+transfer pages); the title is a block in the dark theme too, and at 390 x 844 on the dashboard
+and the sign-in page. Held by `ConfirmDialog.test.tsx` › `gives its title a line of its own,
+with the message under it`, which reads the declaration, since jsdom lays nothing out. The
+title is still the dialog's name and the message its description.
+
+The same component also gained one slot, under its error and above its buttons, for the wait's
+hint of a confirm that takes time, and it keeps focus on itself when such a wait starts under
+the button that was pressed.
 
 ## Related
 
