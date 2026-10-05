@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
@@ -36,6 +36,24 @@ const SPA_HOSTING = '../backend/src/AzureBank.Bff/Extensions/SpaHostingExtension
 const COPY_DEFAULTS = '../backend/src/AzureBank.Shared/Constants/DemoCopyDefaults.cs';
 
 const read = (path: string) => readFileSync(path, 'utf8');
+
+/** Every `.ts` and `.tsx` file under `dir`, tests among them, with forward slashes on any machine. */
+function sourceFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) return sourceFiles(path);
+    return /\.tsx?$/.test(entry.name) ? [path] : [];
+  });
+}
+
+const isTest = (path: string) => /\.test\.tsx?$/.test(path);
+
+/** What `found` finds in each file of `files` where it finds anything, by the file's path. */
+function byFile<T>(files: string[], found: (path: string) => T[]): Record<string, T[]> {
+  return Object.fromEntries(
+    files.map((path) => [path, found(path)] as const).filter(([, list]) => list.length > 0),
+  );
+}
 
 /** `public const string Name = "value";` in a C# file, as name and value. */
 function constantsOf(source: string): Record<string, string> {
@@ -119,17 +137,25 @@ describe("the claim's two refusals the app words", () => {
     // CONTROL: green before this change
     const backendCodes = Object.values(constantsOf(read(ERROR_CODES)));
 
-    expect({
-      theSignInPage: demoCodesIn('src/pages/LoginPage.tsx'),
-      theDialog: demoCodesIn('src/features/demo/StartOverDialog.tsx'),
-    }).toEqual({
-      theSignInPage: ['DEMO_DAILY_LIMIT', 'DEMO_POOL_EMPTY'],
-      theDialog: ['DEMO_DAILY_LIMIT', 'DEMO_POOL_EMPTY'],
+    // Every file under src that is not a test and names a code of the demo's, found by walking
+    // the folder and not by a list of names: a file that starts to name one cannot go unread.
+    // It has to be written in here, and its codes are then held with the others.
+    const namedIn = byFile(
+      sourceFiles('src').filter((path) => !isTest(path)),
+      demoCodesIn,
+    );
+    expect(namedIn).toEqual({
+      // The sign-in page and the dialog: the two places with words of their own for a refusal.
+      'src/pages/LoginPage.tsx': ['DEMO_DAILY_LIMIT', 'DEMO_POOL_EMPTY'],
+      'src/features/demo/StartOverDialog.tsx': ['DEMO_DAILY_LIMIT', 'DEMO_POOL_EMPTY'],
+      // The mock, which refuses a claim from an empty pool as the API does.
+      'src/mocks/handlers.ts': ['DEMO_POOL_EMPTY'],
     });
-    expect({
-      DEMO_DAILY_LIMIT: backendCodes.includes('DEMO_DAILY_LIMIT'),
-      DEMO_POOL_EMPTY: backendCodes.includes('DEMO_POOL_EMPTY'),
-    }).toEqual({ DEMO_DAILY_LIMIT: true, DEMO_POOL_EMPTY: true });
+    const named = [...new Set(Object.values(namedIn).flat())].sort();
+    expect(Object.fromEntries(named.map((code) => [code, backendCodes.includes(code)]))).toEqual({
+      DEMO_DAILY_LIMIT: true,
+      DEMO_POOL_EMPTY: true,
+    });
   });
 
   it("are given the API's own sentences by every fixture that types one out", () => {
@@ -160,22 +186,22 @@ describe("the claim's two refusals the app words", () => {
       [...read(path).matchAll(/errorCode: '(DEMO_[A-Z_]+)',\s*detail:\s*'([^']*)'/g)].map(
         ([, code, detail]) => `${code}: ${detail === theApis[code] ? "the API's" : detail}`,
       );
-    expect({
-      theMock: fixtures('src/mocks/handlers.ts'),
-      theMocksTest: fixtures('src/mocks/demoClaimHandler.test.ts'),
-      theClaimsTest: fixtures('src/features/demo/claim.test.ts'),
-      theDialogsTest: fixtures('src/features/demo/StartOverDialog.test.tsx'),
-      theSignInPagesTest: fixtures('src/pages/LoginPage.test.tsx'),
-    }).toEqual({
-      theMock: ["DEMO_POOL_EMPTY: the API's"],
-      theMocksTest: ["DEMO_POOL_EMPTY: the API's"],
-      theClaimsTest: ["DEMO_POOL_EMPTY: the API's", "DEMO_POOL_EMPTY: the API's"],
-      theDialogsTest: [
+    // In every file under src, tests and all, found by walking the folder: a test file that
+    // types a refusal out is read here from the day it is written. What the walk cannot see is
+    // a fixture spelled another way: its `detail` before its code, or in double quotes.
+    expect(byFile(sourceFiles('src'), fixtures)).toEqual({
+      'src/mocks/handlers.ts': ["DEMO_POOL_EMPTY: the API's"],
+      'src/mocks/demoClaimHandler.test.ts': ["DEMO_POOL_EMPTY: the API's"],
+      'src/features/demo/claim.test.ts': [
+        "DEMO_POOL_EMPTY: the API's",
+        "DEMO_POOL_EMPTY: the API's",
+      ],
+      'src/features/demo/StartOverDialog.test.tsx': [
         "DEMO_POOL_EMPTY: the API's",
         "DEMO_DAILY_LIMIT: the API's",
         "DEMO_COPY_LIMIT: the API's",
       ],
-      theSignInPagesTest: ["DEMO_POOL_EMPTY: the API's", "DEMO_DAILY_LIMIT: the API's"],
+      'src/pages/LoginPage.test.tsx': ["DEMO_POOL_EMPTY: the API's", "DEMO_DAILY_LIMIT: the API's"],
     });
   });
 });
