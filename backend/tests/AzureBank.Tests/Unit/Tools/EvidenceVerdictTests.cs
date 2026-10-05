@@ -2,6 +2,7 @@ using AzureBank.AuditVerifier.Commands;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 
 namespace AzureBank.Tests.Unit.Tools;
@@ -317,8 +318,8 @@ public class EvidenceVerdictTests
     [Fact]
     public void TheDetailRoundTrips_AndAnythingElseReadsAsNoName()
     {
-        AuditDetails.ConsumedAuthorisation(BoundId).Should().Be(
-            "{\"authorizationId\":\"0b1c2d3e-4f50-4617-8899-aabbccddeeff\"}",
+        ComparableText.Of(AuditDetails.ConsumedAuthorisation(BoundId)).Should().Be(
+            ComparableText.Of("{\"authorizationId\":\"0b1c2d3e-4f50-4617-8899-aabbccddeeff\"}"),
             "the shape is fixed by hand so a serializer setting cannot move it");
         AuditDetails.ConsumedAuthorisationOf(AuditDetails.ConsumedAuthorisation(BoundId)).Should().Be(BoundId);
 
