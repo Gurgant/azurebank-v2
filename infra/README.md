@@ -1593,7 +1593,9 @@ It is the first time the deployment identity reads and changes the pool job. **I
 a right on the identity the job carries,** the run stops with its own sentence and no role is
 added ([If Azure says no](#if-azure-says-no)).
 
-**The way back:** the put-back is the script's own; by hand, `--app-only`.
+**The way back:** the put-back is the script's own; by hand, `--app-only` with `IMAGE_TAG` the
+tag step 24 deployed, never the one step 22 read: those images do not read the flag
+([When something fails](#when-something-fails), "Going back by hand").
 
 #### 29. The policy must still refuse: another name on a schedule, and two runs at once (operator; two **writes** that must change nothing)
 
@@ -2289,7 +2291,8 @@ the code of the app.
 | `--pool-run`: "The pool run ended and Azure reported no exit code for it" | The run is over, the read of its exit code was answered, and the answer carried no code. How it ended is not guessed from its status, so the command fails although the run may have ended well | `Show-Executions azurebank-pool`, or `--pool-log` with the run's name, reads the code once Azure has it. On 2026-10-03 an older execution of the migrate job no longer carried its own |
 | `--pool-run`: "The pool run ended (...), and the read of its exit code failed: ..." | The run is over, and the one read that carries its exit code was refused by Azure or failed: Azure's words follow the colon. The verdict line above the sentence is what the waiting knew, and no code is expected on it. How the run ended is not guessed from its status, so the command fails although the run may have ended well, and the run was not started again | The sentence ends with its command, `python infra/deploy.py --pool-log <the execution>`, which reads the verdict again, with the code if Azure has it, and the run's lines once they are due. Or `Show-Executions azurebank-pool`, which asks with the same API version. If that read fails as well, the code cannot be read now: stop, and no second start before the run's lines have been read |
 
-**Going back by hand.** As the owner, from a terminal, to any commit whose images are published:
+**Going back by hand.** As the owner, from a terminal, to a commit whose images are published
+and, with the demo on, one that reads the demo's flag (below):
 
 ```powershell
 $env:AZURE_SUBSCRIPTION_ID = az account show --query id --output tsv
@@ -2301,6 +2304,17 @@ python infra/deploy.py --app-only
 It moves the app only: no job is touched and no migration runs. It keeps the same checks and the
 same put-back. It is refused inside GitHub Actions: a workflow that could deploy any published tag
 without the migration would be a second, weaker road.
+
+**With the demo on, only to a commit that reads the flag.** Until 2026-10-05 this said "to any
+commit whose images are published". `git merge-base --is-ancestor e5107f0f '<the full SHA to go
+back to>'` must exit 0, as step 22 reads it for the images that run. Images older than that
+commit neither close registration nor tag the page. The script would move the app to them all
+the same: its smoke test then waits five minutes for the tag, fails, and puts the app back, and
+from the moment those images answer until the put-back's revision does, registration is open
+beside the pool. One registration that commits makes every later run of the pool job exit 13,
+and the one road from there is a new database
+([Turning the demo back](#turning-the-demo-back)). Read in the script's smoke test; not
+provoked.
 
 **The schema has no road back.** `migrate` refuses a database that is ahead of the build, so an
 older commit cannot be deployed through the workflow once a newer migration has run; `--app-only`
