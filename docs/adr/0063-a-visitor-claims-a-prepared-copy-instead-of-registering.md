@@ -1027,16 +1027,18 @@ still offered: the end is looked at when the page opens` and `without the tag no
 demo's key`; in `features/demo/DemoCopyPanel.test.tsx`, `a stored copy is shown as text,
 whatever it holds` and `a kept copy past its end is still its owner's here, and is not
 removed`; in `features/auth/SessionExpiryWarning.test.tsx`, `a copy that has ended says so, and
-stays remembered`. On the last commit that changes the application's code, `npm test` passed 91
-files and 1,356 tests and `npm run test:contract:mock` 7 files and 79.
+stays remembered`. On `925974ee`, the last commit of this change that touches the application's
+code, its specs or their comments, `npm test` passed 92 files and 1,363 tests and
+`npm run test:contract:mock` 7 files and 79.
 
-**Measured on 2026-10-05 on the compose stack** (`compose.yaml` with `compose.demo.yaml`,
-Production, the three images built from commit `d8787a2b` of the application's branch, Docker
-Desktop on Windows, a pool of 50, the BFF on `http://localhost:5000`; headless Chromium
-151.0.7922.34 under Playwright 1.62.1, 1280 x 720, the light theme). One run of
-`npm run test:e2e:demo`, with `E2E_DEMO_COMPOSE_PROJECT` naming the compose project:
-`15 passed (35.6s)`, exit 0, and no name the specs ask for had to change from what the mock had
-shown.
+**Measured on 2026-10-05 on the compose stack, twice** (`compose.yaml` with `compose.demo.yaml`,
+Production, Docker Desktop on Windows, a pool of 50 nobody had claimed from, the BFF on
+`http://localhost:5000`; headless Chromium 151.0.7922.34 under Playwright 1.62.1, 1280 x 720,
+the light theme). The table is the first run's, on the three images built from commit
+`d8787a2b` of the application's branch: one run of `npm run test:e2e:demo`, with
+`E2E_DEMO_COMPOSE_PROJECT` naming the compose project, `15 passed (35.6s)`, exit 0, and no name
+the specs ask for had to change from what the mock had shown. The second run, on images built
+from `340813a5`, is under the table, with what it met otherwise.
 
 | What was done | What was observed | Not run |
 |---|---|---|
@@ -1050,41 +1052,85 @@ shown.
 | The BFF's container restarted and then the API's, each found by its two compose labels | Before: `GET /bff/auth/me` 200 with the saved state. Docker's `StartedAt` of both moved, the BFF's 2.4 s before the API's. `/health/ready` was asked three times: a request that threw, `200 Degraded`, `200 Healthy`. The step took 6.1 s | The step's refusals (no session, no container, two containers, no `docker`) on that stack |
 | From the saved state, after the restart | `GET /bff/auth/me` 401. `/dashboard` leads to `/login` with no "Your session has expired" note and the kept copy offered. "Continue with my copy": `POST /bff/auth/login` 200, and the panel shows the kept address and password. Signed out, "Forget this copy" pressed from the keyboard: the status says "This browser no longer remembers the copy.", "Try the demo" alone is offered, with focus on it, and the key is gone | |
 | Four scans with the gate of the default run (`e2e/axeScan.ts`) | The sign-in page and the open "Start over" dialog: no violation. The dashboard, with the sign-in details closed and with them open: colour contrast alone, two nodes, which the gate reports and does not fail on. With the details closed axe says nothing of the toggle's `aria-controls`. The report of the scan with the details open holds no markup of the page (`grep -c '"html"'`: 0, and 2 in the closed one's) | Heading order, which no scan checks |
-| The default run's own check that the demo is off, pointed at this stack (`npx playwright test e2e/auth.spec.ts --project chromium --no-deps -g 'are offered "Create account"'`) | It fails, as it must: `createAccount` 0 where 1, `tryTheDemo` 1 where 0 | |
+| The default run's own check that the demo is off, pointed at this stack (`E2E_BASE_URL=http://localhost:5000 npx playwright test e2e/auth.spec.ts --project chromium --no-deps -g 'are offered "Create account"'`) | It fails, as it must: `createAccount` 0 where 1, `tryTheDemo` 1 where 0 | |
 | The claim's door, asked by hand | No body and no `Content-Type`: 415. `text/plain` with `{}`: 415. `application/json` with an empty body or with `null`: 400. With `not json` or `[]`: 400 | `text/json` and `application/…+json` |
-| The same three images with `compose.yaml` alone | `GET /`: 200, 3,020 bytes, no tag, and the bytes of the flag-on page with its tag taken out (SHA-256). The claim, with `{}` and with no body: 404, `Content-Length: 0`, the headers of a path the BFF does not have. Eleven claims in a row: 404 ten times, then 429 `RATE_LIMIT_EXCEEDED` with `Retry-After: 60` | **The default suite, `npm run test:e2e`, whole.** See below |
+| The same three images with `compose.yaml` alone | `GET /`: 200, 3,020 bytes, no tag, and the bytes of the flag-on page with its tag taken out (SHA-256). The claim, with `{}` and with no body: 404, `Content-Length: 0`, the headers of a path the BFF does not have. Eleven claims in a row: 404 ten times, then 429 `RATE_LIMIT_EXCEEDED` with `Retry-After: 60` | **The default suite, `npm run test:e2e`, whole, in this first run.** It ran whole on the second run's images: below |
 | A search of what the runs left on disk for the passwords of the copies claimed and for the stack's nine secret values | Twelve patterns. The search named the two files planted for it, and then no file | |
 
-**The default suite was not run whole with the demo off on those images.** The Docker engine
+**In the first run the default suite was not run whole with the demo off.** The Docker engine
 stopped answering while the stack was starting with `compose.yaml` alone: the database and the
 BFF were up, the API was not, and `/health/ready` said `200 Degraded`. Against that BFF the four
 tests of the suite that need no session ran and passed (`4 passed (19.3s)`): that a visitor is
 offered "Create account" and no "Try the demo", the redirect from a protected route, and the
 scans of the sign-in and registration pages, with no violation in either. The other 44 of its
-48 tests did not run there: every signed-in spec, twelve of its fourteen scans, and the confirm
-dialog's keyboard test.
+48 tests did not run there.
 
-**The demo run was made once, on `d8787a2b`, and not again on the change's last commit.**
-Thirteen files of the application changed after it, under `frontend/src` and
-`frontend/e2e-demo`: the mock, tests, a compile-time check of the copy's shape, and comments in
-the three spec files. After those, the eight documents of this change, this record among them.
-Measured in its place, and not a run: `npm run build` on the last commit that changes the
-application's code gives the page, the script and the stylesheet that the container of the
-image served, byte for byte (SHA-256, three of three), and the three spec files, with their
-comments taken out, transpile to what they did at `d8787a2b`.
+**The second run, the same day, on images built from `340813a5`.** Between the two the
+application changed. Among other things the demo run gained two tests, and three things a
+visitor meets are not as they were: what "Try the demo" does over a copy another tab claimed,
+what the sign-in page shows between a claim's answer and the dashboard, and what the closed
+confirm dialog does with a press. So the three images were built again, and `npm run build` on
+that commit gave the page, the script and the stylesheet their container served, byte for byte
+(SHA-256, three of three).
 
-**Not measured:** the default suite with the demo off, but for the four tests above; the demo
-run on the last commit; in a browser, the two refusals of a claim (`DEMO_POOL_EMPTY`,
-`DEMO_DAILY_LIMIT`), whose sentences are held against the mock, and `DEMO_COPY_LIMIT`; on the
-stack, "Continue with my copy" on a copy past its end, and "Stay signed in", which needs a
-session at its fixed end; a browser that refuses storage; a browser whose clock is ahead or
-behind, which the unit tests reach with a date held still; in a browser, a signed-in owner who
-opens the sign-in page with a copy past its end; on the stack, a claim whose 200 the
-application refuses; a second open tab between two of its renders; heading order on the
-dashboard (in the unit environment the panel's `h2` comes
-before the page's `h1`); what a screen reader says; on the stack, any browser but headless
-Chromium at 1280 x 720 in the light theme; anything on Azure, where the demo is still off
-(decision 14).
+- **The demo run: `17 passed (23.4s)`, exit 0,** with no test failed, skipped or flaky: the
+  `demo` project 15, `restart` 1, `demo-after-restart` 1. The two tests added since the first
+  run passed. One holds where the run's two secret files are written. The other is `no screen
+  of the demo's raised a Content-Security-Policy violation`: it first heard a violation made
+  for it, then found the page served under a policy and no violation on any screen the run had
+  drawn. `after-restart.spec.ts` ends on the same expectation, and passed.
+- **Every row of the table was done again and met as the table has it, but for three things.**
+  The copy's end was `2026-10-06T15:40:45.8276093Z`. After the two restarts the BFF's
+  `StartedAt` was 1.0 s before the API's, and `/health/ready`, asked three times, said
+  `200 Degraded` twice and then `200 Healthy`: no request threw, and the step took 4.2 s. And
+  the search was made six times, for thirteen to sixteen values, session cookies among them:
+  each time it named a file planted for it in every place it searched, and then no file. What
+  three reruns of the default suite's one red test wrote under `test-results` was replaced by
+  the next run before a search read it there.
+- **The default suite with the demo off, on those images with `compose.yaml` alone: three whole
+  runs, and the first two are red on one test.** Each was `npm run test:e2e` with `CI=1`,
+  `E2E_BASE_URL=http://localhost:5000` and the two probe users CI's `real-stack` job names,
+  then `node scripts/assert-e2e-ran.mjs`. The first: `1 failed`, `47 passed (7.9m)`. The
+  second, on a fresh volume: `1 failed`, `47 passed (9.8m)`. The third, on a fresh volume:
+  `48 passed (3.3m)`, `e2e: passed=48 failed=0 flaky=0 skipped=0`. No test was skipped in any
+  of the three.
+- **The red test is the same both times,** `e2e/pinLockExpiry.spec.ts`, `a real 429 from the
+  API disables the PIN, ticks down, and releases at zero`, with the same message: `Tearing down
+  "context" exceeded the test timeout of 30000ms.` By each run's trace the test's own steps,
+  every expectation among them, had ended without an error, after 7.0 s and 5.1 s. What did
+  not end is the closing of the browser's context. Run by itself the test passed twice, once on
+  a PIN the red run had already locked and once on a fresh volume, and once more after one
+  other spec in the same worker. **Why the context did not close is not known.** It is not
+  shown to be load: the two red runs are the two slow ones, but the machine's processor was at
+  97 to 100 % in each of ten samples taken during the green run too, and was not sampled during
+  the red ones. That spec and `playwright.config.ts` are `main`'s, and this change does not
+  touch them (`git diff --stat` over the two, against `main`: no line). Not tried: `main`'s
+  tree on that stack, the suite with its trace off, the browser's own log of the close. CI's
+  `real-stack` job runs this suite on every pull request.
+- **What the three runs agree on:** the control passed (a visitor is offered "Create account"
+  and no "Try the demo"); so did every test of `e2e/accessibility.spec.ts`, its fourteen scans
+  among them, and `e2e/confirmDialog.spec.ts`; and the fifteen axe reports hold no finding the
+  gate fails on, colour contrast in ten of them and nothing at all in the fifteenth,
+  `transfer-leave-prompt`.
+
+After `340813a5` this change touches comments and documents only. `npm run build` on
+`925974ee`, the last commit that touches a file of the application or of its specs, gives the
+same three files (SHA-256, three of three), and each of the eight source files changed after
+`340813a5` transpiles, with its comments taken out, to what it did there.
+
+**Not measured:** why the browser's context did not close in two runs of the default suite; on
+the stack, the three things a visitor meets that changed between the two runs, which the demo
+run does not single out and which are held against the mock; in a browser, the two refusals of
+a claim (`DEMO_POOL_EMPTY`, `DEMO_DAILY_LIMIT`), whose sentences are held against the mock, and
+`DEMO_COPY_LIMIT`; on the stack, "Continue with my copy" on a copy past its end, and "Stay
+signed in", which needs a session at its fixed end; a browser that refuses storage; a browser
+whose clock is ahead or behind, which the unit tests reach with a date held still; in a
+browser, a signed-in owner who opens the sign-in page with a copy past its end; on the stack, a
+claim whose 200 the application refuses; on the stack, a second open tab; under a scan, the
+sign-in page of a browser that keeps a copy; heading order on the dashboard (in the unit
+environment the panel's `h2` comes before the page's `h1`); what a screen reader says; on the
+stack, any browser but headless Chromium at 1280 x 720 in the light theme; anything on Azure,
+where the demo is still off (decision 14).
 
 ### Two changes to the shared confirm dialog (added 2026-10-05)
 
@@ -1118,11 +1164,13 @@ listener before the dialog has moved focus`) and in a browser by two specs:
 `frontend/e2e/confirmDialog.spec.ts`, in the default run, on the leave prompt, and the demo
 run's `"Start over" asks first, takes the keyboard, and brings a new copy`.
 
-- **On the compose stack, 2026-10-05:** the demo run's test passed: focus on "Close" at the
-  open, Tab round the three controls and Shift+Tab back, all inside, and focus on the panel's
-  "Start over" once the new copy was there. `e2e/confirmDialog.spec.ts` has not run on the real
-  stack, since the default suite was not run whole there; against the mock, in Chromium 151, a
-  copy of it passed five times of five.
+- **On the compose stack, 2026-10-05:** the demo run's test passed in both runs: focus on
+  "Close" at the open, Tab round the three controls and Shift+Tab back, all inside, and focus
+  on the panel's "Start over" once the new copy was there. `e2e/confirmDialog.spec.ts` ran in
+  the three whole runs of the default suite on the second run's images and passed in each. By
+  then it also held that "Leave anyway" is the document's last Tab stop before it presses Tab,
+  which is what makes its third Tab a test of the trap against tabster, and it scanned the open
+  prompt: `transfer-leave-prompt`, no violation.
 - **Measured and not built: while it waits, a dialog that is the first or the last Tab stop of
   its document still loses Tab.** Every control is disabled then, and the trap leaves focus
   where tabster put it. No page is in that state: the transfer prompts never wait, and the

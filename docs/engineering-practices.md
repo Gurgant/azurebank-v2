@@ -193,12 +193,17 @@ between its two halves it **restarts the BFF's container and then the API's** wi
 `docker restart`, to show that the kept copy still signs in once every session is gone. So it
 needs the `docker` command, and `E2E_DEMO_COMPOSE_PROJECT` when the stack was started with `-p`
 (`frontend/playwright.demo.config.ts` has the rest, and what a run leaves on disk to delete).
-Measured on 2026-10-05, on the three images built from one commit: 15 tests passed in 35.6 s,
-and after the two restarts the BFF's `/health/ready` was asked three times and met a request
-that threw, then `200 Degraded`, then `200 Healthy`. The default suite, `npm run test:e2e`,
-expects the demo off; it was not run whole against those images that day, because the Docker
-engine stopped answering while the stack was starting with `compose.yaml` alone: 4 of its 48
-tests, the four that need no session, ran against that BFF and passed. **A repeated demo run
+Measured twice on 2026-10-05, each time on three images built from one commit. The second
+time, on commit `340813a5`, after which the change touches comments and documents only: 17
+tests passed in 23.4 s, and after the two restarts the BFF's `/health/ready`, asked three
+times, said `200 Degraded` twice and then `200 Healthy`. The first time, on an earlier commit,
+15 tests passed in 35.6 s and the first of the three asks met a request that threw. The
+default suite, `npm run test:e2e`, expects the demo off. On the second set of images, started
+with `compose.yaml` alone, it ran whole three times: `1 failed`, `47 passed` twice, then
+`48 passed`. The red test was the same both times, `e2e/pinLockExpiry.spec.ts`, and its own
+expectations had held: the browser's context did not close within the test's 30 s. Why is not
+known; the spec is `main`'s, and ADR-0063, "What the browser keeps in demo mode", has the
+three runs. **A repeated demo run
 meets two caps.** The API hands one client `Demo:Claim:MaxPerClientPerDay` copies, 10 unless
 set, in a rolling 24 hours, and through the one published port every browser on the machine is
 one client (ADR-0063, "What a visitor can still do"); a run claims twice, so five runs fit in a

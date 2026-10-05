@@ -70,12 +70,13 @@ spec proves matches nothing else. Every page carries its own title, and a route 
 and moves focus to the new page. The per-scan JSON reports are a CI artifact.
 
 The public demo's screens are scanned by the same gate only in `npm run test:e2e:demo`, which is
-run by hand: the sign-in page as the demo shows it, the dashboard with its panel, once with the
-copy's sign-in details closed and once with them open, and the "Start over" dialog. Until CI has
-a job for that run, the gate catches a finding on a demo screen nowhere else. On 2026-10-05,
-against the compose stack with the demo on, none of the four scans had a finding the gate fails
-on: the sign-in page and the dialog had no violation, and the dashboard had colour contrast
-alone, on two nodes, in both of its scans.
+run by hand: the sign-in page as the demo shows it to a browser that keeps no copy, the
+dashboard with its panel, once with the copy's sign-in details closed and once with them open,
+and the "Start over" dialog. The sign-in page of a browser that keeps a copy is under no scan.
+Until CI has a job for that run, the gate catches a finding on a demo screen nowhere else. On
+2026-10-05, against the compose stack with the demo on, in each of the day's two runs none of
+the four scans had a finding the gate fails on: the sign-in page and the dialog had no
+violation, and the dashboard had colour contrast alone, on two nodes, in both of its scans.
 
 ## Screenshots
 
