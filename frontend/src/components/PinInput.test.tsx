@@ -450,8 +450,13 @@ describe('PinInput on the demo', () => {
       .flatMap((file) =>
         boxesDrawnIn(file).map((element) => {
           const name = /\sariaLabel="([^"]*)"/.exec(element)?.[1] ?? 'no name';
-          const purpose = /\spurpose=(?:"([^"]*)"|\{([^}]*)\})/.exec(element);
-          return `${file} | ${name} | ${purpose ? (purpose[1] ?? purpose[2]) : 'says nothing'}`;
+          // However the element writes it: in double quotes, in single quotes or in braces.
+          const purpose = /\spurpose=(?:"([^"]*)"|'([^']*)'|\{([^}]*)\})/.exec(element);
+          const said = purpose ? (purpose[1] ?? purpose[2] ?? purpose[3]) : 'says nothing';
+          // Properties handed over in a spread are not read here, so an element that has one says
+          // so: `purpose` may be among them.
+          const spreads = /\s\{\.\.\./.test(element) ? ' | spreads properties' : '';
+          return `${file} | ${name} | ${said}${spreads}`;
         }),
       )
       .sort();
