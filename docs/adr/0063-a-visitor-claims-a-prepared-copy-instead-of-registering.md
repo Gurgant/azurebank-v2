@@ -1135,8 +1135,8 @@ that commit gave the page, the script and the stylesheet their container served,
   `200 Degraded` twice and then `200 Healthy`: no request threw, and the step took 4.2 s. And
   the search was made six times, for thirteen to sixteen values, session cookies among them:
   each time it named a file planted for it in every place it searched, and then no file. What
-  three reruns of the default suite's one red test wrote under `test-results` was replaced by
-  the next run before a search read it there.
+  three of the later runs wrote under `test-results`, the default suite's second whole run and
+  two reruns of its red test, was replaced by the next run before a search read it there.
 - **The default suite with the demo off, on those images with `compose.yaml` alone: three whole
   runs, and the first two are red on one test.** Each was `npm run test:e2e` with `CI=1`,
   `E2E_BASE_URL=http://localhost:5000` and the two probe users CI's `real-stack` job names,
