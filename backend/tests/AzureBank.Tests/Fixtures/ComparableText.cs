@@ -16,12 +16,12 @@ namespace AzureBank.Tests.Fixtures;
 /// without that name, so two that differ only there are shown alike.
 /// <para>
 /// The encoding is one-to-one. A percent sign is doubled first, then each brace becomes a token
-/// that starts with one, so every percent sign in the result begins exactly one of <c>%%</c>,
-/// <c>%7B</c> and <c>%7D</c>, and reading them left to right gives back the one text it came
-/// from. Two encoded texts are equal exactly when the two texts are: the comparison is exact,
-/// and a parenthesis where a brace belongs fails it (<c>ComparableTextTests</c> holds the
-/// helper to this on a few pairs). A failure shows both texts with <c>%7B</c> and <c>%7D</c>
-/// where their braces are.
+/// that starts with one, so the result, read left to right, splits in one way only into
+/// <c>%%</c>, <c>%7B</c>, <c>%7D</c> and characters that are not a percent sign, and reading it
+/// so gives back the one text it came from. Two encoded texts are equal exactly when the two
+/// texts are: the comparison is exact, and a parenthesis where a brace belongs fails it
+/// (<c>ComparableTextTests</c> holds the helper to this on a few pairs). A failure shows both
+/// texts with <c>%7B</c> and <c>%7D</c> where their braces are.
 /// </para>
 /// </remarks>
 internal static class ComparableText
