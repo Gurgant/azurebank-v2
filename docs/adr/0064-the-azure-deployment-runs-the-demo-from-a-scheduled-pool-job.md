@@ -294,7 +294,11 @@ Offline, on one machine (Windows, Python 3.14, PowerShell 7.6, Bicep 0.47.16), o
   of a good run as the scripts print them.
 - **`bicep build` and `bicep lint`** of the three templates: nothing on standard error.
 - **The backend's gate**, since documents its tests read were edited: the Release build, the
-  whitespace check, and `dotnet test` with and without a SQL Server, each with no failure.
+  whitespace check, and `dotnet test` with and without a SQL Server, each with no failure, on
+  the documents as they were first written. After the corrections of the same day: the build,
+  the whitespace check and the two test projects without a SQL Server, each with no failure.
+  The twelve SQL statements of the pool's runbook, which the tests that need a SQL Server run,
+  are byte for byte what they were at the run with one.
 - **One registration on a database that only `migrate` has touched**, on a local stack
   (`compose.yaml` under a project name of its own, the `seed` service made to run `migrate`
   again; images built from the sources of `6988514f`; SQL Server 2022 CU27). 17 migrations, 0
