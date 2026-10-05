@@ -331,7 +331,9 @@ export function ConfirmDialog({
         to whichever end the direction calls for, rather than letting the browser step OUT of the
         subtree backwards;
       - with NO focusable children at all — `isLoading` disables all three buttons at once — there
-        is nothing to cycle to, so simply refuse the keystroke and leave focus on the container.
+        is nothing to cycle to, so refuse the keystroke and give focus back to the container.
+        (Until 2026-10-05 this said: simply refuse the keystroke and leave focus on the container.
+        Focus was not always there to leave: the branch below says where it had gone.)
   */
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'Tab' || !dialogRef.current) return;
@@ -339,6 +341,12 @@ export function ConfirmDialog({
     const focusable = focusableWithin(dialogRef.current);
     if (focusable.length === 0) {
       event.preventDefault();
+      // Refusing the key is not enough where this dialog's controls are the document's last Tab
+      // stops (backward: its first). Tabster has heard the key by now, found no stop to go on to
+      // and moved focus to an element of its own, outside the dialog. Refused, the key leaves
+      // focus there, one Tab from the page behind the waiting dialog. So the container takes
+      // focus back. The ref is not empty here: the handler's first line returns when it is.
+      dialogRef.current.focus();
       return;
     }
 

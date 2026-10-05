@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { makeStyles, tokens } from '@fluentui/react-components';
+import { makeStyles, tokens, useFocusFinders } from '@fluentui/react-components';
 import { cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -180,6 +180,16 @@ function OpenedFromAButton({
       />
     </>
   );
+}
+
+/**
+ * Starts Fluent's tabster on the page. Nothing else in this file does: the dialog's own Fluent
+ * parts, a `Button` and a `Text`, do not start it. `useFocusFinders` is one of the Fluent hooks
+ * that do.
+ */
+function TabsterRunning() {
+  useFocusFinders();
+  return null;
 }
 
 describe('ConfirmDialog', () => {
@@ -372,6 +382,100 @@ describe('ConfirmDialog', () => {
 
     expect(screen.queryByText('outside after')).not.toHaveFocus();
     expect(screen.queryByText('outside before')).not.toHaveFocus();
+  });
+
+  it('waiting, it keeps Tab also where it is the last or the first Tab stop of the document', async () => {
+    /*
+      Not a control. Without the line that gives focus back to the dialog where the Tab handler
+      finds no control to cycle to (src/components/shared/ConfirmDialog.tsx) this fails on `last`
+      and on `first`: after the first key focus is on the page, and after the second on the
+      control outside the dialog.
+
+      The test above passes without that line, because nothing in it moves focus before the
+      dialog hears the key. With Fluent's tabster running, something does. Tabster hears Tab on
+      the window, before React does, and where it finds no stop after the element that has focus
+      (backward: none before it) it moves focus to an element of its own, for the browser's
+      default to carry out of the page. While the dialog waits its controls are disabled and
+      focus is on the dialog itself, so a dialog whose controls are the document's last has no
+      stop after it. The trap refuses the key, and that alone leaves focus where tabster put it:
+      outside the waiting dialog, one Tab from the page behind it.
+
+      A browser meets this on the dashboard at the desktop width when the accounts could not be
+      read: the demo's panel is then the last thing the page draws, and its "Start over" waits
+      for a claim. No kept browser test reaches that state.
+
+      Tabster itself runs here, with no listener standing in for it. `takenOutside` counts the
+      times focus landed outside the dialog while the keys were pressed. It is what says tabster
+      ran: a 0 there for `last` or `first` would make their six places a focus that never left.
+      `between` is the control: with a stop on each side of the dialog tabster moves nothing,
+      and focus stays with the line and without it.
+
+      One thing is not as in a browser. There the first key leaves focus on tabster's element.
+      Here that element is gone by the time the test looks, and focus is on the page.
+    */
+    const user = userEvent.setup();
+    /** Three Tabs and three Shift+Tabs on the waiting dialog: where focus was after each. */
+    const pressedOn = async (outside: { before: boolean; after: boolean }) => {
+      const { unmount } = renderWithProviders(
+        <>
+          <TabsterRunning />
+          {outside.before && <button>outside before</button>}
+          <ConfirmDialog
+            isOpen
+            isLoading
+            onClose={vi.fn()}
+            onConfirm={vi.fn()}
+            title="Delete account?"
+            message="This can't be undone."
+          />
+          {outside.after && <button>outside after</button>}
+        </>,
+      );
+      const where = () =>
+        document.activeElement === dialog() ? 'on the dialog itself' : focusIs();
+      let takenOutside = 0;
+      const countOutside = (event: FocusEvent) => {
+        if (!dialog().contains(event.target as Node)) takenOutside += 1;
+      };
+      document.addEventListener('focusin', countOutside, true);
+      try {
+        const atTheStart = where();
+        const afterEachKey: string[] = [];
+        for (const shift of [false, false, false, true, true, true]) {
+          await user.tab({ shift });
+          afterEachKey.push(where());
+        }
+        return { atTheStart, afterEachKey, takenOutside };
+      } finally {
+        document.removeEventListener('focusin', countOutside, true);
+        unmount();
+      }
+    };
+    const onTheDialogSixTimes = Array.from({ length: 6 }, () => 'on the dialog itself');
+
+    const last = await pressedOn({ before: true, after: false });
+    const first = await pressedOn({ before: false, after: true });
+    const between = await pressedOn({ before: true, after: true });
+
+    expect({ last, first, between }).toStrictEqual({
+      // Forward, tabster finds no stop after the dialog, three times; backward, it finds one.
+      last: {
+        atTheStart: 'on the dialog itself',
+        afterEachKey: onTheDialogSixTimes,
+        takenOutside: 3,
+      },
+      // The other way round.
+      first: {
+        atTheStart: 'on the dialog itself',
+        afterEachKey: onTheDialogSixTimes,
+        takenOutside: 3,
+      },
+      between: {
+        atTheStart: 'on the dialog itself',
+        afterEachKey: onTheDialogSixTimes,
+        takenOutside: 0,
+      },
+    });
   });
 
   /*
