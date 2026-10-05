@@ -88,6 +88,37 @@ def job_resource(name='migrate', tag=OLD):
     }
 
 
+def pool_resource(tag=OLD):
+    """The pool job as infra/main.bicep writes it: on a schedule, one run at a time, one container
+    that runs `recycle`, and the app's database identity."""
+    return {
+        'location': 'italynorth',
+        'identity': identity('azurebank-app'),
+        'properties': {
+            'provisioningState': 'Succeeded',
+            'configuration': {
+                'triggerType': 'Schedule', 'replicaRetryLimit': 0, 'replicaTimeout': 600,
+                'scheduleTriggerConfig': {'cronExpression': '0 */4 * * *', 'parallelism': 1,
+                                          'replicaCompletionCount': 1},
+            },
+            'template': {'containers': [
+                {**container('pool', f'ghcr.io/gurgant/azurebank-tools:{tag}'), 'args': ['recycle']}]},
+        },
+    }
+
+
+def flagged(bff=None, api=None, name='Demo__Enabled'):
+    """An app whose two containers carry the demo's setting as given: a plain value, a list of
+    whole entries, or None for a container that does not carry the setting."""
+    app = app_resource()
+    for entry, value in zip(app['properties']['template']['containers'], (bff, api)):
+        if isinstance(value, list):
+            entry['env'] = entry['env'] + copy.deepcopy(value)
+        elif value is not None:
+            entry['env'] = entry['env'] + [{'name': name, 'value': value}]
+    return app
+
+
 def resource(names):
     """A bare resource for the tests of one function."""
     return {
@@ -164,6 +195,12 @@ class FakeAzure:
         self.versions = []
         self.events = []
         self.printed_before_first_write = None
+
+    def turn_the_demo_on(self):
+        """What a run of the template with `demo` true writes: the flag on both containers of the
+        app, and the pool job."""
+        self.app = flagged('true', 'true')
+        self.jobs['azurebank-pool'] = pool_resource()
 
     def writes(self):
         return [(method, resource_id) for method, resource_id, _ in self.calls if method != 'GET']
@@ -301,7 +338,7 @@ class DeployCase(Offline):
         self.migration = self.start(patch('deploy.run_migration', side_effect=(
             lambda *args, **options: self.azure.events.append('migration'))))
         self.smoke = self.start(patch(
-            'deploy.smoke', side_effect=lambda *args: self.azure.events.append('smoke')))
+            'deploy.smoke', side_effect=lambda *args, **options: self.azure.events.append('smoke')))
 
     def deploy(self, **options):
         return deploy.deploy(SUBSCRIPTION, GROUP, NEW, **options)
@@ -852,7 +889,7 @@ class DeploymentTests(DeployCase):
         self.assertEqual(deploy.images(self.azure.jobs['azurebank-migrate']),
                          {'migrate': f'ghcr.io/gurgant/azurebank-tools:{NEW}'})
         self.migration.assert_called_once_with(MIGRATE_ID, 600, in_actions=False)
-        self.smoke.assert_called_once_with(f'https://{ADDRESS}')
+        self.smoke.assert_called_once_with(f'https://{ADDRESS}', demo=False)
 
     def test_the_app_request_carries_the_template_it_read_and_nothing_else(self):
         self.deploy()
@@ -889,6 +926,82 @@ class DeploymentTests(DeployCase):
         for image in ('azurebank-bff', 'azurebank-api', 'azurebank-tools'):
             self.assertIn(f'ghcr.io/gurgant/{image}:{OLD}', before)
         self.assertEqual(before.count(BEFORE), 2, 'the latest revision and the latest ready one')
+
+
+def out_of_shape(what, *drift, when='nothing was changed'):
+    """The whole sentence of a refusal for a shape, so that a test holds every word of it: what
+    was found is in it only where the drift itself says so."""
+    return (f'{what} is not in the shape this script deploys onto ({when}): {"; ".join(drift)}. '
+            'Put it right with the template (infra/README.md) before deploying.')
+
+
+DISAGREE = 'Demo__Enabled is true in one container and not in another'
+
+
+def neither(name):
+    return (f"Demo__Enabled in the container '{name}' is something the template never writes "
+            '(it writes the plain value true or false, once)')
+
+
+class DemoStateTests(DeployCase):
+    """Whether the app is the public demo is read from the app itself: the setting Demo__Enabled of
+    its two containers, which infra/main.bicep writes on both from one switch."""
+
+    def test_no_flag_or_false_on_both_is_off(self):
+        # CONTROL: green before this change: a function that answers False for every app passes it.
+        bare = flagged()
+        for entry in bare['properties']['template']['containers']:
+            del entry['env']
+        for app in (flagged(), flagged('false', 'false'), flagged('false', None), flagged(None, 'false'), bare):
+            self.assertIs(deploy.demo_of(app), False)
+
+    def test_true_on_both_is_on(self):
+        self.assertIs(deploy.demo_of(flagged('true', 'true')), True)
+        # Whatever the case of the setting's name: infra/secrets.ps1 finds it so too (its -eq), and
+        # the two must not read one app two ways.
+        self.assertIs(deploy.demo_of(flagged('true', 'true', name='DEMO__ENABLED')), True)
+        self.assertIs(deploy.demo_of(flagged([{'name': 'demo__enabled', 'value': 'true'}], 'true')), True)
+
+    def test_two_containers_that_disagree_are_refused_before_any_change(self):
+        for bff, api in (('true', 'false'), ('false', 'true'), ('true', None), (None, 'true')):
+            for options in ({}, {'app_only': True}):
+                with self.subTest(bff=bff, api=api, **options):
+                    self.azure.app = flagged(bff, api)
+                    with self.assertRaises(deploy.ShapeError) as raised:
+                        self.deploy(**options)
+                    self.assertEqual(str(raised.exception), out_of_shape('The app', DISAGREE))
+        self.assertEqual(self.azure.writes(), [])
+        self.migration.assert_not_called()
+        self.smoke.assert_not_called()
+
+    def test_a_value_that_is_neither_is_refused_and_never_printed(self):
+        # What the template writes is the plain value true or false, once. Anything else was set
+        # by hand: no side is chosen, and what was found is not repeated.
+        flag = 'Demo__Enabled'
+        strange = {
+            'another word': 'VALUE-MARKER',
+            'a capital': 'True',
+            'nothing': '',
+            'a space after it': 'true ',
+            'a number': [{'name': flag, 'value': 1}],
+            'a boolean': [{'name': flag, 'value': True}],
+            'no value': [{'name': flag}],
+            'a secret': [{'name': flag, 'secretRef': 'VALUE-MARKER'}],
+            'twice': [{'name': flag, 'value': 'true'}] * 2,
+            'twice, in two cases': [{'name': flag, 'value': 'true'}, {'name': flag.upper(), 'value': 'true'}],
+        }
+        for what, value in strange.items():
+            for bff, api, named in ((value, value, ('bff', 'api')), (value, 'true', ('bff',)),
+                                    ('false', value, ('api',))):
+                with self.subTest(what=what, on=named):
+                    self.azure.app = flagged(bff, api)
+                    with self.assertRaises(deploy.ShapeError) as raised:
+                        self.deploy()
+                    self.assertEqual(str(raised.exception), out_of_shape('The app', *map(neither, named)))
+                    self.assertNotIn('VALUE-MARKER', str(raised.exception) + self.printed())
+        self.assertEqual(self.azure.writes(), [])
+        self.migration.assert_not_called()
+        self.smoke.assert_not_called()
 
 
 class OrderTests(DeployCase):
@@ -1354,7 +1467,7 @@ class GateTests(DeployCase):
 class MaskTests(DeployCase):
     def setUp(self):
         super().setUp()
-        self.smoke.side_effect = lambda url: print(f'checked {url}')
+        self.smoke.side_effect = lambda url, **options: print(f'checked {url}')
 
     def test_in_actions_the_address_is_masked_before_any_line_that_holds_it(self):
         self.deploy(in_actions=True)
@@ -1386,6 +1499,15 @@ class AppOnlyTests(DeployCase):
         self.migration.assert_not_called()
         self.assertEqual(deploy.images(self.azure.app),
                          {name: f'ghcr.io/gurgant/azurebank-{name}:{NEW}' for name in ('bff', 'api')})
+        self.smoke.assert_called_once_with(f'https://{ADDRESS}', demo=False)
+
+    def test_with_the_demo_on_it_still_reads_no_job_and_tells_the_smoke_test_what_the_app_says(self):
+        self.azure.turn_the_demo_on()
+        self.deploy(app_only=True)
+        self.assertEqual(self.steps(), ['app d', 'smoke'])
+        self.assertEqual([call for call in self.azure.calls if '/jobs/' in call[1]], [])
+        self.smoke.assert_called_once_with(f'https://{ADDRESS}', demo=True)
+        self.assertNotIn('azurebank-pool', self.printed())
 
     def test_it_is_refused_inside_actions_before_any_call(self):
         with self.assertRaisesRegex(ValueError, 'refused inside GitHub Actions'):

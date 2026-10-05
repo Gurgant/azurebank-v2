@@ -12,7 +12,9 @@ and AZURE_RESOURCE_GROUP. A deployment also needs IMAGE_TAG (the full SHA of a c
 images are published).
 
 A full run, in order:
-  1. read the app and the jobs, print what runs now, and refuse to go on if their shape drifted;
+  1. read the app, and from its containers whether it is the public demo (Demo__Enabled: on in
+     one and off in the other stops the run); read the jobs, print what runs now, and refuse to
+     go on if their shape drifted;
   2. move the tools image on the migrate job, run the migration, wait for that exact execution;
   3. move the tools image on every other job;
   4. move both app images in one request, wait for the new revision to be ready, and read the
@@ -71,6 +73,15 @@ MAX_LOG_LINES = 5000
 # migrate job before the migration, the others only after it succeeded.
 JOBS = {MIGRATE_JOB: 'migrate'}
 MAX_JOB_TIMEOUT = 840
+# The setting both containers of the app read to know whether they are the public demo
+# (infra/main.bicep writes it on both from one switch, `demo`).
+DEMO_FLAG = 'Demo__Enabled'
+# What the public demo shows of itself without spending a copy, both under
+# backend/src/AzureBank.Bff: the tag the BFF puts in the page's head
+# (Extensions/SpaHostingExtensions.cs, DemoTag), and its own door for a registration, which the
+# demo closes (Middleware/DemoModeMiddleware.cs).
+DEMO_TAG = '<meta name="azurebank-demo" content="true">'
+REGISTER_PATH = '/bff/auth/register'
 ACTIVE = {'Running', 'Processing'}
 FAILED = {'Failed', 'Stopped', 'Degraded'}
 FINISHED = FAILED | {'Succeeded'}
@@ -280,6 +291,38 @@ def assert_shape(what, drift, when):
         raise ShapeError(f'{what} is not in the shape this script deploys onto ({when}): '
                          f'{"; ".join(drift)}. Put it right with the template (infra/README.md) '
                          'before deploying.')
+
+
+def demo_says(container):
+    """What one container of the app says about the demo: 'true', 'false', or None for neither.
+    A container that does not carry the setting says 'false': off is the default in the code
+    (backend/src/AzureBank.Shared/Options/DemoOptions.cs). The template writes the setting once,
+    as the plain value true or false; anything else was set by hand and is neither. The name is
+    matched whatever its case, as infra/secrets.ps1 matches it: the two must not read one app two
+    ways."""
+    settings = [entry for entry in listed(container, 'env')
+                if isinstance(entry, dict) and str(entry.get('name')).lower() == DEMO_FLAG.lower()]
+    if not settings:
+        return 'false'
+    value = settings[0].get('value')
+    return value if len(settings) == 1 and isinstance(value, str) and value in ('true', 'false') else None
+
+
+def demo_of(app, when='nothing was changed'):
+    """Whether the app is the public demo, as the app itself says it: True when every container
+    carries Demo__Enabled as true, False when none does. On in one container and off in another
+    is not a state this folder deploys, and neither is a value the template never writes: no side
+    is chosen, and the run stops. The refusal names the setting and the container; what was found
+    is never repeated."""
+    containers = listed((app.get('properties') or {}).get('template'), 'containers')
+    says = [demo_says(container) for container in containers]
+    assert_shape('The app', [
+        f"{DEMO_FLAG} in the container {str(container.get('name'))!r} is something the template "
+        'never writes (it writes the plain value true or false, once)'
+        for container, said in zip(containers, says) if said is None], when)
+    assert_shape('The app', [f'{DEMO_FLAG} is true in one container and not in another']
+                 if len(set(says)) > 1 else [], when)
+    return 'true' in says
 
 
 # --- Azure ---
@@ -632,7 +675,9 @@ def told(answer, text=False):
     return f'{status} {body[:80]!r}' if text or status == 'no answer' else str(status)
 
 
-def smoke(url, timeout=300):
+def smoke(url, timeout=300, demo=False):
+    # `demo` is what the app says it is (demo_of). Nothing below reads it: the three requests
+    # are the same with the demo on and off.
     opener = urllib.request.build_opener(NoRedirect)
     deadline = time.monotonic() + timeout
     while True:
@@ -751,6 +796,9 @@ def deploy(subscription, resource_group, tag, app_only=False, in_actions=False,
     if in_actions and fqdn:
         # The log of a public repository is public. This hides the name in it and nothing more.
         print(f'::add-mask::{fqdn}', flush=True)
+    # The app itself says whether it is the public demo, and two containers that disagree stop
+    # the run here.
+    demo = demo_of(app)
     jobs = {} if app_only else {name: rest('GET', f'{prefix}/jobs/{name}') for name in JOBS}
     say(running_now(app, jobs))
     assert_shape('The app', app_drift(app), 'nothing was changed')
@@ -791,7 +839,7 @@ def deploy(subscription, resource_group, tag, app_only=False, in_actions=False,
         moved = wait_revision(app_id, app_images, previous)
         assert_shape('The app', app_drift(moved), 'after its images moved')
         wait_inactive(app_id, previous)
-        smoke(f'https://{fqdn}')
+        smoke(f'https://{fqdn}', demo=demo)
     # A shape read back wrong is put back too: put_back sends the template read at the start,
     # which passed the same check, never the one read after the move.
     except (RevisionFailed, ShapeError, SmokeFailed) as failure:
