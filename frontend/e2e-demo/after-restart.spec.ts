@@ -24,12 +24,13 @@ import {
  * The copy's password is read here too, to be compared and never printed
  * (`e2e-demo/demoRun.ts`).
  *
- * As of 2026-10-05 this file has not run against the stack. On this tree's dev server with the
- * mock it ran as it stands, from the saved state, as far as the press on "Continue with my
- * copy": the mock keeps its copies in the page, so a page opened from a saved state has none to
- * sign in to, and the mock answered that press 401. Started instead from a claim made in the
- * page, it ran from the kept copy on to its end. The 401 before the press and the 200 after it
- * are READ, from the BFF's source, and not from a run against it.
+ * MEASURED on 2026-10-05, in Chromium 151 against compose.yaml with compose.demo.yaml
+ * (Production), after the restart of `e2e-demo/restart.setup.ts`: this file ran as it stands
+ * and passed. `GET /bff/auth/me` with the saved cookie answered 401, the sign-in with the kept
+ * pair 200, the sign-out 200. It cannot run whole against the mock: the mock keeps its copies
+ * in the page, so a page opened from a saved state has none to sign in to, and the mock answers
+ * that press 401. Started there from a claim made in the page, it ran from the kept copy on to
+ * its end.
  */
 
 const CONTINUE = 'Continue with my copy';

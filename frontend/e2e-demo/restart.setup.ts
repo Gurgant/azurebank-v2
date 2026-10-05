@@ -37,11 +37,14 @@ import { note } from './demoRun';
  * function it polls; `toPass` takes a throw as "not yet" and asks again
  * (`e2e/auth.setup.ts` wraps its own probe in a `try` for the same reason).
  *
- * As of 2026-10-05 this step has restarted no container. It has run against stand-ins for the
- * stack's port and for the `docker` command: the control, the two lookups, the two restarts in
- * their order, the wait through a port that refuses and through `Degraded`, and each refusal
- * above. What `docker restart` does to the two real containers, and how long the stack then
- * takes to be whole, are READ; the two times below were chosen, not measured.
+ * MEASURED on 2026-10-05 against compose.yaml with compose.demo.yaml (Production, Docker Desktop
+ * on Windows, the project named with `-p`), one run: the control answered 200; each lookup found
+ * one container; after the two restarts docker's own `StartedAt` of both had moved, the BFF's
+ * 2.4 s before the API's; the wait asked three times and met a request that threw, then
+ * `200 Degraded`, then `200 Healthy`; the step took 6.1 s. The two times below are ceilings
+ * chosen well above that, not measurements. The refusals above (no session, no container, two
+ * containers, no docker) were met against stand-ins for the port and for the `docker` command,
+ * not on that stack.
  */
 
 /** The compose project whose containers these are: compose.yaml's `name:`, unless `-p` was used. */

@@ -54,12 +54,13 @@ import {
  * transfer's names are the app's older ones, asked as the screenshot capture asks them
  * (`screenshots/app.capture.ts`).
  *
- * WHAT HAS BEEN SEEN WHERE, as of 2026-10-05. This file has not run against the stack. Every
- * name in it was read from the components and then met in Chromium on this tree's dev server
- * with the mock and the demo's tag, where the flow below ran from the first test to the last
- * with one line changed for what only the stack does: the name of the session's cookie. That
- * line, and each other value that is the stack's to say and the mock's only to imitate, is
- * marked READ where it stands.
+ * WHAT HAS BEEN SEEN WHERE. On 2026-10-05 this file ran as it stands, from the first test to the
+ * last, in Chromium 151 against compose.yaml with compose.demo.yaml (Production, the images
+ * built from this branch, a pool nobody had claimed from): thirteen passed, and no name in it
+ * had to be changed. Before that every name had been met on this tree's dev server with the
+ * mock and the demo's tag, where the flow passes with one line changed: the name of the
+ * session's cookie, which only the stack gives. Each value that is the stack's to say and the
+ * mock's only to imitate is marked MEASURED where it stands, with what the stack said.
  */
 
 // The words a visitor reads, typed out and not imported from the product: a test fails the day
@@ -78,8 +79,10 @@ const TAG = '<meta name="azurebank-demo" content="true">';
 
 /**
  * What a copy's two accounts hold when it is claimed, and what the dashboard adds them up to.
- * READ, from the pool's builder (`backend/tools/AzureBank.Seeder/Pool/DemoCopyBuilder.cs`) and
- * from the mock, which was given the same sums: not yet seen on the stack.
+ * The pool's builder gives the two (`backend/tools/AzureBank.Seeder/Pool/DemoCopyBuilder.cs`),
+ * and the mock was given the same. MEASURED on the stack, 2026-10-05: the dashboard of the first
+ * copy showed these three; the sum was read again on the copy "Start over" brought and after
+ * "Continue with my copy"; and the sum further down once a euro had been sent.
  */
 const STARTING_SUM = '€14,750.00';
 const STARTING_SUMS = ['€12,450.00', '€14,750.00', '€2,300.00'];
@@ -464,9 +467,10 @@ test.describe('the demo, from the first click', () => {
       keepsTheCopysEnd: kept?.expiresAt === copy?.expiresAt,
       keepsTheCopysPassword: kept?.password === password,
       theSearchKnowsTheKeptPassword: await theSearchKnows(kept),
-      // READ, from the BFF's source (backend/src/AzureBank.Bff/Program.cs: the prefix outside
-      // Development), not yet seen in this browser on the stack: the session's cookie is a
-      // `__Host-` one, and Chromium keeps it although the page came over http from localhost.
+      // MEASURED on the stack, 2026-10-05: the context's one cookie after the claim was
+      // `__Host-AzureBank.Session` (the prefix is the BFF's outside Development:
+      // backend/src/AzureBank.Bff/Program.cs). Chromium kept it, `Secure` as it is, although
+      // the page came over http from localhost, and sent it: the dashboard below is behind it.
       sessionCookieHasTheHostPrefix: cookies.some((name) => name.startsWith('__Host-')),
     }).toEqual({
       status: 200,
@@ -585,8 +589,8 @@ test.describe('the demo, from the first click', () => {
       authorisation: { path: '/api/transfers/authorizations', status: authorisation.status() },
       transfer: { path: '/api/transfers', status: transfer.status() },
     });
-    // READ, from the API's source (backend/src/AzureBank.Api/Controllers/TransferController.cs)
-    // and from the mock, not yet seen on the stack: 201 and 201.
+    // MEASURED on the stack, 2026-10-05: 201 and 201, as the API's source has them
+    // (backend/src/AzureBank.Api/Controllers/TransferController.cs) and as the mock answers.
     expect({ authorisation: authorisation.status(), transfer: transfer.status() }).toEqual({
       authorisation: 201,
       transfer: 201,
