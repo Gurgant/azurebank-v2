@@ -4672,12 +4672,19 @@ def said(node):
 
 def texts_of_the_script():
     """What infra/deploy.py can say, read from its source and never run: each string expression
-    whole, and each run of literal text, which is what stands between two values put in."""
+    whole, and each run of literal text, which is what stands between two values put in. A
+    string that stands as a statement of its own is left out: it is a docstring, which no
+    terminal shows, and its words must not pass for a sentence the script prints."""
     with open(deploy.__file__, encoding='utf-8') as source:
         tree = ast.parse(source.read())
+    docstrings = {id(node.value) for node in ast.walk(tree)
+                  if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+                  and isinstance(node.value.value, str)}
     whole = []
 
     def visit(node):
+        if id(node) in docstrings:
+            return
         text = said(node)
         if text is None:
             for child in ast.iter_child_nodes(node):
@@ -4687,7 +4694,7 @@ def texts_of_the_script():
 
     visit(tree)
     runs = [node.value for node in ast.walk(tree)
-            if isinstance(node, ast.Constant) and isinstance(node.value, str)]
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstrings]
     return whole, runs
 
 
@@ -4706,7 +4713,9 @@ class RunbookTests(unittest.TestCase):
     # What a row of "When something fails" quotes of a sentence of the script: a run of its
     # literal text, word for word, so that whoever reads the sentence on a terminal finds its row
     # by searching the page for it. The first is the put-back's, which had its row before the
-    # demo; every other is a sentence the demo added to the script.
+    # demo; every other is a sentence the demo added to the script. Each stands in one sentence
+    # of the script and in no other: words that two sentences share would go on being found in
+    # the one while the other, and the row that quotes it, came apart.
     ROWS = (
         'The app may be serving a broken revision',
         'is true in',
@@ -4718,13 +4727,13 @@ class RunbookTests(unittest.TestCase):
         'the registration probe expected 403',
         'the registration probe got',
         'not in a state to be checked',
-        'an answer could still come from another revision',
+        'answering alone (',
         'came with a link to a next page',
-        'reports no address',
+        'is in shape and reports no address',
         "from the app's",
-        "secrets could not be compared with the app's",
+        "The pool job's secrets could not be compared with the app's",
         'could not be listed',
-        'no value was shown',
+        'Nothing was moved, and no value was shown',
         'This was --check, not a deployment',
         'writes that job only with the demo on',
         'was asked to start once',
@@ -4763,6 +4772,11 @@ class RunbookTests(unittest.TestCase):
         for words in self.ROWS:
             with self.subTest(words=words):
                 self.assertTrue(any(words in run for run in self.runs), 'the script no longer says this')
+                # In one sentence only. Found in two, the words would still be there after the
+                # sentence its row quotes was reworded. Seen red with each of the four entries
+                # that stood in two texts of the script, a docstring among them.
+                self.assertEqual(sum(words in text for text in self.whole), 1,
+                                 'these words do not stand in exactly one sentence the script prints')
                 self.assertIn(words, section)
         # And no sentence of the script names the section without one of them: a new refusal that
         # points there gets its row, and its words above, in the change that adds it.
