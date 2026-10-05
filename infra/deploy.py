@@ -1197,9 +1197,13 @@ def listed_secrets(resource_id, whose):
     that its own identity is refused the listing (prove_secrets_are_refused)."""
     try:
         answer = rest('POST', f'{resource_id}/listSecrets')
-    except AzError as error:
+    except (AzError, ValueError) as error:
+        # A ValueError is a decoder's: the CLI answered, and what it printed is not a listing. Its
+        # own words say where in the answer it stopped, and of a listing not even that is shown:
+        # the place is worked out from what stood before it.
+        why = str(error).rstrip('.') if isinstance(error, AzError) else 'the answer could not be read'
         raise RuntimeError(f"The secrets of {whose} could not be listed, so the pool job's secrets "
-                           f"could not be compared with the app's: {str(error).rstrip('.')}. "
+                           f"could not be compared with the app's: {why}. "
                            'Nothing was moved. See infra/README.md, "When something fails".') from None
     found = {}
     for entry in listed(answer, 'value'):

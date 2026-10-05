@@ -2452,6 +2452,38 @@ class CheckTests(DeployCase):
         self.smoke.assert_not_called()
         self.assert_nothing_was_moved()
 
+    def test_a_listing_that_cannot_be_read_fails_the_check_in_its_own_words(self):
+        # The CLI answered, and what it printed is not a listing: here it stops short, or holds a
+        # byte that is not text. A decoder's own words say where in the answer it stopped, and of
+        # a listing not even that is shown: the place is worked out from what stood before it.
+        self.azure.turn_the_demo_on()
+        cut = json.dumps({'value': [{'name': 'pin-pepper', 'value': PEPPER}]})[:60]
+        with self.assertRaises(json.JSONDecodeError) as stops_short:
+            json.loads(cut)
+        with self.assertRaises(UnicodeDecodeError) as not_text:
+            (cut.encode() + b'\xff').decode()
+        self.assertIn('(char 43)', str(stops_short.exception), 'ARRANGE: the decoder says where it stopped')
+        self.assertIn('position 60', str(not_text.exception), 'ARRANGE: the decoder says where it stopped')
+        listing = self.azure.secrets_call
+        for whose, resource_id in (('the app', APP_ID), ('the job azurebank-pool', POOL_ID)):
+            for unread in (stops_short.exception, not_text.exception):
+                with self.subTest(whose=whose, unread=type(unread).__name__), patch.object(
+                        self.azure, 'secrets_call', side_effect=lambda target, body: (
+                            raise_(unread) if target == resource_id else listing(target, body))):
+                    self.clear()
+                    # Either kind is one the command line prints as it is.
+                    with self.assertRaises((RuntimeError, ValueError)) as raised:
+                        self.check()
+                    self.assertIs(type(raised.exception), RuntimeError, 'the check says what it means')
+                    self.assertEqual(str(raised.exception), (
+                        f"The secrets of {whose} could not be listed, so the pool job's secrets could not "
+                        "be compared with the app's: the answer could not be read. Nothing was moved. See "
+                        'infra/README.md, "When something fails".'))
+                    self.assert_no_secret_is_shown(str(raised.exception) + self.printed())
+                    self.assert_nothing_else_was_printed()
+        self.smoke.assert_not_called()
+        self.assert_nothing_was_moved()
+
     def test_a_listing_that_does_not_hold_one_value_for_each_secret_cannot_be_compared(self):
         self.azure.turn_the_demo_on()
         app, job = 'the app', 'the job azurebank-pool'
