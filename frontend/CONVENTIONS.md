@@ -228,9 +228,17 @@ and the BFF on `:5000` via `dotnet run --project backend/src/AzureBank.Bff --lau
 ⚠️ **The launch profile is not optional, and an earlier version of this note implied it was.** It is
 the only thing setting `ASPNETCORE_ENVIRONMENT=Development`, and two things hang off that: the dev
 certificate is trusted on the BFF→API hop, and the session cookie keeps its plain name. Outside
-Development `Program.cs` prefixes it `__Host-`, which **cannot be set over `http://localhost:5000`**
-at all — so a run without the profile fails on TLS and then on login, and neither failure names the
-profile. No cluster override is needed locally: `appsettings.json` already points cluster
+Development `Program.cs` prefixes it `__Host-` and marks it `Secure` — so a run without the
+profile fails on TLS, and that failure does not name the profile. _(Until 2026-10-05 this said
+a `__Host-` cookie "cannot be set over `http://localhost:5000` at all", and that such a run
+therefore fails on login as well. Measured that day, on the Production images of `compose.yaml`
+with `compose.demo.yaml`, in headless Chromium 151.0.7922.34: the browser kept
+`__Host-AzureBank.Session` (`Secure`, `HttpOnly`, `SameSite=Strict`, host `localhost`) from a
+claim made on `http://localhost:5000` and sent it back, and Playwright's own request context
+sent it to `localhost` too. So the cookie's name is not what stops a browser there. What the
+two suites that run in node, which carry the cookie themselves, meet at sign-in outside
+Development was not measured.)_ No cluster override is needed locally: `appsettings.json`
+already points cluster
 `backend-api` at `https://localhost:7215`. The `--ReverseProxy:Clusters:backend-api:…` arguments you
 will see in `ci.yml` are CI-only, because CI moves the API to `:5068`; they are passed as
 command-line config rather than environment variables because the cluster id `backend-api` contains

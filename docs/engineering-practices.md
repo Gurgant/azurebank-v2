@@ -181,6 +181,41 @@ http even there, which is why the development profile's cookie is neither (the B
 docker compose up --build -d   # after exporting the eight variables compose.yaml names
 ```
 
+**The public demo on that stack, and in the dev loop.** With `compose.demo.yaml` the page the BFF
+serves has `<meta name="azurebank-demo" content="true">` in its head, and the app is the demo
+(ADR-0063, decision 13): the sign-in page leads with "Try the demo", which claims a copy and
+lands on its dashboard; `/register` leads to the sign-in page; the dashboard says what the
+visitor holds and offers "Start over"; and the browser keeps what signs in to the copy, so that
+"Continue with my copy" opens it again (ADR-0063, "What the browser keeps in demo mode").
+`npm run test:e2e:demo`, from `frontend/`, drives all of that in Chromium on
+`http://localhost:5000`. It is run by hand, on a stack nobody else is using, and by no CI job:
+between its two halves it **restarts the BFF's container and then the API's** with
+`docker restart`, to show that the kept copy still signs in once every session is gone. So it
+needs the `docker` command, and `E2E_DEMO_COMPOSE_PROJECT` when the stack was started with `-p`
+(`frontend/playwright.demo.config.ts` has the rest, and what a run leaves on disk to delete).
+Measured on 2026-10-05, on the three images built from one commit: 15 tests passed in 35.6 s,
+and after the two restarts the BFF's `/health/ready` was asked three times and met a request
+that threw, then `200 Degraded`, then `200 Healthy`. The default suite, `npm run test:e2e`,
+expects the demo off; it was not run whole against those images that day, because the Docker
+engine stopped answering while the stack was starting with `compose.yaml` alone: 4 of its 48
+tests, the four that need no session, ran against that BFF and passed. **A repeated demo run
+meets two caps.** The API hands one client `Demo:Claim:MaxPerClientPerDay` copies, 10 unless
+set, in a rolling 24 hours, and through the one published port every browser on the machine is
+one client (ADR-0063, "What a visitor can still do"); a run claims twice, so five runs fit in a
+day on one volume (arithmetic, not run). That count is rows of the database (ADR-0063, decision
+7), so `docker compose … down -v` and a fresh `up` start it again (read, not run as a sequence).
+The BFF also takes ten sign-ins and claims in 60 s from one address; a run spends four, and only
+the minute gives them back. **In the dev loop no BFF serves the page,** so nothing puts the tag
+there unless the dev server is started with `AZUREBANK_DEMO=true` in its environment:
+`AZUREBANK_DEMO=true npm run dev` in bash, `$env:AZUREBANK_DEMO = 'true'` and then `npm run dev`
+in PowerShell, and `npm run dev:mock` in place of `npm run dev` for the demo's screens with no
+backend at all (measured on 2026-10-05: in bash with both scripts, in PowerShell with
+`npm run dev:mock` and with `npx vite`). The value is exactly `true`; an env file
+does not set it; and a build never carries the tag, whatever its environment held
+(`frontend/vite.config.ts`). The variable sets the page and not the backend: a BFF with the demo
+off answers the claim 404 (measured on the compose stack the same day), so "Try the demo"
+pressed against one is refused (that pair was not run together).
+
 ## Quality gates
 
 Run all of these before opening a pull request.
