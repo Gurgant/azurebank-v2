@@ -1421,6 +1421,9 @@ NINE_ACTIONS = [
 BEHIND_DEPLOY_APP = ['Microsoft.App/containerApps', 'Microsoft.App/jobs', 'Microsoft.Authorization/roleAssignments',
                      'Microsoft.Authorization/roleAssignments', 'Microsoft.Insights/actionGroups',
                      'Microsoft.Resources/deployments']
+# What needs the demo's switch as well as the app's: the pool job, and the deployment role's
+# assignment on it. BEHIND_DEPLOY_APP above is what needs the app's switch alone.
+BEHIND_THE_DEMO = ['Microsoft.App/jobs', 'Microsoft.Authorization/roleAssignments']
 # The module that refuses deployApp=true without these values (app-inputs.bicep), and what it asks
 # of each: a length of exactly 40 for the image tag, at least 32 for the demo's client key (with
 # the demo on the API does not start on a shorter one), at least 1 for the others.
@@ -1589,13 +1592,14 @@ class TemplateTests(unittest.TestCase):
     def every_setting(self):
         """Each (resource, container, name of a setting): every container and init container of
         every resource the template compiles. A search that walked nothing would find nothing, so
-        the app's two containers and the migrate job's one must be among what this saw."""
+        the app's two containers and each job's one must be among what this saw."""
         found = []
         for resource in self.resources:
             template = resource.get('properties', {}).get('template', {})
             for container in [*template.get('containers', []), *template.get('initContainers', [])]:
                 found += [(resource['name'], container['name'], entry['name']) for entry in container.get('env', [])]
-        self.assertLessEqual({('azurebank', 'bff'), ('azurebank', 'api'), ('azurebank-migrate', 'migrate')},
+        self.assertLessEqual({('azurebank', 'bff'), ('azurebank', 'api'), ('azurebank-migrate', 'migrate'),
+                              ('azurebank-pool', 'pool')},
                              {(resource, container) for resource, container, _ in found})
         return found
 
@@ -1604,6 +1608,36 @@ class TemplateTests(unittest.TestCase):
 
     def test_the_app_and_all_that_needs_it_are_behind_deploy_app(self):
         self.assertEqual(self.conditions("[parameters('deployApp')]"), sorted(BEHIND_DEPLOY_APP))
+
+    def test_the_pool_job_and_its_role_are_behind_the_demo_switch(self):
+        # Two switches, and the job needs both. A job that builds copies while the app's flags are
+        # off is the state ADR-0063 warns of ("With the flag on the job and on neither container"),
+        # so with the demo off the template writes no such job; and without the app nobody could
+        # be handed a copy.
+        both = "[and(parameters('deployApp'), parameters('demo'))]"
+        self.assertEqual(self.conditions(both), sorted(BEHIND_THE_DEMO))
+        # Which two: the job by its name, and the assignment by the job it is on.
+        self.assertEqual(sorted((resource['type'], resource.get('scope', resource['name']))
+                                for resource in self.resources if resource.get('condition') == both),
+                         [(JOB, 'azurebank-pool'),
+                          ('Microsoft.Authorization/roleAssignments', f"[resourceId('{JOB}', 'azurebank-pool')]")])
+        # What needed the app's switch alone before there was a pool job still needs that one alone,
+        # and no other condition reads the demo's switch.
+        self.assertEqual(self.conditions("[parameters('deployApp')]"), sorted(BEHIND_DEPLOY_APP))
+        self.assertEqual(sorted({resource['condition'] for resource in self.resources
+                                 if "parameters('demo')" in resource.get('condition', '')}), [both])
+
+    def test_the_pool_job_waits_for_the_app(self):
+        # Written after the app, never beside it. Expected of Azure and not provoked: a run in
+        # which the app's own update fails then creates no job, where a job created beside an app
+        # whose flags are still off would be the state the test above names.
+        (app,) = self.of_type(APP)
+        after_the_app = f"[resourceId('{APP}', '{app['name']}')]"
+        self.assertIn(after_the_app, self.job('azurebank-pool').get('dependsOn', []))
+        # The text is the one Bicep writes for such a wait: the role assignment on the app has it.
+        (on_the_app,) = [resource for resource in self.of_type('Microsoft.Authorization/roleAssignments')
+                         if resource['scope'] == after_the_app]
+        self.assertIn(after_the_app, on_the_app['dependsOn'])
 
     def test_the_app_is_named_by_a_plain_value_and_no_resource_id_reads_a_secret(self):
         # CONTROL: green before this change. The walk below covers the eighth secure parameter too.
@@ -1649,12 +1683,13 @@ class TemplateTests(unittest.TestCase):
         # It creates nothing and gives nothing back.
         self.assertEqual(guard['properties']['template']['resources'], [])
         self.assertNotIn('outputs', guard['properties']['template'])
-        # The app, the job and the action group wait for it; the role assignments and the alerts
-        # wait for them.
+        # The app, each of the two jobs and the action group wait for it; the role assignments and
+        # the alerts wait for them.
         waits = f"[resourceId('Microsoft.Resources/deployments', '{GUARD}')]"
-        self.assertEqual(sorted(resource['type'] for resource in self.resources
+        self.assertEqual(sorted((resource['type'], resource['name']) for resource in self.resources
                                 if waits in resource.get('dependsOn', [])),
-                         sorted([APP, JOB, 'Microsoft.Insights/actionGroups']))
+                         [(APP, 'azurebank'), (JOB, 'azurebank-migrate'), (JOB, 'azurebank-pool'),
+                          ('Microsoft.Insights/actionGroups', 'azurebank-owner')])
 
     def test_a_what_if_can_name_everything_the_app_run_creates(self):
         # Offline, with values of the shapes secrets.ps1 writes: fourteen things and eight more, and
@@ -1683,6 +1718,53 @@ class TemplateTests(unittest.TestCase):
             self.assertEqual(len(predicted), 14)
             self.assertNotIn(APP, [resource['type'] for resource in predicted])
 
+    def test_with_the_demo_on_the_run_also_creates_the_pool_job_and_its_role(self):
+        # Offline, as above. By default the run creates the 22 it created before there was a pool
+        # job. With the demo on it creates those and two more: the job, and the deployment role's
+        # assignment on it. Asking for the demo without the app adds nothing to the fourteen.
+        group = f'/subscriptions/{SNAPSHOT_CONTEXT[1]}/resourceGroups/azurebank-demo/providers'
+        with tempfile.TemporaryDirectory() as folder:
+            copy_templates(folder)
+            runs = {}
+            for case, values, count in (
+                    ('by default', {}, 22),
+                    ('the demo on', {'demo': True}, 24),
+                    ('the demo on, and the alert on the workspace', {'demo': True, 'logVolumeAlert': True}, 25),
+                    ('the demo asked for without the app', {'demo': True, 'deployApp': False}, 14)):
+                code, said, predicted = snapshot(folder, {**APP_INPUTS, **values})
+                self.assertEqual(code, 0, said)
+                self.assertEqual([resource['id'] for resource in predicted if resource['id'].startswith('[')], [], case)
+                self.assertEqual(len(predicted), count, case)
+                runs[case] = {resource['id']: resource for resource in predicted}
+        default, on = runs['by default'], runs['the demo on']
+        job = f'{group}/{JOB}/azurebank-pool'
+        self.assertEqual(sorted(set(default) - set(on)), [])
+        added = sorted(set(on) - set(default))
+        self.assertEqual(added[:1], [job])
+        self.assertEqual(len(added), 2, added)
+        self.assertTrue(added[1].startswith(job + '/providers/Microsoft.Authorization/roleAssignments/'), added[1])
+        # The policy is handed the one name it lets run on a schedule, and it is this job's.
+        (assignment,) = [resource for resource in on.values()
+                         if resource['type'] == 'Microsoft.Authorization/policyAssignments']
+        self.assertEqual(assignment['properties']['parameters'],
+                         {'allowedJobTriggers': {'value': ['Manual']}, 'scheduledJobs': {'value': [on[job]['name']]}})
+        # The job as the run would send it: every four hours, one run at a time, ten minutes at most.
+        configuration = on[job]['properties']['configuration']
+        self.assertEqual((configuration['triggerType'], configuration['replicaTimeout'],
+                          configuration['scheduleTriggerConfig']),
+                         ('Schedule', 600, {'cronExpression': '0 */4 * * *', 'parallelism': 1,
+                                            'replicaCompletionCount': 1}))
+
+        # And the job is there exactly when both containers of the app are told that the demo is on.
+        def told(run):
+            return {(resource['name'], container['name']): entry['value']
+                    for resource in run.values() if resource['type'] in (APP, JOB)
+                    for container in resource['properties']['template']['containers']
+                    for entry in container['env'] if entry['name'] == 'Demo__Enabled'}
+        self.assertEqual(told(default), {('azurebank', 'bff'): 'false', ('azurebank', 'api'): 'false'})
+        self.assertEqual(told(on), {('azurebank', 'bff'): 'true', ('azurebank', 'api'): 'true',
+                                    ('azurebank-pool', 'pool'): 'true'})
+
     def test_deploy_app_true_is_refused_with_a_tag_that_is_not_40_characters_or_no_address(self):
         # Offline, as above. The secrets cannot be tried this way: like a what-if, this evaluation
         # works out no secure value. Their checks are read from the compiled template above. A
@@ -1707,8 +1789,8 @@ class TemplateTests(unittest.TestCase):
     def test_the_policy_can_be_switched_off_and_nothing_else_hangs_on_that_switch(self):
         self.assertEqual(self.conditions("[parameters('denyPolicy')]"), sorted(BEHIND_DENY_POLICY))
         self.assertEqual(self.conditions(ALERTS_CONDITION), ['Microsoft.Insights/metricAlerts'])
-        self.assertEqual(len(self.resources), len(BEHIND_DEPLOY_APP) + len(FOUNDATION) + len(BEHIND_DENY_POLICY)
-                         + len(BEHIND_KEEP_LOGS) + 1)
+        self.assertEqual(len(self.resources), len(BEHIND_DEPLOY_APP) + len(BEHIND_THE_DEMO) + len(FOUNDATION)
+                         + len(BEHIND_DENY_POLICY) + len(BEHIND_KEEP_LOGS) + 1)
 
     def test_the_logs_go_to_one_capped_workspace_that_takes_no_key(self):
         self.assertEqual(self.conditions("[parameters('keepLogs')]"), sorted(BEHIND_KEEP_LOGS))
@@ -1817,15 +1899,20 @@ class TemplateTests(unittest.TestCase):
                                                     'subject': 'repo:Gurgant/azurebank-v2:environment:demo',
                                                     'audiences': ['api://AzureADTokenExchange']})
 
-    def test_the_role_is_assigned_on_the_app_and_on_the_job_and_nowhere_else(self):
+    def test_the_role_is_assigned_on_the_app_and_on_each_job_and_nowhere_else(self):
         assignments = self.of_type('Microsoft.Authorization/roleAssignments')
         scopes = sorted(resource['scope'] for resource in assignments)
-        self.assertEqual(len(scopes), 2)
-        self.assertIn("resourceId('Microsoft.App/containerApps'", scopes[0])
-        self.assertIn("resourceId('Microsoft.App/jobs', 'azurebank-migrate')", scopes[1])
-        # Both go to the deployment identity: the two database identities hold no role on anything in Azure.
+        self.assertEqual(scopes, [f"[resourceId('{APP}', 'azurebank')]", f"[resourceId('{JOB}', 'azurebank-migrate')]",
+                                  f"[resourceId('{JOB}', 'azurebank-pool')]"])
+        # All three go to the deployment identity: the two database identities hold no role on anything in Azure.
         self.assertEqual({resource['properties']['principalId'] for resource in assignments},
                          {f"[reference(resourceId('{IDENTITIES}', 'azurebank-deploy'), '2023-01-31').principalId]"})
+        # One role, the nine actions above, and each assignment is named for the resource it is on.
+        self.assertEqual({resource['properties']['roleDefinitionId'] for resource in assignments},
+                         {"[variables('deployRoleId')]"})
+        for resource in assignments:
+            self.assertEqual(resource['name'], f"[guid({resource['scope'][1:-1]}, "
+                             f"resourceId('{IDENTITIES}', 'azurebank-deploy'), variables('deployRoleId'))]")
 
     def test_the_lock_is_on_the_database_not_on_the_server(self):
         (lock,) = self.of_type('Microsoft.Authorization/locks')
@@ -1852,21 +1939,22 @@ class TemplateTests(unittest.TestCase):
         for word in ('password', 'pwd', 'administratorlogin'):
             self.assertNotIn(word, text)
 
-    def test_the_app_and_the_job_each_carry_their_own_database_identity_and_no_other(self):
+    def test_the_app_and_each_job_carry_their_own_database_identity_and_no_other(self):
         (app,) = self.of_type('Microsoft.App/containerApps')
-        job = self.job('azurebank-migrate')
-        for resource, name in ((app, 'azurebank-app'), (job, 'azurebank-migrate')):
+        # The pool job signs in to the database as the app does, to read and write rows, and
+        # never as the identity that changes the schema (ADR-0062).
+        for resource, name in ((app, 'azurebank-app'), (self.job('azurebank-migrate'), 'azurebank-migrate'),
+                               (self.job('azurebank-pool'), 'azurebank-app')):
             self.assertEqual(resource.get('identity'), {'type': 'UserAssigned', 'userAssignedIdentities': {
-                f"[format('{{0}}', resourceId('{IDENTITIES}', '{name}'))]": {}}}, resource['type'])
+                f"[format('{{0}}', resourceId('{IDENTITIES}', '{name}'))]": {}}}, resource['name'])
 
     def test_each_connection_string_names_its_own_identity_and_holds_no_credential(self):
         (app,) = self.of_type('Microsoft.App/containerApps')
-        job = self.job('azurebank-migrate')
         for resource, secret, identity in ((app, 'app-connection', 'azurebank-app'),
-                                           (job, 'migration-connection', 'azurebank-migrate')):
-            (value,) = [entry['value'] for entry in resource['properties']['configuration']['secrets']
-                        if entry['name'] == secret]
-            self.assertEqual(value, connection_of(identity), secret)
+                                           (self.job('azurebank-migrate'), 'migration-connection', 'azurebank-migrate'),
+                                           (self.job('azurebank-pool'), 'app-connection', 'azurebank-app')):
+            self.assertEqual([entry['value'] for entry in resource['properties']['configuration'].get('secrets', [])
+                              if entry['name'] == secret], [connection_of(identity)], (resource['name'], secret))
 
     def test_eight_parameters_are_secure_and_only_two_must_be_given(self):
         parameters = self.main['parameters']
@@ -1889,17 +1977,18 @@ class TemplateTests(unittest.TestCase):
 
     def test_every_secret_reaches_a_container_by_reference_only(self):
         (app,) = self.of_type('Microsoft.App/containerApps')
-        job = self.job('azurebank-migrate')
+        job, pool = self.job('azurebank-migrate'), self.job('azurebank-pool')
         self.assertEqual(len(app['properties']['configuration']['secrets']), 9)
         self.assertEqual(len(job['properties']['configuration']['secrets']), 1)
-        text = json.dumps([app['properties']['template'], job['properties']['template']])
-        self.assertEqual(text.count('"secretRef"'), 11)
+        self.assertEqual(len(pool['properties']['configuration'].get('secrets', [])), 2)
+        text = json.dumps([resource['properties']['template'] for resource in (app, job, pool)])
+        self.assertEqual(text.count('"secretRef"'), 13)
         for name in SECURE:
             self.assertNotIn(f"parameters('{name}')", text, f'{name} is a plain value in a container')
 
-    def test_only_the_api_container_and_the_job_are_handed_a_connection_string(self):
+    def test_only_the_api_container_and_the_two_jobs_are_handed_a_connection_string(self):
         (app,) = self.of_type('Microsoft.App/containerApps')
-        job = self.job('azurebank-migrate')
+        job, pool = self.job('azurebank-migrate'), self.job('azurebank-pool')
         handed = {container['name']: sorted(entry['secretRef'] for entry in container['env'] if 'secretRef' in entry)
                   for container in app['properties']['template']['containers']}
         # The bff faces the internet and can use the app's identity like any container of the app:
@@ -1907,8 +1996,39 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(handed, {'bff': ['service-key'], 'api': SECRETS_OF_THE_APP})
         (migrate,) = job['properties']['template']['containers']
         self.assertEqual([entry.get('secretRef') for entry in migrate['env']], ['migration-connection'])
+        # The pool job is handed the app's string and the pepper, each a secret of its own (below).
+        (recycle,) = pool['properties']['template']['containers']
+        self.assertEqual([entry['secretRef'] for entry in recycle.get('env', []) if 'secretRef' in entry],
+                         ['app-connection', 'pin-pepper'])
         # Nor does either reach a container as a plain value: nothing in a container is read from another resource.
-        self.assertNotIn('reference(', json.dumps([app['properties']['template'], job['properties']['template']]))
+        self.assertNotIn('reference(', json.dumps([resource['properties']['template']
+                                                   for resource in (app, job, pool)]))
+
+    def test_the_pool_job_holds_two_secrets_and_the_pepper_the_app_holds(self):
+        # A job has a secret list of its own. The pool's commands need the connection string and
+        # the PIN pepper, "which must be the API's" (backend/tools/AzureBank.Seeder/README.md), so
+        # the template writes the job's two from what it writes the app's from: one run of it
+        # cannot give the job and the app two peppers.
+        (app,) = self.of_type(APP)
+        pool = self.job('azurebank-pool')
+        of_the_app = {entry['name']: entry['value'] for entry in app['properties']['configuration']['secrets']}
+        secrets = pool['properties']['configuration'].get('secrets', [])
+        self.assertEqual([entry['name'] for entry in secrets], ['app-connection', 'pin-pepper'])
+        self.assertEqual({entry['name']: entry['value'] for entry in secrets},
+                         {name: of_the_app[name] for name in ('app-connection', 'pin-pepper')})
+        self.assertEqual(of_the_app['pin-pepper'], "[parameters('securityPinPepper')]")
+        # Its container is handed the two by reference, under the names the api container reads
+        # them by, and nothing else of the job is a secret.
+        (container,) = pool['properties']['template']['containers']
+        by_reference = [entry for entry in container.get('env', []) if 'secretRef' in entry]
+        self.assertEqual(by_reference, [{'name': 'ConnectionStrings__DefaultConnection', 'secretRef': 'app-connection'},
+                                        {'name': 'Security__PinPepper', 'secretRef': 'pin-pepper'}])
+        for entry in by_reference:
+            self.assertIn(entry, self.container('api')['env'])
+        # No other secure parameter is read anywhere in the job: not the client key, which only
+        # the api hashes an address with, and none of the six other keys.
+        self.assertEqual([name for name in SECURE if f"parameters('{name}')" in json.dumps(pool)],
+                         ['securityPinPepper'])
 
     def test_the_demo_is_off_unless_asked_and_one_switch_says_it_to_both_containers(self):
         # Both hosts read the flag: the bff closes registration and marks the page by it, the api
@@ -1968,6 +2088,68 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual((migrate['name'], migrate['args'], migrate['resources']),
                          ('migrate', ['migrate'], {'cpu': "[json('0.25')]", 'memory': '0.5Gi'}))
         self.assertNotIn('initContainers', job['properties']['template'])
+
+    def test_the_pool_job_keeps_the_shape_the_deploy_script_and_the_policy_expect(self):
+        pool, migrate = self.job('azurebank-pool'), self.job('azurebank-migrate')
+        configuration, template = pool['properties']['configuration'], pool['properties']['template']
+        # On a schedule, one run at a time, and a run is never tried again: `recycle` ends a run
+        # that found something to say with an exit code from 10 to 15 (docs/runbooks/demo-pool.md),
+        # and with a retry Azure is expected to take such a run for a failed one and to try it again.
+        self.assertEqual((configuration.get('triggerType'), configuration.get('replicaRetryLimit')), ('Schedule', 0))
+        self.assertEqual(configuration.get('scheduleTriggerConfig'),
+                         {'cronExpression': "[variables('poolSchedule')]", 'parallelism': 1,
+                          'replicaCompletionCount': 1})
+        self.assertEqual(sorted(key for key in configuration if key.endswith('TriggerConfig')),
+                         ['scheduleTriggerConfig'])
+        # Every four hours, on the hour. One variable: no parameter of a run can change it.
+        self.assertEqual(self.main['variables'].get('poolSchedule'), '0 */4 * * *')
+        self.assertNotIn('poolSchedule', self.main['parameters'])
+        # A timeout of its own, within the bounds the migrate job's has.
+        self.assertEqual(configuration.get('replicaTimeout'), "[parameters('poolTimeout')]")
+        timeout = self.main['parameters'].get('poolTimeout', {})
+        self.assertEqual({key: timeout.get(key) for key in ('type', 'minValue', 'maxValue', 'defaultValue')},
+                         {'type': 'int', 'minValue': 60, 'maxValue': 840, 'defaultValue': 600})
+        # In the environment and on the profile of the migrate job, and nothing else is set on it.
+        self.assertEqual(sorted(pool['properties']),
+                         ['configuration', 'environmentId', 'template', 'workloadProfileName'])
+        for key in ('environmentId', 'workloadProfileName'):
+            self.assertEqual(pool['properties'][key], migrate['properties'][key], key)
+        # One container: the tools image at the commit every other image is at, `recycle`, a
+        # quarter of a vCPU. The policy refuses an init container and anything above half a vCPU.
+        (container,) = template['containers']
+        (tool,) = migrate['properties']['template']['containers']
+        self.assertEqual((container['name'], container.get('image'), container.get('args'), container.get('resources')),
+                         ('pool', tool['image'], ['recycle'], {'cpu': "[json('0.25')]", 'memory': '0.5Gi'}))
+        self.assertEqual(sorted(template), ['containers'])
+        # What it is told: where the database is and the pepper, by reference; that the demo is
+        # on, as a plain word, because the job exists only while it is; and the cap on one
+        # address's claims, the one expression the api container has.
+        (cap,) = [entry for entry in self.container('api')['env'] if entry['name'] == 'Demo__Claim__MaxPerClientPerDay']
+        self.assertEqual(container.get('env'), [
+            {'name': 'ConnectionStrings__DefaultConnection', 'secretRef': 'app-connection'},
+            {'name': 'Security__PinPepper', 'secretRef': 'pin-pepper'},
+            {'name': 'Demo__Enabled', 'value': 'true'},
+            cap])
+
+    def test_two_scheduled_runs_cannot_overlap(self):
+        # Two pool runs at once can build up to twice the pool's target
+        # (backend/tools/AzureBank.Seeder/README.md), so the template leaves no room for it: a run
+        # every H hours, where H divides the day (the gap across midnight is then H hours like
+        # every other), and H hours are longer than the longest timeout a run may be given. One
+        # try a run: the test above holds the retry at 0. It holds for what the template writes.
+        # It says nothing of a job that is deployed, whose schedule and timeout whoever may write
+        # the job can change.
+        schedule = self.main['variables'].get('poolSchedule', '')
+        form = re.fullmatch(r'([0-5]?[0-9]) \*/([1-9][0-9]?) \* \* \*', schedule)
+        self.assertIsNotNone(form, f'not of the form "M */H * * *": {schedule!r}')
+        hours = int(form.group(2))
+        self.assertEqual(24 % hours, 0, schedule)
+        longest = self.main['parameters'].get('poolTimeout', {}).get('maxValue')
+        self.assertIsInstance(longest, int)
+        self.assertGreater(hours * 3600, longest)
+        # And the timeout the job is given is that parameter, so its bound is the job's.
+        configuration = self.job('azurebank-pool')['properties']['configuration']
+        self.assertEqual(configuration.get('replicaTimeout'), "[parameters('poolTimeout')]")
 
     def test_the_policy_definition_sits_at_subscription_scope_and_denies(self):
         self.assertEqual(sorted(module['name'] for module in self.of_type('Microsoft.Resources/deployments')),

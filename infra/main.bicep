@@ -3,9 +3,9 @@ targetScope = 'resourceGroup'
 param location string = 'italynorth'
 @description('Full commit SHA shared by the three public GHCR images. Needed only when deployApp is true.')
 param imageTag string = ''
-@description('False creates what needs no image: the environment, the log workspace, SQL, the three identities and the deployment role. True adds the app, the migrate job and the two role assignments.')
+@description('False creates what needs no image: the environment, the log workspace, SQL, the three identities and the deployment role. True adds the app, the migrate job and the two role assignments; with demo true as well, the pool job and a third role assignment.')
 param deployApp bool = false
-@description('True turns the public demo on: it is the flag both containers of the app read. infra/secrets.ps1 writes it: what the deployed app does now, or true with -DemoOn.')
+@description('True turns the public demo on: the flag on both containers of the app, and the pool job with its role assignment. infra/secrets.ps1 writes it: what the deployed app does now, or true with -DemoOn.')
 param demo bool = false
 param entraAdminObjectId string
 param entraAdminLogin string
@@ -13,6 +13,10 @@ param entraAdminLogin string
 @minValue(60)
 @maxValue(840)
 param replicaTimeout int = 600
+@description('Seconds a pool run may take. Kept under 15 minutes, and under the four hours between two runs.')
+@minValue(60)
+@maxValue(840)
+param poolTimeout int = 600
 
 @description('Where the notify-only alerts send their e-mail. Needed only when deployApp is true; never committed.')
 param alertEmail string = ''
@@ -187,8 +191,9 @@ resource githubFederation 'Microsoft.ManagedIdentity/userAssignedIdentities/fede
   }
 }
 
-// What the app and the migrate job sign in to the database as. Neither has a role on any Azure
-// resource: each is only a user inside the database, created by infra/sql-principals.ps1.
+// What the app and the migrate job sign in to the database as; the pool job signs in as the app
+// does. Neither has a role on any Azure resource: each is only a user inside the database, created
+// by infra/sql-principals.ps1.
 resource appIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: 'azurebank-app'
   location: location
@@ -200,7 +205,8 @@ resource migrateIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-
 }
 
 // Each string names the identity to ask a token for and holds no credential. The two are secrets
-// all the same, referenced by the api container and by the job only. An identity can be used by
+// all the same, referenced by the api container and by the two jobs only: the app's string by the
+// api container and by the pool job, the other by the migrate job. An identity can be used by
 // every container of the app, the bff included, and the bff faces the internet: it is handed
 // neither the server's name nor the client ID. That is not a lock, because neither is a secret;
 // it keeps both out of that container, and out of every read of the app and of an execution.
@@ -209,8 +215,8 @@ var appConnection = 'Server=tcp:${sql.properties.fullyQualifiedDomainName},1433;
 var migrationConnection = 'Server=tcp:${sql.properties.fullyQualifiedDomainName},1433;Database=AzureBank;Authentication=Active Directory Managed Identity;User ID=${migrateIdentity.properties.clientId};Encrypt=True;TrustServerCertificate=False'
 
 // Refuses deployApp=true without the image tag, the alerts' address or one of the eight secrets:
-// the checks are the parameters of app-inputs.bicep, and the app, the job and the action group
-// wait for it. The app's name stays a plain value, which a what-if can work out (README.md,
+// the checks are the parameters of app-inputs.bicep, and the app, the two jobs and the action
+// group wait for it. The app's name stays a plain value, which a what-if can work out (README.md,
 // "Measured on Azure").
 module appInputs 'app-inputs.bicep' = if (deployApp) {
   name: 'azurebank-app-inputs'
@@ -391,11 +397,87 @@ resource migrate 'Microsoft.App/jobs@2025-01-01' = if (deployApp) {
   ]
 }
 
-// What a deployment needs: read and write the app and the job, start the job, read its executions,
+// When the pool job is asked to run: every four hours, on the hour. Azure is expected to read the
+// expression in UTC; no run on a schedule has been seen here. A variable and not a parameter: an
+// override could make the interval shorter than the job's timeout, and two runs at once can build
+// up to twice the pool's target (backend/tools/AzureBank.Seeder/README.md).
+var poolSchedule = '0 */4 * * *'
+
+// The job that keeps the demo's pool of copies: `recycle` tops the pool up and deletes the copies
+// whose time is over (ADR-0062). Built only with the demo on: a job that carries the flag beside
+// an app whose two containers do not is the state ADR-0063 warns of, where visitors register
+// beside the pool and every run exits 13. It signs in to the database as the app does, never as
+// the identity that changes the schema. A job has a secret list of its own, so its two secrets
+// are written here from what the app's are written from: the same connection string and the same
+// pepper. No retry: `recycle` ends a run that found something to say with an exit code from 10 to
+// 15 (docs/runbooks/demo-pool.md), and with a retry Azure is expected to take such a run for a
+// failed one and to try it again.
+resource pool 'Microsoft.App/jobs@2025-01-01' = if (deployApp && demo) {
+  name: 'azurebank-pool'
+  location: location
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${appIdentity.id}': {}
+    }
+  }
+  properties: {
+    environmentId: environment.id
+    workloadProfileName: 'Consumption'
+    configuration: {
+      triggerType: 'Schedule'
+      replicaRetryLimit: 0
+      replicaTimeout: poolTimeout
+      scheduleTriggerConfig: {
+        cronExpression: poolSchedule
+        parallelism: 1
+        replicaCompletionCount: 1
+      }
+      secrets: [
+        { name: 'app-connection', value: appConnection }
+        { name: 'pin-pepper', value: securityPinPepper }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'pool'
+          image: 'ghcr.io/gurgant/azurebank-tools:${imageTag}'
+          args: [
+            'recycle'
+          ]
+          resources: {
+            cpu: json('0.25')
+            memory: '0.5Gi'
+          }
+          env: [
+            { name: 'ConnectionStrings__DefaultConnection', secretRef: 'app-connection' }
+            { name: 'Security__PinPepper', secretRef: 'pin-pepper' }
+            // A plain word and not the switch: the job exists only while the demo is on, and the
+            // pool's commands refuse to run with it off (backend/tools/AzureBank.Seeder/README.md).
+            { name: 'Demo__Enabled', value: 'true' }
+            { name: 'Demo__Claim__MaxPerClientPerDay', value: demoClaimsPerClient }
+          ]
+        }
+      ]
+    }
+  }
+  // After the app, not beside it. Expected of Azure and not provoked: when the app's own update
+  // fails, a job that waits for it is not created, so no scheduled job is left beside an app whose
+  // flags are still off. It does not cover a new revision that never gets ready: for Azure the
+  // app's update has then succeeded. What is done in that case, before the job's next run, is
+  // the runbook's to say (infra/README.md).
+  dependsOn: [
+    appInputs
+    app
+  ]
+}
+
+// What a deployment needs: read and write the app and its jobs, start a job, read its executions,
 // read the app's revisions and replicas (why a revision is not ready). It cannot list secrets,
-// delete, stop, or touch the environment or the resource group. It CAN write the whole app and the
-// whole job, so it can run any image with the secrets in its environment and with the database
-// identity attached to it: see the README.
+// delete, stop, or touch the environment or the resource group. It CAN write the whole app and
+// each whole job, so it can run any image with the secrets in its environment and with the
+// database identity attached to it: see the README.
 var deployRoleName = guid(resourceGroup().id, 'azurebank-deploy')
 // The form every role assignment stores, whatever scope the definition was written at.
 var deployRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', deployRoleName)
@@ -404,7 +486,7 @@ resource deployRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' = {
   name: deployRoleName
   properties: {
     roleName: 'AzureBank deploy ${uniqueString(resourceGroup().id)}'
-    description: 'Move the images of the AzureBank app and of its migrate job, and start that job.'
+    description: 'Move the images of the AzureBank app and of its jobs, and start a job.'
     type: 'CustomRole'
     assignableScopes: [
       resourceGroup().id
@@ -446,6 +528,23 @@ resource appRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (depl
 resource jobRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployApp) {
   name: guid(migrate.id, deployIdentity.id, deployRoleId)
   scope: migrate
+  properties: {
+    principalId: deployIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: deployRoleId
+  }
+  dependsOn: [
+    deployRole
+  ]
+}
+
+// The same role a third time, on the pool job: without it a deployment could neither read that job
+// nor move its image with the commit. No new action. The pool job carries the app's database
+// identity and two of the app's secrets, which the role can already run any image with through
+// the app (above).
+resource poolRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployApp && demo) {
+  name: guid(pool.id, deployIdentity.id, deployRoleId)
+  scope: pool
   properties: {
     principalId: deployIdentity.properties.principalId
     principalType: 'ServicePrincipal'
