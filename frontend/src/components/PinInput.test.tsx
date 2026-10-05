@@ -254,12 +254,28 @@ describe('PinInput on the demo', () => {
   it('in the demo the boxes of an existing PIN are described by the demo PIN', () => {
     enableDemoMode();
     renderWithProviders(<Boxes />);
+    const [line] = hints();
 
-    expect({ hints: hints().length, column: column(), described: described() }).toEqual({
+    expect({
+      hints: hints().length,
+      column: column(),
+      described: described(),
+      // Words to read and nothing more: the line speaks only when the boxes are asked about, it
+      // is no stop for the Tab key, and it is hidden from nobody. Were it an alert, it would
+      // speak beside the caller's own refusal after a wrong PIN.
+      line: {
+        role: line?.getAttribute('role') ?? null,
+        speaksByItself:
+          (line?.closest('[aria-live], [role="alert"], [role="status"]') ?? null) !== null,
+        hidden: line?.getAttribute('aria-hidden') ?? null,
+        tabIndex: line?.tabIndex ?? null,
+      },
+    }).toEqual({
       hints: 1,
       // Between the boxes and the button that shows the digits.
       column: ['boxes: PIN', DEMO_PIN_HINT, 'button: Show PIN'],
       described: [DEMO_PIN_HINT],
+      line: { role: null, speaksByItself: false, hidden: null, tabIndex: -1 },
     });
   });
 
