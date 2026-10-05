@@ -103,6 +103,23 @@ public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Progra
         (await response.Content.ReadAsStringAsync()).Should().NotContain("stand-in shell");
     }
 
+    // CONTROL: green before and after this change. Paths whose first non-empty segment is not a server
+    // prefix still get the shell, even behind extra slashes. Observed in the test host and against
+    // Kestrel on 127.0.0.1 with curl --path-as-is.
+    [Theory]
+    [InlineData("//settings")]
+    [InlineData("/settings//api")]
+    [InlineData("//apix/thing")]
+    public async Task PathsOutsideServerPrefixes_BehindExtraSlashes_StillGetTheShell(string path)
+    {
+        var address = new Uri("http://localhost" + path);
+        var response = await _factory.CreateClient().GetAsync(address);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        (response.Content.Headers.ContentType?.MediaType).Should().Be("text/html");
+        (await response.Content.ReadAsStringAsync()).Should().Be(Shell);
+    }
+
     [Fact]
     public async Task WithoutARootPath_NoPageIsServed()
     {
@@ -337,6 +354,40 @@ public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Progra
             (response.Content.Headers.ContentType?.ToString()).Should().Be(
                 there.Content.Headers.ContentType?.ToString(), "the answer's type is the one a host with the demo off gives");
             there.StatusCode.Should().Be(expected, "CONTROL: a host with the demo off answers the same status");
+        }
+    }
+
+    // These statuses were observed in the test host and against Kestrel on 127.0.0.1 with
+    // curl --path-as-is (recorded as left as-is in ADR-0063 lines 589-591).
+    // A path whose first non-empty segment is a server prefix is never answered with the shell,
+    // with the demo off or on.
+    [Theory]
+    [InlineData("GET", "//api/accounts")]
+    [InlineData("GET", "///api/accounts")]
+    [InlineData("GET", "//API/accounts")]
+    [InlineData("GET", "//bff/nope")]
+    [InlineData("GET", "//bff/auth/login")]
+    [InlineData("GET", "//health/live")]
+    [InlineData("GET", "//health/nope")]
+    [InlineData("HEAD", "//api/accounts")]
+    public async Task ServerPrefixPaths_BehindExtraSlashes_NeverGetTheShell_WithDemoOffOrOn(string method, string path)
+    {
+        using var host = HostServing(ShellWithAHead, demo: true);
+        using var ordinary = HostServing(ShellWithAHead, demo: false);
+
+        var address = new Uri("http://localhost" + path);
+        var response = await host.CreateClient().SendAsync(new HttpRequestMessage(new HttpMethod(method), address));
+        var there = await ordinary.CreateClient().SendAsync(new HttpRequestMessage(new HttpMethod(method), address));
+
+        using (new AssertionScope())
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+            (await response.Content.ReadAsStringAsync()).Should().BeEmpty();
+            (response.Content.Headers.ContentType?.MediaType).Should().NotBe("text/html");
+
+            there.StatusCode.Should().Be(HttpStatusCode.NotFound);
+            (await there.Content.ReadAsStringAsync()).Should().BeEmpty();
+            (there.Content.Headers.ContentType?.MediaType).Should().NotBe("text/html");
         }
     }
 
