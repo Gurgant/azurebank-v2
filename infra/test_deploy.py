@@ -1081,6 +1081,13 @@ class DemoStateTests(DeployCase):
         self.smoke.assert_not_called()
 
 
+def beside_a_pool_run(name, state, timeout=600):
+    """The whole sentence of the refusal beside a pool run, so that a test holds every word of it."""
+    return (f'Execution {name} of the job azurebank-pool is {state}: a pool run may still be in '
+            'progress, and a deployment does not start beside one. Nothing was changed. A run is '
+            f"expected to end within the job's timeout ({timeout} s): deploy again after that.")
+
+
 class PoolDeployTests(DeployCase):
     """With the demo on a deployment also moves the pool job: after the migration, so that the job
     never runs a new image on an old schema, and only once it has read the job and found it in shape."""
@@ -1109,6 +1116,10 @@ class PoolDeployTests(DeployCase):
         self.assertEqual(deploy.images(self.azure.jobs['azurebank-pool']), {'pool': tools})
         self.assertEqual(deploy.images(self.azure.jobs['azurebank-migrate']), {'migrate': tools})
         self.smoke.assert_called_once_with(f'https://{ADDRESS}', demo=True)
+        # CONTROL: green as written. The line that says the pool job is not read and not moved is
+        # for a run with the demo off: this run reads that job and moves it. Seen red with the line
+        # said whatever the app says.
+        self.assertNotIn('the demo is off', self.printed())
         # What the job runs and what it is told travel back as they were read, and so does the
         # flag of the app's two containers: a deployment moves images and nothing else.
         moved = self.azure.jobs['azurebank-pool']['properties']['template']['containers'][0]
@@ -1156,13 +1167,31 @@ class PoolDeployTests(DeployCase):
                 self.azure.pool_runs = [finished('an-earlier-run'), execution('pool-run', state, started)]
                 with self.assertRaises(RuntimeError) as raised:
                     self.deploy()
-                self.assertEqual(str(raised.exception), (
-                    f'Execution pool-run of the job azurebank-pool is {state}: a pool run may still be '
-                    'in progress, and a deployment does not start beside one. Nothing was changed. A '
-                    "run is expected to end within the job's timeout (600 s): deploy again after that."))
+                self.assertEqual(str(raised.exception), beside_a_pool_run('pool-run', state))
         self.assertEqual(self.azure.writes(), [])
         self.migration.assert_not_called()
         self.smoke.assert_not_called()
+
+    def test_a_pool_run_is_aged_against_the_pool_jobs_own_timeout(self):
+        # CONTROL: green as written. Each job has a timeout of its own in infra/main.bicep, and the
+        # migrate job's stays 600 here. Seen red with the migrate job handed to the rule in the pool
+        # job's place: the first half on "RuntimeError not raised", the second on the refusal of a
+        # run that is too old to be alive.
+        now = datetime.datetime.now(datetime.timezone.utc)
+        with self.subTest('840 s: a run in a state nobody named that began 800 s ago may be alive'):
+            pool_configuration(self.azure).update(replicaTimeout=840)
+            self.azure.pool_runs = [
+                execution('pool-run', 'Unknown', (now - datetime.timedelta(seconds=800)).isoformat())]
+            with self.assertRaises(RuntimeError) as raised:
+                self.deploy()
+            self.assertEqual(str(raised.exception), beside_a_pool_run('pool-run', 'Unknown', timeout=840))
+            self.assertEqual(self.azure.writes(), [])
+        with self.subTest('60 s: one that began 300 s ago is too old to be alive, and stops nothing'):
+            pool_configuration(self.azure).update(replicaTimeout=60)
+            self.azure.pool_runs = [
+                execution('pool-run', 'Unknown', (now - datetime.timedelta(seconds=300)).isoformat())]
+            self.deploy()
+            self.assertEqual(self.steps(), self.STEPS)
 
     def test_a_pool_run_that_blocks_is_named_only_in_the_shape_expected(self):
         recent = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -1215,6 +1244,15 @@ class PoolDeployTests(DeployCase):
         pool_container(self.azure).update(command=None)
         self.deploy()
         self.assertEqual(self.steps(), self.STEPS)
+
+    def test_a_timeout_at_either_end_of_the_templates_range_is_in_shape(self):
+        # CONTROL: green as written. infra/main.bicep allows 60 and 840 themselves (the least and the
+        # greatest value of its parameter poolTimeout), and a job written with either is one this
+        # script deploys onto. Seen red with either end taken out of the range.
+        for timeout in deploy.POOL_TIMEOUTS:
+            with self.subTest(timeout=timeout):
+                pool_configuration(self.azure).update(replicaTimeout=timeout)
+                self.assertEqual(deploy.pool_drift(self.azure.jobs['azurebank-pool']), [])
 
     def test_what_runs_now_names_the_pool_jobs_image_too(self):
         self.deploy()
@@ -1330,6 +1368,12 @@ POOL_DRIFTS = {
                             initContainers=[container('first', 'ghcr.io/someone/else:latest')])),
     'arguments': ("template.containers[0].args is not ['recycle']",
                   lambda a: pool_container(a).update(args=['seed-pool', '--VALUE-MARKER'])),
+    # CONTROL: green as written. The arguments are `recycle` and nothing after it: the command
+    # declares no option and no argument of its own
+    # (backend/tools/AzureBank.Seeder/Commands/RecycleCommand.cs), so a word after it is not the
+    # run the template writes. Seen red with only the first word compared.
+    'arguments_after_recycle': ("template.containers[0].args is not ['recycle']",
+                                lambda a: pool_container(a).update(args=['recycle', '--help'])),
     'identity': ('identity is not exactly one user-assigned identity ending in /azurebank-app',
                  lambda a: a.jobs['azurebank-pool'].update(identity=identity('azurebank-migrate'))),
     'schedules_expression': ("configuration.scheduleTriggerConfig.cronExpression is not '0 */4 * * *'",
@@ -1344,10 +1388,10 @@ POOL_DRIFTS = {
                                lambda a: pool_configuration(a).update(replicaTimeout=59)),
     'timeout_that_is_no_number': ('configuration.replicaTimeout is True',
                                   lambda a: pool_configuration(a).update(replicaTimeout=True)),
-    # CONTROL: green as written, the two below. A timeout that is text, and text where the
-    # schedule's settings are due, are refused like any other drift and are not an error of this
-    # script: each was seen ending in one (a TypeError, an AttributeError) with the check of the
-    # type taken out of pool_drift.
+    # CONTROL: green as written, 'timeout_that_is_text' here and 'schedule_that_is_text' below. A
+    # timeout that is text, and text where the schedule's settings are due, are refused like any
+    # other drift and are not an error of this script: each was seen ending in one (a TypeError, an
+    # AttributeError) with the check of the type taken out of pool_drift.
     'timeout_that_is_text': ("configuration.replicaTimeout is '600'",
                              lambda a: pool_configuration(a).update(replicaTimeout='600')),
     # CONTROL: green as written. A job with no timeout is refused for its shape, before its
