@@ -806,6 +806,117 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
         await AssertLooksLikeTheApisOwn401(nothing);
     }
 
+    [Theory]
+    [InlineData("GET", "/api", "none")]
+    [InlineData("HEAD", "/api", "none")]
+    [InlineData("POST", "/api", "none")]
+    [InlineData("PUT", "/api", "none")]
+    [InlineData("PATCH", "/api", "none")]
+    [InlineData("DELETE", "/api", "none")]
+    [InlineData("OPTIONS", "/api", "none")]
+    [InlineData("GET", "/api?x=1", "none")]
+    [InlineData("GET", "/API", "none")]
+    [InlineData("POST", "/Api", "none")]
+    [InlineData("GET", "/api", "never-issued")]
+    [InlineData("POST", "/api", "never-issued")]
+    [InlineData("GET", "/api", "revoked")]
+    [InlineData("HEAD", "/api?x=1", "revoked")]
+    [InlineData("GET", "/api", "bearer")]
+    public async Task BareApiPath_WithoutLiveSession_Answers401AndForwardsNothing(
+        string method, string path, string sessionKind)
+    {
+        var (factory, backend) = WithRecorder();
+        var client = factory.CreateClient();
+
+        HttpRequestMessage request;
+        switch (sessionKind)
+        {
+            case "none":
+                request = new HttpRequestMessage(new HttpMethod(method), path);
+                break;
+            case "never-issued":
+                request = Request(new HttpMethod(method), path, CookieName(factory), NeverIssuedSessionId);
+                break;
+            case "revoked":
+                var (sessionId, cookieName, sessions) = CreateSession(factory);
+                sessions.EndSession(sessionId);
+                request = Request(new HttpMethod(method), path, cookieName, sessionId);
+                break;
+            case "bearer":
+                request = BearerOnly(new HttpMethod(method), path);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(sessionKind), sessionKind, null);
+        }
+
+        var response = await client.SendAsync(request);
+
+        using (new AssertionScope())
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            backend.ForwardedPaths.Should().BeEmpty();
+        }
+
+        AssertNoStepUpHeaders(response);
+        await AssertLooksLikeTheApisOwn401(response);
+    }
+
+    // CONTROL: green before and after. With a live session, the bare /api prefix (with any query
+    // string or letter case) is forwarded to the API with the session's bearer token. Observed on
+    // the test host (2026-10-05).
+    [Theory]
+    [InlineData("GET", "/api")]
+    [InlineData("HEAD", "/api")]
+    [InlineData("POST", "/api")]
+    [InlineData("DELETE", "/api")]
+    [InlineData("GET", "/api?x=1")]
+    [InlineData("GET", "/API")]
+    public async Task BareApiPath_WithLiveSession_IsForwardedWithBearerToken(string method, string path)
+    {
+        var (factory, backend) = WithRecorder();
+        var (sessionId, cookieName, _) = CreateSession(factory);
+        var client = factory.CreateClient();
+
+        var request = Request(new HttpMethod(method), path, cookieName, sessionId);
+        var response = await client.SendAsync(request);
+
+        using (new AssertionScope())
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            backend.ForwardedPaths.Should().ContainSingle();
+            backend.ForwardedAuthorization.Should().ContainSingle().Which.Should().Be("Bearer fake-jwt");
+        }
+    }
+
+    // CONTROL: green before and after. Without a session and without Spa:RootPath configured,
+    // ungated paths and server routes outside /api answer 404 with an empty body, and nothing is
+    // forwarded. Observed on the test host (2026-10-05).
+    [Theory]
+    [InlineData("GET", "/apix")]
+    [InlineData("GET", "/apix/thing")]
+    [InlineData("POST", "/apix/thing")]
+    [InlineData("GET", "/api-docs")]
+    [InlineData("GET", "/api.json")]
+    [InlineData("GET", "/bff")]
+    [InlineData("POST", "/bff")]
+    [InlineData("GET", "/health")]
+    public async Task WithoutSession_UngatedPaths_Answer404WithEmptyBodyAndNothingForwarded(string method, string path)
+    {
+        var (factory, backend) = WithRecorder();
+        var client = factory.CreateClient();
+
+        var request = new HttpRequestMessage(new HttpMethod(method), path);
+        var response = await client.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+
+        using (new AssertionScope())
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+            backend.ForwardedPaths.Should().BeEmpty();
+            body.Should().BeEmpty();
+        }
+    }
+
     [Fact]
     public async Task LoginWithATrailingSlash_IsBlockedLikeTheBarePath()
     {

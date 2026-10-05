@@ -326,9 +326,11 @@ public class AuthLevelMiddleware
     /// <remarks>
     /// <para>
     /// Scoped to /api/ deliberately: the BFF's own controllers live under /bff/ and are mapped after
-    /// this middleware, so a wider prefix would lock the front door. The prefix test uses the RAW
-    /// path so "/api/" itself cannot slip through a trim; there is no longer anything matched on the
-    /// normalized one, because there is nothing left to exempt.
+    /// this middleware, so a wider prefix would lock the front door. The test uses the RAW path
+    /// matching "/api/" or the bare "/api" so neither can slip through a trim; there is no longer
+    /// anything matched on the normalized one, because there is nothing left to exempt.
+    /// (Until 2026-10-05 this claimed "so \"/api/\" itself cannot slip through a trim", which missed
+    /// the bare /api path.)
     /// </para>
     /// </remarks>
     /*
@@ -354,7 +356,8 @@ public class AuthLevelMiddleware
       than requiring a verified PIN — a caller who cannot pass this could never have passed that.
     */
     private static bool RequiresSession(string path) =>
-        path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase);
+        path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase)
+        || path.Equals("/api", StringComparison.OrdinalIgnoreCase);
 
     private static bool RequiresPinVerification(string path, string method)
     {
