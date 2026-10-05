@@ -1080,9 +1080,9 @@ still offered: the end is looked at when the page opens` and `without the tag no
 demo's key`, and the three that point 6 names; in `features/demo/DemoCopyPanel.test.tsx`, `a
 stored copy is shown as text, whatever it holds` and `a kept copy past its end is still its
 owner's here, and is not removed`; in `features/auth/SessionExpiryWarning.test.tsx`, `a copy
-that has ended says so, and stays remembered`. On `925974ee`, the last commit of this change
-that touches the application's code, its specs or their comments, `npm test` passed 92 files
-and 1,363 tests and `npm run test:contract:mock` 7 files and 79.
+that has ended says so, and stays remembered`. On `8ce36aa0`, the last commit of this change
+that touches the application's code, its tests or its specs, `npm test` passed 92 files and
+1,364 tests and `npm run test:contract:mock` 7 files and 79.
 
 **Measured on 2026-10-05 on the compose stack, three times** (`compose.yaml` with
 `compose.demo.yaml`, Production, Docker Desktop on Windows, a pool of 50 nobody had claimed
