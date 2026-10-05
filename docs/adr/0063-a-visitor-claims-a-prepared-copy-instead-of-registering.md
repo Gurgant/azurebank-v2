@@ -927,8 +927,9 @@ A script running in the page could already drive that copy through the page, wit
 cookie the browser sends for it. What the key adds is that the sign-in outlives the session and
 can be carried to another browser. The owner reads the same details on the dashboard, under
 "Show sign-in details". The page is served under `script-src 'self'` and `connect-src 'self'`
-(`backend/src/AzureBank.Bff/README.md`, "Security headers"; the header was read back from the
-compose stack on 2026-10-05), so no inline script runs and none is loaded from another origin.
+(`backend/src/AzureBank.Bff/README.md`, "Security Headers Middleware"; the header was read back
+from the compose stack on 2026-10-05), so no inline script runs and none is loaded from another
+origin.
 That is why no such script is expected. It is not a wall around the value: no directive of that
 header stops a page from navigating away with it (read, not tried).
 
@@ -1011,7 +1012,7 @@ shown.
 |---|---|---|
 | `GET /` | 200, `text/html; charset=utf-8`, the tag once, before the end of the head | |
 | The sign-in page in a fresh browser context; then `/register` with a query and a fragment | "Try the demo" and no "Create account". The address ends at `/login`, with neither the query nor the fragment | |
-| "Try the demo" | `POST /bff/auth/demo/claim` 200, `Cache-Control: no-store`, `message` `Demo copy claimed`. `data.copy.expiresAt` was `2026-10-06T09:22:42.2604692Z`: seven fractional digits and a `Z`, which the check of 2 took on the first press. Two contacts; a password of 19 characters in four groups of four. The browser's cookie is `__Host-AzureBank.Session` (`Secure`, `HttpOnly`, `SameSite=Strict`, host `localhost`): Chromium kept it and sent it on `http://localhost:5000`. The page landed on `/dashboard` | |
+| "Try the demo" | `POST /bff/auth/demo/claim` 200, `Cache-Control: no-store`, `message` `Demo copy claimed`. `data.copy.expiresAt` was `2026-10-06T09:22:42.2604692Z`: seven fractional digits and a `Z`, which the check of point 2 took on the first press. Two contacts; a password of 19 characters in four groups of four. The browser's cookie is `__Host-AzureBank.Session` (`Secure`, `HttpOnly`, `SameSite=Strict`, host `localhost`): Chromium kept it and sent it on `http://localhost:5000`. The page landed on `/dashboard` | |
 | The dashboard | The total reads €14,750.00, with €12,450.00 and €2,300.00 in the buttons of the group "Account scope". The panel "Your private copy" has its three lines, "Show sign-in details" and "Start over"; the details show the address and the password the key holds | |
 | One euro sent to the copy's first contact, with the PIN the page prints | `POST /api/transfers/authorizations` 201, `POST /api/transfers` 201, "Transfer Complete", and the total €14,749.00 | |
 | "Start over", from the keyboard, confirmed in the dialog | A second claim, 200, `no-store`; "You have a new copy."; another address in the panel and in the key; the total €14,750.00 again; focus back on the panel's "Start over" | Any instant between the press and that end. That no draw in between shows the first copy's total is held against the mock (`pages/DashboardPage.test.tsx`), not measured on the stack |
