@@ -12,9 +12,14 @@ import { isDemoMode } from './demoMode';
   the variable that is not exactly `true`.
 
   What is held here is what the plugin says of itself and what it hands vite. What vite then does
-  with it is vite's and is not held here: that a build leaves a `serve` plugin out, and where a
-  tag "for the end of the head" is written. The commit that added the plugin lists the commands
-  that looked at both.
+  with it is vite's and is not held here: that a build leaves a `serve` plugin out, where a tag
+  "for the end of the head" is written, and that `vite preview` serves the built page as it is.
+  Three commands look at those by hand, from `frontend/`:
+    AZUREBANK_DEMO=true npm run build, then grep -c 'azurebank-demo' dist/index.html: prints 0
+    AZUREBANK_DEMO=true npx vite --port 5199 --strictPort, then curl -s http://localhost:5199/:
+      the tag once, on the line before `</head>`; started without the variable: none
+    AZUREBANK_DEMO=true npx vite preview --port 5198 --strictPort over that build, then
+      curl -s http://localhost:5198/: none
 
   The tag is typed out below and not taken from the product. The last test then asks the app's
   own `isDemoMode()` about a page that carries what the plugin handed over: renamed together in
