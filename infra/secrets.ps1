@@ -21,10 +21,13 @@
       Monitor, false if it sends them nowhere. -LogsOff writes false whatever is deployed. With no
       environment yet and no -LogsOff the template's own default applies.
     * demo, written only with -DeployApp, is what the deployed app does now: true if both of its
-      containers carry Demo__Enabled as true, false if neither does. -DemoOn writes true. The
-      app is the only thing that remembers the switch: with no app deployed and no -DemoOn
-      nothing is written and the template's default, off, applies, whatever the database holds.
-      Two containers that disagree stop the script.
+      containers carry Demo__Enabled as true, false if each carries it as false or does not
+      carry it. -DemoOn writes true. The app is the only thing that remembers the switch: with
+      no app deployed and no -DemoOn nothing is written and the template's default, off,
+      applies, whatever the database holds. Two containers that disagree stop the script. So
+      does a container that carries the setting any other way than the template writes it
+      (another word or another case, an empty value, a reference to a secret, the setting
+      twice): it is read as neither on nor off, and what it holds is not repeated.
     * "Could not read" is never taken for "absent": a failed az call, or a deployed app without
       one of its secrets, stops the script and no file is written. One secret is the exception,
       the eighth: the demo's client key. An app deployed before the demo existed never held it,
