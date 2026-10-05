@@ -183,7 +183,8 @@ internal static class IdempotencyConcurrencyProof
 
         foreach (var replay in replays)
         {
-            ComparableText.Of(replay.Body).Should().Be(ComparableText.Of(winners[0].Body), "replays are byte-identical to the original response");
+            ComparableText.Of(replay.Body).Should().Be(ComparableText.Of(winners[0].Body),
+                "replays are byte-identical to the original response");
         }
 
         foreach (var conflict in conflicts)

@@ -180,7 +180,8 @@ public class ExportCommandTests : IDisposable
             "the chain was fine and nothing came of the run, which is neither success nor no-verdict");
         string.Join(" ", lines).Should().Contain("NOT EXPORTED");
         ComparableText.Of(await File.ReadAllTextAsync(path)).Should().Be(
-            ComparableText.Of(sentinel), "the earlier copy is the reference; this verb must never be able to destroy it");
+            ComparableText.Of(sentinel),
+            "the earlier copy is the reference; this verb must never be able to destroy it");
     }
 
     /// <summary>
