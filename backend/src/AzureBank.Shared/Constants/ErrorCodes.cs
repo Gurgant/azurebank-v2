@@ -70,6 +70,8 @@ public static class ErrorCodes
     // Validation
     public const string ValidationError = "VALIDATION_ERROR";
     public const string InvalidRequest = "INVALID_REQUEST";
+    // A body exceeds its endpoint limit outside the idempotency protocol.
+    public const string PayloadTooLarge = "PAYLOAD_TOO_LARGE";
 
     // Business Rules
     public const string InsufficientFunds = "INSUFFICIENT_FUNDS";
