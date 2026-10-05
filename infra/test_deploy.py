@@ -37,6 +37,23 @@ NEW = 'a' * 40
 ADDRESS = 'azurebank.example.invalid'
 BEFORE = 'azurebank--before'
 IDENTITY_IDS = ('aaaaaaaa-1111-4222-8333-444444444444', 'bbbbbbbb-5555-4666-8777-888888888888')
+# What a listing of secrets answers in these tests: the nine secrets infra/main.bicep gives the
+# app, and the two it gives the pool job from the same two expressions. Every value is planted:
+# no line and no error may hold one, or eight characters in a row of one.
+PEPPER = 'Kq7vX2mPz9LwTn4RbY6cJd8HsF3gA1eU'
+CONNECTION = 'Zx5nQw8rVt2yBu6iMo3pLa9sDk4fGj7h;Hc1eXz0vNb5mQp8wRt3y'
+SECRETS_OF_THE_APP = {
+    'app-connection': CONNECTION,
+    'jwt-secret': 'Wd4kTy7uIo1pAs6dFg9hJk2lZx5cVb8n',
+    'idempotency-hash-key': 'Mn3bVc6xZa9sDf2gHj5kLq8wEr1tYu4i',
+    'stepup-binding-key': 'Pl0oKi9jUh8yGt7fRd6eSw5aQz4xCv3b',
+    'service-key': 'Yt6rEw3qAs9dFg2hJk5lZx8cVb1nMq4w',
+    'audit-chain-key': 'Gh2jKl5zXc8vBn1mQw4eRt7yUi0oPa3s',
+    'audit-anchor-key': 'Bv7cXz4aSd1fGh8jKl5qWe2rTy9uIo6p',
+    'pin-pepper': PEPPER,
+    'demo-client-key': 'Nm9bVc2xZl5kJh8gFd1sAp4oIu7yTr0e',
+}
+SECRETS_OF_THE_POOL_JOB = {'app-connection': CONNECTION, 'pin-pepper': PEPPER}
 
 
 def container(name, image):
@@ -170,7 +187,7 @@ class Clock:
 
 
 class FakeAzure:
-    """What `deploy.rest` talks to: one app, its revisions and replicas, and the jobs."""
+    """What `deploy.rest` talks to: one app, its revisions, replicas and secrets, and the jobs."""
 
     def __init__(self, out):
         self.out = out
@@ -180,6 +197,9 @@ class FakeAzure:
                                    'runningState': 'Running', 'healthState': 'Healthy'}}
         # True: the list of the app's revisions comes with a link to a next page.
         self.more_revisions = False
+        # What a listing of secrets answers, for the app and for the pool job: every value is
+        # planted, and no test may find one, or a part of one, in a line or in an error.
+        self.secrets = {APP_ID: dict(SECRETS_OF_THE_APP), POOL_ID: dict(SECRETS_OF_THE_POOL_JOB)}
         self.replicas = [{'name': 'azurebank--replica-1', 'properties': {'containers': [
             {'name': 'bff', 'ready': False, 'started': False, 'restartCount': 7,
              'runningState': 'Waiting', 'runningStateDetails': 'CrashLoopBackOff'}]}}]
@@ -239,6 +259,8 @@ class FakeAzure:
             return self.revisions_call()
         if resource_id.startswith(APP_ID + '/revisions/'):
             return self.revision_call(resource_id[len(APP_ID + '/revisions/'):])
+        if method == 'POST' and resource_id in (APP_ID + '/listSecrets', POOL_ID + '/listSecrets'):
+            return self.secrets_call(resource_id[:-len('/listSecrets')], body)
         if resource_id.startswith(PREFIX + '/jobs/'):
             return self.job_call(method, resource_id[len(PREFIX + '/jobs/'):], body)
         raise AssertionError(f'unexpected call: {method} {resource_id}')
@@ -301,6 +323,13 @@ class FakeAzure:
         if self.more_revisions:
             answer['nextLink'] = f'https://management.azure.com{APP_ID}/revisions?page=2'
         return answer
+
+    def secrets_call(self, resource_id, body):
+        """A listing of secrets: a POST that changes nothing, and carries no body."""
+        assert body is None, body
+        self.events.append(f"read secrets of {resource_id.rsplit('/', 1)[-1]}")
+        return {'value': [{'name': name, 'value': value}
+                          for name, value in self.secrets[resource_id].items()]}
 
     def job_call(self, method, tail, body):
         name, _, rest = tail.partition('/')
@@ -1972,7 +2001,12 @@ CHECK_REFUSED = ("--check is refused inside GitHub Actions: it is the owner's re
 ANOTHER_REVISION = ('an answer could still come from another revision: nothing was proved, nothing was '
                     "moved. Look at the app's revisions, then check again.")
 ALONE = 'is the latest ready one and no other revision is active: what answers now is that revision.'
-DEMO_OFF = 'The app says the demo is off: the job azurebank-pool is not read.'
+DEMO_OFF = 'The app says the demo is off: the job azurebank-pool is not read and no secret is listed.'
+EQUAL = ("The pool job's PIN pepper and connection string are the app's: each was listed on both and "
+         'compared here, and no value was shown.')
+NOT_SHOWN = 'Nothing was moved, and no value was shown. See infra/README.md, "When something fails".'
+PEPPER_NAMED = 'PIN pepper (its secret pin-pepper)'
+CONNECTION_NAMED = 'connection string (its secret app-connection)'
 
 
 def checked(latest, demo):
@@ -1998,6 +2032,19 @@ def not_alone(found, latest):
 NOT_LISTED = 'the latest ready revision was not in the list'
 
 
+def differs(*which):
+    return (f"The pool job's {' and '.join(which)} {'differs' if len(which) == 1 else 'differ'} from "
+            f"the app's. {NOT_SHOWN}")
+
+
+def not_compared(*why):
+    return f"The pool job's secrets could not be compared with the app's: {'; '.join(why)}. {NOT_SHOWN}"
+
+
+def no_single_value(whose, name):
+    return f'{whose} lists no single value of text for {name}'
+
+
 class CheckTests(DeployCase):
     """`deploy.check`: the owner reads the running app and asks its address what a deployment asks
     at its end, and nothing is moved. It is the read-back of a run of the template, which makes a
@@ -2014,9 +2061,17 @@ class CheckTests(DeployCase):
         return [(method, resource_id) for method, resource_id, _ in self.azure.calls]
 
     def assert_nothing_was_moved(self):
-        # No PATCH and no start: every request was a read.
-        self.assertEqual(self.azure.writes(), [])
+        # No PATCH and no start. A listing of secrets is a POST, and it changes nothing.
+        self.assertEqual([call for call in self.azure.writes() if not call[1].endswith('/listSecrets')], [])
         self.migration.assert_not_called()
+
+    def assert_no_secret_is_shown(self, text, *more):
+        """Neither a value a listing answered, nor eight characters in a row of one."""
+        values = {value for secrets in self.azure.secrets.values() for value in secrets.values()
+                  if isinstance(value, str)} | set(more) | {PEPPER, CONNECTION}
+        for value in values:
+            for start in range(len(value) - 7):
+                self.assertNotIn(value[start:start + 8], text)
 
     def test_it_reads_the_app_runs_the_smoke_test_and_writes_nothing(self):
         self.check()
@@ -2237,6 +2292,8 @@ class CheckTests(DeployCase):
                          out_of_shape('The job azurebank-pool', named, when='nothing was moved'))
         self.assertNotIn('* * * * *', str(raised.exception) + self.printed())
         self.smoke.assert_not_called()
+        self.assertEqual([call for call in self.asked() if 'listSecrets' in call[1]], [],
+                         'no secret is listed for a job that is out of shape')
         self.assert_nothing_was_moved()
 
     def test_with_the_demo_on_a_pool_job_that_cannot_be_read_ends_the_check(self):
@@ -2289,6 +2346,122 @@ class CheckTests(DeployCase):
         self.assertEqual(raised.exception.code, not_alone('1 other revision had not gone inactive', after))
         self.assertEqual(self.azure.writes(), [])
 
+    def test_with_the_demo_on_it_says_the_jobs_pepper_and_string_are_the_apps_and_shows_neither(self):
+        self.azure.turn_the_demo_on()
+        self.check()
+        self.assertEqual([line for line in self.said() if 'pepper' in line], [EQUAL])
+        self.assert_no_secret_is_shown(self.printed())
+        # Each listed once, after the job was found in shape and before the address is asked anything.
+        self.assertEqual(self.azure.events, ['read revisions', 'read secrets of azurebank',
+                                             'read secrets of azurebank-pool', 'smoke'])
+        self.assertEqual(self.azure.writes(), [('POST', APP_ID + '/listSecrets'), ('POST', POOL_ID + '/listSecrets')])
+        self.assertEqual([call for call in self.azure.versions if call[2] != deploy.API_VERSION], [])
+
+    def test_a_pepper_that_differs_fails_the_check_and_is_never_shown(self):
+        self.azure.turn_the_demo_on()
+        other = 'Ua8hGq3zXw6nTm1bRv4cYk7pLd0sFj5e'
+        # One sentence for every way to differ: it says which secret, and nothing of how.
+        for what, value in (('another value', other), ('its last character', PEPPER[:-1] + '#'),
+                            ('its case', PEPPER.swapcase()), ('a space after it', PEPPER + ' '),
+                            ('only its beginning', PEPPER[:16]), ('twice over', PEPPER * 2)):
+            with self.subTest(what=what):
+                self.clear()
+                self.azure.secrets[POOL_ID]['pin-pepper'] = value
+                with self.assertRaises(RuntimeError) as raised:
+                    self.check()
+                self.assertIs(type(raised.exception), RuntimeError)
+                self.assertEqual(str(raised.exception), differs(PEPPER_NAMED))
+                self.assert_no_secret_is_shown(str(raised.exception) + self.printed(), other)
+                self.assertNotIn("are the app's", self.printed())
+        self.smoke.assert_not_called()
+        self.assert_nothing_was_moved()
+
+    def test_a_connection_string_that_differs_and_both_that_differ_are_named(self):
+        self.azure.turn_the_demo_on()
+        other = 'Oe2xLm9vQa6tZs3dWk8cRj5yNh1uBf4g;Ti7pGb0wVq4n'
+        for pepper, connection, which in ((PEPPER, other, [CONNECTION_NAMED]),
+                                          (other, other, [PEPPER_NAMED, CONNECTION_NAMED])):
+            with self.subTest(which=which):
+                self.clear()
+                self.azure.secrets[APP_ID].update({'pin-pepper': pepper, 'app-connection': connection})
+                with self.assertRaises(RuntimeError) as raised:
+                    self.check()
+                self.assertEqual(str(raised.exception), differs(*which))
+                self.assert_no_secret_is_shown(str(raised.exception) + self.printed(), other)
+        self.smoke.assert_not_called()
+
+    def test_only_the_two_secrets_the_job_holds_are_compared(self):
+        # The app holds seven secrets the job does not, and the job may hold one the app does not:
+        # none of them is compared, and none is a difference.
+        self.azure.turn_the_demo_on()
+        self.azure.secrets[APP_ID].update({'jwt-secret': 'Fs1dGa4hJq7kLw0zXe3cVr6bNt9mYu2i'})
+        self.azure.secrets[POOL_ID].update({'another-secret': 'Ce5vBr8nMt1yQu4iWo7pEa0sDl3fGk6h'})
+        self.check()
+        self.assertIn(EQUAL, self.said())
+        self.assert_no_secret_is_shown(self.printed())
+
+    def test_a_listing_that_fails_fails_the_check(self):
+        self.azure.turn_the_demo_on()
+        for whose, resource_id in (('the app', APP_ID), ('the job azurebank-pool', POOL_ID)):
+            for refusal in ('Forbidden: AuthorizationFailed.',
+                            f'The Azure CLI gave no answer in 180 s (POST {deploy.short(resource_id)}/listSecrets).'):
+                with self.subTest(whose=whose, refusal=refusal):
+                    self.azure.refusal = refusal
+                    self.azure.refuse = lambda method, target, body, wanted=resource_id + '/listSecrets': (
+                        target == wanted)
+                    with self.assertRaises(RuntimeError) as raised:
+                        self.check()
+                    self.assertIs(type(raised.exception), RuntimeError, 'the check says what it means')
+                    self.assertEqual(str(raised.exception), (
+                        f"The secrets of {whose} could not be listed, so the pool job's secrets could not "
+                        f"be compared with the app's: {refusal.rstrip('.')}. Nothing was moved. See "
+                        'infra/README.md, "When something fails".'))
+        self.smoke.assert_not_called()
+        self.assert_nothing_was_moved()
+        self.assertNotIn("are the app's", self.printed())
+
+    def test_a_listing_that_does_not_hold_one_value_for_each_secret_cannot_be_compared(self):
+        self.azure.turn_the_demo_on()
+        app, job = 'the app', 'the job azurebank-pool'
+        pair = [{'name': 'pin-pepper', 'value': PEPPER}, {'name': 'app-connection', 'value': CONNECTION}]
+
+        def without(name, *instead):
+            return [entry for entry in pair if entry['name'] != name] + list(instead)
+
+        # (what the app's listing answers, what the job's answers) -> why they cannot be compared
+        cases = {
+            'the job lacks the pepper': (pair, without('pin-pepper'), [no_single_value(job, 'pin-pepper')]),
+            'the app lacks the string': (without('app-connection'), pair, [no_single_value(app, 'app-connection')]),
+            'no value on the job': (pair, without('pin-pepper', {'name': 'pin-pepper'}),
+                                    [no_single_value(job, 'pin-pepper')]),
+            'a value that is not text': (pair, without('pin-pepper', {'name': 'pin-pepper', 'value': 7}),
+                                         [no_single_value(job, 'pin-pepper')]),
+            # Two that hold nothing are not "the app's": nothing was compared.
+            'nothing on both': (without('pin-pepper', {'name': 'pin-pepper', 'value': ''}),) * 2 + (
+                [no_single_value(app, 'pin-pepper'), no_single_value(job, 'pin-pepper')],),
+            'a name twice': (pair + [{'name': 'pin-pepper', 'value': PEPPER}], pair,
+                             [no_single_value(app, 'pin-pepper')]),
+            'no list': ({'secrets': pair}, pair, [no_single_value(app, 'pin-pepper'),
+                                                 no_single_value(app, 'app-connection')]),
+            'entries that are not objects': (pair, ['pin-pepper', 'app-connection'],
+                                             [no_single_value(job, 'pin-pepper'),
+                                              no_single_value(job, 'app-connection')]),
+        }
+        for what, (of_the_app, of_the_job, why) in cases.items():
+            answers = {APP_ID: of_the_app, POOL_ID: of_the_job}
+            with self.subTest(what=what), patch.object(
+                    self.azure, 'secrets_call', side_effect=lambda resource_id, body: (
+                        answers[resource_id] if isinstance(answers[resource_id], dict)
+                        else {'value': answers[resource_id]})):
+                self.clear()
+                with self.assertRaises(RuntimeError) as raised:
+                    self.check()
+                self.assertIs(type(raised.exception), RuntimeError)
+                self.assertEqual(str(raised.exception), not_compared(*why))
+                self.assert_no_secret_is_shown(str(raised.exception) + self.printed())
+        self.smoke.assert_not_called()
+        self.assert_nothing_was_moved()
+
 
 class SmokeInTheCheckTests(Offline):
     """The real smoke test inside the real check: what the address answers decides how the check
@@ -2309,7 +2482,7 @@ class SmokeInTheCheckTests(Offline):
         lines = [line.split(' ', 1)[1] for line in self.printed().splitlines()]
         self.assertIn('It is the public demo', lines[-2])
         self.assertEqual(lines[-1], checked(BEFORE, demo=True))
-        self.assertEqual(self.azure.writes(), [])
+        self.assertEqual([call for call in self.azure.writes() if not call[1].endswith('/listSecrets')], [])
 
     def test_an_answer_that_is_wrong_ends_the_check_and_the_app_is_left_as_it_is(self):
         self.azure.turn_the_demo_on()
@@ -2327,7 +2500,7 @@ class SmokeInTheCheckTests(Offline):
                     'This was --check, not a deployment: nothing was moved and nothing is put back; where '
                     'that says to deploy again, check again.'), str(raised.exception))
                 self.assertNotIn('PLANTED', str(raised.exception) + self.printed())
-        self.assertEqual(self.azure.writes(), [])
+        self.assertEqual([call for call in self.azure.writes() if not call[1].endswith('/listSecrets')], [])
         self.assertEqual(self.azure.app, before)
         self.assertNotIn('Checked', self.printed())
 

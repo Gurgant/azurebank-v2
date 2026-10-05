@@ -42,6 +42,12 @@ what answers is that revision; it reads from the app whether the demo is on, and
 app's shape; with the demo on it reads the pool job and checks its shape; then it runs the same
 smoke test, and a wrong answer puts nothing back.
 
+With the demo on --check also lists the secrets of the app and of the pool job, as whoever is
+signed in, and compares the job's PIN pepper and connection string with the app's. It says that
+they are the app's, or which one differs, and never shows a value, a part of one or its length.
+It is the one mode that lists a secret. A deployment never does: a workflow run goes on proving
+that its own identity is refused the listing of the app's secrets.
+
 The pool job is the app's to announce. With the demo off it is neither read nor moved, and
 whether it exists is not asked: no answer of Azure's is read as "there is no pool job". With the
 demo on it must be readable and in shape, its schedule and its timeout included, or the run stops
@@ -62,6 +68,7 @@ script never asks it to.
 import argparse
 import copy
 import datetime
+import hmac
 import http.client
 import json
 import os
@@ -1100,7 +1107,8 @@ def deploy(subscription, resource_group, tag, app_only=False, in_actions=False,
 
 # --- The check that moves nothing: the owner's terminal only ---
 # A run of the template makes a revision outside this script: no migration, no smoke test and no
-# put-back follow it. This is its read-back. Every request it sends is a read.
+# put-back follow it. This is its read-back. Every request it sends is a read, but for the two
+# listings of secrets, which change nothing either.
 
 def settled_app(app_id, timeout=300):
     """The app, read until its last update has succeeded and its latest revision is its latest
@@ -1173,6 +1181,63 @@ def wait_alone(app_id, latest, timeout=180):
         time.sleep(5)
 
 
+# The pool job's two secrets, by what a line calls each. infra/main.bicep writes them from the
+# two expressions it writes the app's secrets of the same names from, so a run of the template
+# leaves them equal. A secret of the app written again by itself leaves the job's copy as it was.
+POOL_SECRETS = {'pin-pepper': 'PIN pepper', 'app-connection': 'connection string'}
+
+
+def listed_secrets(resource_id, whose):
+    """The secrets of the app or of a job, as whoever is signed in may list them: name -> every
+    value listed under that name. The values stay in this process. Nothing here prints one, and
+    no error holds one, a part of one or its length. A deployment never calls this: it proves
+    that its own identity is refused the listing (prove_secrets_are_refused)."""
+    try:
+        answer = rest('POST', f'{resource_id}/listSecrets')
+    except AzError as error:
+        raise RuntimeError(f"The secrets of {whose} could not be listed, so the pool job's secrets "
+                           f"could not be compared with the app's: {str(error).rstrip('.')}. "
+                           'Nothing was moved. See infra/README.md, "When something fails".') from None
+    found = {}
+    for entry in listed(answer, 'value'):
+        if isinstance(entry, dict) and isinstance(entry.get('name'), str):
+            found.setdefault(entry['name'], []).append(entry.get('value'))
+    return found
+
+
+def compare_pool_secrets(app_id, pool_id):
+    """Say whether the pool job's PIN pepper and connection string are the app's, and show
+    neither. The tool that builds the copies needs the pepper the API has
+    (backend/src/AzureBank.Api/README.md, Security__PinPepper). With two that differ a PIN of a
+    copy is expected to be refused while every status stays good: a PIN that is not taken is
+    answered 200 (backend/src/AzureBank.Bff/Controllers/BffAuthController.cs, verify-pin), so no
+    status, alert or exit code is expected to show it. That is why the two are compared here,
+    where nothing is spent, and not left to a browser alone.
+
+    Two that cannot be compared, and two that differ, both end the check."""
+    sides = [(whose, listed_secrets(resource_id, whose))
+             for whose, resource_id in (('the app', app_id), (f'the job {POOL_JOB}', pool_id))]
+    # One value of text that is not empty: two secrets that hold nothing are not "the app's".
+    unreadable = [f'{whose} lists no single value of text for {name}'
+                  for name in POOL_SECRETS for whose, secrets in sides
+                  if not (len(secrets.get(name, [])) == 1 and isinstance(secrets[name][0], str)
+                          and secrets[name][0])]
+    closing = 'Nothing was moved, and no value was shown. See infra/README.md, "When something fails".'
+    if unreadable:
+        raise RuntimeError("The pool job's secrets could not be compared with the app's: "
+                           f"{'; '.join(unreadable)}. {closing}")
+    (_, ours), (_, theirs) = sides
+    # Bytes, and an encoding that cannot fail: an error of the encoder would quote a character.
+    differing = [name for name in POOL_SECRETS if not hmac.compare_digest(
+        ours[name][0].encode('utf-8', 'surrogatepass'), theirs[name][0].encode('utf-8', 'surrogatepass'))]
+    if differing:
+        which = ' and '.join(f'{POOL_SECRETS[name]} (its secret {name})' for name in differing)
+        raise RuntimeError(f"The pool job's {which} {'differs' if len(differing) == 1 else 'differ'} "
+                           f"from the app's. {closing}")
+    say("The pool job's PIN pepper and connection string are the app's: each was listed on both "
+        'and compared here, and no value was shown.')
+
+
 def check(subscription, resource_group, in_actions=False):
     """Read the running app and ask its address what a deployment asks at its end. Nothing is
     moved: no request here changes a resource or starts a job, and a wrong answer puts nothing
@@ -1180,9 +1245,9 @@ def check(subscription, resource_group, in_actions=False):
 
     In order: the app, read until its last update has succeeded with its latest revision as its
     latest ready one; from that read its address, whether it is the public demo, and its shape;
-    its revisions, until no other one is active; with the demo on the pool job and its shape;
-    then the smoke test, with the demo as the app says it. With the demo off the pool job is not
-    read."""
+    its revisions, until no other one is active; with the demo on the pool job and its shape,
+    then the job's two secrets against the app's; then the smoke test, with the demo as the app
+    says it. With the demo off the pool job is not read and no secret is listed."""
     if in_actions:
         raise ValueError("--check is refused inside GitHub Actions: it is the owner's read of the "
                          'running app, from a terminal. A workflow run checks the app at the end of '
@@ -1198,8 +1263,9 @@ def check(subscription, resource_group, in_actions=False):
     if demo:
         pool_id = f'{prefix}/jobs/{POOL_JOB}'
         assert_shape(f'The job {POOL_JOB}', pool_drift(read_pool_job(pool_id)), 'nothing was moved')
+        compare_pool_secrets(app_id, pool_id)
     else:
-        say(f'The app says the demo is off: the job {POOL_JOB} is not read.')
+        say(f'The app says the demo is off: the job {POOL_JOB} is not read and no secret is listed.')
     try:
         smoke(f'https://{fqdn}', demo=demo)
     except (SmokeFailed, SmokeUnproven) as failure:
