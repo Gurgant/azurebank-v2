@@ -29,6 +29,11 @@ smoke test gets a wrong answer, the script tries to put the app back on the temp
 step 1, and the run still fails. If that put-back fails too, the run says so: the app may then be
 serving a broken revision. The schema is never put back.
 
+An interrupt stops the script where it is, in any mode: Ctrl+C on a terminal, and a workflow
+run that is cancelled is expected to arrive the same way. Nothing is put back, nothing that was
+started is stopped, and the last sentence says so and names the commands that read what was
+moved or started.
+
 The smoke test asks the address for the page, for the readiness answer, and for one sign-in
 with an address nobody can register, which the API must refuse after it asked the database. The
 page must say what the app's containers say: it carries the demo's tag with the demo on, and
@@ -1405,8 +1410,9 @@ def pool_run(subscription, resource_group, in_actions=False):
 
     In order: the job, read and checked for its shape, its schedule and its timeout included;
     its executions, read once, and a refusal while one is or may still be in progress; the one
-    start; that execution, read until it has ended, for the job's timeout and two minutes; its
-    verdict, read with the version that carries the exit code; and the end, by that code alone.
+    start, said in a line before it is sent; that execution, read until it has ended, for the
+    job's timeout and two minutes; its verdict, read with the version that carries the exit
+    code; and the end, by that code alone.
     A read that fails once the start was made, or a list of executions that then comes in a shape
     this script does not read, ends the wait in a sentence that says the run was started and may
     go on. Once the run is seen over, a read of its exit code that Azure refuses or fails ends
@@ -1434,6 +1440,9 @@ def pool_run(subscription, resource_group, in_actions=False):
     assert_shape(f'The job {POOL_JOB}', pool_drift(job), 'nothing was started', before='it is started')
     timeout = job['properties']['configuration']['replicaTimeout']
     known = {execution['name'] for execution in refuse_beside_a_pool_run(job_id, job, starting=True)}
+    # Said before the one write of this command: until the start's answer has come, no other line
+    # says that a run may exist, and an interrupt at that moment would leave none.
+    say(f'Starting the job {POOL_JOB} once.')
     try:
         name = start_once(job_id, known, before='it is started again')
     except (AzError, KeyError, TypeError, AttributeError) as error:
@@ -1685,6 +1694,16 @@ def main(arguments=None):
         raise SystemExit(f'An answer from Azure lacked {error}.')
     except (RuntimeError, ValueError) as error:
         raise SystemExit(str(error))
+    except KeyboardInterrupt:
+        # Ctrl+C; a workflow run that is cancelled is expected to arrive the same way. The script
+        # stops where it is: it does not put the app back, and it stops nothing it started. Which
+        # request was on its way is not known here, so the sentence does not say that nothing
+        # was changed.
+        raise SystemExit('Interrupted. Nothing is put back and nothing is stopped by this: a request '
+                         'that was on its way may have reached Azure, and a job that was started goes '
+                         'on. What was moved or started is read, from a terminal, with `python '
+                         'infra/deploy.py --check` (the app), `--job-log` (a migration) and '
+                         '`--pool-log` (a run of the pool job).')
 
 
 if __name__ == '__main__':

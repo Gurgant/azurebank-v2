@@ -159,6 +159,25 @@ def raise_(error):
     raise error
 
 
+def met(call, *arguments):
+    """What a call ended in: the error it raised, of any kind, or None. A test that needs to say
+    which error a call must end in catches it this way when the error could be one that
+    unittest does not take for a failure: a KeyboardInterrupt that escaped a test would end the
+    whole run of the tests."""
+    try:
+        call(*arguments)
+    except BaseException as error:  # whatever it is: the test says which one it must be
+        return error
+    return None
+
+
+# How every mode of the script ends when it is interrupted (Ctrl+C).
+INTERRUPTED = ('Interrupted. Nothing is put back and nothing is stopped by this: a request that was on its way '
+               'may have reached Azure, and a job that was started goes on. What was moved or started is read, '
+               'from a terminal, with `python infra/deploy.py --check` (the app), `--job-log` (a migration) and '
+               '`--pool-log` (a run of the pool job).')
+
+
 def execution(name, status, started=None, **more):
     properties = {'status': status, **more}
     if started:
@@ -464,19 +483,10 @@ class DeployCase(Offline):
 class OfflineTests(Offline):
     """What `Offline` holds for every test built on it: nothing leaves this machine."""
 
-    @staticmethod
-    def met(reach, *arguments):
-        """What a call ended in: the error it raised, or None."""
-        try:
-            reach(*arguments)
-        except BaseException as error:  # whatever it is: the test says which one it must be
-            return error
-        return None
-
     def test_a_connection_to_anything_but_this_machine_fails_the_test_that_opens_it(self):
         # Another address of this machine first, so that nothing leaves it even where the guard
         # is missing: there the connection is refused, which is an OSError and not this failure.
-        refused = self.met(socket.create_connection, ('127.0.0.2', 9), 1)
+        refused = met(socket.create_connection, ('127.0.0.2', 9), 1)
         self.assertIsInstance(refused, AssertionError, 'a test could open a connection that is not to 127.0.0.1')
         self.assertEqual(str(refused), 'a test tried to open a connection to 127.0.0.2')
         # CONTROL: green as written, from here on: the guard was in place. The real fetch, and
@@ -488,11 +498,11 @@ class OfflineTests(Offline):
         opener = deploy.urllib.request.build_opener(deploy.NoRedirect)
         for url, host in ((f'https://{ADDRESS}/', ADDRESS), ('http://example.invalid/health/ready', 'example.invalid')):
             with self.subTest(url=url):
-                asked = self.met(deploy.fetch, opener, url)
+                asked = met(deploy.fetch, opener, url)
                 self.assertIsInstance(asked, AssertionError)
                 self.assertNotIsInstance(asked, deploy.NO_ANSWER)
                 self.assertEqual(str(asked), f'a test tried to open a connection to {host}')
-        smoked = self.met(deploy.smoke, f'https://{ADDRESS}')
+        smoked = met(deploy.smoke, f'https://{ADDRESS}')
         self.assertIsInstance(smoked, AssertionError, 'the smoke test ended in a verdict of its own')
         self.assertEqual(str(smoked), f'a test tried to open a connection to {ADDRESS}')
         self.assertEqual(self.clock.sleeps, [], 'and it did not go on asking')
@@ -1234,6 +1244,20 @@ class DeploymentTests(DeployCase):
         with self.assertRaisesRegex(RuntimeError, 'timeout'):
             self.deploy()
         self.assertEqual(self.azure.writes(), [])
+
+    def test_an_interrupt_ends_a_deployment_in_one_sentence_and_puts_nothing_back(self):
+        # Ctrl+C on the owner's terminal; a workflow run that is cancelled is expected to arrive
+        # the same way. Whenever it comes, the script stops where it is. It does not put the app
+        # back, and nothing it started is stopped: here the migration had run and the app had
+        # moved.
+        self.smoke.side_effect = KeyboardInterrupt
+        environment = {'AZURE_SUBSCRIPTION_ID': SUBSCRIPTION, 'AZURE_RESOURCE_GROUP': GROUP, 'IMAGE_TAG': NEW}
+        with patch.dict(deploy.os.environ, environment, clear=True):
+            end = met(deploy.main, [])
+        self.assertIs(type(end), SystemExit, 'the interrupt left the script as Python raises it: a traceback')
+        self.assertEqual(end.code, INTERRUPTED)
+        self.assertEqual(self.steps(), ['job azurebank-migrate', 'migration', 'app d'])
+        self.assertEqual(len(self.azure.app_patches()), 1, 'nothing is put back')
 
     def test_what_runs_now_is_printed_before_the_first_write(self):
         self.deploy()
@@ -2799,6 +2823,9 @@ POOL_LOG_REFUSED = ('--pool-log is refused inside GitHub Actions: what the conta
                     'owner, from a terminal, and never reaches a public log.')
 START = ('POST', POOL_ID + '/start')
 RUNS = ('GET', POOL_ID + '/executions')
+# The one line a start by hand prints before its one write: an interrupt while the start is on
+# its way leaves it on the terminal.
+STARTING = 'Starting the job azurebank-pool once.'
 # The words of the pool job's map for the codes a start by hand is tried with here, and the count
 # of the run's summary line each signal points at.
 LOW = ('done, with a signal: the pool was low (PoolLow)', 'was')
@@ -2942,10 +2969,14 @@ class PoolRunTests(DeployCase):
         # what runs is the job as the template wrote it, with no argument and no setting of the
         # start's own. Seen red with a start of the pool job that carries a container.
         self.assertEqual([body for method, _, body in self.azure.calls if method == 'POST'], [None])
-        self.assertEqual(self.said(), ['Pool run execution pool-run started.',
+        self.assertEqual(self.said(), [STARTING, 'Pool run execution pool-run started.',
                                        'Pool run execution pool-run: Running.',
                                        'Pool run execution pool-run: Succeeded.',
                                        pool_verdict(), ended_well()])
+        # That the start is about to be sent is said before it is: it is the one write, and
+        # until its answer has come no other line says a run may exist.
+        self.assertEqual([line.split(' ', 1)[1] for line in self.azure.printed_before_first_write.splitlines()],
+                         [STARTING])
         # The exit code is read once, last, with the version that carries it.
         self.assertEqual([call for call in self.azure.versions if call[2] != deploy.API_VERSION],
                          [('GET', 'executions', '2026-07-01')])
@@ -3227,7 +3258,7 @@ class PoolRunTests(DeployCase):
         self.assertEqual(str(raised.exception), not_ended())
         self.assertGreaterEqual(self.clock.now, 720)
         self.assertEqual(self.azure.writes(), [START], 'it is not started a second time')
-        self.assertEqual(self.said(), ['Pool run execution pool-run started.',
+        self.assertEqual(self.said(), [STARTING, 'Pool run execution pool-run started.',
                                        'Pool run execution pool-run: Running.'])
         # The wait is the pool job's own timeout and two minutes, not the migrate job's.
         self.again(execution('pool-run', 'Unknown'))
@@ -3307,7 +3338,34 @@ class PoolRunTests(DeployCase):
                     "Whether a run began is read from the job's executions, before any second start "
                     '(infra/README.md, "When something fails").'))
                 self.assertEqual(self.azure.writes(), [START])
-                self.assertEqual(self.printed(), '')
+                self.assertEqual(self.said(), [STARTING])
+
+    def test_an_interrupt_once_the_start_is_on_its_way_ends_under_a_line_that_says_so(self):
+        # Ctrl+C while the start is being sent: its answer never came, and without the line
+        # printed before it the terminal would hold nothing that says a start may have left.
+        # And Ctrl+C while the run is waited for: the run was started, and it goes on.
+        answer = self.azure.pool_call
+        environment = {'AZURE_SUBSCRIPTION_ID': SUBSCRIPTION, 'AZURE_RESOURCE_GROUP': GROUP}
+        for what, (call, nth), lines in (
+                ('while the start is sent', (('POST', 'start'), 1), [STARTING]),
+                ('while the run is waited for', (('GET', 'executions'), 2),
+                 [STARTING, 'Pool run execution pool-run started.'])):
+            with self.subTest(what=what):
+                self.again(execution('pool-run', 'Running'), *ends_as(pool_finished()))
+                seen = []
+
+                def interrupted(method, tail, call=call, nth=nth, seen=seen):
+                    seen.append((method, tail))
+                    if (method, tail) == call and seen.count(call) == nth:
+                        raise KeyboardInterrupt
+                    return answer(method, tail)
+
+                with patch.dict(deploy.os.environ, environment, clear=True), patch.object(
+                        self.azure, 'pool_call', side_effect=interrupted):
+                    end = met(deploy.main, ['--pool-run'])
+                self.assertIs(type(end), SystemExit, 'the interrupt left the script as Python raises it: a traceback')
+                self.assertEqual(end.code, INTERRUPTED)
+                self.assertEqual(self.said(), lines)
 
     def test_a_read_that_fails_while_the_run_is_waited_for_says_that_the_run_goes_on(self):
         # The start was made. A read of the job's executions that Azure then refuses, or does not
@@ -3336,7 +3394,7 @@ class PoolRunTests(DeployCase):
                     for unwanted in ('\n', '::', 'add-mask'):
                         self.assertNotIn(unwanted, str(raised.exception))
                     self.assertEqual(self.azure.writes(), [START], 'nothing is started a second time')
-                    self.assertEqual(self.said(), [f'Pool run {name} started.'])
+                    self.assertEqual(self.said(), [STARTING, f'Pool run {name} started.'])
         # A start that names no run looks for it among the executions: a read that fails there is
         # a request that failed before the run was known, and is said so.
         self.again(*ends_as(pool_finished()))
@@ -3395,7 +3453,7 @@ class PoolRunTests(DeployCase):
                 self.assertEqual(str(end), read_failed(NOT_THE_LIST))
                 self.assertNotIn('::', str(end) + self.printed())
                 self.assertEqual(self.azure.writes(), [START], 'nothing is started a second time')
-                self.assertEqual(self.said(), ['Pool run execution pool-run started.'])
+                self.assertEqual(self.said(), [STARTING, 'Pool run execution pool-run started.'])
         # A start that names no run looks for it among the executions, and meets the same answers
         # there before the run is known; so does a start whose own answer is not an object.
         self.azure.start_names_the_run = False
@@ -3409,14 +3467,14 @@ class PoolRunTests(DeployCase):
                 self.assertIs(type(end), RuntimeError, f'{end!r}: the run says what it means, in its own words')
                 self.assertEqual(str(end), START_NOT_READ)
                 self.assertEqual(self.azure.writes(), [START], 'the start is not sent again')
-                self.assertEqual(self.printed(), '')
+                self.assertEqual(self.said(), [STARTING])
 
     def test_a_start_that_names_no_run_is_found_by_what_is_new_and_is_not_sent_again(self):
         self.azure.start_names_the_run = False
         self.azure.pool_runs = [pool_finished('an-earlier-run')]
         self.assertEqual(self.ended(), 'pool-run')
         self.assertEqual(self.azure.writes(), [START])
-        self.assertEqual(self.said()[0], 'Pool run execution pool-run started.')
+        self.assertEqual(self.said()[:2], [STARTING, 'Pool run execution pool-run started.'])
         self.assertEqual(self.said()[-1], ended_well())
         # A start that is accepted and makes no execution is looked for during one minute, and the
         # sentence is the start's own: nothing was deployed.
@@ -3439,7 +3497,8 @@ class PoolRunTests(DeployCase):
         for unwanted in ('::', 'add-mask'):
             self.assertNotIn(unwanted, str(raised.exception) + self.printed())
         self.assertEqual(str(raised.exception), not_well(13, *FOREIGN, name=withheld))
-        self.assertEqual(self.said(), [f'Pool run {withheld} started.', f'Pool run {withheld}: status not reported.',
+        self.assertEqual(self.said(), [STARTING, f'Pool run {withheld} started.',
+                                       f'Pool run {withheld}: status not reported.',
                                        f'Pool run {withheld}: Failed.',
                                        pool_verdict('Failed', 13, FOREIGN[0], name='whose name is withheld')])
         # A run that is not seen ending is not named in the command that stops it either.
@@ -3636,6 +3695,19 @@ class MainTests(Offline):
         with self.assertRaises(SystemExit) as raised:
             self.run_main([])
         self.assertIn('AuthorizationFailed', str(raised.exception.code))
+
+    def test_an_interrupt_ends_every_mode_in_one_sentence_and_not_in_a_traceback(self):
+        modes = {'deploy.deploy': ([], ['--app-only']), 'deploy.check': (['--check'],),
+                 'deploy.pool_run': (['--pool-run'],), 'deploy.job_log': (['--pool-log'], ['--job-log', 'a-run']),
+                 'deploy.app_log': (['--app-log', '5'],)}
+        for mode, command_lines in modes.items():
+            for arguments in command_lines:
+                with self.subTest(arguments=arguments), patch(mode, side_effect=KeyboardInterrupt):
+                    end = met(self.run_main, arguments)
+                    self.assertIs(type(end), SystemExit,
+                                  'the interrupt left the script as Python raises it: a traceback')
+                    self.assertEqual(end.code, INTERRUPTED)
+        self.assertEqual(self.printed(), '', 'the sentence is how the command ends, on standard error')
 
     @patch('deploy.deploy', side_effect=deploy.SmokeUnproven('Smoke test unproven.'))
     def test_an_unproven_run_exits_non_zero(self, run):
