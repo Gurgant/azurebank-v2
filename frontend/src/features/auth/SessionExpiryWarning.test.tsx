@@ -388,10 +388,11 @@ describe('SessionExpiryWarning', () => {
     tests above: a page without the demo's tag, a browser that keeps no copy, a browser that keeps
     another copy than the one that is signed in.
 
-    Every test starts signed in to the first copy of the mock's pool (src/mocks/state.ts), claimed
-    there. The two passwords and the second address typed out below are the pool's: fixtures no
-    server knows. The words are typed out too, and not imported from the product, so a test fails
-    the day the words on screen are no longer these.
+    Every test but one starts signed in to the first copy of the mock's pool (src/mocks/state.ts),
+    claimed there; "nor a typed password's, off the demo" starts on the mock's ordinary session.
+    The two passwords and the second address typed out below are the pool's: fixtures no server
+    knows. The words are typed out too, and not imported from the product, so a test fails the
+    day the words on screen are no longer these.
 
     One test is not at the cap: the one named for "lack of activity" takes the same owner to the
     other end of a session, where the dialog has a "Stay signed in" of its own, the keep-alive,
