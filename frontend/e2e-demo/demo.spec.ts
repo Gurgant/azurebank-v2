@@ -102,6 +102,50 @@ const CANARY_PAGE = `<!doctype html>
   </body>
 </html>`;
 
+/**
+ * Pages of this file's own for the sign-in details, answered here as the scan's canary is: a
+ * button that says the details are open, the line it controls, which holds the canary's words,
+ * and a script that says what the browser keeps and what a press on the button does.
+ */
+const DETAILS_PATH = '/details-canary';
+const detailsPage = (button: string, script: string) => `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>The sign-in details' canary</title>
+  </head>
+  <body>
+    <main>
+      <h1>The sign-in details' canary</h1>
+      <button type="button" aria-expanded="true" aria-controls="details">${button}</button>
+      <p id="details">Password: ${CANARY}</p>
+    </main>
+    <script>
+      ${script}
+    </script>
+  </body>
+</html>`;
+/** The browser keeps a copy whose password is the canary's words. */
+const KEEPS_THE_WORDS = `localStorage.setItem(${JSON.stringify(KEPT_COPY_KEY)}, JSON.stringify({ password: ${JSON.stringify(CANARY)} }));`;
+const KEEPS_NOTHING = `localStorage.removeItem(${JSON.stringify(KEPT_COPY_KEY)});`;
+/** A press takes the line off the page and turns the button round, as the dashboard's panel does. */
+const A_PRESS_HIDES = `document.querySelector('button').addEventListener('click', (event) => {
+        document.getElementById('details').remove();
+        event.currentTarget.setAttribute('aria-expanded', 'false');
+        event.currentTarget.textContent = 'Show sign-in details';
+      });`;
+const DETAILS_PAGES = {
+  // As the dashboard's panel has them: the button by its name, and a press that takes them off.
+  asThePanelHasThem: detailsPage('Hide sign-in details', `${KEEPS_THE_WORDS} ${A_PRESS_HIDES}`),
+  // Under a button of another name. A press would take them off here too, for whoever knew it.
+  underAnotherName: detailsPage('Hide the details', `${KEEPS_THE_WORDS} ${A_PRESS_HIDES}`),
+  // The button by its name, a press that does nothing, and a browser that keeps no copy to
+  // look for.
+  stuckAndNothingKept: detailsPage('Hide sign-in details', KEEPS_NOTHING),
+};
+const THE_PAGE_WAS_LEFT =
+  'The sign-in details could not be taken off the page, so the page was left.';
+
 test.describe.configure({ mode: 'serial' });
 
 test.describe('the demo, from the first click', () => {
@@ -212,6 +256,66 @@ test.describe('the demo, from the first click', () => {
         returnedHoldsTheWords: false,
         onDiskHoldsTheWords: false,
         attachedHoldsTheWords: false,
+      },
+    });
+  });
+
+  test('the sign-in details count as off the page only once the kept password is off it', async ({
+    page: canaryPage,
+  }) => {
+    /*
+      BEFORE ANYTHING IS CLAIMED, as the test above. After every test a hook takes the sign-in
+      details off the page, or leaves the page, before Playwright writes the page down
+      (`leaveNoSignInDetails` in `e2e-demo/demoRun.ts`). It finds the details by the button that
+      hides them. The day the panel calls that button something else, a helper that went by the
+      button alone would find nothing to press, call that "off", and the first red test would
+      leave the password on disk. So it also looks for the password the browser keeps, and this
+      is where that is held: on pages of this test's own, in a browser context of its own, with
+      words that are nobody's password.
+    */
+    await canaryPage.route(`**${DETAILS_PATH}/*`, (route) => {
+      const name = new URL(route.request().url()).pathname.slice(DETAILS_PATH.length + 1);
+      return route.fulfill({
+        contentType: 'text/html',
+        body: DETAILS_PAGES[name as keyof typeof DETAILS_PAGES],
+      });
+    });
+    const showsTheWords = () =>
+      canaryPage.evaluate((words) => document.body.innerText.includes(words), CANARY);
+
+    const leaving = async (name: keyof typeof DETAILS_PAGES) => {
+      await canaryPage.goto(`${DETAILS_PATH}/${name}`);
+      // Read first: an "off" below is about a page that had the words on it.
+      const shown = await showsTheWords();
+      const said = await leaveNoSignInDetails(canaryPage).then(
+        () => 'nothing',
+        (error: unknown) => (error instanceof Error ? error.message : 'something else'),
+      );
+      return {
+        shown,
+        said,
+        leftThePage: canaryPage.url() === 'about:blank',
+        stillShown: await showsTheWords(),
+      };
+    };
+
+    expect({
+      asThePanelHasThem: await leaving('asThePanelHasThem'),
+      underAnotherName: await leaving('underAnotherName'),
+      stuckAndNothingKept: await leaving('stuckAndNothingKept'),
+    }).toEqual({
+      asThePanelHasThem: { shown: true, said: 'nothing', leftThePage: false, stillShown: false },
+      underAnotherName: {
+        shown: true,
+        said: THE_PAGE_WAS_LEFT,
+        leftThePage: true,
+        stillShown: false,
+      },
+      stuckAndNothingKept: {
+        shown: true,
+        said: THE_PAGE_WAS_LEFT,
+        leftThePage: true,
+        stillShown: false,
       },
     });
   });

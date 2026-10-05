@@ -71,19 +71,39 @@ export function keptCopy(page: Page) {
  * In the page and through no locator: this is what runs when something has already gone wrong,
  * and a locator that failed here would have Playwright write the page down, details and all.
  * The page is given a moment to draw itself again after the press before it is asked.
+ *
+ * GONE IS TWO THINGS, and the first alone is not enough. No button says the details are open;
+ * and the password the browser keeps is not among the words the page shows. The button is found
+ * by its name and its two attributes, so the day the panel names it otherwise this finds
+ * nothing to press, and "no such button" would read as "gone" with the password still on the
+ * page: wrong exactly when the product has changed, which is when a run is red. The password is
+ * looked for where the browser keeps the copy; a page that keeps none is judged by the button
+ * alone. One test of the run holds both halves, on pages of its own (`e2e-demo/demo.spec.ts`).
  */
 function hideSignInDetails(page: Page) {
-  return page.evaluate(async () => {
+  return page.evaluate(async (key) => {
     const open = () =>
       Array.from(document.querySelectorAll('button[aria-expanded="true"][aria-controls]')).filter(
         (button) => button.textContent === 'Hide sign-in details',
       );
+    let password = '';
+    try {
+      const raw = localStorage.getItem(key);
+      const kept = raw === null ? null : (JSON.parse(raw) as { password?: unknown } | null);
+      password = typeof kept?.password === 'string' ? kept.password : '';
+    } catch {
+      // No copy to look for. Reading the storage throws on a page that has none of its own
+      // (about:blank: where the shared page is until its first visit, and where a page that
+      // was left ends), and a key that is not JSON is no copy.
+    }
+    const gone = () =>
+      open().length === 0 && (password === '' || !document.body.innerText.includes(password));
     for (const button of open()) (button as HTMLButtonElement).click();
-    for (let asked = 0; asked < 40 && open().length > 0; asked += 1) {
+    for (let asked = 0; asked < 40 && !gone(); asked += 1) {
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
-    return open().length === 0;
-  });
+    return gone();
+  }, KEPT_COPY_KEY);
 }
 
 /**
