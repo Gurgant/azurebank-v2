@@ -2474,9 +2474,11 @@ class CheckTests(DeployCase):
         self.assert_nothing_was_moved()
 
     def test_a_listing_that_cannot_be_read_fails_the_check_in_its_own_words(self):
-        # The CLI answered, and what it printed is not a listing: here it stops short, or holds a
-        # byte that is not text. A decoder's own words say where in the answer it stopped, and of
-        # a listing not even that is shown: the place is worked out from what stood before it.
+        # The CLI answered, and what it printed is not a listing: it stops short. A decoder's own
+        # words say where in the answer it stopped, and of a listing not even that is shown: the
+        # place is worked out from what stood before it. The second error is another decoder's,
+        # one of bytes. It stands for any other ValueError a read could end in: that such a one
+        # reaches the check from the CLI is not known.
         self.azure.turn_the_demo_on()
         cut = json.dumps({'value': [{'name': 'pin-pepper', 'value': PEPPER}]})[:60]
         with self.assertRaises(json.JSONDecodeError) as stops_short:
