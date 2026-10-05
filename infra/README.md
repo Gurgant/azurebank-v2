@@ -28,6 +28,19 @@ of step 20 was refused as written, and once it ran it showed that the alert on t
 not count lines. That alert was deleted, and the template now leaves it out unless it is asked
 for.
 
+**On 2026-10-05 this folder gained what turns the public demo on, and none of it has run on
+Azure.** The template has a switch, `demo`, off unless it is asked for. With it on, both
+containers of the app are told they are the demo, and a second job, `azurebank-pool`, runs
+`recycle` every four hours as the app's database identity; the Deny policy lets a job of that
+name, and no other, run on a schedule. `deploy.py` reads from the app whether the demo is on,
+moves the pool job with the commit when it is, and has three more commands for the owner's
+terminal. Why, and what was weighed:
+[ADR-0064](../docs/adr/0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md).
+The third session, [Turn the demo on](#third-session-turn-the-demo-on), is steps 22 to 33 below.
+It has not been run: every value in it is what the code and the records lead to expect, and it
+says so. The steps of the first two sessions, and what they read back, are left as they were
+measured, with the demo off.
+
 What ran on Azure before, on 2026-10-02, is a throwaway trial: a resource group in the same
 subscription and region, created and deleted that day, in which requests of the shapes this
 folder makes were sent by hand, with `az rest` and go-sqlcmd, and not by this folder's template
@@ -56,6 +69,7 @@ expected, and what to do when Azure refuses a step is written down before the st
 - [What only the owner does](#what-only-the-owner-does)
 - [Before renaming or transferring the repository](#before-renaming-or-transferring-the-repository)
 - [Changing the infrastructure later](#changing-the-infrastructure-later)
+- [Turning the demo back](#turning-the-demo-back)
 - [Removing everything](#removing-everything)
 - [What is not here](#what-is-not-here)
 - [Measured on Azure](#measured-on-azure)
@@ -83,8 +97,8 @@ One resource group, `azurebank-demo`, in Italy North. `main.bicep` is run with `
 | `azurebank-app` | The managed identity the app signs in to the database as. It has no role on any Azure resource: it is only a user inside the database |
 | `azurebank-migrate` | The same for the migration job, with the right to change the schema |
 | `AzureBank deploy <letters>` | A custom role of nine actions: read and write the app and a job, start a job, read its executions, read the app's revisions and replicas. It cannot list secrets, delete or stop |
-| the policy definition | "AzureBank: one small replica, manual jobs" (`guardrails.bicep`), written at subscription level because a custom definition cannot live in a resource group. It refuses nothing by itself |
-| `azurebank-shape` | That policy assigned to the resource group, effect Deny. It refuses, whoever asks: more than one replica, a minimum above zero, several active revisions, plain HTTP, more than two containers, an init container, a container above half a vCPU; and for a job, a trigger other than Manual, parallel runs, an init container, a container above half a vCPU |
+| the policy definition | "AzureBank: one small replica, manual jobs, the pool job scheduled" (`guardrails.bicep`), written at subscription level because a custom definition cannot live in a resource group. It refuses nothing by itself. Until 2026-10-05 its name ended at "manual jobs", and the definition the first deployment created carries that name until a run of the template sends this one (step 23) |
+| `azurebank-shape` | That policy assigned to the resource group, effect Deny. It refuses, whoever asks: more than one replica, a minimum above zero, several active revisions, plain HTTP, more than two containers, an init container, a container above half a vCPU; and for a job, a trigger other than Manual, parallel runs, an init container, a container above half a vCPU. One exception, by name: a job named in the parameter `scheduledJobs` may have the trigger `Schedule`. `main.bicep` hands over one name, `azurebank-pool`; every other job is still started by hand, the migrate job among them. Until 2026-10-05 the rule had no exception, and no request under it has been sent to Azure yet |
 
 **Why the template names the environment's mode.** On this subscription a request for an
 environment that names no mode is taken as *Express*. Sent by hand on 2026-10-02, such a request
@@ -115,11 +129,36 @@ to one identity, by its client ID, and with no password. `azurebank_app` reads a
 
 | Resource | What it is |
 | --- | --- |
-| `azurebank` | The app: the BFF (0.25 vCPU, 0.5 GiB) and the API (0.5 vCPU, 1 GiB) in one replica, zero to one replica, single revision, with the identity `azurebank-app` attached. HTTPS ingress to the BFF's port 8080. The API listens on `127.0.0.1:5068` only: nothing outside the replica can reach it. Three probes, on the BFF. Eight secrets, each reaching a container by reference: seven application keys and the connection string, which holds a server name and a client ID and no password. The BFF does not keep its one line per request (`Serilog__MinimumLevel__Override__Serilog=Warning`); its warnings and its 5xx lines stay |
+| `azurebank` | The app: the BFF (0.25 vCPU, 0.5 GiB) and the API (0.5 vCPU, 1 GiB) in one replica, zero to one replica, single revision, with the identity `azurebank-app` attached. HTTPS ingress to the BFF's port 8080. The API listens on `127.0.0.1:5068` only: nothing outside the replica can reach it. Three probes, on the BFF. Nine secrets, each reaching a container by reference: eight application keys and the connection string, which holds a server name and a client ID and no password. The eighth key is the demo's, `demo-client-key`: only the `api` container is handed it, and nothing uses it while the demo is off. Both containers carry `Demo__Enabled`, written as `false` unless `demo` is true, and the `api` container `Demo__Claim__MaxPerClientPerDay=1000` (below). The BFF does not keep its one line per request (`Serilog__MinimumLevel__Override__Serilog=Warning`); its warnings and its 5xx lines stay. Until 2026-10-05 this row counted eight secrets, seven of them keys, and no setting of the demo: that is the app the first deployment created, and it stays so until the next run of the template ([Changing the infrastructure later](#changing-the-infrastructure-later)) |
 | `azurebank-migrate` | A manual job: the tools image with the argument `migrate`, no retry, 600 s, the identity `azurebank-migrate` attached, one secret (its own connection string, no password) |
 | two role assignments | The custom role, to the deployment identity, on the app and on the job and nowhere else. From here the workflow can change the app |
 | `azurebank-owner` | An action group with one e-mail receiver, given as a parameter |
 | three alert rules | E-mail only, all on the app: more than 66,667 requests in an hour; more than 3.3 GiB sent in a day; the replica running more than about 2.2 hours in a day (an average replica count above 0.093) |
+
+**With `demo=true` as well: two more, and the app is told it is the demo.** The switch is a
+parameter of the template, `false` by default. `secrets.ps1` writes it: what the deployed app
+does now, or `true` with `-DemoOn` (step 25). Added on 2026-10-05; none of it has been sent to
+Azure.
+
+| Resource | What it is |
+| --- | --- |
+| `azurebank-pool` | A scheduled job: the tools image with the argument `recycle`, which deletes the demo copies whose time is over and tops the pool up ([`docs/runbooks/demo-pool.md`](../docs/runbooks/demo-pool.md)). The schedule is `0 */4 * * *`, a variable of the template and not a parameter; Azure is expected to read it in UTC. One run at a time, no retry, 600 s (the parameter `poolTimeout`, 60 to 840), 0.25 vCPU and 0.5 GiB. It carries the identity `azurebank-app`, so it signs in to the database as the app does, never as the migration. Two secrets of its own, which the template writes from the two expressions it writes the app's from: the app's connection string and the app's PIN pepper. Four settings: those two by reference, `Demo__Enabled=true` as a plain word, and `Demo__Claim__MaxPerClientPerDay=1000` |
+| a third role assignment | The custom role, to the deployment identity, on the pool job: without it the workflow could neither read that job nor move its image |
+
+With `demo=true` both containers of the app carry `Demo__Enabled=true`: the page carries the
+demo's tag, a visitor claims a private copy, registration is closed, and only the owner of a
+claimed copy signs in (ADR-0063). The job waits for the app in the template. Expected of Azure and
+not provoked: when the app's own update fails, a job that waits for it is not created. That does
+not cover a new revision that never gets ready, which for Azure is an update that succeeded:
+step 25 says what is done then, before the job's next run.
+
+**Why 1,000 claims a day for one client.** `Demo__Claim__MaxPerClientPerDay` is 10 by default and
+1,000 is its range's maximum. The BFF counts a client by the address it sees, and no file in this
+folder tells it to trust a proxy's forwarded header, so behind the ingress it may see one address
+for every visitor: ten copies a day for everybody. What it sees there has not been measured
+(step 30), and until it has, the template writes 1,000 on the `api` container and on the job,
+from one variable (ADR-0063, decision 14). Every other number of the demo stays at its default on
+all three.
 
 **A ninth, only when it is asked for: an alert rule on the workspace.** Until 2026-10-03 the
 template built it with the others (nine more, four alert rules), and the first deployment created
@@ -132,18 +171,24 @@ day, and the parameter `logVolumeAlert` is now `false` unless a run passes
 
 **And a check that creates nothing.** A run with `deployApp=true` also deploys `app-inputs.bicep`
 as the nested deployment `azurebank-app-inputs`. Its parameters are the values the app needs, each
-with the length it must have: the image tag exactly 40 characters, the alerts' address and the
-seven secrets at least one character (the seven stay secure parameters there too). A value that
-does not fit fails that deployment, and the app, the job and the action group wait for it, so none
-of them is sent without its values: seen offline and on a local engine
-([Checking these files](#checking-these-files)), not yet on Azure. The check used to be the app's
-name, through `fail()`. A what-if works out no expression that reads a secure parameter, and on
+with the length it must have: the image tag exactly 40 characters, the alerts' address and seven
+of the eight secrets at least one character, and the eighth, the demo's client key, at least 32:
+the API refuses to start with the demo on and a shorter one (the eight stay secure parameters
+there too). A value that does not fit fails that deployment, and the app, the migrate job, the
+pool job and the action group wait for it, so none of them is sent without its values: seen
+offline and on a local engine for the tag, the address and the seven
+([Checking these files](#checking-these-files)), not yet on Azure. The client key's 32 characters
+have not been seen refused by any engine: the offline tests read the decorator in the compiled
+check. Until 2026-10-05 the check asked for seven secrets, and three resources waited for it.
+The check used to be the app's name, through `fail()`. A what-if works out no expression that reads a secure parameter, and on
 2026-10-03 it could name neither the app nor the role assignment on it (step 9). Now the name is
 the plain `azurebank`, and the same what-if, run again that day, named both.
 
 The environment variables of the two containers are the ones `compose.yaml` sets, plus the one
-Serilog setting on the BFF. The connection limits are the hosts' own defaults (ADR-0058); the
-template sets none.
+Serilog setting on the BFF and, since 2026-10-05, the demo's: `Demo__Enabled` on both, and on the
+`api` container `Demo__ClientKeySecret` and `Demo__Claim__MaxPerClientPerDay`. No container of
+the template carries a key id of the pepper or a previous pepper, and none a forwarded-headers
+setting. The connection limits are the hosts' own defaults (ADR-0058); the template sets none.
 
 Three container images, public in GHCR, tagged with the full commit SHA: `azurebank-api`,
 `azurebank-bff`, `azurebank-tools`.
@@ -167,6 +212,16 @@ amounts of Container Apps and of Log Analytics are the ones their pricing pages 
 **Expected each month:** the database, $4.83 to $4.99. The app costs nothing while it stays inside
 the free amounts: 0.75 vCPU and 1.5 GiB use both up together after 66.7 hours of a running replica.
 Past that, a replica-hour is $0.1134.
+
+**The pool job, with the demo on: computed, not measured.** Every four hours is 180 runs in 30
+days, at 0.25 vCPU and 0.5 GiB. A run of 30 s, which is what a migrate execution took on
+2026-10-03 (24 to 37 s), makes 1,350 vCPU-seconds and 2,700 GiB-seconds a month: 0.75 % of each
+free amount. If every run lasted its whole 600 s it would be 15 %, and 21 % at the largest
+timeout the template allows, 840 s. Expected, and not read on a cost line: that a job's seconds
+are billed on the app's two meters and count against the same free amounts. If none of them were
+free, a second of a run is $0.0000105 by the two rates above: $0.06 a month at 30 s a run, $1.13
+at 600 s, $1.59 at 840 s. No pool run has been timed on this database: the first fill's seconds
+(step 26) replace these.
 
 **The logs: $0 expected.** A cap of 0.05 GB a day is 1.50 to 1.55 GB a month, under the free 5 GB.
 Three things are not certain:
@@ -221,6 +276,33 @@ Past the free 5 GB, or without them, such a request costs about $2.30 a million 
 (computed from the 768 bytes) on top of $0.40 on the request meter: the credit goes nearly seven
 times faster, for whatever gets past the cap. A stranger can also fill the day's cap on purpose:
 the log is then dark until its reset, and a migration run on that day leaves a verdict and no text.
+So does a pool run: its exit code is read from Azure all the same, and its one summary line is
+not there to read.
+
+**What a stranger can make the demo hold, once it is on.** None of it costs money; each is a way
+the demo stops being usable. All of it is read from the code and its defaults, not seen on Azure.
+
+- **The pool is the only bound on claims.** While the cap for one client is 1,000 a day (above),
+  it stops nobody. What is left are the pool's own numbers, at their defaults: 50 free copies, a
+  top-up that builds nothing once the claims of the last 24 hours reach 150, 200 changing
+  requests in a copy, 24 hours for a copy
+  ([`docs/runbooks/demo-pool.md`](../docs/runbooks/demo-pool.md), sections 1 and 9). 50 claims
+  leave every other visitor with 429 `DEMO_POOL_EMPTY` until the next run, up to four hours
+  later; 150 in a day leave them so until the count lets a run build again.
+- **Both of the BFF's rate limits count by one function of the caller's address**
+  (`backend/src/AzureBank.Bff/Program.cs`, `ClientAddress.Of`). Ten a minute, together, for
+  sign-in, the claim, registration, re-authentication and the handle's rename
+  (`RateLimiting:AuthPermitLimit`, and the five actions of `BffAuthController` that carry that
+  policy); 300 a minute for every other request the limiter sees (`RateLimiting:GlobalPermitLimit`).
+  **If the app sees one address for every visitor, both are shared by everybody**: one request
+  every six seconds to any of the five doors answers everybody else 429 there, and a script at
+  five requests a second, or a handful of visitors at once, answers 429 to every call of every
+  signed-in visitor. The page itself would still load, since its files are served before the
+  limiter: the demo would look up while nothing in it works. Whether the app sees one address is
+  what step 30 measures; until then this is the case to expect.
+- **The database grows and nothing warns.** A run deletes a copy's users and everything of
+  theirs, and never an audit row (`docs/runbooks/demo-pool.md`, section 7). The database is Basic,
+  2 GB, and no alert watches its size.
 
 **What warns:** the three alert rules, by e-mail, all on the app. Nothing warns of the log's
 volume: the rule that was meant to did not count lines (step 20). And nothing warns that the cap
@@ -264,7 +346,9 @@ Rules for every command in this file:
 ## Create it once
 
 Two sessions. The first needs no image and can run before the workflow is on `main`. The second
-needs the workflow on `main`, and the GitHub environment in place before that.
+needs the workflow on `main`, and the GitHub environment in place before that. A third,
+[Turn the demo on](#third-session-turn-the-demo-on), needs the app deployed; it was written on
+2026-10-05 and has not been run.
 
 Every step that writes is marked **writes**. Run from the repository root.
 
@@ -382,10 +466,13 @@ Expected, each time:
   next reset (`quotaNextResetTime`). `OverQuota` means the log has been dark since the cap was
   reached.
 - **Jobs:** none before the app exists; afterwards exactly `azurebank-migrate`. A job named
-  `azurebank-probe` is the leftover of step 7: delete it.
+  `azurebank-probe` is the leftover of step 7: delete it. Once the demo has been turned on
+  (step 25), two are expected: `azurebank-migrate` and `azurebank-pool`.
 - **Identities:** before the app exists, nothing is listed. Afterwards `azurebank: azurebank-app`
   and `azurebank-migrate: azurebank-migrate`, and nothing else: each database identity on exactly
-  one resource.
+  one resource. Once the demo has been turned on, a third line is expected,
+  `azurebank-pool: azurebank-app`: the app's identity on the app and on the pool job, the
+  migration's on the migrate job alone.
 - **The environment's mode:** `WorkloadProfiles`, or the line that the answer names no mode and
   the logs go to `azure-monitor`; anything else is a stop. Microsoft's FAQ for Container Apps
   express (read on 2026-10-03) says that an environment with no running app or job and no recent
@@ -740,7 +827,7 @@ it printed the line above ([Measured on Azure](#measured-on-azure)).
 ```powershell
 $sha = git rev-parse origin/main
 try {
-    ./infra/secrets.ps1 -Action New -DeployApp -ImageTag $sha   # seven "generated", thrown away below
+    ./infra/secrets.ps1 -Action New -DeployApp -ImageTag $sha   # eight "generated", thrown away below
     Invoke-Template 'app'                                       # answer "no"
 } finally {
     ./infra/secrets.ps1 -Action Remove
@@ -753,7 +840,11 @@ action group, three alerts), the four `Modify` lines of step 3, nothing deleted,
 deployment and creates nothing, so it should have no line, as the policy's module had none at
 step 3. When this step ran, on 2026-10-03, the template still built the alert on the workspace
 with the others, so nine were expected that day, four alerts among them. The next paragraph is
-the record of that day and keeps its numbers.
+the record of that day and keeps its numbers. Since 2026-10-05 the script's report names eight
+generated secrets where it named seven: the eighth is the demo's client key, which the app holds
+whether the demo is on or off. The what-if's eight resources are the same eight: the switch
+`demo` is off unless `-DemoOn` is passed, and the pool job and its role assignment are built
+only with it on.
 
 On 2026-10-03, on the template as it was then, this what-if listed seven to create (the job, one
 role assignment, the action group, the four alerts), the same four `Modify` lines as step 3, and
@@ -885,7 +976,7 @@ what the registry answers for a private one was not seen that day.
 
 ```powershell
 try {
-    ./infra/secrets.ps1 -Action New -DeployApp -ImageTag $sha   # seven "generated" on the first run
+    ./infra/secrets.ps1 -Action New -DeployApp -ImageTag $sha   # eight "generated" on the first run (seven on 2026-10-03)
     Invoke-Template 'app'
 } finally {
     ./infra/secrets.ps1 -Action Remove
@@ -1147,6 +1238,473 @@ On 2026-10-03: `http://` answered 301 to `https://` of the same name; `/health/r
 exit code 28). The last reads of that day, before `az logout`, are under
 [Measured on Azure](#measured-on-azure).
 
+### Third session: turn the demo on
+
+Written on 2026-10-05. **No step of this session has been run.** Every "expected" below is what
+the code, the offline tests and the records of the first two sessions lead to expect; where it
+is something of Azure's that nobody has seen, the step says so. A read that differs from what
+is expected is a stop, unless the step names what is done instead.
+
+**Before it.** `main` holds this folder as it is now and the application's screens for the claim,
+and its CI is green. The owner is at the machine: every step that writes waits for the owner's
+word, given for that step, as in the first two sessions.
+
+**The order, and why.** The policy first, in a run of its own (step 23): how soon a changed
+definition is enforced has not been measured. Then a deployment with the demo still off
+(step 24), so that the app runs images that read the flag. The images last recorded on the app,
+those of `8552f935`, do not: `git grep -n DemoOptions 8552f935 -- backend/src/AzureBank.Api
+backend/src/AzureBank.Bff` prints nothing, so a flag set on them would be read by nobody. Then
+the demo on (step 25), the first fill by hand (26), a browser (27), a deployment with the demo on
+(28), two refusals made due (29), the address the app sees (30), a run that ends with a signal
+(31), the stop and the start (32), and the end (33). Each step is meant to leave a state that
+fails closed.
+
+**Not near a run of the pool job.** By its schedule the job is expected to start at minute 0 of
+the hours 0, 4, 8, 12, 16 and 20, UTC. Step 25 is started only when the next of those is more
+than 60 minutes away and the last one more than ten minutes past, and its first note is that next
+time. The margin is for the step and for what is done when it does not end well: a run of the
+template, the wait for the revision, `--check` with its waits and, if one of them fails, the
+deletion or the stop that has to come before the job's first run. A run of the job beside an app
+that is not proved to be the demo is the one moment a registration could commit beside the pool.
+
+**What is kept of a step.** From a terminal the smoke test prints the app's address (the mask is
+for GitHub Actions), so notes that hold a step's output stay private. What `--pool-log` and
+`--app-log` print is kept in no file and pasted nowhere: what is written down is the count of
+lines and the one thing the step reads from them.
+
+The two variables of step 16 are set for every `deploy.py` command below:
+
+```powershell
+$env:AZURE_SUBSCRIPTION_ID = az account show --query id --output tsv
+$env:AZURE_RESOURCE_GROUP  = $group
+```
+
+#### 22. Look before writing (operator; reads, and one sign-in that is refused)
+
+```powershell
+python infra/deploy.py --check                # first: the line it leaves in the log is read last
+```
+
+Then the reads of step 1, and these:
+
+```powershell
+az containerapp show --name azurebank --resource-group $group --query 'properties.template.containers[].image' --output tsv
+git merge-base --is-ancestor e5107f0f '<the tag those images carry>'; "exit $LASTEXITCODE"
+az containerapp secret list --name azurebank --resource-group $group --query '[].name' --output tsv
+$deploy = az identity show --resource-group $group --name azurebank-deploy --query principalId --output tsv
+az role assignment list --assignee $deploy --all --output json | ConvertFrom-Json |
+    ForEach-Object { '{0}: {1}' -f $_.roleDefinitionName, (($_.scope -split '/')[-2..-1] -join '/') }
+az policy assignment show --name azurebank-shape --resource-group $group --output json | ConvertFrom-Json |
+    ForEach-Object { $_.displayName; $_.parameters | ConvertTo-Json -Depth 4 -Compress }
+az monitor metrics alert list --resource-group $group --query '[].name' --output tsv
+Show-Executions azurebank-migrate
+```
+
+The role assignments and the policy assignment go through `ConvertFrom-Json` and print names
+only: as they stand, both answers hold the subscription's ID.
+
+| Read | Expected |
+| --- | --- |
+| `--check` | On the app as the second session left it: "The app says the demo is off: the job azurebank-pool is not read and no secret is listed."; one line that the latest revision is the latest ready one and no other is active; "Smoke passed"; and at the end "nothing was moved". It wakes the replica and sends the one sign-in that is refused, so the API owes the log one line for it. Write down the minute |
+| The reads of step 1 | As step 1 has them with the demo off: one firewall rule; Entra-only `true`; the cap 0.05 and `RespectQuota` (`OverQuota` means the log is dark, and the last read of this step is then "not run"); one job; two lines of identities; `WorkloadProfiles` |
+| The images, and the `git` command | Two references on one tag. The last one recorded is `8552f935`, for which the command exits 1: the commit that makes the two hosts read the flag, `e5107f0f`, is not among its ancestors |
+| The secret names; the role assignments; the policy assignment | Eight names. Two rows, the custom role on `containerApps/azurebank` and on `jobs/azurebank-migrate`. The name the first deployment gave the policy, ending at "manual jobs", with `allowedJobTriggers` holding `Manual` and no `scheduledJobs` |
+| The alerts; the executions | Three rules; every execution `Succeeded` |
+
+The owner, in the portal: Cost analysis for the resource group, by meter, which is the read
+[Afterwards](#afterwards) asks for and the second session did not take. Expected: the database's
+own row, the three environment meters and the Dedicated one at 0, nothing on log ingestion. "No
+rows" is "not run".
+
+**Last, not sooner than eight minutes after `--check`:** the owner, in the workspace's Logs page,
+over the last 30 days, one query run twice with one word changed.
+
+```text
+ContainerAppConsoleLogs
+| where ContainerAppName == 'azurebank' and ContainerName == 'api'
+| where Log contains 'auth/login'
+| summarize count() by Answered = extract('responded ([0-9]+)', 1, Log)
+```
+
+The query is written from the columns step 16 read and from the API's line as a local stack of
+this code printed it on 2026-10-05, `HTTP "POST" "/api/auth/register" responded 500 in ...ms`; it
+has not been sent to the workspace.
+
+- **With `auth/login`, the control.** Expected: at least this step's own line, answered 401.
+  While the workspace still keeps them (30 days), also the lines of the smoke tests of
+  2026-10-03, one or more for each of that day's six deployments.
+- **With `auth/register`.** Expected: no line, or only lines answered 500. On a database that
+  holds a schema and no role a registration cannot commit: it is answered 500 and leaves no row
+  ([Not measured yet](#not-measured-yet) has the local measurement). A line answered 201 means a
+  user exists, and the first pool run will then exit 13 (step 26).
+
+**The second read counts only if the first showed its line.** "No line" is otherwise no proof: a
+line takes minutes to arrive, a capped workspace takes none until its reset, and the shape of the
+line is a reading until the control has matched it. If the control shows nothing after a second
+read, the read of registrations is "not run", and the owner decides on step 25 knowing that the
+count of users is unread: the first pool run's own line (`foreignUsers`) is then its first read.
+Even with its control this is a supporting read: it covers 30 days, and a day the log was dark
+left no line.
+
+**Stop if** any read differs from the last record in a way nobody can explain.
+
+#### 23. The policy: one named job may run on a schedule (operator, **writes**)
+
+```powershell
+try {
+    ./infra/secrets.ps1 -Action New          # the foundation's file: no secret, and deployApp is false
+    Invoke-Template 'pool-policy'
+} finally {
+    ./infra/secrets.ps1 -Action Remove
+}
+```
+
+Expected in the what-if, before "yes": `Modify` on the policy definition (its name, its
+description, its rule, a second parameter) and on the policy assignment (its name, the second
+parameter); `Modify` on the role definition, whose description changed on 2026-10-05 and nothing
+else of it; the `Modify` lines step 3 saw at each run; nothing to create and nothing to delete.
+The app, the migrate job, the action group, the alerts and the two role assignments are not in a
+run with `deployApp=false`. Expected: each is not listed, or listed as `Ignore`, which is what
+step 3's what-if printed for a database that exists and is not in the template. No what-if of
+this folder has been run without the app on a group that holds one.
+
+| Read back | Expected |
+| --- | --- |
+| The deployment's answer | `Succeeded` |
+| The policy assignment, as step 22 reads it | The new name; `allowedJobTriggers` holding `Manual`; `scheduledJobs` holding `azurebank-pool` |
+| The definition, found as [Removing everything](#removing-everything) finds it, its `policyRule` | The exception is in the first rule on a job |
+| `az containerapp job list`, `Show-Identities`, the app's latest revision | As step 22 read them |
+
+**If the what-if would create, change or delete the app, a job, the action group or an alert:**
+answer "no" and stop. **If Azure refuses the definition:** stop, and bring the refusal to the
+owner. `allowedJobTriggers` with `Schedule` in it is not the way round: it lets every job of the
+group be put on a schedule, the migrate job among them, and the file does not remember it
+(ADR-0064).
+
+**The way back:** `Invoke-Template 'pool-policy-back' @('scheduledJobs=[]')` with the same file.
+The policy then refuses what it refused before.
+
+#### 24. Deploy `main`'s head, with the demo still off (operator, **writes**; the owner approves the run)
+
+```powershell
+gh workflow run deploy.yml --ref main -f action=build-push
+gh workflow run deploy.yml --ref main -f action=deploy
+```
+
+| Read back | Expected |
+| --- | --- |
+| The summary of `build-push` | Three digests |
+| The log of `deploy` | "the listing was refused"; "The app says the demo is off: the job azurebank-pool is not read and not moved."; the migration's verdict, `Succeeded` with exit code 0; "Smoke passed"; the address masked |
+| The five counts of step 17, in the raw log | 0 each |
+| The app's images, and the `git` command of step 22 with their tag | The head's tag; exit 0 |
+
+After it the app runs code that reads the flag, and no container carries the flag yet, which
+the code reads as off: registration is as open as it was, and the page carries no tag.
+
+**The way back:** `python infra/deploy.py --app-only` with `IMAGE_TAG` the tag step 22 read
+([When something fails](#when-something-fails), "Going back by hand"). **If the run fails and
+puts the app back:** stop. Step 25 is not run on the earlier images.
+
+#### 25. Turn the demo on (operator, **writes**)
+
+Its first note is the UTC time of the job's next run, which must be more than 60 minutes away.
+Only if the `git` command of step 24 exited 0.
+
+```powershell
+try {
+    ./infra/secrets.ps1 -Action New -DeployApp -DemoOn
+    Invoke-Template 'demo-on'
+} finally {
+    ./infra/secrets.ps1 -Action Remove
+}
+Test-Path $folder                                              # False
+python infra/deploy.py --check
+Show-Executions azurebank-pool                                 # nothing
+Show-Executions azurebank-migrate                              # the control: its executions
+```
+
+`-DemoOn` is passed once. From then on the script reads the switch from the app's two containers
+and keeps it, as it keeps the tag and the secrets
+([Changing the infrastructure later](#changing-the-infrastructure-later)).
+
+| Read back | Expected |
+| --- | --- |
+| The script's report | Seven secrets "kept from the deployed resource"; `demoClientKeySecret: generated`; `demo: true, asked for with -DemoOn`. No value is shown |
+| The what-if, before "yes" | `Modify` on the app: its secrets, and the settings of both containers. `Create` for the job `azurebank-pool` and for one role assignment. The `Modify` lines of the earlier runs. Nothing to delete |
+| The deployment's answer | `Succeeded` |
+| `az containerapp secret list --name azurebank --resource-group $group --query '[].name' --output tsv` | Nine names |
+| The settings of each container, by name: the block below | `bff`: 6 settings, `Demo__Enabled` `true`. `api`: 13 settings, `Demo__Enabled` `true` |
+| `az containerapp job show --name azurebank-pool --resource-group $group --query properties.configuration`; the same with `--query 'properties.template.containers[0].args'` | `Schedule`, the expression `0 */4 * * *`, parallelism 1, retry limit 0, timeout 600, two secret names; `recycle` |
+| `az containerapp job list --resource-group $group --query '[].name' --output tsv`; `Show-Identities`; `az identity list-resources --resource-group $group --name azurebank-app` | Two jobs; a third line, `azurebank-pool: azurebank-app`; the app and the pool job |
+| The role assignments, as step 22 reads them | Three rows, the custom role on `containerApps/azurebank`, `jobs/azurebank-migrate` and `jobs/azurebank-pool` |
+| `--check` | It waits until the revision that answered before this step is inactive, and says so: "no other revision is active: what answers now is that revision". Then "The pool job's PIN pepper and connection string are the app's"; "It is the public demo: the page carries the demo's tag, and a registration with an empty body was refused as closed."; and at the end "the demo is on and the job azurebank-pool is in shape; the smoke test passed; nothing was moved." |
+| The two `Show-Executions` | Nothing for the pool job; the migrate job's executions, so that the silence is the function's answer and not its failure |
+
+```powershell
+(az containerapp show --name azurebank --resource-group $group --output json | ConvertFrom-Json).properties.template.containers |
+    ForEach-Object { '{0}: {1} settings, Demo__Enabled {2}' -f $_.name, @($_.env).Count, ($_.env | Where-Object name -eq 'Demo__Enabled').value }
+```
+
+**Step 26 is not started unless `--check` passed.** "Ready" is not enough. The revision is made
+by a run of the template, outside `deploy.py`, and until the one that ran before is inactive an
+answer could still come from it. That one has its registration open, and step 26 is the run that
+creates the roles a registration needs.
+
+From here the app is the demo with an empty pool: a claim is answered 429 `DEMO_POOL_EMPTY` and
+registration is closed. That state fails closed and may be left standing until the job's next
+run, which fills the pool by itself.
+
+**If the policy refuses.** Where a run of the template meets a policy's refusal has not been
+measured: the refusals seen so far were single requests (step 15, and the trial). So the outcome
+is read, not assumed:
+
+| What is seen | Then read | What it is, and what is done |
+| --- | --- | --- |
+| `Invoke-Template` stops with "The what-if failed." and Azure's text names the policy | The app's secret names; `--check`; the job list | Nothing was sent: the what-if comes before the deployment. Expected: eight names, no tag, one job. Wait 15 minutes, then the step again as written |
+| The deployment fails with `RequestDisallowedByPolicy` | The same three, and the app's latest revision | Nine names, the tag, a new revision and one job: the app's part was applied and the job was refused. The app is the demo with an empty pool and no job, which fails closed. Eight names, no tag and the revision step 24 left: it was refused before anything was applied. Either way wait 15 minutes and run the step again as written: with nine names the script keeps the eight keys and the switch, with eight it generates the client key again. Anything else: stop |
+
+The third refusal is a stop.
+
+**If the deployment answers `Succeeded` and `--check` does not pass, or the app's latest revision
+is not its latest ready one.** "Do not go on" is not a safe stop here: the job exists, it is
+scheduled, and the revision that answers may still be the earlier one, with its registration
+open. At its next run the job would create the roles and the copies beside an open registration,
+which is the state ADR-0063 warns of, and the one road back from it is a new database. So, before
+the time noted at the top of the step, and before any diagnosis:
+
+1. `Show-Executions azurebank-pool`, and its control, `Show-Executions azurebank-migrate`.
+2. **Nothing is printed for the pool job:** on the owner's word,
+   `az containerapp job delete --name azurebank-pool --resource-group $group --yes`, and its
+   absence is read back: one job in the list, two role assignments. No run can now fill
+   anything.
+3. **An execution is printed, in any state:** the pool may exist. On the owner's word the app is
+   stopped ([Stop the app by hand](#stop-the-app-by-hand)). From here the roads are the ones
+   [Turning the demo back](#turning-the-demo-back) has for a pool job that has run: never
+   `demo=false`.
+4. Only then the diagnosis: the app's revisions with their `active` flag, and
+   `python infra/deploy.py --app-log 15`. Then the step again, which brings the job back, or,
+   after case 2 only, the first road of [Turning the demo back](#turning-the-demo-back).
+
+#### 26. The first fill (operator, **writes**: the pool's rows and the two roles)
+
+```powershell
+python infra/deploy.py --pool-run
+Show-Executions azurebank-pool
+python infra/deploy.py --pool-log             # when the lines are due
+python infra/deploy.py --check
+```
+
+| Read back | Expected |
+| --- | --- |
+| The run's verdict, and the command's last line | `Succeeded`, exit code 0 (done); "The pool run ended well". Its seconds are the first measurement of a fill on this database: write them down |
+| The run's summary line, read with `--pool-log` | `pool: free=50 was=0 claimed=0 claims24h=0 clientsAtCap=0 seeded=50 deleted(expired=0 hardStop=0 staleFree=0 failed=0) swept(idempotency=0 grants=0) tombstones=0 foreignUsers=0 ceiling=no result=PoolOk` |
+| The seconds from the run's first line to that one | On a local server, 4.63 s for 50 copies in a first fill (ADR-0062). On Basic, 5 DTU: not measured |
+| `--check` | As in step 25 |
+
+By the run's exit code:
+
+- **0:** go on.
+- **1: no second start before the run's lines have been read.** Wait until they are due and read
+  them with `--pool-log`. On this database no role exists yet, and the tool creates the roles
+  first and outside every copy (`backend/tools/AzureBank.Seeder/Pool/DemoCopyBuilder.cs`), so a
+  right that `azurebank_app` lacks is expected to show here as exit 1, with a `recycle failed:`
+  line and SQL Server's permission error, 229, in the exception printed with it, and not as exit
+  12. That is read in the code, not run. A permission error in the lines: stop, with no second
+  start, and bring the line to the owner. A line that says the database was not reached in time:
+  the step again, once; a second such exit 1 is the owner's decision on the job's connect
+  timeout. No line at all after a second read: stop, and read the log's cap.
+- **2:** the job's configuration is wrong. Stop.
+- **12:** a copy could not be built although the roles were created. Stop, and bring the line.
+  With 229 in it, `azurebank_app` can write the roles' table and not a copy's: what a missing
+  right looks like once the roles exist, which is how it was measured locally
+  (`backend/tools/AzureBank.Seeder/README.md`).
+- **13:** a user outside every copy exists. Stop. Nothing is deleted, and the app stays as it is,
+  which fails closed: the one road the records name is a new database, by the owner's own hands
+  ([Turning the demo back](#turning-the-demo-back)).
+- **14, or "exit code not reported":** stop, and bring the line. With no code reported the
+  command starts nothing again: `Show-Executions azurebank-pool` or `--pool-log` with the run's
+  name reads the code once Azure has it.
+
+**If the start itself is refused:** that a job on a schedule can also be started by hand has not
+been tried here. Wait for the job's next run and read that execution. **If a run of the schedule
+got there first:** the command refuses while it runs. Read that execution's verdict and line
+instead, by its name.
+
+**There is no way back from this step, and none is needed:** the copies are rows nobody can sign
+in to until they are claimed. From here the switch is no longer a way back
+([Turning the demo back](#turning-the-demo-back)).
+
+#### 27. From a real browser (owner; **writes**: two copies are claimed)
+
+A browser window in the foreground, at the app's address.
+
+| What is done | Expected |
+| --- | --- |
+| The page, and the demo's button | The start page; then a private copy: the dashboard with two accounts, at 12,450.00 and 2,300.00 |
+| A deposit; a transfer to one of the copy's two contacts, with the PIN 123456 | Both succeed. The transfer is the proof that the job's pepper is the API's. Where a PIN is checked alone, read what the screen says and `data.verified` in the answer's body, never the status |
+| The reveal of an account number; "Start over" | A second copy, with the starting balances |
+| The network panel, for the claim, `/bff/auth/me` and the transfer | Each succeeds, the claim and `/bff/auth/me` with 200; no token is in a body the page keeps |
+
+It spends two of the 50 copies and two of the day's 150 claims, and their audit rows stay. A
+deployment after this step ends the browser's session.
+
+It is the one step that proves two things nothing else in this session does: that the API obeys
+its flag, and that a PIN hashed by the job is taken by the API. Step 28 follows it, so each
+answer that is not the expected one has its rule:
+
+| What is seen | What it means | What is done |
+| --- | --- | --- |
+| The claim answers 429 `DEMO_POOL_EMPTY` | The pool holds no free copy although step 26 ended well | `Show-Executions azurebank-pool` and `--pool-log`: read the line. Stop |
+| The claim answers 429 with the rate limiter's code | The ten a minute that sign-ins share were spent, by this session's own checks | Wait a full minute, and once more. A second one: stop |
+| The claim answers 404 | The BFF has the flag, since `--check` saw the tag, and the API does not read its own | Stop. Step 28 is not run. `python infra/deploy.py --app-log 15` for the API's lines |
+| The claim answers 500 or 503 | The API could not serve it | `--app-log 15`. Stop |
+| The transfer is refused for its PIN, or a PIN checked alone shows `data.verified` false. The status is 200 either way | The job's pepper is not the API's, whatever `--check` printed: every copy this job built fails every PIN | Stop. Step 28 is not run. On the owner's word the app is stopped ([Stop the app by hand](#stop-the-app-by-hand)), so that no visitor meets a copy whose PIN fails. `--check` once more, and its line kept: "the app's" beside a PIN that fails is a finding of its own |
+| The dashboard does not show the two accounts with those balances | The copy is not the one the tool describes | Stop; the line of step 26 and `--app-log 15` |
+
+In each of these cases the later steps wait for the owner's decision.
+
+#### 28. The same road as the deployment identity, with the demo on (operator, **writes**; the owner approves the run)
+
+```powershell
+gh workflow run deploy.yml --ref main -f action=deploy
+python infra/deploy.py --check                # afterwards, as the owner
+```
+
+| Read back | Expected |
+| --- | --- |
+| The run's log | "Running now" with four image references; no refusal for a pool run in progress; "Moving azurebank-migrate", the verdict; "Moving azurebank-pool"; the new revision; "Smoke passed", naming the demo's tag and the closed registration |
+| The five counts of step 17, in the raw log | 0 each |
+| `az containerapp job show --name azurebank-pool --resource-group $group`: its container's image and its `properties.configuration` | The head's tag. The configuration as step 25 read it: a change of the image changed nothing else |
+| `--check` | As in step 25. With no copy spent, it is what shows that the deployment identity's change left the job's pepper where it was |
+
+It is the first time the deployment identity reads and changes the pool job. **If Azure asks for
+a right on the identity the job carries,** the run stops with its own sentence and no role is
+added ([If Azure says no](#if-azure-says-no)).
+
+**The way back:** the put-back is the script's own; by hand, `--app-only`.
+
+#### 29. The policy must still refuse: another name on a schedule, and two runs at once (operator; two **writes** that must change nothing)
+
+**First.** As the owner, one request for a job `azurebank-not-the-pool` in the environment, its
+body in a file: the trigger `Schedule`, an expression that fires once a year, one small container
+of the image step 7's probe used. The body is step 7's `$job` with the name, the trigger and a
+`scheduleTriggerConfig` changed, and no program in it.
+
+| Read back | Expected |
+| --- | --- |
+| The answer | A failure with `RequestDisallowedByPolicy` |
+| `az containerapp job list --resource-group $group --query '[].name' --output tsv` | Two names, as before |
+
+**If it is accepted:** on the owner's word, given at once, that job is deleted (it is this step's
+own and has not run), its absence is read back, and the session stops: the exception is wider
+than a name. The policy goes back by step 23's way back until a change has put it right.
+
+**Second.** Not within ten minutes of a run of the job. As the owner, one PATCH of the pool job
+that asks for two runs at once, as step 15 asks for two replicas: the body in a file, holding
+`scheduleTriggerConfig` with the expression and the completion count step 25 read, and
+`parallelism` 2.
+
+| Read back | Expected |
+| --- | --- |
+| The answer | A failure with `RequestDisallowedByPolicy`. It would be the first time the rule on a schedule's parallelism is seen at work ([Not measured yet](#not-measured-yet)) |
+| The job's `properties.configuration` | As step 25 read it, whole |
+| `--check` | The job in shape |
+
+**If it is accepted:** put 1 back at once with the same request, read the configuration back
+whole against step 25's, and stop. The one rule that bounds a scheduled job does not hold, and
+until it does, two runs at once are bounded by `deploy.py`'s shape check alone, at a deployment
+and at a `--check`.
+
+**What this step does not make due.** Nothing on Azure refuses a changed expression: the policy
+has no rule for one, and the deployment identity may write the whole job. A schedule changed to
+every minute is caught by `deploy.py`'s shape check, at the next deployment or `--check`, and by
+nothing sooner.
+
+#### 30. The address the app sees (operator; **writes** nothing in the database; spends the shared sign-in limit for a minute)
+
+Network A is this machine's own connection. Network B is this machine through a phone's mobile
+data. The request is the smoke test's own sign-in, for an address nobody has, so nothing is
+written.
+
+| Measurement | How | What is read |
+| --- | --- | --- |
+| The first | From A: twelve sign-ins inside a minute, each status printed. Then, at once, from B: one | From A: how many answer 401 before the first 429. From B: 401 or 429 |
+| The second | `python infra/deploy.py --app-log 15`, its first run against the workspace, its output kept in no file | The rate limiter's warning names the client it rejected. It is compared with A's own public address, and what is written down is "A's own address" or "another, the same for A and B", and the count of warnings: never the value. If the log's cap was reached that day, the read is "not run" |
+| The third | The first two again, after the app has been at zero replicas, and after step 28's new revision | The same client, or another |
+
+Twelve sign-ins are enough for both of the BFF's limits: one function of the caller's address
+feeds the ten a minute and the 300 a minute alike
+([What it costs, and what bounds it](#what-it-costs-and-what-bounds-it)).
+
+What follows from each answer:
+
+| What is read | The cap of 1,000 claims a day for one client | Reading the client's address through the ingress | The public link |
+| --- | --- | --- | --- |
+| B is answered 429, and the warning names one client that is not A's own address | Stays | A change of the BFF's code is needed, and this is its measurement | Not published before that change is deployed and the first measurement, run again, answers 401 for B |
+| A needs more than eleven requests to meet a 429, or B's answer changes between repeats | Stays | Needed; it must take a range of addresses, not one | The same |
+| B is answered 401 every time, and the warning names A's own public address | Goes back to its default of 10: a change takes the setting out of the `api` container and of the job, and one run of the template applies it | Not needed for the link | Its other preconditions only |
+| The third measurement names another client than the second | As the first row | Needed; a range, or a rule that survives a new revision | The same |
+
+Whatever is read replaces "not provoked" in the row of [Not measured yet](#not-measured-yet)
+about the shared sign-in limit: in words, never the address.
+
+#### 31. A run that ends with a signal, and the metrics (operator; **writes** one top-up)
+
+The run must find at least one free copy and fewer than 50. So it is started after a claim and
+before the job's next run tops the pool up again: after step 27 the pool is expected to hold 48
+free copies until then, and if a run came in between, one more claim from the browser comes
+first. As the owner, one start of the pool job whose execution carries the job's own container
+with one more setting, `Demo__Pool__LowMark=50`: the low mark may be as high as the target
+(ADR-0062). The body travels in a file. No secret is in it: the two secrets stay references.
+
+| Read back | Expected |
+| --- | --- |
+| `Show-Executions azurebank-pool` | That execution, with exit code `[10]`. Its status is what this step is for: how Azure words an execution whose container exits with a code that is not 0 and is not a failure. `Failed` is expected, since an execution that exited 7 read `Failed` in the trial |
+| `python infra/deploy.py --pool-log '<that execution>'` | "exit code 10 (done, with a signal: the pool was low (PoolLow))"; the summary line with `was` below 50, `seeded` the difference and `result=PoolLow` |
+| `python infra/deploy.py --check` | The job in shape, and its two secrets the app's. Expected and not measured: a start whose body was written by hand changes that execution and not the job |
+| Reads only: `az monitor metrics list-definitions` for the pool job and for the database; one `az monitor metrics list` of the job's execution metric over the last hour, and of the database's size | The names and the dimensions, and whether a time series exists at all. An alert on a failed pool run, or on the database's size, is built on what these show and not before ([What is not here](#what-is-not-here)) |
+
+**If Azure refuses a start that carries a setting:** the signal is recorded as not provoked, and
+the metrics are read all the same.
+
+#### 32. Stop the app and start it, once (owner's sign-in; **writes**)
+
+The two calls of [Stop the app by hand](#stop-the-app-by-hand). It is the way back that takes
+minutes, and until this step no record shows it run.
+
+| Read back | Expected |
+| --- | --- |
+| After the stop: the app's properties whose names end in `State` or `Status`, read through `ConvertFrom-Json`; the latest revision's `runningState`; its replicas; what the address answers | One of them says the app is stopped, and there is no replica. **Which property says it, and with which word, is in no file of this repository.** The step writes down the name and the value it read, and from then on that read is "the app's state" wherever this document asks for it. What the address answers then is not measured: expected, something that is not the page |
+| After the start: `--check` | As in step 25 |
+
+The deployment identity can neither stop nor start the app: only the owner's sign-in can.
+
+#### 33. The end (operator; reads)
+
+The reads of step 22 once more, with what they are expected to give now: two jobs, three lines of
+identities, nine secret names, three role assignments, three alerts, the policy under its new
+name with `scheduledJobs`. Then the day's log volume by table ([Afterwards](#afterwards)),
+`Show-Executions` for both jobs, and `Test-Path $folder`, `False`.
+
+**A run that nobody started.** A job on a schedule has never been seen accepted here, and never
+seen starting by itself. The session started the pool job twice by hand, at steps 26 and 31, and
+knows those two executions by name. This step is not closed before one run of the schedule after
+step 25 has been read:
+
+| Read back | Expected |
+| --- | --- |
+| `Show-Executions azurebank-pool` | An execution whose name is neither step 26's nor step 31's, started at minute 0 of an hour that is a multiple of four, UTC, with its status and its exit code: 0, or 10 if copies were claimed since the run before |
+| `python infra/deploy.py --pool-log '<that execution>'` | Its summary line, when it is due |
+| The subscription's activity log for the resource group over the last eight hours, read through `ConvertFrom-Json`: for each event whose operation is `Microsoft.App/jobs/start/action`, its time, its status, and one word for its caller ("the owner", "another", "none"). Never the caller itself, and no resource ID | One event for each start by hand. For the run of the schedule: one, or none. Not measured, and this read settles it: it is what an alert on job starts could or could not see |
+
+**If the session ends before a run of the schedule has passed,** "a scheduled run, and its start
+event" stay under [Not measured yet](#not-measured-yet), with these three reads as what settles
+them, and they are taken at the owner's next sign-in. A schedule that never fires changes nothing
+a visitor sees until the free copies are gone, and no alert is built on the job: without this
+read nobody is due to notice.
+
+Then `az logout`, and what the session measured replaces every "expected" of steps 22 to 33.
+
 ### Afterwards
 
 - **48 hours after step 2, and again after the second session: the cost, by meter** (the portal's
@@ -1255,6 +1813,18 @@ that exists, since a run of the template removes nothing that exists.
 | The raw log of a run holds the server's name, the app's address, one of the five IDs or an address | Stop: the mask or the print is a defect |
 | The last-resort road cannot sign in | Its first half (run the job again and read its log) stands alone, and the failure's text goes to the owner. On 2026-10-03 it could not, as it was written then: with the tool's connect timeout of 10 s the driver had no token in time. With `Connect Timeout=60` in the string, as it is written now, it signed in ([A migration nobody can read](#a-migration-nobody-can-read)) |
 
+**Turning the demo on (steps 22 to 33).** Written on 2026-10-05; no request of these steps has
+been sent, so every row is a refusal that has not been seen.
+
+| If | Then |
+| --- | --- |
+| The policy definition with its exception by name is refused, or the what-if of step 23 would touch the app, a job, the action group or an alert | Answer "no" where it is the what-if, and stop. The parameter `allowedJobTriggers` with `Schedule` in it is not used to get round it: it would let the migrate job be scheduled too |
+| The run of step 25 is refused by the policy | Step 25's table: three reads say whether the app's part was applied; wait 15 minutes and run the step again as written. The third refusal is a stop |
+| Step 25's deployment answers `Succeeded` and `--check` does not pass | Before the job's next run: the pool job is deleted if it has no execution, the app is stopped if it has one (step 25). Only then the diagnosis |
+| The start by hand of step 26 is refused | Wait for the job's next run and read that execution |
+| A deployment as the identity is refused naming `userAssignedIdentities/assign/action` on the pool job (step 28) | Stop, as for the migrate job and the app: no role is created |
+| A scheduled job under another name is accepted, or two runs at once on the pool job are (step 29) | The job of the first is deleted, the parallelism of the second put back to 1, each at once and on the owner's word; then stop |
+
 ## Deploy a commit
 
 From `main`, in this order:
@@ -1272,21 +1842,33 @@ written once: an image that is already published is left as it is, and only the 
 
 1. checks that the three images can be pulled without signing in, then signs in to Azure as the
    deployment identity;
-2. reads the app and the job, prints what runs now (the three image references and the two revision
-   names), and stops if their shape has drifted: scale, revision mode, ingress, the two containers
-   and no init container, the job's trigger, parallelism and retry limit, and on each the one
-   database identity it must carry and no other. A drift in the identity names the field and the
-   ending it should have, never what was found;
-3. tries to list the app's secrets and goes on only if Azure refuses;
-4. moves the tools image on the migrate job, starts the migration once, and waits for that exact
+2. reads the app, and from its containers whether it is the public demo: `Demo__Enabled` as
+   `true` on both is on, on neither is off, and anything else stops the run. It reads the migrate
+   job, and the pool job only if the demo is on; with the demo off it says "The app says the demo
+   is off: the job azurebank-pool is not read and not moved.", and whether such a job exists is
+   not asked. It prints what runs now (the three image references, four with the demo on, and the
+   two revision names), and stops if a shape has drifted: the app's scale, revision mode,
+   ingress, its two containers and no init container; the migrate job's trigger, parallelism and
+   retry limit; and on each the one database identity it must carry and no other. A drift in the
+   identity names the field and the ending it should have, never what was found;
+3. with the demo on, checks the pool job's shape too: the trigger `Schedule`, the expression the
+   template writes, one run at a time, no retry, a timeout from 60 to 840 s, no init container,
+   one container named `pool` whose arguments are `recycle` and which has no command, and the
+   identity `azurebank-app`. Then it reads that job's executions once and stops if a run is, or
+   may still be, in progress: the migration is about to change the schema that run works on. A
+   run the schedule starts after that read is not seen;
+4. tries to list the app's secrets and goes on only if Azure refuses;
+5. moves the tools image on the migrate job, starts the migration once, and waits for that exact
    execution. When it ends, either way, it prints the verdict: the execution's name, status, start,
-   end, length, exit code and a one-word reason. A failed migration stops here: the app is not
-   touched;
-5. moves both app images in one request, waits up to 15 minutes for the new revision to be ready,
+   end, length, exit code and a one-word reason. A failed migration stops here: neither the pool
+   job nor the app is touched;
+6. with the demo on, moves the tools image on the pool job and reads its shape again. It never
+   starts that job: the template gives it a schedule;
+7. moves both app images in one request, waits up to 15 minutes for the new revision to be ready,
    and reads the app's shape again, as in step 2;
-6. waits until the revision that ran before is inactive, so that the answers below come from the
+8. waits until the revision that ran before is inactive, so that the answers below come from the
    new code;
-7. smoke test: `/` is the built page; `/health/ready` answers `Healthy` (not merely 200: the BFF
+9. smoke test: `/` is the built page; `/health/ready` answers `Healthy` (not merely 200: the BFF
    answers 200 `Degraded` when the API is down); one sign-in for an address nobody can register,
    sent to `/bff/auth/login`, must be refused with 401 and the code `INVALID_CREDENTIALS`. That
    answer means the BFF reached the API with its key and the API asked the database. It writes
@@ -1294,6 +1876,30 @@ written once: an image that is already published is left as it is, and only the 
    the schema is there, and 500 on a database with no table while `/health/ready` still says
    `Healthy`. The sign-in is the one check that fails when a migration did not run, and with
    identities it is also the one that fails when the app cannot sign in to the database.
+
+Until 2026-10-05 this list had seven steps and one job: steps 3 and 6 are the pool job's, and
+with the demo off a deployment is the seven it was.
+
+**With the demo on the smoke test asks two things more, and neither spends a copy.** The page
+must say what the app's containers say: it carries the demo's tag,
+`<meta name="azurebank-demo" content="true">`, exactly when the demo is on, so a page that says
+"demo" on an app set otherwise fails, and so does the reverse. And after the refused sign-in one
+more request is sent, only with the demo on: `POST /bff/auth/register` with the body `{}`, which
+must be answered 403 with the code `REGISTRATION_CLOSED`. It is tried and waited for as the
+sign-in is, and an answer that is not the refusal is told by its status and its error code,
+never by its body. With the demo off no registration is ever sent: the door is open then, and
+the request would register somebody. Both answers are read from the BFF's code and its tests,
+not from a running stack. With the demo on a deployment sends four requests and no cookie, and
+spends two permits of the ten a minute that sign-ins share.
+
+**What those two checks do not prove, and what does.** Both are answered by the BFF alone. That
+the `api` container carries the flag is read from the app, in step 2. That the pool job's PIN
+pepper is the API's is what `python infra/deploy.py --check` compares
+([Reading the logs](#reading-the-logs)). That a visitor is handed a copy and that a PIN is taken,
+end to end, is proved by a browser (step 27) and by nothing a deployment runs: a wrong pepper
+answers a PIN with 200 and `verified` false, so no status, alert or exit code shows it. No
+deployment claims a copy: a claim spends one, leaves audit rows, and its answer holds a copy's
+password, which must not reach a public log.
 
 **The workflow prints the migration's verdict and never its text.** The log of a public repository
 is public, and that text can name the server, an address or a value from a database error. Inside
@@ -1306,12 +1912,14 @@ looked for. The text could not be printed in time anyway: in the trial a line co
 six and a half minutes after it was written (the median), and the verdict as soon as the run had
 ended.
 
-**If step 5 or step 7 fails, the script tries to put the app back** on the template it had at
+**If step 7 or step 9 fails, the script tries to put the app back** on the template it had at
 step 2 (if that fails too, the run says the app may be serving a broken revision), under a new
 revision, and the run still fails, saying "put back to `<tag>`; the schema stays where the
-migration left it". The sign-in is tried up to four times and the last try decides. If the last
+migration left it". The pool job is not put back: it stays on the new tools image, as the migrate
+job does. The sign-in is tried up to four times and the last try decides. If the last
 try is rate limited (429) or gets no answer (the connection refused, reset, closed or timed out),
 nothing is proved either way: the run fails as *unproven* and the new revision is left in place.
+With the demo on the registration is tried the same way, and ends the same three ways.
 While the page or `/health/ready` gets no answer, they are asked again every five seconds for five
 minutes; still nothing then is a failure, and the app is put back.
 
@@ -1332,11 +1940,17 @@ From a terminal where the owner has run `az login`, with the two variables of st
 ```powershell
 python infra/deploy.py --job-log                  # the latest migration: its verdict, then what it printed
 python infra/deploy.py --job-log '<execution>'    # a named one
+python infra/deploy.py --pool-log                 # the latest run of the pool job, the same way
+python infra/deploy.py --pool-log '<execution>'   # a named one
 python infra/deploy.py --app-log 30               # what the app's two containers printed in the last 30 minutes
 ```
 
-`--app-log` takes 1 to 1440 minutes. Both commands show at most 5,000 lines, and both are refused
+`--app-log` takes 1 to 1440 minutes. Each command shows at most 5,000 lines, and each is refused
 inside GitHub Actions. The other way in is the portal: the workspace `azurebank-logs`, Logs.
+Two more commands of the owner's terminal read without the workspace, and are told at the end of
+this section: `--check`, which reads the running app and moves nothing, and `--pool-run`, which
+starts the pool job once and reads how that run ended. Until 2026-10-05 this section had the two
+log commands of the first deployment and no other.
 
 - **The cap comes first.** Each command starts by saying what the daily cap is doing: its value,
   `dataIngestionStatus`, and the next reset. `OverQuota` means the workspace has taken no line
@@ -1348,6 +1962,15 @@ inside GitHub Actions. The other way in is the portal: the workspace `azurebank-
   which had started inside the period (step 16). A name that is not letters, digits and hyphens,
   100 at most, is refused before anything is read. The query with the new filter is tested
   offline and has not been sent to the workspace yet.
+- **`--pool-log` reads a run of the pool job the same way.** The query differs by the job's name
+  and nothing else, and the verdict above the lines is worded with the pool job's own exit codes
+  (the table below). The line to look for is the run's one summary line, which starts `pool:`;
+  [`docs/runbooks/demo-pool.md`](../docs/runbooks/demo-pool.md) says what each of its counts
+  means. A run that left no such line did not finish, or was refused: its last line says which.
+  Before the pool job has run, the command ends with "The job azurebank-pool has no execution
+  yet."; on a deployment where the demo was never turned on there is no such job, and the
+  command ends in Azure's own words for that read. No run of the pool job exists yet, so this
+  command has read nothing on Azure.
 - **An empty answer is not proof that nothing was printed.** A line takes minutes to arrive (in
   the trial a median of 387 s and 398 s for two jobs, 486 s at the most; on 2026-10-03 the lines
   of step 16's migration were there when they were read, 11 minutes after they were written),
@@ -1375,6 +1998,95 @@ inside GitHub Actions. The other way in is the portal: the workspace `azurebank-
 - **It is a debugging record, not an audit trail.** Whoever wants to act unseen can fill the cap
   first. Who changed the app is read in the subscription's activity log, which the cap does not
   touch.
+
+**Reading the running app, and moving nothing.**
+
+```powershell
+python infra/deploy.py --check
+```
+
+A run of the template makes a revision outside `deploy.py`: no migration, no smoke test and no
+put-back follow it. `--check` is its read-back, and the read-back of any other step that could
+change the app or the pool job. Every request it sends is a read, but for two listings of
+secrets, which Azure asks for as a POST; a wrong answer puts nothing back. In order:
+
+1. the app, read until its last update has succeeded and its latest revision is its latest ready
+   one, for up to 300 s. An update that ended `Failed` or `Canceled` is not waited out;
+2. from that read, the app's address, whether it is the demo, and its shape, as a deployment
+   reads them;
+3. the app's revisions, read until no other one is active, for up to 180 s. "Ready" is not "the
+   one before has stopped answering": until every other revision is inactive an answer could
+   still come from one of them. When none is, the line is "no other revision is active: what
+   answers now is that revision";
+4. with the demo on, the pool job: its shape, as a deployment checks it, and then the secrets of
+   the app and of the job, listed as whoever is signed in. The job's PIN pepper and connection
+   string are compared with the app's, and one line says "The pool job's PIN pepper and
+   connection string are the app's", or the check fails and names which of the two differs. No
+   value, no part of one and no length is printed or put into an error. With the demo off the
+   pool job is not read and no secret is listed;
+5. the smoke test of a deployment, with the demo as the app says it.
+
+It ends "Checked: ... the smoke test passed; nothing was moved." It is the one mode of the script
+that lists a secret. A deployment never does: a workflow run goes on proving that its own
+identity is refused that listing.
+
+**Why the two secrets are compared.** The tool that builds the copies must hash their PINs with
+the pepper the API verifies them with. The template writes the job's two secrets from the two
+expressions it writes the app's from, so a run of the template is expected to leave them equal.
+But the job holds a copy of its own, and whoever may write the app can overwrite the app's secret
+alone ([What each identity can do](#what-each-identity-can-do)). With two peppers that differ, a
+PIN of a copy is refused while every status stays good: a PIN that is not taken is answered 200
+(`backend/src/AzureBank.Bff/Controllers/BffAuthController.cs`, `verify-pin`). So `--check` is run
+after every step that could change either side: a run of the template, a deployment, a start of
+the job by hand, a stop and a start of the app. "The app's" says the two secrets are equal. That
+a PIN is then taken, end to end, is what a browser proves (step 27).
+
+**Starting the pool job by hand, and reading how that run ended.**
+
+```powershell
+python infra/deploy.py --pool-run
+```
+
+The job runs on its schedule, and a deployment never starts it. This starts it once beside the
+schedule, as whoever is signed in: the first fill, or a refill by hand. It reads the job and
+checks its shape; reads its executions once and refuses while one is, or may still be, in
+progress, because two runs at once each top the pool up from their own count
+(`backend/tools/AzureBank.Seeder/README.md`); sends the start once and never again; waits for
+that exact execution for the job's timeout and two minutes; and prints its verdict. **How the run
+ended is told by the exit code of its container, never by the execution's status alone**: how
+Azure words an execution whose container exits with a signal's code has not been seen. Where the
+status could make the code doubted, the last line says "The exit code decides here, whatever
+status Azure gave the execution."
+
+| Exit code | What the script says of it | `--pool-run` |
+| --- | --- | --- |
+| 0 | done | ends well |
+| 1 | did not finish, and left no summary line; read its last line before it is started again | fails |
+| 2 | refused before anything was opened; the job's configuration must change | fails |
+| 10 | done, with a signal: the pool was low (PoolLow) | ends well |
+| 11 | done, with a signal: the pool was empty (PoolEmpty) | ends well |
+| 12 | needs a look: a copy could not be built (TopUpIncomplete) | fails |
+| 13 | needs a look: a user outside every copy exists (ForeignUsers) | fails |
+| 14 | needs a look: a copy could not be deleted (DeleteFailed) | fails |
+| 15 | done, with a signal: the day's claims held the top-up back (ClaimCeiling) | ends well |
+| not reported | Azure gave the run no exit code: how it ended is not guessed from its status | fails |
+
+The codes are the tool's own (`backend/tools/AzureBank.Seeder/Pool/PoolExitCodes.cs`), and what
+to do about each is in [`docs/runbooks/demo-pool.md`](../docs/runbooks/demo-pool.md). For a code
+from 10 to 15 the last line also names the count of the run's summary line that the code says to
+read: `was` for 10 and 11, `free` for 12, `foreignUsers` for 13, `failed` for 14, `ceiling` for
+15. The line itself is not fetched by this command: the last sentence names
+`python infra/deploy.py --pool-log <the execution>`, which reads it once the workspace has it.
+Whatever the code, the run is never started a second time by the script.
+
+Three things this command does not do. It asks the app nothing: the job's container carries the
+demo's flag as a plain word, so a run is expected to build the pool whatever the app's two
+containers say, and whether the app is the demo is `--check`'s to say before a run is started by
+hand. It does not see a run the schedule starts after its one read of the executions. And it does
+not keep what it read: the exit code is Azure's to keep and the line the workspace's, 30 days;
+`Show-Executions azurebank-pool` (under [Create it once](#create-it-once)) prints the codes
+Azure still holds, in brackets, and on 2026-10-03 an older execution of the migrate job no longer
+carried its own (step 16).
 
 ## Switching the logs off
 
@@ -1438,14 +2150,20 @@ az rest --method post --url "https://management.azure.com${app}/stop?api-version
 `/start` instead of `/stop` starts it again. The database keeps its daily charge while the app is
 stopped. The deployment identity cannot stop or start the app.
 
+Neither call has been run on this app. Step 32 runs both once, and reads which property of the
+app says that it is stopped: no file of this repository names it. With the demo on, stopping the
+app does not stop the pool job: it is expected to go on by its schedule, which harms nothing
+while nobody is served ([Turning the demo back](#turning-the-demo-back)). What a deployment or a
+`--check` reads of a stopped app has not been seen.
+
 ## When something fails
 
 | What you see | What it means | What to do |
 | --- | --- | --- |
 | `build-push`: "The registry gave no clear answer" | The registry did not say "no such manifest". For a package that has never been published it may answer `denied`, the same as for a private one | First publication only: run again with `-f first_publication=true`. Otherwise read the answer printed below the error and run again. The first publication of 2026-10-03 did not stop this way: it went through with the box left alone |
 | `deploy`: an image "is not published, or its package is not public" | The check before the Azure sign-in | Run `build-push` at this commit. If the image is published and the anonymous check of step 14 still answers `denied`, the owner sets that package to Public, which cannot be undone. On 2026-10-03 the three packages were public as soon as the workflow had published them |
-| "is not in the shape this script deploys onto" | Something changed the app or the job outside the template: its scale, its ingress, its containers, or the identity it carries. The words in brackets say when it was read. "(nothing was changed)": nothing was changed by this run. "(after its images moved)": the app had moved, and the run printed what Azure says about the revision and put the app back, as below. "(after its image moved)": the job runs the new tools image, no migration ran and the app was not touched. "(after the put-back)": the old images run again, and the shape is still wrong | Run the template again ([Changing the infrastructure later](#changing-the-infrastructure-later)). If it is the identity, read [If something was stolen](#if-something-was-stolen) first |
-| "This identity can list the secrets" | The identity holds more than the custom role. Nothing was changed | Look at its role assignments: there must be exactly two |
+| "is not in the shape this script deploys onto" | Something changed the app or a job outside the template: its scale, its ingress, its containers, or the identity it carries; for the pool job also its schedule, its timeout, its arguments or a command. The words in brackets say when it was read. "(nothing was changed)": nothing was changed by this run. "(after its images moved)": the app had moved, and the run printed what Azure says about the revision and put the app back, as below. "(after its image moved)": the job runs the new tools image; for the migrate job no migration ran and the app was not touched, for the pool job the migration had run and the app was not touched. "(after the put-back)": the old images run again, and the shape is still wrong. "(nothing was moved)" is `--check`'s, and "(nothing was started)" is `--pool-run`'s | Run the template again ([Changing the infrastructure later](#changing-the-infrastructure-later)). If it is the identity, read [If something was stolen](#if-something-was-stolen) first. A schedule or a timeout of the pool job that changed is read by this check and by nothing else on Azure: who changed it is in the activity log |
+| "This identity can list the secrets" | The identity holds more than the custom role. Nothing was changed | Look at its role assignments: there must be exactly two, or three once the demo is on, the third on the pool job |
 | "Azure asked for a right on a database identity" | Azure wants `assign/action` on the attached identity before it changes the job or the app. The request changed nothing and was not tried again | Stop. No role is added: [If Azure says no](#if-azure-says-no) |
 | "Execution ... is Running: a migration may still be running" | An execution blocks every later deployment until it ends, and the deployment identity cannot stop it | The owner: `az containerapp job stop --name azurebank-migrate --resource-group azurebank-demo --job-execution-name <name>` |
 | "The migration did not succeed", after its verdict | The job runs the new tools image; some migrations may be applied; the app still runs the old images. Exit code 1: failed after it reached for the server, and running it again is safe. Exit code 2: refused before any connection, and the configuration must change | `python infra/deploy.py --job-log` from a terminal, when the lines are due. If there is no text: [A migration nobody can read](#a-migration-nobody-can-read) |
@@ -1457,6 +2175,35 @@ stopped. The deployment identity cannot stop or start the app.
 | "The put-back ... did not succeed. The app may be serving a broken revision" | Both the deployment and the way back failed | Go back by hand, below |
 | "There is no log workspace azurebank-logs in this resource group" | The logs are switched off: nothing is kept | The verdict line is all there is |
 | The first request after the app was idle answers 503 with `Retry-After: 10` | The replica started from zero and its first sign-in to the database, token included, did not fit in the 10 s connect timeout. Possible; in the trial the first open of a process on a cold replica took 3,810 ms, measured once, and at step 7 of the first deployment 6,390 ms as the app's identity, once | Ask again. If it happens every time, it is the row of the probe's 10,000 ms in [If Azure says no](#if-azure-says-no) |
+
+**With the demo on, and the three commands that came with it.** Added on 2026-10-05. Each row
+quotes the sentence `deploy.py` prints, so a search of this page for the words on the terminal
+finds it. None of these has been seen on Azure: what each means is read from the script and from
+the code of the app.
+
+| What you see | What it means | What to do |
+| --- | --- | --- |
+| "The app is not in the shape this script deploys onto", then "Demo__Enabled is true in ['bff'] and not in ['api']", either way round, or "Demo__Enabled in the container ... is something the template never writes" | The app's two containers do not say the same thing about the demo, or one carries the setting with something other than the plain `true` or `false`. The template writes both from one switch, so somebody changed a setting by hand. No side is chosen: nothing was changed, and a `--check` that meets it says "(nothing was moved)" | `secrets.ps1` refuses such an app as well ("The two containers of the deployed app disagree about Demo__Enabled. Nothing was written."), so the owner first puts the setting right on the app itself, then runs the template and `--check`. Which value is right is not a guess: if the pool job has an execution, it is on ([Turning the demo back](#turning-the-demo-back)). This repair has not been rehearsed |
+| "The app says the demo is on, and the job azurebank-pool could not be read: ..." | With the demo on, a deployment and a `--check` need that job, and no answer of Azure's is read as "there is no pool job": what Azure answers for a job that is not there has not been seen. Nothing was changed. Every workflow deployment stops here until the job is back, and only `--app-only`, which runs no migration, still moves the app | If the job was never created or is gone by accident: a run of the template creates it again, since `secrets.ps1` keeps the switch. If it was deleted on purpose, that is the first step of a road of [Turning the demo back](#turning-the-demo-back): finish that road. If it is there and Azure refuses the read: the role assignments, which must be three |
+| `--pool-run`: "The job azurebank-pool could not be read: ... Nothing was started. infra/main.bicep writes that job only with the demo on" | The same read, by the command that asks the app nothing. On a deployment where the demo was never turned on there is no such job to start. `--pool-log` has no sentence of its own for it: there the read of the executions ends in Azure's words | Turn the demo on first (step 25), or read the refusal as above |
+| "The executions of the job azurebank-pool could not be read, so whether a pool run is in progress is not known: ..." | The job was read a moment before, and the read of its executions failed. Nothing was changed, or with `--pool-run` nothing was started | Run it again. Refused again: `Show-Executions azurebank-pool` as the owner, and the role assignment on the pool job |
+| "Execution ... of the job azurebank-pool is Running: a pool run may still be in progress, and a deployment does not start beside one", or with `--pool-run` "a second run is not started beside one" | A run of the pool job is listed as running, or in a state the script does not know and young enough to be alive. A migration beside it would change the schema it works on, and two runs at once each top the pool up from their own count. Nothing was changed, or started | Wait for the job's timeout, which the sentence names, and deploy or start again. Refused again: the owner reads `Show-Executions azurebank-pool` and stops that one, `az containerapp job stop --name azurebank-pool --resource-group azurebank-demo --job-execution-name <name>`. The deployment identity cannot. That Azure stops an execution in such a state is expected, not seen |
+| "Smoke test failed: ... The page does not carry the tag of the public demo", or "The page carries the tag of the public demo", then "put back to ..." | The page and the app's containers disagree about the demo on the new revision: the BFF's image does not read the flag, or reads it another way than the settings say | The same as for "Smoke test failed" above; and whether the commit deployed is a descendant of the one that reads the flag (step 22's `git` command) |
+| "Smoke test failed: the registration probe expected 403 REGISTRATION_CLOSED and got ...", then "put back to ..." | With the demo on, a registration with an empty body was not refused as closed by the new revision: on the demo that door must be shut, whatever the body. Only the status and an error code are shown, never the body | `python infra/deploy.py --check` on the revision that was put back. If it fails the same way, registration is open beside the pool: stop the app ([Stop the app by hand](#stop-the-app-by-hand)), then read `--app-log 30` |
+| "Smoke test unproven: in 4 tries the registration probe got 429 (rate limited) last", or "got no answer last" | The page, the readiness answer and the sign-in were right, and the last try of the registration proved nothing. The limit it met is the one sign-ins share, ten a minute, which a closed registration is expected to spend from too. The new revision is serving and was not put back | Deploy again later; or `python infra/deploy.py --check` from a terminal, which asks the address the same four questions and moves nothing |
+| `--check`: "The app is not in a state to be checked", or "After 300 s the app was not in a state to be checked (its last update: ...; its latest revision: ...; its latest ready revision: ...)" | The app's last update has not succeeded, or its latest revision is not its latest ready one. Until it is, an answer could still come from another revision: nothing was proved, nothing was moved | Look at the app's revisions, then check again. After a run of the template that turned the demo on, step 25 says what is done before the pool job's next run |
+| `--check`: "After 180 s the list of the app's revisions did not show ... answering alone (...), so an answer could still come from another revision" | Another revision had not gone inactive, or the latest was not in the list. Nothing was proved, nothing was moved | The same |
+| `--check`: "The list of the app's revisions came with a link to a next page, and this script reads one answer" | Whether Azure gives that list in pages is recorded nowhere here. A page that was not read could hold a revision that is still active, so the check stops and proves nothing | Read the revisions by hand, names and `active` only. If Azure always sends that link, `--check` cannot pass until the script reads on: a change of `deploy.py` |
+| `--check`: "The app is in shape and reports no address (its ingress holds no host name), so there is nothing to ask" | The shape check passed and the app's answer names no host. Nothing was proved, nothing was moved | Read the app's ingress; run the template again |
+| `--check`: "The pool job's PIN pepper (its secret pin-pepper) differs from the app's. Nothing was moved, and no value was shown.", or "connection string (its secret app-connection)", or both | The job holds another pepper than the API verifies with, or signs in with another string than the app. With another pepper no copy that job built takes a PIN, and every status stays good | For the pepper: on the owner's word, stop the app, so that no visitor meets a copy whose PIN fails. Then a run of the template, which writes the job's two secrets from the app's again, and `--check`. A secret that changed outside the template is a change nobody ordered: read [If something was stolen](#if-something-was-stolen). The copies built with the other pepper are not repaired by any of this: a run deletes a claimed one when its time is over, and a free one once it is too old to hand out. Reasoned, not rehearsed |
+| `--check`: "The pool job's secrets could not be compared with the app's: ... lists no single value of text for ..." | One side lists that secret twice, not at all, empty, or as something that is not text. Two that hold nothing are not "the app's" | Read the secret names of the app and of the job; run the template again; check again |
+| `--check`: "The secrets of ... could not be listed, so the pool job's secrets could not be compared with the app's: ..." | Azure refused a listing, or its answer could not be read. Listing the app's and the job's secrets takes the owner's sign-in: it is the one thing the deployment identity is refused on purpose | Run it as the owner. An answer that "could not be read" is the CLI's output, not Azure's refusal: run it again |
+| `--check`: "... This was --check, not a deployment: nothing was moved and nothing is put back; where that says to deploy again, check again." | The smoke test failed or was unproven inside a check. Its own words are a deployment's; this sentence corrects them | The row of that smoke test's sentence, with "check again" for "deploy again" |
+| `--pool-run`: "The job azurebank-pool was asked to start once, and Azure refused or failed a request before the run it made was known", or "an answer was not in the shape this script reads before the run it made was known" | The start was sent, and whether a run began is not known. The start is not sent again | `Show-Executions azurebank-pool` before any second start. A new execution: read it with `--pool-log`, by its name. None: start again |
+| `--pool-run`: "The pool run was started (...), and a read of the job's executions failed while its end was waited for" | The run exists and may still be in progress. It was not started again, and a second start is refused while it is listed as running | `python infra/deploy.py --pool-log <the execution>` when it has ended and its lines are due |
+| `--pool-run`: "Timed out waiting for ... of the job azurebank-pool: it had not ended ... s after it was started here (the job's timeout and two minutes)" | Azure did not end the run within its own timeout. While it is listed as running, a deployment and a second start are refused | The sentence ends with the command that stops it, for the owner. Then `--pool-log` for what it printed |
+| `--pool-run`: "The pool run did not end well (...: exit code ..., ...)" | The run ended with 1, 2, 12, 13 or 14, or with a code that is not the tool's. It was not started again | By its code: the table under [Reading the logs](#reading-the-logs), then [`docs/runbooks/demo-pool.md`](../docs/runbooks/demo-pool.md). After exit 1, no second start before its last line has been read |
+| `--pool-run`: "The pool run ended and Azure reported no exit code for it" | The run is over and Azure's answer carried no code. How it ended is not guessed from its status, so the command fails although the run may have ended well | `Show-Executions azurebank-pool`, or `--pool-log` with the run's name, reads the code once Azure has it. On 2026-10-03 an older execution of the migrate job no longer carried its own |
 
 **Going back by hand.** As the owner, from a terminal, to any commit whose images are published:
 
@@ -1545,12 +2292,18 @@ There are no passwords to change. If code may have run as one of the two databas
 deployment nobody ordered, an image nobody built, an identity on a resource it does not belong
 to), the steps are these, in this order. They have not been rehearsed.
 
-1. **Delete the app and the job.** With them go the app's secrets and the two places an identity
-   can be used from.
+1. **Delete the app and both jobs.** With them go the app's secrets, the pool job's two, and the
+   three places an identity can be used from. The pool job is one of them: it carries
+   `azurebank-app`, the app's connection string and the PIN pepper, and the deployment identity
+   can write it and start it. Until 2026-10-05 this step named the app and one job. First, and
+   kept: `Show-Executions azurebank-pool`. Whether the pool job has run decides step 4, and once
+   the job is deleted its executions are not expected to be readable.
 
    ```powershell
+   Show-Executions azurebank-pool             # kept: nothing printed means the pool job never ran
    az containerapp delete --name azurebank --resource-group $group --yes
    az containerapp job delete --name azurebank-migrate --resource-group $group --yes
+   az containerapp job delete --name azurebank-pool --resource-group $group --yes   # if the demo was turned on
    ```
 
 2. **Delete the two identities and make them again**, under the same names: each then has new
@@ -1580,31 +2333,49 @@ to), the steps are these, in this order. They have not been rehearsed.
    `Msg 50003` or `Msg 50004`, the database itself was changed: run nothing else there.
 
 4. **Run the template with the app**, on a commit whose images are known. With no app deployed,
-   `secrets.ps1` generates the seven application secrets anew.
+   `secrets.ps1` generates the eight application secrets anew (seven until 2026-10-05).
+
+   **With no app deployed, nothing remembers the demo's switch.** The script reads it from the
+   app's two containers, and the app is gone: without `-DemoOn` its report says
+   `demo: not written, the template's default applies`, and the app comes back with both flags
+   off. On a database that holds the pool that is the state
+   [Turning the demo back](#turning-the-demo-back) forbids: registration open beside the pool.
+   The script cannot know what the database holds and does not guess. **So if the pool job had
+   run (step 1's read), pass `-DemoOn`**, which also brings the pool job back:
 
    ```powershell
    try {
-       ./infra/secrets.ps1 -Action New -DeployApp -ImageTag '<a known commit>'
+       ./infra/secrets.ps1 -Action New -DeployApp -ImageTag '<a known commit>'            # the pool job never ran
+       # ./infra/secrets.ps1 -Action New -DeployApp -ImageTag '<a known commit>' -DemoOn  # the pool job had run
        Invoke-Template 'after-a-theft'
    } finally {
        ./infra/secrets.ps1 -Action Remove
    }
    ```
 
-5. **Look at who could run a job in `demo`** ([What each identity can do](#what-each-identity-can-do)),
-   then deploy.
+   **Not designed: what the new secrets mean for the rows already there.** The new PIN pepper is
+   not the one the copies in the database were built with, so no copy built before takes a PIN,
+   and the new audit keys do not continue the chain the old ones wrote. Nothing in this folder
+   repairs either. The road known to work is a new database, by the owner's own hands, in the
+   order [Turning the demo back](#turning-the-demo-back) gives for it: it starts a new chain and
+   loses every row.
 
-While an intruder can still run code in the app or in the job, a new token is one request away:
-that is why step 1 comes first. The app and the job are deleted, and not put back on known
-images, because nothing else in these files makes the seven application secrets anew.
+5. **Look at who could run a job in `demo`** ([What each identity can do](#what-each-identity-can-do)),
+   then deploy, and with the demo on `python infra/deploy.py --check`.
+
+While an intruder can still run code in the app or in a job, a new token is one request away:
+that is why step 1 comes first. The app and the jobs are deleted, and not put back on known
+images, because nothing else in these files makes the eight application secrets anew.
 
 ## Where each secret lives
 
 | Secret | Lives in | Who can read it |
 | --- | --- | --- |
 | JWT secret, idempotency key, step-up key, service key, audit chain key, audit anchor key, PIN pepper | The secrets of the app `azurebank` | The owner, by listing. The deployment identity cannot list them, and can still reach them by running code: see [What each identity can do](#what-each-identity-can-do) |
+| The demo's client key (`demo-client-key`), since 2026-10-05 | A secret of the app, referenced by the `api` container only. Under it the API stores the address a copy was claimed from as a hash, never the address. It is there whether the demo is on or off, and used only when on | The same |
 | The app's connection string | A secret of the app, referenced by the `api` container only | The same. It holds the server's name and a client ID, and no password |
 | The migration connection string | The secret of the job `azurebank-migrate` | The same. No password |
+| The pool job's two, with the demo on: a copy of the app's connection string (`app-connection`) and a copy of the PIN pepper (`pin-pepper`) | The secrets of the job `azurebank-pool`, which the template writes from the two expressions it writes the app's from. `secrets.ps1` asks nothing of a job | The same. `--check` lists them beside the app's, as the owner, to say whether they are equal, and shows neither |
 | A database password | **Nowhere: none exists.** The server takes Microsoft Entra sign-ins only | Nobody |
 | `parameters.json` | `%LOCALAPPDATA%\AzureBank\deploy` (elsewhere `~/.azurebank-deploy`), open to its owner only, for the minutes of a session. Without `-DeployApp` it holds no secret | Removed in `finally` |
 | In GitHub | The three Azure identifiers, as secrets of the environment `demo`. No application secret | A job in `demo` |
@@ -1615,10 +2386,14 @@ container is handed neither the server's name nor the client ID. This is not a l
 neither is a secret ([What each identity can do](#what-each-identity-can-do)). A secret also stays
 out of every read of the app and of an execution, which a plain setting would not.
 
-`secrets.ps1 -Action New` never generates a value twice: each of the seven application secrets
+`secrets.ps1 -Action New` never generates a value twice: each of the eight application secrets
 comes from the deployed app if it exists, else from a file left by a run that stopped, else from
 the system's random generator. A failed read is never taken for an absent value: the script stops
-and writes nothing. `-Action Remove` deletes `parameters.json`, `what-if.json` and `budget.json`
+and writes nothing. One exception, for one name: the demo's client key is generated for a
+deployed app that lacks it while that app's demo is off, because the app the first deployment
+created never needed it. A deployed app whose demo is on and which lacks the key stops the
+script, as a missing one of the seven does. Until 2026-10-05 this paragraph counted seven and
+had no exception. `-Action Remove` deletes `parameters.json`, `what-if.json` and `budget.json`
 by name, then the folder if it is empty, and nothing else.
 
 Rotating an application secret is not in these files, short of
@@ -1627,7 +2402,9 @@ Rotating an application secret is not in these files, short of
 ## What each identity can do
 
 **The deployment identity, `azurebank-deploy`.** The custom role lets it read and write the app
-and the job, start the job, and read executions, revisions and replicas. It cannot list secrets,
+and each job it is assigned on (the migrate job, and with the demo on the pool job: three
+assignments, where there were two until 2026-10-05), start such a job, and read executions,
+revisions and replicas. It cannot list secrets,
 delete or stop anything, or touch the environment, the database server, the workspace, any
 identity or any role. It cannot read the logs. It has no user in the database. The Deny policy on
 the resource group is the one guard it cannot change.
@@ -1640,9 +2417,18 @@ identity can:
 - run that code as the app's database identity: read and write every row;
 - overwrite a secret with a value of their choice;
 - change the ingress: another target port, more port mappings, address rules;
-- run any image in the job, as the schema-changing identity. So, by running code in the job, it
-  can do everything the migrator can do, and **it can leave code in the database that runs as
-  whoever next changes users there**: the users file refuses to run on such a database.
+- run any image in the migrate job, as the schema-changing identity. So, by running code in that
+  job, it can do everything the migrator can do, and **it can leave code in the database that
+  runs as whoever next changes users there**: the users file refuses to run on such a database;
+- with the demo on, run any image in the pool job and start it at will, as the app's database
+  identity, with the connection string and the PIN pepper in its environment. That reaches
+  nothing the first two lines do not already reach through the app. A start is also expected to
+  take a body that changes the container for that one execution: `deploy.py` sends none, a test
+  holds that, and nothing on Azure refuses one (not measured; step 31 sends one on purpose, as
+  the owner);
+- change the pool job's schedule or its timeout. **Nothing on Azure polices either**: the policy
+  has no rule on a schedule's expression. `deploy.py` reads both at a deployment and at a
+  `--check`, and nothing reads them between two of those.
 
 It is not expected to be able to attach an identity to a resource: Azure asks for a right on the
 identity itself (`assign/action`), which this role does not hold and which is never given to it.
@@ -1650,7 +2436,11 @@ That refusal has not been provoked.
 
 The policy refuses: a second replica, a minimum above zero, several active revisions, plain HTTP, a
 third container, any init container, a container above half a vCPU; and for a job, a trigger other
-than Manual, parallel runs under any trigger, any init container, a container above half a vCPU. It
+than Manual (but `Schedule` on a job named in `scheduledJobs`, which is `azurebank-pool` and no
+other), parallel runs under any trigger, any init container, a container above half a vCPU. So
+whoever puts a job of another name on a schedule, the migrate job among them, or gives the pool
+job two runs at once, is expected to be refused. Neither refusal has been seen: step 29 makes
+both due. It
 does not limit how many containers a job has, and it has no rule about identities: the provider
 publishes no policy alias for the identity block of an app or of a job (measured: 0 of 1,058).
 
@@ -1670,9 +2460,9 @@ change the schema (in the trial, a user with these two roles was refused `CREATE
 262 and `ALTER TABLE` with 1088). That includes the rows of the migrations history table, by which
 it could steer the next migration: a `DENY` on that table is not set. It holds no role on any
 Azure resource.
-**It is available to both containers of the app.** Code running in the BFF, which faces the
-internet, can therefore ask for a database token. Between that code and the database stands only
-what the BFF is not handed: the server's name and the identity's client ID. Both are identifiers,
+**It is available to both containers of the app, and with the demo on to the pool job.** Code
+running in the BFF, which faces the internet, can therefore ask for a database token. Between
+that code and the database stands only what the BFF is not handed: the server's name and the identity's client ID. Both are identifiers,
 not secrets, so neither is a barrier to count on. Microsoft's page says a request for a token
 must name the identity, and that one which names none is answered for a system-assigned identity,
 which the app does not have; whether such a request is refused here has not been seen. With
@@ -1685,8 +2475,9 @@ on Azure SQL, in the trial: `CREATE USER` refused with error 15247, and thirteen
 statement that migrations use allowed). It can create a trigger, which is why the users file is
 guarded.
 
-**Who can act as either:** code running in any container of the app, in the job, in the probe job
-of the first session while it exists, or in any resource the owner attaches the identity to. In
+**Who can act as either:** code running in any container of the app or in the pool job (the
+app's identity), in the migrate job (the migration's), in the probe job of the first session
+while it exists, or in any resource the owner attaches the identity to. In
 the trial a job that carried one identity got no token for the other, tried both ways.
 
 **The owner's account.** It is the only administrator of the database and the only Owner of the
@@ -1727,7 +2518,12 @@ accepted a new connection from the same address.
    one-time code, and the one that follows the verification; every alert afterwards.
 7. Stopping the app when an alert says so. Nothing does it for him.
 8. The word for each step that writes, and for each deletion that a rule above allows: the
-   workspace and its setting.
+   workspace and its setting, and the pool job where step 25 or
+   [Turning the demo back](#turning-the-demo-back) says so.
+9. With the demo on: the sign-in under which `--check`, `--pool-run` and `--pool-log` run, since
+   all three are refused inside GitHub Actions; the stop and the start of the app; and, if the
+   demo is ever turned back after the pool job has run, the lock and the database, by his own
+   hands.
 
 ## Before renaming or transferring the repository
 
@@ -1743,8 +2539,9 @@ The credential trusts the repository by name. After a rename or a transfer, whoe
 ## Changing the infrastructure later
 
 Edit the template, then run it the same way. Without `-ImageTag` the parameter file takes the tag
-the app runs now, the seven secrets it holds now, the address its alerts write to now and what its
-environment does with its logs now, so the run leaves all four alone:
+the app runs now, the eight secrets it holds now, the address its alerts write to now, what its
+environment does with its logs now and whether its two containers say the demo is on now, so the
+run leaves all five alone (until 2026-10-05: seven secrets, and four things):
 
 ```powershell
 try {
@@ -1755,8 +2552,26 @@ try {
 }
 ```
 
+- **The first run of the template after 2026-10-05 changes the app, whatever the run is for, and
+  with the demo still off.** Expected in its what-if: `Modify` on the app, for a ninth secret and
+  four settings (`Demo__Enabled`, written as `false`, on both containers; `Demo__ClientKeySecret`
+  and `Demo__Claim__MaxPerClientPerDay` on `api`), and the script's report says
+  `demoClientKeySecret: generated`. A change of the app's template makes a new revision, and a
+  new revision ends every session held in the replica's memory. Also expected, in a run without
+  the app too: `Modify` on the role definition, whose description changed, and on the policy
+  definition and its assignment. Nothing is created and nothing deleted by it: offline, a run
+  with the switch off predicts the 22 resources it predicted before, and 14 without the app
+  ([Checking these files](#checking-these-files)).
+- **The demo's switch is passed once.** `-DemoOn` at step 25; afterwards the script reads
+  `Demo__Enabled` on the app's two containers and writes what they say, and its report says
+  `demo: kept from the deployed resource`, on or off. Two containers that disagree stop it. With
+  no app deployed nothing remembers the switch
+  ([If something was stolen](#if-something-was-stolen)). **Never `demo=false` as an override once
+  the pool job has an execution**: [Turning the demo back](#turning-the-demo-back). A run with
+  the switch off does not delete a pool job that exists; it is expected to leave it, with its
+  schedule.
 - Images move through the `deploy` workflow only: once the app exists, `secrets.ps1` refuses
-  another `-ImageTag`.
+  another `-ImageTag`. So a run of the template creates the pool job on the tag the app runs.
 - The server is not changed by a later run: step 3 is where that is seen for the template. The
   `administrators` block is never edited in place.
 - The environment's mode is read again (`Assert-EnvironmentMode`) at the start of every session,
@@ -1768,16 +2583,135 @@ try {
   again: `Invoke-Template 'change' @('denyPolicy=false')`. The file does not remember it
   ([If Azure says no](#if-azure-says-no)). The alert on the workspace needs no override to stay
   out: since step 20 it is built only with `@('logVolumeAlert=true')`.
-- A job with another trigger needs it added to the parameter `allowedJobTriggers`, or the policy
-  refuses it.
+- A job that must run on a schedule is named in the parameter `scheduledJobs`, which holds
+  `azurebank-pool`, or the policy refuses it. `allowedJobTriggers` holds for every job and stays
+  `Manual`: a trigger added there is allowed to the migrate job too. Until 2026-10-05 this line
+  sent a job with another trigger to `allowedJobTriggers`.
+- The pool job's schedule is a variable of the template and not a parameter: an override could
+  make the interval shorter than the job's timeout, and two runs at once can build up to twice
+  the pool's target (`backend/tools/AzureBank.Seeder/README.md`). Its timeout is the parameter
+  `poolTimeout`, 60 to 840 s, and a test holds the interval longer than the longest of them.
 - After an identity was deleted and made again, run `./infra/sql-principals.ps1`: the user it left
   matches nothing and is replaced.
+
+## Turning the demo back
+
+Written on 2026-10-05. **None of it has been run.** There is no switch that turns the demo off,
+and which road exists depends on one read: **whether the pool job has an execution, in any
+state.**
+
+```powershell
+Show-Executions azurebank-pool               # the read
+Show-Executions azurebank-migrate            # its control: this one must print its executions
+```
+
+Not "whether step 26 has run": the job fills the pool by itself at its next run. And the control
+comes with it, so that a silence is the function's answer and not its failure.
+
+**Why an execution is the line.** The first run of the pool job creates the two roles a
+registration needs. Before it, a registration on this database cannot commit
+([Not measured yet](#not-measured-yet) has the local measurement). After it, an app whose flags
+are off registers whoever asks, beside the pool: every later run of the job then exits 13, no
+file here removes a user, and `seed` and `reset` refuse a database that holds a pool row. With
+the flags off the sign-in gate also refuses nobody (ADR-0063, decision 10), so the owner of a
+claimed copy signs in past its time.
+
+**While the pool job has no execution: the switch may go off, the job first.**
+
+1. The read above prints nothing for the pool job, and the control prints. Both are kept before
+   anything is deleted: once the job is gone, its executions are not expected to be readable.
+   **An execution, in any state, ends this road:** the roads are then the two further down.
+2. On the owner's word, `az containerapp job delete --name azurebank-pool --resource-group $group --yes`,
+   and its absence is read back: one job in the list, and two role assignments, since the third
+   is expected to go with the job.
+3. On the owner's word, one run of the template with the switch off:
+
+   ```powershell
+   try {
+       ./infra/secrets.ps1 -Action New -DeployApp
+       Invoke-Template 'demo-off' @('demo=false')
+   } finally {
+       ./infra/secrets.ps1 -Action Remove
+   }
+   ```
+
+   The what-if must show `Modify` on the app and **nothing to create for a job**. A job to create
+   means the override was not taken: the file itself says `demo: kept from the deployed
+   resource`, which is on. Answer "no". That a value given after the file wins over the file's
+   is how `denyPolicy=false` is passed too, and the what-if shows it before anything is sent.
+4. `python infra/deploy.py --check`: the demo is off, and the page carries no tag. The client key
+   stays, as a secret nothing uses.
+
+**Never step 3 while the job exists.** A run with `demo=false` does not delete it: a run of the
+template removes nothing that exists, as [Switching the logs off](#switching-the-logs-off) says
+of the workspace. And a scheduled job whose own flag is the plain word `true`, beside an app
+whose flags are off, is the state ADR-0063 warns of: visitors register beside the pool and every
+run exits 13.
+
+**Once the pool job has an execution: two roads, and no third.**
+
+| Wanted | Who | What is done | Read back |
+| --- | --- | --- | --- |
+| Nobody reaches the demo, within minutes | The owner's sign-in only: the deployment identity can neither stop nor start the app | [Stop the app by hand](#stop-the-app-by-hand). The job goes on by its schedule, and harms nothing while nobody is served | The app's state, by the read step 32 recorded; what the address answers |
+| The deployment as it was before the demo | The owner's own hands for the lock and the database; the operator for the rest, each on the owner's word | The six steps below, in this order and no other | Each step's own |
+
+1. **The pool job is deleted first**, on the owner's word, as in step 2 above. Read back: one job,
+   two role assignments. No run can now fill any database. The app still answers as the demo and
+   hands out the copies that are free.
+2. **The owner removes the lock `keep-the-database` and deletes the database**, by his own hands.
+   Read back: the database is gone from the server's list, by name. The app now answers errors,
+   and the BFF still refuses a registration, because both flags are still on.
+3. **One run of the template with the app and `demo=false`**, on the owner's word: the block of
+   step 3 above, as `Invoke-Template 'as-before' @('demo=false')`. The what-if must show the
+   database and its lock to create, `Modify` on the app, and nothing to create for a job. It makes
+   the empty database again and turns both flags off while no pool row exists anywhere. Read
+   back: `Demo__Enabled` on both containers, `false`; one job.
+4. `./infra/sql-principals.ps1`: its two lines (step 6).
+5. The workflow's `deploy`, approved by the owner. With the demo off the script reads no pool job;
+   the migration applies every migration to the empty database; the smoke test sends its three
+   requests. Read back: the verdict and its exit code.
+6. `python infra/deploy.py --check`: no tag, and no job read. `Show-Identities`: two lines.
+
+The app is not stopped for this road. Every state on the way fails closed or writes nothing:
+flags on with no database answers errors, and flags off with no schema can write nothing. And
+what a run of the template does to a stopped app has not been seen. The audit chain starts again
+with the new database. The app's address is expected not to change, since neither the app nor
+its environment is made again: not measured.
+
+**Never `demo=false` while the pool job exists, and never while the database holds a pool row.**
+The first leaves the scheduled job beside an app whose flags are off. The second reopens
+registration on a database that now has its roles.
+
+**"The job deleted and the app left up" is not a third road.** In that state this folder's own
+tools refuse it or undo it. Every workflow deployment stops at the pool job it cannot read, a
+security fix included, and only `--app-only`, which runs no migration, still moves the app. The
+next run of the template, for any reason, creates the job again without being asked: the script
+writes the switch it reads from the app, and the job is built whenever the app and the switch
+are. The free copies, up to 50, are still handed out. And nothing sweeps expired grants or
+deletes the copies whose time is over: those are `recycle`'s to do
+([`docs/runbooks/demo-pool.md`](../docs/runbooks/demo-pool.md)). So the job is deleted only as the
+first step of a road that ends with the demo off.
+
+**If it is the job itself that must not run again** (its image, its cost, a run that
+misbehaves): stopping the app does not stop the job. So the app is stopped first, by the owner,
+and then the job is deleted, on his word, which is step 1 of the six. With the app stopped the
+change may wait there: nothing runs and nothing is handed out. The ways on are the rest of the
+six, with the app started again before the third, or the start and then step 25's commands
+again, which bring the job back.
+
+**If the first run of the pool job exits 13** (a user outside every copy, on a database with no
+pool row): stop. Nothing is deleted by the operator: no file here removes a user, and nothing
+but the users file is run as administrator in that database. The app stays on with an empty
+pool, which fails closed. The one road the records name is the six steps above, and the deletion
+in it is the owner's own.
 
 ## Removing everything
 
 In this order. The role definition and the policy definition are not inside the resource group
 and are not deleted with it. The role can be assigned in this group only, so it is removed first,
-through the group, while the group still exists: its two assignments, then the definition. Whether
+through the group, while the group still exists: its assignments, two or with the demo on three,
+then the definition. The policy definition is found by the first words of its name, which the
+name the first deployment gave it and the one of 2026-10-05 share. Whether
 it could still be found once the group is gone is not measured: the trial deleted its role first,
 as here, and then found it neither by its ID nor in the lists. The workspace is deleted on its
 own, with `--force`, if what it holds must be gone at once: that a workspace deleted with its
@@ -1822,9 +2756,29 @@ users go with the group. On this machine, if it is no longer wanted:
 - No alert on changes to the role assignments, the federated credential or the job.
 - No deployment by image digest; no rollback of the schema.
 - No rotation of application secrets, no Key Vault, no private endpoint, no custom domain.
-- No scheduled job and no demo data: the database a first deployment leaves has a schema and no
-  rows. The app's registration endpoint is not closed by anything in this folder, and the app is
-  reachable by anyone who has its address.
+- No demo data: the database a first deployment leaves has a schema and no rows, and on Azure the
+  app goes live on it with its registration open, reachable by anyone who has its address. Until
+  2026-10-05 this line also said "No scheduled job" and "The app's registration endpoint is not
+  closed by anything in this folder". Of the folder that is no longer so: it holds a scheduled
+  job, behind the switch `demo`, and that switch closes registration on both containers. Of
+  Azure nothing changed with it: none of it has run there, and the deployed app's registration
+  stays open until step 25 has run.
+- No switch that turns the demo off ([Turning the demo back](#turning-the-demo-back)), and
+  nothing that removes a user from the database.
+- No alert on a failed run of the pool job, and none on the database's size. The one rule this
+  folder built on a metric nobody had seen report was created and then deleted (step 20); step
+  31 reads the two metrics before anything is built on them. Until then a pool run is read on
+  demand: its exit code, its line, and what a visitor is answered.
+- No workflow action that starts the pool job. The job refills the pool by itself, and a start
+  by hand is `--pool-run`, from the owner's terminal: one public door fewer.
+- No claim of a copy by a deployment, and no command that claims one: a claim spends a copy,
+  leaves audit rows, and its answer holds a copy's password. A browser proves the claim and the
+  PIN (step 27); `--check` compares the two secrets that decide the PIN, and spends nothing.
+- The visitor's own address behind the ingress. No file here tells the BFF to trust a forwarded
+  header (`ForwardedHeaders:KnownProxies`), and what the BFF sees there is not measured
+  (step 30). Until it is, the cap of claims for one client is 1,000 a day, which stops nobody.
+- No rotation of the PIN pepper for the pool job: the template carries no key id and no previous
+  pepper, on the app or on the job.
 - The text of the migration is not shown by the workflow, on purpose.
 - The password design this folder first had, the other two shapes of the SQL server and the
   switch that bound a user to its identity's object ID. They were written as steps down in case
@@ -2283,6 +3237,18 @@ on 2026-10-02), not on Azure:
   own lines are untouched.
 - A lost registration race prints the duplicate value in the API's console: an e-mail address
   four times in two lines, a handle the same way. The BFF's console holds neither.
+- **A registration on a database that only `migrate` has touched, on 2026-10-05.** `compose.yaml`
+  under a project name of its own, with the `seed` service made to run `migrate` a second time,
+  so that the API started on a schema with no row: 17 migrations in the history table, 0 users,
+  0 roles. The images were built from the sources of `6988514f`; SQL Server 2022 CU27
+  (16.0.4295.3). One `POST /bff/auth/register` with a body that passes the rules was answered
+  **500**, and afterwards the database held **0 users and 0 roles**, and no role membership and
+  no account either. The API's console gave the reason, `Role USER does not exist.`, and its
+  request line read `HTTP "POST" "/api/auth/register" responded 500`, at Error. The control:
+  after `seed` had run on that database (4 users, 2 roles), the same body was answered 201 and
+  the users were 5. A body of `{}` was answered 400 by the BFF and did not reach the API. So on
+  the database a first deployment leaves, a registration cannot commit until something has
+  created the roles: with the demo, the pool job's first run. One request each; not on Azure.
 
 **Measured on a local SQL Server** (17.0, LocalDB, with go-sqlcmd 1.10.0 and `-b`; run again on
 2026-10-03 on the file without the switch for the object ID, again that day after the first
@@ -2389,7 +3355,7 @@ fourth alert does not count lines (step 20).
 | What | Where it shows |
 | --- | --- |
 | Azure refusing a run with a value missing, through `app-inputs.bicep` (seen offline and on a local engine only, under [Checking these files](#checking-these-files)), and whether it refuses before the foundation's resources are sent again or only when the check's own deployment starts (the app, the job and the action group wait for it either way). The what-if run again at step 9 was given every value | not provoked |
-| The four conditions of the policy named above at work: an init container on an app or on a job, and parallel runs under a schedule or an event trigger. The definition is deployed and assigned, and none of the four has been seen refusing | not provoked |
+| The four conditions of the policy named above at work: an init container on an app or on a job, and parallel runs under a schedule or an event trigger. The definition is deployed and assigned, and none of the four has been seen refusing | not provoked; step 29, which has not been run, makes the one on a schedule due |
 | That a second run of the users file on Azure SQL changes nothing. The second run of step 6 ended with the same lines as the first, and the file prints those lines whether or not it replaced a user | no step reads it |
 | The users file dropping and creating a user inside its transaction, which it does when an identity has been made again; its second form, `FROM EXTERNAL PROVIDER WITH OBJECT_ID` | not provoked; the second form only if it is asked for |
 | A container of the app that asks for a token and names no identity gets none (read on Microsoft's page: such a request is answered for a system-assigned identity, and the app has none) | not provoked |
@@ -2399,7 +3365,7 @@ fourth alert does not count lines (step 20).
 | Why the metric `Ingestion Volume` had no time series on 2026-10-03, and whether it has one on another day or on a workspace that takes more | step 20, by whoever turns that alert back on |
 | What the `Replicas` metric reports while the app is scaled to zero: 0, or nothing. If nothing, a day's average is 1 on any day the app ran at all, the alert on replica time fires on any use, and that rule has to count another way | the first days after step 16 |
 | What the registry answers for a package that exists and is private, anonymously or to the workflow's token: none of the three packages has been private. Why they were public as soon as they were published | not provoked; not looked into |
-| Whether every visitor shares one sign-in limit behind the Azure ingress | not provoked |
+| Whether every visitor shares one sign-in limit behind the Azure ingress, and with it the limit of 300 a minute on every other request, which counts by the same address | not provoked; step 30, which has not been run, measures it |
 | A replica's container states, which `deploy.py` reads only when a new revision does not get ready | a real failure; not provoked |
 | `--app-log` against the workspace: the table has the two columns it reads (`ContainerAppName`, `ContainerName`), and the command has not been run. `--job-log` with its filter on `ContainerGroupName`: tested offline, and the column was read at step 16, but the query has not been sent | the next read of either |
 | The automatic put-back on a real failure. Its trigger is proved by unit tests only; its request and its wait are the ones `--app-only` uses, which ran at step 18 | a real failure; not provoked |
@@ -2411,7 +3377,42 @@ fourth alert does not count lines (step 20).
 | What the workspace bills for a line of the app; how far the cap overshoots; whether an environment set to `none` still feeds a setting that exists | after step 21; the last two are not provoked |
 | How long a managed identity's token stays valid for the database | not found in the pages read |
 | That the identity is refused a scale change, a delete or a stop. One refusal is provoked on every deployment (the secrets listing); the policy's refusal is provoked as the owner | not provoked |
-| Every command under [Switching the logs off](#switching-the-logs-off) but one, the deletion of the alert on the workspace, which ran as step 20's; every command under [If something was stolen](#if-something-was-stolen) and [Removing everything](#removing-everything). The trial made its own deletions with other commands | the day they are needed |
+| Every command under [Switching the logs off](#switching-the-logs-off) but one, the deletion of the alert on the workspace, which ran as step 20's; every command under [Stop the app by hand](#stop-the-app-by-hand), which step 32 would run once, under [If something was stolen](#if-something-was-stolen) and under [Removing everything](#removing-everything). The trial made its own deletions with other commands | the day they are needed |
+
+**Not measured, of what turns the demo on.** Added on 2026-10-05. Nothing of it has run on Azure:
+the switch, the pool job, the policy's exception and the three commands are tested offline,
+against stand-ins and invented answers, and steps 22 to 33 are where each line would show.
+
+| What | Where it shows |
+| --- | --- |
+| That Azure Policy takes a rule on a job's name (the field `name`, `in` a parameter), on a create and on a PATCH; that a job's name there is its bare name; that the definition's new name and description are accepted | steps 23, 25 and 29 |
+| How soon a changed policy definition or assignment is enforced | the time between steps 23 and 25 |
+| That a run with `deployApp=false` leaves the deployed app, its job, the action group and the alerts alone, and how its what-if names them | the what-if of step 23, before anything is sent |
+| What the first run of the template after 2026-10-05 shows for the app (a ninth secret, four settings) and for the role definition (its description); that the role's assignments are untouched by it | steps 23 and 25 |
+| Azure refusing a client key under 32 characters, through `app-inputs.bicep`: no engine has refused one | not provoked |
+| That a value given after the parameter file wins over the file's (`demo=false`, `scheduledJobs=[]`) | the what-if of a way back, before it is sent; only if one is taken |
+| That a job on a schedule is accepted, with `scheduleTriggerConfig` as the template writes it; that Azure reads the expression in UTC; that it starts with nobody typing, what such a run exits with, and whether the activity log holds a start event for it | steps 25 and 33 |
+| That a job which waits for the app is not created when the app's own update fails; whether the revision before keeps answering when a new one never gets ready | not provoked; step 25's rule does not rest on either |
+| That a job on a schedule can be started by hand; that a start takes a body which changes one setting for that execution, and leaves the job's own configuration and secrets as they were | steps 26 and 31 |
+| What Azure answers the deployment identity for a pool job that is not there, "not found" or "not authorised"; what it answers its PATCH of a job that carries `azurebank-app`; that its role lets it read that job's executions | step 28; the first is not provoked |
+| How Azure words an execution whose container exits 10, 11 or 15; whether its exit code is reported at the moment the run ends; whether a status and a code can disagree | step 31 |
+| Whether Azure gives the list of a job's executions, or of an app's revisions, in pages, and in which order; what `active` says for the latest revision of an app scaled to zero. `--check` stops on a link to a next page of revisions; nothing follows one | one read of each list at step 33 |
+| The seconds of a first fill on Basic; the first open as the app's identity from the tools image; the first write this folder asks of `azurebank_app` on Azure SQL | step 26 |
+| What a right that `azurebank_app` lacks looks like on a first fill: exit 1 with SQL Server's 229, by the code | not provoked |
+| `--pool-log` against the workspace: the pool job's lines under its `JobName`, and the query by execution, which has not been sent for either job | step 26 |
+| `--check` on Azure: that the owner may list the secrets of the app and of a job, that a job answers that listing in the shape the app does, and that an app at rest after a run of the template reads `Succeeded` with its latest revision ready | step 25 |
+| The demo's two answers through the ingress: the tag in the page, and 403 `REGISTRATION_CLOSED` for a registration with the body `{}`. Both are read from the BFF's code and its tests; the 400 for that body with the demo off was seen on a local stack on 2026-10-05, above. That a closed registration spends a permit of the ten sign-ins share | step 25's `--check`; the permit is not provoked |
+| The claim, the session and a PIN on the deployed demo, from a browser | step 27 |
+| A job of another name refused a schedule, and the pool job refused two runs at once. That anything refuses a changed expression: nothing does, and `deploy.py`'s shape check is its only read | step 29 |
+| What a stopped app answers, which property says it is stopped, and that the two calls are the ones written here; what a deployment, a `--check` or a run of the template does with a stopped app | step 32; the last three are not provoked |
+| The metrics of the pool job and of the database: their names, their dimensions, and whether either has a time series | step 31 |
+| Whether a visitor's session survives 6, 10 and 14 idle minutes: sessions are held in the replica's memory and end with every scale to zero | a session of its own, with the cold start |
+| Whether the pool job's seconds count against the free amounts on this offer | the cost by meter, 48 hours after step 26 |
+| A recovery after a theft that keeps the database: not designed ([If something was stolen](#if-something-was-stolen)) | the day it is needed |
+| An app that reports an ingress and no host name; an output of the CLI that is not JSON, or that the terminal's encoding cannot decode | not provoked |
+| The repair of two containers that disagree about the demo; every road of [Turning the demo back](#turning-the-demo-back) | the day they are needed |
+| The CI job `infra` with the tests added on 2026-10-05: its minutes against its limit of 10. On this machine, with other work running, the suite of 428 or 429 tests took from 5 to 17 minutes | the first push |
+
 
 ## Checking these files
 
@@ -2453,6 +3454,19 @@ named no parameter ("Encountered internal server error"). Where Azure stops such
 foundation's resources are sent again or only when the check's deployment starts, is not documented
 and has not been seen ([Not measured yet](#not-measured-yet)).
 
+**With the demo's switch, on 2026-10-05** (the same Bicep, offline). The compiled template holds
+23 resources: the 21 of before, the pool job and its role assignment. Worked out by
+`bicep snapshot` with the switch off, it predicts what it predicted before: 22 with the app, 23
+with `logVolumeAlert=true`, 14 without the app. With `demo=true`: 24, the pool job and its role
+assignment among them, and 25 with the alert; with `demo=true` and no app, 14, since the job is
+built only with both. That is what "the merged template creates nothing more until it is asked"
+rests on, and it is all it says: with the switch off the template still writes a ninth secret
+and four settings on the app
+([Changing the infrastructure later](#changing-the-infrastructure-later)). A snapshot works out
+no secure value, so the client key's length was not tried by it, and `bicep local-deploy` was
+not run again: the eighth secret's 32 characters are read in the compiled check and have not
+been refused by any engine.
+
 `test_deploy.py` tests the deployment script's decisions against invented answers: time is a
 counter and no process is started. A few of its tests open a real connection to a server of their
 own on `127.0.0.1`, to see what a dropped connection really raises. `test_scripts.py` runs the two
@@ -2466,3 +3480,15 @@ and the check of the app's values and what waits for it. It also runs `bicep sna
 of the templates: every ID worked out with the app, three alert rules by default and the fourth
 when it is asked for, and the short or long tag and the empty address refused. The CI job `infra`
 runs the same three checks and actionlint on the workflows.
+
+Since 2026-10-05 the two files read more than that. `test_scripts.py` runs `secrets.ps1` against
+a stand-in app whose containers carry the demo's flag, reads the compiled pool job, its role
+assignment and the policy's exception, and reads three things of `deploy.py` as text, the pool
+job's schedule, the bounds of its timeout and the names of its two secrets, to hold each equal
+to the template's. `test_deploy.py` reads five source files of the backend as text, never built
+or run: three of the BFF, for the page's tag, the error code and the route of a registration,
+and two of the tool the pool job runs, for its exit codes and the counts of its summary line.
+And it reads this page and `docs/runbooks/demo-pool.md`: a heading the script names is there, a
+refusal that sends its reader to [When something fails](#when-something-fails) has a row there
+that quotes it, every command of the script is told, and the table of a pool run's exit codes
+is the script's own. So the tests need the whole checkout, not this folder alone.

@@ -3,7 +3,8 @@
 **Symptom:** a run of `recycle` ended with a code from 10 to 15, or its line shows `hardStop` or
 `failed` above 0, or it ended with no line at all, with exit 1 or 2. Or a visitor is refused a
 copy with 429 `DEMO_POOL_EMPTY` or `DEMO_DAILY_LIMIT` (section 1), or is told their copy reached
-its limit of changes, 429 `DEMO_COPY_LIMIT` (section 9). Or the demo's database is
+its limit of changes, 429 `DEMO_COPY_LIMIT` (section 9). Or the PIN of a fresh copy is not taken
+although every run ended well (section 10). Or the demo's database is
 filling up: on Azure it is Basic, 2 GB at most (`infra/main.bicep`), and none of the
 deployment's alerts watches its size (ADR-0061, decision 10).
 
@@ -24,6 +25,29 @@ Azure deployment (ADR-0061), which has no pool job yet, that job is to carry the
 `azurebank-app` and sign in as `azurebank_app`, never with `azurebank-migrate`; ADR-0062,
 decision 13, says what else adding it changes. `backend/tools/AzureBank.Seeder/README.md` has
 every variable and code; on one machine, `compose.demo.yaml` runs both.
+
+**On the Azure deployment, once the demo is on there.** Written on 2026-10-05 and not yet run:
+Azure has no pool job until the third session of `infra/README.md` has turned the demo on
+([ADR-0064](../adr/0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md)). The
+template then holds one job, `azurebank-pool`: `recycle` every four hours, at minute 0 of the
+hours 0, 4, 8, 12, 16 and 20 if Azure reads the schedule in UTC as expected, one run at a time
+and no retry, with the identity `azurebank-app` and the app's pepper with no key id. There is no
+`seed-pool` job: the first fill is `recycle` too, which builds the pool on a database that holds
+no copy and exits 0. From the owner's terminal, with the two variables `infra/README.md` names:
+
+```powershell
+python infra/deploy.py --pool-run             # one run beside the schedule: the first fill, or a refill by hand
+python infra/deploy.py --pool-log             # the latest run's verdict, then what it printed; or --pool-log '<execution>'
+python infra/deploy.py --check                # moves nothing; says whether the job's pepper is the app's
+```
+
+**There the read-back of a run is its exit code first and its line second.** The code is Azure's
+to report, when the run ends. The line is console text in a capped log workspace: it arrives
+minutes after it was written, and on a day the cap was reached it does not arrive at all.
+Neither is kept for ever. `--pool-run` ends by the code, never by the status Azure gives the
+execution: well on 0, 10, 11 and 15, and failed on 1, 2, 12, 13, 14 and on a code that was not
+reported. Its last line names the count of the line below that the code says to read
+(`infra/README.md`, "Reading the logs").
 
 **Running the SQL.** Every statement here reads and none writes. They run against the demo's
 database. Where a statement needs a copy's lifetime or the age a free copy is kept to, it uses the
@@ -74,7 +98,13 @@ pool: free=50 was=23 claimed=7 claims24h=12 clientsAtCap=0 seeded=38 deleted(exp
 something that is no copy's failed, such as a count, the roles the top-up creates first, or a
 sweep, and the log says which; or `recycle was cancelled` when the job was stopped. Whatever the
 run had deleted stays deleted, a copy is never left half built or half deleted, and the next run
-starts again from the rows as they are.
+starts again from the rows as they are. **On a database where no role exists yet, a login that
+cannot write shows here and not as 12:** the top-up creates the two roles first, outside every
+copy, so the refusal is "no copy's". The run is expected to exit 1 with `recycle failed:` and
+SQL Server's 229 in the exception printed with it. That is read in the tool's code
+(`DemoCopyBuilder`, `RecycleCommand`); the 229 that was measured ended a `seed-pool` with 12, on
+a server where the roles were there already (`backend/tools/AzureBank.Seeder/README.md`). So
+after an exit 1 on a first fill, the run's last line is read before anything is started again.
 
 **A run that exited 2 did nothing.** It refused before it opened anything, and its one Error line,
 `recycle refused: …`, says why: the demo is off where the job runs (`Demo__Enabled`), a demo
@@ -171,7 +201,10 @@ the day's claims, so a pool drained again and again cannot grow the database wit
 **More free copies than `Demo:Pool:TargetFree`** means two runs overlapped: a `seed-pool` started
 while `recycle` was building, or two runs of the job. Each topped up from its own count. Nothing is
 wrong with the copies, and the extra ones are deleted when they grow too old to count; a schedule
-whose runs end before the next starts keeps it from happening again.
+whose runs end before the next starts keeps it from happening again. On the Azure deployment
+the job's runs are four hours apart and a run may take 14 minutes at most; `infra/deploy.py`
+starts nothing beside a run that is in progress, and the resource group's policy is expected to
+refuse the job two runs at once (`infra/README.md`; none of it seen on Azure yet).
 
 ## 2. A copy could not be built (12)
 
@@ -205,9 +238,12 @@ registration answers 403 `REGISTRATION_CLOSED` and sign-in lets in only the owne
 copy (ADR-0063), so the app creates no user outside the pool. The flag is one setting per
 container, and registration through the app is refused when either the `api` or the `bff` has
 it on. A user outside every copy that registered beside the pool says the job had the flag on
-while neither of the app's two containers did: compare `Demo__Enabled` on the three. That is
-how the Azure deployment stands until the change that adds the pool's job turns the demo on
-there, and how `compose.demo.yaml` ran the app until 2026-10-04.
+while neither of the app's two containers did: compare `Demo__Enabled` on the three. On the
+Azure deployment neither container has it on, and no job exists beside them, until the demo is
+turned on there: one run of the template then turns on both containers and builds the job, the
+job after the app (`infra/README.md`, step 25, which also says what is done if that run leaves
+the job beside an app not proved to be the demo). `compose.demo.yaml` ran the app with the flag
+on the job alone until 2026-10-04.
 
 ```sql
 SELECT u.Id, u.AzureTag, u.CreatedAt
@@ -332,7 +368,10 @@ On the Azure deployment (ADR-0061) the template gives the `api` container one pe
 `Security__PinPepper`, with no key id (so 1) and no previous pepper, and `infra/README.md` says
 rotating an application secret is not in its files. A rotation there starts with
 `infra/main.bicep` and `infra/secrets.ps1` carrying `Security__PinPepperKeyId` and
-`Security__PreviousPinPeppers__<id>`, for the `api` container and, once it exists, the pool's job.
+`Security__PreviousPinPeppers__<id>`, for the `api` container and for the pool's job, which the
+template has held since 2026-10-05 with the app's pepper and no key id. Until then, what keeps
+the two the same is that the template writes both from one value, and
+`python infra/deploy.py --check` says whether they still are (section 10).
 
 ## 7. Storage: what `recycle` cannot give back
 
@@ -364,7 +403,10 @@ It comes back only by giving the database more, or by recreating the demo's data
 a new chain and loses every row. On Azure the database is Basic, 5 DTU and 2 GB, set in
 `infra/main.bicep` (more is a change to ADR-0061, decision 3); recreating it first needs the lock
 `keep-the-database` removed, and the two database users made again with `infra/sql-principals.ps1`
-before the migration and the app can sign in (`infra/README.md`).
+before the migration and the app can sign in (`infra/README.md`). With the demo on there, the
+order is the one under "Turning the demo back" in that file, and its first step is the pool job's
+deletion: a run of the job on the new database, before the app's flags are settled, is what that
+order keeps from happening.
 
 ## 8. An audit row whose actor is neither a user nor a deleted copy
 
@@ -412,6 +454,36 @@ the visitor claims another copy, and this one ends at its time.
   opened only for the owner of a claimed copy, so this takes a session opened before the `api`
   container was given the flag, or a copy deleted at the backstop while a session was still
   live in it (section 5).
+
+## 10. Whether a run built copies a visitor can use
+
+A run's line and its exit code say that copies were built. They do not say that a PIN of those
+copies is taken. The job hashes each copy's PIN with the pepper it was given, and the API
+verifies with its own. With two that differ every status stays good: the claim answers, the
+dashboard loads, and a PIN that is not taken is answered 200 with `verified` false, so no exit
+code, alert or status shows it.
+
+**First, without spending a copy.** On the Azure deployment:
+
+```powershell
+python infra/deploy.py --check
+```
+
+It lists the job's two secrets and the app's, as the owner, compares them, and prints "The pool
+job's PIN pepper and connection string are the app's", or which of the two differs. It shows no
+value. It moves nothing, so it is run after anything that could have changed either side: a run
+of the template, a deployment, a start of the job by hand, a stop and a start of the app
+(`infra/README.md`, "Reading the logs"). Not yet run on Azure.
+
+**Then, after any change of the job's secrets, or after a line that says they differ: from a
+browser.** Claim a copy with the demo's button, open the dashboard, and make one transfer to a
+contact of the copy with its PIN. Where a PIN is checked by itself, what counts is what the
+screen says and `data.verified` in the answer's body, never the status. It spends a copy and
+leaves its audit rows, which is why it is not the first check.
+
+**If the PIN is not taken,** no copy that job built is usable, and the next visitor meets the
+same. On Azure the app is stopped first, on the owner's word; `infra/README.md`, "When something
+fails", has the row for the line that says the two differ.
 
 ## Afterwards
 
