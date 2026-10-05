@@ -2717,8 +2717,8 @@ POOL_RUN_REFUSED = ('--pool-run is refused inside GitHub Actions: the pool job r
                     'beside the schedule is started by the owner, from a terminal. A deployment moves that '
                     "job's image and never starts it.")
 LINE_KEPT = 'What it printed is kept in the log workspace (infra/README.md, "Reading the logs").'
-READ_WITH = ('`python infra/deploy.py --pool-log pool-run` reads its verdict again and prints what it printed, '
-             'once the log workspace has the lines: a line takes minutes to arrive.')
+READ_WITH = ("`python infra/deploy.py --pool-log pool-run` reads the run's verdict again and prints the run's "
+             'lines, once the log workspace has them: a line takes minutes to arrive.')
 POOL_LOG_REFUSED = ('--pool-log is refused inside GitHub Actions: what the containers printed is read by the '
                     'owner, from a terminal, and never reaches a public log.')
 START = ('POST', POOL_ID + '/start')

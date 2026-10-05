@@ -1358,8 +1358,8 @@ def where_it_printed(name):
     execution by its name, and a name of another shape is refused there and never printed here."""
     if not named(name):
         return 'What it printed is kept in the log workspace (infra/README.md, "Reading the logs").'
-    return (f'`python infra/deploy.py --pool-log {name}` reads its verdict again and prints what it '
-            'printed, once the log workspace has the lines: a line takes minutes to arrive.')
+    return (f"`python infra/deploy.py --pool-log {name}` reads the run's verdict again and prints the "
+            "run's lines, once the log workspace has them: a line takes minutes to arrive.")
 
 
 def end_pool_run(name, code):
