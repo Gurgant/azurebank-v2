@@ -136,12 +136,11 @@ locally, at the BFF, with the API's own 401 shape, trailing slash normalised the
 
 > **Amended 2026-08-19.** The method condition is gone: the gate now requires a session for EVERY
 > proxied request under `/api/`, not only POSTs.
->
-> **Amended 2026-10-05.** The bare prefix `/api` is gated too: with no live session it answers 401
+> _Amended 2026-10-05: the bare prefix `/api` is gated too. With no live session it answers 401
 > with the API's own `AUTH_TOKEN_MISSING` body, and nothing is forwarded. Until this change the gate
 > tested only `/api/`, so the bare path, which the proxy's catch-all route takes too, was forwarded
 > to the backend with no session. Seen on the test host, 2026-10-05: before, 200 from the recording
-> backend and `/api` forwarded; after, 401 and nothing forwarded (`AuthLevelMiddlewareTests`).
+> backend and `/api` forwarded; after, 401 and nothing forwarded (`AuthLevelMiddlewareTests`)._
 >
 > The 2026-08-17 amendment above deferred exactly this, and gave a concrete reason —
 > `SessionlessPostPaths` was a POST-shaped set, so widening the gate would have forced it to become
