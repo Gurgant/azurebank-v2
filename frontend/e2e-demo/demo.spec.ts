@@ -131,10 +131,12 @@ const detailsPage = (button: string, script: string) => `<!doctype html>
     </script>
   </body>
 </html>`;
-/** The browser keeps a copy whose password is the canary's words. */
-const KEEPS_THE_WORDS = `localStorage.setItem(${JSON.stringify(KEPT_COPY_KEY)}, JSON.stringify({ password: ${JSON.stringify(CANARY)} }));`;
-const KEEPS_NOTHING = `localStorage.removeItem(${JSON.stringify(KEPT_COPY_KEY)});`;
-/** A press takes the line off the page and turns the button round, as the dashboard's panel does. */
+/** What the browser is told it keeps: a copy whose password is the canary's words, or none. */
+const THE_KEY = JSON.stringify(KEPT_COPY_KEY);
+const A_COPY = JSON.stringify(JSON.stringify({ password: CANARY }));
+const KEEPS_THE_WORDS = `localStorage.setItem(${THE_KEY}, ${A_COPY});`;
+const KEEPS_NOTHING = `localStorage.removeItem(${THE_KEY});`;
+/** A press takes the line off the page and turns the button round, as the panel's does. */
 const A_PRESS_HIDES = `document.querySelector('button').addEventListener('click', (event) => {
         document.getElementById('details').remove();
         event.currentTarget.setAttribute('aria-expanded', 'false');
