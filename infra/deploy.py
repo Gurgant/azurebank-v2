@@ -13,10 +13,11 @@ images are published).
 
 A full run, in order:
   1. read the app, and from its containers whether it is the public demo (Demo__Enabled: on in
-     one and off in the other stops the run); read the jobs, print what runs now, and refuse to
-     go on if their shape drifted;
+     one and off in the other stops the run); read the migrate job, and the pool job only if the
+     demo is on; print what runs now, and refuse to go on if a shape drifted or a run of the
+     pool job may still be in progress;
   2. move the tools image on the migrate job, run the migration, wait for that exact execution;
-  3. move the tools image on every other job;
+  3. with the demo on, move the tools image on the pool job and read its shape again;
   4. move both app images in one request, wait for the new revision to be ready, and read the
      app's shape again;
   5. wait until the revision that ran before has stopped answering, then smoke-test the address.
@@ -24,6 +25,12 @@ If the new revision never gets ready, the app's shape has drifted when it is rea
 smoke test gets a wrong answer, the script tries to put the app back on the template it had at
 step 1, and the run still fails. If that put-back fails too, the run says so: the app may then be
 serving a broken revision. The schema is never put back.
+
+The pool job is the app's to announce. With the demo off it is neither read nor moved, and
+whether it exists is not asked: no answer of Azure's is read as "there is no pool job". With the
+demo on it must be readable and in shape, its schedule and its timeout included, or the run stops
+before any change. A deployment moves that job's image and never starts it: the template gives it
+a schedule.
 
 A migration leaves one line here, its verdict: the execution's name, status, times, exit code and
 a one-word reason. What it printed is never fetched by a deployment: the log of a public
@@ -63,16 +70,26 @@ AZ = shutil.which('az') or 'az'
 AZ_TIMEOUT = 180
 APP = 'azurebank'
 MIGRATE_JOB = 'azurebank-migrate'
-# What each signs in to the database as: the one user-assigned identity it may carry.
+POOL_JOB = 'azurebank-pool'
+# What each signs in to the database as: the one user-assigned identity it may carry. The pool
+# job signs in as the app does.
 APP_IDENTITY = 'azurebank-app'
 MIGRATE_IDENTITY = 'azurebank-migrate'
 WORKSPACE = 'azurebank-logs'
 LOG_QUERY = 'https://api.loganalytics.io'
 MAX_LOG_LINES = 5000
 # Job name -> container name. Every job runs the tools image and moves with the commit: the
-# migrate job before the migration, the others only after it succeeded.
-JOBS = {MIGRATE_JOB: 'migrate'}
+# migrate job before the migration, the pool job only after it succeeded. infra/main.bicep writes
+# the pool job only with the demo on, so it is read and moved only when the app says it is the
+# demo (demo_of).
+JOBS = {MIGRATE_JOB: 'migrate', POOL_JOB: 'pool'}
 MAX_JOB_TIMEOUT = 840
+# The one schedule infra/main.bicep writes (its variable poolSchedule) and the bounds it gives
+# the pool job's timeout (its parameter poolTimeout). A test holds each equal to the template's
+# (infra/test_scripts.py). Nothing else reads the schedule or the timeout of a job that is
+# deployed: the Deny policy has no rule on either.
+POOL_SCHEDULE = '0 */4 * * *'
+POOL_TIMEOUTS = (60, 840)
 # The setting both containers of the app read to know whether they are the public demo
 # (infra/main.bicep writes it on both from one switch, `demo`).
 DEMO_FLAG = 'Demo__Enabled'
@@ -94,9 +111,26 @@ EXECUTION_NAME = re.compile(r'[A-Za-z0-9-]{1,100}')
 # reads (backend/tools/AzureBank.Seeder/Commands/ExitCodes.cs). For `migrate` a 2 always comes
 # before any connection. The image's other commands differ: `seed` and `reset` can also refuse
 # after one count, and `seed-pool` and `recycle` can also end with a code from 10 to 15
-# (Pool/PoolExitCodes.cs; `seed-pool` only 12 or 13), so a pool job needs a map of its own.
+# (Pool/PoolExitCodes.cs; `seed-pool` only 12 or 13), so the pool job has a map of its own, below.
 EXIT_CODES = {0: 'done', 1: 'failed after it reached for the server; running it again is safe',
               2: 'refused before any connection; the configuration must change'}
+# What `recycle` exits with, the one command the pool job runs
+# (backend/tools/AzureBank.Seeder/Pool/PoolExitCodes.cs; docs/runbooks/demo-pool.md, "The exit
+# code"). A code from 10 to 15 is a signal: the run finished, and the code names the count somebody
+# should read. A deployment never starts the pool job and reads no exit code of it.
+POOL_EXIT_CODES = {
+    0: 'done',
+    1: 'did not finish, and left no summary line; read its last line before it is started again',
+    2: 'refused before anything was opened; the job\'s configuration must change',
+    10: 'done, with a signal: the pool was low (PoolLow)',
+    11: 'done, with a signal: the pool was empty (PoolEmpty)',
+    12: 'needs a look: a copy could not be built (TopUpIncomplete)',
+    13: 'needs a look: a user outside every copy exists (ForeignUsers)',
+    14: 'needs a look: a copy could not be deleted (DeleteFailed)',
+    15: 'done, with a signal: the day\'s claims held the top-up back (ClaimCeiling)',
+}
+# The codes a pool run ends well with: it finished, and at most the pool was short.
+POOL_RUN_ENDS_WELL = {0, 10, 11, 15}
 
 # The sign-in the smoke test sends. It goes to the BFF's own door: the BFF answers 404 itself on
 # the proxied /api/auth/login and never forwards it. The address is one nobody can register, and
@@ -284,6 +318,49 @@ def job_drift(job):
     ]
     return ([f'{field} is {value!r}' for field, value, wanted in checks if not wanted]
             + identity_drift(job, MIGRATE_IDENTITY))
+
+
+def pool_drift(job):
+    """The pool job as the template writes it: on its one schedule, one run at a time and none
+    tried again, a timeout inside the template's bounds, one container that runs `recycle`, and
+    the app's database identity. The schedule and the timeout are read here because nothing else
+    reads them on a job that is deployed, and whoever may write the job may change both: a
+    shorter interval or a longer timeout could let two runs overlap. The schedule's expression,
+    the arguments and a command are named by what they should be, never by what was found: each
+    is free text, and an argument may hold a value nobody should print."""
+    properties = job.get('properties') or {}
+    configuration = properties.get('configuration') or {}
+    template = properties.get('template') or {}
+    schedule = configuration.get('scheduleTriggerConfig')
+    schedule = schedule if isinstance(schedule, dict) else {}
+    trigger = configuration.get('triggerType')
+    timeout = configuration.get('replicaTimeout')
+    shortest, longest = POOL_TIMEOUTS
+    containers = listed(template, 'containers')
+    names = [str(c.get('name')) if isinstance(c, dict) else '?' for c in containers]
+    checks = [
+        ('configuration.triggerType', trigger, str(trigger).lower() == 'schedule'),
+        ('configuration.scheduleTriggerConfig.parallelism', schedule.get('parallelism'),
+         schedule.get('parallelism') in (None, 1)),
+        ('configuration.replicaRetryLimit', configuration.get('replicaRetryLimit'),
+         configuration.get('replicaRetryLimit') in (None, 0)),
+        # A number and not True: a truth value is a whole number to Python.
+        ('configuration.replicaTimeout', timeout, type(timeout) is int and shortest <= timeout <= longest),
+        ('template.initContainers', init_names(template), not template.get('initContainers')),
+        ('template.containers', names, names == [JOBS[POOL_JOB]]),
+    ]
+    drift = [f'{field} is {value!r}' for field, value, wanted in checks if not wanted]
+    if schedule.get('cronExpression') != POOL_SCHEDULE:
+        drift.append(f'configuration.scheduleTriggerConfig.cronExpression is not {POOL_SCHEDULE!r}')
+    if len(containers) == 1 and isinstance(containers[0], dict):
+        if containers[0].get('args') != ['recycle']:
+            drift.append("template.containers[0].args is not ['recycle']")
+        # A command is expected to replace the image's entry point
+        # (backend/tools/AzureBank.Seeder/Dockerfile) and to leave `recycle` an argument of
+        # something else.
+        if containers[0].get('command'):
+            drift.append('template.containers[0].command is set')
+    return drift + identity_drift(job, APP_IDENTITY)
 
 
 def assert_shape(what, drift, when):
@@ -565,17 +642,27 @@ def report_verdict(job_id, name, known, in_actions):
             pass
 
 
-def run_migration(job_id, timeout, in_actions=False):
-    before = executions(job_id)
-    for execution in before:
+def in_progress(executions, timeout):
+    """The first execution, of a list already read, that may still be running, or None. It reads
+    nothing by itself: whoever asks has read the job's executions once, and says what a run in
+    progress means for it."""
+    for execution in executions:
         status = state_of(execution)
         # A state that is neither running nor finished ("Unknown") blocks only while a run that
         # started then could still be alive.
         if status in ACTIVE or (status not in FINISHED and started_within(execution, timeout + 120)):
-            state = told_status(status, 'in a state this script does not know')
-            raise RuntimeError(f"Execution {named(execution['name']) or 'whose name is withheld'} "
-                               f"is {state}: a migration may still be running. "
-                               f"{stop_hint(job_id, execution['name'])}")
+            return execution
+    return None
+
+
+def run_migration(job_id, timeout, in_actions=False):
+    before = executions(job_id)
+    blocking = in_progress(before, timeout)
+    if blocking:
+        state = told_status(state_of(blocking), 'in a state this script does not know')
+        raise RuntimeError(f"Execution {named(blocking['name']) or 'whose name is withheld'} "
+                           f"is {state}: a migration may still be running. "
+                           f"{stop_hint(job_id, blocking['name'])}")
     known = {execution['name'] for execution in before}
 
     name = rest('POST', job_id + '/start').get('name')
@@ -773,6 +860,35 @@ def put_back(app_id, app):
     return label
 
 
+def read_pool_job(job_id):
+    """The pool job, which is expected to be there once the app says it is the demo. What Azure
+    answers for a job that is not there, to an identity whose role is on each resource by itself
+    ("not found", or "not authorised"), has not been seen: no answer is read as "there is no pool
+    job", and the run stops before anything is changed."""
+    try:
+        return rest('GET', job_id)
+    except AzError as error:
+        raise RuntimeError(f'The app says the demo is on, and the job {POOL_JOB} could not be '
+                           f"read: {str(error).rstrip('.')}. Nothing was changed. See "
+                           'infra/README.md, "When something fails".') from None
+
+
+def refuse_beside_a_pool_run(job_id, job):
+    """Stop while a run of the pool job is, or may still be, in progress: the migration is about
+    to change the schema that run works on, and the job itself is about to be moved. It is one
+    read, before anything is changed: a run the schedule starts after it is not seen, and nothing
+    here holds the schedule back."""
+    timeout = job['properties']['configuration']['replicaTimeout']
+    running = in_progress(executions(job_id), timeout)
+    if running:
+        state = told_status(state_of(running), 'in a state this script does not know')
+        raise RuntimeError(f"Execution {named(running['name']) or 'whose name is withheld'} of the "
+                           f'job {POOL_JOB} is {state}: a pool run may still be in progress, and a '
+                           'deployment does not start beside one. Nothing was changed. A run is '
+                           f"expected to end within the job's timeout ({timeout} s): deploy again "
+                           'after that.')
+
+
 def deploy(subscription, resource_group, tag, app_only=False, in_actions=False,
            expect_secrets_refused=False):
     if not re.fullmatch(r'[0-9a-f]{40}', tag):
@@ -797,9 +913,16 @@ def deploy(subscription, resource_group, tag, app_only=False, in_actions=False,
         # The log of a public repository is public. This hides the name in it and nothing more.
         print(f'::add-mask::{fqdn}', flush=True)
     # The app itself says whether it is the public demo, and two containers that disagree stop
-    # the run here.
+    # the run here. The pool job is asked for only when it says so: with the demo off, whether
+    # such a job exists is not a question this script puts to Azure.
     demo = demo_of(app)
-    jobs = {} if app_only else {name: rest('GET', f'{prefix}/jobs/{name}') for name in JOBS}
+    jobs = {}
+    if not app_only:
+        jobs[MIGRATE_JOB] = rest('GET', f'{prefix}/jobs/{MIGRATE_JOB}')
+        if demo:
+            jobs[POOL_JOB] = read_pool_job(f'{prefix}/jobs/{POOL_JOB}')
+        else:
+            say(f'The app says the demo is off: the job {POOL_JOB} is not read and not moved.')
     say(running_now(app, jobs))
     assert_shape('The app', app_drift(app), 'nothing was changed')
     if not app_only:
@@ -807,6 +930,9 @@ def deploy(subscription, resource_group, tag, app_only=False, in_actions=False,
         timeout = jobs[MIGRATE_JOB]['properties']['configuration']['replicaTimeout']
         if not 1 <= timeout <= MAX_JOB_TIMEOUT:
             raise RuntimeError('The migrate job timeout is outside what this workflow waits for.')
+        if POOL_JOB in jobs:
+            assert_shape(f'The job {POOL_JOB}', pool_drift(jobs[POOL_JOB]), 'nothing was changed')
+            refuse_beside_a_pool_run(f'{prefix}/jobs/{POOL_JOB}', jobs[POOL_JOB])
     job_patches = {name: image_patch(jobs[name], {container: tools})
                    for name, container in JOBS.items() if name in jobs}
     app_patch = image_patch(app, app_images)
@@ -825,11 +951,11 @@ def deploy(subscription, resource_group, tag, app_only=False, in_actions=False,
         moved = move_job(MIGRATE_JOB)
         assert_shape(f'The job {MIGRATE_JOB}', job_drift(moved), 'after its image moved')
         run_migration(f'{prefix}/jobs/{MIGRATE_JOB}', timeout, in_actions=in_actions)
-        # Only now: a failed migration must leave the other jobs on the image that matches the
-        # schema they run on.
-        for name in job_patches:
-            if name != MIGRATE_JOB:
-                move_job(name)
+        # Only now: a failed migration must leave the pool job on the image that matches the
+        # schema it runs on.
+        if POOL_JOB in jobs:
+            moved = move_job(POOL_JOB)
+            assert_shape(f'The job {POOL_JOB}', pool_drift(moved), 'after its image moved')
         say('Migration succeeded; moving both app containers together.')
     else:
         say('Moving both app containers together; no job is touched and no migration runs.')

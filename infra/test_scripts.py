@@ -2176,6 +2176,19 @@ class TemplateTests(unittest.TestCase):
         configuration = self.job('azurebank-pool')['properties']['configuration']
         self.assertEqual(configuration.get('replicaTimeout'), "[parameters('poolTimeout')]")
 
+    def test_the_schedule_the_tool_expects_is_the_one_the_template_writes(self):
+        # infra/deploy.py reads the deployed job's expression against a constant of its own, at a
+        # deployment: the test above holds the template, and this one holds the tool to it.
+        tool = (HERE / 'deploy.py').read_text(encoding='utf-8')
+        self.assertEqual(re.findall(r"(?m)^POOL_SCHEDULE = '([^']*)'$", tool),
+                         [self.main['variables']['poolSchedule']])
+
+    def test_the_timeouts_the_tool_takes_on_the_pool_job_are_the_ones_the_template_allows(self):
+        tool = (HERE / 'deploy.py').read_text(encoding='utf-8')
+        timeout = self.main['parameters']['poolTimeout']
+        self.assertEqual(re.findall(r'(?m)^POOL_TIMEOUTS = \((\d+), (\d+)\)$', tool),
+                         [(str(timeout['minValue']), str(timeout['maxValue']))])
+
     def test_the_policy_definition_sits_at_subscription_scope_and_denies(self):
         self.assertEqual(sorted(module['name'] for module in self.of_type('Microsoft.Resources/deployments')),
                          [GUARD, 'azurebank-shape-definition'])

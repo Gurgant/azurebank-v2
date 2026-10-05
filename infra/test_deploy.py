@@ -31,6 +31,7 @@ GROUP = 'group'
 PREFIX = f'/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}/providers/Microsoft.App'
 APP_ID = f'{PREFIX}/containerApps/azurebank'
 MIGRATE_ID = f'{PREFIX}/jobs/azurebank-migrate'
+POOL_ID = f'{PREFIX}/jobs/azurebank-pool'
 OLD = 'b' * 40
 NEW = 'a' * 40
 ADDRESS = 'azurebank.example.invalid'
@@ -191,6 +192,9 @@ class FakeAzure:
         # None: the migration is a stand-in. A list: the job runs here, and ends as `outcome`.
         self.executions = None
         self.outcome = finished('this-run')
+        # The executions of the pool job, once there is one. They are only ever read here: a
+        # deployment moves that job and never starts it.
+        self.pool_runs = []
         self.calls = []
         self.versions = []
         self.events = []
@@ -272,6 +276,9 @@ class FakeAzure:
 
     def job_call(self, method, tail, body):
         name, _, rest = tail.partition('/')
+        if rest and name == 'azurebank-pool':
+            assert (method, rest) == ('GET', 'executions'), f'unexpected call on the pool job: {method} {tail}'
+            return {'value': copy.deepcopy(self.pool_runs)}
         if rest and self.executions is not None:
             return self.execution_call(method, rest)
         assert not rest, f'the migration is run by a stand-in in these tests: {tail}'
@@ -548,6 +555,51 @@ class MigrationTests(Offline):
         self.assertIn('--job-execution-name run', str(raised.exception))
 
 
+class InProgressTests(Offline):
+    """`deploy.in_progress`: which execution, of a list somebody already read, may still be running.
+    It is the rule a migration always had for its own job; a deployment asks it of the pool job."""
+
+    @staticmethod
+    def ago(seconds):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        return (now - datetime.timedelta(seconds=seconds)).isoformat().replace('+00:00', 'Z')
+
+    def test_it_answers_with_the_execution_that_runs_or_may_still_be_alive(self):
+        ended = execution('ended', 'Succeeded', self.ago(30))
+        for blocking in (execution('running', 'Running'), execution('processing', 'Processing'),
+                         # A state that is neither running nor finished, on a run young enough: the
+                         # timeout and two minutes.
+                         execution('young', 'Unknown', self.ago(700)), execution('no-state', None, self.ago(5)),
+                         execution('strange', {'state': 'x'}, self.ago(5)),
+                         # No start time, or one nobody can read, is not proof of age.
+                         execution('no-start', 'Unknown'), execution('unreadable', 'Unknown', 'yesterday')):
+            with self.subTest(blocking=blocking['name']):
+                self.assertIs(deploy.in_progress([ended, blocking], 600), blocking)
+        first, second = execution('first', 'Running'), execution('second', 'Running')
+        self.assertIs(deploy.in_progress([first, second], 600), first)
+        # The age is measured against the timeout it is given: 800 s is too old for 600, not for 840.
+        old = execution('old', 'Unknown', self.ago(800))
+        self.assertIs(deploy.in_progress([old], 840), old)
+
+    def test_an_execution_that_ended_or_is_too_old_to_be_alive_blocks_nothing(self):
+        # CONTROL: green before this change: a function that answers None for any list passes it.
+        ended = [execution(status.lower(), status, self.ago(30)) for status in ('Succeeded', 'Failed', 'Stopped',
+                                                                                'Degraded')]
+        self.assertIsNone(deploy.in_progress([], 600))
+        self.assertIsNone(deploy.in_progress(ended, 600))
+        self.assertIsNone(deploy.in_progress([*ended, execution('old', 'Unknown', self.ago(800))], 600))
+
+    @patch('deploy.rest', side_effect=AssertionError('in_progress read something'))
+    def test_it_reads_nothing_and_changes_nothing_of_the_list_it_is_given(self, rest):
+        # CONTROL: green before this change. Whoever calls it has read the executions, once: a
+        # read of its own would be one more than a migration makes before it starts its job.
+        given = [execution('ended', 'Succeeded', self.ago(30)), execution('running', 'Running')]
+        before = copy.deepcopy(given)
+        deploy.in_progress(given, 600)
+        self.assertEqual(given, before)
+        rest.assert_not_called()
+
+
 # What Azure could put in a name or a status and nobody has seen: a second line, and on it a
 # command that GitHub Actions would obey.
 STRANGE = 'x\n::add-mask::something'
@@ -669,6 +721,18 @@ class VerdictTests(unittest.TestCase):
                 line = public_verdict(finished(status='Failed', code=code)['properties'])
                 self.assertIn(': Failed, started', line)
                 self.assertIn(f', exit code {code} ({meaning}), ', line)
+
+    def test_the_pool_jobs_map_says_done_for_exactly_the_codes_a_pool_run_ends_well_with(self):
+        # CONTROL: green as written. `recycle` exits with 0, 1, 2 and 10 to 15
+        # (backend/tools/AzureBank.Seeder/Pool/PoolExitCodes.cs; docs/runbooks/demo-pool.md): the
+        # words of the map and the set of codes that end a run well are one split written twice,
+        # and each is held to the other here. Nothing reads either at a deployment, which never
+        # starts the pool job. Seen red with 10 taken out of the set.
+        self.assertEqual(sorted(deploy.POOL_EXIT_CODES), [0, 1, 2, 10, 11, 12, 13, 14, 15])
+        self.assertEqual({code for code, words in deploy.POOL_EXIT_CODES.items() if words.startswith('done')},
+                         deploy.POOL_RUN_ENDS_WELL)
+        self.assertEqual({code for code, words in deploy.POOL_EXIT_CODES.items()
+                          if words.startswith('needs a look: ')}, {12, 13, 14})
 
     def test_an_exit_code_azure_did_not_report_is_said_to_be_missing_and_never_guessed(self):
         entry = {'name': 'migrate', 'code': 0}
@@ -891,6 +955,19 @@ class DeploymentTests(DeployCase):
         self.migration.assert_called_once_with(MIGRATE_ID, 600, in_actions=False)
         self.smoke.assert_called_once_with(f'https://{ADDRESS}', demo=False)
 
+    def test_with_the_demo_off_the_pool_job_is_neither_read_nor_moved(self):
+        # The app says the demo is off, and that is read from the app alone: whether a job of that
+        # name exists is not asked. Here one does.
+        self.azure.jobs['azurebank-pool'] = pool_resource()
+        self.deploy()
+        self.assertEqual([call for call in self.azure.calls if 'azurebank-pool' in call[1]], [])
+        self.assertEqual(self.steps(), ['job azurebank-migrate', 'migration', 'app d', 'smoke'])
+        self.assertEqual(deploy.images(self.azure.jobs['azurebank-pool']),
+                         {'pool': f'ghcr.io/gurgant/azurebank-tools:{OLD}'})
+        said = [line.split(' ', 1)[1] for line in self.azure.printed_before_first_write.splitlines()]
+        self.assertEqual([line for line in said if 'azurebank-pool' in line],
+                         ['The app says the demo is off: the job azurebank-pool is not read and not moved.'])
+
     def test_the_app_request_carries_the_template_it_read_and_nothing_else(self):
         self.deploy()
         body = self.azure.app_patches()[0]
@@ -1004,28 +1081,186 @@ class DemoStateTests(DeployCase):
         self.smoke.assert_not_called()
 
 
-class OrderTests(DeployCase):
-    """A second job, as the pool job will be: it must not run a new image on an old schema."""
+class PoolDeployTests(DeployCase):
+    """With the demo on a deployment also moves the pool job: after the migration, so that the job
+    never runs a new image on an old schema, and only once it has read the job and found it in shape."""
+
+    STEPS = ['job azurebank-migrate', 'migration', 'job azurebank-pool', 'app d', 'smoke']
 
     def setUp(self):
         super().setUp()
-        self.start(patch.dict(deploy.JOBS, {'azurebank-pool': 'pool'}))
-        self.azure.jobs['azurebank-pool'] = job_resource('pool')
+        self.azure.turn_the_demo_on()
 
-    def test_the_other_jobs_move_after_the_migration_and_before_the_app(self):
+    def refused_before_any_change(self, named, drift):
+        drift(self.azure)
+        with self.assertRaises(deploy.ShapeError) as raised:
+            self.deploy()
+        self.assertEqual(str(raised.exception), out_of_shape('The job azurebank-pool', named))
+        for hidden in ('MARKER', '* * * * *'):
+            self.assertNotIn(hidden, self.printed())
+        self.assertEqual(self.azure.writes(), [], 'nothing may be changed on a drifted job')
+        self.migration.assert_not_called()
+        self.smoke.assert_not_called()
+
+    def test_the_pool_job_moves_after_the_migration_and_before_the_app(self):
         self.deploy()
-        self.assertEqual(self.steps(), ['job azurebank-migrate', 'migration', 'job azurebank-pool',
-                                        'app d', 'smoke'])
-        self.assertEqual(deploy.images(self.azure.jobs['azurebank-pool']),
-                         {'pool': f'ghcr.io/gurgant/azurebank-tools:{NEW}'})
+        self.assertEqual(self.steps(), self.STEPS)
+        tools = f'ghcr.io/gurgant/azurebank-tools:{NEW}'
+        self.assertEqual(deploy.images(self.azure.jobs['azurebank-pool']), {'pool': tools})
+        self.assertEqual(deploy.images(self.azure.jobs['azurebank-migrate']), {'migrate': tools})
+        self.smoke.assert_called_once_with(f'https://{ADDRESS}', demo=True)
+        # What the job runs and what it is told travel back as they were read, and so does the
+        # flag of the app's two containers: a deployment moves images and nothing else.
+        moved = self.azure.jobs['azurebank-pool']['properties']['template']['containers'][0]
+        self.assertEqual((moved['args'], moved['env']), (['recycle'], [{'name': 'KEY', 'secretRef': 'key'}]))
+        self.assertEqual([entry['env'][-1] for entry in app_part(self.azure, 'template', 'containers')],
+                         [{'name': 'Demo__Enabled', 'value': 'true'}] * 2)
 
-    def test_a_failed_migration_leaves_the_other_jobs_on_the_old_image(self):
+    def test_a_failed_migration_leaves_the_pool_job_on_the_old_image(self):
+        # CONTROL: green before this change. While the script did not know the pool job, the
+        # migration's error, the one write and the old image all held. It is the guard of the
+        # order now: with the pool job moved before the migration it fails.
         self.migration.side_effect = RuntimeError('migration failed')
         with self.assertRaisesRegex(RuntimeError, 'migration failed'):
             self.deploy()
         self.assertEqual(self.azure.writes(), [('PATCH', MIGRATE_ID)])
         self.assertEqual(deploy.images(self.azure.jobs['azurebank-pool']),
                          {'pool': f'ghcr.io/gurgant/azurebank-tools:{OLD}'})
+
+    def test_a_pool_job_that_cannot_be_read_stops_the_run_before_any_change(self):
+        # Which of the two Azure answers for a job that is not there, to an identity whose role is
+        # on each resource by itself, has not been seen. Neither is read as "there is no pool job".
+        self.azure.refuse = lambda method, resource_id, body: resource_id == POOL_ID
+        for refusal in ('Not Found: ResourceNotFound', 'Forbidden: AuthorizationFailed.'):
+            with self.subTest(refusal=refusal):
+                self.azure.refusal = refusal
+                with self.assertRaises(RuntimeError) as raised:
+                    self.deploy()
+                self.assertIs(type(raised.exception), RuntimeError, 'the run says what it means, in its own words')
+                self.assertEqual(str(raised.exception), (
+                    'The app says the demo is on, and the job azurebank-pool could not be read: '
+                    f'{refusal.rstrip(".")}. Nothing was changed. See infra/README.md, "When something fails".'))
+        self.assertEqual(self.azure.writes(), [])
+        self.migration.assert_not_called()
+        self.smoke.assert_not_called()
+
+    def test_a_pool_run_in_progress_stops_the_deployment_before_any_change(self):
+        recent = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        for state, started in (('Running', None), ('Processing', None), ('Unknown', recent)):
+            with self.subTest(state=state):
+                self.azure.pool_runs = [finished('an-earlier-run'), execution('pool-run', state, started)]
+                with self.assertRaises(RuntimeError) as raised:
+                    self.deploy()
+                self.assertEqual(str(raised.exception), (
+                    f'Execution pool-run of the job azurebank-pool is {state}: a pool run may still be '
+                    'in progress, and a deployment does not start beside one. Nothing was changed. A '
+                    "run is expected to end within the job's timeout (600 s): deploy again after that."))
+        self.assertEqual(self.azure.writes(), [])
+        self.migration.assert_not_called()
+        self.smoke.assert_not_called()
+
+    def test_a_pool_run_that_blocks_is_named_only_in_the_shape_expected(self):
+        recent = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        unknown = 'in a state this script does not know'
+        for blocking, told in ((execution(STRANGE, 'Running'), 'Execution whose name is withheld of the job '
+                                                                 'azurebank-pool is Running: a pool run may'),
+                               (execution('pool-run', STRANGE, recent),
+                                f'Execution pool-run of the job azurebank-pool is {unknown}: a pool run may'),
+                               (execution(STRANGE, {'state': STRANGE}, recent),
+                                f'Execution whose name is withheld of the job azurebank-pool is {unknown}: a pool')):
+            with self.subTest(told=told):
+                self.azure.pool_runs = [blocking]
+                with self.assertRaises(RuntimeError) as raised:
+                    self.deploy(in_actions=True)
+                self.assertTrue(str(raised.exception).startswith(told), str(raised.exception))
+                for unwanted in ('\n', '::', 'something'):
+                    self.assertNotIn(unwanted, str(raised.exception))
+        self.assertEqual(self.azure.writes(), [])
+
+    def test_pool_runs_that_ended_or_are_too_old_to_be_alive_do_not_stop_the_deployment(self):
+        stale = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=2)).isoformat()
+        self.azure.pool_runs = [finished('one'), finished('two', status='Failed', code=10),
+                                execution('stale', 'Unknown', stale)]
+        self.deploy()
+        self.assertEqual(self.steps(), self.STEPS)
+
+    def test_the_runs_of_the_pool_job_are_read_once_before_anything_is_changed_and_none_is_started(self):
+        self.deploy()
+        calls = [(method, resource_id) for method, resource_id, _ in self.azure.calls]
+        self.assertEqual(calls.count(('GET', POOL_ID + '/executions')), 1)
+        self.assertLess(calls.index(('GET', POOL_ID + '/executions')), calls.index(('PATCH', MIGRATE_ID)))
+        self.assertEqual([call for call in calls if call[0] != 'GET' and call[1].startswith(POOL_ID)],
+                         [('PATCH', POOL_ID)])
+
+    def test_the_pool_job_is_read_again_after_it_moved_and_a_drift_stops_the_run(self):
+        self.azure.drift_job_on_patch = lambda job: (
+            'pool' in deploy.images(job) and job['properties']['configuration'].update(triggerType='Manual'))
+        with self.assertRaises(deploy.ShapeError) as raised:
+            self.deploy()
+        self.assertEqual(str(raised.exception), out_of_shape(
+            'The job azurebank-pool', "configuration.triggerType is 'Manual'", when='after its image moved'))
+        self.assertEqual(self.steps(), self.STEPS[:3])
+        self.assertEqual(self.azure.app_patches(), [])
+        self.smoke.assert_not_called()
+
+    def test_values_azure_leaves_out_of_the_pool_job_read_as_their_defaults(self):
+        pool_configuration(self.azure).update(replicaRetryLimit=None, triggerType='schedule')
+        del pool_configuration(self.azure)['scheduleTriggerConfig']['parallelism']
+        self.azure.jobs['azurebank-pool']['properties']['template'].update(initContainers=[])
+        pool_container(self.azure).update(command=None)
+        self.deploy()
+        self.assertEqual(self.steps(), self.STEPS)
+
+    def test_what_runs_now_names_the_pool_jobs_image_too(self):
+        self.deploy()
+        (line,) = [line for line in self.azure.printed_before_first_write.splitlines() if 'Running now' in line]
+        self.assertEqual(re.findall(r'ghcr\.io/gurgant/azurebank-[a-z]+:[0-9a-f]{40}', line),
+                         [f'ghcr.io/gurgant/azurebank-{name}:{OLD}' for name in ('bff', 'api', 'tools', 'tools')])
+
+    def test_a_pool_job_that_does_not_carry_exactly_the_apps_identity_is_refused(self):
+        # The pool job signs in to the database as the app does: the same identity, and no other.
+        job = self.azure.jobs['azurebank-pool']
+        right = job['identity']
+        for what, (block, _) in WRONG_IDENTITIES.items():
+            with self.subTest(what=what):
+                job['identity'] = block
+                with self.assertRaises(deploy.ShapeError) as raised:
+                    self.deploy()
+                self.assertEqual(str(raised.exception), out_of_shape(
+                    'The job azurebank-pool',
+                    'identity is not exactly one user-assigned identity ending in /azurebank-app'))
+                self.assertEqual(self.azure.writes(), [], 'nothing may be changed')
+        job['identity'] = right
+        self.deploy()
+        self.assertEqual(self.steps(), self.STEPS)
+
+    def test_with_the_demo_on_no_request_carries_an_identity_either(self):
+        # The deployment, and the put-back after it: four bodies, each a location and a template.
+        self.azure.fate['d'] = 'never'
+        with self.assertRaisesRegex(RuntimeError, 'put back'):
+            self.deploy()
+        patches = [(resource_id, body) for method, resource_id, body in self.azure.calls if method == 'PATCH']
+        self.assertEqual([resource_id for resource_id, _ in patches], [MIGRATE_ID, POOL_ID, APP_ID, APP_ID])
+        for _, body in patches:
+            self.assertEqual((sorted(body), sorted(body['properties'])),
+                             (['location', 'properties'], ['template']))
+            self.assertEqual([key for key in keys_of(body) if 'identit' in key.lower()], [])
+        self.assertIn('identity', self.azure.jobs['azurebank-pool'], 'the job that was read did hold one')
+
+    def test_a_refusal_that_asks_for_a_right_on_the_identity_stops_the_run_at_the_pool_job_too(self):
+        # The pool job carries the app's database identity. What Azure answers when the deployment
+        # identity changes that job has not been seen; if it asks for a right on the identity, the
+        # run stops there as it does for the migrate job and for the app.
+        self.azure.refusal = LINKED
+        self.azure.refuse = lambda method, resource_id, body: method == 'PATCH' and resource_id == POOL_ID
+        with self.assertRaises(deploy.IdentityRightAsked) as raised:
+            self.deploy()
+        self.assertTrue(str(raised.exception).startswith(
+            'Azure asked for a right on a database identity before it would change the job '
+            'azurebank-pool: stop here.'), str(raised.exception))
+        self.assertEqual(self.azure.writes(), [('PATCH', MIGRATE_ID), ('PATCH', POOL_ID)],
+                         'no retry, and the app is not touched')
+        self.smoke.assert_not_called()
 
 
 def app_part(azure, *path):
@@ -1065,6 +1300,53 @@ JOB_DRIFTS = {
     'configuration.replicaRetryLimit': lambda a: job_configuration(a).update(replicaRetryLimit=2),
     'template.initContainers': lambda a: a.jobs['azurebank-migrate']['properties']['template'].update(
         initContainers=[container('first', 'ghcr.io/someone/else:latest')]),
+}
+
+
+def pool_configuration(azure):
+    return azure.jobs['azurebank-pool']['properties']['configuration']
+
+
+def pool_container(azure):
+    return azure.jobs['azurebank-pool']['properties']['template']['containers'][0]
+
+
+# name of the test -> (what the refusal says, how the pool job drifted). The schedule's expression,
+# the arguments and a command are named by what they should be, never by what was found.
+POOL_DRIFTS = {
+    'trigger': ("configuration.triggerType is 'Manual'",
+                lambda a: pool_configuration(a).update(triggerType='Manual')),
+    'schedules_parallelism': ('configuration.scheduleTriggerConfig.parallelism is 3',
+                              lambda a: pool_configuration(a)['scheduleTriggerConfig'].update(parallelism=3)),
+    'retry_limit': ('configuration.replicaRetryLimit is 2',
+                    lambda a: pool_configuration(a).update(replicaRetryLimit=2)),
+    'init_containers': ("template.initContainers is ['first']",
+                        lambda a: a.jobs['azurebank-pool']['properties']['template'].update(
+                            initContainers=[container('first', 'ghcr.io/someone/else:latest')])),
+    'arguments': ("template.containers[0].args is not ['recycle']",
+                  lambda a: pool_container(a).update(args=['seed-pool', '--VALUE-MARKER'])),
+    'identity': ('identity is not exactly one user-assigned identity ending in /azurebank-app',
+                 lambda a: a.jobs['azurebank-pool'].update(identity=identity('azurebank-migrate'))),
+    'schedules_expression': ("configuration.scheduleTriggerConfig.cronExpression is not '0 */4 * * *'",
+                             lambda a: pool_configuration(a)['scheduleTriggerConfig'].update(
+                                 cronExpression='* * * * *')),
+    'timeout': ('configuration.replicaTimeout is 3600',
+                lambda a: pool_configuration(a).update(replicaTimeout=3600)),
+    # Beyond the eight above: the other end of the timeout's range, a timeout that is no number,
+    # a job with no schedule to read, a command (it would leave `recycle` an argument of something
+    # else), and a container that is not the one the template writes.
+    'timeout_under_a_minute': ('configuration.replicaTimeout is 59',
+                               lambda a: pool_configuration(a).update(replicaTimeout=59)),
+    'timeout_that_is_no_number': ('configuration.replicaTimeout is True',
+                                  lambda a: pool_configuration(a).update(replicaTimeout=True)),
+    'missing_schedule': ("configuration.scheduleTriggerConfig.cronExpression is not '0 */4 * * *'",
+                         lambda a: pool_configuration(a).pop('scheduleTriggerConfig')),
+    'command': ('template.containers[0].command is set',
+                lambda a: pool_container(a).update(command=['/bin/sh', '-c', 'VALUE-MARKER'])),
+    'second_container': ("template.containers is ['pool', 'extra']",
+                         lambda a: a.jobs['azurebank-pool']['properties']['template']['containers'].append(
+                             container('extra', 'ghcr.io/someone/else:latest'))),
+    'containers_name': ("template.containers is ['migrate']", lambda a: pool_container(a).update(name='migrate')),
 }
 
 
@@ -1124,6 +1406,17 @@ for _what, _drifts in (('The app', APP_DRIFTS), ('The job azurebank-migrate', JO
         _name = f"{_what.split()[1]}_{_field.replace('.', '_')}"
         setattr(ShapeTests, f'test_a_drift_in_the_{_name}_is_refused_before_any_change',
                 _drift_test(_field, _drift, _what))
+
+
+def _pool_drift_test(named, drift):
+    def test(self):
+        self.refused_before_any_change(named, drift)
+    return test
+
+
+for _name, (_named, _drift) in POOL_DRIFTS.items():
+    setattr(PoolDeployTests, f'test_a_drift_in_the_pool_jobs_{_name}_is_refused_before_any_change',
+            _pool_drift_test(_named, _drift))
 
 
 def keys_of(node):
@@ -1839,6 +2132,24 @@ class WholeRunTests(Offline):
         self.assertEqual([call for call in self.azure.versions if call[2] != deploy.API_VERSION],
                          [('GET', 'executions', '2026-07-01')])
         self.smoke.assert_called_once()
+
+    def test_with_the_demo_on_a_deployment_reads_the_pool_jobs_runs_and_starts_the_migration_only(self):
+        self.azure.turn_the_demo_on()
+        self.azure.pool_runs = [finished('a-pool-run', status='Failed', code=10)]
+        deploy.deploy(SUBSCRIPTION, GROUP, NEW, in_actions=True)
+        # One verdict, the migration's: a pool run is read for whether it is over, and no line of
+        # a deployment says how it ended.
+        self.assertEqual(self.verdicts(), [VERDICT])
+        self.assertNotIn('a-pool-run', self.printed())
+        calls = [(method, resource_id) for method, resource_id, _ in self.azure.calls]
+        self.assertEqual([call for call in calls if call[0] == 'POST'], [('POST', MIGRATE_ID + '/start')])
+        self.assertEqual(calls.count(('GET', POOL_ID + '/executions')), 1)
+        self.assertEqual({resource_id.split('/providers/')[1].split('/')[0] for _, resource_id in calls},
+                         {'Microsoft.App'})
+        # The pool job's runs are read with the usual version: only the verdict needs the later one.
+        self.assertEqual([call for call in self.azure.versions if call[2] != deploy.API_VERSION],
+                         [('GET', 'executions', '2026-07-01')])
+        self.smoke.assert_called_once_with(f'https://{ADDRESS}', demo=True)
 
     def test_a_failed_migration_prints_its_verdict_and_leaves_the_app_alone(self):
         self.azure.outcome = finished('this-run', status='Failed', code=2, reason='Error')
