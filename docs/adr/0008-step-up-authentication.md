@@ -539,7 +539,7 @@ public class ApplicationUser : IdentityUser<Guid>
 > until the change this note comes with. The proxy's catch-all route takes the bare path `/api`
 > too, with nothing after it, and the `/api/` prefix does not match it: with no live session it
 > was forwarded. `RequiresSession` now matches the bare path as well, so with no live session it
-> is answered the same 401 and nothing is forwarded;
+> is answered 401, as every path under `/api/` is, and nothing is forwarded;
 > [ADR-0041](0041-the-api-verifies-the-transfer-pin.md)'s amendment of 2026-10-05 says where both
 > were seen.)*
 > When a session cookie is present the middleware calls

@@ -27,6 +27,8 @@ namespace AzureBank.Bff.Tests;
 /// once, 43 bytes longer than the file.
 /// The rows behind extra slashes (<c>//api/accounts</c>, <c>//settings</c>) are not among them
 /// either: the comment over each of their two theories says where its statuses were observed.
+/// Nor are the rows behind a leading backslash, nor the control that follows them: the comment
+/// over each of those two theories says the same.
 /// </para>
 /// </remarks>
 public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Program>>, IDisposable
