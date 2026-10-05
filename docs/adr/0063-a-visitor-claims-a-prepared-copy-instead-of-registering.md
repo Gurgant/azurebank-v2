@@ -956,9 +956,10 @@ origin.
 That is why no such script is expected. It is not a wall around the value: no directive of that
 header stops a page from navigating away with it (read, not tried).
 
-**5. What the browser's clock does.** The sign-in page compares the kept copy's end with the
-browser's clock once, when it opens. That one comparison both decides what is offered and
-removes the key.
+**5. What the browser's clock does.** The sign-in page reads the browser's clock once, when it
+opens, and holds the kept copy's end against that instant. That comparison both decides what is
+offered and removes the key. It is made once more, against the same instant, when "Try the
+demo" is pressed (6 below).
 
 - **A clock ahead of the server's by more than the copy has left forgets a living copy for
   good,** with no sentence shown, and offers "Try the demo". That copy is never sent to the
@@ -993,6 +994,31 @@ tab shows the copy it drew, with the balances it had fetched. What it cannot do 
 forgotten or replaced copy's password: "Continue with my copy" and "Stay signed in" read the
 pair from the key when they are pressed. While the key's string is unchanged the same object is
 handed back, which is what lets a component ask at every render.
+
+"Try the demo" reads the key when it is pressed too. The button is drawn for a browser that
+keeps no copy, and another tab may have claimed one since: a claim sent then would put a second
+copy in that one's place with nobody asked, and end the session the other tab is signed in
+with. So if the key holds a copy the page would offer, nothing is sent and the page offers that
+copy, with nothing said. A copy past its end that the browser could not remove is not in the
+way of a claim. Held against the mock by `LoginPage.test.tsx`, `a copy another tab claimed
+before "Try the demo" is pressed: nothing is sent, and the copy is offered` and `"Try the demo"
+still claims over a copy past its end that the browser would not remove`. Seen on 2026-10-05
+in Chromium 151.0.7922.34 on the dev server with the mock, with two tabs of one browser
+context, twice: the second tab, drawn before the first claimed, sent nothing at the press,
+offered the first tab's copy with no alert, and left the key as it was. Focus was then on the
+page, and nothing was built for that. From a press that does claim until the dashboard is
+drawn, the page stays as it was pressed: the answer puts the new copy under the key before the
+dashboard is there, and the page does not offer the copy it has just claimed (`from the press
+on "Try the demo" to the dashboard the page never offers the copy it has just claimed`).
+
+One tab is outside all of this: a tab whose browser refused to store its copy (3 above). It
+holds that copy in memory and does not read the key again until a write succeeds there or the
+copy is forgotten there. So another tab's "Forget this copy" or "Start over" never reaches it,
+and its two buttons, where it draws them, send the pair it holds
+(`frontend/src/features/demo/demoCopyStorage.ts`, `getDemoCopySnapshot`; held by
+`demoCopyStorage.test.ts`, `a browser that refuses to store still remembers the copy while the
+page lives` and `leaves a copy in the key and another in memory`). No browser that refuses
+storage was run.
 
 **7. Three sentences assume the default lifetime.** "24 hours" is typed out in the notice under
 "Try the demo", in the sentence for a copy that is gone, and in the dashboard's sentence for a
@@ -1035,7 +1061,7 @@ claim that was refused changes neither`, `an ordinary sign-in resets nothing` an
 a sign-in leaves nothing of the cache it found`; in `pages/LoginPage.test.tsx`, `a copy past
 its end is not offered, and is forgotten`, `a copy whose end passes while the page is open is
 still offered: the end is looked at when the page opens` and `without the tag nothing reads the
-demo's key`; in `features/demo/DemoCopyPanel.test.tsx`, `a stored copy is shown as text,
+demo's key`, and the three that point 6 names; in `features/demo/DemoCopyPanel.test.tsx`, `a stored copy is shown as text,
 whatever it holds` and `a kept copy past its end is still its owner's here, and is not
 removed`; in `features/auth/SessionExpiryWarning.test.tsx`, `a copy that has ended says so, and
 stays remembered`. On `925974ee`, the last commit of this change that touches the application's

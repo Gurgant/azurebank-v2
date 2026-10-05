@@ -167,6 +167,9 @@ exception in demo mode. What comes back from the key is input: it is parsed with
 definition the claim's answer is checked by, and a string that fails is removed, not repaired.
 The key is read at each ask, so never copy the snapshot into a state or a module variable: a copy
 held that way is how a second tab would go on holding a password the first was told to forget.
+(The storage module holds one copy that way itself: the one a browser refused to store. While
+it does, that tab does not read the key, and what another tab forgot or replaced does not reach
+it.) "Try the demo" asks at the press as well, and sends no claim over a copy another tab left.
 Off the demo the key is never read. Every kept value is rendered as text. ADR-0063's section
 "What the browser keeps in demo mode" has when the key is removed.
 
