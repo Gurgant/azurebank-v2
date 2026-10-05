@@ -403,13 +403,15 @@ describe('PinInput on the demo', () => {
 
   it('two groups on one page are each described by the line under them', () => {
     enableDemoMode();
+    // Both under one name, the one five of the six places that ask for a PIN give their boxes
+    // (the list in the last test): an id made from the group's name would be one id for both.
     renderWithProviders(
       <>
-        <PinInput value="" onChange={() => {}} ariaLabel="One PIN" />
-        <PinInput value="" onChange={() => {}} ariaLabel="Another PIN" />
+        <PinInput value="" onChange={() => {}} ariaLabel="Enter your PIN" />
+        <PinInput value="" onChange={() => {}} ariaLabel="Enter your PIN" />
       </>,
     );
-    const groups = ['One PIN', 'Another PIN'].map((name) => screen.getByRole('group', { name }));
+    const groups = screen.getAllByRole('group', { name: 'Enter your PIN' });
     const ids = groups.map((group) => group.getAttribute('aria-describedby') ?? '');
 
     expect({
