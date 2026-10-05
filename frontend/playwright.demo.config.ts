@@ -51,7 +51,9 @@ import { defineConfig, devices } from '@playwright/test';
  * screenshot of a red test (`playwright.config.ts`, `use`). Here a trace would hold the claim's
  * answer, with the password and the PIN, and the session's cookie; a screenshot could be of the
  * dashboard with the sign-in details open. So: no trace, no screenshot, no video, and the `list`
- * reporter alone, as the capture's config (`playwright.screenshots.config.ts`).
+ * reporter alone, as the capture's config (`playwright.screenshots.config.ts`). The run's first
+ * test holds the three settings, for each project and against the command line's `--trace`
+ * (`e2e-demo/demo.spec.ts`): a run started otherwise stops there, before it claims a copy.
  *
  * That is not all a run writes, and no setting of this config stops the two files below:
  *   - `error-context.md`, which Playwright writes beside a red test's other output with the page

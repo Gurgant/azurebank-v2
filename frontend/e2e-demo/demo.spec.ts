@@ -212,11 +212,34 @@ test.describe('the demo, from the first click', () => {
     return kept !== null && kept.password !== '' && lines.includes(kept.password);
   }
 
+  test('this run keeps no trace, no screenshot and no video, in any of its projects', () => {
+    // CONTROL: green before this change
+    /*
+      BEFORE ANYTHING ELSE. A trace of a red test would hold a claim's answer, password and
+      all, and a screenshot could be of the dashboard with the sign-in details open
+      (`playwright.demo.config.ts`). A run that kept them would look like any other until a
+      test of it went red. So the first test asks what this run was started with, for each of
+      its three projects and with whatever the command line added (`--trace on`): asked here, a
+      wrong answer stops the run before a copy is claimed.
+    */
+    const kept = test.info().config.projects.map(({ name, use }) => ({
+      project: name,
+      trace: use.trace,
+      screenshot: use.screenshot,
+      video: use.video,
+    }));
+    expect(kept).toEqual([
+      { project: 'demo', trace: 'off', screenshot: 'off', video: 'off' },
+      { project: 'restart', trace: 'off', screenshot: 'off', video: 'off' },
+      { project: 'demo-after-restart', trace: 'off', screenshot: 'off', video: 'off' },
+    ]);
+  });
+
   test("the scan leaves a node's markup out of its report when asked, and quotes it when not", async ({
     page: canaryPage,
   }) => {
     /*
-      FIRST, before anything is claimed. Further down the dashboard is scanned with a copy's
+      BEFORE ANYTHING IS CLAIMED. Further down the dashboard is scanned with a copy's
       email and password on it, and that scan asks for a report with no markup. If the scan
       stopped honouring that, this is where the run stops: on words that are nobody's password,
       in a browser context of this test's own, with every later test skipped.
