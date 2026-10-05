@@ -275,7 +275,7 @@ SELECT Id, UserId, Event, OccurredAt, DeliveredAt, DeliveryReceipt FROM Subscrib
   2026-09-03 00:27:05  NULL  NULL
 
 notify C:\…\azurebank-notices-t13 --contact "security@your-bank.example, +00 000 0000"
-NOTIFIED 1 of 1 waiting notices into C:\Users\Drako\AppData\Local\Temp\azurebank-notices-t13
+NOTIFIED 1 of 1 waiting notices into C:\…\azurebank-notices-t13
   Each file is a complete message addressed to the email held on the account, and it has
   reached this machine's disk and nobody else: nothing here sends. Point a relay at the
   directory or move the files yourself, and delete the spool afterwards.
@@ -294,6 +294,10 @@ SELECT DeliveredAt, DeliveryReceipt FROM SubscriberNotices
 01a064a9806078ea97ab2aba54d4cc37.eml: 1181 bytes; first three bytes 46 72 6f ("Fro", no BOM);
 29 of 29 lines end in CRLF
 ```
+
+*(2026-10-05: the directory on the NOTIFIED line is shortened as the command line above it already
+was; it carried the name of a Windows account. Shortened, not struck, so the name is no longer
+published.)*
 
 The file is `docs/notices/pin-enrolled.sample.eml`, byte for byte. Then every statement in
 `docs/runbooks/pin-enrolment-repudiated.md`, run once against the same store with that reference:

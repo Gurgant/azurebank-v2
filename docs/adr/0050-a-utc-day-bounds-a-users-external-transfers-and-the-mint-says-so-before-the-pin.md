@@ -16,8 +16,10 @@ Supersedes nothing; the four records it moves carry a dated note each, named at 
 
 **Nothing aggregates.** Measured on `main` @ `3c30122` before any of this was written — BFF `:5000`
 → API `:7215`, the `AzureBankDev` LocalDB store, two throwaway users registered by the probe. The
-lines below are the transcript `plans/daily-limit/measure-before-2026-09-07.txt` in the
-working-state repo, quoted verbatim; its setup lines are omitted:
+lines below are that run's transcript, which is kept outside this repository
+*(2026-10-05: what was cited here, by path or by name, sits in a private working folder that no
+reader of this repository can open; the citation is replaced by what it stood for, not struck.)*,
+quoted verbatim; its setup lines are omitted:
 
 ```
 ## daily-limit BEFORE -- 2026-09-07T12:47:41Z -- BFF :5000 -> API :7215, AzureBankDev, main 3c30122 (backend as 19742ff)
@@ -83,8 +85,10 @@ its own placement, not a copy of the balance guard's — see D4.
   every existing test's day untouched and a zero-money contract row is possible (D6).
 
 **What the regulation says, and does not.** Read on EUR-Lex on 2026-09-07 (the consolidated texts;
-the exact sentences are filed as `plans/daily-limit/standards-read-2026-09-07.txt` in the
-working-state repo, and nothing regulatory is cited here that is not in that file). PSD2 Art. 68(1)
+the exact sentences were copied that day into a note kept outside this repository
+*(2026-10-05: what was cited here, by path or by name, sits in a private working folder that no
+reader of this repository can open; the citation is replaced by what it stood for, not struck.)*,
+and nothing regulatory is cited here that is not in that note). PSD2 Art. 68(1)
 (CELEX 02015L2366-20240408): *"Where a specific payment instrument is used for the purposes of
 giving consent, the payer and the payer's payment service provider may agree on spending limits for
 payment transactions executed through that payment instrument."* — and Art. 4(14) defines the
@@ -225,7 +229,10 @@ set in `AddInfrastructure` (`sqlOptions.CommandTimeout(30)`). Under same-payer c
 transaction and a pooled connection held for half a minute per queued transfer, which is a cost
 this decision never argued for. Measured beside it: a holder took the lock in one transaction and a
 second connection asking with `@LockTimeout = 2000` was refused `-1` after **2,006-2,012 ms across
-three runs** (`plans/daily-limit/measure-cr1-2026-09-07.txt`, run 1). The batch now declares
+three runs** (this round's first measurement; its transcript is kept outside this repository.
+2026-10-05: a file of a private working folder was cited here by path; no reader of this
+repository can open it, so the citation is replaced by what it stood for, not struck). The batch
+now declares
 `@t int = {1}` and passes it as `@LockTimeout`; the bound is `DailyLimit:LockTimeoutSeconds`,
 default **10**, `[Range(1, 29)]` and `ValidateDataAnnotations().ValidateOnStart()` — above
 `Audit:TailTimeoutSeconds` (5), because the holder's own audit tail read sits INSIDE the span a
@@ -562,8 +569,10 @@ moves 5,000 externally — the contract row moves nothing and the after-probe us
 
 _Measured 2026-09-07 (review round 1), because this paragraph asserted a cost without one.
 `SET STATISTICS IO` on `AzureBankDev`, a **242-row `Transactions` table and a 147-row `Accounts`
-table** — the transcript, the exact `sqlcmd` commands and the plan are in
-`plans/daily-limit/measure-cr1-2026-09-07.txt`, run 2. The aggregate costs **11 logical reads on
+table** — the transcript, the exact `sqlcmd` commands and the plan are kept outside this
+repository, as that round's second measurement (2026-10-05: a file of a private working folder was
+cited here by path; no reader of this repository can open it, so the citation is replaced by what
+it stood for, not struck). The aggregate costs **11 logical reads on
 `Transactions`** (scan count 1, 1 physical, 9 read-ahead) **and 32 on `Accounts`**, for the busiest
 payer of the current UTC day — 5 matching rows, 2 accounts — and IDENTICALLY for the user with the
 most of everything (136 transaction rows, 32 accounts). The plan says why, and it is not what a
@@ -588,8 +597,11 @@ transfer's refusal came with `{available, requested}` at the top level of the bo
 
 ### After
 
-**AFTER — observed 2026-09-07T14:17Z on this PR's working tree** (`plans/daily-limit/daily-after-probe.py`,
-transcript `measure-after-2026-09-07.txt` in the working-state repo), BFF `:5000` → API `:7215`,
+**AFTER — observed 2026-09-07T14:17Z on this PR's working tree** (one probe script; it and its
+transcript are kept outside this repository
+*(2026-10-05: what was cited here, by path or by name, sits in a private working folder that no
+reader of this repository can open; the citation is replaced by what it stood for, not struck.)*),
+BFF `:5000` → API `:7215`,
 `AzureBankDev` (`is_read_committed_snapshot_on = 1`), the DEFAULT 5,000, three throwaway users
 registered by the probe (never the seeded admin). Expectation beside observation; none disagreed.
 A4 is the exception in provenance, not in agreement: the pre-review found that the 14:17Z probe had

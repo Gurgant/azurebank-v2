@@ -85,8 +85,10 @@ marked as such rather than guessed at~~ (struck 2026-09-04; correction below).
 >
 > The mint for 1000 on a balance of 16 answered 201: funds are checked at the transfer, not at the
 > mint (ADR-0042). The mock now quotes these, `serverCurrency` is gone, and the contract suite pins
-> the withdrawal and the delete on the real stack from a fresh account. Transcript:
-> `measure-2026-09-04.txt` in the work log's plan for the 2026-09-04 sweep.
+> the withdrawal and the delete on the real stack from a fresh account. The run's transcript is
+> kept outside this repository.
+> *(2026-10-05: what was cited here, by path or by name, sits in a private working folder that no
+> reader of this repository can open; the citation is replaced by what it stood for, not struck.)*
 
 **D5 — The committed document is guarded against a constant changed without a regen.** The regen
 step is manual and deliberately outside CI, so a backend architecture test now reads the committed
