@@ -389,17 +389,23 @@ def demo_of(app, when='nothing was changed'):
     """Whether the app is the public demo, as the app itself says it: True when every container
     carries Demo__Enabled as true, False when none does. On in one container and off in another
     is not a state this folder deploys, and neither is a value the template never writes: no side
-    is chosen, and the run stops. The refusal names the setting and the container; what was found
-    is never repeated."""
+    is chosen, and the run stops. The refusal names the setting and the containers, by name on
+    each side when they disagree; what was found in the setting is never repeated.
+
+    It looks at every container the app has, and a deployment asks it before it checks the app's
+    shape: a container too many that does not carry the setting is one more that says off, and
+    with the demo on in the others it is met here first. The names are what shows it."""
     containers = listed((app.get('properties') or {}).get('template'), 'containers')
     says = [demo_says(container) for container in containers]
     assert_shape('The app', [
         f"{DEMO_FLAG} in the container {str(container.get('name'))!r} is something the template "
         'never writes (it writes the plain value true or false, once)'
         for container, said in zip(containers, says) if said is None], when)
-    assert_shape('The app', [f'{DEMO_FLAG} is true in one container and not in another']
-                 if len(set(says)) > 1 else [], when)
-    return 'true' in says
+    # Names only, as the shape check prints them; an entry that is not an object has none.
+    names = [str(container.get('name')) if isinstance(container, dict) else '?' for container in containers]
+    on, off = (sorted(name for name, said in zip(names, says) if said == side) for side in ('true', 'false'))
+    assert_shape('The app', [f'{DEMO_FLAG} is true in {on} and not in {off}'] if on and off else [], when)
+    return bool(on)
 
 
 # --- Azure ---

@@ -1012,7 +1012,9 @@ def out_of_shape(what, *drift, when='nothing was changed'):
             'Put it right with the template (infra/README.md) before deploying.')
 
 
-DISAGREE = 'Demo__Enabled is true in one container and not in another'
+def disagree(on, off):
+    """Two containers that disagree, each side by its containers' names in their order."""
+    return f'Demo__Enabled is true in {on} and not in {off}'
 
 
 def neither(name):
@@ -1041,12 +1043,34 @@ class DemoStateTests(DeployCase):
 
     def test_two_containers_that_disagree_are_refused_before_any_change(self):
         for bff, api in (('true', 'false'), ('false', 'true'), ('true', None), (None, 'true')):
+            on, off = (['bff'], ['api']) if bff == 'true' else (['api'], ['bff'])
             for options in ({}, {'app_only': True}):
                 with self.subTest(bff=bff, api=api, **options):
                     self.azure.app = flagged(bff, api)
                     with self.assertRaises(deploy.ShapeError) as raised:
                         self.deploy(**options)
-                    self.assertEqual(str(raised.exception), out_of_shape('The app', DISAGREE))
+                    self.assertEqual(str(raised.exception), out_of_shape('The app', disagree(on, off)))
+        self.assertEqual(self.azure.writes(), [])
+        self.migration.assert_not_called()
+        self.smoke.assert_not_called()
+
+    def test_a_container_too_many_is_named_when_the_other_two_say_the_demo_is_on(self):
+        # The demo is read before the app's shape is checked. With the demo on in bff and api, a
+        # third container that does not carry the setting is met here first: the refusal names the
+        # containers on each side, so the one too many is in it. With the demo off the same app is
+        # refused for its containers, as before (the drift test of template.containers).
+        for extra, off in ((container('sidecar', 'ghcr.io/someone/else:latest'), ['sidecar']),
+                           # What Azure could put in a name is repeated as Python writes it, on one line.
+                           (container(STRANGE, 'ghcr.io/someone/else:latest'), [STRANGE]),
+                           # An entry that is not an object has no name to give.
+                           ('not an object', ['?'])):
+            with self.subTest(off=off):
+                self.azure.app = flagged('true', 'true')
+                app_part(self.azure, 'template', 'containers').append(extra)
+                with self.assertRaises(deploy.ShapeError) as raised:
+                    self.deploy()
+                self.assertEqual(str(raised.exception), out_of_shape('The app', disagree(['api', 'bff'], off)))
+                self.assertNotIn('\n', str(raised.exception))
         self.assertEqual(self.azure.writes(), [])
         self.migration.assert_not_called()
         self.smoke.assert_not_called()
