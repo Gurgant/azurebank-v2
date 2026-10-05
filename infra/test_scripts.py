@@ -1564,12 +1564,15 @@ class TemplateTests(unittest.TestCase):
 
     def every_setting(self):
         """Each (resource, container, name of a setting): every container and init container of
-        every resource the template compiles."""
+        every resource the template compiles. A search that walked nothing would find nothing, so
+        the app's two containers and the migrate job's one must be among what this saw."""
         found = []
         for resource in self.resources:
             template = resource.get('properties', {}).get('template', {})
             for container in [*template.get('containers', []), *template.get('initContainers', [])]:
                 found += [(resource['name'], container['name'], entry['name']) for entry in container.get('env', [])]
+        self.assertLessEqual({('azurebank', 'bff'), ('azurebank', 'api'), ('azurebank-migrate', 'migrate')},
+                             {(resource, container) for resource, container, _ in found})
         return found
 
     def conditions(self, condition):
@@ -1898,11 +1901,7 @@ class TemplateTests(unittest.TestCase):
         about_forwarded_headers = re.compile(r'ForwardedHeaders__|ASPNETCORE_FORWARDEDHEADERS_ENABLED$', re.IGNORECASE)
         for name in ('ForwardedHeaders__KnownProxies__0', 'ASPNETCORE_FORWARDEDHEADERS_ENABLED'):
             self.assertRegex(name, about_forwarded_headers)
-        settings = self.every_setting()
-        # What the search walks: the app's two containers and the migrate job's one, at least.
-        self.assertLessEqual({('azurebank', 'bff'), ('azurebank', 'api'), ('azurebank-migrate', 'migrate')},
-                             {(resource, container) for resource, container, _ in settings})
-        self.assertEqual([found for found in settings if about_forwarded_headers.match(found[2])], [])
+        self.assertEqual([found for found in self.every_setting() if about_forwarded_headers.match(found[2])], [])
 
     def test_the_api_is_handed_the_client_key_by_reference_and_the_cap_as_a_plain_value(self):
         api = self.container('api')
