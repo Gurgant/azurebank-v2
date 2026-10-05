@@ -284,9 +284,14 @@ that looks behind it, is in [`docs/runbooks/demo-pool.md`](../runbooks/demo-pool
   migration's where a deployment has the two, is ADR-0060's note on its decision 5.
 - **On the Azure deployment no job runs them yet**
   ([ADR-0061](0061-the-demo-is-deployed-to-azure-container-apps-with-no-database-password.md)),
-  and the change that adds one amends that record. A job that is not manual is refused by the
+  and the change that adds one amends that record. ~~A job that is not manual is refused by the
   resource group's Deny policy until `Schedule` is in `allowedJobTriggers` (`infra/main.bicep`;
-  ADR-0061's decision 2). The PIN pepper becomes a secret of the job too, where ADR-0061's
+  ADR-0061's decision 2).~~ *(struck 2026-10-05,
+  [ADR-0064](0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md), decision 4:
+  not through that parameter, which holds for every job and would let the migrate job be
+  scheduled too. The policy has a second one, `scheduledJobs`, and a job whose name is in it
+  may run on a schedule: `main.bicep` names `azurebank-pool`.)* The PIN pepper becomes a secret
+  of the job too, where ADR-0061's
   decision 9 keeps it in the app. The job carries the identity `azurebank-app` and a connection
   string like the one only the `api` container references today, where `infra/README.md`'s
   read-back expects each database identity on exactly one resource. And the deployment identity
@@ -294,6 +299,15 @@ that looks behind it, is in [`docs/runbooks/demo-pool.md`](../runbooks/demo-pool
   API there sets no `Security__PinPepperKeyId`,
   so the key id the job holds is 1. An execution that exited 7 read `Failed` in ADR-0061's trial,
   so the signals 10 to 15 may show there as failed executions; that was not tried.
+  *(2026-10-05, [ADR-0064](0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md):
+  that change is written, and on Azure nothing of it has run. `infra/main.bicep` holds the job,
+  `azurebank-pool`, behind a switch that is off by default: `recycle` every four hours, the
+  identity `azurebank-app`, and two secrets of its own, a copy of the app's connection string and
+  of its pepper. The deployment identity's role is assigned a third time, on that job. The
+  read-backs with each identity on one resource are left as they were measured, and the
+  runbook's third session says what they are expected to give with the demo on. A start by hand
+  ends by the run's exit code and not by the execution's status, since how Azure shows the
+  signals is still not tried. No job runs the commands on Azure until that session has.)*
 - **On Azure the app goes live on an empty database with its registration open**
   (`infra/README.md`, "What is not here"). A user who registers before the first `seed-pool`
   makes it exit 13 on the demo's own database and write nothing, as on any database with users

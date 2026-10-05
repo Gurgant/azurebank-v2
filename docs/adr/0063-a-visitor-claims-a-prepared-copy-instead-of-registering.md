@@ -423,6 +423,15 @@ not know.
   BFF may see the ingress as every visitor's address, and the default of 10 would then be ten
   copies a day for everybody. 1,000 is the range's maximum. A number near the pool's size would
   not do: the count is a rolling 24 hours and is asked before the pool is.
+  *(2026-10-05, [ADR-0064](0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md):
+  that change is written, and on Azure the demo is still off. `infra/main.bicep` sets the three
+  from one switch, `demo`, which is off by default: the flag on both containers and, with the
+  switch on, on the pool job; the client key as a secret of the app, handed to `api` alone,
+  there whether the demo is on or off; and the cap of 1,000 on `api` and on the job from one
+  variable. So `git grep -n "Demo__" -- infra` prints lines now. No template or script under
+  `infra/` sets a forwarded-headers value, and a test holds that no container carries one. What
+  the BFF sees as a visitor's address is still not measured: the runbook's third session has
+  the step, and what follows from each answer.)*
 
 **15. What is logged and counted.** Plain log lines, no `SecurityEvent` line and no audit row, so
 ADR-0044's inventory and its pinned counts do not move:
