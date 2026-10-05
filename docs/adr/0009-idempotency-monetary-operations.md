@@ -252,8 +252,17 @@ minute longer than `RequestDeadline:Seconds`.)*
   `RequestSizeLimitFilter` event on the four. The in-memory test host offers no
   `IHttpMaxRequestBodySizeFeature` and shows none of this.)*
   So the middleware itself rejects `Content-Length > 32768` with **413
-  `IDEMPOTENCY_PAYLOAD_TOO_LARGE`** *before* buffering/hashing/claiming (closing an
-  authenticated hash-amplification DoS), caps chunked reads at the same limit via
+  `IDEMPOTENCY_PAYLOAD_TOO_LARGE`** *before* buffering/hashing/claiming ~~(closing an
+  authenticated hash-amplification DoS)~~ *(Struck 2026-10-05 with the sentence
+  above: on Kestrel, routing's limit had already closed it. Measured with this
+  check and the cap on chunked reads both taken out of the middleware:
+  `KestrelRequestSizeLimitTests` still passed, 12 of 12, a 40 KB deposit still
+  answered 413 `IDEMPOTENCY_PAYLOAD_TOO_LARGE` with a `Content-Length` and
+  chunked. What the check still does there is what the note of 2026-09-24 below
+  describes. It is the only limit where the server offers none, as in the
+  in-memory test host: there the same change failed five tests of
+  `IdempotencyEndpointTests` and `OversizedBodyDrainTests`.)*, caps chunked reads
+  at the same limit via
   `IHttpMaxRequestBodySizeFeature`, and raises `EnableBuffering`'s threshold to 32 KB
   so an accepted body ~~(PIN included)~~ is never spooled to disk. *(Struck
   2026-09-21, ADR-0056: no monetary body carries a PIN any more — the
