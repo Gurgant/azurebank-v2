@@ -45,9 +45,9 @@ python infra/deploy.py --check                # moves nothing; says whether the 
 to report, when the run ends. The line is console text in a capped log workspace: it arrives
 minutes after it was written, and on a day the cap was reached it does not arrive at all.
 Neither is kept for ever. `--pool-run` ends by the code, never by the status Azure gives the
-execution: well on 0, 10, 11 and 15, and failed on 1, 2, 12, 13, 14 and on a code that was not
-reported. Its last line names the count of the line below that the code says to read
-(`infra/README.md`, "Reading the logs").
+execution: well on 0, 10, 11 and 15, and failed on 1, 2, 12, 13, 14, on a code that was not
+reported, and when the read of the code itself was refused or failed. Its last line names the
+count of the line below that the code says to read (`infra/README.md`, "Reading the logs").
 
 **Running the SQL.** Every statement here reads and none writes. They run against the demo's
 database. Where a statement needs a copy's lifetime or the age a free copy is kept to, it uses the

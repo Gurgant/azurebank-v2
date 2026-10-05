@@ -67,7 +67,8 @@ value of the demo.
 With it off the template creates what it created before. `infra/secrets.ps1` writes the switch
 the way it writes what the environment does with its logs: `true` with `-DemoOn`, else what the
 deployed app's two containers say, else nothing, and the template's default applies. Two
-containers that disagree stop the script. So no later run turns the demo off by forgetting an
+containers that disagree stop the script, and so does a container that carries the setting any
+other way than the template writes it. So no later run turns the demo off by forgetting an
 override, and none turns it on by accident. **With no app deployed nothing remembers the
 switch**: the script's report says so in one line, and the runbook says when `-DemoOn` must be
 passed again.
@@ -176,7 +177,9 @@ the job's secrets.
 
 **12. A pool run by hand ends by its exit code, never by its status alone.** 0, 10, 11 and 15
 end the command well, the last three with a signal: the run finished and found the pool short.
-1, 2, 12, 13 and 14 fail it, and so does a code Azure did not report. How Azure words an
+1, 2, 12, 13 and 14 fail it, and so does a code Azure did not report. A read of the code that
+Azure refuses or fails ends the command as failed too, in a sentence of its own with Azure's
+words: it is not said to be a run with no code. How Azure words an
 execution whose container exits 10 has not been seen, and an older execution was once read
 without its code (`infra/README.md`, "Measured on Azure", step 16).
 

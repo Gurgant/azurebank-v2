@@ -1500,6 +1500,7 @@ python infra/deploy.py --check
 
 | Read back | Expected |
 | --- | --- |
+| The command's first lines | "Starting the job azurebank-pool once.", which is printed before the start is sent, and only if one is sent; then "Pool run execution ... started." and each status the run goes through |
 | The run's verdict, and the command's last line | `Succeeded`, exit code 0 (done); "The pool run ended well". Its seconds are the first measurement of a fill on this database: write them down |
 | The run's summary line, read with `--pool-log` | `pool: free=50 was=0 claimed=0 claims24h=0 clientsAtCap=0 seeded=50 deleted(expired=0 hardStop=0 staleFree=0 failed=0) swept(idempotency=0 grants=0) tombstones=0 foreignUsers=0 ceiling=no result=PoolOk` |
 | The seconds from the run's first line to that one | On a local server, 4.63 s for 50 copies in a first fill (ADR-0062). On Basic, 5 DTU: not measured |
@@ -1527,7 +1528,9 @@ By the run's exit code:
   ([Turning the demo back](#turning-the-demo-back)).
 - **14, or "exit code not reported":** stop, and bring the line. With no code reported the
   command starts nothing again: `Show-Executions azurebank-pool` or `--pool-log` with the run's
-  name reads the code once Azure has it.
+  name reads the code once Azure has it. The same when the command ends with "the read of its
+  exit code failed": the run is over, the read that carries its code was refused or failed, and
+  the code is read the same two ways.
 
 **If the start itself is refused:** that a job on a schedule can also be started by hand has not
 been tried here. Wait for the job's next run and read that execution. **If a run of the schedule
@@ -1933,6 +1936,13 @@ With the demo on the registration is tried the same way, and ends the same three
 While the page or `/health/ready` gets no answer, they are asked again every five seconds for five
 minutes; still nothing then is a failure, and the app is put back.
 
+**An interrupt puts nothing back.** Ctrl+C stops the script where it is, in any mode, with one
+sentence that starts "Interrupted." and exit code 1; a workflow run that is cancelled is expected
+to reach the script the same way, which has not been tried. No put-back follows it and nothing
+that was started is stopped, so what was moved or started is read afterwards
+([When something fails](#when-something-fails)). Until 2026-10-05 an interrupt ended in Python's
+traceback.
+
 No request a deployment sends carries an identity: a change is a location and a template.
 
 Every deployment ends the sessions held in the replica's memory, and so does every scale to zero.
@@ -2061,8 +2071,11 @@ The job runs on its schedule, and a deployment never starts it. This starts it o
 schedule, as whoever is signed in: the first fill, or a refill by hand. It reads the job and
 checks its shape; reads its executions once and refuses while one is, or may still be, in
 progress, because two runs at once each top the pool up from their own count
-(`backend/tools/AzureBank.Seeder/README.md`); sends the start once and never again; waits for
-that exact execution for the job's timeout and two minutes; and prints its verdict. **How the run
+(`backend/tools/AzureBank.Seeder/README.md`); prints "Starting the job azurebank-pool once." and
+sends the start, once and never again; waits for that exact execution for the job's timeout and
+two minutes; and prints its verdict. That first line comes before the one write of the command:
+a run that ends without it sent no start, and one that is cut short after it may have made a
+run. **How the run
 ended is told by the exit code of its container, never by the execution's status alone**: how
 Azure words an execution whose container exits with a signal's code has not been seen. Where the
 status could make the code doubted, the last line says "The exit code decides here, whatever
@@ -2088,6 +2101,11 @@ read: `was` for 10 and 11, `free` for 12, `foreignUsers` for 13, `failed` for 14
 15. The line itself is not fetched by this command: the last sentence names
 `python infra/deploy.py --pool-log <the execution>`, which reads it once the workspace has it.
 Whatever the code, the run is never started a second time by the script.
+
+"Not reported" is an answer of Azure's that carried no code. A read of the code that Azure
+refuses or fails is told apart from it: the command prints the verdict as the waiting knew it,
+on which no exit code is expected, and then fails with "the read of its exit code failed" and
+Azure's own words ([When something fails](#when-something-fails)).
 
 Three things this command does not do. It asks the app nothing: the job's container carries the
 demo's flag as a plain word, so a run is expected to build the pool whatever the app's two
@@ -2185,6 +2203,7 @@ while nobody is served ([Turning the demo back](#turning-the-demo-back)). What a
 | "The put-back ... did not succeed. The app may be serving a broken revision" | Both the deployment and the way back failed | Go back by hand, below |
 | "There is no log workspace azurebank-logs in this resource group" | The logs are switched off: nothing is kept | The verdict line is all there is |
 | The first request after the app was idle answers 503 with `Retry-After: 10` | The replica started from zero and its first sign-in to the database, token included, did not fit in the 10 s connect timeout. Possible; in the trial the first open of a process on a cold replica took 3,810 ms, measured once, and at step 7 of the first deployment 6,390 ms as the app's identity, once | Ask again. If it happens every time, it is the row of the probe's 10,000 ms in [If Azure says no](#if-azure-says-no) |
+| "Interrupted. Nothing is put back and nothing is stopped by this" | The script was interrupted, in whichever mode it ran: Ctrl+C on a terminal, and a workflow run that is cancelled is expected to reach it the same way, which has not been tried. It stopped where it was, with exit code 1 and this one sentence. It did not put the app back and stopped nothing it had started: a request that was on its way may have reached Azure, a migration or a pool run that was started goes on, and an app that was moved stays on the new images, unchecked. Until 2026-10-05 an interrupt ended in Python's traceback | What the run printed before it says how far it got, and a deployment's "Running now" line names the images to go back to. Then `python infra/deploy.py --check` for the app, `--job-log` for a migration and `--pool-log` for a run of the pool job. An execution still listed as running refuses the next deployment until it ends (the rows of "is Running" in the two tables). Then deploy again, or go back by hand, below |
 
 **With the demo on, and the three commands that came with it.** Added on 2026-10-05. Each row
 quotes the sentence `deploy.py` prints, so a search of this page for the words on the terminal
@@ -2193,7 +2212,7 @@ the code of the app.
 
 | What you see | What it means | What to do |
 | --- | --- | --- |
-| "The app is not in the shape this script deploys onto", then "Demo__Enabled is true in ['bff'] and not in ['api']", either way round, or "Demo__Enabled in the container ... is something the template never writes" | The app's two containers do not say the same thing about the demo, or one carries the setting with something other than the plain `true` or `false`. The template writes both from one switch, so somebody changed a setting by hand. No side is chosen: nothing was changed, and a `--check` that meets it says "(nothing was moved)" | `secrets.ps1` refuses such an app as well ("The two containers of the deployed app disagree about Demo__Enabled. Nothing was written."), so the owner first puts the setting right on the app itself, then runs the template and `--check`. Which value is right is not a guess: if a run of the pool job was ever listed, it is on ([Turning the demo back](#turning-the-demo-back)). This repair has not been rehearsed |
+| "The app is not in the shape this script deploys onto", then "Demo__Enabled is true in ['bff'] and not in ['api']", either way round, or "Demo__Enabled in the container ... is something the template never writes" | The app's two containers do not say the same thing about the demo, or one carries the setting with something other than the plain `true` or `false`. The template writes both from one switch, so somebody changed a setting by hand. No side is chosen: nothing was changed, and a `--check` that meets it says "(nothing was moved)" | `secrets.ps1` refuses such an app as well, with one of two sentences: "The two containers of the deployed app disagree about Demo__Enabled. Nothing was written.", or, for a setting that is not the plain `true` or `false` written once, "The bff container of the deployed app carries Demo__Enabled with something this template never writes. Nothing was written." (or "The api container ..."). So the owner first puts the setting right on the app itself, then runs the template and `--check`. Which value is right is not a guess: if a run of the pool job was ever listed, it is on ([Turning the demo back](#turning-the-demo-back)). This repair has not been rehearsed |
 | "The app says the demo is on, and the job azurebank-pool could not be read: ..." | With the demo on, a deployment and a `--check` need that job, and no answer of Azure's is read as "there is no pool job": what Azure answers for a job that is not there has not been seen. Nothing was changed. Every workflow deployment stops here until the job is back, and only `--app-only`, which runs no migration, still moves the app | If the job was never created or is gone by accident: a run of the template creates it again, since `secrets.ps1` keeps the switch. If it was deleted on purpose, that is the first step of a road of [Turning the demo back](#turning-the-demo-back): finish that road. If it is there and Azure refuses the read: the role assignments, which must be three |
 | `--pool-run`: "The job azurebank-pool could not be read: ... Nothing was started. infra/main.bicep writes that job only with the demo on" | The same read, by the command that asks the app nothing. On a deployment where the demo was never turned on there is no such job to start. `--pool-log` has no sentence of its own for it: there the read of the executions ends in Azure's words | Turn the demo on first (step 25), or read the refusal as above |
 | "The executions of the job azurebank-pool could not be read, so whether a pool run is in progress is not known: ..." | The job was read a moment before, and the read of its executions failed. Nothing was changed, or with `--pool-run` nothing was started | Run it again. Refused again: `Show-Executions azurebank-pool` as the owner, and the role assignment on the pool job |
@@ -2213,7 +2232,8 @@ the code of the app.
 | `--pool-run`: "The pool run was started (...), and a read of the job's executions failed while its end was waited for" | The run exists and may still be in progress. It was not started again, and a second start is refused while it is listed as running | `python infra/deploy.py --pool-log <the execution>` when it has ended and its lines are due |
 | `--pool-run`: "Timed out waiting for ... of the job azurebank-pool: it had not ended ... s after it was started here (the job's timeout and two minutes)" | Azure did not end the run within its own timeout. While it is listed as running, a deployment and a second start are refused | The sentence ends with the command that stops it, for the owner. Then `--pool-log` for what it printed |
 | `--pool-run`: "The pool run did not end well (...: exit code ..., ...)" | The run ended with 1, 2, 12, 13 or 14, or with a code that is not the tool's. It was not started again | By its code: the table under [Reading the logs](#reading-the-logs), then [`docs/runbooks/demo-pool.md`](../docs/runbooks/demo-pool.md). After exit 1, no second start before its last line has been read |
-| `--pool-run`: "The pool run ended and Azure reported no exit code for it" | The run is over and Azure's answer carried no code. How it ended is not guessed from its status, so the command fails although the run may have ended well | `Show-Executions azurebank-pool`, or `--pool-log` with the run's name, reads the code once Azure has it. On 2026-10-03 an older execution of the migrate job no longer carried its own |
+| `--pool-run`: "The pool run ended and Azure reported no exit code for it" | The run is over, the read of its exit code was answered, and the answer carried no code. How it ended is not guessed from its status, so the command fails although the run may have ended well | `Show-Executions azurebank-pool`, or `--pool-log` with the run's name, reads the code once Azure has it. On 2026-10-03 an older execution of the migrate job no longer carried its own |
+| `--pool-run`: "The pool run ended (...), and the read of its exit code failed: ..." | The run is over, and the one read that carries its exit code was refused by Azure or failed: Azure's words follow the colon. The verdict line above the sentence is what the waiting knew, and no code is expected on it. How the run ended is not guessed from its status, so the command fails although the run may have ended well, and the run was not started again | The sentence ends with its command, `python infra/deploy.py --pool-log <the execution>`, which reads the verdict again, with the code if Azure has it, and the run's lines once they are due. Or `Show-Executions azurebank-pool`, which asks with the same API version. If that read fails as well, the code cannot be read now: stop, and no second start before the run's lines have been read |
 
 **Going back by hand.** As the owner, from a terminal, to any commit whose images are published:
 
@@ -2579,7 +2599,8 @@ try {
   ([Checking these files](#checking-these-files)).
 - **The demo's switch is passed once.** `-DemoOn` at step 25; afterwards the script reads
   `Demo__Enabled` on the app's two containers and writes what they say, and its report says
-  `demo: kept from the deployed resource`, on or off. Two containers that disagree stop it. With
+  `demo: kept from the deployed resource`, on or off. Two containers that disagree stop it, and
+  so does a container that carries the setting any other way than the template writes it. With
   no app deployed nothing remembers the switch
   ([If something was stolen](#if-something-was-stolen)). **Never `demo=false` as an override once
   the pool job has an execution**: [Turning the demo back](#turning-the-demo-back). A run with
@@ -3438,6 +3459,8 @@ against stand-ins and invented answers, and steps 22 to 33 are where each line w
 | Whether the pool job's seconds count against the free amounts on this offer | the cost by meter, 48 hours after step 26 |
 | A recovery after a theft that keeps the database: not designed ([If something was stolen](#if-something-was-stolen)) | the day it is needed |
 | An app that reports an ingress and no host name; an output of the CLI that is not JSON, or that the terminal's encoding cannot decode | not provoked |
+| That a workflow run which is cancelled reaches `deploy.py` as an interrupt, and so ends in its one sentence with nothing put back. Seen offline for an interrupt raised inside the script: exit code 1, nothing on standard output, the sentence on standard error | not provoked |
+| That a read of a pool run's exit code can be refused or fail after the run was seen over, and how Azure words it: the sentence for it is tested against an invented refusal | not provoked |
 | The repair of two containers that disagree about the demo; every road of [Turning the demo back](#turning-the-demo-back) | the day they are needed |
 | The CI job `infra` with the tests added on 2026-10-05: its minutes against its limit of 10. On this machine the suite of 428 to 433 tests took from 6 to 29 minutes, the longer runs with other work beside them | the first push |
 
