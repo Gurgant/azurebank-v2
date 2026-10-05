@@ -9,11 +9,12 @@ namespace AzureBank.Tests.Fixtures;
 /// <remarks>
 /// The assertion library builds a failure's message with <c>string.Format</c>, and a brace in
 /// either of two texts that differ spoils that message, unless both are eight characters or
-/// fewer (FluentAssertions 8.8.0; the three outcomes that follow were measured on the tests
+/// fewer (FluentAssertions 8.8.0; the four outcomes that follow were measured on the tests
 /// that compare through this helper). Two long answers throw <see cref="FormatException"/>
 /// in place of the message that shows where they differ. A short JSON text fails inside a
 /// warning that the message could not be formatted. A text with a <c>{Name}</c> in it is shown
-/// without that name, so two that differ only there are shown alike.
+/// without that name, so two that differ only there are shown alike. A JSON text that ends in
+/// two closing braces was shown with one.
 /// <para>
 /// The encoding is one-to-one. A percent sign is doubled first, then each brace becomes a token
 /// that starts with one, so the result, read left to right, splits in one way only into
