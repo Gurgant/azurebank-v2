@@ -1481,9 +1481,9 @@ and keeps it, as it keeps the tag and the secrets
     ForEach-Object { '{0}: {1} settings, Demo__Enabled {2}' -f $_.name, @($_.env).Count, ($_.env | Where-Object name -eq 'Demo__Enabled').value }
 ```
 
-**Step 26 is not started unless `--check` passed.** "Ready" is not enough. The revision is made
-by a run of the template, outside `deploy.py`, and until the one that ran before is inactive an
-answer could still come from it. That one has its registration open, and step 26 is the run that
+**Step 26 is not started unless `--check` passed.** "Ready" is not enough. The revision is
+expected to be made by the run of the template, outside `deploy.py`, and until the one that ran
+before is inactive an answer could still come from it. That one has its registration open, and step 26 is the run that
 creates the roles a registration needs.
 
 From here the app is the demo with an empty pool: a claim is answered 429 `DEMO_POOL_EMPTY` and
@@ -2221,8 +2221,9 @@ log commands of the first deployment and no other.
 python infra/deploy.py --check
 ```
 
-A run of the template makes a revision outside `deploy.py`: no migration, no smoke test and no
-put-back follow it. `--check` is its read-back, and the read-back of any other step that could
+A run of the template that changes the app is expected to make a revision outside `deploy.py`:
+no migration, no smoke test and no put-back follow it. No record shows one yet: step 15 created
+the app, and every revision since was made by the script's own request. `--check` is its read-back, and the read-back of any other step that could
 change the app or the pool job. Every request it sends is a read, but for two listings of
 secrets, which Azure asks for as a POST; a wrong answer puts nothing back. In order:
 
@@ -2810,8 +2811,8 @@ try {
   with the demo still off.** Expected in its what-if: `Modify` on the app, for a ninth secret and
   four settings (`Demo__Enabled`, written as `false`, on both containers; `Demo__ClientKeySecret`
   and `Demo__Claim__MaxPerClientPerDay` on `api`), and the script's report says
-  `demoClientKeySecret: generated`. A change of the app's template makes a new revision, and a
-  new revision ends every session held in the replica's memory. Also expected, in a run without
+  `demoClientKeySecret: generated`. A change of the app's template is expected to make a new
+  revision, and a new revision ends every session held in the replica's memory. Also expected, in a run without
   the app too: `Modify` on the role definition, whose description changed, and on the policy
   definition and its assignment. Nothing is created and nothing deleted by it: offline, a run
   with the switch off predicts the 22 resources it predicted before, and 14 without the app

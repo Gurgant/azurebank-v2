@@ -412,14 +412,20 @@ not know.
   variable, `DEMO_CLIENT_KEY_SECRET`, given to the API alone. Compose asks for it whichever
   service is named, so the pool's two commands and `down` need it too.
 - **On Azure the demo is still off.** This change touches no file under `infra/`
-  (`git grep -n "Demo__" -- infra` prints nothing): after it the deployment of ADR-0061 answers
+  ~~(`git grep -n "Demo__" -- infra` prints nothing)~~ *(struck 2026-10-05,
+  [ADR-0064](0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md): true of
+  this change, and the command prints lines since that one; the note below)*: after it the
+  deployment of ADR-0061 answers
   the claim 404, its registration is open and its page is the built file. The change that adds
   the pool's job (ADR-0062, decision 13) is the one that turns the demo on, and it has to set:
   `Demo__Enabled=true` on the `api` and the `bff` containers as on the job; `Demo__ClientKeySecret`
   on `api`, an eighth application secret where ADR-0061's decision 9 counts seven; and, until what
   the BFF sees as a visitor's address behind the ingress has been measured,
   `Demo__Claim__MaxPerClientPerDay=1000` on `api` and on the job. No file under `infra/` sets
-  `ForwardedHeaders:KnownProxies` (`git grep -n "KnownProxies" -- infra` prints nothing), so the
+  `ForwardedHeaders:KnownProxies` ~~(`git grep -n "KnownProxies" -- infra` prints nothing)~~
+  *(struck 2026-10-05, ADR-0064: the command prints lines now, a sentence of the runbook and a
+  test's list of names no container may carry. Neither sets it, and no file under `infra/`
+  does)*, so the
   BFF may see the ingress as every visitor's address, and the default of 10 would then be ten
   copies a day for everybody. 1,000 is the range's maximum. A number near the pool's size would
   not do: the count is a rolling 24 hours and is asked before the pool is.

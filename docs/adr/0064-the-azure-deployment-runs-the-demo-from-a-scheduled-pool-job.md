@@ -144,9 +144,13 @@ and the deployment identity may write the whole job: this check, at a deployment
 
 **9. Nothing is started beside a pool run.** A deployment reads the pool job's executions once,
 before any change, and stops while one is running or may be: the migration is about to change
-the schema that run works on, and two jobs beside two API processes pass the database's 30
-logins (ADR-0058). A start by hand refuses the same way. A run the schedule starts after that
-one read is not seen, and nothing holds the schedule back.
+the schema that run works on, and the job itself is about to be moved. A run that the read
+missed stays inside the database's 30 logins all the same: 12 + 5 + 5 beside the migration, and
+2 × 12 + 5 = 29 while a revision is replaced, because the migration has ended by then
+(ADR-0058, the note of this date). A start by hand refuses the same way, and reads the pool job
+alone: it does not look for a migration in progress, so the runbook keeps it away from a
+deployment. A run the schedule starts after that one read is not seen, and nothing holds the
+schedule back.
 
 **10. A deployment asks the address two things more with the demo on, and claims nothing.** The
 smoke test keeps its refused sign-in. With the demo on, the page must carry the demo's tag, and
@@ -156,8 +160,8 @@ copy. Both are answered by the BFF alone: what they do not prove is said in deci
 
 **11. Three commands for the owner's terminal, refused inside GitHub Actions.**
 
-- **`--check` moves nothing.** A run of the template makes a revision outside `deploy.py`, with
-  no migration, no smoke test and no put-back: this is its read-back. It waits until the app's
+- **`--check` moves nothing.** A run of the template is expected to make a revision outside
+  `deploy.py`, with no migration, no smoke test and no put-back: this is its read-back. It waits until the app's
   latest revision is its latest ready one and no other revision is active, since "ready" is not
   "the one before has stopped answering". With the demo on it checks the pool job's shape, then
   lists the secrets of the app and of the job as whoever is signed in and compares the job's PIN
@@ -233,8 +237,8 @@ demo off.
 
 - **Nothing on Azure changes with the merge, and the next run of the template changes the app
   whatever it is for.** With the switch off the template still writes the ninth secret and four
-  settings on the app, the flag as `false` on both containers among them: a new revision, which
-  ends every session. The role definition's description changed too, so a run without the app
+  settings on the app, the flag as `false` on both containers among them: that is expected to
+  make a new revision, and a new revision ends every session. The role definition's description changed too, so a run without the app
   shows a change on it. Nothing is created or deleted.
 - **The same run changes the policy, with the switch off as with it on.** Its definition gets
   the new name, the new description, a second parameter and the exception in the rule; its

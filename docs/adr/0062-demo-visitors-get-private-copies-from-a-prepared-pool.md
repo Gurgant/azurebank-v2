@@ -324,8 +324,10 @@ that looks behind it, is in [`docs/runbooks/demo-pool.md`](../runbooks/demo-pool
   users and no pool row stands as it was measured. Not measured on Azure.)* ~~Whether
   registration closes before the first fill is for the change that adds the job.~~ *(struck
   2026-10-05, ADR-0064: it does. One run of the template turns the flag on in both containers
-  and builds the job, the job after the app, and the runbook starts the first fill only once
-  the app has been read as the demo. Not run on Azure.)*
+  and builds the job, the job after the app. The job then fills the pool by itself at its next
+  run, so step 25 of the runbook keeps that run from coming before the app has been read as the
+  demo: it begins more than an hour before it, and deletes the job or stops the app if that
+  read fails. Not run on Azure.)*
 - **`seed` and `reset` refuse demo mode** (exit 2, nothing opened): `seed`'s four users have a
   password and a PIN in this repository, and `reset` drops the database. **Both also refuse a
   database that holds any pool row**, a record included, whatever the flag says: a job whose
