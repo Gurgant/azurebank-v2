@@ -680,6 +680,68 @@ describe('SessionExpiryWarning', () => {
       }
     });
 
+    /** A new session on the same page, brought to its own cap: what signing in again leaves. */
+    async function signedInAgain(store: TestStore, signIn: () => void) {
+      signIn();
+      mockState.sessionInactivityWindowMs = 30 * 60_000;
+      mockState.sessionAbsoluteWindowMs = ABSOLUTE_SOON_MS;
+      await act(async () => {
+        await store.dispatch(apiSlice.endpoints.getMe.initiate(undefined, { forceRefetch: true }));
+      });
+      expect(store.getState().auth.status).toBe('authenticated');
+      await advance(35_000);
+      await waitFor(() => expect(dialog()).toBeInTheDocument());
+    }
+
+    it("a refusal's words are not said to the next session", async () => {
+      const { store } = await bootOnACopy();
+      await reachTheWarning(store);
+      expect(offered()).toStrictEqual(THE_OWNERS);
+      // Signed out in another tab: the session is gone on the server while this dialog is still
+      // open. The BFF answers the button's request itself, with a 401 that carries no code, and
+      // that answer ends the session on this page as well. The dialog goes with it.
+      mockState.session = null;
+
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      await user.click(stayButtons()[0]);
+      await waitFor(() => expect(store.getState().auth.status).toBe('expired'));
+      await settled(store);
+      expect(dialog()).not.toBeInTheDocument();
+
+      // The visitor signs in to a copy again, on the same page, and reaches its cap. The copy is
+      // a living one: "This demo copy has ended" was the last session's answer, and not even
+      // about the copy.
+      await signedInAgain(store, () => rememberDemoCopy(seedMockDemoCopy().copy));
+
+      expect({ offered: offered(), alerts: alerts() }).toStrictEqual({
+        offered: THE_OWNERS,
+        alerts: [],
+      });
+    });
+
+    it("nor a typed password's, off the demo", async () => {
+      const store = await bootAbsolute();
+      await reachTheWarning(store);
+      expect(offered()).toStrictEqual(ANYONE_ELSES);
+      // The same end of the session, met by "Sign in again".
+      mockState.session = null;
+
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      fireEvent.change(password(), { target: { value: MOCK_PASSWORD } });
+      await user.click(screen.getByRole('button', { name: /sign in again/i }));
+      await waitFor(() => expect(store.getState().auth.status).toBe('expired'));
+      await settled(store);
+      expect(dialog()).not.toBeInTheDocument();
+
+      await signedInAgain(store, () => seedMockSession());
+
+      // No "That password didn't match." over a field nobody has submitted in this session.
+      expect({ offered: offered(), alerts: alerts() }).toStrictEqual({
+        offered: ANYONE_ELSES,
+        alerts: [],
+      });
+    });
+
     it("the owner's other failures keep the dialog's own words", async () => {
       const { store } = await bootOnACopy();
       await reachTheWarning(store);

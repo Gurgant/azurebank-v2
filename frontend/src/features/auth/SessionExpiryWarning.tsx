@@ -203,10 +203,17 @@ export function SessionExpiryWarning() {
 
   // A failed sign-out belongs to the session it failed in. Should that session end some other way
   // (a 401 elsewhere), its words must not greet the visitor in the next one.
+  //
+  // Nor must a refused re-authentication's. The one refusal that ends the session is the BFF's
+  // own 401 for a session already gone (signed out in another tab, say): the dialog goes with the
+  // session, and its words are set after it has gone, with no dialog left to show them. They
+  // would open the next session's dialog instead, and for the owner of a demo copy they are
+  // "This demo copy has ended", said of a copy that is alive.
   const [statusSeen, setStatusSeen] = useState(status);
   if (statusSeen !== status) {
     setStatusSeen(status);
     setSignOutError(null);
+    setReauthError(null);
   }
 
   // The countdown. `null` means the deadline is not known yet — before the first /bff/auth/me
