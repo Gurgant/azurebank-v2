@@ -2,7 +2,7 @@
 
     python infra/deploy.py                    migrate the database, then move the app, then check it
     python infra/deploy.py --app-only         move the app only: the owner's road back
-    python infra/deploy.py --job-log [NAME]   print what a migration printed (the latest one, or NAME)
+    python infra/deploy.py --job-log [NAME]   print what one migration printed (the latest, or NAME)
     python infra/deploy.py --app-log MINUTES  print what the app printed in the last MINUTES
 
 The last three are for the owner's terminal and are refused inside GitHub Actions.
@@ -26,7 +26,8 @@ serving a broken revision. The schema is never put back.
 A migration leaves one line here, its verdict: the execution's name, status, times, exit code and
 a one-word reason. What it printed is never fetched by a deployment: the log of a public
 repository is public, and that text can name the server, an address, or a value from a database
-error. It is kept in the log workspace, where --job-log reads it as the owner.
+error. It is kept in the log workspace, where --job-log reads it as the owner, the lines of one
+execution at a time.
 
 In a deployment every Azure call is `az rest` on the app or on a job. The deployment identity can
 reach nothing else, so it could not follow the status URL of a long-running operation, and this
@@ -400,8 +401,9 @@ def started_within(execution, seconds, now=None):
 
 def named(name):
     """An execution's name when it has the shape of one, else None. Every line of a deployment
-    may be public, and this script has read no answer of Azure's yet: a field is printed only in
-    the shape expected of it."""
+    may be public: a field is printed only in the shape expected of it. Until 2026-10-03 this
+    said that the script had read no answer of Azure's yet; it read them that day (README.md,
+    "Measured on Azure"), and the rule stays."""
     return name if isinstance(name, str) and EXECUTION_NAME.fullmatch(name) else None
 
 
@@ -465,9 +467,9 @@ def exit_code(properties, container):
 def verdict(name, properties, in_actions=False):
     """One line about an execution: name, status, times, exit code, reason. Every field is checked
     for its shape before it is printed, because inside GitHub Actions the line is public. The
-    fields were seen filled once, by hand, for a throwaway job (README.md, "Measured on Azure");
-    this script has not read them from Azure itself. There, a reason that is not one plain word is
-    withheld, and Azure's message is not printed at all."""
+    fields were seen filled by hand for a throwaway job on 2026-10-02, and by this script at the
+    first deployment on 2026-10-03 (README.md, "Measured on Azure"). Inside GitHub Actions a
+    reason that is not one plain word is withheld, and Azure's message is not printed at all."""
     parts = [f"{told_name(name)}: {told_status(properties.get('status'))}"]
     began, ended = moment(properties.get('startTime')), moment(properties.get('endTime'))
     parts.append(f'started {stamp(began)}' if began else 'start not reported')
@@ -872,7 +874,18 @@ def print_lines(rows, columns):
 
 
 def job_log(subscription, resource_group, execution='', in_actions=False):
+    """Print one execution's verdict, then what that execution printed: the latest one, or the one
+    named. Its lines are told from another execution's by ContainerGroupName, which holds the
+    execution's name, a hyphen and a suffix. The job's name and a period are not enough: on
+    2026-10-03 they also matched the lines of the next execution, which started inside the margin
+    (README.md, "Measured on Azure"). The name goes into the query between quotes, so only the
+    shape of an execution's name may: one given on the command line in another shape is refused
+    before anything is read, and one Azure lists in another shape is never asked for. The query
+    with this filter is tested offline and has not been sent to the workspace yet."""
     refuse_in_actions('--job-log', in_actions)
+    if execution and not named(execution):
+        raise ValueError("--job-log takes an execution's name: letters, digits and hyphens, 100 at "
+                         'most. Nothing was read.')
     prefix = prefix_of(subscription, resource_group)
     job_id = f'{prefix}/Microsoft.App/jobs/{MIGRATE_JOB}'
     customer_id = workspace_id(prefix)
@@ -887,14 +900,20 @@ def job_log(subscription, resource_group, execution='', in_actions=False):
                            + (f' named {execution}.' if execution else ' yet.'))
     properties = chosen[0].get('properties') or {}
     say(verdict(chosen[0].get('name'), properties))
+    name = named(chosen[0].get('name'))
+    if not name:
+        raise RuntimeError("The execution's name is not the shape of one, so its lines cannot be "
+                           "told from another execution's: no query was sent.")
     began = moment(properties.get('startTime'))
     if not began:
         raise RuntimeError('The execution has no start time: there is no period to read.')
     ended = moment(properties.get('endTime')) or datetime.datetime.now(datetime.timezone.utc)
-    # A margin on both sides: a line is stamped by the platform, not by the job.
+    # A margin on both sides: a line is stamped by the platform, not by the job. The period
+    # bounds the read; the group's name is what keeps another execution's lines out.
     since, until = began - datetime.timedelta(minutes=2), ended + datetime.timedelta(minutes=5)
     rows = query(customer_id,
                  f"ContainerAppConsoleLogs | where JobName == '{MIGRATE_JOB}' "
+                 f"| where ContainerGroupName startswith '{name}-' "
                  f'| where TimeGenerated between (datetime({stamp(since)}) .. datetime({stamp(until)})) '
                  f'| order by TimeGenerated asc | take {MAX_LOG_LINES} | project TimeGenerated, Log',
                  f'{stamp(since)}/{stamp(until)}')

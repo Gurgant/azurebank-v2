@@ -5,7 +5,7 @@
 copy with 429 `DEMO_POOL_EMPTY` or `DEMO_DAILY_LIMIT` (section 1), or is told their copy reached
 its limit of changes, 429 `DEMO_COPY_LIMIT` (section 9). Or the demo's database is
 filling up: on Azure it is Basic, 2 GB at most (`infra/main.bicep`), and none of the
-deployment's four alerts watches its size (ADR-0061, decision 10).
+deployment's alerts watches its size (ADR-0061, decision 10).
 
 **Why this runbook exists:** a run decides everything from the rows as they are, and says what it
 found in one line and one exit code

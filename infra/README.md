@@ -16,16 +16,28 @@ identity was refused, and a SQL sign-in was refused for the reason expected. The
 step 9 could not name the app: the template's own check of the app's values hid it. The check
 was moved for that, and the same what-if, run again that day on the changed template, listed the
 nine resources expected and nothing it could not work out
-([Measured on Azure](#measured-on-azure)). What ran there before, on 2026-10-02, is a throwaway
-trial: a resource group in the same subscription and region, created and deleted that day, in
-which requests of the shapes this folder makes were sent by hand, with `az rest` and go-sqlcmd,
-and not by this folder's template or scripts. Not every request of this folder was among them.
-What the trial saw is under [Measured on Azure](#measured-on-azure) as well. The other facts
-marked *measured* were read on those days, from Azure or GitHub with read-only commands, on a
-local stack of this code, or on a local SQL Server. What only the rest of the first deployment
-can show is listed under [Not measured yet](#not-measured-yet), every value below that no run
-has shown is marked as expected, and what to do when Azure refuses a step is written down before
-the step runs ([If Azure says no](#if-azure-says-no)).
+([Measured on Azure](#measured-on-azure)). The second session ran the same day, steps 12 to 21:
+the images were published, the template created the app, `deploy.py` migrated the database and
+moved the app from the owner's terminal, and the workflow did the same twice as the deployment
+identity. A later commit, with a 17th migration, was deployed by the workflow that day as well.
+The demo is deployed. Five things did not go as this document had them, and each is told at its
+step: the three packages were public without the owner's step (step 14); the offer refuses the
+test notification (step 15); `--job-log` printed the lines of the next execution too (step 16);
+the last-resort migration got no token within the tool's connect timeout (step 19); and the query
+of step 20 was refused as written, and once it ran it showed that the alert on the workspace does
+not count lines. That alert was deleted, and the template now leaves it out unless it is asked
+for.
+
+What ran on Azure before, on 2026-10-02, is a throwaway trial: a resource group in the same
+subscription and region, created and deleted that day, in which requests of the shapes this
+folder makes were sent by hand, with `az rest` and go-sqlcmd, and not by this folder's template
+or scripts. Not every request of this folder was among them. What the trial saw is under
+[Measured on Azure](#measured-on-azure) as well. The other facts marked *measured* were read on
+those days, from Azure or GitHub with read-only commands, on a local stack of this code, or on a
+local SQL Server. What no run has shown yet is listed under
+[Not measured yet](#not-measured-yet), every value below that no run has shown is marked as
+expected, and what to do when Azure refuses a step is written down before the step runs
+([If Azure says no](#if-azure-says-no)).
 
 - [What this creates](#what-this-creates)
 - [What it costs, and what bounds it](#what-it-costs-and-what-bounds-it)
@@ -99,7 +111,7 @@ to one identity, by its client ID, and with no password. `azurebank_app` reads a
 (`db_datareader`, `db_datawriter`); `azurebank_migrator` does the same and may change the schema
 (`db_ddladmin`).
 
-**With `deployApp=true`: nine more**
+**With `deployApp=true`: eight more**
 
 | Resource | What it is |
 | --- | --- |
@@ -107,7 +119,16 @@ to one identity, by its client ID, and with no password. `azurebank_app` reads a
 | `azurebank-migrate` | A manual job: the tools image with the argument `migrate`, no retry, 600 s, the identity `azurebank-migrate` attached, one secret (its own connection string, no password) |
 | two role assignments | The custom role, to the deployment identity, on the app and on the job and nowhere else. From here the workflow can change the app |
 | `azurebank-owner` | An action group with one e-mail receiver, given as a parameter |
-| four alert rules | E-mail only. On the app: more than 66,667 requests in an hour; more than 3.3 GiB sent in a day; the replica running more than about 2.2 hours in a day (an average replica count above 0.093). On the workspace: more than 50,000 records ingested in an hour, which are its lines if each measurement of the metric is one record (not yet measured: step 20) |
+| three alert rules | E-mail only, all on the app: more than 66,667 requests in an hour; more than 3.3 GiB sent in a day; the replica running more than about 2.2 hours in a day (an average replica count above 0.093) |
+
+**A ninth, only when it is asked for: an alert rule on the workspace.** Until 2026-10-03 the
+template built it with the others (nine more, four alert rules), and the first deployment created
+it at step 15: more than 50,000 records ingested in an hour, by the metric `Ingestion Volume`.
+Step 20 then read that metric against the rows of one hour. The workspace had ingested 446 rows
+and the metric had no time series at all, so the rule could not count lines. It was deleted that
+day, and the parameter `logVolumeAlert` is now `false` unless a run passes
+`@('logVolumeAlert=true')`, which is for whoever measures again
+([Measured on Azure](#measured-on-azure)).
 
 **And a check that creates nothing.** A run with `deployApp=true` also deploys `app-inputs.bicep`
 as the nested deployment `azurebank-app-inputs`. Its parameters are the values the app needs, each
@@ -140,7 +161,7 @@ amounts of Container Apps and of Log Analytics are the ones their pricing pages 
 | Container Apps, requests | $0.40 a million | 2 million |
 | Data out to the internet | $0.087 a GB | the first 100 GB |
 | Log Analytics, Analytics logs ingested | $2.99 a GB | the first 5 GB of the billing account. **Not confirmed for this credit offer** |
-| Metric alert rules | $0.10 a month each | the first 10; four are used |
+| Metric alert rules | $0.10 a month each | the first 10; three are used |
 | Environment management, private endpoint, planned maintenance; Dedicated plan | $0.13 an hour each; $0.10 an hour | none: this template uses none of them, and they must read 0 |
 
 **Expected each month:** the database, $4.83 to $4.99. The app costs nothing while it stays inside
@@ -158,9 +179,11 @@ Three things are not certain:
   receiving high rates of data", and that it is billed. How large: not stated.
 - **What a line costs.** In the trial the lines of two jobs were billed 438 bytes each on average
   (45 lines, 19,732 bytes) for 194 characters of text: about 244 bytes a line on top of the text.
-  A cap of 0.05 GB is about 114,000 lines of that size a day (computed). No line of the app has
-  reached a workspace yet: the numbers below are its console bytes, measured locally, with that
-  overhead added where it says "computed".
+  A cap of 0.05 GB is about 114,000 lines of that size a day (computed). What a line of the app
+  is billed has not been read: the numbers below are its console bytes, measured locally, with
+  that overhead added where it says "computed". What the workspace took on 2026-10-03, the day
+  of both sessions, read 0.19 MB, console and system logs together
+  ([Measured on Azure](#measured-on-azure)).
 
 **What bounds the spending, meter by meter.** The demo's subscription is a credit offer with a
 spending limit: no bill is possible, and when the credit (86 at the time of writing) is used up the
@@ -199,8 +222,10 @@ Past the free 5 GB, or without them, such a request costs about $2.30 a million 
 times faster, for whatever gets past the cap. A stranger can also fill the day's cap on purpose:
 the log is then dark until its reset, and a migration run on that day leaves a verdict and no text.
 
-**What warns:** the four alert rules, by e-mail. Nothing warns that the cap itself was reached: the
-alert Microsoft documents for that is a log search rule, $0.50 a month or more, and is not used.
+**What warns:** the three alert rules, by e-mail, all on the app. Nothing warns of the log's
+volume: the rule that was meant to did not count lines (step 20). And nothing warns that the cap
+itself was reached: the alert Microsoft documents for that is a log search rule, $0.50 a month or
+more, and is not used.
 **What stops the app:** the owner, by hand ([Stop the app by hand](#stop-the-app-by-hand)).
 **What stops the logs:** the owner, by rule ([Switching the logs off](#switching-the-logs-off)).
 Nothing stops either automatically.
@@ -437,7 +462,7 @@ These are the expected values. On 2026-10-03 every read gave them
 | The database | `az sql db show -g $group -s $server -n AzureBank` | `Basic`, capacity 5, 2147483648 bytes, `Local` |
 | The server | `az sql server firewall-rule list`; `az sql server ad-admin list`; `az sql server ad-only-auth get`; `az sql server show --query minimalTlsVersion` | one rule; one administrator; `true`; `1.2` |
 | Three identities | `az identity list -g $group --query '[].name'`; `Show-Identities` | `azurebank-app`, `azurebank-deploy`, `azurebank-migrate`; attached to nothing yet |
-| The same, asked of the identity | `az identity list-resources -g $group -n azurebank-app`, and for `azurebank-migrate`. On 2026-10-03, before the app, it answered `[]` for both; after step 15 nobody has seen it answer | No resource yet; after step 15, exactly one each. If the call does not answer, it is dropped and `Show-Identities` stands alone |
+| The same, asked of the identity | `az identity list-resources -g $group -n azurebank-app`, and for `azurebank-migrate`. On 2026-10-03, before the app, it answered `[]` for both. After step 15, read at the end of that day, it named the app `azurebank` for `azurebank-app` and the job `azurebank-migrate` for `azurebank-migrate`, and nothing for `azurebank-deploy` (until then this row said that nobody had seen it answer after step 15) | No resource yet; after step 15, exactly one each. If the call does not answer, it is dropped and `Show-Identities` stands alone |
 | One federated credential | `az identity federated-credential list --identity-name azurebank-deploy -g $group` | one: the GitHub issuer, the subject ending `:environment:demo`, the audience `api://AzureADTokenExchange` |
 | The role, unassigned | `az role definition list --custom-role-only true -g $group`; `az role assignment list --assignee <principal id> --all` | nine actions, no data action; no assignment yet. The role can be assigned in this resource group only, so it is listed through the group. In the trial a role of this shape was also found, by its ID and in the list of custom roles, when asked at the subscription |
 | The lock | `az lock list -g $group` | one, `CanNotDelete`, on the database |
@@ -722,11 +747,13 @@ try {
 }
 ```
 
-Expected in the what-if: nine resources to create (the app, the job, two role assignments, the
-action group, four alerts), the four `Modify` lines of step 3, nothing deleted, nothing
+Expected in the what-if: eight resources to create (the app, the job, two role assignments, the
+action group, three alerts), the four `Modify` lines of step 3, nothing deleted, nothing
 `Unsupported`, and no refusal. The check of the app's values, `azurebank-app-inputs`, is a nested
 deployment and creates nothing, so it should have no line, as the policy's module had none at
-step 3.
+step 3. When this step ran, on 2026-10-03, the template still built the alert on the workspace
+with the others, so nine were expected that day, four alerts among them. The next paragraph is
+the record of that day and keeps its numbers.
 
 On 2026-10-03, on the template as it was then, this what-if listed seven to create (the job, one
 role assignment, the action group, the four alerts), the same four `Modify` lines as step 3, and
@@ -736,9 +763,9 @@ role assignment on the app: its unworked ID holds the app's, and the last `/prov
 the role definition's, where the function reads a type. The template's check of the app's values
 had made the app's name an expression that reads the secure parameters, and a what-if works out
 none of those. The check is now in `app-inputs.bicep` and the name is `azurebank`; worked out
-offline the same way, the template names all nine ([Checking these files](#checking-these-files)).
+offline the same way, the template named all nine ([Checking these files](#checking-these-files)).
 Run again on the changed template later that day, and answered "no" again, this what-if listed
-what is expected above: nine to create, the same four `Modify` lines, nothing `Unsupported`,
+what was expected then: nine to create, the same four `Modify` lines, nothing `Unsupported`,
 nothing to delete, and no line for the check ([Measured on Azure](#measured-on-azure)).
 
 `secrets.ps1` takes the address the alerts write to from `-AlertEmail`; without it from the
@@ -756,7 +783,8 @@ the first line arrived under nine minutes after the setting was created, and a l
 about six and a half minutes after it was written (the median), eight at the most. If the session
 ends first, this is the first step of the second one. The probe job restores and compiles, so it
 says nothing about a run that lasts seconds: in the trial three such runs each kept their line,
-and the first deployments show it for `migrate`.
+and the first deployments show it for `migrate`: on 2026-10-03 its five executions, 24 to 37 s
+each, kept their lines ([Measured on Azure](#measured-on-azure)).
 
 Then the reads of step 1 (one firewall rule, no job, nothing attached), `Test-Path $folder`
 (`False`), and:
@@ -804,15 +832,16 @@ gh secret list --env demo --repo Gurgant/azurebank-v2
 
 The workflow's first step fails if one of the three is missing or is not the shape of an
 identifier (a stray space or newline). It prints one error line that names the secret, never its
-value.
+value. On 2026-10-03 the three were set this way, and the last command listed the three names.
 
 ### Second session: with the workflow on `main`
 
 #### 13. Look before writing (operator)
 
 The reads of step 1, `Assert-EnvironmentMode` among them, and the two `gh api` reads of step 11.
+On 2026-10-03 each gave what it should ([Measured on Azure](#measured-on-azure)).
 
-#### 14. The images (operator, **writes**; then the owner, in the browser, **cannot be undone**)
+#### 14. The images (operator, **writes**)
 
 ```powershell
 gh workflow run deploy.yml --ref main -f action=build-push
@@ -820,10 +849,10 @@ gh workflow run deploy.yml --ref main -f action=build-push
 
 If the run stops with "The registry gave no clear answer" on a package that has never been
 published, run it once more with `-f first_publication=true` (see
-[When something fails](#when-something-fails)).
+[When something fails](#when-something-fails)). On 2026-10-03 the first run did not stop: it
+published the three images with `first_publication` left alone and printed no such line.
 
-The owner then opens each of the three packages, Package settings, Change visibility, **Public**.
-A package cannot be made private again; it can only be deleted. Then, with no login at all:
+Then, with no login at all:
 
 ```powershell
 $sha = '<the full SHA of the commit that was built>'
@@ -831,8 +860,26 @@ $empty = New-Item -ItemType Directory -Path (Join-Path $env:TEMP "docker-$PID")
 'api', 'bff', 'tools' | ForEach-Object { docker --config $empty manifest inspect "ghcr.io/gurgant/azurebank-${_}:$sha" > $null; "$_ exit $LASTEXITCODE" }
 ```
 
-Three times `exit 0`. Measured today, before any package exists: the registry answers `denied` to
-an anonymous request for a package that is private or absent.
+Three times `exit 0`: that is what proves the three images can be pulled with no login.
+
+**The owner has nothing to click, unless this check answers `denied`.** Until 2026-10-03 this
+step had the owner open each of the three packages and change its visibility to Public before
+the check. That day the three packages were readable anonymously as soon as the workflow had
+published them, before anybody had changed a visibility setting: the check gave `exit 0` three
+times; with an anonymous token from the registry, a request for each of the three manifests
+answered 200, and one for a package that does not exist answered 403 (the control); and each
+package's page opened without a login, under the repository. The owner changed nothing. Why they
+were public was not looked into: the repository is public and the packages are linked to it, and
+that is all that was read.
+
+If the check ever answers `denied` for an image the workflow has published, the owner opens that
+package, Package settings, Change visibility, **Public**. That cannot be undone: a package cannot
+be made private again; it can only be deleted.
+
+This step also said: "Measured today, before any package exists: the registry answers `denied` to
+an anonymous request for a package that is private or absent." For an absent package that was
+measured again on 2026-10-03 (the 403 above). None of the three packages has been private, so
+what the registry answers for a private one was not seen that day.
 
 #### 15. The app (operator, **writes**)
 
@@ -846,10 +893,14 @@ try {
 Test-Path $folder                                               # False
 ```
 
-Expected in the what-if: the nine resources of step 9. No database user is touched and no password
-is set: the users of step 6 are the ones the app signs in as.
+Expected in the what-if: the eight resources of step 9. No database user is touched and no
+password is set: the users of step 6 are the ones the app signs in as. On 2026-10-03, with the
+template that still built the alert on the workspace, the what-if was equal line for line to step
+9's second one, nine to create with four alerts, and the deployment answered `Succeeded`
+([Measured on Azure](#measured-on-azure)).
 
-Then read back (expected values), and make two things happen on purpose:
+Then read back (expected values), and make two things happen on purpose. On 2026-10-03 every read
+gave the value expected then, which for the alerts was four rules, the fourth on the workspace.
 
 | Claim | Read | Expected |
 | --- | --- | --- |
@@ -859,10 +910,11 @@ Then read back (expected values), and make two things happen on purpose:
 | One database identity each | `Show-Identities` | `azurebank: azurebank-app`; `azurebank-migrate: azurebank-migrate` |
 | The job | `az containerapp job show -n azurebank-migrate -g $group --query properties.configuration` | `Manual`, retry limit 0, timeout 600, parallelism 1 |
 | Roles on the app and the job only | `az role assignment list --assignee <principal id of azurebank-deploy> --all`; the same for the two database identities | exactly two rows, the custom role, scopes ending `/containerApps/azurebank` and `/jobs/azurebank-migrate`; no row for `azurebank-app` or `azurebank-migrate` |
-| The alerts | `az monitor metrics alert list -g $group`; `az monitor action-group show -n azurebank-owner -g $group` | four rules, enabled, three on the app and one on the workspace; one e-mail receiver |
+| The alerts | `az monitor metrics alert list -g $group`; `az monitor action-group show -n azurebank-owner -g $group` | three rules, enabled, all on the app; one e-mail receiver |
 
 1. **The policy must refuse.** As the owner, ask for two replicas. The request must fail with
    `RequestDisallowedByPolicy`. If it is accepted, put 1 back at once: the policy does not work.
+   On 2026-10-03 it failed with that code, and `maxReplicas` read 1 afterwards.
 
    ```powershell
    $app = az containerapp show --name azurebank --resource-group $group --query id --output tsv
@@ -871,8 +923,21 @@ Then read back (expected values), and make two things happen on purpose:
    Remove-Item "$env:TEMP\scale.json"
    ```
 
-2. **An alert e-mail must arrive.** One test notification, to the address the action group already
-   holds; the owner reads the mailbox. The portal's Test button on the action group does the same.
+2. **The receiver must verify the address, and the two messages must arrive.** When the action
+   group is created, Azure Monitor writes to the address it holds: "Action required: Verify your
+   email for Azure Monitor action group", with a one-time code that is valid for 30 minutes. The
+   owner reads the mailbox and verifies. Until then nothing else arrives at that address: the
+   message says "To receive these notifications, please verify your email address". After the
+   verification a second message says "You're now in the azurebank action group". On 2026-10-03
+   the first arrived at 10:02Z and the second at 10:03Z, both from
+   `azure-noreply@microsoft.com`, as the owner read them in the mailbox. On this offer these two
+   messages are what proves the e-mail road.
+
+   Until 2026-10-03 this item was "An alert e-mail must arrive": one test notification, sent with
+   the command below, and it said that the portal's Test button on the action group does the
+   same. On this offer the command is refused: it answered
+   `(Conflict) Free subscription not supported`. The portal's Test button was not tried. The
+   command stays for an offer that takes it:
 
    ```powershell
    $to = az monitor action-group show --name azurebank-owner --resource-group $group --query 'emailReceivers[0].emailAddress' --output tsv
@@ -905,6 +970,21 @@ is new):
 python infra/deploy.py --job-log
 ```
 
+On 2026-10-03 this step's execution ended `Succeeded` after 34 s, with exit code 0 and the reason
+`CompletionsReached`; the new revision was ready 38 s after the verdict, the one before it went
+inactive, and the smoke test passed. The migration's lines were in the workspace when they were
+read, 11 minutes after they were written: 16 migrations pending, each applied, and the database
+at 16 of 16 after 5.3 s ([Measured on Azure](#measured-on-azure)).
+
+`--job-log` prints the lines of one execution: the latest, or the one named. Until 2026-10-03 it
+asked the workspace for the job's lines between two minutes before the execution's start and five
+after its end, and that day, asked for this step's execution, it printed 25 lines: its own 20 and
+the 5 of the next execution, which had started inside those five minutes. It now also asks for
+the lines whose `ContainerGroupName` starts with the execution's name and a hyphen: in the table
+every line of the job carried its execution's name that way, followed by a suffix. The period
+stays, because it bounds the read. The query with that filter is tested offline and has not been
+sent to the workspace yet ([Not measured yet](#not-measured-yet)).
+
 #### 17. The same road as the deployment identity, twice (operator, **writes**; the owner approves each run)
 
 ```powershell
@@ -934,9 +1014,25 @@ number has the same shape. The three identifiers GitHub holds as secrets are the
 identity's client ID, the tenant and the subscription; the other two client IDs are the database
 identities'. A name, an ID or an address in that log is a defect, and a stop.
 
+On 2026-10-03 both runs succeeded, each approved by the owner. Each log held "the listing was
+refused", a verdict of `Succeeded` with exit code 0 after 37 s, and the smoke test's line with the
+address masked as `***`; each migration had nothing to do. The five counts were 0 in each raw
+log, the last one too ([Measured on Azure](#measured-on-azure)).
+
 If Azure refuses the workflow's change of the job or of the app and names
 `userAssignedIdentities/assign/action`, the run stops with one sentence and Azure's words. **No
-role is added for it**: see [If Azure says no](#if-azure-says-no).
+role is added for it**: see [If Azure says no](#if-azure-says-no). On 2026-10-03 Azure asked for
+no such right: in three workflow runs the deployment identity changed the job and the app, each
+carrying its identity.
+
+**Do not run `deploy.py` from a terminal while a `deploy` run of the workflow is going, or the
+other way round.** The workflow's concurrency group is about the workflow's own runs; it knows
+nothing of a terminal. On 2026-10-03 the two overlapped for about 50 s, not on purpose: a
+`deploy.py` run from the terminal had moved the app and was waiting for its new revision to be
+ready when the workflow's second run read the app, with a latest revision that was not yet the
+latest ready one, and went on. Both deployed the same images and both ended well; afterwards one
+revision was active, at 100 %, and both containers and the job ran those images. It was not
+tried with different images.
 
 #### 18. The road back, once (operator, **writes**)
 
@@ -946,21 +1042,33 @@ So that it is not first tried on a bad day:
 python infra/deploy.py --app-only
 ```
 
+On 2026-10-03: no job was touched, the new revision was ready after 39 s, and the smoke test
+passed.
+
 #### 19. The last-resort migration road, once (operator, **writes** only the temporary firewall rule)
 
 [A migration nobody can read](#a-migration-nobody-can-read), with nothing left to migrate.
 
+On 2026-10-03 the road did not work as it was written and works as it is written now. With the
+tool's own connect timeout of 10 s the driver had no token in time and never reached the server;
+with `Connect Timeout=60` in the connection string it did, and the second try, through the
+temporary firewall rule, ended with exit 0 and nothing to migrate. That section has the numbers.
+
 #### 20. What the alert on the workspace counts (operator; **writes** only to switch it off)
 
-The fourth alert reads the metric `Ingestion Volume` with the aggregation `Count`. Microsoft's page
+**Measured on 2026-10-03: that alert does not count lines here. It was deleted, and the template
+now leaves it out.** What the step showed is at its end. The step stays as the way to measure
+again, for whoever turns the alert back on with `@('logVolumeAlert=true')`.
+
+The alert reads the metric `Ingestion Volume` with the aggregation `Count`. Microsoft's page
 on the workspace's metrics calls it the number of records ingested into a workspace or a table,
 and lists `Count` as its default aggregation
 (<https://learn.microsoft.com/en-us/azure/azure-monitor/reference/supported-metrics/microsoft-operationalinsights-workspaces-metrics>,
 2026-07-31). It does not say whether one measurement of the metric is one record. If one stands
 for several, `Count` counts measurements, and the rule may never see 50,000 in an hour however many
-lines arrive. This step reads the metric and a query of the rows over the same hour: the hour in
-which step 16's migration started, if it started ten minutes or more from either end of it, and
-otherwise the hour of the first run of step 17. It must have ended more than an hour ago.
+lines arrive. This step reads the metric and a query of the rows over the same hour: an hour in
+which a migration ran, started ten minutes or more from either end of it. It must have ended more
+than an hour ago.
 
 ```powershell
 $start = ([datetimeoffset]'<the hour, as 2026-10-10T14:00:00Z>').UtcDateTime
@@ -968,15 +1076,16 @@ $utc = { param([int]$Minutes) $start.AddMinutes($Minutes).ToString("yyyy-MM-ddTH
 $workspace = az monitor log-analytics workspace show --resource-group $group --workspace-name azurebank-logs --query id --output tsv
 $customer = az monitor log-analytics workspace show --resource-group $group --workspace-name azurebank-logs --query customerId --output tsv
 
-# What the alert reads: the metric's Count for that hour, one line.
+# What the alert reads: the metric's Count for that hour, one line. No line at all means the
+# metric has no time series for the hour.
 az monitor metrics list --resource $workspace --metrics 'Ingestion Volume' --aggregation Count --interval PT1H `
     --start-time (& $utc 0) --end-time (& $utc 60) --query 'value[0].timeseries[0].data[].[timeStamp, count]' --output tsv
 
 # What the workspace holds, by table and by the time each row was ingested: in the hour's middle
 # forty minutes, in the hour, and in the hour widened by ten minutes at each end.
 $between = { param([int]$From, [int]$To) "Ingested >= datetime($(& $utc $From)) and Ingested < datetime($(& $utc $To))" }
-@{ query = "union withsource = SourceTable * | extend Ingested = ingestion_time() | where $(& $between -10 70) " +
-    "| summarize Middle = countif($(& $between 10 50)), Hour = countif($(& $between 0 60)), Widened = count() by SourceTable" } |
+@{ query = "union withsource = TableOfRow * | extend Ingested = ingestion_time() | where $(& $between -10 70) " +
+    "| summarize Middle = countif($(& $between 10 50)), Hour = countif($(& $between 0 60)), Widened = count() by TableOfRow" } |
     ConvertTo-Json | Set-Content "$env:TEMP\ingested.json"
 $rows = @((az rest --method post --url "https://api.loganalytics.io/v1/workspaces/$customer/query" --resource https://api.loganalytics.io `
     --body "@$env:TEMP\ingested.json" | ConvertFrom-Json).tables[0].rows)
@@ -985,20 +1094,42 @@ $rows | ForEach-Object { '{0}: {1}, {2}, {3}' -f $_[0], $_[1], $_[2], $_[3] }
 'every table: {0}, {1}, {2}' -f @(1, 2, 3 | ForEach-Object { $column = $_; ($rows | ForEach-Object { [long]$_[$column] } | Measure-Object -Sum).Sum })
 ```
 
+The table of each row goes into a column named `TableOfRow`, a name no table of the workspace
+uses. Until 2026-10-03 the query named that column `SourceTable`, and as written it was refused:
+`SEM0001`, "union: column named 'SourceTable' already exists". The workspace's schema has 680
+tables, and one of them, `LAJobLogs`, already has a column of that name. With `TableOfRow` the
+query ran.
+
 The query is sent as `deploy.py --job-log` sends its own. Ten minutes is more than the eight the
 trial's lines took to be readable. The metric and the query agree if the metric's count is at
 least the first of the three totals and at most the last. If the first total is 0, the hour proves
-nothing: take the hour of the next run of step 17.
+nothing: take another hour in which a migration ran.
 
-- **They agree:** the alert stays. The metric's count and the three totals go into
-  [Measured on Azure](#measured-on-azure).
-- **They do not:** the alert does not count lines, and it is switched off:
-  `az monitor metrics alert delete --name azurebank-log-volume --resource-group $group`, and every
-  later run of the template passes `@('logVolumeAlert=false')` (the file does not remember it:
-  [If Azure says no](#if-azure-says-no)). The four numbers and the reason go into
+- **They agree:** the alert stays, and every later run of the template passes
+  `@('logVolumeAlert=true')`: without it the template does not build the rule. The metric's
+  count and the three totals go into [Measured on Azure](#measured-on-azure).
+- **They do not:** the alert does not count lines, and it is deleted:
+  `az monitor metrics alert delete --name azurebank-log-volume --resource-group $group`. Later
+  runs of the template leave it out by themselves. The four numbers and the reason go into
   [Measured on Azure](#measured-on-azure). An alert that does count lines is a log search rule,
   and it is billed: $0.50 a month evaluated every 15 minutes, as this rule is, $1.50 every 5 (the
   Retail Prices API, Italy North). It is the owner's decision, and nothing here creates one.
+
+**What it showed on 2026-10-03**, for the hour from 10:00Z to 11:00Z, read at 12:01Z:
+
+- **The metric: no time series at all.** Not for that hour, not for any hour of that day up to
+  12:00Z, with its dimension `Table Name` or without, and not for the last 40 minutes at one
+  minute's grain. Its unit is Count, and Count is its only aggregation.
+- **The rows:** 395 in the hour's middle forty minutes, 446 in the hour, 446 in the widened hour
+  (`ContainerAppConsoleLogs` 182, 199 and 199; `ContainerAppSystemLogs` 213, 247 and 247).
+- **The control:** another metric of the same workspace, `Query Count`, had a time series for the
+  four hours from 09:00Z (1, 2, 2 and 2). `Ingestion Time` had none.
+- **The verdict, by the rule above:** the first total is 395, not 0, so the hour counts; the
+  metric counted nothing where the workspace ingested 395 to 446 rows. They do not agree.
+- **What was done:** the alert `azurebank-log-volume` was deleted at 16:11Z, on the owner's word,
+  and the three alerts on the app read back enabled. The owner decided against a billed log
+  search rule for now. The template's default changed with it: `logVolumeAlert` is `false`.
+  Why the metric reported nothing was not looked into.
 
 #### 21. From outside, and the end (operator)
 
@@ -1010,6 +1141,11 @@ curl.exe --silent --output NUL --write-out '%{http_code}' --request POST "https:
 curl.exe --silent --max-time 10 "https://${site}:5068/"                     # no connection
 az logout
 ```
+
+On 2026-10-03: `http://` answered 301 to `https://` of the same name; `/health/ready` answered
+`Healthy`; the POST answered 404; and port 5068 gave no connection within the ten seconds (curl's
+exit code 28). The last reads of that day, before `az logout`, are under
+[Measured on Azure](#measured-on-azure).
 
 ### Afterwards
 
@@ -1024,9 +1160,12 @@ az logout
   (`ContainerAppConsoleLogs | summarize avg(_BilledSize)`); the day's billable volume
   (`Usage | where IsBillable | summarize sum(Quantity) by bin(TimeGenerated, 1d)`, in MB; the
   `Usage` table is not billed); and the count, as a number only, of console lines that contain `@`.
-  The alert's threshold and the "about 65,100" above are then worked again from the app's own
-  billed size. The trial read `_BilledSize` and the `Usage` table for its jobs' lines; neither of
-  these two queries has been run as it is written here.
+  The "about 65,100" above is then worked again from the app's own billed size, and so is the
+  threshold of the alert on the workspace if that alert is ever turned back on. The trial read
+  `_BilledSize` and the `Usage` table for its jobs' lines; neither of these two queries has been
+  run as it is written here. At the end of the second session, on 2026-10-03, the day's volume
+  read 0.19 MB by table ([Measured on Azure](#measured-on-azure)); the billed size of a line of
+  the app and the count of lines with an `@` were not read.
 
 ## If Azure says no
 
@@ -1053,13 +1192,19 @@ database's $0.161 a day), and the road to remove it all is
 
 `az sql server ad-only-auth disable` is never run, whatever is refused.
 
-**Two switches are not remembered.** The parameter file keeps what the environment does with its
-logs, read from Azure. It does not keep `denyPolicy=false` or `logVolumeAlert=false`: a policy or
-an alert that is absent cannot be told from one a run that stopped halfway never got to create,
-and a guard must not be switched off by that. If either was left out because Azure refused it, or
-the alert because step 20 found that it does not count lines, pass the same override on every
+**An override is not remembered.** The parameter file keeps what the environment does with its
+logs, read from Azure. It does not keep `denyPolicy=false`: a policy that is absent cannot be
+told from one a run that stopped halfway never got to create, and a guard must not be switched
+off by that. If the policy was left out because Azure refused it, pass the same override on every
 later run of the template; without it the run asks Azure again for what it left out. The what-if
-shows it first: a policy assignment, or a fourth alert, to create.
+shows it first: a policy assignment to create.
+
+Until 2026-10-03 this paragraph named two switches, the second `logVolumeAlert=false` for the
+alert on the workspace, which the template then built unless told otherwise. Step 20 found that
+the alert does not count lines, and the parameter's default is now `false`: a run leaves that
+alert out by itself. A run that wants it passes `@('logVolumeAlert=true')`, and that is not
+remembered either. Read, not tried: a run without it neither creates the rule nor deletes one
+that exists, since a run of the template removes nothing that exists.
 
 **The users (step 6)**
 
@@ -1081,7 +1226,7 @@ shows it first: a policy assignment, or a fourth alert, to create.
 | Start 1 or start 3 ends with exit 4 (the login is refused) | Stop. In the trial a user made from the client ID signed in, so here the user and the identity do not match: read the two lines the users script printed, run it once more, start the probe job again, and bring a second refusal to the owner |
 | Start 1 or start 3 ends with exit 5 (other roles) | Stop: the users script's own lists said these roles and no others. Bring the line the program printed (in the workspace, when it is due: step 10) and the two lines of step 6 to the owner |
 | Start 2 ends with exit 0, 4 or 5 | Stop: it got a token for an identity the job does not carry, and the isolation between the two identities does not hold |
-| The open took more than 10,000 ms | Nothing changes by itself. The number is recorded and the app's connect timeout stays 10 s: the first sign-in after a cold start may then answer one 503 with `Retry-After: 10`, and the smoke test tries four times. A larger value is the owner's decision, through `Database:ConnectTimeoutSeconds`, with ADR-0058's table worked again: that timeout also bounds each COMMIT. In the trial it took 3,810 ms, once. At step 7 on 2026-10-03: 6,390 ms as the app's identity and 3,253 ms as the migrator's, once each, on a cold replica of the probe, whose string waits 30 s. The app's 10 s stays until its own first sign-in is measured, in the second session |
+| The open took more than 10,000 ms | Nothing changes by itself. The number is recorded and the app's connect timeout stays 10 s: the first sign-in after a cold start may then answer one 503 with `Retry-After: 10`, and the smoke test tries four times. A larger value is the owner's decision, through `Database:ConnectTimeoutSeconds`, with ADR-0058's table worked again: that timeout also bounds each COMMIT. In the trial it took 3,810 ms, once. At step 7 on 2026-10-03: 6,390 ms as the app's identity and 3,253 ms as the migrator's, once each, on a cold replica of the probe, whose string waits 30 s. The app's 10 s stays until its own first sign-in after a cold start is measured. This row said that would be in the second session; the second session ran on 2026-10-03 and timed no cold start |
 | Start 1 or start 3 ends with exit 3 (no token for the identity the job carries) | Start it again. The third time: stop, that is not a timeout |
 | Any start ends with exit 2 (another failure) | Start it once more. The same again: stop, and bring the line the program printed (the error's number, its class and the chain of exception types; in the workspace when it is due) to the owner |
 | The probe job cannot be built or started (an exit code the program does not give, and no line of it) | Skip it. Step 16 is then the first sign-in of these two users, and the pull request says so |
@@ -1095,7 +1240,7 @@ shows it first: a policy assignment, or a fourth alert, to create.
 | No line of the probe job is in the workspace once it is due | Set `disableLocalAuth: false` in the template, deploy, run the probe job once more, read again when due. Still none: [Switching the logs off](#switching-the-logs-off). In the trial the lines arrived with key access off |
 | The lines of a migration that lasts seconds never arrive | The logs stay on, because the app's lines are the other half: a short run may then leave a verdict and no text |
 | Azure reports no exit code for an execution | The verdict line is a status and two times. "Failed" is still a verdict |
-| At step 20 the metric's count is below the rows of the hour's middle or above those of the widened hour | The alert on the workspace does not count lines: it is deleted and left out from then on, as step 20 writes. A log search rule in its place is billed, and the owner's decision |
+| At step 20 the metric's count is below the rows of the hour's middle or above those of the widened hour | The alert on the workspace does not count lines: it is deleted and left out from then on, as step 20 writes. A log search rule in its place is billed, and the owner's decision. This happened on 2026-10-03: the metric had no time series for an hour in which the workspace ingested 446 rows. The alert was deleted, the template now leaves it out unless asked, and the owner decided against a log search rule for now |
 
 **The app and the deployments (steps 9 and 15 to 19)**
 
@@ -1103,11 +1248,12 @@ shows it first: a policy assignment, or a fourth alert, to create.
 | --- | --- |
 | The what-if or the deployment with `deployApp=true` is refused on a parameter of `azurebank-app-inputs` (a length) | A value the app needs is missing or the wrong length: run `secrets.ps1 -Action New -DeployApp -ImageTag <the full SHA>` again, as the step does, and read its report. The app, the job and the action group wait for that check, so none of them was sent |
 | The what-if lists anything as `Unsupported` | Answer "no" and stop: an ID of the template reads something a what-if cannot work out again, as on 2026-10-03 at step 9 |
-| The alert on the workspace is refused | `Invoke-Template 'app' @('logVolumeAlert=false')`, the same override on every later run, and say so. It is one of four rules, and no request for it has ever been sent |
+| The alert on the workspace is refused, in a run that asks for it with `logVolumeAlert=true` | Leave the override out: without it the template does not build that rule. Until 2026-10-03 the rule was built by default, and this row said to pass `logVolumeAlert=false` and that no request for it had ever been sent. At step 15 that day Azure accepted it, one of four rules then; step 20 is why it is left out now |
 | The policy accepts two replicas | Put 1 back at once and stop: the policy does not work |
+| The test notification of step 15 is refused | Not a stop. On this offer it is refused, `(Conflict) Free subscription not supported` on 2026-10-03, when no row here named it and the session went on with the owner's mailbox as the proof. What proves the e-mail road is the message that asks the receiver to verify the address and the one that follows the verification (step 15). If neither arrives: stop |
 | A deployment as the identity is refused naming `userAssignedIdentities/assign/action` | **Stop.** No role is created: a right on the two database identities would let the deployment identity attach the schema-changing one to the app that faces the internet. The deployment from the owner's terminal keeps working meanwhile |
 | The raw log of a run holds the server's name, the app's address, one of the five IDs or an address | Stop: the mask or the print is a defect |
-| The last-resort road cannot sign in | It is written here as unproven, and its first half (run the job again and read its log) stands alone |
+| The last-resort road cannot sign in | Its first half (run the job again and read its log) stands alone, and the failure's text goes to the owner. On 2026-10-03 it could not, as it was written then: with the tool's connect timeout of 10 s the driver had no token in time. With `Connect Timeout=60` in the string, as it is written now, it signed in ([A migration nobody can read](#a-migration-nobody-can-read)) |
 
 ## Deploy a commit
 
@@ -1173,6 +1319,12 @@ No request a deployment sends carries an identity: a change is a location and a 
 
 Every deployment ends the sessions held in the replica's memory, and so does every scale to zero.
 
+**One deployment at a time.** The workflow's concurrency group is about the workflow's own runs:
+a `deploy.py` run from a terminal is not held back by it, and does not hold a workflow run back.
+On 2026-10-03 one of each overlapped for about 50 s, not on purpose, with the same images. Both
+ended well, and afterwards one revision was active (step 17). It was not tried with different
+images. Do not run one while the other runs.
+
 ## Reading the logs
 
 From a terminal where the owner has run `az login`, with the two variables of step 16 set:
@@ -1189,10 +1341,19 @@ inside GitHub Actions. The other way in is the portal: the workspace `azurebank-
 - **The cap comes first.** Each command starts by saying what the daily cap is doing: its value,
   `dataIngestionStatus`, and the next reset. `OverQuota` means the workspace has taken no line
   since the cap was reached and takes none until the reset, at an hour Azure picks.
+- **`--job-log` reads one execution's lines.** It asks for the job's lines whose
+  `ContainerGroupName` starts with the execution's name and a hyphen, between two minutes before
+  the execution's start and five after its end. Until 2026-10-03 it asked by the job's name and
+  that period alone, and a read of one execution printed its 20 lines and the 5 of the next one,
+  which had started inside the period (step 16). A name that is not letters, digits and hyphens,
+  100 at most, is refused before anything is read. The query with the new filter is tested
+  offline and has not been sent to the workspace yet.
 - **An empty answer is not proof that nothing was printed.** A line takes minutes to arrive (in
-  the trial a median of 387 s and 398 s for two jobs, 486 s at the most), Microsoft's page allows
-  a new diagnostic setting up to 90 minutes, and a capped workspace takes none. The trial's three
-  runs that lasted seconds each kept their line: three runs, not a promise.
+  the trial a median of 387 s and 398 s for two jobs, 486 s at the most; on 2026-10-03 the lines
+  of step 16's migration were there when they were read, 11 minutes after they were written),
+  Microsoft's page allows a new diagnostic setting up to 90 minutes, and a capped workspace takes
+  none. The trial's three runs that lasted seconds each kept their line: three runs, not a
+  promise.
 - **Telling two failures of the migration apart by the run's length**, which is on the verdict
   line: a login refused because the database has no user for the identity ends after about four
   seconds; an identity that gets no token is waited for the whole 60 s. Neither has been seen
@@ -1201,6 +1362,8 @@ inside GitHub Actions. The other way in is the portal: the workspace `azurebank-
   to 52 ms; with no token, an error numbered 0, class 20, around
   `Azure.Identity.AuthenticationFailedException`, after 40 to 71 ms.
   The token's failure is quick each time: it is `migrate`'s own wait that makes that run long.
+  From the owner's terminal, with `Active Directory Default` and not a managed identity,
+  `migrate` printed the no-token answer once, error 0 of class 20, after 11 s (step 19).
 - **What the text can hold.** The SQL server's name and the database's. A caller's address: the
   rate limiter's warning names it. A value from a database error: on a local stack, registrations
   racing for one address printed that address four times in two lines of the API's console, whole,
@@ -1227,7 +1390,7 @@ Three deletions and a read. `keepLogs=false` alone deletes nothing: the template
 workspace or a setting that exists.
 
 ```powershell
-# 1. The diagnostic setting, and the alert on the workspace if the app exists.
+# 1. The diagnostic setting, and the alert on the workspace if a run turned it back on (step 20).
 $environment = az containerapp env show --name azurebank-env --resource-group $group --query id --output tsv
 az monitor diagnostic-settings delete --name to-azurebank-logs --resource $environment
 az monitor metrics alert delete --name azurebank-log-volume --resource-group $group
@@ -1258,7 +1421,9 @@ To switch them on again, run the template as under
 [Changing the infrastructure later](#changing-the-infrastructure-later), with
 `Invoke-Template 'logs-on' @('keepLogs=true')`. It creates a new, empty workspace.
 
-None of these commands has been run yet.
+Of these commands one has been run: the deletion of the alert on the workspace, as step 20's own,
+on 2026-10-03. It exited 0 and the alert was gone from the list. The others have not been run,
+and neither has that deletion for an alert that does not exist.
 
 ## Stop the app by hand
 
@@ -1277,8 +1442,8 @@ stopped. The deployment identity cannot stop or start the app.
 
 | What you see | What it means | What to do |
 | --- | --- | --- |
-| `build-push`: "The registry gave no clear answer" | The registry did not say "no such manifest". For a package that has never been published it may answer `denied`, the same as for a private one | First publication only: run again with `-f first_publication=true`. Otherwise read the answer printed below the error and run again |
-| `deploy`: an image "is not published, or its package is not public" | The check before the Azure sign-in | Run `build-push` at this commit; make the package public |
+| `build-push`: "The registry gave no clear answer" | The registry did not say "no such manifest". For a package that has never been published it may answer `denied`, the same as for a private one | First publication only: run again with `-f first_publication=true`. Otherwise read the answer printed below the error and run again. The first publication of 2026-10-03 did not stop this way: it went through with the box left alone |
+| `deploy`: an image "is not published, or its package is not public" | The check before the Azure sign-in | Run `build-push` at this commit. If the image is published and the anonymous check of step 14 still answers `denied`, the owner sets that package to Public, which cannot be undone. On 2026-10-03 the three packages were public as soon as the workflow had published them |
 | "is not in the shape this script deploys onto" | Something changed the app or the job outside the template: its scale, its ingress, its containers, or the identity it carries. The words in brackets say when it was read. "(nothing was changed)": nothing was changed by this run. "(after its images moved)": the app had moved, and the run printed what Azure says about the revision and put the app back, as below. "(after its image moved)": the job runs the new tools image, no migration ran and the app was not touched. "(after the put-back)": the old images run again, and the shape is still wrong | Run the template again ([Changing the infrastructure later](#changing-the-infrastructure-later)). If it is the identity, read [If something was stolen](#if-something-was-stolen) first |
 | "This identity can list the secrets" | The identity holds more than the custom role. Nothing was changed | Look at its role assignments: there must be exactly two |
 | "Azure asked for a right on a database identity" | Azure wants `assign/action` on the attached identity before it changes the job or the app. The request changed nothing and was not tried again | Stop. No role is added: [If Azure says no](#if-azure-says-no) |
@@ -1329,7 +1494,8 @@ git switch --detach '<the deployed SHA>'
 ./infra/sql-principals.ps1                   # first: it stops, and so do you, if the database holds any code
 $server = az sql server list --resource-group $group --query '[0].name' --output tsv
 $fqdn   = az sql server list --resource-group $group --query '[0].fullyQualifiedDomainName' --output tsv
-$env:ConnectionStrings__DefaultConnection = "Server=tcp:$fqdn,1433;Database=AzureBank;Authentication=Active Directory Default;Encrypt=True;TrustServerCertificate=False"
+# Connect Timeout=60: with the tool's own 10 s the driver had no token in time (measured, below).
+$env:ConnectionStrings__DefaultConnection = "Server=tcp:$fqdn,1433;Database=AzureBank;Authentication=Active Directory Default;Encrypt=True;TrustServerCertificate=False;Connect Timeout=60"
 try {
     # The first try is refused by the firewall, and its last line names this machine's address.
     dotnet run --project backend/tools/AzureBank.Seeder --configuration Release -- migrate --wait-seconds 0
@@ -1345,7 +1511,7 @@ try {
 }
 ```
 
-Three things to know about this road:
+Four things to know about this road:
 
 - **It signs in as the administrator**, with more rights than the migrator, and it is the one
   exception to "run nothing else as administrator in this database". That is why the users script
@@ -1353,8 +1519,25 @@ Three things to know about this road:
 - **It is the source at that commit, not the image.** The image has no `az` inside, so
   `Active Directory Default` has nothing to sign in with there, and a managed identity does not
   exist off Azure.
-- **It has not been run.** With `Active Directory Default` the driver walks several credentials
-  and is expected to take the `az login` session. Step 19 tries it once with nothing to migrate.
+- **It ran once, at step 19 on 2026-10-03, with nothing to migrate, and not as it was first
+  written.** Until that day this line said "It has not been run", and the string had no connect
+  timeout of its own. With `Active Directory Default` the driver walks several credentials and
+  is expected to take the `az login` session; which one it took was not read. Within the tool's
+  own connect timeout of 10 s it got no token: the first try ended after 11 s without reaching
+  the server, with error 0 of class 20, "DefaultAzureCredential failed to retrieve a token from
+  the included credentials", and exit 1. The `az` session itself was fine: asked directly,
+  `az account get-access-token` for the database answered in 929 ms and in 986 ms. That was a
+  diagnosis, with a command this file's rules forbid; what was recorded of it is its exit code,
+  its time and whether a token came back.
+- **With `Connect Timeout=60` in the string it works.** A keyword in the connection string wins
+  over the tool's setting, and the tool's first line then read a connect timeout of 60 s. The
+  first try reached the server after 13 s and, run again, after 8 s, and got the firewall's
+  refusal, which names the address (error 40615, class 14). With the temporary rule in, the
+  second try ended with exit 0 after 11 s: no migration pending, the database at 16 of 16,
+  `migrate` took 9.4 s. The rule was deleted and the list read back `AllowAzureServices` alone.
+  Before it, the users script had run on that database, which held the 16 migrations, and ended
+  with its two lines. Why the driver needs longer than `az` for the same session was not looked
+  into, and the road has not been run with a migration to apply.
 
 ## If something was stolen
 
@@ -1535,10 +1718,13 @@ accepted a new connection from the same address.
 
 1. `az login` at the start of each session, and `gh auth login`: the browser and the second factor.
 2. The GitHub environment `demo`: `main` only, and the required reviewer (step 11).
-3. Each of the three packages to Public (step 14). It cannot be undone.
+3. A package to Public, only if the anonymous check of step 14 answers `denied` for it. It
+   cannot be undone. On 2026-10-03 it was not needed: the three packages were public as soon as
+   the workflow had published them. Until then this line had the owner set each of the three.
 4. The merge of the pull request that puts the workflow on `main`, and the required checks.
 5. The approval of each `deploy` run, if the reviewer is set.
-6. Reading the mailbox: the test e-mail of step 15, and every alert afterwards.
+6. Reading the mailbox: at step 15 the message that asks to verify the address, with its
+   one-time code, and the one that follows the verification; every alert afterwards.
 7. Stopping the app when an alert says so. Nothing does it for him.
 8. The word for each step that writes, and for each deletion that a rule above allows: the
    workspace and its setting.
@@ -1578,10 +1764,10 @@ try {
   supports may be moved to it after a notice, and that one with no running app or job and no
   recent activity may be archived; this one has jobs, a second container and Azure Monitor logs,
   which Express does not have (read on 2026-10-03).
-- If the policy or the alert on the workspace was left out because Azure refused it, or the alert
-  because step 20 found that it does not count lines, the override that left it out is passed
-  again: `Invoke-Template 'change' @('denyPolicy=false')`, or `@('logVolumeAlert=false')`. The
-  file does not remember it ([If Azure says no](#if-azure-says-no)).
+- If the policy was left out because Azure refused it, the override that left it out is passed
+  again: `Invoke-Template 'change' @('denyPolicy=false')`. The file does not remember it
+  ([If Azure says no](#if-azure-says-no)). The alert on the workspace needs no override to stay
+  out: since step 20 it is built only with `@('logVolumeAlert=true')`.
 - A job with another trigger needs it added to the parameter `allowedJobTriggers`, or the policy
   refuses it.
 - After an identity was deleted and made again, run `./infra/sql-principals.ps1`: the user it left
@@ -1623,10 +1809,12 @@ users go with the group. On this machine, if it is no longer wanted:
 
 ## What is not here
 
-- **Nothing stops the app automatically, and nothing stops the logs.** Four e-mails warn; the
-  owner stops the app and says when the logs go off.
-- No alert that the log's cap was reached, and no SQL auditing: a sign-in attempt on the server
-  leaves no record.
+- **Nothing stops the app automatically, and nothing stops the logs.** Three alert rules warn by
+  e-mail, all on the app; the owner stops the app and says when the logs go off.
+- No alert on the log's volume and none that its cap was reached. The metric rule that was meant
+  for the volume did not count lines and was deleted on 2026-10-03 (step 20); a rule that does
+  is a log search rule, which is billed, and the owner decided against one for now.
+- No SQL auditing: a sign-in attempt on the server leaves no record.
 - One warning line per caller per window from the rate limiter, instead of one per request. It is
   the change that would let the app's own limiter bound the log, and it touches the BFF's security
   logging.
@@ -1645,8 +1833,9 @@ users go with the group. On this machine, if it is no longer wanted:
 
 ## Measured on Azure
 
-Two parts: a trial on 2026-10-02, and, at the end of this section, the first deployment, begun on
-2026-10-03 with this folder's own files.
+Two parts: a trial on 2026-10-02, and, at the end of this section, the first deployment, on
+2026-10-03 with this folder's own files: its first session, its second session, a later
+deployment the same day, and the last reads of that day.
 
 On 2026-10-02, in a throwaway resource group in the same subscription and region (Italy North),
 created and deleted that day. Requests of the shapes this folder makes were sent by hand, with
@@ -1887,8 +2076,8 @@ unless the line says otherwise.
 - **The first open as the app's identity took 6,390 ms**, against the app's connect timeout of
   10 s. It is one cold run of the probe program, whose string waits 30 s (`Connect Timeout=30`);
   the migrator's took 3,253 ms, and the trial's first open 3,810 ms. The timeout stays 10 s: that
-  decision stands until the app's own first sign-in after a cold start is measured, in the second
-  session.
+  decision stands until the app's own first sign-in after a cold start is measured. The second
+  session, on 2026-10-03, timed no cold start.
 - Step 8: the users file once more (above), then the made-up SQL sign-in, refused with "Reason:
   Azure Active Directory only authentication is enabled.", and the script printed its line
   `Proved: a SQL sign-in is refused, and the server says it is because Microsoft Entra-only authentication is on.`
@@ -1915,8 +2104,9 @@ unless the line says otherwise.
   calculated (<https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/deploy-what-if>,
   2026-03-03, read on 2026-10-03). The template's check of the app's values made the app's name go
   through `fail()` and the seven secure parameters. So the check moved into `app-inputs.bicep`
-  ([What this creates](#what-this-creates)), and offline the changed template names all 23
-  resources of the run with the app. On Azure, see step 9 again, below.
+  ([What this creates](#what-this-creates)), and offline the changed template named all 23
+  resources of the run with the app, the alert on the workspace among them. On Azure, see step 9
+  again, below.
 - Step 10: the five lines of step 7 were in the workspace when they were read, at 02:40:28Z,
   written from 02:31:37Z to 02:33:36Z. The reads of step 1: the rule `AllowAzureServices` alone;
   Entra-only `true`; the log's cap 0.05, taking data (`RespectQuota`); no job; nothing attached
@@ -1927,6 +2117,149 @@ unless the line says otherwise.
   same properties; `NoChange` on the same ten; one `Ignore` on a database; nothing
   `Unsupported`, nothing to delete, and no line for the check of the app's values. The protected
   folder was gone afterwards.
+
+**The first deployment, steps 12 to 21 (2026-10-03): the second session**
+
+The same day, from 09:54Z, with the workflow on `main`, at commit `1fc4d131`. Times are UTC. Each
+line is what one run of the step printed or what a read gave, unless the line says otherwise. The
+steps are in the runbook's order, but for step 20, which ran last and is told last; of the
+others, step 14 ran first, then 13, 12 and 15. What a migration printed is told here, not pasted.
+
+- Step 12: the three identifiers were set as secrets of `demo` through the pipe, and
+  `gh secret list` showed the three names.
+- Step 13, the reads of step 1 and of step 11: the rule `AllowAzureServices` alone; Entra-only
+  `true`; the cap 0.05, taking data (`RespectQuota`); no job; nothing attached to an identity;
+  the mode `WorkloadProfiles`; the database `Online`, `Basic`; the environment `demo` with a
+  `required_reviewers` rule and exactly `main`; the protected folder absent.
+- Step 14, 09:54:30Z to 09:56:29Z: `build-push` succeeded on its first run, with
+  `first_publication` left alone and no "The registry gave no clear answer" line, and pushed
+  three digests. Read in the workflow, and not kept as text: without that box the script builds
+  only when the registry says there is no such manifest, so that is what the registry answered
+  the workflow's token for packages that did not exist yet. **The three packages were readable
+  anonymously at once**, before anybody had changed a visibility setting: the runbook's check
+  gave `exit 0` three times; with an anonymous token from the registry, a request for each of
+  the three manifests answered 200, and one for a package that does not exist answered 403;
+  each package's page opened without a login, under the repository. The owner changed nothing.
+  Why they were public was not looked into.
+- Step 15, at 10:01:32Z: the what-if was equal line for line to the second one of step 9: 9
+  `Create` (the app, the job, two role assignments, the action group, four alerts), `Modify` on
+  the same four resources, nothing to delete. The deployment answered `Succeeded`, with the Deny
+  policy assigned, and the protected folder was gone afterwards. Read back: scale 0 to 1;
+  `Single`; ingress external, target port 8080, `allowInsecure` false, no additional port
+  mapping; eight secret names on the app and one on the job; `azurebank: azurebank-app` and
+  `azurebank-migrate: azurebank-migrate`; the job `Manual`, retry limit 0, timeout 600,
+  parallelism 1; two role assignments for the deployment identity, the custom role on the app
+  and on the job, and none for either database identity; four alerts, enabled; the action group
+  enabled, with one e-mail receiver. The app's first revision read `Running` before any
+  migration had run.
+  - The policy refused: the PATCH that asked for two replicas failed with
+    `RequestDisallowedByPolicy`, and `maxReplicas` read 1 afterwards.
+  - The test notification was refused by the offer:
+    `az monitor action-group test-notifications create` answered
+    `(Conflict) Free subscription not supported`. The portal's Test button was not tried. What
+    the mailbox got instead, as the owner read it: "Action required: Verify your email for Azure
+    Monitor action group" at 10:02Z, with a one-time code valid for 30 minutes, and after the
+    owner verified, "You're now in the azurebank action group" at 10:03Z.
+  - `az identity list-resources`, read at 16:11Z: the app `azurebank` for `azurebank-app`, the
+    job `azurebank-migrate` for `azurebank-migrate`, and nothing for `azurebank-deploy`.
+- Step 16, 10:04:54Z to 10:06:59Z, `deploy.py` as the owner: the job moved to the tools image;
+  the execution `Succeeded`, 34 s, exit code 0, reason `CompletionsReached`; the new revision
+  ready 38 s after the verdict; the revision before it inactive; the smoke test passed: the
+  page, `Healthy`, and the sign-in refused by the API after it asked the database. What the
+  migration printed, read with `--job-log` at 10:16Z, 11 minutes after it was written: 16
+  migrations pending, from `InitialCreate` to `AddUserSessionStamp`, each applied, the database
+  at 16 of 16, and `migrate` took 5.3 s.
+  - That read's verdict for the same execution said "exit code not reported", where the
+    deployment's own verdict, four seconds after the run ended, had said exit code 0. Three
+    later executions existed by then. At 10:44Z the latest execution's verdict still carried
+    its exit code 0, fifteen minutes after it ended. So an exit code is read when the run ends,
+    as the deployment does; an older execution's may no longer be there.
+  - `--job-log` with that execution's name printed 25 lines: its own 20, and the 5 of the next
+    execution, written about four and a half minutes later and read about six and a half
+    minutes after they were written. It asked by the job's name and a period, from two minutes
+    before the execution's start to five after its end. In the table, every line of the job
+    carried in `ContainerGroupName` its execution's name, a hyphen and a suffix: 20 lines for
+    this execution and 5 for each of the four that followed that day. The table also has the
+    columns `JobName`, `Log`, `ContainerAppName` and `ContainerName`, the last of which read
+    `migrate` on those lines. `--job-log` asks by `ContainerGroupName` as well since then; that
+    query is tested offline and has not been sent to the workspace.
+- Step 17, the workflow's `deploy`, twice at that commit, each approved by the owner: both
+  succeeded. In each log: "the listing was refused", which the script prints only for Azure's
+  `AuthorizationFailed`; the verdict `Succeeded`, exit code 0, 37 s; the smoke test's line, with
+  the address masked as `***`. Each migration had nothing to do. In each raw log the five counts
+  were 0: the server's name, the app's address, the three client IDs, the tenant and the
+  subscription, and anything shaped like an IPv4 address. So the deployment identity read and
+  changed the job and the app, each carrying its identity, with its nine actions and no right
+  on either identity.
+  - An overlap, not planned. A second full run of `deploy.py` from the owner's terminal, which
+    no step asks for, ran from 10:14:01Z to 10:15:53Z and ended well: `Succeeded`, 24 s, nothing
+    to migrate, a new revision, the smoke test. The workflow's second run started its own
+    `deploy.py` at 10:15:05Z, about 50 s before that one ended, and read the app with a latest
+    revision that was not yet the latest ready one. It ended well too. Read afterwards: one
+    active revision, at 100 %, and both containers and the job on that commit's images. The
+    workflow's concurrency group does not cover a run from a terminal. The images were the same
+    in both; it was not tried with different ones.
+- Step 18, 10:18:27Z to 10:19:45Z, `deploy.py --app-only`: no job touched, the new revision
+  ready after 39 s, the smoke test passed.
+- Step 19, the last-resort migration from this machine, from a checkout of that commit:
+  - the users script first, on the database that then held the 16 migrations: exit 0, both
+    users with their roles and `ID as asked: 1`, the temporary rule in and out;
+  - as the runbook had it, with the tool's connect timeout of 10 s: exit 1 after 11 s without
+    reaching the server, error 0 of class 20, "DefaultAzureCredential failed to retrieve a token
+    from the included credentials";
+  - `az account get-access-token` for the database, as a diagnosis: a token after 929 ms, and
+    again after 986 ms;
+  - with `Connect Timeout=60` in the string: the first try reached the server after 13 s and,
+    in a second run, after 8 s, and was refused for this machine's address (error 40615, class
+    14); with the temporary rule `owner-migrating-by-hand`, the second try ended with exit 0
+    after 11 s, with no migration pending, the database at 16 of 16, and `migrate` at 9.4 s;
+    the rule was deleted, and `AllowAzureServices` was alone afterwards.
+- Step 21, at 10:23:42Z, from outside: `http://` answered 301 to `https://` of the same name;
+  `/health/ready` answered `Healthy`; `POST /api/auth/login` answered 404; port 5068 gave no
+  connection (curl's exit code 28).
+- Step 20, read at 12:01Z for the hour from 10:00Z to 11:00Z. The query as the runbook had it
+  was refused: `SEM0001`, "union: column named 'SourceTable' already exists". Of the 680 tables
+  of the workspace's schema one, `LAJobLogs`, has a column of that name. With `TableOfRow` it
+  ran. The four numbers: the metric `Ingestion Volume`, no time series at all; the rows, 395 in
+  the hour's middle forty minutes, 446 in the hour and 446 in the widened hour
+  (`ContainerAppConsoleLogs` 182, 199 and 199; `ContainerAppSystemLogs` 213, 247 and 247). The
+  metric had no time series for any hour of that day up to 12:00Z either, with its dimension
+  `Table Name` or without, nor for the last 40 minutes by the minute. `Query Count` of the same
+  workspace had one for the four hours from 09:00Z (1, 2, 2 and 2); `Ingestion Time` had none.
+  The reason: the first total is not 0, so the hour counts, and the metric counted nothing where
+  the workspace ingested 395 to 446 rows. They do not agree. The alert `azurebank-log-volume`
+  was deleted at 16:11Z, on the owner's word (exit 0), and the alerts read afterwards were
+  `azurebank-bytes-out`, `azurebank-replica-time` and `azurebank-requests`, all enabled. The
+  owner decided against a billed log search rule for now. Why the metric reported nothing was
+  not looked into.
+- Not done in this session: no cold start was timed, so the app's own first sign-in against its
+  10 s is still not measured; no cost of this resource group was read by meter; the portal's
+  Test button was not tried; an overlap of two deployments with different images was not tried.
+
+**A later deployment the same day, at commit `8552f935` (2026-10-03)**
+
+The commit that adds a 17th migration, `AddDemoCopies`. The workflow, approved by the owner.
+
+- `build-push` succeeded, then `deploy`, 10:26Z to 10:30Z: the verdict `Succeeded`, 25 s, exit
+  code 0; the smoke test passed; the same five counts in the raw log, all 0.
+- What the migration printed, read with `--job-log` at 10:44Z: one migration pending,
+  `AddDemoCopies`; it was applied; the database at 17 of 17; `migrate` took 2.5 s.
+- So a migration added by a later commit was applied on the live database through the workflow,
+  by the migrator's identity, whose user holds `db_datareader`, `db_datawriter` and
+  `db_ddladmin`. Until then [Not measured yet](#not-measured-yet) said of that migration "Read,
+  not run".
+
+**The end of that day (2026-10-03, from 16:11Z)**
+
+The last reads before `az logout`:
+
+- the firewall rule `AllowAzureServices` alone; the cap 0.05, taking data (`RespectQuota`); one
+  job, `azurebank-migrate`;
+- the app `Running`, with one active revision and 0 replicas: scaled to zero;
+- five executions of the job, all `Succeeded`: step 16's, the two of step 17, the unplanned one
+  and the later deployment's;
+- the day's log volume: 0.120 MB in `ContainerAppConsoleLogs` and 0.069 MB in
+  `ContainerAppSystemLogs`, both billable, 0.19 MB of the 50 MB cap.
 
 ## Not measured yet
 
@@ -1994,11 +2327,15 @@ with it. Everything else is the file as it is.
   user was still there afterwards, because it was made before the transaction began. The file
   does not keep such text out; the runner does, by parsing each ID.
 - After the first 16 migrations a database held 0 triggers and 0 modules, and none of the lists had
-  an unexpected row. (Measured on 2026-10-02 and not repeated. Since then the two code lists have
-  changed, and they now leave one kind of module out, so they can only name less; and a 17th
-  migration, `AddDemoCopies`, was added. Read, not run: it adds a table with its primary key, a
-  column, five indexes, a foreign key, a default and two CHECK constraints, kinds the first 16
-  already create, and no `Sql()` statement.)
+  an unexpected row. (Measured on 2026-10-02 and not repeated on a local engine. Since then the
+  two code lists have changed, and they now leave one kind of module out, so they can only name
+  less; and a 17th migration, `AddDemoCopies`, was added. Until 2026-10-03 this line said of it
+  "Read, not run". That day it ran on Azure: the migrate job applied it on the live database, 17
+  of 17 ([Measured on Azure](#measured-on-azure)). What was read of it stands: it adds a table
+  with its primary key, a column, five indexes, a foreign key, a default and two CHECK
+  constraints, kinds the first 16 already create, and no `Sql()` statement. Whether a database
+  then holds 0 triggers and 0 modules was not measured again, locally or on Azure: the users
+  file last ran on the live database at step 19, when it held 16 migrations, and passed there.)
 - Without `-b`, `sqlcmd` exits 0 when the file stops on an error.
 
 **Measured on this machine, of the tools:** go-sqlcmd 1.10.0 passes the users script's three
@@ -2023,43 +2360,58 @@ signature check that says it checked nothing), and the two that hold only on Win
 skipped. actionlint 1.7.12 with ShellCheck 0.11.0 read the run blocks of the three workflows and
 found nothing; an unquoted variable planted in a copy is reported.
 
-**Not measured.** The trial sent requests by hand, and the first deployment has run its first
-session, steps 1 to 10; read-only commands, offline tests and local stacks cannot show the rest.
-Each line is checked at the step named, in the rest of the first deployment.
+**Measured on GitHub's runner, of the CI job `infra`** (read in the job's log, on 2026-10-03): on
+the push of `1fc4d131` to `main` the job ended `success`. Its Bicep was 0.47.16; the three
+templates built and linted clean; 267 tests ran, among them the ones that run `snapshot`, and
+the two that hold only on Windows were skipped and no other; actionlint 1.7.12 printed no
+finding. Until this was read, the table below held that job as something no run had shown, and
+said that the branch had not been pushed.
+
+**Not measured.** The first deployment has run both of its sessions, on 2026-10-03. The table
+holds what no run has shown yet, each line with where it would show.
+
+Until that day the table also held what only the second session could show. These lines were
+taken out because it showed them ([Measured on Azure](#measured-on-azure)): the template's second
+step deployed, and `deploy.py` and the workflow `deploy.yml` on Azure (steps 15 to 17); the action
+group and the alert rules accepted with their metric names (step 15); the app's scale read back,
+0 and 1; the template passing the Deny policy, and the policy refusing a second replica on a
+PATCH; the registry's answer to the workflow's token for a package that does not exist yet, read
+from what the script did with it, and the digest lines (step 14); the smoke test's answers
+through the Azure ingress; the job start, the execution's states and the revision's `active` flag
+as `deploy.py` reads them (step 16); the columns `--job-log` reads; the deployment identity's
+reads and changes of the app and of the job with its nine actions, and its listing of secrets
+refused with `AuthorizationFailed` (step 17); the app ready on an empty database, before the
+first migration; `migrate` as the migrator's identity (step 16); the raw log of a workflow run
+holding no identifier, name or address (step 17); and `migrate` from a checkout as the owner,
+once its string carried `Connect Timeout=60` (step 19). One line was answered the other way: the
+fourth alert does not count lines (step 20).
 
 | What | Where it shows |
 | --- | --- |
-| **This folder's own files on Azure, past what the first session met** ([Measured on Azure](#measured-on-azure)): `main.bicep`'s second step deployed (nine more resources); `deploy.py`; the workflow `deploy.yml` | steps 15 to 17 |
 | Azure refusing a run with a value missing, through `app-inputs.bicep` (seen offline and on a local engine only, under [Checking these files](#checking-these-files)), and whether it refuses before the foundation's resources are sent again or only when the check's own deployment starts (the app, the job and the action group wait for it either way). The what-if run again at step 9 was given every value | not provoked |
-| What the template sends and neither the trial nor steps 2 to 4 showed: the four conditions of the policy named above at work (the definition is deployed and assigned), the action group and the four alert rules | step 15 |
-| How the app's scale reads back (a value Azure leaves out is read by `deploy.py` as its default). The logs settings read back at steps 3 and 4 | step 15 |
+| The four conditions of the policy named above at work: an init container on an app or on a job, and parallel runs under a schedule or an event trigger. The definition is deployed and assigned, and none of the four has been seen refusing | not provoked |
 | That a second run of the users file on Azure SQL changes nothing. The second run of step 6 ended with the same lines as the first, and the file prints those lines whether or not it replaced a user | no step reads it |
 | The users file dropping and creating a user inside its transaction, which it does when an identity has been made again; its second form, `FROM EXTERNAL PROVIDER WITH OBJECT_ID` | not provoked; the second form only if it is asked for |
 | A container of the app that asks for a token and names no identity gets none (read on Microsoft's page: such a request is answered for a system-assigned identity, and the app has none) | not provoked |
-| The API as `azurebank_app` under the three real-stack test suites, and a transfer as that user | before step 15, on a local SQL Server |
-| **The app itself:** two containers in one replica, its three probes against a cold start (1 s delay, 3 s period, 10 failures; 4 s timeout on readiness), the first database request after it, and scale to zero. Its own first sign-in after a cold start, against its 10 s: the probe program's first open as the app's identity took 6,390 ms at step 7, one cold run with a string that waits 30 s | steps 15 and 16, and the days after |
-| The four alert rules are accepted with these metric names (`Requests`, `TxBytes`, `Replicas`, `Ingestion Volume`), the fourth on a workspace and at no cost; a test e-mail arrives; any of the four ever firing | step 15, and the days after |
-| That the fourth alert counts lines. Microsoft's page calls `Ingestion Volume` the number of records ingested and lists `Count` as its default aggregation; whether one measurement of it is one record is said nowhere. If it is not, `Count` counts measurements, the rule may never reach 50,000 an hour, and it is switched off | step 20 |
+| The API as `azurebank_app` under the three real-stack test suites, and a transfer as that user. This row placed it before step 15; step 15 ran on 2026-10-03, and that day's records hold no such run | on a local SQL Server |
+| **The app after a cold start:** its three probes against a start from zero (1 s delay, 3 s period, 10 failures; 4 s timeout on readiness), the first database request after it, and its own first sign-in against its 10 s: the probe program's first open as the app's identity took 6,390 ms at step 7, one cold run with a string that waits 30 s. The second session saw each new revision become ready, the smoke test answered through both containers each time and, at the end of the day, the active revision at 0 replicas; it read no container's state and timed no cold start | the days after |
+| Any of the three alert rules ever firing, and an alert's e-mail arriving: the test notification is refused on this offer, and what arrived at step 15 is the verification and the membership message. That the rules cost nothing: no cost of this resource group has been read by meter | the days after |
+| Why the metric `Ingestion Volume` had no time series on 2026-10-03, and whether it has one on another day or on a workspace that takes more | step 20, by whoever turns that alert back on |
 | What the `Replicas` metric reports while the app is scaled to zero: 0, or nothing. If nothing, a day's average is 1 on any day the app ran at all, the alert on replica time fires on any use, and that rule has to count another way | the first days after step 16 |
-| Our own template passes the Deny policy; the policy refuses a second replica on a PATCH (the trial saw an earlier rule refuse a job above half a vCPU) | step 15 |
-| What the registry answers the workflow's token for a package that does not exist yet (anonymously, measured: `denied`); the digest line | step 14 |
-| The smoke test's answers through the Azure ingress, and whether every visitor shares one sign-in limit behind it | step 16 |
-| The answers `deploy.py` reads, as it reads them: the job start it sends, the execution states while it polls, the revision's `active` flag, a replica's container states. Where an execution's status, times and exit code sit was seen at step 7, through `Show-Executions`, which reads the same fields on the same API version | step 16 |
-| The columns `--app-log` reads (`ContainerAppName`, `ContainerName`); `--job-log` reads `JobName` and `Log`, which the trial saw filled | steps 16 and 17 |
-| **As the deployment identity:** GET and PATCH of the app and of the job succeed with these nine actions against resources that carry an identity, with no right on the environment and none on the attached identity; the listing of secrets is refused with `AuthorizationFailed` | step 17 |
-| On Azure, as on the local stack: the app becomes ready on an empty database, before the first migration | steps 15 and 16 |
-| `migrate` itself, as the migrator's identity (the trial ran the kinds of statement, not the tool) | step 16 |
-| The automatic put-back on a real failure. Its trigger is proved by unit tests only; its request and its wait are the ones `--app-only` uses | step 18 proves `--app-only` |
+| What the registry answers for a package that exists and is private, anonymously or to the workflow's token: none of the three packages has been private. Why they were public as soon as they were published | not provoked; not looked into |
+| Whether every visitor shares one sign-in limit behind the Azure ingress | not provoked |
+| A replica's container states, which `deploy.py` reads only when a new revision does not get ready | a real failure; not provoked |
+| `--app-log` against the workspace: the table has the two columns it reads (`ContainerAppName`, `ContainerName`), and the command has not been run. `--job-log` with its filter on `ContainerGroupName`: tested offline, and the column was read at step 16, but the query has not been sent | the next read of either |
+| The automatic put-back on a real failure. Its trigger is proved by unit tests only; its request and its wait are the ones `--app-only` uses, which ran at step 18 | a real failure; not provoked |
 | What the app reads just after the put-back request. If its state still says `Failed`, left by the deployment that failed, `deploy.py` reports a put-back that did not succeed although it may have | a real put-back; not provoked |
 | A request to Azure that fails once in the middle of a run. Nothing is asked twice: the run stops, and nothing is put back | not provoked |
-| The raw log of a workflow run holds none of the three identifiers, not the app's address, not the server's name, no client ID of a database identity and no address: step 17 counts each | step 17 |
-| `migrate` from a checkout, signed in as the owner with `Active Directory Default` | step 19 |
-| The meters after 48 hours: the three environment meters and the Dedicated one at 0; whether the free 5 GB of logs apply to this offer; whether the cost view returns a row at all (on the trial's own day it returned none) | after steps 2 and 21 |
+| The last-resort road with a migration to apply: step 19 ran it with nothing pending. Why the driver got no token within 10 s there, when `az` gave one in under a second | the day it is needed; not looked into |
+| Two deployments at once with different images: the overlap of 2026-10-03 had the same images in both | not provoked |
+| The meters after 48 hours: the three environment meters and the Dedicated one at 0; whether the free 5 GB of logs apply to this offer; whether the cost view returns a row at all (on the trial's own day it returned none). The second session read no cost of this resource group by meter | 48 hours after steps 2 and 21 |
 | What the workspace bills for a line of the app; how far the cap overshoots; whether an environment set to `none` still feeds a setting that exists | after step 21; the last two are not provoked |
 | How long a managed identity's token stays valid for the database | not found in the pages read |
 | That the identity is refused a scale change, a delete or a stop. One refusal is provoked on every deployment (the secrets listing); the policy's refusal is provoked as the owner | not provoked |
-| Every command under [Switching the logs off](#switching-the-logs-off), [If something was stolen](#if-something-was-stolen) and [Removing everything](#removing-everything). The trial made its own deletions with other commands | the day they are needed |
-| The CI job `infra` itself, on GitHub's runner and its versions of the tools, among them whether its Bicep has `snapshot`, which the tests run (Microsoft's page names version 0.41.2 or later). Its checks ran on this machine, on Windows and in WSL (above); the branch has not been pushed | the pull request's first run |
+| Every command under [Switching the logs off](#switching-the-logs-off) but one, the deletion of the alert on the workspace, which ran as step 20's; every command under [If something was stolen](#if-something-was-stolen) and [Removing everything](#removing-everything). The trial made its own deletions with other commands | the day they are needed |
 
 ## Checking these files
 
@@ -2082,7 +2434,11 @@ reported.
 (<https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/bicep-cli>, 2026-05-14, read
 on 2026-10-03). On the template as it was at step 9 it gave the app's ID unworked, in the form that
 what-if printed, and the role assignment's ID around it. On the changed one, with values of the
-shapes `secrets.ps1` writes, it names all 23 resources of the run with the app, and 14 without it.
+shapes `secrets.ps1` writes, it named all 23 resources of the run with the app, and 14 without it.
+Since the alert on the workspace is left out by default (step 20), run again that day on the
+template as it is now: 22 with the app, three alert rules among them; 23 with
+`logVolumeAlert=true`, the fourth rule equal to the one predicted before the change; 20 with that
+and `keepLogs=false`, with no workspace, no diagnostic setting and three alert rules.
 It refuses an image tag of 39 or 41 characters and an empty address, and names the parameter: "The
 provided value for the template parameter 'imageTag' is not valid. Length of the value should be
 greater than or equal to '40'." Like a what-if, it leaves a secure value unworked, so an empty
@@ -2107,5 +2463,6 @@ actions, the federated credential's subject, every rule of the policy, the two i
 one each resource carries, that no database credential is anywhere, the workspace and its cap, the
 environment's mode and its API version, the app's name and no resource ID that reads a secret,
 and the check of the app's values and what waits for it. It also runs `bicep snapshot` on copies
-of the templates: every ID worked out with the app, and the short or long tag and the empty
-address refused. The CI job `infra` runs the same three checks and actionlint on the workflows.
+of the templates: every ID worked out with the app, three alert rules by default and the fourth
+when it is asked for, and the short or long tag and the empty address refused. The CI job `infra`
+runs the same three checks and actionlint on the workflows.

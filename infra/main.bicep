@@ -24,8 +24,8 @@ param allowedJobTriggers array = [
 param keepLogs bool = true
 @description('Daily cap of the log workspace, in GB. Text, because the property is typed as a whole number: a fraction has to pass through json().')
 param logDailyCapGb string = '0.05'
-@description('False leaves out the alert on the log workspace: the fallback if this subscription refuses that rule.')
-param logVolumeAlert bool = true
+@description('True adds the alert on the log workspace. Left out since 2026-10-03: at step 20 of the runbook its metric had no time series for an hour in which the workspace ingested 446 rows. True is for whoever measures again.')
+param logVolumeAlert bool = false
 
 // The seven values below are needed only when deployApp is true; infra/secrets.ps1 supplies them.
 @secure()
@@ -456,7 +456,8 @@ resource shapeAssignment 'Microsoft.Authorization/policyAssignments@2025-03-01' 
 }
 
 // Notify only: nothing here stops the app. One e-mail receiver; three rules on the app, one per
-// meter that traffic can move (requests, bytes out, replica time), and one on the log workspace.
+// meter that traffic can move (requests, bytes out, replica time). A fourth, on the log workspace,
+// is built only when logVolumeAlert is true: see the comment on it below.
 resource owner 'Microsoft.Insights/actionGroups@2023-01-01' = if (deployApp) {
   name: 'azurebank-owner'
   location: 'global'
@@ -488,13 +489,17 @@ var alerts = [
   // 50,000 records ingested in one hour. Microsoft's page on the workspace's metrics (2026-07-31)
   // calls 'Ingestion Volume' the number of records ingested into a workspace or a table, with Count
   // as its default aggregation. A record is a row, and in the trial a line printed was one row; but
-  // whether one measurement of the metric is one record is said nowhere: if one stands for
-  // several, Count counts measurements and this rule may never fire. Not measured yet: the
-  // runbook's step 20 reads the metric against a query of the rows, and if they disagree the rule
-  // is left out (logVolumeAlert=false). If they agree, 50,000 lines at the 438 bytes that a line of
-  // a job was billed (README.md, "Measured on Azure") are 22 MB of the 50 MB daily cap; at the 768
-  // computed for one of the app's warnings, 38 MB. It warns of volume; nothing warns that the cap
-  // itself was reached.
+  // whether one measurement of the metric is one record is said nowhere. Measured on 2026-10-03,
+  // at the runbook's step 20 (README.md, "Measured on Azure"): for an hour in which the workspace
+  // ingested 446 rows, 395 of them in its middle forty minutes, the metric had no time series at
+  // all, while another metric of the same workspace, 'Query Count', had one. A rule on it cannot
+  // count lines there, so this one is built only when logVolumeAlert is true, which is for
+  // whoever measures again. Until that day this comment said "Not measured yet" and the rule was
+  // built by default; the first deployment created it, and it was deleted after the measurement.
+  // The threshold is what a rule that counts lines would use: 50,000 lines at the 438 bytes that
+  // a line of a job was billed are 22 MB of the 50 MB daily cap; at the 768 computed for one of
+  // the app's warnings, 38 MB. Without it nothing warns of the log's volume, and nothing warns
+  // that the cap itself was reached.
   { name: 'azurebank-log-volume', onLogs: true, metric: 'Ingestion Volume', aggregation: 'Count', threshold: 50000, window: 'PT1H', every: 'PT15M', text: 'More than 50,000 log lines in one hour.' }
 ]
 
