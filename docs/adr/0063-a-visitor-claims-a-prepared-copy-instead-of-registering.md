@@ -1169,18 +1169,19 @@ environment the panel's `h2` comes before the page's `h1`); what a screen reader
 stack, any browser but headless Chromium at 1280 x 720 in the light theme; anything on Azure,
 where the demo is still off (decision 14).
 
-### Two changes to the shared confirm dialog (added 2026-10-05)
+### Three changes to the shared confirm dialog (added 2026-10-05)
 
 "Start over" asks before it claims, in `ConfirmDialog`
 (`frontend/src/components/shared/ConfirmDialog.tsx`), the application's one hand-rolled modal,
 which the two transfer pages also open for "Leave without finishing?". Opening the demo's
-dialog in a real browser showed two defects of that component that were older than this change
-and on every page that opens it, with the demo off too. Both were corrected in the shared
-component, so the transfer prompts changed with the demo's dialog. They are recorded here
-because this is the change that made them.
+dialog in a real browser showed three defects of that component that were older than this
+change and on every page that opens it, with the demo off too. All three were corrected in the
+shared component, so the transfer prompts changed with the demo's dialog. They are recorded
+here because this is the change that made them.
 
-**It takes focus when it opens, and keeps Tab inside.** Before, measured in Chrome 154 and in
-Chromium 151 against the mock: the dialog opened and focus stayed on the control that had
+**It takes focus when it opens, and keeps Tab inside.** Before, measured on 2026-10-04 in
+Chrome 154 and in Chromium 151 against the mock: the dialog opened and focus stayed on the
+control that had
 opened it, and the next Tab walked the page behind the open dialog, whose controls were live.
 The unit tests were green all the while, because jsdom gives focus to an element whatever its
 `visibility`. Three lines changed. The open overlay now transitions `opacity` alone, so it is
@@ -1209,19 +1210,42 @@ run's `"Start over" asks first, takes the keyboard, and brings a new copy`.
   which is what makes its third Tab a test of the trap against tabster, and it scanned the open
   prompt: `transfer-leave-prompt`, no violation.
 - **Measured and not built: while it waits, a dialog that is the first or the last Tab stop of
-  its document still loses Tab.** Every control is disabled then, and the trap leaves focus
-  where tabster put it. No page is in that state: the transfer prompts never wait, and the
-  dialog is neither first nor last on the sign-in page (seven controls before it, one after)
-  or on the dashboard (fourteen before and fifteen after at 1280 px wide).
-- **Measured and not built: a dialog closed with Escape still takes Enter while it fades,**
-  when it was opened with no control holding focus. In Chromium 151 on the mock the closed
-  "Start over" dialog sent a claim six times of six for an Enter 9 to 143 ms after the Escape,
-  and never at 420 ms. Opened by a click or from the keyboard, Escape gives focus back to the
-  opener and Enter opens the dialog again. A browser in which a click gives a button no focus
-  would reach the first state with a mouse (read, not run).
+  its document still loses Tab.** Every control is disabled then, focus is on the dialog
+  itself, and the trap leaves focus where tabster put it. **One page is in that state: the
+  dashboard at the desktop width when its accounts could not be read.** It then draws its
+  alert and the demo's panel and nothing after them, so the dialog's controls are the
+  document's last. Measured on 2026-10-05 in Chromium 151.0.7922.34 on the dev server with the
+  mock and the demo's tag, at 1280 x 720, the claim left unanswered, in two runs, one with the
+  accounts read answered 503 twice and one with every read of the page answered so: ten
+  controls before the dialog, three in it, none after. With "Start over" confirmed and waiting,
+  the first Tab put focus on tabster's own element, the second on the page, the third on a
+  "Transfer" button of the page behind; Shift+Tab then reached the panel's "Start over" and
+  "Show sign-in details", behind the waiting dialog. With the accounts read (nine controls
+  before the dialog, fifteen after), and at 390 x 844 with the read failed (three before, five
+  after), three Tabs and three Shift+Tabs left focus on the dialog. The transfer prompts never
+  wait, and on the sign-in page the dialog is neither first nor last (seven controls before
+  it, one after). No kept test reaches the state.
 
-**Its title sits on a line of its own.** Before, measured in Chromium 151 on all four pages
-that open the dialog: the title's computed `display` was `inline`, and the message began on
+**Closed, it takes no press.** The dialog stays in the page when it closes and stays drawn
+while it fades, and until this change its buttons acted for that long. Before, measured in
+Chromium 151 on the mock. On 2026-10-04: a dialog closed with Escape, when it had been opened
+with no control holding focus, sent a claim for an Enter 9 to 143 ms after the Escape, six
+times of six, and never at 420 ms. On 2026-10-05: two presses on the dialog's "Start over" at
+one spot, 78 to 246 ms apart, sent two claims and showed two toasts, five times of five, so a
+double click replaced the copy it had just brought; the mock answered a claim in 11 to 23 ms.
+Each handler now asks first whether the dialog is open: the confirm, the cancel, the close and
+the scrim. After, measured on 2026-10-05 in Chromium 151.0.7922.34 on the dev server with the
+mock: two presses 172, 176 and 283 ms apart, the second on the closed dialog while it was
+still drawn, sent one claim and showed one toast each time; an Enter 73 and 136 ms after an
+Escape, on the confirm that still held focus, sent none. Held by `ConfirmDialog.test.tsx`,
+`closed, it takes no press: not on its buttons, not on its scrim, not from the keyboard`. All
+of it is the dev build with the mock. On a stack a second press that comes before the answer
+meets a disabled button, before this change and after it (read, not run). The two transfer
+prompts are the same component; nothing was measured on them.
+
+**Its title sits on a line of its own.** Before, measured on 2026-10-04 in Chromium 151 on all
+four pages that open the dialog: the title's computed `display` was `inline`, and the message
+began on
 the title's own line, right after it ("Start over with a new copy?You'll get a …", "Leave
 without finishing?This transfer has …"); the 8 px the style declares under the title did
 nothing on an inline box. One style line makes the title a block. After, on all four pages:
@@ -1233,8 +1257,15 @@ with the message under it`, which reads the declaration, since jsdom lays nothin
 title is still the dialog's name and the message its description.
 
 The same component also gained one slot, under its error and above its buttons, for the wait's
-hint of a confirm that takes time, and it keeps focus on itself when such a wait starts under
-the button that was pressed.
+hint of a confirm that takes time. And it takes focus itself when such a wait starts under the
+button that was pressed: every control is disabled then, and a browser hands a disabled
+control's focus to the page. Held in jsdom by `ConfirmDialog.test.tsx` (`keeps Tab inside when
+it starts waiting under the button that was pressed`, `closed while its caller still says it
+waits, it does not take focus back`), with the browser's hand-off emulated
+(`frontend/src/test/outage.ts`). Seen on 2026-10-05 in Chromium 151.0.7922.34 against the
+mock, with the claim left unanswered: after the press on the confirm, focus was on the dialog
+itself, in each of the four runs of the bullet above. No kept browser test meets a wait: the
+demo run looks only once its claim is answered. The transfer prompts never wait.
 
 ## Related
 
