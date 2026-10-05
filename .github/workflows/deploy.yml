@@ -108,9 +108,9 @@ jobs:
     if: inputs.action == 'deploy'
     runs-on: ubuntu-24.04
     # The tools image on each of two jobs 5 and 5, the migration 16, the new revision 15, the old
-    # one going inactive 3, the smoke test with its waits 14 (10 for the page and the sign-in, 4
-    # for a second probe that waits as the sign-in does), a put-back 15: 73, and the steps around
-    # them.
+    # one going inactive 3, the smoke test with its waits 15 (the page 5, the sign-in up to 4.6,
+    # and as much again for a second probe that waits as the sign-in does), a put-back 15: 74,
+    # and the steps around them.
     timeout-minutes: 80
     # The deployment identity trusts this environment and nothing else; the environment allows
     # main only, and holds the three Azure identifiers as its secrets.
