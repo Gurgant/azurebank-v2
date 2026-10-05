@@ -5,22 +5,25 @@ import { server } from '../../mocks/server';
 import { makeTestStore } from '../../test/renderWithProviders';
 import { apiSlice } from '../api/apiSlice';
 import { isDemoMode } from './demoMode';
+import { DEMO_PIN } from './demoPin';
 
 /**
  * The demo's names, held against the backend's source.
  *
- * The app and the backend agree on four things by spelling them the same in two languages: the
+ * The app and the backend agree on five things by spelling them the same in two languages: the
  * tag the BFF puts in the page, the route a claim is sent to, the two refusals the app has words
- * of its own for, and the sentences the API gives those refusals, which this suite's fixtures
- * type out. No job of CI runs the demo in a browser, so if one side changed its spelling nothing
- * there would fail: every test here answers with the mock, which spells things as the app does.
+ * of its own for, the sentences the API gives those refusals, which this suite's fixtures type
+ * out, and the PIN every copy is seeded with, which the page prints. No job of CI runs the demo in
+ * a browser, so if one side changed its spelling nothing there would fail: every test here answers
+ * with the mock, which spells things as the app does.
  * These read the backend's files as text and fail on the name that moved. The manner is
  * src/api/timeoutChain.test.ts's, and so are the plain relative paths: Vitest runs from the
  * frontend root.
  *
  * What a visitor would have met without them, each read from the code and not run: the page
  * without its demo (the tag); a claim answered 404 (the route); the house's fallback sentence in
- * place of the one written for the refusal (the codes).
+ * place of the one written for the refusal (the codes); under every box that asks for a PIN, six
+ * digits no copy takes (the PIN).
  *
  * Every test here was green when it was written: they hold what is, on both sides. Each was
  * watched failing on a name misspelled in what it expects, and again on a name misspelled in the
@@ -30,6 +33,7 @@ const ERROR_CODES = '../backend/src/AzureBank.Shared/Constants/ErrorCodes.cs';
 const REFUSALS = '../backend/src/AzureBank.Shared/Exceptions/DemoRefusalException.cs';
 const BFF_AUTH_CONTROLLER = '../backend/src/AzureBank.Bff/Controllers/BffAuthController.cs';
 const SPA_HOSTING = '../backend/src/AzureBank.Bff/Extensions/SpaHostingExtensions.cs';
+const COPY_DEFAULTS = '../backend/src/AzureBank.Shared/Constants/DemoCopyDefaults.cs';
 
 const read = (path: string) => readFileSync(path, 'utf8');
 
@@ -172,6 +176,21 @@ describe("the claim's two refusals the app words", () => {
         "DEMO_COPY_LIMIT: the API's",
       ],
       theSignInPagesTest: ["DEMO_POOL_EMPTY: the API's", "DEMO_DAILY_LIMIT: the API's"],
+    });
+  });
+});
+
+describe("the demo's PIN", () => {
+  it('as the page prints it is the one the server seeds every copy with', () => {
+    /*
+      The page's digits are a constant of the app's (src/features/demo/demoPin.ts), typed from the
+      server's and not read from a claim's answer: a visitor signed in to a copy on a browser that
+      never claimed it has no answer to read. The mock has digits of its own
+      (src/mocks/state.ts), so no test that answers with the mock meets the server's.
+    */
+    expect({ theServers: constantsOf(read(COPY_DEFAULTS)).Pin, thePages: DEMO_PIN }).toEqual({
+      theServers: '123456',
+      thePages: '123456',
     });
   });
 });
