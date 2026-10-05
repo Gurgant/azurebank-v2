@@ -693,7 +693,7 @@ is left out by default, and the owner decided against a log search rule for now.
   `Unit/Tools/SeederCommandTests`: `migrate`'s line for a refused login names both ways to sign
   in.
 - `infra/test_scripts.py` and `infra/test_deploy.py`, 267 tests *(272 since 2026-10-03, with the
-  five added after the second session: four for `--job-log`, one for the alerts; 433 since
+  five added after the second session: four for `--job-log`, one for the alerts; 444 since
   2026-10-05, with those of
   [ADR-0064](0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md))*: the two
   PowerShell scripts run

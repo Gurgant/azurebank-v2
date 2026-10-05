@@ -3462,7 +3462,7 @@ against stand-ins and invented answers, and steps 22 to 33 are where each line w
 | That a workflow run which is cancelled reaches `deploy.py` as an interrupt, and so ends in its one sentence with nothing put back. Seen offline for an interrupt raised inside the script: exit code 1, nothing on standard output, the sentence on standard error | not provoked |
 | That a read of a pool run's exit code can be refused or fail after the run was seen over, and how Azure words it: the sentence for it is tested against an invented refusal | not provoked |
 | The repair of two containers that disagree about the demo; every road of [Turning the demo back](#turning-the-demo-back) | the day they are needed |
-| The CI job `infra` with the tests added on 2026-10-05: its minutes against its limit of 10. On this machine the suite of 428 to 433 tests took from 6 to 29 minutes, the longer runs with other work beside them | the first push |
+| The CI job `infra` with the tests added on 2026-10-05: its minutes against its limit of 10. On this machine the suite of 428 to 444 tests took from under 6 to 29 minutes, the longer runs with other work beside them. The limit is in `.github/workflows/ci.yml`, which this change does not edit: a job that passes it is put right by a change of that file | the first run of CI on the pull request: that workflow runs on a pull request to `main` and on a push to `main`, not on a push of a branch |
 
 
 ## Checking these files
@@ -3519,8 +3519,11 @@ not run again: the eighth secret's 32 characters are read in the compiled check 
 been refused by any engine.
 
 `test_deploy.py` tests the deployment script's decisions against invented answers: time is a
-counter and no process is started. A few of its tests open a real connection to a server of their
-own on `127.0.0.1`, to see what a dropped connection really raises. `test_scripts.py` runs the two
+counter and no process is started. One thing is read from the real clock: how old an execution
+is, against the start time a test gives it (until 2026-10-05 this paragraph did not say so). A
+few of its tests open a real connection to a server of their own on `127.0.0.1`, to see what a
+dropped connection really raises; since 2026-10-05 a test built on the file's offline base that
+opens a connection to any other host fails for it. `test_scripts.py` runs the two
 PowerShell scripts for real against a stand-in for the Azure CLI and a stand-in for `sqlcmd`,
 reads `sql-principals.sql` as text (the order of its guards and every condition, word for word;
 what a server does with them is above), and reads the compiled templates: the role's nine
@@ -3533,14 +3536,23 @@ when it is asked for, and the short or long tag and the empty address refused. T
 runs the same three checks and actionlint on the workflows.
 
 Since 2026-10-05 the two files read more than that. `test_scripts.py` runs `secrets.ps1` against
-a stand-in app whose containers carry the demo's flag, reads the compiled pool job, its role
-assignment and the policy's exception, and reads three things of `deploy.py` as text, the pool
-job's schedule, the bounds of its timeout and the names of its two secrets, to hold each equal
-to the template's. `test_deploy.py` reads five source files of the backend as text, never built
-or run: two of the BFF, for the page's tag and the route of a registration, one of the shared
-library, for the error code, and two of the tool the pool job runs, for its exit codes and the
-counts of its summary line.
-And it reads this page and `docs/runbooks/demo-pool.md`: a heading the script names is there, a
+a stand-in app whose containers carry the demo's flag, and reads the compiled pool job, its role
+assignment and the policy's exception. It imports `deploy.py`, sends nothing with it, and asks
+the script's own names and shape checks about what a run of the template would send: the app,
+the two jobs, each job's container and the demo's flag, so that a name typed on both sides
+cannot drift on one. It reads three things of `deploy.py` as text, the pool job's schedule, the
+bounds of its timeout and the names of its two secrets, to hold each equal to the template's;
+one source file of the backend, `backend/src/AzureBank.Shared/Options/DemoOptions.cs`, to hold
+every setting the template writes under the demo's section to a name the backend binds; and this
+page, for the lines of `secrets.ps1` about the demo's switch that a step quotes.
+`test_deploy.py` reads seven source files of the backend as text, never built or run: three of
+the BFF, for the page's tag, the route of a registration, and the status and the member of the
+refusal that closes it; one of the shared library, for the error code; and three of the tool the
+pool job runs, for its exit codes, the counts of its summary line and the name of its command
+`recycle`.
+And it reads this page and `docs/runbooks/demo-pool.md`: a heading the script names is there; a
 refusal that sends its reader to [When something fails](#when-something-fails) has a row there
-that quotes it, every command of the script is told, and the table of a pool run's exit codes
-is the script's own. So the tests need the whole checkout, not this folder alone.
+that quotes it, in words that stand in one sentence of the script and no other; a line a step
+gives as what a good run prints is one the script prints; every command of the script is told;
+and the table of a pool run's exit codes is the script's own. So the tests need the whole
+checkout, not this folder alone, and a page that drops one of those quotes fails a test.

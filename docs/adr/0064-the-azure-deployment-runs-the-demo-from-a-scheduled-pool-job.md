@@ -248,7 +248,7 @@ demo off.
   what the new secrets mean for the rows already in the database is not designed.
 - **A template run's revision is checked by hand.** Nothing runs `--check` by itself: the
   runbook's steps do.
-- **The offline tests read more than this folder**: five source files of the backend and two
+- **The offline tests read more than this folder**: eight source files of the backend and two
   runbooks, as text.
 - **The sentences of the earlier records about what Azure holds stay as they are.** "No job runs
   them yet", "the demo is still off" and the read-backs with one job are true until the session
@@ -258,7 +258,7 @@ demo off.
 
 Offline, on one machine (Windows, Python 3.14, PowerShell 7.6, Bicep 0.47.16), on 2026-10-05.
 
-- **The tests of `infra/`**: `python -B -m unittest discover -s infra -p "test_*.py"` ran 433
+- **The tests of `infra/`**: `python -B -m unittest discover -s infra -p "test_*.py"` ran 444
   tests, with no failure and no error; 2 were skipped, the two that hold only off Windows. They
   run `secrets.ps1` for real against a stand-in for the Azure CLI, read the compiled templates,
   work them out with `bicep snapshot`, and run `deploy.py` against invented answers. Among what
@@ -266,9 +266,12 @@ Offline, on one machine (Windows, Python 3.14, PowerShell 7.6, Bicep 0.47.16), o
   the workspace and 14 without the app, and on predicts 24 and 25; the compiled job, its two
   secrets and what its container is handed; the policy's rule, compared whole; the role's nine
   actions on three scopes; the script's schedule, timeout bounds and secret names held equal to
-  the template's; the refusals the demo added to `deploy.py`, compared as whole sentences; that
-  no line and no error of `--check` holds eight characters in a row of a listed secret; and that
-  the runbook has a row for each refusal that sends its reader there.
+  the template's; the names the scripts, the template and the backend each type for the app, the
+  jobs and the demo's settings, held to one another; the refusals the demo added to `deploy.py`,
+  compared as whole sentences; that no line and no error of `--check` holds eight characters in
+  a row of a listed secret; that a test of `deploy.py` which reaches for the network fails; and
+  that the runbook has a row for each refusal that sends its reader there, and quotes the lines
+  of a good run as the scripts print them.
 - **`bicep build` and `bicep lint`** of the three templates: nothing on standard error.
 - **The backend's gate**, since documents its tests read were edited: the Release build, the
   whitespace check, and `dotnet test` with and without a SQL Server, each with no failure.
