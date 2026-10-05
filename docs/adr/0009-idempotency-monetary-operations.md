@@ -227,9 +227,30 @@ minute longer than `RequestDeadline:Seconds`.)*
 - Middleware sits **after `UseAuthorization`** (401/403 never create
   records) and before the endpoints; its 400/409/422 are thrown as
   `IdempotencyException : AppException` → uniform ProblemDetails.
-- Body size is capped at **32 KB** (legit bodies < 2 KB). `[RequestSizeLimit(32768)]`
+- Body size is capped at **32 KB** (legit bodies < 2 KB). ~~`[RequestSizeLimit(32768)]`
   on the four endpoints is an MVC resource filter that runs only once the action
-  executes — *after* this middleware has already buffered and HMAC-hashed the body.
+  executes — *after* this middleware has already buffered and HMAC-hashed the body.~~
+  *(Struck 2026-10-05: wrong about when the limit applied, and the four endpoints
+  no longer carry `[RequestSizeLimit]`. The attribute acted twice. As endpoint
+  metadata, routing applied it when the endpoint was matched: before
+  authentication and before this middleware. As an MVC authorization filter
+  (`RequestSizeLimitFilter`) it tried again inside MVC; on the four idempotent
+  endpoints the middleware had read the body by then, the server's limit was
+  read-only, and every request the middleware passed on logged the Warning "A
+  request body size limit could not be applied" (event 2 `FeatureIsReadOnly`):
+  four requests, one to each endpoint, four events. They now carry
+  `[EndpointRequestSizeLimit(32_768)]`, the same routing metadata without the
+  filter. The 32,768-byte limit is in force from the moment the endpoint is
+  matched; the middleware's own 413 for a declared length and its cap on chunked
+  reads, described next, are unchanged; nothing tries to set the limit after the
+  body is read. The four authorisation mints keep `[RequestSizeLimit]`: there the
+  filter sets the limit and logs no warning. Measured on Kestrel by
+  `KestrelRequestSizeLimitTests`: asked with no token, each of the four logs
+  exactly one routing event `MaxRequestBodySizeSet` naming 32768, before the
+  first authentication event; a 40 KB deposit is answered 413
+  `IDEMPOTENCY_PAYLOAD_TOO_LARGE` with a `Content-Length` and chunked; no
+  `RequestSizeLimitFilter` event on the four. The in-memory test host offers no
+  `IHttpMaxRequestBodySizeFeature` and shows none of this.)*
   So the middleware itself rejects `Content-Length > 32768` with **413
   `IDEMPOTENCY_PAYLOAD_TOO_LARGE`** *before* buffering/hashing/claiming (closing an
   authenticated hash-amplification DoS), caps chunked reads at the same limit via
