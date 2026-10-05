@@ -224,7 +224,7 @@ internal sealed class DemoVisitor
     /// <summary>
     /// A response as status and body, with what differs between two requests for the same answer
     /// taken out: the trace id, and the handle the caller typed, which both bodies echo.
-    /// Returned through <see cref="ComparableText.Of"/>, parentheses where the body has braces.
+    /// With parentheses where the body has braces: <see cref="ComparableText"/> says why.
     /// </summary>
     public static async Task<string> AnswerAsync(HttpResponseMessage response, string handle)
     {
