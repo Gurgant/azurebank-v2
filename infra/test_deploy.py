@@ -1494,6 +1494,19 @@ class PoolDeployTests(DeployCase):
                 pool_configuration(self.azure).update(replicaTimeout=timeout)
                 self.assertEqual(deploy.pool_drift(self.azure.jobs['azurebank-pool']), [])
 
+    def test_the_command_the_pool_job_must_run_is_the_one_the_seeder_declares(self):
+        # CONTROL: green as written. The script refuses a pool job whose one argument is not the
+        # command it types, and the template is held to the script by handing it what a run
+        # would send (infra/test_scripts.py). Here the word is read where the tool that runs it
+        # declares it, backend/tools/AzureBank.Seeder/Commands/RecycleCommand.cs, as text: a
+        # command renamed there fails here, and not at a run of the job. Seen red with the word
+        # changed in the script and in the stand-in of these tests.
+        declared = re.findall(r'new Command\(\s*"([^"]+)"', seeder_source('Commands', 'RecycleCommand.cs'))
+        self.assertEqual(len(declared), 1, 'ARRANGE: the one command that file declares was found')
+        job = pool_resource()
+        job['properties']['template']['containers'][0]['args'] = declared
+        self.assertEqual(deploy.pool_drift(job), [])
+
     def test_what_runs_now_names_the_pool_jobs_image_too(self):
         self.deploy()
         (line,) = [line for line in self.azure.printed_before_first_write.splitlines() if 'Running now' in line]
@@ -4047,8 +4060,9 @@ class SmokeTests(Offline):
                      'with an empty body was refused as closed.'])
 
     def test_the_tag_and_the_refusal_are_the_ones_the_bff_writes(self):
-        # CONTROL: green as written. The three are read in the BFF's own sources, as text: a tag,
-        # a code or a route changed there fails here, and not at a deployment with the demo on,
+        # CONTROL: green as written. The tag, the code and the route are read where the backend
+        # writes them, as text, in two sources of the BFF and one of the shared library: a tag, a
+        # code or a route changed there fails here, and not at a deployment with the demo on,
         # whose smoke test would take the new one for a wrong answer. Seen red with each of the
         # three sources changed.
         spa = backend_source('AzureBank.Bff', 'Extensions', 'SpaHostingExtensions.cs')
@@ -4062,6 +4076,19 @@ class SmokeTests(Offline):
         self.assertEqual(controller.count('[HttpPost("register")]'), 1)
         self.assertEqual([f'/{prefix}/register' for prefix in re.findall(r'(?m)^\[Route\("([^"]*)"\)\]', controller)],
                          [deploy.REGISTER_PATH])
+        # CONTROL: green as written. The status of the refusal, and the member its code travels
+        # in: the script types both (is_closed, error_code), and so does CLOSED above. They are
+        # read in a third source of the BFF, the middleware that closes the door, and the script
+        # is asked about an answer built from what that source says. Seen red with the status
+        # changed in the script and in these tests' answers, and the same for the member.
+        middleware = backend_source('AzureBank.Bff', 'Middleware', 'DemoModeMiddleware.cs')
+        statuses = re.findall(r'GetMetadata<ClosedInDemoAttribute>\(\) is not null\)\s*\{\s*'
+                              r'context\.Response\.StatusCode = StatusCodes\.Status(\d{3})\w+;', middleware)
+        members = re.findall(r'problem\.Extensions\["(\w+)"\] = ErrorCodes\.RegistrationClosed;', middleware)
+        self.assertEqual((len(statuses), len(members)), (1, 1), 'ARRANGE: the refusal was found in the middleware')
+        status, member = int(statuses[0]), members[0]
+        self.assertTrue(deploy.is_closed(status, 'application/json', json.dumps({member: deploy.REGISTRATION_CLOSED})))
+        self.assertEqual((CLOSED[0], json.loads(CLOSED[2]).get(member)), (status, deploy.REGISTRATION_CLOSED))
         # And what these tests type is what the script holds.
         self.assertEqual((deploy.DEMO_TAG, deploy.REGISTRATION_CLOSED, deploy.REGISTER_PATH),
                          (TAG, 'REGISTRATION_CLOSED', '/bff/auth/register'))

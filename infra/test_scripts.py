@@ -7,6 +7,12 @@ templates are compiled by the Bicep CLI and the compiled JSON is read; the CLI's
 works them out offline with given values, as a what-if does. What Azure itself answers is
 checked on the first deployment (README.md).
 
+The deploy script is imported, and nothing of it is run against Azure: its names for the app
+and the jobs, and the shape checks it makes before it moves anything, are asked of what the
+templates work out, so that a name typed in both cannot drift on one side. Its own decisions
+are tested in test_deploy.py. One source of the backend is read as text, for the names of the
+settings the template writes.
+
 On a developer's machine a missing tool skips its tests; in CI a missing tool is an error.
 """
 
@@ -20,6 +26,8 @@ import sys
 import tempfile
 import textwrap
 import unittest
+
+import deploy
 
 HERE = pathlib.Path(__file__).resolve().parent
 TAG = 'a' * 40
@@ -1798,6 +1806,28 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(told(on), {('azurebank', 'bff'): 'true', ('azurebank', 'api'): 'true',
                                     ('azurebank-pool', 'pool'): 'true'})
 
+        # CONTROL: green as written, from here to the end. The deploy script is asked itself. It
+        # types the names of the app, of the two jobs and of their containers, the identity each
+        # carries, the pool job's arguments and the demo's setting; this file types them again
+        # for the template. A name changed in the template and in the lists above left every
+        # test green and the script refusing that job at each deployment with the demo on. So
+        # what a run would send is handed to the script's own checks: it finds each resource by
+        # its name, in shape, with the container it moves, and reads the demo as the run set it.
+        # Seen red with the pool job's container, its name, its arguments and the demo's setting
+        # each renamed in the template and in the lists above.
+        app = f'{group}/{APP}/{deploy.APP}'
+        self.assertEqual(sorted(f'{group}/{JOB}/{name}' for name in deploy.JOBS),
+                         sorted(found for found, resource in on.items() if resource['type'] == JOB))
+        self.assertEqual(job, f'{group}/{JOB}/{deploy.POOL_JOB}')
+        self.assertEqual(deploy.pool_drift(on[job]), [])
+        self.assertEqual(deploy.job_drift(on[f'{group}/{JOB}/{deploy.MIGRATE_JOB}']), [])
+        self.assertEqual(deploy.app_drift(on[app]), [])
+        for name, container in deploy.JOBS.items():
+            self.assertEqual(list(deploy.images(on[f'{group}/{JOB}/{name}'])), [container], name)
+        self.assertIs(deploy.demo_of(on[app]), True)
+        self.assertIs(deploy.demo_of(default[app]), False)
+        self.assertEqual(deploy.app_drift(default[app]), [])
+
     def test_deploy_app_true_is_refused_with_a_tag_that_is_not_40_characters_or_no_address(self):
         # Offline, as above. The secrets cannot be tried this way: like a what-if, this evaluation
         # works out no secure value. Their checks are read from the compiled template above. A
@@ -2081,6 +2111,44 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual({name: [entry for entry in self.container(name)['env'] if entry['name'] == 'Demo__Enabled']
                           for name in ('bff', 'api')}, {'bff': [DEMO_FLAG], 'api': [DEMO_FLAG]})
         self.assertIs(self.main['parameters']['demo']['defaultValue'], False)
+
+    def test_both_scripts_read_the_demo_by_the_setting_and_the_containers_the_template_writes(self):
+        # CONTROL: green as written. infra/secrets.ps1 and infra/deploy.py each read from the
+        # deployed app whether the demo is on, by a name typed in each, and a setting that is not
+        # found reads as off. A name that differed from the template's would make the secrets
+        # script write demo=false for a demo that is on, and report it as "kept from the deployed
+        # resource". Seen red with the name changed in the script, and with the two containers
+        # it asks changed there.
+        (app,) = self.of_type(APP)
+        containers = [container['name'] for container in app['properties']['template']['containers']]
+        script = (HERE / 'secrets.ps1').read_text(encoding='utf-8')
+        self.assertEqual(re.findall(r"(?m)^\$DemoFlag = '([^']*)'$", script), [DEMO_FLAG['name']])
+        asks = r"(?m)^ *\$says = @\('(\w+)', '(\w+)' \| ForEach-Object \{ Get-DemoFlag \$app \$_ \}\)$"
+        self.assertEqual(re.findall(asks, script), [tuple(containers)])
+        self.assertEqual(deploy.DEMO_FLAG, DEMO_FLAG['name'])
+
+    def test_every_setting_of_the_demo_is_one_the_backend_binds(self):
+        # CONTROL: green as written. A setting whose name the backend does not bind is not an
+        # error anywhere: the host starts and the default applies. For the cap on one address's
+        # claims that default is 10 where the template means 1,000 (ADR-0063, decision 14). So
+        # each name the template writes under the demo's section is walked through the classes
+        # of backend/src/AzureBank.Shared/Options/DemoOptions.cs, read as text: the section,
+        # then a property of each class on the way. Seen red with the cap's name changed in the
+        # template and in the lists above.
+        source = (HERE.parent / 'backend' / 'src' / 'AzureBank.Shared' / 'Options' / 'DemoOptions.cs').read_text(
+            encoding='utf-8')
+        classes = {name: dict((prop, kind) for kind, prop in re.findall(r'public (\S+) (\w+) \{ get; set; \}', body))
+                   for name, body in re.findall(r'(?ms)^public class (\w+)\n\{\n(.*?)^\}', source)}
+        (section,) = re.findall(r'public const string SectionName = "(\w+)";', source)
+        written = sorted({name for _, _, name in self.every_setting() if name.startswith(f'{section}__')})
+        self.assertEqual(written, ['Demo__Claim__MaxPerClientPerDay', 'Demo__ClientKeySecret', 'Demo__Enabled'])
+        for name in written:
+            with self.subTest(name=name):
+                kind = 'DemoOptions'
+                for part in name.split('__')[1:]:
+                    self.assertIn(part, classes.get(kind, {}), f'{kind} has no such property')
+                    kind = classes[kind][part]
+                self.assertIn(kind, ('bool', 'int', 'string?'), 'the name stops at a section, not at a value')
 
     def test_the_bff_is_handed_the_flag_and_nothing_about_forwarded_headers(self):
         self.assertEqual([entry['name'] for entry in self.container('bff')['env']], SETTINGS_OF_THE_BFF)
