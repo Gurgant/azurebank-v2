@@ -161,7 +161,7 @@ const WHAT_TO_DO = 'Enter your 6-digit PIN.';
  * Boxes named "PIN", beside the two elements a caller's description may name. Nothing typed into
  * them is kept: these tests read what is drawn around the boxes.
  */
-function Boxes(props: Pick<PinInputProps, 'purpose' | 'ariaDescribedBy'>) {
+function Boxes(props: Pick<PinInputProps, 'purpose' | 'ariaDescribedBy' | 'error' | 'disabled'>) {
   return (
     <>
       <p id="what-to-do">{WHAT_TO_DO}</p>
@@ -282,6 +282,35 @@ describe('PinInput on the demo', () => {
       withAList: {
         attribute: expect.stringMatching(/^what-to-do why-it-was-refused \S+$/),
         described: [WHAT_TO_DO, REFUSED, DEMO_PIN_HINT],
+      },
+    });
+  });
+
+  /*
+    The visitor who has just typed a wrong PIN is the one the line is for, and that is when a
+    caller turns the boxes red; while its request runs, or while the PIN is locked, it switches
+    them off (src/features/auth/StepUpModal.tsx does both). The line is there in both states.
+  */
+  it('the line stays under boxes that show a refusal and under boxes that wait', () => {
+    enableDemoMode();
+
+    // As a caller draws them after a wrong PIN: red, and described by the refusal.
+    const refused = renderWithProviders(<Boxes ariaDescribedBy="why-it-was-refused" error />);
+    const afterARefusal = { column: column(), described: described() };
+    refused.unmount();
+
+    // As a caller draws them while its request runs, or while the PIN is locked.
+    renderWithProviders(<Boxes disabled />);
+    const whileTheyWait = { column: column(), described: described() };
+
+    expect({ afterARefusal, whileTheyWait }).toEqual({
+      afterARefusal: {
+        column: ['boxes: PIN', DEMO_PIN_HINT, 'button: Show PIN'],
+        described: [REFUSED, DEMO_PIN_HINT],
+      },
+      whileTheyWait: {
+        column: ['boxes: PIN', DEMO_PIN_HINT, 'button: Show PIN'],
+        described: [DEMO_PIN_HINT],
       },
     });
   });
