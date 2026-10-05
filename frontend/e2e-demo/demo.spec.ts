@@ -1,6 +1,6 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { expect, test, type BrowserContext, type Page } from '@playwright/test';
+import { expect, test, type BrowserContext, type Page, type Response } from '@playwright/test';
 import { scan } from '../e2e/axeScan';
 import { focusOf } from '../e2e/focusOf';
 import { DEMO_STATE, SCAN_VALUES } from '../playwright.demo.config';
@@ -38,11 +38,13 @@ import {
  * that sends the request, and with it the path and the headers the step is about. Never a
  * claim's answer.
  *
- * THE PASSWORD. Each claim's answer holds one. After each claim it is read from the browser's
- * storage and appended to `e2e-demo/.auth/scan-values.txt`, a file git ignores, so that whoever
- * ran this can search everything the run wrote for it and find nothing. It is compared, never
- * printed (`e2e-demo/demoRun.ts`). The sign-in details are on the page only while a helper reads
- * them or the scan runs, and the hook below takes them off after every test, however it ended.
+ * THE PASSWORD. Each claim's answer holds one. It is taken from the answer and appended to
+ * `e2e-demo/.auth/scan-values.txt`, a file git ignores, before anything is expected of the
+ * answer or of the page, so that whoever ran this can search everything the run wrote for it and
+ * find nothing, after a red run as after a green one. Each test that claims then holds that the
+ * file knows the password the browser keeps. It is compared, never printed
+ * (`e2e-demo/demoRun.ts`). The sign-in details are on the page only while a helper reads them
+ * or the scan runs, and the hook below takes them off after every test, however it ended.
  *
  * NAMES ARE EXACT. Playwright matches a role's name as a substring unless told otherwise, and
  * "Start over" is the first words of the dialog's title, the name of the panel's button and the
@@ -174,18 +176,40 @@ test.describe('the demo, from the first click', () => {
   const buttons = (name: string) => page.getByRole('button', { name, exact: true });
 
   /**
-   * After a claim: the password the browser now keeps goes into the file the run's output is
-   * searched with. It is read from the browser, where the claim's answer put it, and goes
-   * nowhere else: not into an assertion, a log or an attachment.
+   * THE FIRST THING DONE WITH A CLAIM'S ANSWER, before anything is expected of it or of the
+   * page: the password it holds goes into the file the run's output is searched with. A step
+   * that goes red further down has then left the search what it needs: the copy is claimed and
+   * its password is in the browser whether or not the test went on.
+   *
+   * The answer is read here to be measured, and never written down whole. The password goes
+   * nowhere else: not into an assertion, a log or an attachment. An answer that holds none (a
+   * refused claim, or one that is no JSON) adds no line, and what is expected of the answer
+   * afterwards says so: an empty line in that file would match every file searched.
    */
-  async function keepForTheSearch() {
-    const kept = await keptCopy(page);
-    expect(
-      kept !== null && kept.password.length > 0,
-      'after a claim the browser keeps a copy with a password',
-    ).toBe(true);
-    await mkdir(dirname(SCAN_VALUES), { recursive: true });
-    await appendFile(SCAN_VALUES, `${kept?.password}\n`);
+  async function keepForTheSearch(answer: Response) {
+    const body = (await answer.json().catch(() => ({}))) as {
+      message?: unknown;
+      data?: {
+        copy?: { password?: unknown; pin?: unknown; contacts?: unknown; expiresAt?: unknown };
+      };
+    };
+    const copy = body.data?.copy;
+    const password = typeof copy?.password === 'string' ? copy.password : '';
+    if (password !== '') {
+      await mkdir(dirname(SCAN_VALUES), { recursive: true });
+      await appendFile(SCAN_VALUES, `${password}\n`);
+    }
+    return { message: body.message, copy, password };
+  }
+
+  /**
+   * Whether the file the run's output is searched with holds the password the browser keeps:
+   * asked after each claim, of the browser and not of the answer, because what the browser
+   * keeps is what the dashboard shows and what the saved state holds.
+   */
+  async function theSearchKnows(kept: Awaited<ReturnType<typeof keptCopy>>) {
+    const lines = (await readFile(SCAN_VALUES, 'utf8').catch(() => '')).split('\n');
+    return kept !== null && kept.password !== '' && lines.includes(kept.password);
   }
 
   test("the scan leaves a node's markup out of its report when asked, and quotes it when not", async ({
@@ -383,22 +407,13 @@ test.describe('the demo, from the first click', () => {
     const claimed = answerTo(page, 'POST', '/bff/auth/demo/claim');
     await buttons(TRY_THE_DEMO).click();
     const answer = await claimed;
-
-    // Read here to be measured, and never written down whole: it holds the copy's password.
-    const body = (await answer.json()) as {
-      message?: unknown;
-      data?: {
-        copy?: { password?: unknown; pin?: unknown; contacts?: unknown; expiresAt?: unknown };
-      };
-    };
-    const copy = body.data?.copy;
-    const password = typeof copy?.password === 'string' ? copy.password : '';
+    const { message, copy, password } = await keepForTheSearch(answer);
     const cookies = (await context.cookies()).map((cookie) => cookie.name);
     await note('the claim', {
       path: '/bff/auth/demo/claim',
       status: answer.status(),
       'cache-control': answer.headers()['cache-control'],
-      message: body.message,
+      message,
       // The copy's end as the server wrote it: its form is what the app's check of a claim reads.
       copyEnds: copy?.expiresAt,
       copyEndsInZ: typeof copy?.expiresAt === 'string' && copy.expiresAt.endsWith('Z'),
@@ -409,7 +424,6 @@ test.describe('the demo, from the first click', () => {
     });
 
     await expect(page).toHaveURL(/\/dashboard(?:[?#]|$)/, { timeout: 15_000 });
-    await keepForTheSearch();
     const kept = await keptCopy(page);
 
     expect({
@@ -420,6 +434,7 @@ test.describe('the demo, from the first click', () => {
       // What the browser keeps is what the claim answered: the copy's end, not the session's.
       keepsTheCopysEnd: kept?.expiresAt === copy?.expiresAt,
       keepsTheCopysPassword: kept?.password === password,
+      theSearchKnowsTheKeptPassword: await theSearchKnows(kept),
       // READ, from the BFF's source (backend/src/AzureBank.Bff/Program.cs: the prefix outside
       // Development), not yet seen in this browser on the stack: the session's cookie is a
       // `__Host-` one, and Chromium keeps it although the page came over http from localhost.
@@ -430,6 +445,7 @@ test.describe('the demo, from the first click', () => {
       pinIsTheDemoPin: true,
       keepsTheCopysEnd: true,
       keepsTheCopysPassword: true,
+      theSearchKnowsTheKeptPassword: true,
       sessionCookieIsHostOnly: true,
     });
   });
@@ -597,6 +613,7 @@ test.describe('the demo, from the first click', () => {
     const claimed = answerTo(page, 'POST', '/bff/auth/demo/claim');
     await page.keyboard.press('Enter');
     const answer = await claimed;
+    await keepForTheSearch(answer);
     await note('the second claim', {
       path: '/bff/auth/demo/claim',
       status: answer.status(),
@@ -608,7 +625,6 @@ test.describe('the demo, from the first click', () => {
     await expect(page.getByText(NEW_COPY).first()).toBeVisible();
     // Focus is given back to the button the dialog was opened from.
     await expect.poll(() => focusOf(page)).toEqual({ on: START_OVER, inTheDialog: false });
-    await keepForTheSearch();
 
     // The new copy's money, not the first one's: the first had sent a euro.
     await expect(sum()).toHaveText(STARTING_SUM);
@@ -620,11 +636,13 @@ test.describe('the demo, from the first click', () => {
       aNewAddress: shown.email !== firstAddress,
       showsTheKeptAddress: shown.email === kept?.email,
       showsTheKeptPassword: shown.password === kept?.password,
+      theSearchKnowsTheKeptPassword: await theSearchKnows(kept),
     }).toEqual({
       addressIsOfThePool: true,
       aNewAddress: true,
       showsTheKeptAddress: true,
       showsTheKeptPassword: true,
+      theSearchKnowsTheKeptPassword: true,
     });
   });
 
