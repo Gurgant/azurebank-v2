@@ -345,7 +345,7 @@ four reasons:
   |---|---|
   | `data.user` | `id`, `email`, `firstName`, `lastName`, `azureTag`, `hasPin`: the copy's owner, as sign-in answers a user |
   | `data.expiresAt` | When the access token expires, as sign-in's. Not the copy's end |
-  | `data.copy.email`, `data.copy.password` | What signs in to the copy again. The password is in this answer only |
+  | `data.copy.email`, `data.copy.password` | What signs in to the copy again. ~~The password is in this answer only~~ *(struck 2026-10-05: on the server, in this answer only; since the application's change the browser that made the claim keeps it too: "What the browser keeps in demo mode")* |
   | `data.copy.pin` | The copy's PIN, `123456` for every copy (ADR-0062, decision 4) |
   | `data.copy.contacts` | The handles of the copy's two other users, sorted: whom the owner can pay |
   | `data.copy.expiresAt` | The copy's end: the claim's instant plus `Demo:CopyLifetimeHours` |

@@ -83,6 +83,10 @@ gaps, one of them a live hole:
   is declarative and covers the same non-GET surface.
 - **Keeping a loopback-only CORS policy for dev**: rejected — the dev proxy makes even that
   unnecessary, and an empty policy invites re-widening. Deletion is the honest posture.
-- **`__Host-` in Development too**: impossible over `http://localhost` (prefix mandates
-  Secure), and forcing https into the dev loop costs more than the dev/prod cookie-name
-  asymmetry, which the tests pin explicitly.
+- **`__Host-` in Development too**: ~~impossible over `http://localhost` (prefix mandates
+  Secure),~~ *(Struck 2026-10-05 with the same clause of decision 2: not impossible in
+  Chromium, which kept a `__Host-` cookie set over `http://localhost` and sent it back,
+  measured that day. Decision 2 gives Safari's refusal of a `Secure` cookie there as the
+  reason that stands; it was not measured here. So the prefix in Development would still
+  need https for that browser,)* and forcing https into the dev loop costs more than the
+  dev/prod cookie-name asymmetry, which the tests pin explicitly.
