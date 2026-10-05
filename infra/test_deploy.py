@@ -2431,6 +2431,27 @@ class CheckTests(DeployCase):
         self.assert_nothing_else_was_printed(EQUAL, checked(BEFORE, demo=True))
         self.assert_no_secret_is_shown(self.printed())
 
+    def test_a_value_no_encoder_can_write_is_compared_and_never_quoted(self):
+        # CONTROL: green as written. A listing is JSON, and JSON can spell half a character (a
+        # lone surrogate). The comparison must not end in an encoder's own words: they quote the
+        # character and say where in the value it stood, and the command line prints them. Seen
+        # red with the two values encoded by the plain encoder.
+        self.azure.turn_the_demo_on()
+        odd = PEPPER[:9] + json.loads('"\\udc80"') + PEPPER[9:]
+        self.azure.secrets[APP_ID]['pin-pepper'] = odd
+        self.azure.secrets[POOL_ID]['pin-pepper'] = odd.replace('\udc80', '\udc81')
+        environment = {'AZURE_SUBSCRIPTION_ID': SUBSCRIPTION, 'AZURE_RESOURCE_GROUP': GROUP}
+        with patch.dict(deploy.os.environ, environment, clear=True):
+            with self.assertRaises(SystemExit) as raised:
+                deploy.main(['--check'])
+            self.assertEqual(raised.exception.code, differs(PEPPER_NAMED))
+            self.assert_nothing_else_was_printed()
+            self.clear()
+            self.azure.secrets[POOL_ID]['pin-pepper'] = odd
+            self.assertIsNone(deploy.main(['--check']))
+        self.assert_nothing_else_was_printed(EQUAL, checked(BEFORE, demo=True))
+        self.assert_nothing_was_moved()
+
     def test_a_listing_that_fails_fails_the_check(self):
         self.azure.turn_the_demo_on()
         for whose, resource_id in (('the app', APP_ID), ('the job azurebank-pool', POOL_ID)):
@@ -3207,7 +3228,11 @@ class SmokeTests(Offline):
                 ((403, 'application/json', '{"errorCode":"registration_closed"}'), None),
                 ((403, 'application/json', '{"errorCode":"REGISTRATION_CLOSED\\nPLANTED-VALUE"}'), None),
                 ((403, 'text/html', '<html>REGISTRATION_CLOSED PLANTED-VALUE</html>'), None),
-                ((403, 'application/json', '["REGISTRATION_CLOSED", "PLANTED-VALUE"]'), None)):
+                ((403, 'application/json', '["REGISTRATION_CLOSED", "PLANTED-VALUE"]'), None),
+                # CONTROL: green as written. Forty characters is the longest code a line shows: one
+                # more, and none is shown. Seen red with the length taken out of the shape.
+                ((403, 'application/json', json.dumps({'errorCode': 'A' * 41})), None),
+                ((403, 'application/json', json.dumps({'errorCode': 'B' * 40})), '403 ' + 'B' * 40)):
             with self.subTest(answer=answer[2][:40]):
                 self.clear()
                 site = self.demo_site(REFUSED, register=answer)

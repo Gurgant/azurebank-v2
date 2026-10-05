@@ -125,8 +125,8 @@ DEMO_TAG = '<meta name="azurebank-demo" content="true">'
 REGISTER_PATH = '/bff/auth/register'
 REGISTRATION_CLOSED = 'REGISTRATION_CLOSED'
 # The shape of an error code of the app's (backend/src/AzureBank.Shared/Constants/ErrorCodes.cs):
-# capitals, digits and underscores. Of an answer to a registration a line shows the status and an
-# error code of this shape, and nothing else.
+# capitals, digits and underscores, forty characters at most. Of an answer to a registration a
+# line shows the status and an error code of this shape, and nothing else.
 ERROR_CODE = re.compile(r'[A-Z][A-Z0-9_]{0,39}')
 ACTIVE = {'Running', 'Processing'}
 FAILED = {'Failed', 'Stopped', 'Degraded'}
@@ -1188,7 +1188,8 @@ def wait_alone(app_id, latest, timeout=180):
 # The pool job's two secrets, by what a line calls each. infra/main.bicep writes them from the
 # two expressions it writes the app's secrets of the same names from, so a run of the template
 # is expected to leave them equal. The job holds a copy of its own: a secret of the app that is
-# written again by itself is not expected to change it.
+# written again by itself is not expected to change it. A test holds the two names equal to the
+# template's (infra/test_scripts.py).
 POOL_SECRETS = {'pin-pepper': 'PIN pepper', 'app-connection': 'connection string'}
 
 

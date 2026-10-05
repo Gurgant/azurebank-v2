@@ -2189,6 +2189,21 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(re.findall(r'(?m)^POOL_TIMEOUTS = \((\d+), (\d+)\)$', tool),
                          [(str(timeout['minValue']), str(timeout['maxValue']))])
 
+    def test_the_secrets_the_tool_compares_are_the_ones_the_template_writes(self):
+        # CONTROL: green as written. `python infra/deploy.py --check` lists the pool job's secrets
+        # and the app's, and compares the two it names in a constant of its own. The test of the
+        # two secrets holds the template, and this one holds the tool to it: a name changed in one
+        # of the two only would leave that check unable to compare, at every run. Seen red with a
+        # name changed in the tool, and with one changed in the template.
+        tool = (HERE / 'deploy.py').read_text(encoding='utf-8')
+        compared = re.findall(r"(?m)^POOL_SECRETS = \{'([a-z-]+)': '[^']*', '([a-z-]+)': '[^']*'\}$", tool)
+        secrets = self.job('azurebank-pool')['properties']['configuration'].get('secrets', [])
+        self.assertEqual([sorted(names) for names in compared], [sorted(entry['name'] for entry in secrets)])
+        # Each is a secret of the app under the same name: the one it is compared with.
+        (app,) = self.of_type(APP)
+        of_the_app = [entry['name'] for entry in app['properties']['configuration']['secrets']]
+        self.assertEqual([name for names in compared for name in names if name not in of_the_app], [])
+
     def test_the_policy_definition_sits_at_subscription_scope_and_denies(self):
         self.assertEqual(sorted(module['name'] for module in self.of_type('Microsoft.Resources/deployments')),
                          [GUARD, 'azurebank-shape-definition'])
