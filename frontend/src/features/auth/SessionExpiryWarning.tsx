@@ -90,7 +90,9 @@ import {
  * keeps another copy than the one signed in. The kept copy is read each time the dialog is drawn
  * and once more when the button is pressed, and it is never held here. A copy that another tab
  * replaced since is not this session's copy: its password is not sent, and the dialog's next
- * draw, a tick of the countdown away, asks for the password.
+ * draw, a tick of the countdown away, asks for the password. That holds where the browser stored
+ * the copy. In a tab whose browser refused to, the copy read is the one that tab holds in memory,
+ * whatever another tab did since (src/features/demo/demoCopyStorage.ts).
  *
  * The third property above is what makes this honest for free: re-authentication does not dismiss
  * anything either. It succeeds, the session's `Session` tag is invalidated, `AuthBootstrap`'s live

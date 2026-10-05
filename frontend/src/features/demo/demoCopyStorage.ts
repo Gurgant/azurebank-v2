@@ -13,6 +13,11 @@ import { isDemoMode } from './demoMode';
   and loaded once would let a second open tab keep a password after the first was told "forget
   this copy".
 
+  ONE TAB IS OUTSIDE THAT: a tab whose browser refused to store its copy. The copy is held in
+  `refused`, below, while the page lives, and while it is held the key is not read. What another
+  tab forgot or replaced does not reach that tab until a write succeeds there or the copy is
+  forgotten there (demoCopyStorage.test.ts, "leaves a copy in the key and another in memory").
+
   What is read is INPUT. The key holds a password, and anything on the page's origin can write to
   it, so what comes back is parsed and checked like an answer from the server, and a key that
   fails either is removed, not repaired.

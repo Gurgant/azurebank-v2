@@ -71,7 +71,8 @@ const useStyles = makeStyles({
  *
  * The kept copy is read each time the panel is drawn, and never held here. What another tab
  * forgot or replaced is gone from this panel at its next render, the open sign-in details
- * included.
+ * included. A tab whose browser refused to store its copy is the exception: it is drawn from the
+ * copy that tab holds in memory (src/features/demo/demoCopyStorage.ts).
  *
  * EVERY KEPT VALUE IS DRAWN AS TEXT. The key is the browser's storage, which anything on the
  * page's origin can write to, so what it holds is input: a handle or a password that is markup is

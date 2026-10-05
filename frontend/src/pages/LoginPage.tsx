@@ -160,7 +160,9 @@ export function LoginPage() {
     Read from the storage at every render, through the storage module's snapshot. Nothing tells
     this tab what another tab did, so a copy the other tab forgot or replaced is gone, or is the
     other one, the next time this page is drawn, and not before. Off the demo the snapshot is
-    `null` and the storage is not touched.
+    `null` and the storage is not touched. In a tab whose browser refused to store its copy the
+    snapshot is the copy that tab holds in memory, whatever another tab did since: the storage
+    module says why.
 
     A COPY PAST ITS END IS NOT OFFERED, AND IS FORGOTTEN. The end is the kept copy's own
     `expiresAt`, compared with this browser's clock as it stood when the page opened. The clock
