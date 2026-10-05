@@ -1386,7 +1386,8 @@ group be put on a schedule, the migrate job among them, and the file does not re
 (ADR-0064).
 
 **The way back:** `Invoke-Template 'pool-policy-back' @('scheduledJobs=[]')` with the same file.
-The policy then refuses what it refused before.
+The policy then refuses what it refused before. No file remembers that override: a later run of
+the template without it, step 25's among them, writes the exception again.
 
 #### 24. Deploy `main`'s head, with the demo still off (operator, **writes**; the owner approves the run)
 
@@ -1783,6 +1784,12 @@ the alert does not count lines, and the parameter's default is now `false`: a ru
 alert out by itself. A run that wants it passes `@('logVolumeAlert=true')`, and that is not
 remembered either. Read, not tried: a run without it neither creates the rule nor deletes one
 that exists, since a run of the template removes nothing that exists.
+
+Since 2026-10-05 two more overrides exist that no file keeps. `scheduledJobs=[]` takes the
+policy's exception out (step 23's way back): a run without it writes the exception again.
+`poolTimeout` sets the pool job's timeout: a run without it puts 600 s back on that job, and its
+what-if shows the `Modify`. The demo's switch is not one of them: the app remembers it
+([Changing the infrastructure later](#changing-the-infrastructure-later)).
 
 **The users (step 6)**
 
@@ -2668,7 +2675,9 @@ try {
 - The pool job's schedule is a variable of the template and not a parameter: an override could
   make the interval shorter than the job's timeout, and two runs at once can build up to twice
   the pool's target (`backend/tools/AzureBank.Seeder/README.md`). Its timeout is the parameter
-  `poolTimeout`, 60 to 840 s, and a test holds the interval longer than the longest of them.
+  `poolTimeout`, 60 to 840 s, and a test holds the interval longer than the longest of them. An
+  override of it is not remembered: `secrets.ps1` writes no timeout, so a later run without it
+  puts 600 back, and that run's what-if shows the `Modify` on the job.
 - After an identity was deleted and made again, run `./infra/sql-principals.ps1`: the user it left
   matches nothing and is replaced.
 
@@ -2741,7 +2750,7 @@ run exits 13.
 | Wanted | Who | What is done | Read back |
 | --- | --- | --- | --- |
 | Nobody reaches the demo, within minutes | The owner's sign-in only: the deployment identity can neither stop nor start the app | [Stop the app by hand](#stop-the-app-by-hand). The job goes on by its schedule, and harms nothing while nobody is served | The app's state, by the read step 32 recorded; what the address answers |
-| The deployment as it was before the demo | The owner's own hands for the lock and the database; the operator for the rest, each on the owner's word | The six steps below, in this order and no other | Each step's own |
+| The demo off again, on a new and empty database | The owner's own hands for the lock and the database; the operator for the rest, each on the owner's word | The six steps below, in this order and no other | Each step's own |
 
 1. **The pool job is deleted first**, on the owner's word, as in step 2 above. Read back: one job,
    two role assignments. No run can now fill any database. The app still answers as the demo and
@@ -2765,6 +2774,15 @@ flags on with no database answers errors, and flags off with no schema can write
 what a run of the template does to a stopped app has not been seen. The audit chain starts again
 with the new database. The app's address is expected not to change, since neither the app nor
 its environment is made again: not measured.
+
+**What no road here takes back.** Neither the switch going off nor the six steps leave the
+deployment as it was before the demo. The policy keeps its exception for a job named
+`azurebank-pool`, with its new name and its description: the exception is the template's default
+and is not behind the switch. Only step 23's way back takes it out, and that override has to be
+passed again at every later run of the template. The role definition keeps its new description.
+The app keeps the ninth secret and the demo's four settings, the flag written as `false`. While
+no pool job exists, the exception serves only whoever may create a job in the resource group,
+which the deployment identity may not: its role is assigned on resources that exist.
 
 **Never `demo=false` while the pool job exists, and never while the database holds a pool row.**
 The first leaves the scheduled job beside an app whose flags are off. The second reopens

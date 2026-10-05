@@ -64,7 +64,9 @@ value of the demo.
 ## Decision
 
 **1. The template has one switch, `demo`, off by default, and the app is what remembers it.**
-With it off the template creates what it created before. `infra/secrets.ps1` writes the switch
+With it off the template creates the resources it created before and no other; what its next
+run changes on them all the same, the policy's exception among it, is under Consequences.
+`infra/secrets.ps1` writes the switch
 the way it writes what the environment does with its logs: `true` with `-DemoOn`, else what the
 deployed app's two containers say, else nothing, and the template's default applies. Two
 containers that disagree stop the script, and so does a container that carries the setting any
@@ -234,6 +236,13 @@ demo off.
   settings on the app, the flag as `false` on both containers among them: a new revision, which
   ends every session. The role definition's description changed too, so a run without the app
   shows a change on it. Nothing is created or deleted.
+- **The same run changes the policy, with the switch off as with it on.** Its definition gets
+  the new name, the new description, a second parameter and the exception in the rule; its
+  assignment gets the new name and `scheduledJobs` holding `azurebank-pool`. The exception is
+  not behind the switch: it is the template's default from that run on, with the demo off and
+  after every way back, and an override that takes it out holds only until the next run without
+  it. While no pool job exists it serves only whoever may create a job in the resource group,
+  which the deployment identity may not: its role is assigned on resources that exist.
 - **With the demo on, the pool is the only bound on strangers.** The cap for one client is 1,000
   until the address is measured, so what is left is 50 free copies, the day's 150 claims and 200
   changes in a copy. And if the BFF sees one address for every visitor, two of its three rate
