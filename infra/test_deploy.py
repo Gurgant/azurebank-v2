@@ -2065,6 +2065,12 @@ class CheckTests(DeployCase):
         self.assertEqual([call for call in self.azure.writes() if not call[1].endswith('/listSecrets')], [])
         self.migration.assert_not_called()
 
+    def assert_nothing_else_was_printed(self, *lines):
+        # CONTROL: green as written. Every line the check printed, the smoke test being a stand-in
+        # in these tests: nothing of a listing is printed beside them, not how many secrets it
+        # held and not how long a value was. Seen red with such a line printed after each listing.
+        self.assertEqual(self.said(), [f'Revision {BEFORE} {ALONE}', *lines])
+
     def assert_no_secret_is_shown(self, text, *more):
         """Neither a value a listing answered, nor eight characters in a row of one."""
         values = {value for secrets in self.azure.secrets.values() for value in secrets.values()
@@ -2349,7 +2355,7 @@ class CheckTests(DeployCase):
     def test_with_the_demo_on_it_says_the_jobs_pepper_and_string_are_the_apps_and_shows_neither(self):
         self.azure.turn_the_demo_on()
         self.check()
-        self.assertEqual([line for line in self.said() if 'pepper' in line], [EQUAL])
+        self.assert_nothing_else_was_printed(EQUAL, checked(BEFORE, demo=True))
         self.assert_no_secret_is_shown(self.printed())
         # Each listed once, after the job was found in shape and before the address is asked anything.
         self.assertEqual(self.azure.events, ['read revisions', 'read secrets of azurebank',
@@ -2372,7 +2378,7 @@ class CheckTests(DeployCase):
                 self.assertIs(type(raised.exception), RuntimeError)
                 self.assertEqual(str(raised.exception), differs(PEPPER_NAMED))
                 self.assert_no_secret_is_shown(str(raised.exception) + self.printed(), other)
-                self.assertNotIn("are the app's", self.printed())
+                self.assert_nothing_else_was_printed()
         self.smoke.assert_not_called()
         self.assert_nothing_was_moved()
 
@@ -2388,6 +2394,7 @@ class CheckTests(DeployCase):
                     self.check()
                 self.assertEqual(str(raised.exception), differs(*which))
                 self.assert_no_secret_is_shown(str(raised.exception) + self.printed(), other)
+                self.assert_nothing_else_was_printed()
         self.smoke.assert_not_called()
 
     def test_only_the_two_secrets_the_job_holds_are_compared(self):
@@ -2397,7 +2404,7 @@ class CheckTests(DeployCase):
         self.azure.secrets[APP_ID].update({'jwt-secret': 'Fs1dGa4hJq7kLw0zXe3cVr6bNt9mYu2i'})
         self.azure.secrets[POOL_ID].update({'another-secret': 'Ce5vBr8nMt1yQu4iWo7pEa0sDl3fGk6h'})
         self.check()
-        self.assertIn(EQUAL, self.said())
+        self.assert_nothing_else_was_printed(EQUAL, checked(BEFORE, demo=True))
         self.assert_no_secret_is_shown(self.printed())
 
     def test_a_listing_that_fails_fails_the_check(self):
@@ -2406,6 +2413,7 @@ class CheckTests(DeployCase):
             for refusal in ('Forbidden: AuthorizationFailed.',
                             f'The Azure CLI gave no answer in 180 s (POST {deploy.short(resource_id)}/listSecrets).'):
                 with self.subTest(whose=whose, refusal=refusal):
+                    self.clear()
                     self.azure.refusal = refusal
                     self.azure.refuse = lambda method, target, body, wanted=resource_id + '/listSecrets': (
                         target == wanted)
@@ -2416,9 +2424,9 @@ class CheckTests(DeployCase):
                         f"The secrets of {whose} could not be listed, so the pool job's secrets could not "
                         f"be compared with the app's: {refusal.rstrip('.')}. Nothing was moved. See "
                         'infra/README.md, "When something fails".'))
+                    self.assert_nothing_else_was_printed()
         self.smoke.assert_not_called()
         self.assert_nothing_was_moved()
-        self.assertNotIn("are the app's", self.printed())
 
     def test_a_listing_that_does_not_hold_one_value_for_each_secret_cannot_be_compared(self):
         self.azure.turn_the_demo_on()
@@ -2459,6 +2467,7 @@ class CheckTests(DeployCase):
                 self.assertIs(type(raised.exception), RuntimeError)
                 self.assertEqual(str(raised.exception), not_compared(*why))
                 self.assert_no_secret_is_shown(str(raised.exception) + self.printed())
+                self.assert_nothing_else_was_printed()
         self.smoke.assert_not_called()
         self.assert_nothing_was_moved()
 
