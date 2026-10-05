@@ -44,7 +44,7 @@ gaps, one of them a live hole:
    and non-Secure: the dev loop runs on `http://localhost`, ~~where prefixed cookies cannot be
    set at all~~ (and Safari refuses Secure cookies there even unprefixed). *(Struck 2026-10-05:
    not so in Chromium. Measured that day on the Production images of `compose.yaml` with
-   `compose.demo.yaml`, in headless Chromium 151.0.7922.34, in two runs: the browser kept
+   `compose.demo.yaml`, in headless Chromium 151.0.7922.34, in three runs: the browser kept
    `__Host-AzureBank.Session`, `Secure`, from an answer on `http://localhost:5000` and sent it
    back. `docs/engineering-practices.md` says the same of Chromium beside its measurement of
    2026-09-25. Safari's refusal is the reason that still stands, and was not measured here.

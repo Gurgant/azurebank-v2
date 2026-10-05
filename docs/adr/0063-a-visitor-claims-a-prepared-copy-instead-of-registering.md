@@ -1084,14 +1084,17 @@ that has ended says so, and stays remembered`. On `925974ee`, the last commit of
 that touches the application's code, its specs or their comments, `npm test` passed 92 files
 and 1,363 tests and `npm run test:contract:mock` 7 files and 79.
 
-**Measured on 2026-10-05 on the compose stack, twice** (`compose.yaml` with `compose.demo.yaml`,
-Production, Docker Desktop on Windows, a pool of 50 nobody had claimed from, the BFF on
-`http://localhost:5000`; headless Chromium 151.0.7922.34 under Playwright 1.62.1, 1280 x 720,
-the light theme). The table is the first run's, on the three images built from commit
-`d8787a2b` of the application's branch: one run of `npm run test:e2e:demo`, with
-`E2E_DEMO_COMPOSE_PROJECT` naming the compose project, `15 passed (35.6s)`, exit 0, and no name
-the specs ask for had to change from what the mock had shown. The second run, on images built
-from `340813a5`, is under the table, with what it met otherwise.
+**Measured on 2026-10-05 on the compose stack, three times** (`compose.yaml` with
+`compose.demo.yaml`, Production, Docker Desktop on Windows, a pool of 50 nobody had claimed
+from, the BFF on `http://localhost:5000`; headless Chromium 151.0.7922.34 under Playwright
+1.62.1, 1280 x 720, the light theme. The browser's version is what a headless launch of it
+printed after the first run; no run printed one, and `frontend/package-lock.json`, which pins
+Playwright and with it the browser, is the same file in all three). The table is the first
+run's, on the three images built from commit `d8787a2b` of the application's branch: one run
+of `npm run test:e2e:demo`, with `E2E_DEMO_COMPOSE_PROJECT` naming the compose project,
+`15 passed (35.6s)`, exit 0, and no name the specs ask for had to change from what the mock
+had shown. The second run, on images built from `340813a5`, and the third, on images built
+from `8ce36aa0`, are under the table, each with what it met otherwise.
 
 | What was done | What was observed | Not run |
 |---|---|---|
@@ -1107,7 +1110,7 @@ from `340813a5`, is under the table, with what it met otherwise.
 | Four scans with the gate of the default run (`e2e/axeScan.ts`) | The sign-in page and the open "Start over" dialog: no violation. The dashboard, with the sign-in details closed and with them open: colour contrast alone, two nodes, which the gate reports and does not fail on. With the details closed axe says nothing of the toggle's `aria-controls`. The report of the scan with the details open holds no markup of the page (`grep -c '"html"'`: 0, and 2 in the closed one's) | Heading order, which no scan checks |
 | The default run's own check that the demo is off, pointed at this stack (`E2E_BASE_URL=http://localhost:5000 npx playwright test e2e/auth.spec.ts --project chromium --no-deps -g 'are offered "Create account"'`) | It fails, as it must: `createAccount` 0 where 1, `tryTheDemo` 1 where 0 | |
 | The claim's door, asked by hand | No body and no `Content-Type`: 415. `text/plain` with `{}`: 415. `application/json` with an empty body or with `null`: 400. With `not json` or `[]`: 400 | `text/json` and `application/…+json` |
-| The same three images with `compose.yaml` alone | `GET /`: 200, 3,020 bytes, no tag, and the bytes of the flag-on page with its tag taken out (SHA-256). The claim, with `{}` and with no body: 404, `Content-Length: 0`, the headers of a path the BFF does not have. Eleven claims in a row: 404 ten times, then 429 `RATE_LIMIT_EXCEEDED` with `Retry-After: 60` | **The default suite, `npm run test:e2e`, whole, in this first run.** It ran whole on the second run's images: below |
+| The same three images with `compose.yaml` alone | `GET /`: 200, 3,020 bytes, no tag, and the bytes of the flag-on page with its tag taken out (SHA-256). The claim, with `{}` and with no body: 404, `Content-Length: 0`, the headers of a path the BFF does not have. Eleven claims in a row: 404 ten times, then 429 `RATE_LIMIT_EXCEEDED` with `Retry-After: 60` | **The default suite, `npm run test:e2e`, whole, in this first run.** It ran whole on the second run's images and on the third's: below |
 | A search of what the runs left on disk for the passwords of the copies claimed and for the stack's nine secret values | Twelve patterns. The search named the two files planted for it, and then no file | |
 
 **In the first run the default suite was not run whole with the demo off.** The Docker engine
@@ -1160,22 +1163,64 @@ that commit gave the page, the script and the stylesheet their container served,
   touch them (`git diff --stat` over the two, against `main`: no line). Not tried: `main`'s
   tree on that stack, the suite with its trace off, the browser's own log of the close. CI's
   `real-stack` job runs this suite on every pull request.
-- **What the three runs agree on:** the control passed (a visitor is offered "Create account"
-  and no "Try the demo"); so did every test of `e2e/accessibility.spec.ts`, its fourteen scans
-  among them, and `e2e/confirmDialog.spec.ts`; and the fifteen axe reports hold no finding the
-  gate fails on, colour contrast in ten of them and nothing at all in the fifteenth,
-  `transfer-leave-prompt`.
+- **What those three whole runs agree on:** the control passed (a visitor is offered "Create
+  account" and no "Try the demo"); so did every test of `e2e/accessibility.spec.ts`, its
+  fourteen scans among them, and `e2e/confirmDialog.spec.ts`; and the fifteen axe reports hold
+  no finding the gate fails on, colour contrast in ten of them and nothing at all in the
+  fifteenth, `transfer-leave-prompt`.
 
-After `340813a5` this change touches comments and documents only. `npm run build` on
-`925974ee`, the last commit that touches a file of the application or of its specs, gives the
-same three files (SHA-256, three of three), and each of the eight source files changed after
-`340813a5` transpiles, with its comments taken out, to what it did there.
+From `340813a5` to `cd40fb58` this change touched comments and documents only: `npm run build`
+on `925974ee`, the last commit of those that touches a file of the application or of its
+specs, gave the three files the second run's container had served (SHA-256, three of three),
+and each of the eight source files changed after `340813a5` transpiled, with its comments
+taken out, to what it did there. Three things came after `cd40fb58`, and they are why there is
+a third run. `main` was merged in, with two commits of its own: a server path behind extra
+slashes is answered 404 where it was answered the page, and two warnings on the money
+endpoints are quieted. One line of `ConfirmDialog.tsx` changed, with its test: Tab in the
+dialog while it waits (`7600187c`; it is under "Three changes to the shared confirm dialog").
+And one test gained a comment line (`8ce36aa0`).
+
+**The third run, the same day, on images built from `8ce36aa0`,** the commit those three end
+at. `npm run build` on it gave the page, the script and the stylesheet its container served
+(SHA-256, three of three). The script is another file than the second run's; the stylesheet is
+the same one.
+
+- **The demo run: `17 passed (25.8s)`, exit 0,** with no test failed, skipped or flaky: `demo`
+  15, `restart` 1, `demo-after-restart` 1. The policy test passed, and so did
+  `after-restart.spec.ts`, which ends on the same expectation.
+- **Every row of the table was done again and met as the table has it, but for three things.**
+  The copy's end was `2026-10-06T20:37:43.7793942Z`. After the two restarts the BFF's
+  `StartedAt` was 1.0 s before the API's, and `/health/ready`, asked three times, said
+  `200 Degraded` twice and then `200 Healthy`: no request threw, and the step took 3.8 s. And
+  the search was made six times, for thirteen to fifteen values: each time it named a file
+  planted for it in every place it searched, and then no file. This time what each Playwright
+  run wrote under `test-results` (the demo run, the control pointed at the demo's stack, the
+  default suite) was searched where it lay, before the next one replaced it.
+- **The default suite with the demo off, on those images with `compose.yaml` alone: one whole
+  run, green.** The same command and the same two probe users, then
+  `node scripts/assert-e2e-ran.mjs`: `48 passed (1.9m)`, `e2e: passed=48 failed=0 flaky=0
+  skipped=0`. No test was skipped or tried a second time. `e2e/pinLockExpiry.spec.ts` passed,
+  in 5.7 s. That one run was green does not say why two were red: it is as unknown as it was.
+  The control passed, and so did every test of `e2e/accessibility.spec.ts`, its fourteen scans
+  among them, and `e2e/confirmDialog.spec.ts`; the fifteen axe reports hold no finding the
+  gate fails on, colour contrast in ten of them and nothing at all in `transfer-leave-prompt`.
+- **`main`'s change in the BFF, asked of this stack by hand.** `GET //api/accounts`, the path
+  sent as written: 404 and `Content-Length: 0`, with the demo on and with it off.
+  `GET //settings`: 200 and the bytes of `GET /`, both times. This answer, and not the build's
+  log, is what shows that the BFF in the image is the merged one: the log marks the BFF's own
+  layers as taken from the build cache.
+- **Not pressed by this run:** Tab in the confirm dialog while it waits. The demo run's "Start
+  over" and `e2e/confirmDialog.spec.ts` ran on the changed component and passed, and both
+  press Tab in the open dialog only. Of `main`'s second commit this run says one thing, that a
+  transfer still goes through (201 and 201).
+
+After `8ce36aa0` this change touches documents only.
 
 **Not measured:** why the browser's context did not close in two runs of the default suite; on
-the stack, the three things a visitor meets that changed between the two runs, which the demo
-run does not single out and which are held against the mock; on the stack, Tab in the confirm
-dialog while it waits, which neither the demo run nor the default suite presses; in a browser,
-the two refusals of
+the stack, the three things a visitor meets that changed between the first two runs, which
+the demo run does not single out and which are held against the mock; on the stack, Tab in
+the confirm dialog while it waits, which neither the demo run nor the default suite presses;
+in a browser, the two refusals of
 a claim (`DEMO_POOL_EMPTY`, `DEMO_DAILY_LIMIT`), whose sentences are held against the mock, and
 `DEMO_COPY_LIMIT`; on the stack, "Continue with my copy" on a copy past its end, and "Stay
 signed in", which needs a session at its fixed end; a browser that refuses storage; a browser
@@ -1220,13 +1265,13 @@ listener before the dialog has moved focus`) and in a browser by two specs:
 `frontend/e2e/confirmDialog.spec.ts`, in the default run, on the leave prompt, and the demo
 run's `"Start over" asks first, takes the keyboard, and brings a new copy`.
 
-- **On the compose stack, 2026-10-05:** the demo run's test passed in both runs: focus on
+- **On the compose stack, 2026-10-05:** the demo run's test passed in all three runs: focus on
   "Close" at the open, Tab round the three controls and Shift+Tab back, all inside, and focus
   on the panel's "Start over" once the new copy was there. `e2e/confirmDialog.spec.ts` ran in
-  the three whole runs of the default suite on the second run's images and passed in each. By
-  then it also held that "Leave anyway" is the document's last Tab stop before it presses Tab,
-  which is what makes its third Tab a test of the trap against tabster, and it scanned the open
-  prompt: `transfer-leave-prompt`, no violation.
+  the four whole runs of the default suite, three on the second run's images and one on the
+  third's, and passed in each. By then it also held that "Leave anyway" is the document's last
+  Tab stop before it presses Tab, which is what makes its third Tab a test of the trap against
+  tabster, and it scanned the open prompt: `transfer-leave-prompt`, no violation.
 - **While it waits it keeps Tab too, also where its controls are the first or the last Tab
   stops of its document: one more line, built later that day.** Every control is disabled
   then, and focus is on the dialog itself. Where no stop follows the dialog, tabster hears Tab
