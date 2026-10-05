@@ -44,8 +44,8 @@ public sealed class RequestLogRouteTests : IDisposable
     /// <summary>The line's template and its three named properties, read as values, not as a rendering.</summary>
     private static void IsTheRequestLine(LogEvent line, string routePattern, HttpStatusCode status)
     {
-        line.MessageTemplate.Text.Should().Be(
-            "HTTP {RequestMethod} {RoutePattern} responded {StatusCode} in {Elapsed:0.0000}ms");
+        ComparableText.Of(line.MessageTemplate.Text).Should().Be(
+            ComparableText.Of("HTTP {RequestMethod} {RoutePattern} responded {StatusCode} in {Elapsed:0.0000}ms"));
         line.Properties["RequestMethod"].Should().Be(new ScalarValue("GET"));
         line.Properties["RoutePattern"].Should().Be(new ScalarValue(routePattern));
         line.Properties["StatusCode"].Should().Be(new ScalarValue((int)status));
