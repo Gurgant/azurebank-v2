@@ -392,6 +392,10 @@ describe('SessionExpiryWarning', () => {
     there. The two passwords and the second address typed out below are the pool's: fixtures no
     server knows. The words are typed out too, and not imported from the product, so a test fails
     the day the words on screen are no longer these.
+
+    One test is not at the cap: the one named for "lack of activity" takes the same owner to the
+    other end of a session, where the dialog has a "Stay signed in" of its own, the keep-alive,
+    and holds that the cap's button did not reach it.
   */
   describe('at the cap, on the demo', () => {
     const KEY = 'azurebank.demoCopy';
@@ -405,6 +409,7 @@ describe('SessionExpiryWarning', () => {
       signInAgain: 'Sign in again',
       signOut: 'Sign out now',
       ended: 'This demo copy has ended. Sign out to get a new one.',
+      wrongPassword: "That password didn't match. Please try again.",
       tooManyAttempts: 'Too many attempts just now. Wait a moment and try again.',
     } as const;
     /** What the dialog is operated with, top to bottom, for the copy's owner and for anyone else. */
@@ -422,17 +427,19 @@ describe('SessionExpiryWarning', () => {
      *
      * `kept` is what the browser keeps. Left out, it is that copy as its claim left it; an object
      * changes members of it; `null` is a browser that keeps nothing. `demo: false` leaves the tag
-     * off the page.
+     * off the page. `atTheCap: false` gives the session the two windows of `boot` instead: lack of
+     * activity ends it long before its cap does.
      */
     async function bootOnACopy({
       demo = true,
       kept,
-    }: { demo?: boolean; kept?: Partial<KeptCopy> | null } = {}) {
+      atTheCap = true,
+    }: { demo?: boolean; kept?: Partial<KeptCopy> | null; atTheCap?: boolean } = {}) {
       if (demo) enableDemoMode();
       const claimed = seedMockDemoCopy();
       if (kept !== null) rememberDemoCopy({ ...claimed.copy, ...kept });
-      mockState.sessionInactivityWindowMs = 30 * 60_000;
-      mockState.sessionAbsoluteWindowMs = ABSOLUTE_SOON_MS;
+      mockState.sessionInactivityWindowMs = atTheCap ? 30 * 60_000 : INACTIVITY_WINDOW_MS;
+      mockState.sessionAbsoluteWindowMs = atTheCap ? ABSOLUTE_SOON_MS : ABSOLUTE_WINDOW_MS;
       const store = makeTestStore();
       await store.dispatch(apiSlice.endpoints.getMe.initiate()).unwrap();
       return { store, claimed };
@@ -788,6 +795,74 @@ describe('SessionExpiryWarning', () => {
 
       expect(offered()).toStrictEqual(ANYONE_ELSES);
       expect(localStorage.getItem(KEY)).toBeNull();
+    });
+
+    it.each([
+      ['a stored copy for another address', { email: SECOND_COPY, password: SECOND_PASSWORD }],
+      ['no stored copy', null],
+    ])(
+      'demo, %s, a wrong typed password: the words of a wrong password',
+      async (_browser, kept) => {
+        // CONTROL: green before this change
+        const { store } = await bootOnACopy({ kept });
+        const sent = reauthsSent();
+        await reachTheWarning(store);
+        expect(offered()).toStrictEqual(ANYONE_ELSES);
+
+        const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+        // fireEvent, not user.type: userEvent truncates a Fluent Input.
+        fireEvent.change(password(), { target: { value: 'Wrong1234!' } });
+        await user.click(screen.getByRole('button', { name: WORDS.signInAgain }));
+
+        // A password somebody typed was mistyped. "This demo copy has ended" is for the owner's
+        // button, which sends a password nobody typed, and not for whoever is on the demo.
+        await waitFor(() => expect(alerts()).toStrictEqual([WORDS.wrongPassword]));
+        expect({ sent, offered: offered() }).toStrictEqual({
+          sent: [{ password: 'Wrong1234!' }],
+          offered: ANYONE_ELSES,
+        });
+      },
+    );
+
+    it("demo, the copy's owner, where the session ends for lack of activity: the keep-alive, as today", async () => {
+      // CONTROL: green before this change
+      const { store } = await bootOnACopy({ atTheCap: false });
+      const sent = reauthsSent();
+      let keepAlives = 0;
+      server.use(
+        http.get('*/bff/auth/me', () => {
+          keepAlives += 1;
+          // No answer from here, so the mock's own handler gives it.
+          return undefined;
+        }),
+      );
+      // Into the two minutes before the end, as the tests of that branch above.
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      renderWarning(store);
+      await advance(61_000);
+      await waitFor(() => expect(dialog()).toBeInTheDocument());
+
+      // The dialog of that branch, whole: its own sentence, one "Stay signed in" that is not the
+      // form's submit, "Sign out now"; no field and no "Sign in again".
+      expect(screen.getByRole('alertdialog')).toHaveAccessibleDescription(
+        /^You have been inactive for a while\. You will be signed out in \d:\d\d\.$/,
+      );
+      expect({
+        offered: offered(),
+        types: stayButtons().map((button) => button.type),
+      }).toStrictEqual({
+        offered: [`button: ${WORDS.stay}`, `button: ${WORDS.signOut}`],
+        types: ['button'],
+      });
+
+      const before = keepAlives;
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      await user.click(stayButtons()[0]);
+
+      // It asks who is signed in, once, and that is what moves the end and closes the dialog. The
+      // kept password goes nowhere: nothing here signs in again.
+      await waitFor(() => expect(dialog()).not.toBeInTheDocument());
+      expect({ sent, keepAlives: keepAlives - before }).toStrictEqual({ sent: [], keepAlives: 1 });
     });
 
     it("without the tag nothing reads the demo's key", async () => {
