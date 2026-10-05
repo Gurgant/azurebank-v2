@@ -2786,6 +2786,15 @@ def read_failed(why, name='execution pool-run'):
             + (reads if name == 'execution pool-run' else ''))
 
 
+# What stands for Azure's words when an answer came, in a shape this script does not read: nothing
+# of the answer is shown.
+NOT_THE_LIST = 'the answer was not the list of executions this script reads'
+START_NOT_READ = ('The job azurebank-pool was asked to start once, and an answer was not in the shape this '
+                  'script reads before the run it made was known. The start is not sent again. Whether a run '
+                  "began is read from the job's executions, before any second start (infra/README.md, \"When "
+                  'something fails").')
+
+
 def not_ended(name='pool-run', waited=720):
     """The whole sentence of a start by hand whose run was not seen ending."""
     reads = 'How it ends is read with `python infra/deploy.py --pool-log pool-run`. ' if name == 'pool-run' else ''
@@ -3175,6 +3184,65 @@ class PoolRunTests(DeployCase):
             'run it made was known: Forbidden: AuthorizationFailed. The start is not sent again.'),
             str(raised.exception))
         self.assertEqual(self.azure.writes(), [START])
+
+    def test_an_answer_of_another_shape_once_the_start_was_sent_says_that_a_run_may_go_on(self):
+        # The start was sent. A list of the job's executions that comes in a shape this script
+        # does not read ends the command as a read that fails does: "An answer from Azure lacked
+        # 'name'", or a traceback, would not say that a run was started, that it may still be in
+        # progress, nor that nothing was started again. Every answer here is invented and none
+        # was seen; nothing of one is shown.
+        answer = self.azure.pool_call
+        odd = {'an entry with no name': {'value': [{'properties': {'status': 'Running'}}]},
+               'no list': {'value': None},
+               'the run with no properties': {'value': [{'name': 'pool-run'}]},
+               'the run with properties that are text': {'value': [{'name': 'pool-run', 'properties': STRANGE}]},
+               'an entry that is text': {'value': [STRANGE]},
+               'an answer that is a list': [STRANGE]}
+
+        def ended(listing=None, start=None):
+            """How a start by hand ends when the second read of the executions, the first one
+            after the start, answers `listing`, or the start itself answers `start`."""
+            reads = []
+            the_list = ('GET', 'executions')
+
+            def oddly(method, tail):
+                reads.append((method, tail))
+                if start is not None and (method, tail) == ('POST', 'start'):
+                    answer(method, tail)
+                    return copy.deepcopy(start)
+                if listing is not None and (method, tail) == the_list and reads.count(the_list) == 2:
+                    return copy.deepcopy(listing)
+                return answer(method, tail)
+
+            with patch.object(self.azure, 'pool_call', side_effect=oddly):
+                try:
+                    return self.pool_run()
+                except Exception as error:  # a KeyError or a TypeError is what this test is for
+                    return error
+
+        for what, listing in odd.items():
+            with self.subTest(what=what, met='while the run is waited for'):
+                self.again(*ends_as(pool_finished()))
+                end = ended(listing)
+                self.assertIs(type(end), RuntimeError, f'{end!r}: the run says what it means, in its own words')
+                self.assertEqual(str(end), read_failed(NOT_THE_LIST))
+                self.assertNotIn('::', str(end) + self.printed())
+                self.assertEqual(self.azure.writes(), [START], 'nothing is started a second time')
+                self.assertEqual(self.said(), ['Pool run execution pool-run started.'])
+        # A start that names no run looks for it among the executions, and meets the same answers
+        # there before the run is known; so does a start whose own answer is not an object.
+        self.azure.start_names_the_run = False
+        for what, listing, start in (('an entry with no name', odd['an entry with no name'], None),
+                                     ('no list', odd['no list'], None),
+                                     ('an answer that is a list', odd['an answer that is a list'], None),
+                                     ('a start answered with a list', None, [STRANGE])):
+            with self.subTest(what=what, met='while the run is looked for'):
+                self.again(*ends_as(pool_finished()))
+                end = ended(listing, start)
+                self.assertIs(type(end), RuntimeError, f'{end!r}: the run says what it means, in its own words')
+                self.assertEqual(str(end), START_NOT_READ)
+                self.assertEqual(self.azure.writes(), [START], 'the start is not sent again')
+                self.assertEqual(self.printed(), '')
 
     def test_a_start_that_names_no_run_is_found_by_what_is_new_and_is_not_sent_again(self):
         self.azure.start_names_the_run = False

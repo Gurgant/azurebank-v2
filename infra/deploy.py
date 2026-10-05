@@ -1392,8 +1392,9 @@ def pool_run(subscription, resource_group, in_actions=False):
     its executions, read once, and a refusal while one is or may still be in progress; the one
     start; that execution, read until it has ended, for the job's timeout and two minutes; its
     verdict, read with the version that carries the exit code; and the end, by that code alone.
-    A read that fails once the start was made ends the wait in a sentence that says the run was
-    started and may go on.
+    A read that fails once the start was made, or a list of executions that then comes in a shape
+    this script does not read, ends the wait in a sentence that says the run was started and may
+    go on.
 
     It reads nothing of the app and does not ask whether the demo is on. The job's container
     carries the demo's flag as the literal true (infra/main.bicep), so a run is expected to build
@@ -1418,11 +1419,15 @@ def pool_run(subscription, resource_group, in_actions=False):
     known = {execution['name'] for execution in refuse_beside_a_pool_run(job_id, job, starting=True)}
     try:
         name = start_once(job_id, known, before='it is started again')
-    except AzError as error:
+    except (AzError, KeyError, TypeError, AttributeError) as error:
         # A start that Azure refuses is expected to make no run, and one that got no answer may
         # have made one: the sentence is the same for both, and sends the reader to the executions.
-        raise RuntimeError(f'The job {POOL_JOB} was asked to start once, and Azure refused or failed '
-                           f"a request before the run it made was known: {str(error).rstrip('.')}. "
+        # So may one whose answer, or the list read after it, came in a shape this script does not
+        # read: that is said in words of this script's, and nothing of the answer is shown.
+        failed = (f"Azure refused or failed a request before the run it made was known: {str(error).rstrip('.')}"
+                  if isinstance(error, AzError)
+                  else 'an answer was not in the shape this script reads before the run it made was known')
+        raise RuntimeError(f'The job {POOL_JOB} was asked to start once, and {failed}. '
                            'The start is not sent again. Whether a run began is read from the '
                            "job's executions, before any second start (infra/README.md, \"When "
                            'something fails").') from None
@@ -1437,14 +1442,18 @@ def pool_run(subscription, resource_group, in_actions=False):
     while time.monotonic() < deadline:
         try:
             match = [e for e in executions(job_id) if e['name'] == name]
-        except AzError as error:
+            status = state_of(match[0]) if match else None
+        except (AzError, KeyError, TypeError, AttributeError) as error:
             # The start was made. Azure's words alone would not say so, nor that the run may go
-            # on: a second start is refused for as long as it is listed as running.
+            # on: a second start is refused for as long as it is listed as running. Neither would
+            # "an answer lacked 'name'", or a traceback, for a list that came in a shape this
+            # script does not read: it ends the wait the same way, and nothing of it is shown.
+            why = (str(error).rstrip('.') if isinstance(error, AzError)
+                   else 'the answer was not the list of executions this script reads')
             raise RuntimeError(f"The pool run was started ({label}), and a read of the job's "
-                               f"executions failed while its end was waited for: {str(error).rstrip('.')}. "
+                               f'executions failed while its end was waited for: {why}. '
                                'It may still be in progress, and it was not started again.'
                                f'{how_it_ends}') from None
-        status = state_of(match[0]) if match else None
         if status != seen:
             say(f'Pool run {label}: {told_status(status)}.')
             seen = status
