@@ -26,6 +26,14 @@ smoke test gets a wrong answer, the script tries to put the app back on the temp
 step 1, and the run still fails. If that put-back fails too, the run says so: the app may then be
 serving a broken revision. The schema is never put back.
 
+The smoke test asks the address for the page, for the readiness answer, and for one sign-in
+with an address nobody can register, which the API must refuse after it asked the database. The
+page must say what the app's containers say: it carries the demo's tag with the demo on, and
+does not with the demo off. With the demo on there is a fourth request, one registration with an
+empty body, which the BFF must refuse as closed; with the demo off no registration is ever sent.
+The tag and the closed registration are both the BFF's alone, and neither spends a copy of the
+pool: no deployment claims a copy, and none proves that a PIN is taken.
+
 The pool job is the app's to announce. With the demo off it is neither read nor moved, and
 whether it exists is not asked: no answer of Azure's is read as "there is no pool job". With the
 demo on it must be readable and in shape, its schedule and its timeout included, or the run stops
@@ -96,9 +104,15 @@ DEMO_FLAG = 'Demo__Enabled'
 # What the public demo shows of itself without spending a copy, both under
 # backend/src/AzureBank.Bff: the tag the BFF puts in the page's head
 # (Extensions/SpaHostingExtensions.cs, DemoTag), and its own door for a registration, which the
-# demo closes (Middleware/DemoModeMiddleware.cs).
+# demo closes (Middleware/DemoModeMiddleware.cs): 403 with this error code, answered by the BFF
+# before the request reaches the API, whatever the body holds.
 DEMO_TAG = '<meta name="azurebank-demo" content="true">'
 REGISTER_PATH = '/bff/auth/register'
+REGISTRATION_CLOSED = 'REGISTRATION_CLOSED'
+# The shape of an error code of the app's (backend/src/AzureBank.Shared/Constants/ErrorCodes.cs):
+# capitals, digits and underscores. Of an answer to a registration a line shows the status and an
+# error code of this shape, and nothing else.
+ERROR_CODE = re.compile(r'[A-Z][A-Z0-9_]{0,39}')
 ACTIVE = {'Running', 'Processing'}
 FAILED = {'Failed', 'Stopped', 'Degraded'}
 FINISHED = FAILED | {'Succeeded'}
@@ -166,11 +180,13 @@ class RevisionFailed(RuntimeError):
 
 
 class SmokeFailed(RuntimeError):
-    """The page, the readiness answer or the sign-in answer was wrong: the app is put back."""
+    """The page, the readiness answer, the sign-in answer or, on the demo, the answer to a
+    registration was wrong: after a deployment the app is put back."""
 
 
 class SmokeUnproven(RuntimeError):
-    """The sign-in was only rate limited or unanswered: nothing was proved, nothing is put back."""
+    """The sign-in, or on the demo the registration, was only rate limited or unanswered: nothing
+    was proved, nothing is put back."""
 
 
 def redact(text):
@@ -762,15 +778,82 @@ def is_the_refusal(status, content_type, body):
     return isinstance(answer, dict) and answer.get('errorCode') == 'INVALID_CREDENTIALS'
 
 
+def error_code(body):
+    """An answer's error code when it has the shape of one, else None. It is the one thing of an
+    answer to a registration that a line may show: the rest of that body is never printed."""
+    try:
+        answer = json.loads(body)
+    except ValueError:
+        return None
+    code = answer.get('errorCode') if isinstance(answer, dict) else None
+    return code if isinstance(code, str) and ERROR_CODE.fullmatch(code) else None
+
+
+def is_closed(status, content_type, body):
+    """403 with the error code of a registration the public demo keeps closed. The BFF answers it
+    by itself, before the request reaches the API and whatever the body holds; with the demo off
+    the same request with an empty body is answered 400. Both are read from the BFF's code and
+    from its tests (backend/tests/AzureBank.Bff.Tests/DemoClaimTests.cs), not from an answer this
+    script ever got."""
+    return status == 403 and error_code(body) == REGISTRATION_CLOSED
+
+
+def prove_registration_is_closed(opener, url):
+    """With the demo on, one registration that must be refused as closed. The body is an empty
+    object: it holds nothing that could register anybody, wherever it lands. It is tried and
+    waited for as the sign-in is, and it spends a permit of the same shared limit. Three verdicts:
+    the refusal passes; any other definite answer on the last try fails; a 429 or a silence on
+    the last try proves nothing either way. An answer that is not the refusal is told by its
+    status and its error code, never by its body: a door that is open answers a registration
+    with the data of whoever it registered."""
+    answer = None
+    for attempt in range(SIGN_IN_TRIES):
+        if attempt:
+            time.sleep(WAIT_AFTER_429 if answer and answer[0] == 429 else WAIT_BETWEEN_TRIES)
+        try:
+            answer = fetch(opener, url + REGISTER_PATH, {})
+        except NO_ANSWER:
+            answer = None
+            continue
+        if is_closed(*answer):
+            return
+    if answer is None or answer[0] == 429:
+        raise SmokeUnproven(f'Smoke test unproven: in {SIGN_IN_TRIES} tries the registration probe '
+                            f'got {"no answer" if answer is None else "429 (rate limited)"} last. '
+                            'The page, the readiness answer and the sign-in answer were right. '
+                            'Nothing was proved wrong and nothing is put back: whether the demo '
+                            'keeps registration closed is not known. Deploy again, or ask by hand: '
+                            f'POST {REGISTER_PATH} with the body {{}} must answer 403 '
+                            f'{REGISTRATION_CLOSED}.')
+    got = error_code(answer[2]) or 'with no error code of the shape expected'
+    raise SmokeFailed(f'Smoke test failed: the registration probe expected 403 {REGISTRATION_CLOSED} '
+                      f'and got {answer[0]} {got}. On the public demo a registration must be '
+                      'refused as closed, whatever its body: this answer was not that refusal.')
+
+
 def told(answer, text=False):
     """An answer as a failure message shows it: the status, and the text when it says why."""
     status, _, body = answer
     return f'{status} {body[:80]!r}' if text or status == 'no answer' else str(status)
 
 
+def tag_fault(page, demo):
+    """What a failed smoke test says of the demo's tag: nothing, unless the page is the SPA and
+    carries the tag on an app that says the demo is off, or lacks it on one that says it is on."""
+    if not is_spa(*page) or (DEMO_TAG in page[2]) == bool(demo):
+        return ''
+    return (f" The page {'does not carry' if demo else 'carries'} the tag of the public demo "
+            f"({DEMO_TAG}), and the app's containers say the demo is {'on' if demo else 'off'}.")
+
+
 def smoke(url, timeout=300, demo=False):
-    # `demo` is what the app says it is (demo_of). Nothing below reads it: the three requests
-    # are the same with the demo on and off.
+    """Ask the address what only a running app can answer. `demo` is what the app's containers
+    say of themselves (demo_of), and the page must agree: it carries the demo's tag exactly when
+    the demo is on. Then one sign-in that must be refused, and, only with the demo on, one
+    registration that must be refused as closed. With the demo off no registration is ever sent:
+    the door is open then. Both of the demo's checks are answered by the BFF alone, and neither
+    spends a copy of the pool: that a visitor is handed a copy, and that a PIN is taken, is
+    proved by nothing here."""
     opener = urllib.request.build_opener(NoRedirect)
     deadline = time.monotonic() + timeout
     while True:
@@ -779,7 +862,8 @@ def smoke(url, timeout=300, demo=False):
             page = fetch(opener, url + '/')
             ready = fetch(opener, url + '/health/ready')
             # "Healthy" and not just 200: the BFF answers 200 "Degraded" when the API is down.
-            if is_spa(*page) and ready[0] == 200 and ready[2].strip() == 'Healthy':
+            if (is_spa(*page) and not tag_fault(page, demo)
+                    and ready[0] == 200 and ready[2].strip() == 'Healthy'):
                 break
         except NO_ANSWER as error:
             # A dropped connection is one more wrong answer of this loop, never the end of the run.
@@ -788,7 +872,7 @@ def smoke(url, timeout=300, demo=False):
         if time.monotonic() >= deadline:
             raise SmokeFailed('Smoke test failed: the page or the readiness answer was wrong '
                               f'after {timeout} s (/ -> {told(page)}, /health/ready -> '
-                              f'{told(ready, text=True)}).')
+                              f'{told(ready, text=True)}).{tag_fault(page, demo)}')
         time.sleep(5)
 
     # One sign-in that must be refused. Three verdicts: the refusal passes; any other definite
@@ -803,8 +887,14 @@ def smoke(url, timeout=300, demo=False):
             answer = None
             continue
         if is_the_refusal(*answer):
+            if demo:
+                # It returns only once the registration was refused as closed: a run that did
+                # not pass never says it passed.
+                prove_registration_is_closed(opener, url)
             say(f'Smoke passed: {url}/ is the SPA, /health/ready is Healthy, and a sign-in for an '
-                'unknown address was refused by the API after it asked the database.')
+                'unknown address was refused by the API after it asked the database.'
+                + (" It is the public demo: the page carries the demo's tag, and a registration "
+                   'with an empty body was refused as closed.' if demo else ''))
             return
     if answer is None or answer[0] == 429:
         raise SmokeUnproven(f'Smoke test unproven: in {SIGN_IN_TRIES} tries the sign-in probe got '

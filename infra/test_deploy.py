@@ -2315,6 +2315,25 @@ NO_DATABASE = (503, 'application/json',
                '"instance":"/api/auth/login","errorCode":"SERVICE_UNAVAILABLE",'
                '"traceId":"3b7bc662e57734de951062361ab2d548","retryAfterSeconds":10}')
 SITE = 'https://example.invalid'
+# The page as the BFF serves it on the public demo: the same page with the demo's tag in it
+# (backend/src/AzureBank.Bff/Extensions/SpaHostingExtensions.cs).
+DEMO_SPA = SPA.replace('<script', deploy.DEMO_TAG + '<script')
+DEMO_PAGE = (200, 'text/html', DEMO_SPA)
+# The answers to POST /bff/auth/register. None of them was observed on a running stack. CLOSED is
+# the BFF's own refusal on the demo, member for member as its tests hold it for the body {}
+# (backend/tests/AzureBank.Bff.Tests/DemoClaimTests.cs: 403 with the demo on, 400 with it off).
+# OPEN and NOT_VALID are invented: a door that is not closed, answering as if it had registered
+# somebody, and answering the empty body as a body that fails the rules. What they hold beside a
+# status and an error code is planted: no line and no error may show it.
+CLOSED = (403, 'application/json',
+          '{"type":"https://httpstatuses.com/403","title":"Forbidden","status":403,'
+          '"detail":"Registration is closed on this demo.","instance":"/bff/auth/register",'
+          '"errorCode":"REGISTRATION_CLOSED","traceId":"0af7651916cd43dd8448eb211c80319c"}')
+OPEN = (201, 'application/json',
+        '{"success":true,"data":{"user":{"email":"PLANTED-VALUE@example.invalid"}},'
+        '"message":"PLANTED-VALUE"}')
+NOT_VALID = (400, 'application/json',
+             '{"status":400,"errorCode":"VALIDATION_ERROR","errors":{"Email":["PLANTED-VALUE"]}}')
 # What a connection that is dropped raises, as urllib and http.client raise it. None of them is a
 # urllib.error.URLError: each was an uncaught exception before the smoke test took it for silence.
 DROPPED = (
@@ -2329,13 +2348,17 @@ DROPPED = (
 
 
 class Site:
-    """Stands in for `deploy.fetch`: the page, the readiness answer, and the sign-in answers. Each is
-    one answer or a list of answers in order (the last one repeats); an exception is raised."""
+    """Stands in for `deploy.fetch`: the page, the readiness answer, the sign-in answers and the
+    answers to a registration. Each is one answer or a list of answers in order (the last one
+    repeats); an exception is raised. Unless a test says otherwise the door for a registration is
+    open, as it is with the demo off: a request that reaches it would register somebody."""
 
-    def __init__(self, *sign_in, page=(200, 'text/html', SPA), ready=(200, 'text/plain', 'Healthy')):
+    def __init__(self, *sign_in, page=(200, 'text/html', SPA), ready=(200, 'text/plain', 'Healthy'),
+                 register=OPEN):
         self.answers = {'/': page if isinstance(page, list) else [page],
                         '/health/ready': ready if isinstance(ready, list) else [ready],
-                        '/bff/auth/login': list(sign_in)}
+                        '/bff/auth/login': list(sign_in),
+                        '/bff/auth/register': register if isinstance(register, list) else [register]}
         self.requests = []
 
     def fetch(self, opener, url, body=None):
@@ -2350,12 +2373,225 @@ class Site:
     def sign_ins(self):
         return [path for path, body in self.requests if body is not None]
 
+    def registrations(self):
+        """The bodies sent to the door for a registration."""
+        return [body for path, body in self.requests if path == '/bff/auth/register']
+
+
+def demo_site(*sign_in, **answers):
+    """The site as the public demo answers: the page carries the tag, and registration is closed."""
+    return Site(*sign_in, **{'page': DEMO_PAGE, 'register': CLOSED, **answers})
+
+
+PASSED = ('Smoke passed: https://example.invalid/ is the SPA, /health/ready is Healthy, and a sign-in '
+          'for an unknown address was refused by the API after it asked the database.')
+WRONG_PAGE = ("Smoke test failed: the page or the readiness answer was wrong after 300 s (/ -> 200, "
+              "/health/ready -> 200 'Healthy').")
+TAG = '<meta name="azurebank-demo" content="true">'
+
+
+def not_closed(got):
+    """The whole sentence of a registration that was not refused as closed."""
+    return ('Smoke test failed: the registration probe expected 403 REGISTRATION_CLOSED and got '
+            f'{got}. On the public demo a registration must be refused as closed, whatever its '
+            'body: this answer was not that refusal.')
+
+
+def registration_unproven(last):
+    return (f'Smoke test unproven: in 4 tries the registration probe got {last} last. The page, the '
+            'readiness answer and the sign-in answer were right. Nothing was proved wrong and '
+            'nothing is put back: whether the demo keeps registration closed is not known. Deploy '
+            'again, or ask by hand: POST /bff/auth/register with the body {} must answer 403 '
+            'REGISTRATION_CLOSED.')
+
 
 class SmokeTests(Offline):
     def site(self, *sign_in, **pages):
         site = Site(*sign_in, **pages)
         self.start(patch('deploy.fetch', site.fetch))
         return site
+
+    def demo_site(self, *sign_in, **answers):
+        site = demo_site(*sign_in, **answers)
+        self.start(patch('deploy.fetch', site.fetch))
+        return site
+
+    def said(self):
+        """What was printed, without the clock in front of each line."""
+        return [line.split(' ', 1)[1] for line in self.printed().splitlines()]
+
+    def test_with_the_demo_off_the_line_of_a_pass_is_the_one_it_was(self):
+        # CONTROL: green before this change. With `demo` left out, and with it False, a pass
+        # prints the one line it printed before the smoke test knew the demo.
+        for options in ({}, {'demo': False}):
+            with self.subTest(**options):
+                self.clear()
+                self.site(REFUSED)
+                deploy.smoke(SITE, **options)
+                self.assertEqual(self.said(), [PASSED])
+
+    def test_with_the_demo_on_the_page_carries_the_tag_and_registration_is_closed(self):
+        site = self.demo_site(REFUSED)
+        deploy.smoke(SITE, demo=True)
+        self.assertEqual(site.requests, [('/', None), ('/health/ready', None),
+                                         ('/bff/auth/login', deploy.SMOKE_LOGIN),
+                                         ('/bff/auth/register', {})])
+        self.assertEqual(self.clock.sleeps, [])
+        self.assertEqual(self.said(), [
+            PASSED + " It is the public demo: the page carries the demo's tag, and a registration "
+                     'with an empty body was refused as closed.'])
+
+    def test_the_tag_and_the_refusal_are_the_ones_the_bff_writes(self):
+        # backend/src/AzureBank.Bff/Extensions/SpaHostingExtensions.cs (DemoTag);
+        # backend/src/AzureBank.Shared/Constants/ErrorCodes.cs (RegistrationClosed);
+        # backend/src/AzureBank.Bff/Controllers/BffAuthController.cs (the route).
+        self.assertEqual((deploy.DEMO_TAG, deploy.REGISTRATION_CLOSED, deploy.REGISTER_PATH),
+                         (TAG, 'REGISTRATION_CLOSED', '/bff/auth/register'))
+        self.assertTrue(deploy.is_closed(*CLOSED))
+        self.assertTrue(deploy.is_spa(*DEMO_PAGE), 'the tag does not stop the page from being the SPA')
+
+    def test_with_the_demo_on_a_page_without_the_tag_fails(self):
+        site = self.demo_site(REFUSED, page=(200, 'text/html', SPA))
+        with self.assertRaises(deploy.SmokeFailed) as raised:
+            deploy.smoke(SITE, demo=True)
+        self.assertEqual(str(raised.exception), (
+            f'{WRONG_PAGE} The page does not carry the tag of the public demo ({TAG}), and the '
+            "app's containers say the demo is on."))
+        self.assertGreaterEqual(self.clock.now, 300)
+        self.assertGreater(len(site.requests), 60, 'it is asked again until the deadline')
+        self.assertEqual(site.sign_ins(), [], 'no door is tried behind a page that is wrong')
+
+    def test_with_the_demo_off_a_page_with_the_tag_fails(self):
+        for options in ({}, {'demo': False}):
+            with self.subTest(**options):
+                began = self.clock.now
+                site = self.site(REFUSED, page=DEMO_PAGE)
+                with self.assertRaises(deploy.SmokeFailed) as raised:
+                    deploy.smoke(SITE, **options)
+                self.assertEqual(str(raised.exception), (
+                    f'{WRONG_PAGE} The page carries the tag of the public demo ({TAG}), and the '
+                    "app's containers say the demo is off."))
+                self.assertGreaterEqual(self.clock.now - began, 300)
+                self.assertEqual(site.sign_ins(), [])
+
+    def test_a_page_that_gets_its_tag_right_before_the_deadline_passes(self):
+        # A revision that just began to answer is asked again, as for any other wrong page.
+        site = self.demo_site(REFUSED, page=[(200, 'text/html', SPA), (200, 'text/html', SPA), DEMO_PAGE])
+        deploy.smoke(SITE, demo=True)
+        self.assertEqual(self.clock.sleeps, [5, 5])
+        self.assertEqual(len(site.registrations()), 1)
+
+    def test_a_page_that_is_wrong_another_way_says_nothing_of_the_tag(self):
+        # CONTROL: green before this change. The tag is named only on a page that is the SPA: a
+        # page that is something else, or no answer at all, fails in the words it failed in before.
+        for demo in (False, True):
+            for page, told in (((200, 'text/html', '<!doctype html><title>Welcome</title>' + TAG), '200'),
+                               ((503, 'text/html', DEMO_SPA), '503')):
+                with self.subTest(demo=demo, page=told):
+                    self.demo_site(REFUSED, page=page)
+                    with self.assertRaises(deploy.SmokeFailed) as raised:
+                        deploy.smoke(SITE, demo=demo)
+                    self.assertEqual(str(raised.exception), WRONG_PAGE.replace('/ -> 200', f'/ -> {told}'))
+
+    def test_with_the_demo_off_no_registration_is_ever_sent(self):
+        # CONTROL: green before this change, and the guard that the smoke test cannot register
+        # somebody: with the demo off the door is open (here it answers as if it had registered
+        # the caller), and no request may reach it, whatever the other answers are.
+        dropped = ConnectionResetError(104, 'Connection reset by peer')
+        for options in ({}, {'demo': False}):
+            for sign_in in ((REFUSED,), (LIMITED, REFUSED), (LIMITED,), ((404, 'text/plain', ''),),
+                            (NO_TABLES,), (dropped,), (dropped, REFUSED)):
+                for page in ((200, 'text/html', SPA), DEMO_PAGE):
+                    with self.subTest(sign_in=[str(answer)[:20] for answer in sign_in], tag=page is DEMO_PAGE,
+                                      **options):
+                        site = self.site(*sign_in, page=page)
+                        with contextlib.suppress(deploy.SmokeFailed, deploy.SmokeUnproven):
+                            deploy.smoke(SITE, **options)
+                        self.assertEqual(site.registrations(), [])
+                        self.assertEqual(set(site.sign_ins()) - {'/bff/auth/login'}, set())
+
+    def test_with_the_demo_on_the_registration_is_asked_only_after_the_sign_in_was_refused(self):
+        # CONTROL: green before this change. A sign-in that fails or proves nothing ends the smoke
+        # test where it ended before: the second probe is not sent after it.
+        for sign_in, verdict in (((404, 'text/plain', ''), deploy.SmokeFailed), (NO_TABLES, deploy.SmokeFailed),
+                                 (LIMITED, deploy.SmokeUnproven)):
+            with self.subTest(sign_in=sign_in[0]):
+                site = self.demo_site(sign_in)
+                with self.assertRaisesRegex(verdict, 'the sign-in probe'):
+                    deploy.smoke(SITE, demo=True)
+                self.assertEqual(site.registrations(), [])
+
+    def test_an_open_registration_fails_and_its_answer_is_never_printed(self):
+        site = self.demo_site(REFUSED, register=OPEN)
+        with self.assertRaises(deploy.SmokeFailed) as raised:
+            deploy.smoke(SITE, demo=True)
+        self.assertEqual(str(raised.exception), not_closed('201 with no error code of the shape expected'))
+        for hidden in ('PLANTED', 'example.invalid"', 'success'):
+            self.assertNotIn(hidden, str(raised.exception) + self.printed())
+        # Tried as the sign-in is: four times, and never with a body that could register anybody.
+        self.assertEqual(site.registrations(), [{}] * 4)
+        self.assertEqual(self.clock.sleeps, [20, 20, 20])
+
+    def test_a_registration_refused_with_another_code_fails(self):
+        for answer, got in (
+                ((403, 'application/json', '{"status":403,"errorCode":"AUTH_FORBIDDEN"}'), '403 AUTH_FORBIDDEN'),
+                # The code under another status, and an open door that answers the empty body.
+                ((200, 'application/json', '{"errorCode":"REGISTRATION_CLOSED"}'), '200 REGISTRATION_CLOSED'),
+                (NOT_VALID, '400 VALIDATION_ERROR'),
+                # A 403 that is not the BFF's: no error code, one that is not text, one of another
+                # shape, a body that is not JSON, JSON that is not an object.
+                ((403, 'application/json', '{"status":403,"detail":"PLANTED-VALUE"}'), None),
+                ((403, 'application/json', '{"errorCode":{"PLANTED-VALUE":1}}'), None),
+                ((403, 'application/json', '{"errorCode":"PLANTED-VALUE in another shape"}'), None),
+                ((403, 'application/json', '{"errorCode":"registration_closed"}'), None),
+                ((403, 'application/json', '{"errorCode":"REGISTRATION_CLOSED\\nPLANTED-VALUE"}'), None),
+                ((403, 'text/html', '<html>REGISTRATION_CLOSED PLANTED-VALUE</html>'), None),
+                ((403, 'application/json', '["REGISTRATION_CLOSED", "PLANTED-VALUE"]'), None)):
+            with self.subTest(answer=answer[2][:40]):
+                self.clear()
+                site = self.demo_site(REFUSED, register=answer)
+                with self.assertRaises(deploy.SmokeFailed) as raised:
+                    deploy.smoke(SITE, demo=True)
+                self.assertEqual(str(raised.exception), not_closed(
+                    got or f'{answer[0]} with no error code of the shape expected'))
+                for hidden in ('PLANTED', 'registration_closed', '\n'):
+                    self.assertNotIn(hidden, str(raised.exception) + self.printed().rstrip('\n'))
+                self.assertEqual(len(site.registrations()), 4)
+
+    def test_a_rate_limited_registration_probe_is_unproven(self):
+        site = self.demo_site(REFUSED, register=LIMITED)
+        with self.assertRaises(deploy.SmokeUnproven) as raised:
+            deploy.smoke(SITE, demo=True)
+        self.assertEqual(str(raised.exception), registration_unproven('429 (rate limited)'))
+        self.assertEqual(site.registrations(), [{}] * 4)
+        self.assertEqual(self.clock.sleeps, [65, 65, 65], 'each wait is a full window of the shared limit')
+
+    def test_a_registration_that_gets_no_answer_is_unproven_and_is_tried_again(self):
+        for dropped in (urllib.error.URLError('timed out'), *DROPPED):
+            with self.subTest(dropped=type(dropped).__name__):
+                self.clock.sleeps.clear()
+                site = self.demo_site(REFUSED, register=dropped)
+                with self.assertRaises(deploy.SmokeUnproven) as raised:
+                    deploy.smoke(SITE, demo=True)
+                self.assertEqual(str(raised.exception), registration_unproven('no answer'))
+                self.assertEqual(len(site.registrations()), 4)
+                self.assertEqual(self.clock.sleeps, [20, 20, 20])
+
+    def test_a_registration_refused_as_closed_after_a_rate_limit_or_a_drop_passes(self):
+        site = self.demo_site(REFUSED, register=[LIMITED, ConnectionResetError(104, 'reset'), NOT_VALID, CLOSED])
+        deploy.smoke(SITE, demo=True)
+        self.assertEqual(len(site.registrations()), 4)
+        self.assertEqual(self.clock.sleeps, [65, 20, 20])
+        self.assertEqual(len(self.said()), 1, 'one line, and only once every answer was right')
+
+    def test_the_verdict_of_the_registration_probe_is_its_last_try(self):
+        self.demo_site(REFUSED, register=[LIMITED, LIMITED, LIMITED, OPEN])
+        with self.assertRaisesRegex(deploy.SmokeFailed, 'got 201'):
+            deploy.smoke(SITE, demo=True)
+        self.demo_site(REFUSED, register=[OPEN, LIMITED])
+        with self.assertRaises(deploy.SmokeUnproven):
+            deploy.smoke(SITE, demo=True)
+        self.assertEqual(self.printed(), '', 'a run that did not pass never says it passed')
 
     def test_page_healthy_and_refused_sign_in_pass(self):
         site = self.site(REFUSED)
@@ -2518,6 +2754,8 @@ HANG_UP, RESET = 'hang up', 'reset'
 GOOD_PAGE = http_answer(200, 'text/html', SPA)
 GOOD_READY = http_answer(200, 'text/plain', 'Healthy')
 GOOD_REFUSAL = http_answer(401, 'application/json; charset=utf-8', REFUSED[2])
+GOOD_DEMO_PAGE = http_answer(200, 'text/html', DEMO_SPA)
+GOOD_CLOSED = http_answer(403, 'application/json; charset=utf-8', CLOSED[2])
 
 
 class LocalSite:
@@ -2612,6 +2850,28 @@ class RealConnectionTests(Offline):
         self.assertNotIn('cookie:', head)
         self.assertEqual(json.loads(body), deploy.SMOKE_LOGIN)
 
+    def test_the_four_requests_of_a_demo_as_they_are_really_sent_pass(self):
+        site = self.site({'/': GOOD_DEMO_PAGE, '/bff/auth/register': GOOD_CLOSED})
+        deploy.smoke(site.url, demo=True)
+        self.assertEqual([(method, path) for method, path, _, _ in site.requests],
+                         [('GET', '/'), ('GET', '/health/ready'), ('POST', '/bff/auth/login'),
+                          ('POST', '/bff/auth/register')])
+        for _, path, head, _ in site.requests:
+            self.assertNotIn('cookie:', head, f'{path}: no request carries a cookie')
+        _, _, head, body = site.requests[-1]
+        self.assertIn('content-type: application/json', head)
+        self.assertEqual(body, '{}', 'an empty object: a body that could register nobody')
+
+    def test_a_registration_the_server_hangs_up_on_is_unproven_not_a_crash(self):
+        for drop in (HANG_UP, RESET, b'this is not HTTP\r\n\r\n'):
+            with self.subTest(drop=drop):
+                self.clock.sleeps.clear()
+                site = self.site({'/': GOOD_DEMO_PAGE, '/bff/auth/register': drop})
+                with self.assertRaisesRegex(deploy.SmokeUnproven, 'the registration probe got no answer last'):
+                    deploy.smoke(site.url, demo=True)
+                self.assertEqual(site.paths().count('/bff/auth/register'), 4)
+                self.assertEqual(self.clock.sleeps, [20, 20, 20])
+
     def test_a_sign_in_the_server_hangs_up_on_is_unproven_not_a_crash(self):
         site = self.site({'/bff/auth/login': HANG_UP})
         with self.assertRaisesRegex(deploy.SmokeUnproven, 'no answer'):
@@ -2694,6 +2954,47 @@ class SmokeInTheGateTests(Offline):
         holding = [index for index, line in enumerate(lines) if ADDRESS in line]
         self.assertEqual(lines[holding[0]], f'::add-mask::{ADDRESS}')
         self.assertIn('Smoke passed', lines[holding[-1]])
+
+    def test_with_the_demo_on_the_four_answers_of_a_demo_pass_and_nothing_is_put_back(self):
+        self.azure.turn_the_demo_on()
+        site = demo_site(REFUSED)
+        self.start(patch('deploy.fetch', site.fetch))
+        deploy.deploy(SUBSCRIPTION, GROUP, NEW)
+        self.assertEqual([path for path, _ in site.requests],
+                         ['/', '/health/ready', '/bff/auth/login', '/bff/auth/register'])
+        self.assertEqual(len(self.azure.app_patches()), 1)
+        self.assertIn('It is the public demo', self.printed().splitlines()[-1])
+
+    def test_with_the_demo_on_an_open_registration_puts_the_app_back(self):
+        self.azure.turn_the_demo_on()
+        for answer, got in ((OPEN, '201 with no error code of the shape expected'),
+                            (NOT_VALID, '400 VALIDATION_ERROR')):
+            with self.subTest(got=got):
+                self.azure.calls.clear()
+                self.start(patch('deploy.fetch', demo_site(REFUSED, register=answer).fetch))
+                with self.assertRaises(RuntimeError) as raised:
+                    deploy.deploy(SUBSCRIPTION, GROUP, NEW)
+                self.assertEqual(len(self.azure.app_patches()), 2, 'the deployment, and the put-back')
+                self.assertTrue(str(raised.exception).startswith(
+                    f'{not_closed(got)} The app was put back to '), str(raised.exception))
+                self.assertNotIn('PLANTED', str(raised.exception) + self.printed())
+
+    def test_with_the_demo_on_a_page_without_the_tag_puts_the_app_back(self):
+        self.azure.turn_the_demo_on()
+        site = demo_site(REFUSED, page=(200, 'text/html', SPA))
+        self.start(patch('deploy.fetch', site.fetch))
+        with self.assertRaisesRegex(RuntimeError, 'does not carry the tag of the public demo.*put back to'):
+            deploy.deploy(SUBSCRIPTION, GROUP, NEW)
+        self.assertEqual(len(self.azure.app_patches()), 2)
+        self.assertEqual(site.sign_ins(), [])
+
+    def test_with_the_demo_on_a_rate_limited_registration_leaves_the_new_revision_and_exits_unproven(self):
+        self.azure.turn_the_demo_on()
+        self.start(patch('deploy.fetch', demo_site(REFUSED, register=LIMITED).fetch))
+        with self.assertRaises(deploy.SmokeUnproven) as raised:
+            deploy.deploy(SUBSCRIPTION, GROUP, NEW)
+        self.assertEqual(str(raised.exception), registration_unproven('429 (rate limited)'))
+        self.assertEqual(len(self.azure.app_patches()), 1, 'nothing is put back')
 
 
 if __name__ == '__main__':
