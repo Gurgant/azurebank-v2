@@ -3061,8 +3061,9 @@ def registration_unproven(last):
     return (f'Smoke test unproven: in 4 tries the registration probe got {last} last. The page, the '
             'readiness answer and the sign-in answer were right. Nothing was proved wrong and '
             'nothing is put back: whether the demo keeps registration closed is not known. Deploy '
-            'again, or ask by hand: POST /bff/auth/register with the body {} must answer 403 '
-            'REGISTRATION_CLOSED.')
+            'again; or, from a terminal, run `python infra/deploy.py --check`, which asks the address '
+            'the same four questions and moves nothing; or ask by hand: POST /bff/auth/register with '
+            'the body {} must answer 403 REGISTRATION_CLOSED.')
 
 
 class SmokeTests(Offline):

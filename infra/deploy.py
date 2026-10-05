@@ -839,7 +839,9 @@ def prove_registration_is_closed(opener, url):
                             f'got {"no answer" if answer is None else "429 (rate limited)"} last. '
                             'The page, the readiness answer and the sign-in answer were right. '
                             'Nothing was proved wrong and nothing is put back: whether the demo '
-                            'keeps registration closed is not known. Deploy again, or ask by hand: '
+                            'keeps registration closed is not known. Deploy again; or, from a '
+                            'terminal, run `python infra/deploy.py --check`, which asks the address '
+                            'the same four questions and moves nothing; or ask by hand: '
                             f'POST {REGISTER_PATH} with the body {{}} must answer 403 '
                             f'{REGISTRATION_CLOSED}.')
     got = error_code(answer[2]) or 'with no error code of the shape expected'
