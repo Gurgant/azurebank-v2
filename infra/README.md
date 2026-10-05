@@ -2113,11 +2113,15 @@ While the page or `/health/ready` gets no answer, they are asked again every fiv
 minutes; still nothing then is a failure, and the app is put back.
 
 **An interrupt puts nothing back.** Ctrl+C stops the script where it is, in any mode, with one
-sentence that starts "Interrupted." and exit code 1; a workflow run that is cancelled is expected
-to reach the script the same way, which has not been tried. No put-back follows it and nothing
-that was started is stopped, so what was moved or started is read afterwards
-([When something fails](#when-something-fails)). Until 2026-10-05 an interrupt ended in Python's
-traceback.
+sentence that starts "Interrupted." and exit code 1. A workflow run that is cancelled may reach
+the script as that interrupt, or end with no sentence at all: GitHub's page on cancelling a run
+says the interrupt is sent to the step's shell, a second signal 7.5 seconds later, and that the
+process tree is killed if the step is still running 2.5 seconds after that
+(<https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation>,
+read on 2026-10-06). Whether the script, which that shell starts, is sent the interrupt has not
+been tried here. Either way no put-back follows and nothing that was started is stopped, so what
+was moved or started is read afterwards ([When something fails](#when-something-fails)). Until
+2026-10-05 an interrupt ended in Python's traceback.
 
 No request a deployment sends carries an identity: a change is a location and a template.
 
@@ -2417,7 +2421,7 @@ while nobody is served ([Turning the demo back](#turning-the-demo-back)). What a
 | "The put-back ... did not succeed. The app may be serving a broken revision" | Both the deployment and the way back failed | Go back by hand, below |
 | "There is no log workspace azurebank-logs in this resource group" | The logs are switched off: nothing is kept | The verdict line is all there is |
 | The first request after the app was idle answers 503 with `Retry-After: 10` | The replica started from zero and its first sign-in to the database, token included, did not fit in the 10 s connect timeout. Possible; in the trial the first open of a process on a cold replica took 3,810 ms, measured once, and at step 7 of the first deployment 6,390 ms as the app's identity, once | Ask again. If it happens every time, it is the row of the probe's 10,000 ms in [If Azure says no](#if-azure-says-no) |
-| "Interrupted. Nothing is put back and nothing is stopped by this" | The script was interrupted, in whichever mode it ran: Ctrl+C on a terminal, and a workflow run that is cancelled is expected to reach it the same way, which has not been tried. It stopped where it was, with exit code 1 and this one sentence. It did not put the app back and stopped nothing it had started: a request that was on its way may have reached Azure, a migration or a pool run that was started goes on, and an app that was moved stays on the new images, unchecked. Until 2026-10-05 an interrupt ended in Python's traceback | What the run printed before it says how far it got, and a deployment's "Running now" line names the images to go back to. Then `python infra/deploy.py --check` for the app, `--job-log` for a migration and `--pool-log` for a run of the pool job. An execution still listed as running refuses the next deployment until it ends (the rows of "is Running" in the two tables). Then deploy again, or go back by hand, below |
+| "Interrupted. Nothing is put back and nothing is stopped by this" | The script was interrupted, in whichever mode it ran: Ctrl+C on a terminal. It stopped where it was, with exit code 1 and this one sentence. It did not put the app back and stopped nothing it had started: a request that was on its way may have reached Azure, a migration or a pool run that was started goes on, and an app that was moved stays on the new images, unchecked. A workflow run that is cancelled may end with this sentence or with no sentence at all: GitHub's page on cancelling a run says the interrupt is sent to the step's shell, and that the process tree is killed if the step is still running ten seconds later, and which of the two it is has not been tried. What to do is the same for both. Until 2026-10-05 an interrupt ended in Python's traceback | What the run printed before it says how far it got, and a deployment's "Running now" line names the images to go back to. Then `python infra/deploy.py --check` for the app, `--job-log` for a migration and `--pool-log` for a run of the pool job. An execution still listed as running refuses the next deployment until it ends (the rows of "is Running" in the two tables). Then deploy again, or go back by hand, below |
 
 **With the demo on, and the three commands that came with it.** Added on 2026-10-05. Each row
 quotes the sentence `deploy.py` prints, so a search of this page for the words on the terminal
@@ -3720,7 +3724,7 @@ against stand-ins and invented answers, and steps 22 to 33 are where each line w
 | A recovery after a theft that keeps the database: not designed ([If something was stolen](#if-something-was-stolen)) | the day it is needed |
 | An app that reports an ingress and no host name; an output of the CLI that is not JSON, or that the terminal's encoding cannot decode | not provoked |
 | A run of the template that ends while a deployment is under way, and the reverse: the deployment's own request is expected to put the app's settings back to what it read at its start, the demo's flag among them, and a run of the template to put back the tag it read. Read in `deploy.py` and `secrets.ps1`; the rule that keeps the two apart is under [Deploy a commit](#deploy-a-commit), and no code holds it | not provoked |
-| That a workflow run which is cancelled reaches `deploy.py` as an interrupt, and so ends in its one sentence with nothing put back. Seen offline for an interrupt raised inside the script: exit code 1, nothing on standard output, the sentence on standard error | not provoked |
+| Whether a workflow run that is cancelled reaches `deploy.py` as an interrupt, and so ends in its one sentence, or the script is killed without it. GitHub's page on cancelling a run says the interrupt is sent to the step's shell, and that the process tree is killed if the step is still running ten seconds later; it does not say what a program started by that shell is sent. Seen offline for an interrupt raised inside the script: exit code 1, nothing on standard output, the sentence on standard error | not provoked |
 | That a read of a pool run's exit code can be refused or fail after the run was seen over, and how Azure words it: the sentence for it is tested against an invented refusal | not provoked |
 | The repair of two containers that disagree about the demo; every road of [Turning the demo back](#turning-the-demo-back) | the day they are needed |
 | The CI job `infra` with the tests added on 2026-10-05: its minutes against its limit of 10. On this machine the suite of 428 to 444 tests took from under 6 to 29 minutes, the longer runs with other work beside them. The limit is in `.github/workflows/ci.yml`, which this change does not edit: a job that passes it is put right by a change of that file | the first run of CI on the pull request: that workflow runs on a pull request to `main` and on a push to `main`, not on a push of a branch |

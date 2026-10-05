@@ -1246,10 +1246,12 @@ class DeploymentTests(DeployCase):
         self.assertEqual(self.azure.writes(), [])
 
     def test_an_interrupt_ends_a_deployment_in_one_sentence_and_puts_nothing_back(self):
-        # Ctrl+C on the owner's terminal; a workflow run that is cancelled is expected to arrive
-        # the same way. Whenever it comes, the script stops where it is. It does not put the app
-        # back, and nothing it started is stopped: here the migration had run and the app had
-        # moved.
+        # Ctrl+C on the owner's terminal. Whether a workflow run that is cancelled reaches the
+        # script as an interrupt is not known: GitHub's page on cancelling a run says the
+        # interrupt is sent to the step's shell and the process tree killed if the step is still
+        # running ten seconds later, and nobody here has tried it. Whenever an interrupt comes,
+        # the script stops where it is. It does not put the app back, and nothing it started is
+        # stopped: here the migration had run and the app had moved.
         self.smoke.side_effect = KeyboardInterrupt
         environment = {'AZURE_SUBSCRIPTION_ID': SUBSCRIPTION, 'AZURE_RESOURCE_GROUP': GROUP, 'IMAGE_TAG': NEW}
         with patch.dict(deploy.os.environ, environment, clear=True):

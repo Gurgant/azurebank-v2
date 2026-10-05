@@ -29,10 +29,13 @@ smoke test gets a wrong answer, the script tries to put the app back on the temp
 step 1, and the run still fails. If that put-back fails too, the run says so: the app may then be
 serving a broken revision. The schema is never put back.
 
-An interrupt stops the script where it is, in any mode: Ctrl+C on a terminal, and a workflow
-run that is cancelled is expected to arrive the same way. Nothing is put back, nothing that was
-started is stopped, and the last sentence says so and names the commands that read what was
-moved or started.
+An interrupt stops the script where it is, in any mode: Ctrl+C on a terminal. Nothing is put
+back, nothing that was started is stopped, and the last sentence says so and names the commands
+that read what was moved or started. A workflow run that is cancelled may not end that way.
+GitHub's page on cancelling a run says the interrupt is sent to the step's shell, and that the
+process tree is killed if the step is still running ten seconds later. Whether this script,
+which that shell starts, is sent the interrupt has been tried by nobody here: such a run may
+end with no sentence at all. Either way the script puts nothing back and stops nothing.
 
 The smoke test asks the address for the page, for the readiness answer, and for one sign-in
 with an address nobody can register, which the API must refuse after it asked the database. The
@@ -1695,10 +1698,12 @@ def main(arguments=None):
     except (RuntimeError, ValueError) as error:
         raise SystemExit(str(error))
     except KeyboardInterrupt:
-        # Ctrl+C; a workflow run that is cancelled is expected to arrive the same way. The script
-        # stops where it is: it does not put the app back, and it stops nothing it started. Which
-        # request was on its way is not known here, so the sentence does not say that nothing
-        # was changed.
+        # Ctrl+C. A workflow run that is cancelled may never get here: GitHub's page on cancelling
+        # a run says the interrupt is sent to the step's shell, and that the process tree is
+        # killed if the step is still running ten seconds later. Nobody here has tried it. The
+        # script stops where it is: it does not put the app back, and it stops nothing it started.
+        # Which request was on its way is not known here, so the sentence does not say that
+        # nothing was changed.
         raise SystemExit('Interrupted. Nothing is put back and nothing is stopped by this: a request '
                          'that was on its way may have reached Azure, and a job that was started goes '
                          'on. What was moved or started is read, from a terminal, with `python '
