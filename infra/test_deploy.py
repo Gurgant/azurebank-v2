@@ -4699,7 +4699,10 @@ class RunbookTests(unittest.TestCase):
     are the script's."""
 
     PAGES = ('infra/README.md', 'docs/runbooks/demo-pool.md')
-    FAILS = 'infra/README.md, "When something fails"'
+    FAILS = (PAGES[0], 'When something fails')
+    # How many sentences of the script name that section. The count is exact: one more of them
+    # fails here whatever its words, and is not let through by a short entry of ROWS it holds.
+    SENT = 8
     # What a row of "When something fails" quotes of a sentence of the script: a run of its
     # literal text, word for word, so that whoever reads the sentence on a terminal finds its row
     # by searching the page for it. The first is the put-back's, which had its row before the
@@ -4737,13 +4740,20 @@ class RunbookTests(unittest.TestCase):
         cls.runbook, cls.pool = (cls.pages[page] for page in cls.PAGES)
         cls.whole, cls.runs = texts_of_the_script()
 
+    def pointers(self, text):
+        """The sections one text of the script names, as (page, heading): a page of PAGES, a
+        comma, and the heading between two quotes of one kind, double or single."""
+        pages = '|'.join(map(re.escape, self.PAGES))
+        found = re.findall(r"""(%s), (?:"([^"\x00]+)"|'([^'\x00]+)')""" % pages, text)
+        return {(page, double or single) for page, double, single in found}
+
     def test_a_section_the_script_names_is_a_heading_of_the_page_it_names(self):
-        # CONTROL: green before this change. Seen red with a heading of either page renamed.
-        named = {pointer for text in self.whole
-                 for pointer in re.findall(r'(%s), "([^"\x00]+)"' % '|'.join(map(re.escape, self.PAGES)), text)}
+        # CONTROL: green before this change. Seen red with a heading of either page renamed, and
+        # with a section nobody wrote named between single quotes.
+        named = {pointer for text in self.whole for pointer in self.pointers(text)}
         # That the search finds anything: the three the script named when this was written.
-        self.assertLessEqual({(self.PAGES[0], 'When something fails'), (self.PAGES[0], 'Reading the logs'),
-                              (self.PAGES[1], 'The line')}, named)
+        self.assertLessEqual({self.FAILS, (self.PAGES[0], 'Reading the logs'), (self.PAGES[1], 'The line')},
+                             named)
         for page, heading in sorted(named):
             with self.subTest(page=page, heading=heading):
                 self.assertEqual([title for _, _, title in headings(self.pages[page])].count(heading), 1)
@@ -4756,12 +4766,15 @@ class RunbookTests(unittest.TestCase):
                 self.assertIn(words, section)
         # And no sentence of the script names the section without one of them: a new refusal that
         # points there gets its row, and its words above, in the change that adds it.
-        sent = [text for text in self.whole if self.FAILS in text]
-        self.assertGreaterEqual(len(sent), 8, 'the search no longer finds the sentences')
+        sent = [text for text in self.whole if self.FAILS in self.pointers(text)]
         for text in sent:
             with self.subTest(sentence=text.replace('\x00', '{}')[:70]):
                 self.assertTrue(any(words in text for words in self.ROWS),
                                 'a sentence names the section and no row quotes it')
+        # Several of the words above are short enough to stand in a sentence nobody wrote a row
+        # for, so the sentences are counted too. Seen red with one taken out and with one added.
+        self.assertEqual(len(sent), self.SENT, 'a sentence that names the section was added or taken '
+                                               'out: its row, and its words in ROWS, change with it')
 
     def test_every_command_of_the_script_is_told_in_the_runbook_and_the_pools_in_the_pools_page(self):
         with open(deploy.__file__, encoding='utf-8') as source:
@@ -4787,10 +4800,11 @@ class RunbookTests(unittest.TestCase):
                          {code: (words, 'ends well' if code in deploy.POOL_RUN_ENDS_WELL else 'fails')
                           for code, words in deploy.POOL_EXIT_CODES.items()})
         self.assertEqual(len(rows), len(deploy.POOL_EXIT_CODES), 'a code has two rows')
-        # Where a reader looks for it, and with the one row that has no number.
+        # Where a reader looks for it, and with the one row that has no number: on a code Azure
+        # did not report the script fails the command (end_pool_run), and so the row says.
         reading = under(self.runbook, 'Reading the logs')
         self.assertIn(f'| 13 | {deploy.POOL_EXIT_CODES[13]} | fails |', reading)
-        self.assertIn('| not reported |', reading)
+        self.assertRegex(reading, r'\| not reported \| [^|]+ \| fails \|')
 
 
 if __name__ == '__main__':
