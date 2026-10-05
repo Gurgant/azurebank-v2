@@ -107,7 +107,7 @@ public class IdempotencyEndpointTests : IntegrationTestBase
         second.Headers.TryGetValues(IdempotencyConstants.ReplayedHeaderName, out var values)
             .Should().BeTrue();
         values!.Single().Should().Be("true");
-        (await second.Content.ReadAsStringAsync()).Should().Be(firstBody,
+        ComparableText.Of(await second.Content.ReadAsStringAsync()).Should().Be(ComparableText.Of(firstBody),
             "the stored response is replayed byte-identically");
 
         // The money moved exactly once

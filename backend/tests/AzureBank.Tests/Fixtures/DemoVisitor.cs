@@ -224,6 +224,7 @@ internal sealed class DemoVisitor
     /// <summary>
     /// A response as status and body, with what differs between two requests for the same answer
     /// taken out: the trace id, and the handle the caller typed, which both bodies echo.
+    /// Returned through <see cref="ComparableText.Of"/>, parentheses where the body has braces.
     /// </summary>
     public static async Task<string> AnswerAsync(HttpResponseMessage response, string handle)
     {
@@ -234,8 +235,8 @@ internal sealed class DemoVisitor
             body = json.ToJsonString();
         }
 
-        return $"{(int)response.StatusCode} {response.Content.Headers.ContentType?.MediaType} "
-            + body.Replace(handle, "<handle>", StringComparison.Ordinal);
+        return ComparableText.Of($"{(int)response.StatusCode} {response.Content.Headers.ContentType?.MediaType} "
+            + body.Replace(handle, "<handle>", StringComparison.Ordinal));
     }
 
     private async Task<HttpResponseMessage> SendAsync<T>(
