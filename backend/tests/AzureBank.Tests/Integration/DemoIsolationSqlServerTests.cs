@@ -64,7 +64,10 @@ public sealed class DemoIsolationSqlServerTests
             var found = JsonSerializer.Deserialize<JsonElement>(await lookedUp.Content.ReadAsStringAsync()).GetProperty("data");
             found.GetProperty("exists").GetBoolean().Should().BeFalse("{0} belongs to another copy", foreign);
             found.GetProperty("displayName").GetString().Should().BeEmpty("no name crosses from one copy to another");
-            (await DemoVisitor.AnswerAsync(lookedUp, foreign)).Should().Be(await DemoVisitor.AnswerAsync(lookedUpUnknown, unknown));
+            // Exact, and a failure shows both answers: the assertion library's own message breaks on braces.
+            Xunit.Assert.Equal(
+                await DemoVisitor.AnswerAsync(lookedUpUnknown, unknown),
+                await DemoVisitor.AnswerAsync(lookedUp, foreign));
 
             // The mint: 404 Recipient, before the PIN is looked at. The PIN sent is WRONG, so a mint
             // that looked at it first would answer for the PIN and count an attempt; six of them
@@ -72,14 +75,18 @@ public sealed class DemoIsolationSqlServerTests
             using var minted = await visitor.MintTransferAsync(savings.Id, foreign, 10m, WrongPin);
             using var mintedUnknown = await visitor.MintTransferAsync(savings.Id, unknown, 10m, WrongPin);
             minted.StatusCode.Should().Be(HttpStatusCode.NotFound, "{0} belongs to another copy", foreign);
-            (await DemoVisitor.AnswerAsync(minted, foreign)).Should().Be(await DemoVisitor.AnswerAsync(mintedUnknown, unknown));
+            Xunit.Assert.Equal(
+                await DemoVisitor.AnswerAsync(mintedUnknown, unknown),
+                await DemoVisitor.AnswerAsync(minted, foreign));
 
             // The transfer itself, presenting an authorisation that is worth nothing: the payee is
             // resolved before the authorisation is, so the same 404 comes first.
             using var sent = await visitor.TransferAsync(savings.Id, foreign, 10m, Guid.CreateVersion7());
             using var sentUnknown = await visitor.TransferAsync(savings.Id, unknown, 10m, Guid.CreateVersion7());
             sent.StatusCode.Should().Be(HttpStatusCode.NotFound, "{0} belongs to another copy", foreign);
-            (await DemoVisitor.AnswerAsync(sent, foreign)).Should().Be(await DemoVisitor.AnswerAsync(sentUnknown, unknown));
+            Xunit.Assert.Equal(
+                await DemoVisitor.AnswerAsync(sentUnknown, unknown),
+                await DemoVisitor.AnswerAsync(sent, foreign));
         }
 
         await using var db = database.NewContext();
@@ -169,7 +176,10 @@ public sealed class DemoIsolationSqlServerTests
         var unknownOutside = "outsider_00000000";
         using var fromCopy = await visitor.LookupAsync(outsiderHandle);
         using var fromCopyUnknown = await visitor.LookupAsync(unknownOutside);
-        (await DemoVisitor.AnswerAsync(fromCopy, outsiderHandle)).Should().Be(await DemoVisitor.AnswerAsync(fromCopyUnknown, unknownOutside));
+        // Exact, and a failure shows both answers: the assertion library's own message breaks on braces.
+        Xunit.Assert.Equal(
+            await DemoVisitor.AnswerAsync(fromCopyUnknown, unknownOutside),
+            await DemoVisitor.AnswerAsync(fromCopy, outsiderHandle));
         (await fromCopy.Content.ReadAsStringAsync()).Should().Contain("\"exists\":false");
         using var mintFromCopy = await visitor.MintTransferAsync(savings.Id, outsiderHandle, 10m);
         mintFromCopy.StatusCode.Should().Be(HttpStatusCode.NotFound, "a copy pays nobody outside itself");
@@ -178,7 +188,9 @@ public sealed class DemoIsolationSqlServerTests
         var unknownInside = UnknownHandleLike("jane", copies);
         using var fromOutside = await outsider.LookupAsync(copy.Jane.AzureTag);
         using var fromOutsideUnknown = await outsider.LookupAsync(unknownInside);
-        (await DemoVisitor.AnswerAsync(fromOutside, copy.Jane.AzureTag)).Should().Be(await DemoVisitor.AnswerAsync(fromOutsideUnknown, unknownInside));
+        Xunit.Assert.Equal(
+            await DemoVisitor.AnswerAsync(fromOutsideUnknown, unknownInside),
+            await DemoVisitor.AnswerAsync(fromOutside, copy.Jane.AzureTag));
         (await fromOutside.Content.ReadAsStringAsync()).Should().Contain("\"exists\":false");
         using var mintFromOutside = await outsider.MintTransferAsync(outsiderAccount, copy.Jane.AzureTag, 10m);
         mintFromOutside.StatusCode.Should().Be(HttpStatusCode.NotFound, "nobody outside a copy pays into it");

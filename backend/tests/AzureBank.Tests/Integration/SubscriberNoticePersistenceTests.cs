@@ -185,8 +185,8 @@ public class SubscriberNoticePersistenceTests : IntegrationTestBase
         var audit = await context.AuditEvents.AsNoTracking()
             .SingleAsync(e => e.ActorUserId == userId && e.Event == SecurityEvents.PinChanged);
 
-        audit.Detail.Should().Be(
-            "{\"currentPinProved\":true}",
+        ComparableText.Of(audit.Detail).Should().Be(
+            ComparableText.Of("{\"currentPinProved\":true}"),
             "the change proves the CURRENT PIN; recording passwordProved here would be false");
 
         var notice = (await NoticesForAsync(userId))
