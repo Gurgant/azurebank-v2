@@ -408,11 +408,12 @@ public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Progra
         }
     }
 
-    // A server path behind leading backslashes (and mixes of slashes and backslashes) is not the
-    // page: 404 with no body, with the demo off or on, as a path the server does not have.
-    // Red before the change: GET rows returned 200 text/html with the shell body; HEAD returned
-    // 200 text/html with empty body on the demo-on host and shell body on the demo-off host.
-    // Observed in the test host (2026-10-05).
+    // A server path behind leading backslashes, alone or mixed with slashes, is not the page: 404
+    // with no body, with the demo off or on, as a path the server does not have ("%5C" is a
+    // backslash by the time the path is read). Not among the statuses the class's remarks date.
+    // Red before the change: each row 200 text/html, the shell's answer. Falsified, never
+    // committed: with the slashes trimmed and then the backslashes, once each, /%5C/api/accounts
+    // alone goes red, the same way. Observed in the test host (2026-10-06, the whole project).
     [Theory]
     [InlineData("GET", "/%5Capi/accounts")]
     [InlineData("GET", "/%5C%5Capi/x")]
@@ -451,11 +452,16 @@ public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Progra
         }
     }
 
-    // CONTROL: green before and after. Paths where the prefix is mid-path, paths outside server
-    // prefixes, and paths with encoded slashes (%2F) still get the shell. Observed in the test host
-    // (2026-10-05).
+    // CONTROL: green before and after. What is not a server path behind leading separators stays
+    // a page: an encoded slash is not a separator, a backslash further on is part of its segment,
+    // a first segment that only begins like a prefix is not one, and white space is not a
+    // separator. Not among the statuses the class's remarks date: observed in the test host
+    // (2026-10-06, the whole project). Falsified, never committed, each time those rows alone and
+    // 404 where 200 is expected: with every backslash made a slash, /api%5Caccounts and /api%5C go
+    // red; with the path decoded once more before the test, the first eight rows; with white space
+    // trimmed with the separators, the last two.
     [Theory]
-    // Row 1: encoded slashes stay encoded in the request path, so the first segment is not a server prefix
+    // An encoded slash stays encoded in the path, so the first segment is not a server prefix.
     [InlineData("/%2Fapi/accounts")]
     [InlineData("/%2f%2fapi/x")]
     [InlineData("/%2Fapi")]
@@ -463,18 +469,22 @@ public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Progra
     [InlineData("/%2Fhealth/live")]
     [InlineData("/api%2Faccounts")]
     [InlineData("/%5C%2Fapi/accounts")]
+    // No encoded slash here: "%255C" is read as the text "%5C", not as a backslash.
     [InlineData("/%255Capi/accounts")]
-    // Row 2: leading separators only; backslash later in the path is not a separator
+    // Leading separators only: a backslash further on is part of its segment.
     [InlineData("/api%5Caccounts")]
     [InlineData("/api%5C")]
     [InlineData("/settings/%5Capi")]
     [InlineData("/settings%5Capi")]
-    // Row 3: non-server paths or paths not matching prefixes
+    // Behind a backslash or not, a first segment that is not exactly a server prefix.
     [InlineData("/%5Csettings")]
     [InlineData("/%5Capix/thing")]
     [InlineData("/api;x/accounts")]
     [InlineData("/api./accounts")]
     [InlineData("/api%20/accounts")]
+    // A space or a tab before the prefix is part of the first segment, not a separator.
+    [InlineData("/%20api/accounts")]
+    [InlineData("/%09api/accounts")]
     public async Task PathsOutsideServerPrefixRules_StillGetTheShell_WithDemoOffOrOn(string path)
     {
         using var host = HostServing(ShellWithAHead, demo: true);
