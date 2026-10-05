@@ -20,9 +20,9 @@ import { defineConfig, devices } from '@playwright/test';
  * Two variables, both optional. `E2E_DEMO_BASE_URL` is where the page is served, by default
  * http://localhost:5000. Keep the host `localhost`: the session's cookie is `Secure`, and the
  * `restart` project asks with Playwright's own request context, which sends a `Secure` cookie
- * over http to `localhost` and to no other name or address. `E2E_DEMO_COMPOSE_PROJECT` is the
- * compose project's name, by default `azurebank` (compose.yaml's `name:`), for a stack started
- * with `-p`.
+ * over http to `localhost` and not to `127.0.0.1`, where a browser sends it to both.
+ * `E2E_DEMO_COMPOSE_PROJECT` is the compose project's name, by default `azurebank`
+ * (compose.yaml's `name:`), for a stack started with `-p`.
  *
  * WHAT IT DOES THAT THE DEFAULT RUN DOES NOT.
  *
@@ -53,14 +53,15 @@ import { defineConfig, devices } from '@playwright/test';
  * dashboard with the sign-in details open. So: no trace, no screenshot, no video, and the `list`
  * reporter alone, as the capture's config (`playwright.screenshots.config.ts`).
  *
- * That is not all a red test leaves. Playwright also writes `error-context.md` beside a red
- * test's other output, with the page as an accessibility tree: every word on it. Two things keep
- * the password out of that file, and neither is a setting of this config:
- *   - the specs never leave the sign-in details open. They are opened to be read or scanned and
- *     closed in a `finally`, no locator is asserted on while they are open, and a hook closes
- *     them after every test, before Playwright looks at the page (`e2e-demo/demo.spec.ts`);
- *   - the scan of the dashboard with the details open leaves the nodes' markup out of its report
- *     (`e2e/axeScan.ts`), and the run's first test holds that the scan does that.
+ * That is not all a run writes, and no setting of this config stops the two files below:
+ *   - `error-context.md`, which Playwright writes beside a red test's other output with the page
+ *     as an accessibility tree: every word on it. So the specs never leave the sign-in details
+ *     open: they are opened to be read or scanned and closed in a `finally`, no locator is
+ *     asserted on while they are open, and a hook closes them after every test, before
+ *     Playwright looks at the page (`e2e-demo/demoRun.ts`);
+ *   - the report of each scan, green or red, which quotes the markup of what it found. So the
+ *     scan of the dashboard with the details open asks for a report with no markup
+ *     (`e2e/axeScan.ts`), and the run's first test holds that the scan honours that.
  *
  * WHAT THAT COSTS. A red run leaves the `list` reporter's lines, among them one line for each
  * status, path and header a step observed (`note` in `e2e-demo/demoRun.ts`, which also attaches
@@ -68,7 +69,7 @@ import { defineConfig, devices } from '@playwright/test';
  * `test-results/axe/`, and `error-context.md` with the failure and the page as it was. No trace
  * to step through and no picture.
  *
- * WHAT IT LEAVES ON DISK, all of it ignored by git and kept out of the images' build context:
+ * WHAT IT LEAVES ON DISK, all of it ignored by git and named in .dockerignore:
  * `e2e-demo/.auth/copy.json`, the saved state, which holds a live session and the kept copy with
  * its password; `e2e-demo/.auth/scan-values.txt`, the passwords of the copies the run claimed,
  * one a line, so that whoever ran it can search what the run wrote for them; and

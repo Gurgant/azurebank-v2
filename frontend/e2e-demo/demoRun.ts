@@ -11,7 +11,10 @@ import { expect, test, type Page } from '@playwright/test';
  * what it received, and what it prints stays in the terminal and in the run's output folder.
  */
 
-/** The key the browser keeps a claimed copy under, typed out (`src/features/demo/demoCopyStorage.ts`). */
+/**
+ * The key the browser keeps a claimed copy under, typed out
+ * (`src/features/demo/demoCopyStorage.ts`).
+ */
 export const KEPT_COPY_KEY = 'azurebank.demoCopy';
 
 /**
@@ -48,7 +51,7 @@ export function answerTo(page: Page, method: 'GET' | 'POST', path: string) {
   );
 }
 
-/** What the browser keeps of the copy, or `null`. The value is for comparing and for nothing else. */
+/** What the browser keeps of the copy, or `null`. The value is for comparing, and nothing else. */
 export function keptCopy(page: Page) {
   return page.evaluate((key) => {
     const raw = localStorage.getItem(key);
@@ -150,7 +153,7 @@ export async function shownSignInDetails(page: Page) {
   return { email: read[1], password: read[2] };
 }
 
-/** Signs out from the shell, and waits for the sign-in page. The request's status is written down. */
+/** Signs out from the shell and waits for the sign-in page. The request's status is noted. */
 export async function signOut(page: Page) {
   const answered = answerTo(page, 'POST', '/bff/auth/logout');
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();

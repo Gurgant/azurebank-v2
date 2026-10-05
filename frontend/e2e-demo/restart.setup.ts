@@ -47,7 +47,7 @@ import { note } from './demoRun';
 /** The compose project whose containers these are: compose.yaml's `name:`, unless `-p` was used. */
 const PROJECT = process.env.E2E_DEMO_COMPOSE_PROJECT ?? 'azurebank';
 
-/** What one `docker` command is given. A restart waits for the container to stop before it starts it. */
+/** What one `docker` command is given. A restart waits for the container to stop first. */
 const DOCKER_MS = 60_000;
 
 /** What the stack is given to be whole again once both containers are back. */
@@ -93,7 +93,7 @@ setup('the BFF and the API are restarted, and the stack is whole again', async (
     before.status(),
     'With the saved state, GET /bff/auth/me must answer 200 before anything is restarted. A 401 ' +
       'here means the state was saved signed out, the session has ended, or the cookie was not ' +
-      'sent: it is Secure, and this request sends it over http to the host "localhost" alone.',
+      'sent: it is Secure, and this request sends it over http to localhost, not to 127.0.0.1.',
   ).toBe(200);
 
   // Both found before either is touched: a stack with no API to bring back is not restarted.
