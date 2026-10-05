@@ -118,7 +118,7 @@ public class TransactionController : ControllerBase
     /// <returns>Transaction details and new balance</returns>
     [HttpPost("deposit")]
     [RequireIdempotency]
-    [RequestSizeLimit(32_768)] // monetary bodies are <2KB; caps hash/buffer work (ADR-0009)
+    [EndpointRequestSizeLimit(32_768)] // routing caps hash/buffer work before idempotency reads (ADR-0009)
     [ProducesResponseType(typeof(ApiResponse<DepositResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
@@ -205,7 +205,7 @@ public class TransactionController : ControllerBase
     [HttpPost("withdraw")]
     [RequireIdempotency]
     [RequireStepUpAuthorization]
-    [RequestSizeLimit(32_768)] // monetary bodies are <2KB; caps hash/buffer work (ADR-0009)
+    [EndpointRequestSizeLimit(32_768)] // routing caps hash/buffer work before idempotency reads (ADR-0009)
     [ProducesResponseType(typeof(ApiResponse<WithdrawResponse>), StatusCodes.Status201Created)]
     // 400 is reachable two ways: a body that fails validation, and a Step-Up-Authorization header
     // that is present but not a UUID, which MVC model binding refuses before this action runs,

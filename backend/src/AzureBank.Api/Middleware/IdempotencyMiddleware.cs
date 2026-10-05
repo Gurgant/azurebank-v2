@@ -33,7 +33,7 @@ public class IdempotencyMiddleware
     private readonly ILogger<IdempotencyMiddleware> _logger;
     private readonly TimeProvider _timeProvider;
 
-    // Must match [RequestSizeLimit(32_768)] on the guarded endpoints (ADR-0009).
+    // Must match [EndpointRequestSizeLimit(32_768)] on the guarded endpoints (ADR-0009).
     // Legitimate monetary bodies are < 2 KB; this only bounds the hashing and
     // buffering work so an oversized body cannot be used as a DoS amplifier.
     private const int MaxRequestBodyBytes = 32_768;
@@ -90,22 +90,19 @@ public class IdempotencyMiddleware
         var userId = ReadUserId(context);
         var endpointName = EndpointNameOf(context, endpoint);
 
-        // Reject oversized bodies BEFORE buffering or hashing. The per-endpoint
-        // [RequestSizeLimit(32_768)] is an MVC resource filter that runs only
-        // once the action executes -- AFTER this middleware -- so without this
-        // guard an authenticated caller could make us HMAC (and spool to disk)
-        // a body up to Kestrel's ~28 MB default: an idempotency-hash DoS
-        // amplifier. The claim is NOT INSERTed on this path (no orphan rows).
+        // Routing has already applied the endpoint's 32 KB limit, before authentication
+        // and this middleware. Reject a known oversized body BEFORE buffering or hashing,
+        // draining or closing it so the caller receives our 413. The claim is NOT INSERTed
+        // on this path (no orphan rows).
         if (context.Request.ContentLength > MaxRequestBodyBytes)
         {
             await DrainOrCloseAsync(context);
             throw IdempotencyException.PayloadTooLarge();
         }
 
-        // Chunked / unknown-length requests carry no Content-Length to
-        // pre-check (the comparison above is lifted-false for null): cap the
-        // stream so Kestrel aborts the read at the limit instead of reading to
-        // its ~28 MB default. Exceeding it surfaces as a 413
+        // Chunked / unknown-length requests carry no Content-Length to pre-check
+        // (the comparison above is lifted-false for null). Reassert the routing limit
+        // while the feature is writable. Exceeding it surfaces as a 413
         // BadHttpRequestException, normalized to our ProblemDetails below.
         if (context.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } sizeLimit)
         {
