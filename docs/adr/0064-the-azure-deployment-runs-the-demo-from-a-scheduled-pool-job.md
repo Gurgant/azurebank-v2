@@ -233,9 +233,10 @@ demo off.
   shows a change on it. Nothing is created or deleted.
 - **With the demo on, the pool is the only bound on strangers.** The cap for one client is 1,000
   until the address is measured, so what is left is 50 free copies, the day's 150 claims and 200
-  changes in a copy. And if the BFF sees one address for every visitor, both of its rate limits
-  are shared by everybody, the ten a minute of the sign-in doors and the 300 a minute of
-  everything else: they count by one function of the caller's address.
+  changes in a copy. And if the BFF sees one address for every visitor, two of its three rate
+  limits are shared by everybody, the ten a minute of the sign-in doors and the 300 a minute of
+  everything else: they count by one function of the caller's address. The third, on recipient
+  lookups, counts by the signed-in user.
 - **Between two deployments nothing notices a changed schedule or timeout** (decision 8).
 - **A deployment with the demo on needs the pool job.** A job that cannot be read stops every
   workflow deployment until it is back.

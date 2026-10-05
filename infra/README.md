@@ -289,12 +289,14 @@ the demo stops being usable. All of it is read from the code and its defaults, n
   ([`docs/runbooks/demo-pool.md`](../docs/runbooks/demo-pool.md), sections 1 and 9). 50 claims
   leave every other visitor with 429 `DEMO_POOL_EMPTY` until the next run, up to four hours
   later; 150 in a day leave them so until the count lets a run build again.
-- **Both of the BFF's rate limits count by one function of the caller's address**
+- **Two of the BFF's three rate limits count by one function of the caller's address**
   (`backend/src/AzureBank.Bff/Program.cs`, `ClientAddress.Of`). Ten a minute, together, for
   sign-in, the claim, registration, re-authentication and the handle's rename
   (`RateLimiting:AuthPermitLimit`, and the five actions of `BffAuthController` that carry that
   policy); 300 a minute for every other request the limiter sees (`RateLimiting:GlobalPermitLimit`).
-  **If the app sees one address for every visitor, both are shared by everybody**: one request
+  The third, 20 recipient lookups a minute (`RateLimiting:LookupPermitLimit`), counts by the
+  signed-in user, and by the address only for a caller with no session (`LookupPartitionKey`).
+  **If the app sees one address for every visitor, those two are shared by everybody**: one request
   every six seconds to any of the five doors answers everybody else 429 there, and a script at
   five requests a second, or a handful of visitors at once, answers 429 to every call of every
   signed-in visitor. The page itself would still load, since its files are served before the
@@ -1396,7 +1398,7 @@ gh workflow run deploy.yml --ref main -f action=deploy
 | The summary of `build-push` | Three digests |
 | The log of `deploy` | "the listing was refused"; "The app says the demo is off: the job azurebank-pool is not read and not moved."; the migration's verdict, `Succeeded` with exit code 0; "Smoke passed"; the address masked |
 | The five counts of step 17, in the raw log | 0 each |
-| The app's images, and the `git` command of step 22 with their tag | The head's tag; exit 0 |
+| The app's images; the `git` command of step 22 with their tag; and the same command with, in place of `e5107f0f`, the commit that merged the screens for the claim, written down before the session | The head's tag; exit 0 twice |
 
 After it the app runs code that reads the flag, and no container carries the flag yet, which
 the code reads as off: registration is as open as it was, and the page carries no tag.
@@ -1408,7 +1410,7 @@ puts the app back:** stop. Step 25 is not run on the earlier images.
 #### 25. Turn the demo on (operator, **writes**)
 
 Its first note is the UTC time of the job's next run, which must be more than 60 minutes away.
-Only if the `git` command of step 24 exited 0.
+Only if both `git` commands of step 24 exited 0.
 
 ```powershell
 try {
@@ -1640,8 +1642,8 @@ written.
 | The second | `python infra/deploy.py --app-log 15`, its first run against the workspace, its output kept in no file | The rate limiter's warning names the client it rejected. It is compared with A's own public address, and what is written down is "A's own address" or "another, the same for A and B", and the count of warnings: never the value. If the log's cap was reached that day, the read is "not run" |
 | The third | The first two again, after the app has been at zero replicas, and after step 28's new revision | The same client, or another |
 
-Twelve sign-ins are enough for both of the BFF's limits: one function of the caller's address
-feeds the ten a minute and the 300 a minute alike
+Twelve sign-ins are enough for the two of the BFF's three limits that count by the caller's
+address: one function of it feeds the ten a minute and the 300 a minute alike
 ([What it costs, and what bounds it](#what-it-costs-and-what-bounds-it)).
 
 What follows from each answer:
@@ -3409,8 +3411,10 @@ against stand-ins and invented answers, and steps 22 to 33 are where each line w
 
 | What | Where it shows |
 | --- | --- |
+| The API's line for a refused sign-in as the workspace stores it: the query of step 22 is written from the line a local stack printed and from the columns step 16 read, and has not been sent | step 22's control |
 | That Azure Policy takes a rule on a job's name (the field `name`, `in` a parameter), on a create and on a PATCH; that a job's name there is its bare name; that the definition's new name and description are accepted | steps 23, 25 and 29 |
 | How soon a changed policy definition or assignment is enforced | the time between steps 23 and 25 |
+| Where a run of the template meets a refusal of the policy: at the what-if, at validation, or at the job after the app was changed | step 25, only if a refusal happens |
 | That a run with `deployApp=false` leaves the deployed app, its job, the action group and the alerts alone, and how its what-if names them | the what-if of step 23, before anything is sent |
 | What the first run of the template after 2026-10-05 shows for the app (a ninth secret, four settings) and for the role definition (its description); that the role's assignments are untouched by it | steps 23 and 25 |
 | Azure refusing a client key under 32 characters, through `app-inputs.bicep`: no engine has refused one | not provoked |
@@ -3435,7 +3439,7 @@ against stand-ins and invented answers, and steps 22 to 33 are where each line w
 | A recovery after a theft that keeps the database: not designed ([If something was stolen](#if-something-was-stolen)) | the day it is needed |
 | An app that reports an ingress and no host name; an output of the CLI that is not JSON, or that the terminal's encoding cannot decode | not provoked |
 | The repair of two containers that disagree about the demo; every road of [Turning the demo back](#turning-the-demo-back) | the day they are needed |
-| The CI job `infra` with the tests added on 2026-10-05: its minutes against its limit of 10. On this machine, with other work running, the suite of 428 or 429 tests took from 5 to 17 minutes | the first push |
+| The CI job `infra` with the tests added on 2026-10-05: its minutes against its limit of 10. On this machine the suite of 428 to 433 tests took from 6 to 29 minutes, the longer runs with other work beside them | the first push |
 
 
 ## Checking these files
@@ -3510,8 +3514,9 @@ a stand-in app whose containers carry the demo's flag, reads the compiled pool j
 assignment and the policy's exception, and reads three things of `deploy.py` as text, the pool
 job's schedule, the bounds of its timeout and the names of its two secrets, to hold each equal
 to the template's. `test_deploy.py` reads five source files of the backend as text, never built
-or run: three of the BFF, for the page's tag, the error code and the route of a registration,
-and two of the tool the pool job runs, for its exit codes and the counts of its summary line.
+or run: two of the BFF, for the page's tag and the route of a registration, one of the shared
+library, for the error code, and two of the tool the pool job runs, for its exit codes and the
+counts of its summary line.
 And it reads this page and `docs/runbooks/demo-pool.md`: a heading the script names is there, a
 refusal that sends its reader to [When something fails](#when-something-fails) has a row there
 that quotes it, every command of the script is told, and the table of a pool run's exit codes
