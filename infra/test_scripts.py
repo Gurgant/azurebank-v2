@@ -1295,8 +1295,12 @@ REFUSED_ON_AN_APP = [
                'where': {'field': f'{APP}/template.containers[*].resources.cpu', 'greater': 0.5}}, 'greater': 0},
 ]
 REFUSED_ON_A_JOB = [
+    # A trigger outside the list that holds for every job, with one exception: a job whose name is
+    # in the second list may run on a schedule.
     {'allOf': [{'field': f'{JOB}/configuration.triggerType', 'exists': True},
-               {'field': f'{JOB}/configuration.triggerType', 'notIn': "[parameters('allowedJobTriggers')]"}]},
+               {'field': f'{JOB}/configuration.triggerType', 'notIn': "[parameters('allowedJobTriggers')]"},
+               {'not': {'allOf': [{'field': f'{JOB}/configuration.triggerType', 'equals': 'Schedule'},
+                                  {'field': 'name', 'in': "[parameters('scheduledJobs')]"}]}}]},
     {'field': f'{JOB}/configuration.manualTriggerConfig.parallelism', 'greater': 1},
     {'field': f'{JOB}/configuration.scheduleTriggerConfig.parallelism', 'greater': 1},
     {'field': f'{JOB}/configuration.eventTriggerConfig.parallelism', 'greater': 1},
@@ -1751,14 +1755,35 @@ class TemplateTests(unittest.TestCase):
             {'allOf': [{'field': 'type', 'equals': APP}, {'anyOf': REFUSED_ON_AN_APP}]},
             {'allOf': [{'field': 'type', 'equals': JOB}, {'anyOf': REFUSED_ON_A_JOB}]}]})
 
-    def test_a_job_may_only_be_started_by_hand_unless_the_template_is_told_otherwise(self):
+    def test_a_job_is_started_by_hand_unless_it_is_named_for_a_schedule(self):
+        # Two lists. The first holds for every job and stays as it was. The second names the jobs
+        # that may run on a schedule: the definition by itself names none, main.bicep names one,
+        # and the assignment hands over both.
         definition = self.compiled['guardrails']['resources'][0]['properties']
         self.assertEqual(definition['parameters'],
-                         {'allowedJobTriggers': {'type': 'Array', 'defaultValue': ['Manual']}})
-        self.assertEqual(self.main['parameters']['allowedJobTriggers']['defaultValue'], ['Manual'])
+                         {'allowedJobTriggers': {'type': 'Array', 'defaultValue': ['Manual']},
+                          'scheduledJobs': {'type': 'Array', 'defaultValue': []}})
+        self.assertEqual({name: self.main['parameters'].get(name, {}).get('defaultValue')
+                          for name in ('allowedJobTriggers', 'scheduledJobs')},
+                         {'allowedJobTriggers': ['Manual'], 'scheduledJobs': ['azurebank-pool']})
         (assignment,) = self.of_type('Microsoft.Authorization/policyAssignments')
         self.assertEqual(assignment['properties']['parameters'],
-                         {'allowedJobTriggers': {'value': "[parameters('allowedJobTriggers')]"}})
+                         {'allowedJobTriggers': {'value': "[parameters('allowedJobTriggers')]"},
+                          'scheduledJobs': {'value': "[parameters('scheduledJobs')]"}})
+
+    def test_the_policy_is_named_for_what_it_refuses_and_the_removal_finds_it(self):
+        # The name is what a refusal shows, so the definition and its assignment carry the same
+        # one. The runbook's removal looks for the words the name opens with and not for the whole
+        # of it: the name it had before this one opens with them too.
+        opens_with = 'AzureBank: one small replica'
+        name = opens_with + ', manual jobs, the pool job scheduled'
+        definition = self.compiled['guardrails']['resources'][0]['properties']
+        (assignment,) = self.of_type('Microsoft.Authorization/policyAssignments')
+        self.assertEqual((definition['displayName'], assignment['properties']['displayName']), (name, name))
+        runbook = (HERE / 'README.md').read_text(encoding='utf-8')
+        self.assertNotIn(f"-eq '{opens_with}, manual jobs'", runbook)
+        self.assertIn(f"Where-Object {{ $_.policyType -eq 'Custom' -and $_.displayName -like '{opens_with}*' }} |",
+                      runbook)
 
     def test_every_alert_rule_notifies_one_action_group_and_stops_nothing(self):
         # Four rules are written. Three are built, and the fourth when it is asked for (below).

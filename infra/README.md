@@ -1796,7 +1796,7 @@ az role definition list --custom-role-only true --resource-group $group --output
     ForEach-Object { az role definition delete --name $_.name --resource-group $group }
 az group delete --name $group
 az policy definition list --output json | ConvertFrom-Json |
-    Where-Object { $_.policyType -eq 'Custom' -and $_.displayName -eq 'AzureBank: one small replica, manual jobs' } |
+    Where-Object { $_.policyType -eq 'Custom' -and $_.displayName -like 'AzureBank: one small replica*' } |
     ForEach-Object { az policy definition delete --name $_.name }
 az consumption budget delete --budget-name azurebank-monthly
 'AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID' | ForEach-Object { gh secret delete $_ --env demo --repo Gurgant/azurebank-v2 }

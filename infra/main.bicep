@@ -16,9 +16,13 @@ param replicaTimeout int = 600
 param alertEmail string = ''
 @description('False leaves the Deny policy out: the fallback if this subscription refuses a custom policy definition.')
 param denyPolicy bool = true
-@description('Trigger types the Deny policy lets a job have. The pool job adds Schedule.')
+@description('Trigger types the Deny policy lets every job have. A job that runs on a schedule is not added here: it is named in scheduledJobs.')
 param allowedJobTriggers array = [
   'Manual'
+]
+@description('Names of the jobs the Deny policy lets run on a schedule. Every other job is started by hand.')
+param scheduledJobs array = [
+  'azurebank-pool'
 ]
 @description('False keeps no logs: no workspace, no diagnostic setting, and what the containers print goes nowhere. It deletes neither a workspace nor a setting that already exists.')
 param keepLogs bool = true
@@ -444,12 +448,15 @@ module shape 'guardrails.bicep' = if (denyPolicy) {
 resource shapeAssignment 'Microsoft.Authorization/policyAssignments@2025-03-01' = if (denyPolicy) {
   name: 'azurebank-shape'
   properties: {
-    displayName: 'AzureBank: one small replica, manual jobs'
+    displayName: 'AzureBank: one small replica, manual jobs, the pool job scheduled'
     policyDefinitionId: shape!.outputs.definitionId
     enforcementMode: 'Default'
     parameters: {
       allowedJobTriggers: {
         value: allowedJobTriggers
+      }
+      scheduledJobs: {
+        value: scheduledJobs
       }
     }
   }
