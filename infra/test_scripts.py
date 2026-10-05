@@ -242,6 +242,9 @@ LIVE = {
 # The application secrets the template takes and the script writes. No database credential is among them.
 SEVEN = ['jwtSecret', 'idempotencyHashKey', 'stepUpBindingKey', 'serviceCredentialBffKey', 'auditChainKey',
          'auditAnchorKey', 'securityPinPepper']
+# The key the demo hashes a visitor's address with before it stores it: an eighth secret, beside the seven.
+CLIENT_KEY = 'demoClientKeySecret'
+SECURE = [*SEVEN, CLIENT_KEY]
 # Identifiers and names, not secrets: they may appear in a call or in the report's last line.
 NOT_SECRET = ('imageTag', 'entraAdminObjectId', 'entraAdminLogin')
 
@@ -1401,6 +1404,11 @@ class TemplateTests(unittest.TestCase):
     def of_type(self, kind):
         return [resource for resource in self.resources if resource['type'] == kind]
 
+    def job(self, name):
+        """The one job of that name."""
+        (job,) = [resource for resource in self.of_type(JOB) if resource['name'] == name]
+        return job
+
     def conditions(self, condition):
         return sorted(resource['type'] for resource in self.resources if resource.get('condition') == condition)
 
@@ -1654,14 +1662,14 @@ class TemplateTests(unittest.TestCase):
 
     def test_the_app_and_the_job_each_carry_their_own_database_identity_and_no_other(self):
         (app,) = self.of_type('Microsoft.App/containerApps')
-        (job,) = self.of_type('Microsoft.App/jobs')
+        job = self.job('azurebank-migrate')
         for resource, name in ((app, 'azurebank-app'), (job, 'azurebank-migrate')):
             self.assertEqual(resource.get('identity'), {'type': 'UserAssigned', 'userAssignedIdentities': {
                 f"[format('{{0}}', resourceId('{IDENTITIES}', '{name}'))]": {}}}, resource['type'])
 
     def test_each_connection_string_names_its_own_identity_and_holds_no_credential(self):
         (app,) = self.of_type('Microsoft.App/containerApps')
-        (job,) = self.of_type('Microsoft.App/jobs')
+        job = self.job('azurebank-migrate')
         for resource, secret, identity in ((app, 'app-connection', 'azurebank-app'),
                                            (job, 'migration-connection', 'azurebank-migrate')):
             (value,) = [entry['value'] for entry in resource['properties']['configuration']['secrets']
@@ -1686,7 +1694,7 @@ class TemplateTests(unittest.TestCase):
 
     def test_every_secret_reaches_a_container_by_reference_only(self):
         (app,) = self.of_type('Microsoft.App/containerApps')
-        (job,) = self.of_type('Microsoft.App/jobs')
+        job = self.job('azurebank-migrate')
         self.assertEqual(len(app['properties']['configuration']['secrets']), 8)
         self.assertEqual(len(job['properties']['configuration']['secrets']), 1)
         text = json.dumps([app['properties']['template'], job['properties']['template']])
@@ -1696,7 +1704,7 @@ class TemplateTests(unittest.TestCase):
 
     def test_only_the_api_container_and_the_job_are_handed_a_connection_string(self):
         (app,) = self.of_type('Microsoft.App/containerApps')
-        (job,) = self.of_type('Microsoft.App/jobs')
+        job = self.job('azurebank-migrate')
         handed = {container['name']: sorted(entry['secretRef'] for entry in container['env'] if 'secretRef' in entry)
                   for container in app['properties']['template']['containers']}
         # The bff faces the internet and can use the app's identity like any container of the app:
@@ -1719,7 +1727,7 @@ class TemplateTests(unittest.TestCase):
                          [('bff', {'cpu': "[json('0.25')]", 'memory': '0.5Gi'}),
                           ('api', {'cpu': "[json('0.5')]", 'memory': '1Gi'})])
         self.assertNotIn('initContainers', template)
-        (job,) = self.of_type('Microsoft.App/jobs')
+        job = self.job('azurebank-migrate')
         configuration = job['properties']['configuration']
         self.assertEqual((configuration['triggerType'], configuration['replicaRetryLimit'],
                           configuration['manualTriggerConfig']['parallelism']), ('Manual', 0, 1))
