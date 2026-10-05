@@ -883,7 +883,11 @@ def refuse_beside_a_pool_run(job_id, job):
     """Stop while a run of the pool job is, or may still be, in progress: the migration is about
     to change the schema that run works on, and the job itself is about to be moved. It is one
     read, before anything is changed: a run the schedule starts after it is not seen, and nothing
-    here holds the schedule back."""
+    here holds the schedule back.
+
+    It is also one answer. Whether Azure gives the list of a job's executions in pages, and in
+    which order, is recorded nowhere in this repository: if it does, a link to a next page is not
+    followed, and a run listed only on a later page is not seen either."""
     timeout = job['properties']['configuration']['replicaTimeout']
     try:
         runs = executions(job_id)
