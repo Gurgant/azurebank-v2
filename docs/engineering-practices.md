@@ -291,9 +291,14 @@ error strings. There the wrong wording is removed rather than struck, because no
 struck line during an incident and a `~~` renders as noise in a terminal. **The second is the root
 README** (since 2026-09-24): it is the first page a visitor reads, often not an engineer, and a line
 about what it used to claim reads there as noise, or as doubt about everything around it. It is
-corrected in place without that line; git keeps what it said. Everything else that describes the
-system AS IT IS rather than as it was decided — `docs/deferred/`, code comments, XML docs — is
-simply corrected in place, with a line saying what it used to claim.
+corrected in place without that line; git keeps what it said. **The third is a citation of
+something no reader of this repository can open** (since 2026-10-05): a path into a private working
+folder, the name of a file kept there, a row number of a private list. A struck path is still a
+published path, so in a decision record the citation is replaced by what it stood for, and a dated
+note against the place says, in kind, what stood there; in a code comment the address is dropped
+with no line about it, because what was measured, when and where does not change. Everything else
+that describes the system AS IT IS rather than as it was decided — `docs/deferred/`, code comments,
+XML docs — is simply corrected in place, with a line saying what it used to claim.
 
 **What this rule does not ask anybody to decide.** An earlier draft of it split corrections by kind
 — a decision that was right when made versus a statement of fact that was never true — and that is a
