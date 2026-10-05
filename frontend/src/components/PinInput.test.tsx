@@ -201,10 +201,20 @@ function column(): string[] {
   });
 }
 
-/** Draws the boxes, reads how many hints the page has and what the boxes point at, and unmounts. */
+/**
+ * The column with no line in it: the boxes, then the button that shows the digits. Read as well as
+ * the count of hints, which finds the line by its words: an element with no words, left in the
+ * line's place, is counted by nothing and is one more entry here.
+ */
+const BARE = ['boxes: PIN', 'button: Show PIN'];
+
+/**
+ * Draws the boxes, reads how many hints the page has, what stands in the boxes' column and what
+ * the boxes point at, and unmounts.
+ */
 function look(props: Pick<PinInputProps, 'purpose' | 'ariaDescribedBy'> = {}) {
   const view = renderWithProviders(<Boxes {...props} />);
-  const seen = { hints: hints().length, describedBy: describedByAttribute() };
+  const seen = { hints: hints().length, column: column(), describedBy: describedByAttribute() };
   view.unmount();
   return seen;
 }
@@ -293,10 +303,10 @@ describe('PinInput on the demo', () => {
 
     expect({ withoutTheTag, withATagThatSaysFalse, withTheTag }).toEqual({
       withoutTheTag: {
-        passedOne: { hints: 0, describedBy: 'why-it-was-refused' },
-        passedNone: { hints: 0, describedBy: null },
+        passedOne: { hints: 0, column: BARE, describedBy: 'why-it-was-refused' },
+        passedNone: { hints: 0, column: BARE, describedBy: null },
       },
-      withATagThatSaysFalse: { hints: 0, describedBy: null },
+      withATagThatSaysFalse: { hints: 0, column: BARE, describedBy: null },
       withTheTag: 1,
     });
   });
@@ -310,8 +320,8 @@ describe('PinInput on the demo', () => {
       // The same boxes asking for a PIN the visitor has, so that the zeros are counts of something.
       asked: look({ purpose: 'existing' }).hints,
     }).toEqual({
-      chosen: { hints: 0, describedBy: null },
-      chosenWithADescription: { hints: 0, describedBy: 'why-it-was-refused' },
+      chosen: { hints: 0, column: BARE, describedBy: null },
+      chosenWithADescription: { hints: 0, column: BARE, describedBy: 'why-it-was-refused' },
       asked: 1,
     });
   });
