@@ -1085,7 +1085,9 @@ def beside_a_pool_run(name, state, timeout=600):
     """The whole sentence of the refusal beside a pool run, so that a test holds every word of it."""
     return (f'Execution {name} of the job azurebank-pool is {state}: a pool run may still be in '
             'progress, and a deployment does not start beside one. Nothing was changed. A run is '
-            f"expected to end within the job's timeout ({timeout} s): deploy again after that.")
+            f"expected to end within the job's timeout ({timeout} s): deploy again after that. If it "
+            "is refused again then, the owner reads the job's executions and stops that one "
+            '(infra/README.md, "When something fails").')
 
 
 class PoolDeployTests(DeployCase):
@@ -1213,21 +1215,36 @@ class PoolDeployTests(DeployCase):
             self.deploy()
             self.assertEqual(self.steps(), self.STEPS)
 
+    def test_a_pool_run_that_goes_on_blocking_is_told_the_way_out(self):
+        # A run in a state nobody named and with no start time is taken for alive for as long as
+        # it is listed so (in_progress): "deploy again after that" alone would be refused each
+        # time, with no word of who ends it. The deployment identity cannot.
+        self.azure.pool_runs = [execution('stuck', 'Pending')]
+        with self.assertRaises(RuntimeError) as raised:
+            self.deploy()
+        self.assertEqual(str(raised.exception),
+                         beside_a_pool_run('stuck', 'in a state this script does not know'))
+        self.assertTrue(str(raised.exception).endswith(
+            "deploy again after that. If it is refused again then, the owner reads the job's "
+            'executions and stops that one (infra/README.md, "When something fails").'), str(raised.exception))
+        self.assertEqual(self.azure.writes(), [])
+
     def test_a_pool_run_that_blocks_is_named_only_in_the_shape_expected(self):
         recent = datetime.datetime.now(datetime.timezone.utc).isoformat()
         unknown = 'in a state this script does not know'
-        for blocking, told in ((execution(STRANGE, 'Running'), 'Execution whose name is withheld of the job '
-                                                                 'azurebank-pool is Running: a pool run may'),
-                               (execution('pool-run', STRANGE, recent),
-                                f'Execution pool-run of the job azurebank-pool is {unknown}: a pool run may'),
-                               (execution(STRANGE, {'state': STRANGE}, recent),
-                                f'Execution whose name is withheld of the job azurebank-pool is {unknown}: a pool')):
-            with self.subTest(told=told):
+        withheld = 'whose name is withheld'
+        for blocking, name, state in ((execution(STRANGE, 'Running'), withheld, 'Running'),
+                                      (execution('pool-run', STRANGE, recent), 'pool-run', unknown),
+                                      (execution(STRANGE, {'state': STRANGE}, recent), withheld, unknown)):
+            with self.subTest(name=name, state=state):
                 self.azure.pool_runs = [blocking]
                 with self.assertRaises(RuntimeError) as raised:
                     self.deploy(in_actions=True)
-                self.assertTrue(str(raised.exception).startswith(told), str(raised.exception))
-                for unwanted in ('\n', '::', 'something'):
+                # The sentence whole: no word of it is what Azure put in the name or in the state.
+                # (It points at the runbook's "When something fails", so the word "something" of
+                # STRANGE cannot be looked for by itself.)
+                self.assertEqual(str(raised.exception), beside_a_pool_run(name, state))
+                for unwanted in ('\n', '::', 'add-mask'):
                     self.assertNotIn(unwanted, str(raised.exception))
         self.assertEqual(self.azure.writes(), [])
 

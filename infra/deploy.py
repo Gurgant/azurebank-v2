@@ -890,11 +890,15 @@ def refuse_beside_a_pool_run(job_id, job):
     running = in_progress(runs, timeout)
     if running:
         state = told_status(state_of(running), 'in a state this script does not know')
+        # The last sentence is for a run that never ends for this script: one in a state nobody
+        # named and with no start time blocks for as long as it is listed so (started_within), and
+        # the deployment identity may not stop an execution.
         raise RuntimeError(f"Execution {named(running['name']) or 'whose name is withheld'} of the "
                            f'job {POOL_JOB} is {state}: a pool run may still be in progress, and a '
                            'deployment does not start beside one. Nothing was changed. A run is '
                            f"expected to end within the job's timeout ({timeout} s): deploy again "
-                           'after that.')
+                           'after that. If it is refused again then, the owner reads the job\'s '
+                           'executions and stops that one (infra/README.md, "When something fails").')
 
 
 def deploy(subscription, resource_group, tag, app_only=False, in_actions=False,
