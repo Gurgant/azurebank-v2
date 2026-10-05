@@ -2846,6 +2846,17 @@ def not_well(code, words, count=None, name='execution pool-run'):
 
 NO_CODE = ('The pool run ended and Azure reported no exit code for it (execution pool-run: exit code not '
            f'reported). How it ended is not guessed from its status, and it was not started again. {READ_WITH}')
+# What the verdict's line says of a run when the one read that carries the exit code gave nothing
+# of it: what the polling knew, a name and a status.
+VERDICT_AS_POLLED = ('Verdict: execution pool-run: Succeeded, start not reported, end not reported, exit code not '
+                     'reported, no reason given.')
+
+
+def code_not_read(why, name='execution pool-run'):
+    """The whole sentence of a start by hand whose run ended, and whose exit code Azure refused
+    or failed to give: Azure's words are in it."""
+    return (f'The pool run ended ({name}), and the read of its exit code failed: {why}. How it ended is not '
+            f'guessed from its status, and it was not started again. {where_printed(name)}')
 
 
 def beside_another_pool_run(name, state, timeout=600):
@@ -3051,30 +3062,76 @@ class PoolRunTests(DeployCase):
                     self.assertIn(', exit code not reported, ', self.said()[-1])
                     self.assertEqual(self.azure.writes(), [START])
 
-    def test_a_read_of_the_exit_code_that_fails_or_lacks_the_run_is_a_code_not_reported(self):
-        # The polling saw the run end. The one read with the later version is refused, or answers
-        # without that run: what is known is a status, and a status alone decides nothing.
+    def ended_once_the_code_is_read(self, read):
+        """How a start by hand ends when the one read with the later version, the third read of
+        the job's executions, is answered by `read`: a function that answers or raises."""
         answer = self.azure.pool_call
-        for what in ('refused', 'without the run'):
-            with self.subTest(what=what):
-                self.again(*ends_as(pool_finished()))
-                reads = []
+        reads = []
 
-                def third_read(method, tail, what=what, reads=reads):
-                    reads.append((method, tail))
-                    if reads.count(('GET', 'executions')) == 3 and (method, tail) == ('GET', 'executions'):
-                        if what == 'refused':
-                            raise deploy.AzError('Bad Request: NoRegisteredProviderFound for the API version')
-                        return {'value': [pool_finished('another-run', code=10)]}
-                    return answer(method, tail)
+        def third_read(method, tail):
+            reads.append((method, tail))
+            if (method, tail) == ('GET', 'executions') and reads.count(('GET', 'executions')) == 3:
+                return read()
+            return answer(method, tail)
 
-                with patch.object(self.azure, 'pool_call', side_effect=third_read):
-                    with self.assertRaises(RuntimeError) as raised:
-                        self.pool_run()
-                self.assertEqual(str(raised.exception), NO_CODE)
-                self.assertEqual(self.azure.versions[-1], ('GET', 'executions', '2026-07-01'))
-                self.assertEqual(self.said()[-1], 'Verdict: execution pool-run: Succeeded, start not reported, '
-                                                  'end not reported, exit code not reported, no reason given.')
+        with patch.object(self.azure, 'pool_call', side_effect=third_read):
+            return self.ended()
+
+    def test_a_read_of_the_exit_code_that_lacks_the_run_is_a_code_not_reported(self):
+        # The polling saw the run end. The one read with the later version answers, without that
+        # run: what is known is a status, and a status alone decides nothing. Until the read of
+        # the code that fails had a sentence of its own (below), this test held both to this one.
+        self.again(*ends_as(pool_finished()))
+        end = self.ended_once_the_code_is_read(lambda: {'value': [pool_finished('another-run', code=10)]})
+        self.assertIs(type(end), RuntimeError)
+        self.assertEqual(str(end), NO_CODE)
+        self.assertEqual(self.azure.versions[-1], ('GET', 'executions', '2026-07-01'))
+        self.assertEqual(self.said()[-1], VERDICT_AS_POLLED)
+
+    def test_a_read_of_the_exit_code_that_fails_says_that_it_failed_and_what_azure_said(self):
+        # The polling saw the run end, and the one read with the later version is refused or never
+        # answered. Azure did not report "no exit code": the read failed, and why is Azure's to
+        # say. The command still fails, by the same rule: a status alone decides nothing. The
+        # first refusal is invented; it stands for a version of the API that is not served.
+        for refusal in ('Bad Request: NoRegisteredProviderFound for the API version',
+                        'The Azure CLI gave no answer in 180 s (GET /jobs/azurebank-pool/executions).'):
+            for run, name in (('pool-run', 'execution pool-run'), (STRANGE, 'execution whose name is withheld')):
+                for status in ('Succeeded', 'Failed'):
+                    with self.subTest(refusal=refusal, name=name, status=status):
+                        self.again(*ends_as(pool_finished(run, status=status)))
+                        self.azure.versions.clear()
+                        end = self.ended_once_the_code_is_read(lambda: raise_(deploy.AzError(refusal)))
+                        self.assertIs(type(end), RuntimeError, 'the run says what it means, in its own words')
+                        self.assertEqual(str(end), code_not_read(refusal.rstrip('.'), name))
+                        for unwanted in ('\n', '::', 'add-mask', 'Azure reported no exit code'):
+                            self.assertNotIn(unwanted, str(end))
+                        # The read was made, once, with the version that carries the code, and
+                        # the verdict's line is what the polling knew.
+                        self.assertEqual([call for call in self.azure.versions if call[2] != deploy.API_VERSION],
+                                         [('GET', 'executions', '2026-07-01')])
+                        self.assertEqual(self.said()[-1], VERDICT_AS_POLLED.replace('execution pool-run', name)
+                                         .replace('Succeeded', status))
+                        self.assertEqual(self.azure.writes(), [START], 'nothing is started a second time')
+        # Through the command line the sentence is how the command ends.
+        self.again(*ends_as(pool_finished()))
+        environment = {'AZURE_SUBSCRIPTION_ID': SUBSCRIPTION, 'AZURE_RESOURCE_GROUP': GROUP}
+        answer = self.azure.pool_call
+        reads = []
+
+        def third_read(method, tail):
+            reads.append((method, tail))
+            if (method, tail) == ('GET', 'executions') and reads.count(('GET', 'executions')) == 3:
+                raise deploy.AzError('Forbidden: AuthorizationFailed.')
+            return answer(method, tail)
+
+        with patch.dict(deploy.os.environ, environment, clear=True), \
+                patch.object(self.azure, 'pool_call', side_effect=third_read):
+            with self.assertRaises(SystemExit) as raised:
+                deploy.main(['--pool-run'])
+        self.assertEqual(raised.exception.code, code_not_read('Forbidden: AuthorizationFailed'))
+        # A migration is not touched by this: for it the verdict is one printed line and decides
+        # nothing, and a read of the code that fails leaves the line the polling knew
+        # (MigrationVerdictTests, "a verdict Azure will not detail is still a verdict").
 
     def test_a_run_in_progress_blocks_the_start(self):
         now = datetime.datetime.now(datetime.timezone.utc)

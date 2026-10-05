@@ -63,10 +63,11 @@ a refill by hand. It reads the job and checks its shape, reads its executions on
 while one may still be in progress, sends the start once and never again, and waits for that
 exact execution for the job's timeout and two minutes. How the run ended is told by the exit
 code of its container, never by the execution's status alone: 0 ends well, and so do 10, 11 and
-15, which say the run finished and found the pool short; any other code, and a code Azure did
-not report, ends the command as failed. It reads nothing of the app: whether the app is the demo
-is --check's to say, before a run is started by hand. What the run printed, its one summary line
-among it, is not fetched here: --pool-log reads it afterwards.
+15, which say the run finished and found the pool short; any other code, a code Azure did not
+report, and a read of the code that Azure refused or failed, which is said as that and in
+Azure's words, end the command as failed. It reads nothing of the app: whether the app is the
+demo is --check's to say, before a run is started by hand. What the run printed, its one
+summary line among it, is not fetched here: --pool-log reads it afterwards.
 
 A migration leaves one line here, its verdict: the execution's name, status, times, exit code and
 a one-word reason. What it printed is never fetched by a deployment: the log of a public
@@ -691,18 +692,23 @@ def verdict(name, properties, in_actions=False, container=JOBS[MIGRATE_JOB], cod
     return line
 
 
-def detailed(job_id, name, known):
+def detailed(job_id, name, known, a_failed_read_raises=False):
     """An execution's properties, read once more with the version that carries its container's
     exit code. Never raises: if that read fails or lacks the execution, the answer is what the
-    polling already knew."""
+    polling already knew. The one exception is asked for by name: a caller for whom the exit
+    code decides (a start of the pool job by hand) is told of a read that Azure refused or
+    failed, as Azure worded it."""
     properties = (known or {}).get('properties') or {}
     try:
         answer = rest('GET', job_id + '/executions', api_version=VERDICT_API_VERSION)
         for execution in listed(answer, 'value'):
             if execution.get('name') == name and isinstance(execution.get('properties'), dict):
                 properties = execution['properties']
-    except (AzError, AttributeError):
+    except AttributeError:
         pass
+    except AzError:
+        if a_failed_read_raises:
+            raise
     return properties
 
 
@@ -1403,7 +1409,9 @@ def pool_run(subscription, resource_group, in_actions=False):
     verdict, read with the version that carries the exit code; and the end, by that code alone.
     A read that fails once the start was made, or a list of executions that then comes in a shape
     this script does not read, ends the wait in a sentence that says the run was started and may
-    go on.
+    go on. Once the run is seen over, a read of its exit code that Azure refuses or fails ends
+    the command as failed in a sentence of its own, with Azure's words: it is not said to be a
+    run for which Azure reported no exit code.
 
     It reads nothing of the app and does not ask whether the demo is on. The job's container
     carries the demo's flag as the literal true (infra/main.bicep), so a run is expected to build
@@ -1467,7 +1475,17 @@ def pool_run(subscription, resource_group, in_actions=False):
             say(f'Pool run {label}: {told_status(status)}.')
             seen = status
         if status in FINISHED:
-            properties = detailed(job_id, name, match[0])
+            try:
+                properties = detailed(job_id, name, match[0], a_failed_read_raises=True)
+            except AzError as error:
+                # The exit code decides how this command ends. A read of it that Azure refuses or
+                # fails is said as that, in Azure's words: "Azure reported no exit code" would be
+                # false of it. The verdict's line is then what the polling knew.
+                say(verdict(name, match[0].get('properties') or {}, container=JOBS[POOL_JOB],
+                            codes=POOL_EXIT_CODES))
+                raise RuntimeError(f'The pool run ended ({label}), and the read of its exit code failed: '
+                                   f"{str(error).rstrip('.')}. How it ended is not guessed from its status, "
+                                   f'and it was not started again. {where_it_printed(name)}') from None
             say(verdict(name, properties, container=JOBS[POOL_JOB], codes=POOL_EXIT_CODES))
             # The status as that line showed it: one of the states this script knows, or words.
             end_pool_run(name, exit_code(properties, JOBS[POOL_JOB])[0], told_status(properties.get('status')))
