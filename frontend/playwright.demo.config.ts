@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
 
 /**
@@ -79,11 +80,22 @@ import { defineConfig, devices } from '@playwright/test';
  * `test-results/`. Delete all three when the run has been read.
  */
 
+/*
+  The two files below are whole paths, worked out from where this file is and not from the
+  directory the run is started in. Both hold a copy's password, and one folder is ignored for
+  them (`frontend/e2e-demo/.auth/` in .gitignore and .dockerignore). A path given from the run's
+  directory would land there only for a run started in `frontend/`, which is where `npm run`
+  starts one: `playwright test --config` from any other directory would write the two files
+  beside a folder nothing ignores. The run's second test holds both (`e2e-demo/demo.spec.ts`).
+*/
+const inAuth = (file: string) =>
+  fileURLToPath(new URL(`./e2e-demo/.auth/${file}`, import.meta.url));
+
 /** Written by the `demo` project signed in, read by the two after it. It holds a live session. */
-export const DEMO_STATE = 'e2e-demo/.auth/copy.json';
+export const DEMO_STATE = inAuth('copy.json');
 
 /** The passwords of the copies a run claimed, one a line. Never attached, logged or printed. */
-export const SCAN_VALUES = 'e2e-demo/.auth/scan-values.txt';
+export const SCAN_VALUES = inAuth('scan-values.txt');
 
 export default defineConfig({
   testDir: './e2e-demo',

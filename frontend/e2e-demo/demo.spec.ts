@@ -1,5 +1,5 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { expect, test, type BrowserContext, type Page, type Response } from '@playwright/test';
 import { scan } from '../e2e/axeScan';
 import { focusOf } from '../e2e/focusOf';
@@ -54,13 +54,14 @@ import {
  * transfer's names are the app's older ones, asked as the screenshot capture asks them
  * (`screenshots/app.capture.ts`).
  *
- * WHAT HAS BEEN SEEN WHERE. On 2026-10-05 this file ran as it stands, from the first test to the
- * last, in Chromium 151 against compose.yaml with compose.demo.yaml (Production, the images
- * built from this branch, a pool nobody had claimed from): thirteen passed, and no name in it
- * had to be changed. Before that every name had been met on this tree's dev server with the
- * mock and the demo's tag, where the flow passes with one line changed: the name of the
- * session's cookie, which only the stack gives. Each value that is the stack's to say and the
- * mock's only to imitate is marked MEASURED where it stands, with what the stack said.
+ * WHAT HAS BEEN SEEN WHERE. On 2026-10-05 this file ran from the first test to the last, in
+ * Chromium 151 against compose.yaml with compose.demo.yaml (Production, the images built from
+ * the tree as it then stood, a pool nobody had claimed from): thirteen passed, the thirteen it
+ * then had, and no name in it had to be changed. Before that every name had been met on this
+ * tree's dev server with the mock and the demo's tag, where the flow passes with one line
+ * changed: the name of the session's cookie, which only the stack gives. Each value that is the
+ * stack's to say and the mock's only to imitate is marked MEASURED where it stands, with what
+ * the stack said. A test added since that run says so where it stands, with where it has run.
  */
 
 // The words a visitor reads, typed out and not imported from the product: a test fails the day
@@ -242,6 +243,26 @@ test.describe('the demo, from the first click', () => {
       { project: 'restart', trace: 'off', screenshot: 'off', video: 'off' },
       { project: 'demo-after-restart', trace: 'off', screenshot: 'off', video: 'off' },
     ]);
+  });
+
+  test('the saved state and the passwords for the search are written under e2e-demo/.auth, wherever the run was started', () => {
+    /*
+      BEFORE ANYTHING IS CLAIMED, as the test above. The run writes two files that hold a copy's
+      password: the saved state and the lines the run's output is searched with
+      (`playwright.demo.config.ts`). git and docker are told to leave one folder out,
+      `frontend/e2e-demo/.auth/`. A path given from the directory the run was started in lands
+      there only when that directory is `frontend/`: started from anywhere else with `--config`,
+      the two files would be written beside a folder nobody told git about. So both are whole
+      paths, under this folder, and this is where that is held.
+
+      Added after the run of 2026-10-05 on the stack. It asks nothing of a stack, and has run
+      by itself, started from `frontend/` and from `frontend/e2e-demo`.
+    */
+    const auth = join(test.info().config.rootDir, '.auth');
+    expect({ state: DEMO_STATE, values: SCAN_VALUES }).toEqual({
+      state: join(auth, 'copy.json'),
+      values: join(auth, 'scan-values.txt'),
+    });
   });
 
   test("the scan leaves a node's markup out of its report when asked, and quotes it when not", async ({
