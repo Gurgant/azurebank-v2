@@ -48,10 +48,14 @@ wait in `retryAfterSeconds`: the countdowns of the sign-in page belong to the lo
 limiter, by their codes (`src/pages/LoginPage.tsx`). A fourth code, `DEMO_COPY_LIMIT`, can answer
 any change made in a copy that is past its budget of changes (ADR-0063, decision 11). Nothing is
 built for it: each surface shows the fallback it has, which where that prints the problem's
-`detail` is the API's own sentence (held for the "Start over" dialog by
-`src/features/demo/StartOverDialog.test.tsx`, `any other refusal: what the server said, or the
-fallback`; read from the code for every other surface; no run on a stack met it).
-_(Until 2026-10-05 this section counted three places and knew no 429 without a countdown.)_
+`detail` is the API's own sentence. (The one kept test that answers a request with that code is
+the "Start over" dialog's, `src/features/demo/StartOverDialog.test.tsx`, `any other refusal:
+what the server said, or the fallback`. It shows that the dialog prints a `detail` it has no
+sentence for, with an answer made for the test: the dialog sends the claim, which the budget
+never counts. What the surfaces the code can reach would show is read from the code; no kept
+test and no run on a stack met it.)
+_(This paragraph was added on 2026-10-05. The three places above are the 429s the app meets
+with the demo off; until that day this section knew no 429 without a countdown.)_
 
 **One place does compare a server instant with the browser's clock: a kept demo copy's end, on
 the sign-in page.** It is not a countdown. The page reads the clock once, when it opens, and a

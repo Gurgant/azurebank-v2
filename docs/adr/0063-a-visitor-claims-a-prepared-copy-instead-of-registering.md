@@ -1042,9 +1042,13 @@ not accept: the fallback, and the copy kept is still the first`.) `/register` le
 sign-in page in demo mode, so the application never sends the registration decision 1 closes.
 Of the four codes of decision 8 the application words two itself, `DEMO_POOL_EMPTY` and
 `DEMO_DAILY_LIMIT`, in sentences of its own and with no countdown; for `DEMO_COPY_LIMIT`
-nothing is built, and a surface that prints a refusal's `detail` prints the API's sentence
-(held for the "Start over" dialog by `StartOverDialog.test.tsx`, `any other refusal: what the
-server said, or the fallback`; read for the other surfaces; no run on the stack met it). One
+nothing is built, and a surface that prints a refusal's `detail` prints the API's sentence.
+(The one kept test that answers a request with that code is the "Start over" dialog's,
+`StartOverDialog.test.tsx`, `any other refusal: what the server said, or the fallback`. It
+shows that the dialog prints a `detail` it has no sentence for, with an answer made for the
+test: what the dialog sends is the claim, a token endpoint, which the budget never counts
+(decision 11). What the surfaces the code can reach would show, every change a copy's owner
+sends, is read from the code; no kept test and no run on the stack met it.) One
 test reads `ErrorCodes.cs`, `BffAuthController.cs`, `SpaHostingExtensions.cs` and
 `DemoRefusalException.cs` as text (`frontend/src/features/demo/demoContract.test.ts`): it fails
 if the two codes, the claim's route or the tag's name stop being what the application spells,
