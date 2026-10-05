@@ -359,8 +359,23 @@ export function ConfirmDialog({
     }
   };
 
+  /*
+    CLOSED, THE DIALOG TAKES NO PRESS.
+
+    It stays in the page when it closes, and it stays drawn while it fades: the closed overlay
+    keeps `visibility` in its transition, which is what lets it fade at all. For that long its
+    buttons are on screen and enabled. A press that lands on one then is a press on a dialog that
+    has already answered, and the commonest one is the second press of a double click on the
+    confirm: the answer to the first has closed the dialog, the button is still under the
+    pointer, and the confirm would run twice. So would Enter, while the confirm still holds
+    focus. Each handler below asks whether the dialog is open before it does anything.
+  */
+  const whileOpen = (act: () => void) => () => {
+    if (isOpen) act();
+  };
+
   const handleOverlayClick = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget && !isLoading) {
+    if (isOpen && e.target === e.currentTarget && !isLoading) {
       onClose();
     }
   };
@@ -394,7 +409,7 @@ export function ConfirmDialog({
           </div>
           <button
             className={styles.closeButton}
-            onClick={onClose}
+            onClick={whileOpen(onClose)}
             aria-label="Close"
             type="button"
             disabled={isLoading}
@@ -423,7 +438,7 @@ export function ConfirmDialog({
         <div className={styles.footer}>
           <Button
             className={mergeClasses(styles.button, styles.cancelButton)}
-            onClick={onClose}
+            onClick={whileOpen(onClose)}
             disabled={isLoading}
           >
             {cancelText}
@@ -433,7 +448,7 @@ export function ConfirmDialog({
               styles.button,
               variant === 'danger' ? styles.confirmButtonDanger : styles.confirmButtonDefault,
             )}
-            onClick={onConfirm}
+            onClick={whileOpen(onConfirm)}
             disabled={isLoading}
           >
             {isLoading ? 'Loading...' : confirmText}

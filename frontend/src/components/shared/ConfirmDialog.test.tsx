@@ -439,6 +439,59 @@ describe('ConfirmDialog', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it('closed, it takes no press: not on its buttons, not on its scrim, not from the keyboard', async () => {
+    /*
+      Closed, the dialog is still in the page, and still drawn for as long as it fades: the closed
+      overlay keeps `visibility` in its transition (the test of the transitions above holds
+      that). A press that lands on it then is a press on a dialog that has already answered. The
+      second press of a double click on its confirm is one: the answer to the first has closed
+      the dialog, and the button is under the pointer, enabled, until the fade ends.
+
+      jsdom runs no transition and gives a press to a hidden element, so here the closed dialog
+      can be pressed for good, which is the fade made as long as the test needs.
+    */
+    const user = userEvent.setup();
+    const { onConfirm, onClose, update } = renderOpen();
+    const presses = () => ({
+      confirmed: onConfirm.mock.calls.length,
+      closed: onClose.mock.calls.length,
+    });
+    // Closed, it is hidden from the accessibility tree, where its controls have no name to be
+    // asked by: they are found in the DOM, by the label or the words each carries.
+    const closed = (name: string) =>
+      Array.from(document.querySelectorAll('[role="alertdialog"] button')).find(
+        (button) => (button.getAttribute('aria-label') ?? button.textContent) === name,
+      ) as HTMLButtonElement;
+    const scrim = () => document.querySelector('[role="alertdialog"]')?.parentElement as Element;
+
+    update({ isOpen: false });
+    await user.click(closed('Delete'));
+    await user.click(closed('Cancel'));
+    await user.click(closed('Close'));
+    await user.click(scrim());
+    // And the key that presses a button: the confirm can still hold focus while it fades.
+    closed('Delete').focus();
+    const focusWasOnTheConfirm = document.activeElement === closed('Delete');
+    await user.keyboard('{Enter}');
+    const whileClosed = presses();
+
+    // The same presses on the same elements once it is open again, so the zeros above are not
+    // presses that never arrived.
+    update({ isOpen: true });
+    await user.click(confirmButton());
+    await user.click(cancelButton());
+    await user.click(closeButton());
+    await user.click(scrim());
+    confirmButton().focus();
+    await user.keyboard('{Enter}');
+
+    expect({ focusWasOnTheConfirm, whileClosed, openAgain: presses() }).toStrictEqual({
+      focusWasOnTheConfirm: true,
+      whileClosed: { confirmed: 0, closed: 0 },
+      openAgain: { confirmed: 2, closed: 3 },
+    });
+  });
+
   it('shows what it is handed under its message, outside the alert and the description', () => {
     renderOpen({
       errorText: 'That could not be done.',
