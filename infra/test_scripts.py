@@ -353,6 +353,7 @@ class SecretsScriptTests(ScriptCase):
         self.assertEqual(sorted(self.parameters()), ['deployApp', 'entraAdminLogin', 'entraAdminObjectId', 'keepLogs'])
 
     def test_no_database_password_is_generated_read_or_written(self):
+        # CONTROL: green before this change. The eighth generated value joins the exception below.
         for state in ('empty', 'deployed'):
             with self.subTest(state=state):
                 result = self.secrets('-Action', 'New', '-DeployApp', *(['-ImageTag', TAG] if state == 'empty' else []),
@@ -646,8 +647,9 @@ class SecretsScriptTests(ScriptCase):
         self.assertNotIn('generated', result.stderr)
 
     def test_a_deployed_app_missing_a_key_stops_the_run(self):
+        # CONTROL: green before this change, which lets one secret, the eighth, be new for a deployed
+        # app. This is one of the seven: it is refused whether the app's demo is on or off.
         result = self.secrets('-Action', 'New', '-DeployApp', state='key-missing')
-        # One of the seven: it is refused whether the app's demo is on or off.
         self.assertIn('securityPinPepper could not be read from the deployed resource. Nothing was written.',
                       self.said(result))
         self.assertNotEqual(result.returncode, 0)
@@ -1604,6 +1606,7 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(self.conditions("[parameters('deployApp')]"), sorted(BEHIND_DEPLOY_APP))
 
     def test_the_app_is_named_by_a_plain_value_and_no_resource_id_reads_a_secret(self):
+        # CONTROL: green before this change. The walk below covers the eighth secure parameter too.
         # A what-if works out no expression that reads a secure parameter. On 2026-10-03 the app's
         # name went through one, and the what-if listed the app and the role assignment on it as
         # Unsupported (README.md, "Measured on Azure"). What makes a resource's ID: its name,
