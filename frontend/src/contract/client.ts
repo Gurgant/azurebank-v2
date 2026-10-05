@@ -95,8 +95,8 @@ export async function call(
  * auth.contract.test.ts runs LAST without signing in again.
  *
  * `verify-pin` is NOT under the policy: `VerifyPin` carries no `[EnableRateLimiting]`, and twelve
- * calls in a row with a dead cookie answered 401 every time on 2026-09-03, never 429 (the run is
- * in the work log's plan for item 232, `measure-2026-09-03.txt`). Short of the 300/min global
+ * calls in a row with a dead cookie answered 401 every time on 2026-09-03, never 429 (one
+ * measured run). Short of the 300/min global
  * backstop, the 429s these routes do emit are the API's lockouts relayed by the BFF — PIN_LOCKED
  * on verify-pin (ADR-0010), ACCOUNT_LOCKED on login (ADR-0012) — so `elevate()` keeps the wrapper
  * and the message names the cause by errorCode rather than blaming the limiter for a locked

@@ -8,8 +8,7 @@ import { mockState, MOCK_PIN, seedMockSession } from './state';
  *
  * THE ORDER INVERTED ON 2026-09-21 (ADR-0056), and it used to read "PIN before funds". It is now
  * FUNDS before the authorisation, and there is no PIN on this endpoint at all — the PIN moved to
- * the mint. Measured against the running API that day, one request each
- * (`evidence-withdraw-after-2026-09-21.txt` in the working-state repo):
+ * the mint. Measured against the running API that day, one request each:
  *
  *   withdraw 5000 over a 100 balance, NO authorisation  -> 422 INSUFFICIENT_FUNDS
  *   withdraw 10, NO authorisation                       -> 401 AUTHORIZATION_REQUIRED

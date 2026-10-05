@@ -38,7 +38,7 @@ afterEach(() => {
  * presents it in the header. Where a case pins the MOCK (the guards, M0, the happy path) the real
  * handlers answer; where it pins the DIALOG's own branch (INVALID_PIN, PIN_LOCKED, EXPIRED,
  * NETWORK, ACCOUNT_NOT_FOUND) a `server.use` override does, and the test's comment quotes the
- * measured row of `measure-after-main-19742ff-2026-09-06.txt` (2026-09-06T19:16Z, main 19742ff)
+ * measured row of the re-measurement on main (2026-09-06T19:16Z, main 19742ff)
  * the branch exists for.
  */
 
