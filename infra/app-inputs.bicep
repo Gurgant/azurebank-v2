@@ -48,7 +48,9 @@ param auditAnchorKey string
 param securityPinPepper string
 
 // The demo's client key. With the demo on the API does not start on fewer than 32 characters
-// of it, so a shorter one is refused here, before a revision is made that could not start.
+// of it, so a shorter one is expected to be refused here, before a revision is made that could
+// not start. Expected, not seen: the tests read the length from the compiled check
+// (infra/test_scripts.py), and no engine has been seen refusing a shorter key.
 @secure()
 @minLength(32)
 param demoClientKeySecret string
