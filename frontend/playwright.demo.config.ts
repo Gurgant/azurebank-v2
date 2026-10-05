@@ -63,7 +63,8 @@ import { defineConfig, devices } from '@playwright/test';
  *     Playwright looks at the page (`e2e-demo/demoRun.ts`);
  *   - the report of each scan, green or red, which quotes the markup of what it found. So the
  *     scan of the dashboard with the details open asks for a report with no markup
- *     (`e2e/axeScan.ts`), and the run's first test holds that the scan honours that.
+ *     (`e2e/axeScan.ts`), and a test of the run, made before anything is claimed, holds that
+ *     the scan honours that.
  *
  * WHAT THAT COSTS. A red run leaves the `list` reporter's lines, among them one line for each
  * status, path and header a step observed (`note` in `e2e-demo/demoRun.ts`, which also attaches

@@ -314,8 +314,12 @@ export function ConfirmDialog({
 
     The element declares `role="alertdialog"` and `aria-modal="true"` — a promise that the rest of
     the page is unreachable — and the effect above only ever moved focus in ONCE. Nothing watched
-    Tab, so focus walked straight out into the page behind, which for this dialog is the delete
-    confirmation or one of the two transfer confirmations: a money surface with live controls.
+    Tab, so focus walked straight out into the page behind, which for this dialog is a transfer
+    page with a send's key live, or the demo's sign-in page or dashboard: live controls each
+    time, and on a transfer page a money surface. (Until 2026-10-05 this said the delete
+    confirmation or one of the two transfer confirmations. Closing an account has a dialog of
+    its own, src/components/dialogs/DeleteAccountDialog.tsx, and what the two transfer pages
+    open is their leave prompt.)
 
     Every other dialog in the app is a Fluent `Dialog` and gets this from tabster. This one is
     hand-rolled — deliberately, for the scrim and safe-area behaviour documented in the styles — so

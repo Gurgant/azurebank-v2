@@ -177,10 +177,10 @@ export const sessionMiddleware: Middleware = (middlewareApi) => (next) => (actio
     drops nothing, and a sign-in invalidates the `Session` tag only. The accounts of the copy
     before would still be in the cache when the owner of the next asks for theirs.
 
-    Off the demo a sign-in drops nothing, exactly as before this branch existed. A deployment with
-    the demo off has to behave as it did, down to the requests it makes, and what a sign-out
-    leaves in the cache there is not this branch's to change. src/features/demo/claim.test.ts
-    holds both: the cache gone after a sign-in in the demo, and still there after one off it.
+    Off the demo a sign-in drops nothing, as it never has. A deployment with the demo off has to
+    behave as it did before there was a demo, down to the requests it makes, and what a sign-out
+    leaves in the cache there is left as it is. src/features/demo/claim.test.ts holds both: the
+    cache gone after a sign-in in the demo, and still there after one off it.
   */
   if (isFulfilled(action) && isActionOf(action, 'login') && isDemoMode()) {
     middlewareApi.dispatch(apiSlice.util.resetApiState());
