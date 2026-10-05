@@ -764,6 +764,8 @@ The idempotent endpoints refuse a body over 32 KB from its `Content-Length`, bef
 (ADR-0009: an oversized body is never buffered or hashed). The refusal went out as a keep-alive 413
 with the body still unread; Kestrel then drained it to keep the connection, hit the endpoint's 32 KB
 `MaxRequestBodySize` (applied from `[RequestSizeLimit]` by routing) and aborted the connection.
+*(Since 2026-10-05 the four idempotent endpoints declare the limit with
+`[EndpointRequestSizeLimit]`; routing applies it the same way.)*
 Through the BFF that is three different failures, all measured on 2026-09-24 with Kestrel and YARP
 logging at Debug: YARP, still sending the body, gets the abort and answers **502**; or it aborts the
 client's connection as well, and the client sees `ECONNRESET`; or it had finished, pooled the
