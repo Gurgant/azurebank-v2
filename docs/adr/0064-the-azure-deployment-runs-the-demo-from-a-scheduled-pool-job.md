@@ -248,6 +248,13 @@ demo off.
   what the new secrets mean for the rows already in the database is not designed.
 - **A template run's revision is checked by hand.** Nothing runs `--check` by itself: the
   runbook's steps do.
+- **A run of the template and a deployment must not overlap, and no code keeps them apart.** A
+  deployment sends the app the template it read at its start. A run of the template that ends in
+  between is expected to be undone on the app, the demo's flag with it, while the pool job that
+  run created stays on its schedule: the harmful state of the Context, reached with a deployment
+  that ends green. The runbook has the rule and the read that comes before a run of the template
+  (`infra/README.md`, "Deploy a commit", "One deployment at a time"). Read in `deploy.py`; not
+  provoked on Azure.
 - **The offline tests read more than this folder**: eight source files of the backend and two
   runbooks, as text.
 - **The sentences of the earlier records about what Azure holds stay as they are.** "No job runs

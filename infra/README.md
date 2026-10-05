@@ -1125,7 +1125,9 @@ nothing of a terminal. On 2026-10-03 the two overlapped for about 50 s, not on p
 ready when the workflow's second run read the app, with a latest revision that was not yet the
 latest ready one, and went on. Both deployed the same images and both ended well; afterwards one
 revision was active, at 100 %, and both containers and the job ran those images. It was not
-tried with different images.
+tried with different images. Since 2026-10-05 this page counts a run of the template as a third
+writer that must not overlap either: [Deploy a commit](#deploy-a-commit), "One deployment at a
+time".
 
 #### 18. The road back, once (operator, **writes**)
 
@@ -1413,6 +1415,8 @@ Its first note is the UTC time of the job's next run, which must be more than 60
 Only if both `git` commands of step 24 exited 0.
 
 ```powershell
+# First: no deployment may be queued, waiting or running (Deploy a commit, "One deployment at a time").
+gh run list --workflow deploy.yml --limit 5 --json status,displayTitle,createdAt --repo Gurgant/azurebank-v2
 try {
     ./infra/secrets.ps1 -Action New -DeployApp -DemoOn
     Invoke-Template 'demo-on'
@@ -1953,6 +1957,36 @@ On 2026-10-03 one of each overlapped for about 50 s, not on purpose, with the sa
 ended well, and afterwards one revision was active (step 17). It was not tried with different
 images. Do not run one while the other runs.
 
+**A run of the template is a third writer of the app, and nothing holds it back either.** Until
+2026-10-05 this section named two writers. `deploy.py` sends the app the template it read at its
+start: at its move, after the migration, and once more if it puts the app back. A run of the
+template that ended in between is expected to be undone on the app: its settings, the demo's
+flag among them, go back to what the script read, while what that run created beside the app
+stays. After step 25 that is the pool job on its schedule beside an app whose flags are off
+again, the state [Turning the demo back](#turning-the-demo-back) forbids. And the deployment
+ends green: its smoke test asks for the demo it read at its start. No command of this folder
+shows it afterwards, since with the flags off neither a deployment nor `--check` asks whether a
+pool job exists; the job list of step 1 does. The other way round it is the deployment that is
+undone: `secrets.ps1` writes the tag the app ran when the script read it, so a run of the
+template that began before a deployment moved the images is expected to put the earlier tag back
+on the app and on each job, with no migration and no smoke test.
+
+So no run of the template with the app starts while a `deploy` run of the workflow is queued,
+waiting for approval or in progress, or while `deploy.py` runs in a terminal; and no deployment
+is dispatched, approved or started between `secrets.ps1 -Action New` and the `--check` that
+follows the run of the template. The read that comes before such a run:
+
+```powershell
+gh run list --workflow deploy.yml --limit 5 --json status,displayTitle,createdAt --repo Gurgant/azurebank-v2
+```
+
+Every run it lists must read `completed`. `queued`, `waiting`, `requested`, `pending` and
+`in_progress` are a run that has not ended: wait for it, or cancel it before it is approved.
+This is a rule for whoever types, not a guard: the script does not read the app again before it
+sends its template. It is read in `deploy.py` (`image_patch`, `put_back`) and in `secrets.ps1`,
+and none of it has been provoked on Azure. The command's flags and fields are the ones
+`gh run list --help` names (gh 2.97.0); it has not been run for this page.
+
 ## Reading the logs
 
 From a terminal where the owner has run `az login`, with the two variables of step 16 set:
@@ -2135,7 +2169,8 @@ $environment = az containerapp env show --name azurebank-env --resource-group $g
 az monitor diagnostic-settings delete --name to-azurebank-logs --resource $environment
 az monitor metrics alert delete --name azurebank-log-volume --resource-group $group
 
-# 2. The environment sends its logs nowhere. Add -DeployApp if the app exists.
+# 2. The environment sends its logs nowhere. Add -DeployApp if the app exists, and then read
+#    first that no deployment is queued, waiting or running (Deploy a commit, "One deployment at a time").
 try {
     ./infra/secrets.ps1 -Action New -LogsOff
     Invoke-Template 'logs-off'
@@ -2379,6 +2414,8 @@ to), the steps are these, in this order. They have not been rehearsed.
    on and no such read was kept, pass it too: with it registration stays closed.
 
    ```powershell
+   # First: no deployment may be queued, waiting or running (Deploy a commit, "One deployment at a time").
+   gh run list --workflow deploy.yml --limit 5 --json status,displayTitle,createdAt --repo Gurgant/azurebank-v2
    try {
        ./infra/secrets.ps1 -Action New -DeployApp -ImageTag '<a known commit>'            # no run was ever listed
        # ./infra/secrets.ps1 -Action New -DeployApp -ImageTag '<a known commit>' -DemoOn  # one was, or no read was kept
@@ -2579,6 +2616,8 @@ environment does with its logs now and whether its two containers say the demo i
 run leaves all five alone (until 2026-10-05: seven secrets, and four things):
 
 ```powershell
+# First: no deployment may be queued, waiting or running (Deploy a commit, "One deployment at a time").
+gh run list --workflow deploy.yml --limit 5 --json status,displayTitle,createdAt --repo Gurgant/azurebank-v2
 try {
     ./infra/secrets.ps1 -Action New -DeployApp
     Invoke-Template 'change'
@@ -2671,6 +2710,8 @@ claimed copy signs in past its time.
 3. On the owner's word, one run of the template with the switch off:
 
    ```powershell
+   # First: no deployment may be queued, waiting or running (Deploy a commit, "One deployment at a time").
+   gh run list --workflow deploy.yml --limit 5 --json status,displayTitle,createdAt --repo Gurgant/azurebank-v2
    try {
        ./infra/secrets.ps1 -Action New -DeployApp
        Invoke-Template 'demo-off' @('demo=false')
@@ -3459,6 +3500,7 @@ against stand-ins and invented answers, and steps 22 to 33 are where each line w
 | Whether the pool job's seconds count against the free amounts on this offer | the cost by meter, 48 hours after step 26 |
 | A recovery after a theft that keeps the database: not designed ([If something was stolen](#if-something-was-stolen)) | the day it is needed |
 | An app that reports an ingress and no host name; an output of the CLI that is not JSON, or that the terminal's encoding cannot decode | not provoked |
+| A run of the template that ends while a deployment is under way, and the reverse: the deployment's own request is expected to put the app's settings back to what it read at its start, the demo's flag among them, and a run of the template to put back the tag it read. Read in `deploy.py` and `secrets.ps1`; the rule that keeps the two apart is under [Deploy a commit](#deploy-a-commit), and no code holds it | not provoked |
 | That a workflow run which is cancelled reaches `deploy.py` as an interrupt, and so ends in its one sentence with nothing put back. Seen offline for an interrupt raised inside the script: exit code 1, nothing on standard output, the sentence on standard error | not provoked |
 | That a read of a pool run's exit code can be refused or fail after the run was seen over, and how Azure words it: the sentence for it is tested against an invented refusal | not provoked |
 | The repair of two containers that disagree about the demo; every road of [Turning the demo back](#turning-the-demo-back) | the day they are needed |
