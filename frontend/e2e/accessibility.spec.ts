@@ -11,6 +11,8 @@ import { scan } from './axeScan';
  * deposit dialog, the Change PIN dialog, and /accounts while its read is slow (light, dark and
  * 375 px wide): fourteen scans, with the WCAG 2.0 A/AA, 2.1 AA and 2.2 AA tags. The dialog scans
  * are scoped to the dialog, so what the page behind it fails is not reported as the dialog's.
+ * A fifteenth scan of this run is not in this file: the app's one hand-rolled dialog, open, in
+ * `confirmDialog.spec.ts`, where the run has it open.
  * Each scan writes its findings to `test-results/axe/<scan>.json` (a CI artifact)
  * and attaches them to the Playwright report, then FAILS on any serious or critical violation
  * outside `REPORT_ONLY_RULES`. Until 2026-09-17 nothing here failed on a violation: the sweep was

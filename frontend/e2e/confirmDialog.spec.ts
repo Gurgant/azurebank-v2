@@ -1,4 +1,5 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+import { scan } from './axeScan';
 import { USER } from './fixtures';
 import { focusOf } from './focusOf';
 
@@ -22,7 +23,38 @@ import { focusOf } from './focusOf';
  * fails its connection, so NO MONEY MOVES and the seeded account is left as it was. The page keeps
  * the key, says it could not reach the server and offers "Check again". The authorisation is
  * minted for real, with the right PIN, and expires unused.
+ *
+ * The open dialog is also scanned here, through the gate of the accessibility sweep
+ * (`./axeScan.ts`). This is the one place the default run has it open: the sweep scans /transfer
+ * with the dialog closed, and the demo's run, which scans it open, is made by hand.
  */
+
+/**
+ * The last Tab stop of the document, by its name, and whether the confirm dialog holds it.
+ *
+ * Counted with the dialog's own selector for what takes focus
+ * (`src/components/shared/ConfirmDialog.tsx`), over what is drawn, tabster's own two elements
+ * left out: they are what tabster moves focus to, not stops of the page.
+ */
+function lastTabStopOf(page: Page) {
+  return page.evaluate(() => {
+    const stops = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter(
+      (element) =>
+        !element.matches('[data-tabster-dummy]') &&
+        element.getClientRects().length > 0 &&
+        getComputedStyle(element).visibility !== 'hidden',
+    );
+    const last = stops.at(-1);
+    return {
+      last: last?.getAttribute('aria-label') ?? last?.textContent ?? null,
+      inTheDialog: last?.closest('[role="alertdialog"]') != null,
+    };
+  });
+}
 
 test.describe('the confirm dialog under the keyboard', () => {
   test('the leave prompt of a transfer takes focus when it opens, keeps Tab inside, and gives focus back', async ({
@@ -75,6 +107,12 @@ test.describe('the confirm dialog under the keyboard', () => {
     // dialog, so "Close" is not the document's first Tab stop and Shift+Tab from it is an
     // ordinary wrap. The wrap from a dialog that is first in the document is held by
     // src/components/shared/ConfirmDialog.test.tsx, where a listener stands in for tabster.
+    //
+    // That "Leave anyway" is the document's last stop is held here, and not taken from how the
+    // page is built today. It is what makes the third Tab below a test of the dialog against
+    // tabster. The day this page draws a control after the dialog, that Tab is an ordinary wrap:
+    // it would still pass, and would no longer say anything about the line it is here for.
+    expect(await lastTabStopOf(page)).toEqual({ last: 'Leave anyway', inTheDialog: true });
     await page.keyboard.press('Tab');
     expect(await focusOf(page)).toEqual({ on: 'Stay on this page', inTheDialog: true });
     await page.keyboard.press('Tab');
@@ -82,6 +120,12 @@ test.describe('the confirm dialog under the keyboard', () => {
     await page.keyboard.press('Tab');
     expect(await focusOf(page)).toEqual({ on: 'Close', inTheDialog: true });
     await page.keyboard.press('Shift+Tab');
+    expect(await focusOf(page)).toEqual({ on: 'Leave anyway', inTheDialog: true });
+
+    // Open, and scoped to the dialog: what the page behind it fails is not the dialog's. While
+    // the app holds the browser's Back the address is still the transfer's, which the scan asks
+    // first. The scan leaves focus where it was.
+    await scan(page, 'transfer-leave-prompt', '/transfer', '[role="alertdialog"]');
     expect(await focusOf(page)).toEqual({ on: 'Leave anyway', inTheDialog: true });
 
     // Escape stays: the dialog closes and focus goes back to the control it was on when the
