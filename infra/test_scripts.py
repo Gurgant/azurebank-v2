@@ -1264,9 +1264,11 @@ BEHIND_DEPLOY_APP = ['Microsoft.App/containerApps', 'Microsoft.App/jobs', 'Micro
                      'Microsoft.Authorization/roleAssignments', 'Microsoft.Insights/actionGroups',
                      'Microsoft.Resources/deployments']
 # The module that refuses deployApp=true without these values (app-inputs.bicep), and what it asks
-# of each: a length of exactly 40 for the image tag, at least 1 for the others.
+# of each: a length of exactly 40 for the image tag, at least 32 for the demo's client key (with
+# the demo on the API does not start on a shorter one), at least 1 for the others.
 GUARD = 'azurebank-app-inputs'
-GUARDED = {'imageTag': (40, 40), 'alertEmail': (1, None), **dict.fromkeys(SEVEN, (1, None))}
+GUARDED = {'imageTag': (40, 40), 'alertEmail': (1, None), **dict.fromkeys(SEVEN, (1, None)),
+           CLIENT_KEY: (32, None)}
 # What every snapshot below is evaluated against: none of it is real.
 SNAPSHOT_CONTEXT = ['--subscription-id', '00000000-0000-4000-8000-00000000000a', '--resource-group', 'azurebank-demo',
                     '--location', 'italynorth', '--tenant-id', '00000000-0000-4000-8000-00000000000b']
@@ -1280,8 +1282,19 @@ FOUNDATION = ['Microsoft.App/managedEnvironments', 'Microsoft.Authorization/lock
               'Microsoft.Sql/servers', 'Microsoft.Sql/servers/databases', 'Microsoft.Sql/servers/firewallRules']
 BEHIND_DENY_POLICY = ['Microsoft.Authorization/policyAssignments', 'Microsoft.Resources/deployments']
 BEHIND_KEEP_LOGS = ['Microsoft.Insights/diagnosticSettings', 'Microsoft.OperationalInsights/workspaces']
-SECRETS_OF_THE_APP = ['app-connection', 'audit-anchor-key', 'audit-chain-key', 'idempotency-hash-key', 'jwt-secret',
-                      'pin-pepper', 'service-key', 'stepup-binding-key']
+SECRETS_OF_THE_APP = ['app-connection', 'audit-anchor-key', 'audit-chain-key', 'demo-client-key',
+                      'idempotency-hash-key', 'jwt-secret', 'pin-pepper', 'service-key', 'stepup-binding-key']
+# What each container of the app is told, by name and in the template's order. The bff's list has
+# nothing about forwarded headers: which address it takes for a visitor's is not set in this folder.
+SETTINGS_OF_THE_BFF = ['ASPNETCORE_ENVIRONMENT', 'BackendApi__BaseUrl',
+                       'ReverseProxy__Clusters__backend-api__Destinations__primary__Address',
+                       'ServiceCredential__BffKey', 'Serilog__MinimumLevel__Override__Serilog', 'Demo__Enabled']
+SETTINGS_OF_THE_API = ['ASPNETCORE_ENVIRONMENT', 'ASPNETCORE_URLS', 'ConnectionStrings__DefaultConnection',
+                       'Jwt__Secret', 'Idempotency__HashKey', 'StepUp__BindingKey', 'ServiceCredential__BffKey',
+                       'Audit__ChainKey', 'Audit__AnchorKey', 'Security__PinPepper', 'Demo__Enabled',
+                       'Demo__ClientKeySecret', 'Demo__Claim__MaxPerClientPerDay']
+# One switch, written as text to every container of the app.
+DEMO_FLAG = {'name': 'Demo__Enabled', 'value': "[if(parameters('demo'), 'true', 'false')]"}
 SERVER = "resourceId('Microsoft.Sql/servers', format('azurebank-{0}', uniqueString(resourceGroup().id)))"
 # Everything the Deny policy refuses, as Azure receives it. A rule that is dropped or loosened
 # fails the comparison below; so does a new one, until it is written here too.
@@ -1363,7 +1376,7 @@ def bicep_literal(value):
 # The values of a run with the app, none of them real, and of one without it.
 FOUNDATION_INPUTS = {'entraAdminObjectId': '00000000-0000-4000-8000-000000000001', 'entraAdminLogin': 'owner'}
 APP_INPUTS = {**FOUNDATION_INPUTS, 'deployApp': True, 'imageTag': TAG, 'alertEmail': 'owner',
-              **dict.fromkeys(SEVEN, 'x')}
+              **dict.fromkeys(SECURE, 'x')}
 
 
 def snapshot(folder, values):
@@ -1409,6 +1422,22 @@ class TemplateTests(unittest.TestCase):
         (job,) = [resource for resource in self.of_type(JOB) if resource['name'] == name]
         return job
 
+    def container(self, name):
+        """The app's container of that name."""
+        (app,) = self.of_type(APP)
+        (container,) = [entry for entry in app['properties']['template']['containers'] if entry['name'] == name]
+        return container
+
+    def every_setting(self):
+        """Each (resource, container, name of a setting): every container and init container of
+        every resource the template compiles."""
+        found = []
+        for resource in self.resources:
+            template = resource.get('properties', {}).get('template', {})
+            for container in [*template.get('containers', []), *template.get('initContainers', [])]:
+                found += [(resource['name'], container['name'], entry['name']) for entry in container.get('env', [])]
+        return found
+
     def conditions(self, condition):
         return sorted(resource['type'] for resource in self.resources if resource.get('condition') == condition)
 
@@ -1426,7 +1455,7 @@ class TemplateTests(unittest.TestCase):
         self.assertRegex((HERE / 'deploy.py').read_text(encoding='utf-8'), r"(?m)^APP = 'azurebank'$")
         self.assertRegex((HERE / 'secrets.ps1').read_text(encoding='utf-8'), r"(?m)^\$AppName = 'azurebank'$")
         # Each secure parameter, and each variable that reads one, directly or through another.
-        reads_a_secret = {f"parameters('{name}')" for name in SEVEN}
+        reads_a_secret = {f"parameters('{name}')" for name in SECURE}
         variables = {f"variables('{name}')": json.dumps(value)
                      for name, value in self.main.get('variables', {}).items()}
         while True:
@@ -1453,7 +1482,7 @@ class TemplateTests(unittest.TestCase):
                          GUARDED)
         # Secure inside it as well: a plain parameter of a nested deployment is kept in its history.
         self.assertEqual(sorted(name for name, entry in declared.items() if entry['type'].lower() == 'securestring'),
-                         sorted(SEVEN))
+                         sorted(SECURE))
         self.assertEqual(sorted(name for name, entry in declared.items() if 'defaultValue' in entry), [])
         # It creates nothing and gives nothing back.
         self.assertEqual(guard['properties']['template']['resources'], [])
@@ -1493,9 +1522,10 @@ class TemplateTests(unittest.TestCase):
             self.assertNotIn(APP, [resource['type'] for resource in predicted])
 
     def test_deploy_app_true_is_refused_with_a_tag_that_is_not_40_characters_or_no_address(self):
-        # Offline, as above. The seven secrets cannot be tried this way: like a what-if, this
-        # evaluation works out no secure value. Their checks are read from the compiled template
-        # above, and a local deployment saw each one refuse (README.md, "Checking these files").
+        # Offline, as above. The secrets cannot be tried this way: like a what-if, this evaluation
+        # works out no secure value. Their checks are read from the compiled template above. A
+        # local deployment saw each of the seven refuse (README.md, "Checking these files"); the
+        # demo's client key, which must be 32 characters, has not been seen refused by any engine.
         with tempfile.TemporaryDirectory() as folder:
             copy_templates(folder)
             for name, value, why in (('imageTag', TAG[:39], "greater than or equal to '40'"),
@@ -1676,15 +1706,18 @@ class TemplateTests(unittest.TestCase):
                         if entry['name'] == secret]
             self.assertEqual(value, connection_of(identity), secret)
 
-    def test_seven_parameters_are_secure_and_only_two_must_be_given(self):
+    def test_eight_parameters_are_secure_and_only_two_must_be_given(self):
         parameters = self.main['parameters']
         secure = sorted(name for name, entry in parameters.items() if entry['type'].lower() == 'securestring')
-        self.assertEqual(secure, sorted(SEVEN))
+        self.assertEqual(secure, sorted(SECURE))
         required = sorted(name for name, entry in parameters.items() if 'defaultValue' not in entry)
         self.assertEqual(required, ['entraAdminLogin', 'entraAdminObjectId'])
         self.assertEqual((parameters['replicaTimeout']['minValue'], parameters['replicaTimeout']['maxValue']),
                          (60, 840))
         self.assertIs(parameters['deployApp']['defaultValue'], False)
+        # The demo is a switch of its own, and off unless it is asked for.
+        demo = parameters.get('demo', {})
+        self.assertEqual((demo.get('type'), demo.get('defaultValue')), ('bool', False))
 
     def test_no_output_is_a_secret(self):
         self.assertEqual({name: entry['type'] for name, entry in self.main['outputs'].items()},
@@ -1695,11 +1728,11 @@ class TemplateTests(unittest.TestCase):
     def test_every_secret_reaches_a_container_by_reference_only(self):
         (app,) = self.of_type('Microsoft.App/containerApps')
         job = self.job('azurebank-migrate')
-        self.assertEqual(len(app['properties']['configuration']['secrets']), 8)
+        self.assertEqual(len(app['properties']['configuration']['secrets']), 9)
         self.assertEqual(len(job['properties']['configuration']['secrets']), 1)
         text = json.dumps([app['properties']['template'], job['properties']['template']])
-        self.assertEqual(text.count('"secretRef"'), 10)
-        for name in SEVEN:
+        self.assertEqual(text.count('"secretRef"'), 11)
+        for name in SECURE:
             self.assertNotIn(f"parameters('{name}')", text, f'{name} is a plain value in a container')
 
     def test_only_the_api_container_and_the_job_are_handed_a_connection_string(self):
@@ -1714,6 +1747,48 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual([entry.get('secretRef') for entry in migrate['env']], ['migration-connection'])
         # Nor does either reach a container as a plain value: nothing in a container is read from another resource.
         self.assertNotIn('reference(', json.dumps([app['properties']['template'], job['properties']['template']]))
+
+    def test_the_demo_is_off_unless_asked_and_one_switch_says_it_to_both_containers(self):
+        # Both hosts read the flag: the bff closes registration and marks the page by it, the api
+        # hands out the copies by it. One parameter writes it to both as the same text, so the
+        # template cannot set the two apart.
+        self.assertEqual({name: [entry for entry in self.container(name)['env'] if entry['name'] == 'Demo__Enabled']
+                          for name in ('bff', 'api')}, {'bff': [DEMO_FLAG], 'api': [DEMO_FLAG]})
+        self.assertIs(self.main['parameters']['demo']['defaultValue'], False)
+
+    def test_the_bff_is_handed_the_flag_and_nothing_about_forwarded_headers(self):
+        self.assertEqual([entry['name'] for entry in self.container('bff')['env']], SETTINGS_OF_THE_BFF)
+        # Whether the BFF sees a visitor's own address behind the ingress is not measured yet
+        # (ADR-0063, decision 14): until it is, no container of any resource is told whose
+        # forwarded headers to believe. .NET reads a setting's name whatever its case.
+        about_forwarded_headers = re.compile(r'ForwardedHeaders__|ASPNETCORE_FORWARDEDHEADERS_ENABLED$', re.IGNORECASE)
+        for name in ('ForwardedHeaders__KnownProxies__0', 'ASPNETCORE_FORWARDEDHEADERS_ENABLED'):
+            self.assertRegex(name, about_forwarded_headers)
+        settings = self.every_setting()
+        # What the search walks: the app's two containers and the migrate job's one, at least.
+        self.assertLessEqual({('azurebank', 'bff'), ('azurebank', 'api'), ('azurebank-migrate', 'migrate')},
+                             {(resource, container) for resource, container, _ in settings})
+        self.assertEqual([found for found in settings if about_forwarded_headers.match(found[2])], [])
+
+    def test_the_api_is_handed_the_client_key_by_reference_and_the_cap_as_a_plain_value(self):
+        api = self.container('api')
+        self.assertEqual([entry['name'] for entry in api['env']], SETTINGS_OF_THE_API)
+        # The key a visitor's address is hashed with: a secret of the app, handed to the api alone.
+        (app,) = self.of_type(APP)
+        self.assertIn({'name': 'demo-client-key', 'value': f"[parameters('{CLIENT_KEY}')]"},
+                      app['properties']['configuration']['secrets'])
+        self.assertIn({'name': 'Demo__ClientKeySecret', 'secretRef': 'demo-client-key'}, api['env'])
+        # How many copies one address may claim in a day: one variable, the range's maximum
+        # (ADR-0063, decision 14), written as text.
+        self.assertIn({'name': 'Demo__Claim__MaxPerClientPerDay', 'value': "[variables('demoClaimsPerClient')]"},
+                      api['env'])
+        self.assertEqual(self.main['variables'].get('demoClaimsPerClient'), '1000')
+        # No key id and no earlier pepper on any container of any resource: with neither set, the
+        # one pepper is key 1 wherever it is read (ADR-0062).
+        about_pepper_keys = re.compile(r'Security__PinPepperKeyId$|Security__PreviousPinPeppers__', re.IGNORECASE)
+        for name in ('Security__PinPepperKeyId', 'Security__PreviousPinPeppers__1'):
+            self.assertRegex(name, about_pepper_keys)
+        self.assertEqual([found for found in self.every_setting() if about_pepper_keys.match(found[2])], [])
 
     def test_the_app_keeps_the_shape_the_deploy_script_and_the_policy_expect(self):
         (app,) = self.of_type('Microsoft.App/containerApps')

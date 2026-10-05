@@ -1,5 +1,5 @@
 // What a run with deployApp=true must be given, checked by Azure on the values main.bicep hands
-// over: the full commit SHA of the images, the address the alerts write to, and the seven
+// over: the full commit SHA of the images, the address the alerts write to, and the eight
 // application secrets (infra/secrets.ps1 -DeployApp writes them all). main.bicep deploys this only
 // when deployApp is true, and the app, the job and the action group wait for it. It creates
 // nothing.
@@ -46,3 +46,9 @@ param auditAnchorKey string
 @secure()
 @minLength(1)
 param securityPinPepper string
+
+// The demo's client key. With the demo on the API does not start on fewer than 32 characters
+// of it, so a shorter one is refused here, before a revision is made that could not start.
+@secure()
+@minLength(32)
+param demoClientKeySecret string

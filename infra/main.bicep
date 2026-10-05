@@ -5,6 +5,8 @@ param location string = 'italynorth'
 param imageTag string = ''
 @description('False creates what needs no image: the environment, the log workspace, SQL, the three identities and the deployment role. True adds the app, the migrate job and the two role assignments.')
 param deployApp bool = false
+@description('True turns the public demo on: it is the flag both containers of the app read. infra/secrets.ps1 writes it: what the deployed app does now, or true with -DemoOn.')
+param demo bool = false
 param entraAdminObjectId string
 param entraAdminLogin string
 @description('Seconds a migrate run may take. Kept under 15 minutes.')
@@ -31,7 +33,8 @@ param logDailyCapGb string = '0.05'
 @description('True adds the alert on the log workspace. Left out since 2026-10-03: at step 20 of the runbook its metric had no time series for an hour in which the workspace ingested 446 rows. True is for whoever measures again.')
 param logVolumeAlert bool = false
 
-// The seven values below are needed only when deployApp is true; infra/secrets.ps1 supplies them.
+// The eight values below are needed only when deployApp is true; infra/secrets.ps1 supplies them.
+// The eighth is the demo's: the app holds it whether the demo is on or off, and uses it only when on.
 @secure()
 param jwtSecret string = ''
 @secure()
@@ -46,6 +49,8 @@ param auditChainKey string = ''
 param auditAnchorKey string = ''
 @secure()
 param securityPinPepper string = ''
+@secure()
+param demoClientKeySecret string = ''
 
 // Bicep 0.47.16 has no types for this API version (BCP081): test_scripts.py checks the properties instead.
 #disable-next-line BCP081
@@ -203,7 +208,7 @@ resource migrateIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-
 var appConnection = 'Server=tcp:${sql.properties.fullyQualifiedDomainName},1433;Database=AzureBank;Authentication=Active Directory Managed Identity;User ID=${appIdentity.properties.clientId};Encrypt=True;TrustServerCertificate=False'
 var migrationConnection = 'Server=tcp:${sql.properties.fullyQualifiedDomainName},1433;Database=AzureBank;Authentication=Active Directory Managed Identity;User ID=${migrateIdentity.properties.clientId};Encrypt=True;TrustServerCertificate=False'
 
-// Refuses deployApp=true without the image tag, the alerts' address or one of the seven secrets:
+// Refuses deployApp=true without the image tag, the alerts' address or one of the eight secrets:
 // the checks are the parameters of app-inputs.bicep, and the app, the job and the action group
 // wait for it. The app's name stays a plain value, which a what-if can work out (README.md,
 // "Measured on Azure").
@@ -219,8 +224,14 @@ module appInputs 'app-inputs.bicep' = if (deployApp) {
     auditChainKey: auditChainKey
     auditAnchorKey: auditAnchorKey
     securityPinPepper: securityPinPepper
+    demoClientKeySecret: demoClientKeySecret
   }
 }
+
+// How many copies of the demo one address may claim in a day, as text for a container's setting.
+// 1,000 is the range's maximum: until what the BFF sees as a visitor's address behind the ingress
+// has been measured, the default of 10 could be ten copies a day for everybody (ADR-0063, decision 14).
+var demoClaimsPerClient = '1000'
 
 resource app 'Microsoft.App/containerApps@2025-01-01' = if (deployApp) {
   name: 'azurebank'
@@ -251,6 +262,7 @@ resource app 'Microsoft.App/containerApps@2025-01-01' = if (deployApp) {
         { name: 'audit-chain-key', value: auditChainKey }
         { name: 'audit-anchor-key', value: auditAnchorKey }
         { name: 'pin-pepper', value: securityPinPepper }
+        { name: 'demo-client-key', value: demoClientKeySecret }
       ]
     }
     template: {
@@ -271,6 +283,9 @@ resource app 'Microsoft.App/containerApps@2025-01-01' = if (deployApp) {
             // is not kept: it is most of what a day writes and the cheapest way to fill the log's
             // daily cap. Every warning stays, and so does the request line of a 5xx (an Error).
             { name: 'Serilog__MinimumLevel__Override__Serilog', value: 'Warning' }
+            // The demo's switch, the same text on both containers. With it on, this one closes
+            // registration and marks the page, and the api hands out the copies (ADR-0063).
+            { name: 'Demo__Enabled', value: demo ? 'true' : 'false' }
           ]
           probes: [for probe in [
             { type: 'Startup', path: '/health/live', timeout: 1 }
@@ -308,6 +323,12 @@ resource app 'Microsoft.App/containerApps@2025-01-01' = if (deployApp) {
             { name: 'Audit__ChainKey', secretRef: 'audit-chain-key' }
             { name: 'Audit__AnchorKey', secretRef: 'audit-anchor-key' }
             { name: 'Security__PinPepper', secretRef: 'pin-pepper' }
+            { name: 'Demo__Enabled', value: demo ? 'true' : 'false' }
+            // The key a visitor's address is hashed with before a claimed copy's row stores it.
+            // With the demo off the api uses neither it nor the cap below; the cap's range is
+            // checked when the api starts, on or off.
+            { name: 'Demo__ClientKeySecret', secretRef: 'demo-client-key' }
+            { name: 'Demo__Claim__MaxPerClientPerDay', value: demoClaimsPerClient }
           ]
         }
       ]
