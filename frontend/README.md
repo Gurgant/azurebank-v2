@@ -22,8 +22,8 @@ PIN `123456`. The mock's state resets on every page reload.
 Either loop shows the public demo's screens when it is started with `AZUREBANK_DEMO=true` in its
 environment: the dev server then puts the demo's tag on the page, and under `dev:mock` the mock
 hands out demo copies and no longer signs its own user in.
-[`CONVENTIONS.md`](CONVENTIONS.md#demo-mode) has the tag, the one key the browser keeps and how a
-test turns the demo on.
+[`CONVENTIONS.md`](CONVENTIONS.md#demo-mode) has the tag, the key the demo keeps in the browser and
+how a test turns the demo on.
 
 ## Check it
 

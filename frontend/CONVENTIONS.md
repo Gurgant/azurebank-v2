@@ -48,7 +48,9 @@ wait in `retryAfterSeconds`: the countdowns of the sign-in page belong to the lo
 limiter, by their codes (`src/pages/LoginPage.tsx`). A fourth code, `DEMO_COPY_LIMIT`, can answer
 any change made in a copy that is past its budget of changes (ADR-0063, decision 11). Nothing is
 built for it: each surface shows the fallback it has, which where that prints the problem's
-`detail` is the API's own sentence (read from the code; no test and no run of the app met it).
+`detail` is the API's own sentence (held for the "Start over" dialog by
+`src/features/demo/StartOverDialog.test.tsx`, `any other refusal: what the server said, or the
+fallback`; read from the code for every other surface; no run on a stack met it).
 _(Until 2026-10-05 this section counted three places and knew no 429 without a countdown.)_
 
 **One place does compare a server instant with the browser's clock: a kept demo copy's end, on
@@ -154,12 +156,14 @@ has no `VITE_` prefix). `isDemoMode()` (`src/features/demo/demoMode.ts`) reads t
 it is asked, never once when a module loads: ask it in the component or the handler that needs
 the answer. The app has no second place to learn the mode from.
 
-**One key in `localStorage`, `azurebank.demoCopy`, and only a claimed copy's sign-in details go
-under it:** `{ v: 1, email, password, pin, contacts, expiresAt }`. It is written in one place,
-where a claim's answer arrives (`src/features/auth/sessionMiddleware.ts`), and read through
-`src/features/demo/demoCopyStorage.ts` alone. Nothing else is stored there or beside it: no
-token, no session identifier, nothing a visitor typed. `SECURITY.md`'s storage invariant names
-this key as its one exception. What comes back from the key is input: it is parsed with the
+**The demo keeps one key in `localStorage`, `azurebank.demoCopy`, and only a claimed copy's
+sign-in details go under it:** `{ v: 1, email, password, pin, contacts, expiresAt }`. It is
+written in one place, where a claim's answer arrives (`src/features/auth/sessionMiddleware.ts`),
+and read through `src/features/demo/demoCopyStorage.ts` alone. Nothing else of the demo's is
+stored there or beside it: no token, no session identifier, nothing a visitor typed. (The app's
+other key, `azurebank.theme`, holds the theme preference, on the demo or off it:
+`src/theme/themePreference.ts`.) `SECURITY.md`'s storage invariant names this key as its
+exception in demo mode. What comes back from the key is input: it is parsed with the
 definition the claim's answer is checked by, and a string that fails is removed, not repaired.
 The key is read at each ask, so never copy the snapshot into a state or a module variable: a copy
 held that way is how a second tab would go on holding a password the first was told to forget.
@@ -228,17 +232,18 @@ and the BFF on `:5000` via `dotnet run --project backend/src/AzureBank.Bff --lau
 ⚠️ **The launch profile is not optional, and an earlier version of this note implied it was.** It is
 the only thing setting `ASPNETCORE_ENVIRONMENT=Development`, and two things hang off that: the dev
 certificate is trusted on the BFF→API hop, and the session cookie keeps its plain name. Outside
-Development `Program.cs` prefixes it `__Host-` and marks it `Secure` — so a run without the
-profile fails on TLS, and that failure does not name the profile. _(Until 2026-10-05 this said
-a `__Host-` cookie "cannot be set over `http://localhost:5000` at all", and that such a run
-therefore fails on login as well. Measured that day, on the Production images of `compose.yaml`
-with `compose.demo.yaml`, in headless Chromium 151.0.7922.34: the browser kept
-`__Host-AzureBank.Session` (`Secure`, `HttpOnly`, `SameSite=Strict`, host `localhost`) from a
-claim made on `http://localhost:5000` and sent it back, and Playwright's own request context
-sent it to `localhost` too. So the cookie's name is not what stops a browser there. What the
-two suites that run in node, which carry the cookie themselves, meet at sign-in outside
-Development was not measured.)_ No cluster override is needed locally: `appsettings.json`
-already points cluster
+Development `Program.cs` prefixes it `__Host-`, and the cookie is written `Secure`
+(`BuildSessionCookieOptions` in the BFF's `BffAuthController.cs`). A run without the profile
+fails on TLS, on that BFF→API hop, and the failure does not name the profile. _(Until
+2026-10-05 this said a `__Host-` cookie "cannot be set over `http://localhost:5000` at all",
+and that such a run therefore fails on login as well. Measured that day, on the Production
+images of `compose.yaml` with `compose.demo.yaml`, in headless Chromium 151.0.7922.34: the
+browser kept `__Host-AzureBank.Session` (`Secure`, `HttpOnly`, `SameSite=Strict`, host
+`localhost`) from a claim made on `http://localhost:5000` and sent it back, and Playwright's
+own request context sent it to `localhost` too. So the cookie's name is not what stops a
+browser there. What the two suites that run in node, which carry the cookie themselves, meet
+at sign-in outside Development was not measured.)_ No cluster override is needed locally:
+`appsettings.json` already points cluster
 `backend-api` at `https://localhost:7215`. The `--ReverseProxy:Clusters:backend-api:…` arguments you
 will see in `ci.yml` are CI-only, because CI moves the API to `:5068`; they are passed as
 command-line config rather than environment variables because the cluster id `backend-api` contains
