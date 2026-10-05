@@ -2778,6 +2778,14 @@ def beside_another_pool_run(name, state, timeout=600):
             '(infra/README.md, "When something fails").')
 
 
+def read_failed(why, name='execution pool-run'):
+    """The whole sentence of a start by hand whose run was started and then could not be read."""
+    reads = ' How it ends is read with `python infra/deploy.py --pool-log pool-run`.'
+    return (f"The pool run was started ({name}), and a read of the job's executions failed while its end was "
+            f'waited for: {why}. It may still be in progress, and it was not started again.'
+            + (reads if name == 'execution pool-run' else ''))
+
+
 def not_ended(name='pool-run', waited=720):
     """The whole sentence of a start by hand whose run was not seen ending."""
     reads = 'How it ends is read with `python infra/deploy.py --pool-log pool-run`. ' if name == 'pool-run' else ''
@@ -2821,6 +2829,7 @@ class PoolRunTests(DeployCase):
         self.clear()
         self.azure.calls.clear()
         self.azure.pool_runs = list(runs)
+        self.azure.pool_to_come = []
         self.azure.pool_outcome = list(outcome)
 
     def test_it_starts_the_job_once_and_waits_for_its_own_execution(self):
@@ -3112,6 +3121,49 @@ class PoolRunTests(DeployCase):
                     '(infra/README.md, "When something fails").'))
                 self.assertEqual(self.azure.writes(), [START])
                 self.assertEqual(self.printed(), '')
+
+    def test_a_read_that_fails_while_the_run_is_waited_for_says_that_the_run_goes_on(self):
+        # The start was made. A read of the job's executions that Azure then refuses, or does not
+        # answer, ends the wait: Azure's words alone would not say that a run was started, that it
+        # may still be in progress, nor that nothing was started again.
+        reads = []
+
+        def the_second_read(method, resource_id, body):
+            if (method, resource_id) == RUNS:
+                reads.append(resource_id)
+            return (method, resource_id) == RUNS and len(reads) == 2
+
+        self.azure.refuse = the_second_read
+        for refusal in ('Forbidden: AuthorizationFailed.',
+                        'The Azure CLI gave no answer in 180 s (GET /jobs/azurebank-pool/executions).'):
+            for run, name in (('pool-run', 'execution pool-run'), (STRANGE, 'execution whose name is withheld')):
+                with self.subTest(refusal=refusal, name=name):
+                    self.again(*ends_as(pool_finished(run)))
+                    reads.clear()
+                    self.azure.refusal = refusal
+                    with self.assertRaises(RuntimeError) as raised:
+                        self.pool_run()
+                    self.assertIs(type(raised.exception), RuntimeError,
+                                  'the run says what it means, in its own words')
+                    self.assertEqual(str(raised.exception), read_failed(refusal.rstrip('.'), name))
+                    for unwanted in ('\n', '::', 'add-mask'):
+                        self.assertNotIn(unwanted, str(raised.exception))
+                    self.assertEqual(self.azure.writes(), [START], 'nothing is started a second time')
+                    self.assertEqual(self.said(), [f'Pool run {name} started.'])
+        # A start that names no run looks for it among the executions: a read that fails there is
+        # a request that failed before the run was known, and is said so.
+        self.again(*ends_as(pool_finished()))
+        reads.clear()
+        self.azure.start_names_the_run = False
+        self.azure.refusal = 'Forbidden: AuthorizationFailed.'
+        with self.assertRaises(RuntimeError) as raised:
+            self.pool_run()
+        self.assertIs(type(raised.exception), RuntimeError)
+        self.assertTrue(str(raised.exception).startswith(
+            'The job azurebank-pool was asked to start once, and Azure refused or failed a request before the '
+            'run it made was known: Forbidden: AuthorizationFailed. The start is not sent again.'),
+            str(raised.exception))
+        self.assertEqual(self.azure.writes(), [START])
 
     def test_a_start_that_names_no_run_is_found_by_what_is_new_and_is_not_sent_again(self):
         self.azure.start_names_the_run = False

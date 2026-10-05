@@ -1392,6 +1392,8 @@ def pool_run(subscription, resource_group, in_actions=False):
     its executions, read once, and a refusal while one is or may still be in progress; the one
     start; that execution, read until it has ended, for the job's timeout and two minutes; its
     verdict, read with the version that carries the exit code; and the end, by that code alone.
+    A read that fails once the start was made ends the wait in a sentence that says the run was
+    started and may go on.
 
     It reads nothing of the app and does not ask whether the demo is on. The job's container
     carries the demo's flag as the literal true (infra/main.bicep), so a run is expected to build
@@ -1428,11 +1430,20 @@ def pool_run(subscription, resource_group, in_actions=False):
     # As for a migration, the name and each status are printed only in the shape expected.
     label = told_name(name)
     say(f'Pool run {label} started.')
+    how_it_ends = f' How it ends is read with `python infra/deploy.py --pool-log {name}`.' if named(name) else ''
     waited = timeout + 120
     deadline = time.monotonic() + waited
     seen = object()
     while time.monotonic() < deadline:
-        match = [e for e in executions(job_id) if e['name'] == name]
+        try:
+            match = [e for e in executions(job_id) if e['name'] == name]
+        except AzError as error:
+            # The start was made. Azure's words alone would not say so, nor that the run may go
+            # on: a second start is refused for as long as it is listed as running.
+            raise RuntimeError(f"The pool run was started ({label}), and a read of the job's "
+                               f"executions failed while its end was waited for: {str(error).rstrip('.')}. "
+                               'It may still be in progress, and it was not started again.'
+                               f'{how_it_ends}') from None
         status = state_of(match[0]) if match else None
         if status != seen:
             say(f'Pool run {label}: {told_status(status)}.')
@@ -1443,11 +1454,10 @@ def pool_run(subscription, resource_group, in_actions=False):
             end_pool_run(name, exit_code(properties, JOBS[POOL_JOB])[0])
             return name
         time.sleep(5)
-    reads = f'How it ends is read with `python infra/deploy.py --pool-log {name}`. ' if named(name) else ''
     raise RuntimeError(f'Timed out waiting for {label} of the job {POOL_JOB}: it had not ended '
                        f"{waited} s after it was started here (the job's timeout and two minutes). "
                        'It was not started again. While it is listed as running, a deployment and a '
-                       f'second start are refused. {reads}The owner can stop it: '
+                       f'second start are refused.{how_it_ends} The owner can stop it: '
                        f'{stop_command(job_id, name)}')
 
 
