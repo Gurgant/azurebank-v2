@@ -490,9 +490,12 @@ test.describe('the demo, from the first click', () => {
     const open = await whileSignInDetailsAreShown(page, () =>
       scan(page, 'demo-dashboard-details-open', '/dashboard', undefined, { nodeMarkup: false }),
     );
-    expect(open.violations.flatMap((v) => v.targets).filter((target) => 'html' in target)).toEqual(
-      [],
-    );
+    // Counted, so that the day a target has markup the failure prints a number and not the
+    // markup, which is the line with the password if a finding is on it.
+    const targets = open.violations.flatMap((v) => v.targets);
+    expect({ targetsWithMarkup: targets.filter((target) => 'html' in target).length }).toEqual({
+      targetsWithMarkup: 0,
+    });
   });
 
   test("a transfer to the copy's first contact goes through, with the PIN the page gives", async () => {
