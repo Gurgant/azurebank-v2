@@ -25,8 +25,8 @@ namespace AzureBank.Bff.Tests;
 /// build, run as a process with <c>Demo:Enabled</c> true and serving <c>frontend/dist</c>
 /// (2026-10-04): <c>/</c>, <c>/index.html</c> and <c>/settings</c> each answered 200 with the tag
 /// once, 43 bytes longer than the file.
-/// Nor are the rows behind extra slashes (<c>//api/accounts</c>, <c>//settings</c>): each of those
-/// two theories says where its statuses were observed.
+/// The rows behind extra slashes (<c>//api/accounts</c>, <c>//settings</c>) are not among them
+/// either: the comment over each of their two theories says where its statuses were observed.
 /// </para>
 /// </remarks>
 public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Program>>, IDisposable
@@ -376,8 +376,9 @@ public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Progra
     [InlineData("GET", "//health/live")]
     [InlineData("GET", "//health/nope")]
     [InlineData("HEAD", "//api/accounts")]
-    // The prefix alone behind extra slashes. With a slash asked for after the prefix these three
-    // rows go red and the eight above stay green: 200 text/html, the page (test host, 2026-10-05).
+    // The prefix alone behind extra slashes. Were the rule to match a prefix only when a slash
+    // follows it, these three rows would go red and the eight above stay green: 200 text/html,
+    // the page (tried in the test host, 2026-10-05).
     [InlineData("GET", "//api")]
     [InlineData("GET", "//bff")]
     [InlineData("GET", "//health")]
