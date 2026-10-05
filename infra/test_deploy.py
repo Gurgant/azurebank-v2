@@ -164,11 +164,24 @@ def execution(name, status, started=None, **more):
     return {'name': name, 'properties': properties}
 
 
-def finished(name='run', status='Succeeded', code=0, reason='Completed', **more):
+def finished(name='run', status='Succeeded', code=0, reason='Completed', container='migrate', **more):
     """An execution as the later API version describes it once it has ended."""
     return execution(name, status, '2026-10-02T18:00:03.1234567Z', endTime='2026-10-02T18:00:09Z',
                      reason=reason, detailedStatus={'replicas': [{'name': f'{name}-abcde', 'containers': [
-                         {'name': 'migrate', 'status': status, 'code': code}]}]}, **more)
+                         {'name': container, 'status': status, 'code': code}]}]}, **more)
+
+
+def pool_finished(name='pool-run', status='Succeeded', code=0, **more):
+    """A run of the pool job as the later API version describes it once it has ended: its one
+    container is `pool`."""
+    return finished(name, status, code, container='pool', **more)
+
+
+def ends_as(run):
+    """How a run of the pool job that a test starts reads, one read after the other: first as the
+    polling sees it end, a name and a status and no exit code, then as the later API version
+    describes it."""
+    return [execution(run['name'], run['properties']['status']), run]
 
 
 class Clock:
@@ -214,9 +227,14 @@ class FakeAzure:
         # None: the migration is a stand-in. A list: the job runs here, and ends as `outcome`.
         self.executions = None
         self.outcome = finished('this-run')
-        # The executions of the pool job, once there is one. They are only ever read here: a
-        # deployment moves that job and never starts it.
+        # The executions of the pool job, once there is one. A deployment only ever reads them: it
+        # moves that job and never starts it, and a start is an unexpected call while `pool_outcome`
+        # is None. A list: what a start by hand makes, as that run reads one read after the other
+        # (the last entry stays). `start_names_the_run` False: the start's answer carries no name.
         self.pool_runs = []
+        self.pool_outcome = None
+        self.pool_to_come = []
+        self.start_names_the_run = True
         self.calls = []
         self.versions = []
         self.events = []
@@ -334,8 +352,7 @@ class FakeAzure:
     def job_call(self, method, tail, body):
         name, _, rest = tail.partition('/')
         if rest and name == 'azurebank-pool':
-            assert (method, rest) == ('GET', 'executions'), f'unexpected call on the pool job: {method} {tail}'
-            return {'value': copy.deepcopy(self.pool_runs)}
+            return self.pool_call(method, rest)
         if rest and self.executions is not None:
             return self.execution_call(method, rest)
         assert not rest, f'the migration is run by a stand-in in these tests: {tail}'
@@ -348,6 +365,23 @@ class FakeAzure:
             self.drift_job_on_patch(self.jobs[name])
         self.events.append(f'job {name}')
         return {}
+
+    def pool_call(self, method, tail):
+        """Below the pool job: the list of its executions, and a start by hand when a test says how
+        that run goes. Each read of the list moves the run that was started one state on."""
+        if (method, tail) == ('POST', 'start') and self.pool_outcome is not None:
+            self.pool_to_come = copy.deepcopy(self.pool_outcome)
+            self.events.append('pool run')
+            if not self.pool_to_come:
+                # The start is accepted and no execution ever appears.
+                return {}
+            self.pool_runs.append(self.pool_to_come.pop(0))
+            return {'name': self.pool_runs[-1]['name']} if self.start_names_the_run else {}
+        assert (method, tail) == ('GET', 'executions'), f'unexpected call on the pool job: {method} {tail}'
+        answer = {'value': copy.deepcopy(self.pool_runs)}
+        if self.pool_to_come:
+            self.pool_runs[-1] = self.pool_to_come.pop(0)
+        return answer
 
     def execution_call(self, method, tail):
         """A job that runs for real: started once, and finished by the next time it is read."""
@@ -611,6 +645,39 @@ class MigrationTests(Offline):
         self.assertGreaterEqual(self.clock.now, 720)
         self.assertIn('--job-execution-name run', str(raised.exception))
 
+    def test_the_words_a_migration_shares_with_a_pool_run_are_the_ones_it_had(self):
+        # CONTROL: green before this change. A start of the pool job by hand sends its request as
+        # a migration sends its own, once, and names the command that stops an execution. What
+        # the two share moved into helpers; no word a migration says moved with it, and its start
+        # is still looked for during one minute, five seconds apart. Each sentence is held whole.
+        stop = ('The deployment identity cannot stop it, and it blocks every later deploy until it ends or '
+                'the owner stops it: az containerapp job stop --name azurebank-migrate --resource-group group '
+                '--job-execution-name ')
+        with patch('deploy.rest') as start, \
+                patch('deploy.executions', return_value=[execution('previous', 'Running')]):
+            with self.assertRaises(RuntimeError) as raised:
+                deploy.run_migration(MIGRATE_ID, 600)
+            start.assert_not_called()
+        self.assertEqual(str(raised.exception),
+                         f'Execution previous is Running: a migration may still be running. {stop}previous')
+        with patch('deploy.rest', return_value={}) as start, patch('deploy.executions', return_value=[]):
+            with self.assertRaises(RuntimeError) as raised:
+                deploy.run_migration(MIGRATE_ID, 600)
+            self.assertEqual(start.call_count, 1)
+        self.assertEqual(str(raised.exception),
+                         'The start was accepted but no execution appeared; inspect the job before deploying again.')
+        self.assertEqual(self.clock.sleeps, [5] * 12)
+        with patch('deploy.rest', return_value={}), patch('deploy.executions', side_effect=[
+                [], [execution('one', 'Running'), execution('two', 'Running')]]):
+            with self.assertRaises(RuntimeError) as raised:
+                deploy.run_migration(MIGRATE_ID, 600)
+        self.assertEqual(str(raised.exception), 'Several new executions appeared (one, two); inspect them.')
+        with patch('deploy.rest', return_value={'name': 'run'}), patch('deploy.executions', return_value=[]):
+            with self.assertRaises(RuntimeError) as raised:
+                deploy.run_migration(MIGRATE_ID, 600)
+        self.assertEqual(str(raised.exception),
+                         f'Timed out waiting for execution run. The app was not touched. {stop}run')
+
 
 class InProgressTests(Offline):
     """`deploy.in_progress`: which execution, of a list somebody already read, may still be running.
@@ -790,6 +857,59 @@ class VerdictTests(unittest.TestCase):
                          deploy.POOL_RUN_ENDS_WELL)
         self.assertEqual({code for code, words in deploy.POOL_EXIT_CODES.items()
                           if words.startswith('needs a look: ')}, {12, 13, 14})
+
+    def test_each_exit_code_of_a_pool_run_says_what_it_means(self):
+        # backend/tools/AzureBank.Seeder/Pool/PoolExitCodes.cs; docs/runbooks/demo-pool.md, "The exit
+        # code". The line is the owner's: no run of the pool job is started or read inside Actions.
+        meanings = {
+            0: 'done',
+            1: 'did not finish, and left no summary line; read its last line before it is started again',
+            2: "refused before anything was opened; the job's configuration must change",
+            10: 'done, with a signal: the pool was low (PoolLow)',
+            11: 'done, with a signal: the pool was empty (PoolEmpty)',
+            12: 'needs a look: a copy could not be built (TopUpIncomplete)',
+            13: 'needs a look: a user outside every copy exists (ForeignUsers)',
+            14: 'needs a look: a copy could not be deleted (DeleteFailed)',
+            15: "done, with a signal: the day's claims held the top-up back (ClaimCeiling)",
+            137: 'not a code the tool itself exits with',
+        }
+        for code, meaning in meanings.items():
+            with self.subTest(code=code):
+                line = deploy.verdict('run', pool_finished(status='Failed', code=code)['properties'],
+                                      container='pool', codes=deploy.POOL_EXIT_CODES)
+                self.assertIn(': Failed, started', line)
+                self.assertIn(f', exit code {code} ({meaning}), ', line)
+
+    def test_the_exit_code_read_is_the_one_of_the_container_it_is_told(self):
+        # An execution with two containers, which nothing in this folder writes: the code read is
+        # the one of the container the caller names. With no container named it is the migrate
+        # job's, as it was: the second assertion was green before this change.
+        replicas = [{'containers': [{'name': 'pool', 'code': 10}, {'name': 'migrate', 'code': 2}]}]
+        properties = {**finished()['properties'], 'detailedStatus': {'replicas': replicas}}
+        self.assertIn(', exit code 10 (done, with a signal: the pool was low (PoolLow)), ',
+                      deploy.verdict('run', properties, container='pool', codes=deploy.POOL_EXIT_CODES))
+        self.assertIn(', exit code 2 (refused before any connection; the configuration must change), ',
+                      deploy.verdict('run', properties))
+
+    def test_the_pool_jobs_codes_and_the_counts_they_point_at_are_the_seeders_own(self):
+        # The script types the numbers and the names of the signals, and for each the count of the
+        # run's summary line that it says to read. Here both are read where they are written: the
+        # codes in the tool that exits with them, the counts in the line that tool prints. Nothing
+        # is built or run. The half about the map's names was green before this change.
+        codes = {int(number): name for name, number in re.findall(
+            r'public const int (\w+) = (\d+);', seeder_source('Pool', 'PoolExitCodes.cs'))}
+        self.assertEqual(sorted(codes), [0, 10, 11, 12, 13, 14, 15], 'ARRANGE: the seven codes were found')
+        signals = {number: name for number, name in codes.items() if number}
+        self.assertEqual(sorted(deploy.POOL_EXIT_CODES), sorted({0, 1, 2, *signals}))
+        for number, name in signals.items():
+            self.assertTrue(deploy.POOL_EXIT_CODES[number].endswith(f' ({name})'), deploy.POOL_EXIT_CODES[number])
+        (line,) = re.findall(r'public string ToLine\(\) =>(.*?);', seeder_source('Pool', 'PoolRunSummary.cs'), re.S)
+        counts = re.findall(r'(\w+)=\{', line)
+        self.assertEqual((counts[:2], counts[-1], len(counts)), (['free', 'was'], 'result', 16),
+                         'ARRANGE: the counts of the line were found')
+        # Each signal points at one count, and at one the line carries.
+        self.assertEqual(sorted(deploy.POOL_COUNTS), sorted(signals))
+        self.assertEqual([count for count in deploy.POOL_COUNTS.values() if count not in counts], [])
 
     def test_an_exit_code_azure_did_not_report_is_said_to_be_missing_and_never_guessed(self):
         entry = {'name': 'migrate', 'code': 0}
@@ -2593,6 +2713,453 @@ class SmokeInTheCheckTests(Offline):
         self.assertNotIn('Checked', self.printed())
 
 
+POOL_RUN_REFUSED = ('--pool-run is refused inside GitHub Actions: the pool job runs on its schedule, and a run '
+                    'beside the schedule is started by the owner, from a terminal. A deployment moves that '
+                    "job's image and never starts it.")
+LINE_KEPT = 'What it printed is kept in the log workspace (infra/README.md, "Reading the logs").'
+START = ('POST', POOL_ID + '/start')
+RUNS = ('GET', POOL_ID + '/executions')
+# The words of the pool job's map for the codes a start by hand is tried with here, and the count
+# of the run's summary line each signal points at.
+LOW = ('done, with a signal: the pool was low (PoolLow)', 'was')
+EMPTY = ('done, with a signal: the pool was empty (PoolEmpty)', 'was')
+CEILING = ("done, with a signal: the day's claims held the top-up back (ClaimCeiling)", 'ceiling')
+NOT_FINISHED = ('did not finish, and left no summary line; read its last line before it is started again', None)
+REFUSED_ITSELF = ("refused before anything was opened; the job's configuration must change", None)
+NOT_BUILT = ('needs a look: a copy could not be built (TopUpIncomplete)', 'free')
+FOREIGN = ('needs a look: a user outside every copy exists (ForeignUsers)', 'foreignUsers')
+NOT_DELETED = ('needs a look: a copy could not be deleted (DeleteFailed)', 'failed')
+NOT_THE_TOOLS = ('not a code the tool itself exits with', None)
+
+
+def pool_verdict(status='Succeeded', code=0, words='done', name='pool-run'):
+    """The verdict of a run of the pool job that ended, as the owner's terminal shows it."""
+    return (f'Verdict: execution {name}: {status}, started 2026-10-02T18:00:03Z, ended 2026-10-02T18:00:09Z '
+            f'(6 s), exit code {code} ({words}), reason Completed.')
+
+
+def points_at(count):
+    return (f" The code is a signal to read the count '{count}' on the run's summary line "
+            '(docs/runbooks/demo-pool.md, "The line").')
+
+
+def ended_well(code=0, words='done', count=None, name='execution pool-run'):
+    """The last line of a start by hand whose run ended well, whole."""
+    decides = ' The exit code decides here, whatever status Azure gave the execution.'
+    return (f'The pool run ended well ({name}: exit code {code}, {words}).'
+            + (decides + points_at(count) if count else '') + f' {LINE_KEPT}')
+
+
+def not_well(code, words, count=None, name='execution pool-run'):
+    """The whole sentence of a start by hand whose run did not end well."""
+    return (f'The pool run did not end well ({name}: exit code {code}, {words}). It was not started again.'
+            + (points_at(count) if count else '') + f' {LINE_KEPT}')
+
+
+NO_CODE = ('The pool run ended and Azure reported no exit code for it (execution pool-run: exit code not '
+           f'reported). How it ended is not guessed from its status, and it was not started again. {LINE_KEPT}')
+
+
+def beside_another_pool_run(name, state, timeout=600):
+    """The whole sentence of a start by hand that is refused beside a run in progress."""
+    return (f'Execution {name} of the job azurebank-pool is {state}: a pool run may still be in '
+            'progress, and a second run is not started beside one. Nothing was started. A run is '
+            f"expected to end within the job's timeout ({timeout} s): start it again after that. If it "
+            "is refused again then, the owner reads the job's executions and stops that one "
+            '(infra/README.md, "When something fails").')
+
+
+def not_ended(name='pool-run', waited=720):
+    """The whole sentence of a start by hand whose run was not seen ending."""
+    return (f'Timed out waiting for execution {name} of the job azurebank-pool: it had not ended {waited} s '
+            "after it was started here (the job's timeout and two minutes). It was not started again. While "
+            'it is listed as running, a deployment and a second start are refused. The owner can stop it: '
+            'az containerapp job stop --name azurebank-pool --resource-group group --job-execution-name '
+            + (name if name == 'pool-run' else '<its name>'))
+
+
+class PoolRunTests(DeployCase):
+    """`deploy.pool_run`: the owner starts the pool job once, by hand, and waits for that exact
+    execution: the first fill, or a refill between two runs of the schedule. How the run ended is
+    told by its exit code and never by its status alone."""
+
+    def setUp(self):
+        super().setUp()
+        self.azure.turn_the_demo_on()
+        self.azure.pool_outcome = ends_as(pool_finished())
+
+    def pool_run(self, **options):
+        return deploy.pool_run(SUBSCRIPTION, GROUP, **options)
+
+    def ended(self):
+        """How a start by hand ended: the name of its run, or the error it raised, so that a run
+        expected to end well and refused instead fails its test on what the refusal says."""
+        try:
+            return self.pool_run()
+        except RuntimeError as error:
+            return error
+
+    def said(self):
+        """What was printed, without the clock in front of each line."""
+        return [line.split(' ', 1)[1] for line in self.printed().splitlines()]
+
+    def asked(self):
+        return [(method, resource_id) for method, resource_id, _ in self.azure.calls]
+
+    def again(self, *outcome, runs=()):
+        """Forget the run before: what was printed and asked, and the job's executions."""
+        self.clear()
+        self.azure.calls.clear()
+        self.azure.pool_runs = list(runs)
+        self.azure.pool_outcome = list(outcome)
+
+    def test_it_starts_the_job_once_and_waits_for_its_own_execution(self):
+        self.azure.pool_runs = [pool_finished('an-earlier-run')]
+        self.azure.pool_outcome = [execution('pool-run', 'Running'), *ends_as(pool_finished())]
+        self.assertEqual(self.ended(), 'pool-run')
+        # The job, its executions once, the one start, and its executions until that run ended.
+        self.assertEqual(self.asked(), [('GET', POOL_ID), RUNS, START, RUNS, RUNS, RUNS])
+        self.assertEqual(self.said(), ['Pool run execution pool-run started.',
+                                       'Pool run execution pool-run: Running.',
+                                       'Pool run execution pool-run: Succeeded.',
+                                       pool_verdict(), ended_well()])
+        # The exit code is read once, last, with the version that carries it.
+        self.assertEqual([call for call in self.azure.versions if call[2] != deploy.API_VERSION],
+                         [('GET', 'executions', '2026-07-01')])
+        self.assertEqual(self.azure.versions[-1], ('GET', 'executions', '2026-07-01'))
+        self.assertEqual(self.clock.sleeps, [5])
+        # Nothing of the app is read, and nothing is moved: the job runs the image it had.
+        self.assertEqual(self.steps(), ['pool run'])
+        self.assertEqual(deploy.images(self.azure.jobs['azurebank-pool']),
+                         {'pool': f'ghcr.io/gurgant/azurebank-tools:{OLD}'})
+        self.migration.assert_not_called()
+        self.smoke.assert_not_called()
+
+    def test_a_run_that_found_the_pool_short_ends_well_and_says_so(self):
+        # How Azure words an execution whose container exits with one of these codes has not been
+        # seen. `Failed` is what is expected, and the code decides whatever the status says.
+        for code, (words, count) in {10: LOW, 11: EMPTY, 15: CEILING}.items():
+            for status in ('Failed', 'Succeeded'):
+                with self.subTest(code=code, status=status):
+                    self.again(*ends_as(pool_finished(status=status, code=code)))
+                    self.assertEqual(self.ended(), 'pool-run')
+                    self.assertEqual(self.said()[-2:], [pool_verdict(status, code, words),
+                                                        ended_well(code, words, count)])
+                    self.assertIn('done, with a signal', self.said()[-1])
+                    self.assertIn(f"read the count '{count}'", self.said()[-1])
+                    self.assertEqual(self.azure.writes(), [START])
+
+    def test_a_run_that_needs_a_look_fails_and_names_its_code(self):
+        # 137 stands for a code the tool does not exit with: a container ended from outside.
+        failures = {1: NOT_FINISHED, 2: REFUSED_ITSELF, 12: NOT_BUILT, 13: FOREIGN, 14: NOT_DELETED,
+                    137: NOT_THE_TOOLS}
+        for code, (words, count) in failures.items():
+            with self.subTest(code=code):
+                self.again(*ends_as(pool_finished(status='Failed', code=code)))
+                with self.assertRaises(RuntimeError) as raised:
+                    self.pool_run()
+                self.assertIs(type(raised.exception), RuntimeError)
+                self.assertEqual(str(raised.exception), not_well(code, words, count))
+                self.assertIn(f'exit code {code}, {words}', str(raised.exception))
+                self.assertTrue(str(raised.exception).endswith(LINE_KEPT), 'where the line is read')
+                self.assertEqual(self.said()[-1], pool_verdict('Failed', code, words))
+                self.assertEqual(self.azure.writes(), [START])
+
+    def test_the_exit_code_decides_and_never_the_status_alone(self):
+        for status in ('Succeeded', 'Failed', 'Stopped', 'Degraded'):
+            with self.subTest(status=status, code=0):
+                self.again(*ends_as(pool_finished(status=status)))
+                self.assertEqual(self.ended(), 'pool-run')
+                self.assertEqual(self.said()[-1], ended_well())
+            with self.subTest(status=status, code=13):
+                self.again(*ends_as(pool_finished(status=status, code=13)))
+                with self.assertRaises(RuntimeError) as raised:
+                    self.pool_run()
+                self.assertEqual(str(raised.exception), not_well(13, *FOREIGN))
+
+    def test_the_code_that_decides_is_the_one_of_the_jobs_own_container(self):
+        # CONTROL: green as written. An execution that lists a second container, which nothing in
+        # this folder writes: the code that decides is the one of `pool`, as on the verdict's
+        # line. Seen red with the migrate job's container read in its place.
+        two = pool_finished(status='Failed', code=13)
+        two['properties']['detailedStatus']['replicas'][0]['containers'].append({'name': 'migrate', 'code': 0})
+        self.azure.pool_outcome = ends_as(two)
+        with self.assertRaises(RuntimeError) as raised:
+            self.pool_run()
+        self.assertEqual(str(raised.exception), not_well(13, *FOREIGN))
+        self.assertEqual(self.said()[-1], pool_verdict('Failed', 13, FOREIGN[0]))
+
+    def test_a_code_azure_did_not_report_is_a_failure_and_is_not_guessed(self):
+        started = '2026-10-02T18:00:03Z'
+        for status in ('Succeeded', 'Failed'):
+            # Neither read carries a code; a code that is text is not one; two containers and no
+            # `pool` among them.
+            bare = execution('pool-run', status, started)
+            two = pool_finished(status=status)
+            two['properties']['detailedStatus']['replicas'][0]['containers'] = [
+                {'name': 'one', 'code': 0}, {'name': 'two', 'code': 0}]
+            for what, outcome in (('no code on either read', [bare, bare]),
+                                  ('a code that is text', ends_as(pool_finished(status=status, code='0'))),
+                                  ('two containers, neither the pool', ends_as(two))):
+                with self.subTest(status=status, what=what):
+                    self.again(*outcome)
+                    with self.assertRaises(RuntimeError) as raised:
+                        self.pool_run()
+                    self.assertIs(type(raised.exception), RuntimeError)
+                    self.assertEqual(str(raised.exception), NO_CODE)
+                    self.assertIn(f': {status}, started 2026-10-02T18:00:03Z, ', self.said()[-1])
+                    self.assertIn(', exit code not reported, ', self.said()[-1])
+                    self.assertEqual(self.azure.writes(), [START])
+
+    def test_a_read_of_the_exit_code_that_fails_or_lacks_the_run_is_a_code_not_reported(self):
+        # The polling saw the run end. The one read with the later version is refused, or answers
+        # without that run: what is known is a status, and a status alone decides nothing.
+        answer = self.azure.pool_call
+        for what in ('refused', 'without the run'):
+            with self.subTest(what=what):
+                self.again(*ends_as(pool_finished()))
+                reads = []
+
+                def third_read(method, tail, what=what, reads=reads):
+                    reads.append((method, tail))
+                    if reads.count(('GET', 'executions')) == 3 and (method, tail) == ('GET', 'executions'):
+                        if what == 'refused':
+                            raise deploy.AzError('Bad Request: NoRegisteredProviderFound for the API version')
+                        return {'value': [pool_finished('another-run', code=10)]}
+                    return answer(method, tail)
+
+                with patch.object(self.azure, 'pool_call', side_effect=third_read):
+                    with self.assertRaises(RuntimeError) as raised:
+                        self.pool_run()
+                self.assertEqual(str(raised.exception), NO_CODE)
+                self.assertEqual(self.azure.versions[-1], ('GET', 'executions', '2026-07-01'))
+                self.assertEqual(self.said()[-1], 'Verdict: execution pool-run: Succeeded, start not reported, '
+                                                  'end not reported, exit code not reported, no reason given.')
+
+    def test_a_run_in_progress_blocks_the_start(self):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        five_minutes_ago = (now - datetime.timedelta(seconds=300)).isoformat()
+        for state, started in (('Running', None), ('Processing', None), ('Unknown', now.isoformat()),
+                               ('Unknown', five_minutes_ago)):
+            with self.subTest(state=state, started=started):
+                self.again(*ends_as(pool_finished()),
+                           runs=[pool_finished('an-earlier-run'), execution('another-run', state, started)])
+                with self.assertRaises(RuntimeError) as raised:
+                    self.pool_run()
+                self.assertIs(type(raised.exception), RuntimeError)
+                self.assertEqual(str(raised.exception), beside_another_pool_run('another-run', state))
+                self.assertEqual(self.asked(), [('GET', POOL_ID), RUNS])
+                self.assertEqual(self.printed(), '')
+
+    def test_a_run_that_blocks_the_start_is_named_only_in_the_shape_expected(self):
+        recent = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        unknown = 'in a state this script does not know'
+        withheld = 'whose name is withheld'
+        for blocking, name, state in ((execution(STRANGE, 'Running'), withheld, 'Running'),
+                                      (execution('another-run', STRANGE, recent), 'another-run', unknown),
+                                      (execution('stuck', 'Pending'), 'stuck', unknown)):
+            with self.subTest(name=name, state=state):
+                self.again(*ends_as(pool_finished()), runs=[blocking])
+                with self.assertRaises(RuntimeError) as raised:
+                    self.pool_run()
+                self.assertEqual(str(raised.exception), beside_another_pool_run(name, state))
+                for unwanted in ('\n', '::', 'add-mask', 'Pending'):
+                    self.assertNotIn(unwanted, str(raised.exception))
+                self.assertEqual(self.azure.writes(), [])
+
+    def test_runs_that_ended_or_are_too_old_to_be_alive_do_not_block_the_start(self):
+        # CONTROL: green as written, the two halves about the age. A run in a state nobody named is
+        # taken for alive for the pool job's own timeout and two minutes, as a deployment takes it.
+        now = datetime.datetime.now(datetime.timezone.utc)
+        stale = (now - datetime.timedelta(days=2)).isoformat()
+        self.azure.pool_runs = [pool_finished('one'), pool_finished('two', status='Failed', code=10),
+                                execution('stale', 'Unknown', stale)]
+        self.assertEqual(self.ended(), 'pool-run')
+        old = execution('old', 'Unknown', (now - datetime.timedelta(seconds=800)).isoformat())
+        with self.subTest('840 s: a run that began 800 s ago may be alive'):
+            self.again(*ends_as(pool_finished()), runs=[old])
+            pool_configuration(self.azure).update(replicaTimeout=840)
+            with self.assertRaises(RuntimeError) as raised:
+                self.pool_run()
+            self.assertEqual(str(raised.exception), beside_another_pool_run('old', 'Unknown', timeout=840))
+            self.assertEqual(self.azure.writes(), [])
+        with self.subTest('600 s: the same run is too old to be alive'):
+            self.again(*ends_as(pool_finished()), runs=[old])
+            pool_configuration(self.azure).update(replicaTimeout=600)
+            self.assertEqual(self.ended(), 'pool-run')
+
+    def test_a_drifted_pool_job_is_refused_before_the_start(self):
+        # Its schedule and its timeout among the rest: a job that somebody put on another schedule
+        # is not started by hand either. A job with no timeout is refused for its shape, before
+        # its executions are read against that timeout.
+        for drifted in ('trigger', 'schedules_expression', 'timeout', 'missing_timeout', 'arguments', 'identity'):
+            with self.subTest(drifted=drifted):
+                self.again(*ends_as(pool_finished()))
+                self.azure.jobs['azurebank-pool'] = pool_resource()
+                named, drift = POOL_DRIFTS[drifted]
+                drift(self.azure)
+                with self.assertRaises(deploy.ShapeError) as raised:
+                    self.pool_run()
+                self.assertEqual(str(raised.exception),
+                                 out_of_shape('The job azurebank-pool', named, when='nothing was started'))
+                self.assertEqual(self.asked(), [('GET', POOL_ID)], 'not even its executions are read')
+                for hidden in ('MARKER', '* * * * *'):
+                    self.assertNotIn(hidden, str(raised.exception) + self.printed())
+
+    def test_it_is_refused_inside_actions_before_any_call(self):
+        with self.assertRaises(ValueError) as raised:
+            self.pool_run(in_actions=True)
+        self.assertEqual(str(raised.exception), POOL_RUN_REFUSED)
+        self.assertEqual(self.azure.calls, [])
+        self.assertEqual(self.printed(), '')
+
+    def test_it_needs_the_subscription_and_the_resource_group(self):
+        for subscription, group in (('', GROUP), (SUBSCRIPTION, '')):
+            with self.assertRaisesRegex(ValueError, 'AZURE_SUBSCRIPTION_ID and AZURE_RESOURCE_GROUP must be set'):
+                deploy.pool_run(subscription, group)
+        self.assertEqual(self.azure.calls, [])
+
+    def test_a_timeout_names_who_can_stop_it(self):
+        self.azure.pool_outcome = [execution('pool-run', 'Running')]
+        with self.assertRaises(RuntimeError) as raised:
+            self.pool_run()
+        self.assertIs(type(raised.exception), RuntimeError)
+        self.assertEqual(str(raised.exception), not_ended())
+        self.assertGreaterEqual(self.clock.now, 720)
+        self.assertEqual(self.azure.writes(), [START], 'it is not started a second time')
+        self.assertEqual(self.said(), ['Pool run execution pool-run started.',
+                                       'Pool run execution pool-run: Running.'])
+        # The wait is the pool job's own timeout and two minutes, not the migrate job's.
+        self.again(execution('pool-run', 'Unknown'))
+        pool_configuration(self.azure).update(replicaTimeout=60)
+        before = self.clock.now
+        with self.assertRaises(RuntimeError) as raised:
+            self.pool_run()
+        self.assertEqual(str(raised.exception), not_ended(waited=180))
+        self.assertEqual(self.clock.now - before, 180)
+
+    def test_an_exit_1_says_to_read_the_line_before_a_second_start(self):
+        self.azure.pool_outcome = ends_as(pool_finished(status='Failed', code=1))
+        with self.assertRaises(RuntimeError) as raised:
+            self.pool_run()
+        message = str(raised.exception)
+        self.assertIn('exit code 1, did not finish, and left no summary line; read its last line before it is '
+                      'started again). It was not started again.', message)
+        self.assertTrue(message.endswith(LINE_KEPT), message)
+        self.assertEqual(self.azure.writes(), [START], 'nothing is started a second time')
+
+    def test_a_pool_job_that_cannot_be_read_stops_before_any_start_in_its_own_words(self):
+        # The job is written only with the demo on (infra/main.bicep). Whether it is there is not
+        # asked of the app here: the job is read, and a job that cannot be read is not started.
+        self.azure.refuse = lambda method, resource_id, body: resource_id == POOL_ID
+        for refusal in ('Not Found: ResourceNotFound', 'Forbidden: AuthorizationFailed.'):
+            with self.subTest(refusal=refusal):
+                self.azure.refusal = refusal
+                with self.assertRaises(RuntimeError) as raised:
+                    self.pool_run()
+                self.assertIs(type(raised.exception), RuntimeError, 'the run says what it means, in its own words')
+                self.assertEqual(str(raised.exception), (
+                    f'The job azurebank-pool could not be read: {refusal.rstrip(".")}. Nothing was started. '
+                    'infra/main.bicep writes that job only with the demo on: see infra/README.md, "When '
+                    'something fails".'))
+        self.assertEqual(self.azure.writes(), [])
+        self.assertEqual(self.printed(), '')
+
+    def test_runs_that_cannot_be_read_stop_before_any_start_in_their_own_words(self):
+        self.azure.refuse = lambda method, resource_id, body: resource_id == POOL_ID + '/executions'
+        for refusal in ('Forbidden: AuthorizationFailed.',
+                        'The Azure CLI gave no answer in 180 s (GET /jobs/azurebank-pool/executions).'):
+            with self.subTest(refusal=refusal):
+                self.azure.refusal = refusal
+                with self.assertRaises(RuntimeError) as raised:
+                    self.pool_run()
+                self.assertIs(type(raised.exception), RuntimeError, 'the run says what it means, in its own words')
+                self.assertEqual(str(raised.exception), (
+                    'The executions of the job azurebank-pool could not be read, so whether a pool run is '
+                    f'in progress is not known: {refusal.rstrip(".")}. Nothing was started. See '
+                    'infra/README.md, "When something fails".'))
+        self.assertEqual(self.azure.writes(), [])
+        self.assertEqual(self.printed(), '')
+
+    def test_a_start_azure_refuses_or_does_not_answer_is_said_in_its_own_words_and_not_sent_again(self):
+        # Whether Azure lets a job that runs on a schedule be started by hand has not been tried
+        # here. The first refusal is invented. After the second, a run may have begun.
+        self.azure.refuse = lambda method, resource_id, body: (method, resource_id) == START
+        for refusal in ('Bad Request: InvalidRequest.',
+                        'The Azure CLI gave no answer in 180 s (POST /jobs/azurebank-pool/start).'):
+            with self.subTest(refusal=refusal):
+                self.clear()
+                self.azure.calls.clear()
+                self.azure.refusal = refusal
+                with self.assertRaises(RuntimeError) as raised:
+                    self.pool_run()
+                self.assertIs(type(raised.exception), RuntimeError, 'the run says what it means, in its own words')
+                self.assertEqual(str(raised.exception), (
+                    'The job azurebank-pool was asked to start once, and Azure refused or failed a request '
+                    f'before the run it made was known: {refusal.rstrip(".")}. The start is not sent again. '
+                    "Whether a run began is read from the job's executions, before any second start "
+                    '(infra/README.md, "When something fails").'))
+                self.assertEqual(self.azure.writes(), [START])
+                self.assertEqual(self.printed(), '')
+
+    def test_a_start_that_names_no_run_is_found_by_what_is_new_and_is_not_sent_again(self):
+        self.azure.start_names_the_run = False
+        self.azure.pool_runs = [pool_finished('an-earlier-run')]
+        self.assertEqual(self.ended(), 'pool-run')
+        self.assertEqual(self.azure.writes(), [START])
+        self.assertEqual(self.said()[0], 'Pool run execution pool-run started.')
+        self.assertEqual(self.said()[-1], ended_well())
+        # A start that is accepted and makes no execution is looked for during one minute, and the
+        # sentence is the start's own: nothing was deployed.
+        self.again(runs=[pool_finished('an-earlier-run')])
+        with self.assertRaises(RuntimeError) as raised:
+            self.pool_run()
+        self.assertEqual(str(raised.exception), 'The start was accepted but no execution appeared; inspect the '
+                                                'job before it is started again.')
+        self.assertEqual(self.azure.writes(), [START])
+        self.assertEqual(self.clock.sleeps, [5] * 12)
+
+    def test_a_name_or_a_status_of_another_shape_is_never_printed(self):
+        self.azure.pool_outcome = [execution(STRANGE, STRANGE), execution(STRANGE, 'Failed'),
+                                   pool_finished(STRANGE, status='Failed', code=13)]
+        with self.assertRaises(RuntimeError) as raised:
+            self.pool_run()
+        withheld = 'execution whose name is withheld'
+        for line in self.printed().splitlines():
+            self.assertRegex(line, r'^\d\d:\d\d:\d\dZ ', 'a line this script did not begin')
+        for unwanted in ('::', 'add-mask'):
+            self.assertNotIn(unwanted, str(raised.exception) + self.printed())
+        self.assertEqual(str(raised.exception), not_well(13, *FOREIGN, name=withheld))
+        self.assertEqual(self.said(), [f'Pool run {withheld} started.', f'Pool run {withheld}: status not reported.',
+                                       f'Pool run {withheld}: Failed.',
+                                       pool_verdict('Failed', 13, FOREIGN[0], name='whose name is withheld')])
+        # A run that is not seen ending is not named in the command that stops it either.
+        self.again(execution(STRANGE, 'Running'))
+        with self.assertRaises(RuntimeError) as raised:
+            self.pool_run()
+        self.assertEqual(str(raised.exception), not_ended(name='whose name is withheld'))
+
+    def test_through_the_command_line_the_exit_code_of_the_run_is_how_the_command_ends(self):
+        environment = {'AZURE_SUBSCRIPTION_ID': SUBSCRIPTION, 'AZURE_RESOURCE_GROUP': GROUP}
+        with patch.dict(deploy.os.environ, environment, clear=True):
+            self.azure.pool_outcome = ends_as(pool_finished(status='Failed', code=13))
+            with self.assertRaises(SystemExit) as raised:
+                deploy.main(['--pool-run'])
+            self.assertEqual(raised.exception.code, not_well(13, *FOREIGN))
+            self.again(*ends_as(pool_finished(code='0')))
+            with self.assertRaises(SystemExit) as raised:
+                deploy.main(['--pool-run'])
+            self.assertEqual(raised.exception.code, NO_CODE)
+            # A run that ended with a signal ends the command well, whatever its status.
+            self.again(*ends_as(pool_finished(status='Failed', code=10)))
+            try:
+                stopped = deploy.main(['--pool-run'])
+            except SystemExit as error:
+                stopped = error.code
+            self.assertIsNone(stopped, 'the command ends well')
+            self.assertEqual(self.said()[-1], ended_well(10, *LOW))
+
+
 class MainTests(Offline):
     ENVIRONMENT = {'AZURE_SUBSCRIPTION_ID': SUBSCRIPTION, 'AZURE_RESOURCE_GROUP': GROUP, 'IMAGE_TAG': NEW}
 
@@ -2642,6 +3209,36 @@ class MainTests(Offline):
         self.assertEqual(run.call_count, 2)
         check.assert_not_called()
 
+    @patch('deploy.pool_run')
+    @patch('deploy.deploy')
+    def test_the_pool_commands_deploy_nothing_and_need_no_image_tag(self, run, pool_run):
+        environment = {'AZURE_SUBSCRIPTION_ID': SUBSCRIPTION, 'AZURE_RESOURCE_GROUP': GROUP}
+        with patch.dict(deploy.os.environ, environment, clear=True):
+            deploy.main(['--pool-run'])
+        pool_run.assert_called_once_with(SUBSCRIPTION, GROUP, in_actions=False)
+        run.assert_not_called()
+
+    @patch('deploy.rest')
+    @patch('deploy.deploy')
+    def test_the_pool_run_inside_actions_exits_non_zero_without_calling_azure(self, run, rest):
+        with self.assertRaises(SystemExit) as raised:
+            self.run_main(['--pool-run'], GITHUB_ACTIONS='true')
+        self.assertEqual(raised.exception.code, POOL_RUN_REFUSED)
+        rest.assert_not_called()
+        run.assert_not_called()
+
+    @patch('deploy.pool_run')
+    @patch('deploy.check')
+    @patch('deploy.deploy')
+    def test_no_other_command_starts_a_pool_run(self, run, check, pool_run):
+        # CONTROL: green as soon as the function has its name, wired to the command line or not. A
+        # deployment, the road back and the check start no run of the pool job.
+        self.run_main([])
+        self.run_main(['--app-only'])
+        self.run_main(['--check'])
+        self.assertEqual((run.call_count, check.call_count), (2, 1))
+        pool_run.assert_not_called()
+
     @patch('deploy.rest')
     @patch('deploy.az')
     def test_the_two_log_commands_inside_actions_exit_non_zero_without_calling_azure(self, az, rest):
@@ -2664,9 +3261,11 @@ class MainTests(Offline):
 
     def test_two_modes_at_once_are_refused_by_the_command_line(self):
         # The two cases with --check were green before the option existed: a command line the
-        # parser does not know ends the same way. They hold the option in the one group of modes.
+        # parser does not know ends the same way. They hold the option in the one group of modes,
+        # and so do the cases with --pool-run.
         for arguments in (['--app-only', '--job-log'], ['--job-log', '--app-log', '5'],
-                          ['--app-log', 'soon'], ['--check', '--app-only'], ['--check', '--job-log']):
+                          ['--app-log', 'soon'], ['--check', '--app-only'], ['--check', '--job-log'],
+                          ['--pool-run', '--app-only'], ['--pool-run', '--check'], ['--pool-run', 'now']):
             with self.subTest(arguments=arguments), contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit) as raised:
                     self.run_main(arguments)
@@ -3079,6 +3678,16 @@ def backend_source(*path):
     own code writes."""
     here = os.path.dirname(os.path.abspath(__file__))
     with open(os.path.join(here, os.pardir, 'backend', 'src', *path), encoding='utf-8') as source:
+        return source.read()
+
+
+def seeder_source(*path):
+    """A source file of the tool the pool job runs (backend/tools/AzureBank.Seeder), as text, read
+    the same way and for the same reason: what the script expects of a run of `recycle` is held
+    to what that tool's own code writes."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(here, os.pardir, 'backend', 'tools', 'AzureBank.Seeder', *path),
+              encoding='utf-8') as source:
         return source.read()
 
 

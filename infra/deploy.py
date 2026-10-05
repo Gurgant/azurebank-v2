@@ -3,10 +3,11 @@
     python infra/deploy.py                    migrate the database, then move the app, then check it
     python infra/deploy.py --app-only         move the app only: the owner's road back
     python infra/deploy.py --check            read the running app and check it: nothing is moved
+    python infra/deploy.py --pool-run         start the pool job once, by hand, and wait for that run
     python infra/deploy.py --job-log [NAME]   print what one migration printed (the latest, or NAME)
     python infra/deploy.py --app-log MINUTES  print what the app printed in the last MINUTES
 
-The last four are for the owner's terminal and are refused inside GitHub Actions.
+The last five are for the owner's terminal and are refused inside GitHub Actions.
 
 It needs the Azure CLI signed in and on PATH, and the environment variables AZURE_SUBSCRIPTION_ID
 and AZURE_RESOURCE_GROUP. A deployment also needs IMAGE_TAG (the full SHA of a commit whose three
@@ -53,6 +54,15 @@ whether it exists is not asked: no answer of Azure's is read as "there is no poo
 demo on it must be readable and in shape, its schedule and its timeout included, or the run stops
 before any change. A deployment moves that job's image and never starts it: the template gives it
 a schedule.
+
+--pool-run starts that job once beside its schedule, as whoever is signed in: the first fill, or
+a refill by hand. It reads the job and checks its shape, reads its executions once and refuses
+while one may still be in progress, sends the start once and never again, and waits for that
+exact execution for the job's timeout and two minutes. How the run ended is told by the exit
+code of its container, never by the execution's status alone: 0 ends well, and so do 10, 11 and
+15, which say the run finished and found the pool short; any other code, and a code Azure did
+not report, ends the command as failed. It reads nothing of the app: whether the app is the demo
+is --check's to say, before a run is started by hand.
 
 A migration leaves one line here, its verdict: the execution's name, status, times, exit code and
 a one-word reason. What it printed is never fetched by a deployment: the log of a public
@@ -136,17 +146,21 @@ GUID = re.compile(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}')
 IPV4 = re.compile(r'\b\d{1,3}(?:\.\d{1,3}){3}\b')
 # The shape of an execution's name. A name of any other shape is never printed.
 EXECUTION_NAME = re.compile(r'[A-Za-z0-9-]{1,100}')
-# What `migrate` exits with: the one command a deployment runs, and the only container verdict()
-# reads (backend/tools/AzureBank.Seeder/Commands/ExitCodes.cs). For `migrate` a 2 always comes
-# before any connection. The image's other commands differ: `seed` and `reset` can also refuse
-# after one count, and `seed-pool` and `recycle` can also end with a code from 10 to 15
-# (Pool/PoolExitCodes.cs; `seed-pool` only 12 or 13), so the pool job has a map of its own, below.
+# What `migrate` exits with: the one command a deployment runs, and the container verdict() reads
+# unless it is told another (backend/tools/AzureBank.Seeder/Commands/ExitCodes.cs). For `migrate`
+# a 2 always comes before any connection. The image's other commands differ: `seed` and `reset`
+# can also refuse after one count, and `seed-pool` and `recycle` can also end with a code from 10
+# to 15 (Pool/PoolExitCodes.cs; `seed-pool` only 12 or 13), so the pool job has a map of its own,
+# below.
 EXIT_CODES = {0: 'done', 1: 'failed after it reached for the server; running it again is safe',
               2: 'refused before any connection; the configuration must change'}
+# What a line says of a code that the map it is read with does not hold.
+NOT_THE_TOOLS_CODE = 'not a code the tool itself exits with'
 # What `recycle` exits with, the one command the pool job runs
 # (backend/tools/AzureBank.Seeder/Pool/PoolExitCodes.cs; docs/runbooks/demo-pool.md, "The exit
 # code"). A code from 10 to 15 is a signal: the run finished, and the code names the count somebody
-# should read. A deployment never starts the pool job and reads no exit code of it.
+# should read. A deployment never starts the pool job and reads no exit code of it: --pool-run
+# does, for the one run it started.
 POOL_EXIT_CODES = {
     0: 'done',
     1: 'did not finish, and left no summary line; read its last line before it is started again',
@@ -160,6 +174,11 @@ POOL_EXIT_CODES = {
 }
 # The codes a pool run ends well with: it finished, and at most the pool was short.
 POOL_RUN_ENDS_WELL = {0, 10, 11, 15}
+# The count of the run's one summary line that each signal says to read: the one its code is
+# worked out from (Pool/PoolExitCodes.cs, From; the line is Pool/PoolRunSummary.cs, ToLine, and
+# docs/runbooks/demo-pool.md, "The line", says what each count counts). 12 is also a copy that
+# failed, which the line does not count: `free` is the half of it the line shows.
+POOL_COUNTS = {10: 'was', 11: 'was', 12: 'free', 13: 'foreignUsers', 14: 'failed', 15: 'ceiling'}
 
 # The sign-in the smoke test sends. It goes to the BFF's own door: the BFF answers 404 itself on
 # the proxied /api/auth/login and never forwards it. The address is one nobody can register, and
@@ -579,13 +598,19 @@ def state_of(execution):
     return status if isinstance(status, str) else None
 
 
-def stop_hint(job_id, execution):
-    """The deployment identity may start the job and read its executions; it may not stop one."""
+def stop_command(job_id, execution):
+    """The command that stops one execution of a job, for whoever may: the owner. The execution
+    is named only in the shape of a name."""
     match = re.search(r'/resourceGroups/([^/]+)/providers/Microsoft\.App/jobs/([^/]+)$', job_id)
     group, job = match.groups() if match else ('<resource group>', '<job>')
-    return ('The deployment identity cannot stop it, and it blocks every later deploy until it '
-            f'ends or the owner stops it: az containerapp job stop --name {job} '
+    return (f'az containerapp job stop --name {job} '
             f"--resource-group {group} --job-execution-name {named(execution) or '<its name>'}")
+
+
+def stop_hint(job_id, execution):
+    """The deployment identity may start the job and read its executions; it may not stop one."""
+    return ('The deployment identity cannot stop it, and it blocks every later deploy until it '
+            f'ends or the owner stops it: {stop_command(job_id, execution)}')
 
 
 def moment(text):
@@ -621,12 +646,16 @@ def exit_code(properties, container):
     return None, None
 
 
-def verdict(name, properties, in_actions=False):
+def verdict(name, properties, in_actions=False, container=JOBS[MIGRATE_JOB], codes=EXIT_CODES):
     """One line about an execution: name, status, times, exit code, reason. Every field is checked
     for its shape before it is printed, because inside GitHub Actions the line is public. The
     fields were seen filled by hand for a throwaway job on 2026-10-02, and by this script at the
     first deployment on 2026-10-03 (README.md, "Measured on Azure"). Inside GitHub Actions a
-    reason that is not one plain word is withheld, and Azure's message is not printed at all."""
+    reason that is not one plain word is withheld, and Azure's message is not printed at all.
+
+    `container` and `codes` say whose exit code is read and how it is worded: the migrate job's
+    unless the caller names another. A run of the pool job is read with that job's container and
+    its own map, and only from the owner's terminal."""
     parts = [f"{told_name(name)}: {told_status(properties.get('status'))}"]
     began, ended = moment(properties.get('startTime')), moment(properties.get('endTime'))
     parts.append(f'started {stamp(began)}' if began else 'start not reported')
@@ -634,8 +663,8 @@ def verdict(name, properties, in_actions=False):
         parts.append(f'ended {stamp(ended)} ({round((ended - began).total_seconds())} s)')
     else:
         parts.append(f'ended {stamp(ended)}' if ended else 'end not reported')
-    code, entry = exit_code(properties, JOBS[MIGRATE_JOB])
-    meaning = EXIT_CODES.get(code, 'not a code the tool itself exits with')
+    code, entry = exit_code(properties, container)
+    meaning = codes.get(code, NOT_THE_TOOLS_CODE)
     parts.append('exit code not reported' if code is None else f'exit code {code} ({meaning})')
     reason = properties.get('reason')
     if reason in (None, ''):
@@ -655,10 +684,10 @@ def verdict(name, properties, in_actions=False):
     return line
 
 
-def report_verdict(job_id, name, known, in_actions):
-    """Read the execution once more, with the version that carries its exit code, and print its
-    verdict. Never raises: if that read fails or lacks the execution, the verdict is what the
-    polling already knew, and "Failed" is still a verdict."""
+def detailed(job_id, name, known):
+    """An execution's properties, read once more with the version that carries its container's
+    exit code. Never raises: if that read fails or lacks the execution, the answer is what the
+    polling already knew."""
     properties = (known or {}).get('properties') or {}
     try:
         answer = rest('GET', job_id + '/executions', api_version=VERDICT_API_VERSION)
@@ -667,7 +696,14 @@ def report_verdict(job_id, name, known, in_actions):
                 properties = execution['properties']
     except (AzError, AttributeError):
         pass
-    line = verdict(name, properties, in_actions)
+    return properties
+
+
+def report_verdict(job_id, name, known, in_actions):
+    """Read the execution once more, with the version that carries its exit code, and print its
+    verdict. Never raises: if that read fails or lacks the execution, the verdict is what the
+    polling already knew, and "Failed" is still a verdict."""
+    line = verdict(name, detailed(job_id, name, known), in_actions)
     say(line)
     summary = os.environ.get('GITHUB_STEP_SUMMARY') if in_actions else None
     if summary:
@@ -692,16 +728,12 @@ def in_progress(executions, timeout):
     return None
 
 
-def run_migration(job_id, timeout, in_actions=False):
-    before = executions(job_id)
-    blocking = in_progress(before, timeout)
-    if blocking:
-        state = told_status(state_of(blocking), 'in a state this script does not know')
-        raise RuntimeError(f"Execution {named(blocking['name']) or 'whose name is withheld'} "
-                           f"is {state}: a migration may still be running. "
-                           f"{stop_hint(job_id, blocking['name'])}")
-    known = {execution['name'] for execution in before}
-
+def start_once(job_id, known, before='deploying again'):
+    """Start a job and answer with the name of the execution that start made. The request is
+    sent once. When its answer names no execution, the run it may already have launched is
+    looked for among the job's executions, by the names that were not `known` before the start,
+    for one minute. `before` ends the sentence of a start that made nothing to be seen: what the
+    caller would do next."""
     name = rest('POST', job_id + '/start').get('name')
     deadline = time.monotonic() + 60
     while not name and time.monotonic() < deadline:
@@ -715,7 +747,21 @@ def run_migration(job_id, timeout, in_actions=False):
             time.sleep(5)
     if not name:
         raise RuntimeError('The start was accepted but no execution appeared; inspect the job '
-                           'before deploying again.')
+                           f'before {before}.')
+    return name
+
+
+def run_migration(job_id, timeout, in_actions=False):
+    before = executions(job_id)
+    blocking = in_progress(before, timeout)
+    if blocking:
+        state = told_status(state_of(blocking), 'in a state this script does not know')
+        raise RuntimeError(f"Execution {named(blocking['name']) or 'whose name is withheld'} "
+                           f"is {state}: a migration may still be running. "
+                           f"{stop_hint(job_id, blocking['name'])}")
+    known = {execution['name'] for execution in before}
+
+    name = start_once(job_id, known)
 
     # The name and each status come from Azure and go into a log that may be public: both are
     # printed only in the shape expected, as the verdict prints them.
@@ -988,36 +1034,43 @@ def read_pool_job(job_id):
                            'infra/README.md, "When something fails".') from None
 
 
-def refuse_beside_a_pool_run(job_id, job):
-    """Stop while a run of the pool job is, or may still be, in progress: the migration is about
-    to change the schema that run works on, and the job itself is about to be moved. It is one
-    read, before anything is changed: a run the schedule starts after it is not seen, and nothing
-    here holds the schedule back.
+def refuse_beside_a_pool_run(job_id, job, starting=False):
+    """Stop while a run of the pool job is, or may still be, in progress, and answer with the
+    executions that were read. A deployment asks because the migration is about to change the
+    schema that run works on, and the job itself is about to be moved. A start by hand asks
+    (`starting`) because two runs at once each top the pool up from their own count
+    (backend/tools/AzureBank.Seeder/README.md); it is the same rule in the words of a start. It
+    is one read, before anything is changed or started: a run the schedule starts after it is not
+    seen, and nothing here holds the schedule back.
 
     It is also one answer. Whether Azure gives the list of a job's executions in pages, and in
     which order, is recorded nowhere in this repository: if it does, a link to a next page is not
     followed, and a run listed only on a later page is not seen either."""
     timeout = job['properties']['configuration']['replicaTimeout']
+    left = 'Nothing was started' if starting else 'Nothing was changed'
     try:
         runs = executions(job_id)
     except AzError as error:
         # The job itself was read a moment ago. Azure's words alone would not say that nothing
         # was changed, nor that the question left open is whether a pool run is in progress.
         raise RuntimeError(f'The executions of the job {POOL_JOB} could not be read, so whether a '
-                           f"pool run is in progress is not known: {str(error).rstrip('.')}. Nothing "
-                           'was changed. See infra/README.md, "When something fails".') from None
+                           f"pool run is in progress is not known: {str(error).rstrip('.')}. {left}. "
+                           'See infra/README.md, "When something fails".') from None
     running = in_progress(runs, timeout)
     if running:
         state = told_status(state_of(running), 'in a state this script does not know')
+        refused, again = (('a second run is not started', 'start it again') if starting
+                          else ('a deployment does not start', 'deploy again'))
         # The last sentence is for a run that never ends for this script: one in a state nobody
         # named and with no start time blocks for as long as it is listed so (started_within), and
         # the deployment identity may not stop an execution.
         raise RuntimeError(f"Execution {named(running['name']) or 'whose name is withheld'} of the "
-                           f'job {POOL_JOB} is {state}: a pool run may still be in progress, and a '
-                           'deployment does not start beside one. Nothing was changed. A run is '
-                           f"expected to end within the job's timeout ({timeout} s): deploy again "
+                           f'job {POOL_JOB} is {state}: a pool run may still be in progress, and '
+                           f'{refused} beside one. {left}. A run is '
+                           f"expected to end within the job's timeout ({timeout} s): {again} "
                            'after that. If it is refused again then, the owner reads the job\'s '
                            'executions and stops that one (infra/README.md, "When something fails").')
+    return runs
 
 
 def deploy(subscription, resource_group, tag, app_only=False, in_actions=False,
@@ -1292,6 +1345,101 @@ def check(subscription, resource_group, in_actions=False):
         + '; the smoke test passed; nothing was moved.')
 
 
+# --- A run of the pool job by hand: the owner's terminal only ---
+# The template gives the pool job a schedule, and a deployment never starts it. This starts it
+# once beside the schedule, as whoever is signed in: the first fill, or a refill by hand.
+
+# Where what a run of the pool job printed is read: the last sentence of a start by hand.
+WHERE_IT_PRINTED = 'What it printed is kept in the log workspace (infra/README.md, "Reading the logs").'
+
+
+def end_pool_run(name, code):
+    """Say how a run of the pool job that is over ended, by the exit code of its container and
+    never by the execution's status alone: how Azure words an execution whose container exited
+    with a signal's code has not been seen. 0, 10, 11 and 15 end well, the last three with a
+    signal (POOL_RUN_ENDS_WELL). Any other code, and a code Azure did not report, is a failure:
+    nothing is guessed, and nothing is started again. A signal names the count of the run's
+    summary line that it says to read."""
+    label = told_name(name)
+    if code is None:
+        raise RuntimeError(f'The pool run ended and Azure reported no exit code for it ({label}: exit '
+                           'code not reported). How it ended is not guessed from its status, and it '
+                           f'was not started again. {WHERE_IT_PRINTED}')
+    how = f'{label}: exit code {code}, {POOL_EXIT_CODES.get(code, NOT_THE_TOOLS_CODE)}'
+    count = POOL_COUNTS.get(code)
+    points_at = (f" The code is a signal to read the count '{count}' on the run's summary line "
+                 '(docs/runbooks/demo-pool.md, "The line").' if count else '')
+    if code not in POOL_RUN_ENDS_WELL:
+        raise RuntimeError(f'The pool run did not end well ({how}). It was not started again.'
+                           f'{points_at} {WHERE_IT_PRINTED}')
+    decides = ' The exit code decides here, whatever status Azure gave the execution.' if count else ''
+    say(f'The pool run ended well ({how}).{decides}{points_at} {WHERE_IT_PRINTED}')
+
+
+def pool_run(subscription, resource_group, in_actions=False):
+    """Start the pool job once and wait for that exact execution, then end by its exit code.
+
+    In order: the job, read and checked for its shape, its schedule and its timeout included;
+    its executions, read once, and a refusal while one is or may still be in progress; the one
+    start; that execution, read until it has ended, for the job's timeout and two minutes; its
+    verdict, read with the version that carries the exit code; and the end, by that code alone.
+
+    It reads nothing of the app and does not ask whether the demo is on. The job's container
+    carries the demo's flag as the literal true (infra/main.bicep), so a run is expected to build
+    the pool whatever the app's two containers say: what they say is --check's to read, before a
+    run is started by hand. A run the schedule starts after the one read of the executions is not
+    seen, as in a deployment."""
+    if in_actions:
+        raise ValueError('--pool-run is refused inside GitHub Actions: the pool job runs on its '
+                         'schedule, and a run beside the schedule is started by the owner, from a '
+                         "terminal. A deployment moves that job's image and never starts it.")
+    job_id = f'{prefix_of(subscription, resource_group)}/Microsoft.App/jobs/{POOL_JOB}'
+    try:
+        job = rest('GET', job_id)
+    except AzError as error:
+        # What Azure answers for a job that is not there has not been seen: its words are shown,
+        # and no answer is read as "the demo is off".
+        raise RuntimeError(f"The job {POOL_JOB} could not be read: {str(error).rstrip('.')}. Nothing "
+                           'was started. infra/main.bicep writes that job only with the demo on: see '
+                           'infra/README.md, "When something fails".') from None
+    assert_shape(f'The job {POOL_JOB}', pool_drift(job), 'nothing was started')
+    timeout = job['properties']['configuration']['replicaTimeout']
+    known = {execution['name'] for execution in refuse_beside_a_pool_run(job_id, job, starting=True)}
+    try:
+        name = start_once(job_id, known, before='it is started again')
+    except AzError as error:
+        # A start that Azure refuses is expected to make no run, and one that got no answer may
+        # have made one: the sentence is the same for both, and sends the reader to the executions.
+        raise RuntimeError(f'The job {POOL_JOB} was asked to start once, and Azure refused or failed '
+                           f"a request before the run it made was known: {str(error).rstrip('.')}. "
+                           'The start is not sent again. Whether a run began is read from the '
+                           "job's executions, before any second start (infra/README.md, \"When "
+                           'something fails").') from None
+
+    # As for a migration, the name and each status are printed only in the shape expected.
+    label = told_name(name)
+    say(f'Pool run {label} started.')
+    waited = timeout + 120
+    deadline = time.monotonic() + waited
+    seen = object()
+    while time.monotonic() < deadline:
+        match = [e for e in executions(job_id) if e['name'] == name]
+        status = state_of(match[0]) if match else None
+        if status != seen:
+            say(f'Pool run {label}: {told_status(status)}.')
+            seen = status
+        if status in FINISHED:
+            properties = detailed(job_id, name, match[0])
+            say(verdict(name, properties, container=JOBS[POOL_JOB], codes=POOL_EXIT_CODES))
+            end_pool_run(name, exit_code(properties, JOBS[POOL_JOB])[0])
+            return name
+        time.sleep(5)
+    raise RuntimeError(f'Timed out waiting for {label} of the job {POOL_JOB}: it had not ended '
+                       f"{waited} s after it was started here (the job's timeout and two minutes). "
+                       'It was not started again. While it is listed as running, a deployment and a '
+                       f'second start are refused. The owner can stop it: {stop_command(job_id, name)}')
+
+
 # --- Reading the log workspace: the owner's terminal only ---
 # The deployment identity has no right on the workspace, and a public log must never hold this
 # text. Both commands sign in as whoever ran `az login`.
@@ -1430,6 +1578,9 @@ def main(arguments=None):
     modes.add_argument('--check', action='store_true',
                        help='read the running app, and with the demo on the pool job, then '
                             'smoke-test the address: nothing is moved; refused inside GitHub Actions')
+    modes.add_argument('--pool-run', action='store_true',
+                       help='start the pool job once, beside its schedule, and wait for that run: the '
+                            'first fill, or a refill by hand; refused inside GitHub Actions')
     modes.add_argument('--job-log', nargs='?', const='', metavar='EXECUTION',
                        help='print what a migration printed, from the log workspace: the latest '
                             'execution, or the one named; refused inside GitHub Actions')
@@ -1443,6 +1594,8 @@ def main(arguments=None):
     try:
         if options.check:
             check(subscription, resource_group, in_actions=in_actions)
+        elif options.pool_run:
+            pool_run(subscription, resource_group, in_actions=in_actions)
         elif options.job_log is not None:
             job_log(subscription, resource_group, options.job_log, in_actions=in_actions)
         elif options.app_log is not None:
