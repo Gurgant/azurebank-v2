@@ -2,7 +2,10 @@ using System.Diagnostics.CodeAnalysis;
 
 namespace AzureBank.Tests.Fixtures;
 
-/// <summary>A text with parentheses where it has braces, for a comparison whose failure can be read.</summary>
+/// <summary>
+/// A text written without braces, one-to-one, for a comparison that is exact and whose failure
+/// can be read.
+/// </summary>
 /// <remarks>
 /// The assertion library builds a failure's message with <c>string.Format</c>, and a brace in
 /// either of two texts that differ spoils that message, unless both are eight characters or
@@ -10,14 +13,23 @@ namespace AzureBank.Tests.Fixtures;
 /// that compare through this helper). Two long answers throw <see cref="FormatException"/>
 /// in place of the message that shows where they differ. A short JSON text fails inside a
 /// warning that the message could not be formatted. A text with a <c>{Name}</c> in it is shown
-/// without that name, so two that differ only there are shown alike. The price: a brace and a
-/// parenthesis in the same place compare equal. Where a test claims the very text (two answers
-/// that must match, a replay, a file that must not change) it compares with xUnit's
-/// <c>Assert.Equal</c>, alone or after this one: exact, and its message shows both texts.
+/// without that name, so two that differ only there are shown alike.
+/// <para>
+/// The encoding is one-to-one. A percent sign is doubled first, then each brace becomes a token
+/// that starts with one, so every percent sign in the result begins exactly one of <c>%%</c>,
+/// <c>%7B</c> and <c>%7D</c>, and reading them left to right gives back the one text it came
+/// from. Two encoded texts are equal exactly when the two texts are: the comparison is exact,
+/// and a parenthesis where a brace belongs fails it (<c>ComparableTextTests</c> holds the
+/// helper to this on a few pairs). A failure shows both texts with <c>%7B</c> and <c>%7D</c>
+/// where their braces are.
+/// </para>
 /// </remarks>
 internal static class ComparableText
 {
-    /// <summary>The same text, with <c>(</c> for <c>{</c> and <c>)</c> for <c>}</c>. Null stays null.</summary>
+    /// <summary>
+    /// The same text, with <c>%%</c> for <c>%</c>, <c>%7B</c> for <c>{</c> and <c>%7D</c> for
+    /// <c>}</c>. Null stays null.
+    /// </summary>
     [return: NotNullIfNotNull(nameof(text))]
-    public static string? Of(string? text) => text?.Replace('{', '(').Replace('}', ')');
+    public static string? Of(string? text) => text?.Replace("%", "%%").Replace("{", "%7B").Replace("}", "%7D");
 }
