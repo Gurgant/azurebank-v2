@@ -86,11 +86,29 @@ FAKE_AZ = textwrap.dedent('''
                  'service-key', 'audit-chain-key', 'audit-anchor-key', 'pin-pepper']
         if state == 'key-missing':
             names.remove('pin-pepper')
+        # The demo's client key is held by an app that was deployed with it. 'deployed' is the app
+        # as it was before the key existed, and 'demo-key-missing' a demo that lost it.
+        if state in ('deployed-demo', 'deployed-demo-off', 'demo-disagrees'):
+            names.append('demo-client-key')
         out({'value': [{'name': n, 'value': live[n]} for n in names]})
     if 'containerApps/azurebank?' in url:
+        # What the bff and the api container say about the demo, by state, or as FAKE_AZ_DEMO has
+        # it: a value for Demo__Enabled, "-" for a container that does not carry the setting,
+        # "nothing" for one with no settings at all, "secret" for the setting as a reference.
+        by_state = {'deployed-demo': 'true,true', 'demo-key-missing': 'true,true',
+                    'deployed-demo-off': 'false,false', 'demo-disagrees': 'true,false'}
+        says = os.environ.get('FAKE_AZ_DEMO', by_state.get(state, '-,-')).split(',')
+        def container(name, own, flag):
+            settings = [{'name': 'ASPNETCORE_ENVIRONMENT', 'value': 'Production'}, own]
+            if flag == 'secret':
+                settings.append({'name': 'Demo__Enabled', 'secretRef': 'a-secret'})
+            elif flag not in ('-', 'nothing'):
+                settings.append({'name': 'Demo__Enabled', 'value': flag})
+            described = {'name': name, 'image': 'ghcr.io/gurgant/azurebank-' + name + ':' + live['tag']}
+            return described if flag == 'nothing' else dict(described, env=settings)
         out({'properties': {'template': {'containers': [
-            {'name': 'bff', 'image': 'ghcr.io/gurgant/azurebank-bff:' + live['tag']},
-            {'name': 'api', 'image': 'ghcr.io/gurgant/azurebank-api:' + live['tag']}]}}})
+            container('bff', {'name': 'ServiceCredential__BffKey', 'secretRef': 'service-key'}, says[0]),
+            container('api', {'name': 'Security__PinPepper', 'secretRef': 'pin-pepper'}, says[1])]}}})
     if args[:2] == ['identity', 'show']:
         out(json.loads(os.environ['FAKE_AZ_IDS'])[args[args.index('--name') + 1]])
     if args[:3] == ['sql', 'server', 'list']:
@@ -237,7 +255,7 @@ LIVE = {
     'jwt-secret': 'live-jwt-0000000000', 'idempotency-hash-key': 'live-idem-000000000',
     'stepup-binding-key': 'live-stepup-0000000', 'service-key': 'live-service-000000',
     'audit-chain-key': 'live-chain-00000000', 'audit-anchor-key': 'live-anchor-0000000',
-    'pin-pepper': 'live-pepper-0000000',
+    'pin-pepper': 'live-pepper-0000000', 'demo-client-key': 'live-client-key-0000000000000000',
 }
 # The application secrets the template takes and the script writes. No database credential is among them.
 SEVEN = ['jwtSecret', 'idempotencyHashKey', 'stepUpBindingKey', 'serviceCredentialBffKey', 'auditChainKey',
@@ -340,9 +358,9 @@ class SecretsScriptTests(ScriptCase):
                 for word in ('password', 'connection', 'Server='):
                     self.assertNotIn(word.lower(), written.lower())
                 # Three letters can occur by chance in a random key, and did ("...ulsqlw="): "sql"
-                # is looked for in every name and in every value but the seven generated ones.
+                # is looked for in every name and in every value but the eight generated ones.
                 parameters = json.loads(written)['parameters']
-                self.assertNotIn('sql', json.dumps({name: None if name in SEVEN else entry
+                self.assertNotIn('sql', json.dumps({name: None if name in SECURE else entry
                                                     for name, entry in parameters.items()}).lower())
                 # The job holds one secret, its connection string: nothing here asks for it.
                 self.assertEqual([call for call in self.calls() if 'jobs/' in ' '.join(call)], [])
@@ -361,19 +379,21 @@ class SecretsScriptTests(ScriptCase):
         self.assertEqual(self.folder.stat().st_mode & 0o777, 0o700)
         self.assertEqual((self.folder / 'parameters.json').stat().st_mode & 0o777, 0o600)
 
-    def test_first_app_file_generates_seven_distinct_values_and_prints_none(self):
+    def test_first_app_file_generates_eight_distinct_values_and_prints_none(self):
         result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG)
         self.assertEqual(result.returncode, 0, result.stderr)
         values = self.parameters()
+        # No app is deployed, so nothing remembers whether the demo is on: the file does not say.
         self.assertEqual(sorted(values), sorted(['entraAdminObjectId', 'entraAdminLogin', 'deployApp', 'imageTag',
-                                                 'alertEmail', *SEVEN]))
+                                                 'alertEmail', *SECURE]))
         self.assertEqual(values['imageTag'], TAG)
         self.assertIs(values['deployApp'], True)
-        self.assertEqual(len({values[name] for name in SEVEN}), 7)
-        for name in SEVEN:
+        self.assertEqual(len({values[name] for name in SECURE}), 8)
+        for name in SECURE:
             self.assertGreaterEqual(len(values[name]), 44, f'{name}: at least 32 random bytes')
             self.assertIn(f'{name}: generated', result.stderr)
-        self.assertEqual(result.stderr.count(': generated'), 7)
+        self.assertEqual(result.stderr.count(': generated'), 8)
+        self.assertIn("demo: not written, the template's default applies", result.stderr)
         self.assert_nothing_leaked(result, values)
 
     def test_the_alerts_write_to_the_accounts_own_mailbox_and_the_report_does_not_show_it(self):
@@ -454,8 +474,9 @@ class SecretsScriptTests(ScriptCase):
         result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG)
         second = self.parameters()
         self.assertEqual(second, first)
-        self.assertEqual(result.stderr.count(': kept from the earlier file'), 7)
+        self.assertEqual(result.stderr.count(': kept from the earlier file'), 8)
         self.assertIn('jwtSecret: kept from the earlier file', result.stderr)
+        self.assertIn(f'{CLIENT_KEY}: kept from the earlier file', result.stderr)
         self.assert_nothing_leaked(result, second)
 
     def test_a_deployed_app_is_the_authority_and_its_images_are_left_alone(self):
@@ -469,8 +490,118 @@ class SecretsScriptTests(ScriptCase):
             'auditChainKey': LIVE['audit-chain-key'], 'auditAnchorKey': LIVE['audit-anchor-key'],
             'securityPinPepper': LIVE['pin-pepper']})
         self.assertIs(values['keepLogs'], True)
-        self.assertNotIn('generated', result.stderr)
+        # This app was deployed before the demo existed: its containers say nothing of the demo and
+        # it holds no client key. That key is the one value generated against a deployed app, and
+        # only because the app's demo is off; the demo stays as the app has it.
+        self.assertIn(f'{CLIENT_KEY}: generated', result.stderr)
+        self.assertEqual(result.stderr.count('generated'), 1)
+        self.assertGreaterEqual(len(values[CLIENT_KEY]), 44)
+        self.assertIs(values.get('demo'), False)
+        self.assertIn('demo: kept from the deployed resource', result.stderr)
         self.assert_nothing_leaked(result, values)
+
+    def test_the_client_key_is_kept_once_the_deployed_app_holds_it(self):
+        # With the demo on, and with it off: an app that holds the key keeps it, and keeps its demo.
+        for state, demo in (('deployed-demo', True), ('deployed-demo-off', False)):
+            with self.subTest(state=state):
+                result = self.secrets('-Action', 'New', '-DeployApp', state=state)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                values = self.parameters()
+                self.assertEqual(values.get(CLIENT_KEY), LIVE['demo-client-key'])
+                self.assertIn(f'{CLIENT_KEY}: kept from the deployed resource', result.stderr)
+                self.assertNotIn('generated', result.stderr)
+                self.assertIs(values.get('demo'), demo)
+                self.assertIn('demo: kept from the deployed resource', result.stderr)
+                self.assert_nothing_leaked(result, values)
+
+    def test_a_deployed_demo_without_its_client_key_stops_the_run(self):
+        # The exception is for an app whose demo is off. A demo that is on has hashed addresses
+        # with its key: a new one would be another key, so this is the seven's refusal.
+        result = self.secrets('-Action', 'New', '-DeployApp', state='demo-key-missing')
+        self.assertIn(f'{CLIENT_KEY} could not be read from the deployed resource. Nothing was written.',
+                      self.said(result))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.folder / 'parameters.json').exists())
+        self.assertNotIn('generated', result.stderr)
+
+    def test_demo_on_is_written_when_asked_for(self):
+        # Against the app as it is deployed today, and against one whose demo is already on.
+        for state, key in (('deployed', 'generated'), ('deployed-demo', 'kept from the deployed resource')):
+            with self.subTest(state=state):
+                result = self.secrets('-Action', 'New', '-DeployApp', '-DemoOn', state=state)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                values = self.parameters()
+                self.assertIs(values.get('demo'), True)
+                self.assertIn('demo: true, asked for with -DemoOn', result.stderr)
+                self.assertEqual(result.stderr.count('demo: '), 1)
+                self.assertIn(f'{CLIENT_KEY}: {key}', result.stderr)
+                self.assert_nothing_leaked(result, values)
+
+    def test_demo_on_without_deploy_app_is_refused_before_azure_is_asked_anything(self):
+        result = self.secrets('-Action', 'New', '-DemoOn', state='deployed')
+        self.assertIn('-DemoOn needs -DeployApp. Nothing was written.', self.said(result))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.calls(), [])
+        self.assertFalse(self.folder.exists())
+        self.assertEqual(result.stdout, '')
+
+    def test_with_no_app_deployed_nothing_remembers_the_demo(self):
+        # The app is the one thing that remembers the switch. Before the first app, or after the
+        # app was deleted, the script has nothing to read and does not guess: without -DemoOn the
+        # file says nothing and the template's default, off, applies.
+        result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG, state='foundation')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('demo', self.parameters())
+        self.assertIn("demo: not written, the template's default applies", result.stderr)
+        self.assertEqual(result.stderr.count(': generated'), 8)
+        (self.folder / 'parameters.json').unlink()
+        result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG, '-DemoOn', state='foundation')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIs(self.parameters().get('demo'), True)
+        self.assertIn('demo: true, asked for with -DemoOn', result.stderr)
+        self.assertNotIn('demo: not written', result.stderr)
+        self.assertEqual(result.stderr.count(': generated'), 8)
+
+    def test_containers_that_disagree_about_the_demo_stop_the_run(self):
+        # On in one container and off in the other is an app nobody deployed from this folder:
+        # the script does not choose a side, with -DemoOn or without it. A container that does not
+        # carry the setting is off, as the app reads it.
+        cases = (('demo-disagrees', None, []), ('deployed-demo', 'false,true', []), ('deployed-demo', 'true,-', []),
+                 ('deployed-demo', '-,true', []), ('deployed-demo', 'nothing,true', []),
+                 ('demo-disagrees', None, ['-DemoOn']))
+        for state, says, more in cases:
+            with self.subTest(state=state, says=says, more=more):
+                # Each case answers for itself: a file a case before it left is not this one's.
+                (self.folder / 'parameters.json').unlink(missing_ok=True)
+                result = self.secrets('-Action', 'New', '-DeployApp', *more, state=state,
+                                      **({'FAKE_AZ_DEMO': says} if says else {}))
+                self.assertIn('The two containers of the deployed app disagree about Demo__Enabled. '
+                              'Nothing was written.', self.said(result))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse((self.folder / 'parameters.json').exists())
+                self.assertEqual(result.stdout, '')
+
+    def test_a_container_without_the_setting_is_off_like_one_that_says_false(self):
+        for says in ('false,-', '-,false', 'nothing,nothing'):
+            with self.subTest(says=says):
+                result = self.secrets('-Action', 'New', '-DeployApp', state='deployed-demo-off', FAKE_AZ_DEMO=says)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIs(self.parameters().get('demo'), False)
+                self.assertIn('demo: kept from the deployed resource', result.stderr)
+
+    def test_a_demo_setting_the_template_never_writes_stops_the_run_and_is_not_shown(self):
+        # The template writes the text true or false, as a plain value, once. Anything else was
+        # set by hand: it is not read as on or as off, and what it holds is not repeated.
+        for says in ('planted-value,planted-value', 'True,True', 'true,secret', 'secret,secret', ',false'):
+            with self.subTest(says=says):
+                (self.folder / 'parameters.json').unlink(missing_ok=True)
+                result = self.secrets('-Action', 'New', '-DeployApp', state='deployed-demo', FAKE_AZ_DEMO=says)
+                self.assertIn('carries Demo__Enabled with something this template never writes. Nothing was written.',
+                              self.said(result))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse((self.folder / 'parameters.json').exists())
+                self.assertNotIn('planted-value', result.stderr)
+                self.assertEqual(result.stdout, '')
 
     def test_another_image_tag_is_refused_once_the_app_exists(self):
         result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG, state='deployed')
@@ -485,7 +616,7 @@ class SecretsScriptTests(ScriptCase):
         self.assertEqual(result.stdout, '')
 
     def test_a_resource_list_that_fails_is_not_an_empty_resource_group(self):
-        # Read as "no app yet", it would generate seven new secrets for an app that holds seven.
+        # Read as "no app yet", it would generate every secret anew for an app that holds its own.
         result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG, state='resources-unreadable')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('az resource list failed', result.stderr)
@@ -494,6 +625,9 @@ class SecretsScriptTests(ScriptCase):
 
     def test_a_deployed_app_missing_a_key_stops_the_run(self):
         result = self.secrets('-Action', 'New', '-DeployApp', state='key-missing')
+        # One of the seven: it is refused whether the app's demo is on or off.
+        self.assertIn('securityPinPepper could not be read from the deployed resource. Nothing was written.',
+                      self.said(result))
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.folder / 'parameters.json').exists())
         self.assertNotIn('generated', result.stderr)
@@ -1950,9 +2084,11 @@ class TemplateTests(unittest.TestCase):
             self.assertLessEqual(foundation, set(self.main['parameters']))
             self.assertLessEqual(required | {'keepLogs'}, foundation,
                                  'the foundation file must give every required parameter')
-            self.assertEqual(case.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG,
+            # With -DemoOn, so that the demo's switch is written too.
+            self.assertEqual(case.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG, '-DemoOn',
                                           state='foundation').returncode, 0)
             written = set(case.parameters())
+            self.assertIn('demo', written)
             self.assertLessEqual(written, set(self.main['parameters']))
             # What the template's own check asks for when deployApp is true.
             self.assertLessEqual(set(self.compiled['app-inputs']['parameters']) | {'deployApp'}, written)

@@ -9,7 +9,7 @@
     * Without -DeployApp: what the foundation needs (the Microsoft Entra administrator and
       deployApp=false). That file holds no secret; it stays in the folder because the
       administrator's sign-in name is shaped like an e-mail address.
-    * With -DeployApp: also the image tag, the address the alerts write to, and the seven
+    * With -DeployApp: also the image tag, the address the alerts write to, and the eight
       application secrets. Each secret comes from the first place that has it: the deployed app,
       then a file left by a run that stopped, then the system's random generator.
     * No database password is written, because none exists: the app and the migrate job sign in
@@ -20,8 +20,16 @@
     * keepLogs is what the deployed environment does now: true if it sends its logs to Azure
       Monitor, false if it sends them nowhere. -LogsOff writes false whatever is deployed. With no
       environment yet and no -LogsOff the template's own default applies.
+    * demo, written only with -DeployApp, is what the deployed app does now: true if both of its
+      containers carry Demo__Enabled as true, false if neither does. -DemoOn writes true. The
+      app is the only thing that remembers the switch: with no app deployed and no -DemoOn
+      nothing is written and the template's default, off, applies, whatever the database holds.
+      Two containers that disagree stop the script.
     * "Could not read" is never taken for "absent": a failed az call, or a deployed app without
-      one of its secrets, stops the script and no file is written.
+      one of its secrets, stops the script and no file is written. One secret is the exception,
+      the eighth: the demo's client key. An app deployed before the demo existed never held it,
+      so it is generated for a deployed app that lacks it while that app's demo is off, and
+      never while it is on.
     * Once the app exists its images move through the deploy workflow only: another -ImageTag is
       refused, and without one the running tag is written back.
 
@@ -36,6 +44,7 @@ param(
     [Parameter(Mandatory)][ValidateSet('New', 'Remove')][string]$Action,
     [string]$ResourceGroup = 'azurebank-demo',
     [switch]$DeployApp,
+    [switch]$DemoOn,
     [string]$ImageTag = '',
     [string]$AlertEmail = '',
     [switch]$LogsOff,
@@ -46,6 +55,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $AppName = 'azurebank'
+# The setting both containers of the app read to know whether they are the public demo.
+$DemoFlag = 'Demo__Enabled'
 $EnvironmentName = 'azurebank-env'
 $AlertGroupName = 'azurebank-owner'
 $Api = '2025-01-01'
@@ -112,6 +123,8 @@ if ($Action -eq 'Remove') {
 $mailbox = '^[^@\s]+@[^@\s]+\.[^@\s]+$'
 if ($DeployApp -and $ImageTag -and $ImageTag -cnotmatch '^[0-9a-f]{40}$') { throw 'ImageTag must be a full lowercase commit SHA.' }
 if ($AlertEmail -and $AlertEmail -notmatch $mailbox) { throw '-AlertEmail is not an e-mail address. Nothing was written.' }
+# The demo is a setting of the app's two containers: a file for the foundation alone has no use for it.
+if ($DemoOn -and -not $DeployApp) { throw '-DemoOn needs -DeployApp. Nothing was written.' }
 
 Protect-Directory $Directory
 
@@ -124,6 +137,18 @@ function Deployed([string]$Type, [string]$Name) {
     @($resources | Where-Object { $_['type'] -ieq $Type -and $_['name'] -eq $Name }).Count -eq 1
 }
 $appExists = Deployed 'Microsoft.App/containerApps' $AppName
+
+function Get-DemoFlag($App, [string]$Container) {
+    # What one container of the deployed app says about the demo: 'true' or 'false'. One that does
+    # not carry the setting is off, as the app reads it. The template writes the setting once, as
+    # a plain value, true or false: anything else was set by hand, is taken for neither, and is
+    # not repeated in the error.
+    $found = @($App['properties']['template']['containers'] | Where-Object { $_['name'] -eq $Container })
+    $settings = @($found[0]['env'] | Where-Object { $_ -and $_['name'] -eq $DemoFlag })
+    if ($settings.Count -eq 0) { return 'false' }
+    if ($settings.Count -eq 1 -and $settings[0]['value'] -cin 'true', 'false') { return $settings[0]['value'] }
+    throw "The $Container container of the deployed app carries $DemoFlag with something this template never writes. Nothing was written."
+}
 
 $report = [System.Collections.Generic.List[string]]::new()
 
@@ -147,6 +172,8 @@ if ($LogsOff) {
 
 # What already exists, in order of authority: the deployed app, then a file left by a run that stopped.
 $live = @{}
+# Whether the deployed app is the demo now. With no app deployed nothing says so.
+$deployedDemo = $false
 if ($DeployApp -and $appExists) {
     foreach ($s in (Invoke-Az rest --method POST --url (Url "Microsoft.App/containerApps/$AppName/listSecrets"))['value']) { $live[$s['name']] = $s['value'] }
     # Once the app exists its images move only through the deploy workflow, which migrates first.
@@ -155,14 +182,36 @@ if ($DeployApp -and $appExists) {
     $liveTag = ($bff -split ':')[-1]
     if ($ImageTag -and $ImageTag -ne $liveTag) { throw 'The app is deployed: its images move through the deploy workflow, not through this file. Nothing was written.' }
     $ImageTag = $liveTag
+    # On in one container and off in the other is not a state this folder deploys: no side is chosen.
+    $says = @('bff', 'api' | ForEach-Object { Get-DemoFlag $app $_ })
+    if ($says[0] -cne $says[1]) { throw "The two containers of the deployed app disagree about $DemoFlag. Nothing was written." }
+    $deployedDemo = $says[0] -ceq 'true'
 }
+
+# Whether the demo is on is kept the way keepLogs is: what the deployed app does now, so that no
+# later run turns the demo off by forgetting it, or on by accident. The app is the only thing that
+# remembers it. With no app deployed there is nothing to read, and what the database holds is not
+# known here: without -DemoOn the file says nothing, and the template's default, off, applies.
+$demo = $null
+if ($DemoOn) {
+    $demo = $true
+    $report.Add('demo: true, asked for with -DemoOn')
+} elseif ($DeployApp -and $appExists) {
+    $demo = $deployedDemo
+    $report.Add('demo: kept from the deployed resource')
+} elseif ($DeployApp) {
+    $report.Add("demo: not written, the template's default applies")
+}
+
 $previous = @{}
 if (Test-Path -LiteralPath $File) {
     $old = Get-Content -LiteralPath $File -Raw | ConvertFrom-Json -AsHashtable
     foreach ($name in $old['parameters'].Keys) { $previous[$name] = $old['parameters'][$name]['value'] }
 }
 
-# parameter -> the secret of the app that holds it once deployed, and how a new one is made
+# parameter -> the secret of the app that holds it once deployed, and how a new one is made.
+# NewWhileTheDemoIsOff marks the one secret a deployed app may lack: the demo's client key, which
+# an app deployed before the demo existed never held and, with its demo off, never used.
 $plan = [ordered]@{
     jwtSecret               = @{ Secret = 'jwt-secret';           New = { New-Key 64 } }
     idempotencyHashKey      = @{ Secret = 'idempotency-hash-key'; New = { New-Key 32 } }
@@ -171,6 +220,7 @@ $plan = [ordered]@{
     auditChainKey           = @{ Secret = 'audit-chain-key';      New = { New-Key 32 } }
     auditAnchorKey          = @{ Secret = 'audit-anchor-key';     New = { New-Key 32 } }
     securityPinPepper       = @{ Secret = 'pin-pepper';           New = { New-Key 48 } }
+    demoClientKeySecret     = @{ Secret = 'demo-client-key';      New = { New-Key 48 }; NewWhileTheDemoIsOff = $true }
 }
 
 $me = Invoke-Az ad signed-in-user show
@@ -184,6 +234,7 @@ if ($null -ne $keepLogs) { $parameters['keepLogs'] = @{ value = $keepLogs } }
 if ($DeployApp) {
     if ($ImageTag -cnotmatch '^[0-9a-f]{40}$') { throw 'Pass -ImageTag with the full SHA of the commit whose three images are published. Nothing was written.' }
     $parameters['imageTag'] = @{ value = $ImageTag }
+    if ($null -ne $demo) { $parameters['demo'] = @{ value = $demo } }
 
     # Where the alerts write. The report says which source, never the address.
     $address = $AlertEmail
@@ -213,7 +264,10 @@ if ($DeployApp) {
         $entry = $plan[$name]
         $value = $live[$entry.Secret]
         $source = 'kept from the deployed resource'
-        if (-not $value -and $appExists) {
+        # The key is asked for with ContainsKey: only one row has it, and under strict mode a
+        # key that is missing cannot be read by dot.
+        $mayBeNew = $entry.ContainsKey('NewWhileTheDemoIsOff') -and -not $deployedDemo
+        if (-not $value -and $appExists -and -not $mayBeNew) {
             # A deployed app without one of its secrets is not a case to paper over with a new value.
             throw "$name could not be read from the deployed resource. Nothing was written."
         }
