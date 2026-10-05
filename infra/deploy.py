@@ -50,11 +50,13 @@ they are the app's, or which one differs, and never shows a value, a part of one
 It is the one mode that lists a secret. A deployment never does: a workflow run goes on proving
 that its own identity is refused the listing of the app's secrets.
 
-The pool job is the app's to announce. With the demo off it is neither read nor moved, and
-whether it exists is not asked: no answer of Azure's is read as "there is no pool job". With the
-demo on it must be readable and in shape, its schedule and its timeout included, or the run stops
-before any change. A deployment moves that job's image and never starts it: the template gives it
-a schedule.
+For a deployment and for --check the pool job is the app's to announce. With the demo off they
+neither read nor move it, and whether it exists is not asked: no answer of Azure's is read as
+"there is no pool job". With the demo on it must be readable and in shape, its schedule and its
+timeout included, or the run stops before any change. A deployment moves that job's image and
+never starts it: the template gives it a schedule. The two commands that are about that job
+alone, --pool-run and --pool-log, ask the app nothing: the first reads the job and the second
+the job's executions, whatever the app says.
 
 --pool-run starts that job once beside its schedule, as whoever is signed in: the first fill, or
 a refill by hand. It reads the job and checks its shape, reads its executions once and refuses
