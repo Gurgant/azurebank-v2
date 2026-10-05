@@ -515,6 +515,10 @@ describe('SessionExpiryWarning', () => {
       // The button is found by its role and name too, once, and it is the form's submit: Enter
       // and Space press it where it stands.
       expect(stayButtons().map((button) => button.type)).toStrictEqual(['submit']);
+      // And it shows no spinner until it waits.
+      expect(
+        stayButtons().map((button) => within(button).queryAllByRole('progressbar').length),
+      ).toStrictEqual([0]);
       // The sentence above it is the cap's own, as for everyone else.
       expect(screen.getByRole('alertdialog')).toHaveAccessibleDescription(
         /^This session has reached its maximum length\. For your security it ends on a fixed schedule, whether or not you are using it\. You will be signed out in \d:\d\d\.$/,
