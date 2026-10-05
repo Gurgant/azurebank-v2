@@ -85,8 +85,8 @@ marked as such rather than guessed at~~ (struck 2026-09-04; correction below).
 >
 > The mint for 1000 on a balance of 16 answered 201: funds are checked at the transfer, not at the
 > mint (ADR-0042). The mock now quotes these, `serverCurrency` is gone, and the contract suite pins
-> the withdrawal and the delete on the real stack from a fresh account. The run's transcript is
-> kept outside this repository.
+> the withdrawal and the delete on the real stack from a fresh account. The transcript of the
+> 23:25Z run is kept outside this repository.
 > *(2026-10-05: what was cited here, by path or by name, sits in a private working folder that no
 > reader of this repository can open; the citation is replaced by what it stood for, not struck.)*
 

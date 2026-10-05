@@ -85,10 +85,10 @@ its own placement, not a copy of the balance guard's — see D4.
   every existing test's day untouched and a zero-money contract row is possible (D6).
 
 **What the regulation says, and does not.** Read on EUR-Lex on 2026-09-07 (the consolidated texts;
-the exact sentences were copied that day into a note kept outside this repository
+the exact sentences were copied that day into a file kept outside this repository
 *(2026-10-05: what was cited here, by path or by name, sits in a private working folder that no
 reader of this repository can open; the citation is replaced by what it stood for, not struck.)*,
-and nothing regulatory is cited here that is not in that note). PSD2 Art. 68(1)
+and nothing regulatory is cited here that is not in that file). PSD2 Art. 68(1)
 (CELEX 02015L2366-20240408): *"Where a specific payment instrument is used for the purposes of
 giving consent, the payer and the payer's payment service provider may agree on spending limits for
 payment transactions executed through that payment instrument."* — and Art. 4(14) defines the

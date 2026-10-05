@@ -248,7 +248,7 @@ gained its own, below)* proofs is a SQL Server test, not a sentence: a pre-consu
 rolls the soft delete back and the chain still verifies; eight concurrent DELETEs presenting one
 authorisation close the account once and every loser answers 404 or 401, never 500 (the test's own
 `_output.WriteLine`, three `dotnet test --no-build` runs on the working tree at d93ba10, 2026-09-06
-10:40:59Z–10:41:10Z, kept with that earlier output: `404,404,200,404,404,404,404,404`,
+10:40:59Z–10:41:10Z, kept in one file with that earlier output: `404,404,200,404,404,404,404,404`,
 `404,404,404,404,404,200,404,404`, `404,200,404,404,404,404,404,404`; three more at 11:24Z in the
 same file); a forced transient fault writes `AccountDeleted` once; a deposit that lands between the
 first attempt's guard and its UPDATE is refused 422 `NON_ZERO_BALANCE` on the retry with nothing
