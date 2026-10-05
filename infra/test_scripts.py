@@ -690,6 +690,39 @@ class SecretsScriptTests(ScriptCase):
         self.assertFalse(self.folder.exists())
 
 
+class SecretsScriptQuotesTests(unittest.TestCase):
+    """What the runbook quotes of infra/secrets.ps1 about the demo's switch, held to the script.
+    Both files are read as text and nothing is run: the tests above hold what the script prints,
+    and these hold that the page quotes the words the script holds. A step of the runbook gives
+    such a line as what is good to read, and a read that differs is a stop there."""
+
+    # The three lines of the report that say what was done with the switch.
+    REPORT = ('demo: true, asked for with -DemoOn', "demo: not written, the template's default applies",
+              'demo: kept from the deployed resource')
+    # The two refusals about the switch, as the script's source writes them: the second names the
+    # setting through the script's own variable. The page quotes the second and not the first.
+    NEEDS_THE_APP = '-DemoOn needs -DeployApp. Nothing was written.'
+    DISAGREE = 'The two containers of the deployed app disagree about $DemoFlag. Nothing was written.'
+
+    @classmethod
+    def setUpClass(cls):
+        cls.script = (HERE / 'secrets.ps1').read_text(encoding='utf-8')
+        # Every run of blanks and line ends as one blank: a quote that is wrapped is still found.
+        cls.page = ' '.join((HERE / 'README.md').read_text(encoding='utf-8').split())
+
+    def test_the_lines_about_the_demo_that_the_runbook_quotes_are_the_ones_the_script_writes(self):
+        # CONTROL: green as written: each quote was the script's when this was written. Seen red
+        # with a line of the report reworded in the script, with the refusal reworded there, and
+        # with a quote taken out of the page.
+        for words in (*self.REPORT, self.NEEDS_THE_APP, self.DISAGREE):
+            with self.subTest(words=words, held_by='the script'):
+                self.assertEqual(self.script.count(words), 1)
+        (flag,) = re.findall(r"(?m)^\$DemoFlag = '([^']*)'$", self.script)
+        for words in (*self.REPORT, self.DISAGREE.replace('$DemoFlag', flag)):
+            with self.subTest(words=words, held_by='the runbook'):
+                self.assertIn(words, self.page)
+
+
 class UsersCase(ScriptCase):
     """sql-principals.ps1 with a stand-in for sqlcmd at a path of its own, outside PATH."""
 

@@ -4702,8 +4702,8 @@ class RunbookTests(unittest.TestCase):
     """The script and the two pages it names, each held to the other: infra/README.md and
     docs/runbooks/demo-pool.md, read as text. What a page says of Azure is a person's sentence:
     these tests hold only that a heading the script names is there, that a refusal which sends its
-    reader to a section has a row in it, and that the commands and the exit codes the pages tell
-    are the script's."""
+    reader to a section has a row in it, that a line a step gives as what a good run prints is one
+    the script prints, and that the commands and the exit codes the pages tell are the script's."""
 
     PAGES = ('infra/README.md', 'docs/runbooks/demo-pool.md')
     FAILS = (PAGES[0], 'When something fails')
@@ -4741,6 +4741,23 @@ class RunbookTests(unittest.TestCase):
         "(the job's timeout and two minutes)",
         'The pool run did not end well',
         'Azure reported no exit code for it',
+    )
+    # What the runbook quotes of a line that says a run went well: its steps give each as what
+    # is good to read, and a read that differs is a stop there. Held as a row is: one sentence of
+    # the script prints the words, and the page quotes them.
+    GOOD = (
+        'the listing was refused',
+        'Running now',
+        'is not read and not moved',
+        'is not read and no secret is listed',
+        'no other revision is active: what answers now is that revision',
+        "The pool job's PIN pepper and connection string are the app's",
+        "It is the public demo: the page carries the demo's tag, and a registration with an empty body "
+        'was refused as closed.',
+        'Smoke passed',
+        'Checked: ',
+        '; the smoke test passed; nothing was moved.',
+        'The pool run ended well',
     )
 
     @classmethod
@@ -4789,6 +4806,19 @@ class RunbookTests(unittest.TestCase):
         # for, so the sentences are counted too. Seen red with one taken out and with one added.
         self.assertEqual(len(sent), self.SENT, 'a sentence that names the section was added or taken '
                                                'out: its row, and its words in ROWS, change with it')
+
+    def test_a_line_the_runbook_gives_as_good_is_one_the_script_prints(self):
+        # CONTROL: green as written: each quote was the script's when this was written. Seen red
+        # with a line reworded in the script and in its own test, the page left as it was (the
+        # line of a pool run that ended well; the line of a deployment with the demo off), and
+        # with a quote taken out of the page.
+        page = ' '.join(self.runbook.split())
+        for words in self.GOOD:
+            with self.subTest(words=words):
+                self.assertTrue(any(words in run for run in self.runs), 'the script no longer says this')
+                self.assertEqual(sum(words in text for text in self.whole), 1,
+                                 'these words do not stand in exactly one sentence the script prints')
+                self.assertIn(words, page)
 
     def test_every_command_of_the_script_is_told_in_the_runbook_and_the_pools_in_the_pools_page(self):
         with open(deploy.__file__, encoding='utf-8') as source:
