@@ -1339,6 +1339,14 @@ POOL_DRIFTS = {
                                lambda a: pool_configuration(a).update(replicaTimeout=59)),
     'timeout_that_is_no_number': ('configuration.replicaTimeout is True',
                                   lambda a: pool_configuration(a).update(replicaTimeout=True)),
+    # CONTROL: green as written, the two below. A timeout that is text, and text where the
+    # schedule's settings are due, are refused like any other drift and are not an error of this
+    # script: each was seen ending in one (a TypeError, an AttributeError) with the check of the
+    # type taken out of pool_drift.
+    'timeout_that_is_text': ("configuration.replicaTimeout is '600'",
+                             lambda a: pool_configuration(a).update(replicaTimeout='600')),
+    'schedule_that_is_text': ("configuration.scheduleTriggerConfig.cronExpression is not '0 */4 * * *'",
+                              lambda a: pool_configuration(a).update(scheduleTriggerConfig='0 */4 * * *')),
     'missing_schedule': ("configuration.scheduleTriggerConfig.cronExpression is not '0 */4 * * *'",
                          lambda a: pool_configuration(a).pop('scheduleTriggerConfig')),
     'command': ('template.containers[0].command is set',

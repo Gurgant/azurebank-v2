@@ -344,7 +344,7 @@ def pool_drift(job):
          schedule.get('parallelism') in (None, 1)),
         ('configuration.replicaRetryLimit', configuration.get('replicaRetryLimit'),
          configuration.get('replicaRetryLimit') in (None, 0)),
-        # A number and not True: a truth value is a whole number to Python.
+        # Its type first: a timeout that came back as text would not compare with a number.
         ('configuration.replicaTimeout', timeout, type(timeout) is int and shortest <= timeout <= longest),
         ('template.initContainers', init_names(template), not template.get('initContainers')),
         ('template.containers', names, names == [JOBS[POOL_JOB]]),
