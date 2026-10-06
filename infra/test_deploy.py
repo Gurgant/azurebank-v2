@@ -2224,6 +2224,28 @@ ANOTHER_REVISION = ('an answer could still come from another revision: nothing w
                     "moved. Look at the app's revisions, then check again.")
 ALONE = 'is the latest ready one and no other revision is active: what answers now is that revision.'
 DEMO_OFF = 'The app says the demo is off: the job azurebank-pool is not read and no secret is listed.'
+# What a check says of the proxies the BFF believes, after the line about the revision: that the
+# bff container names no network, as the template writes none unless a run gives it some, or how
+# many it names. Since 2026-10-06 every check that gets past the revisions prints one of the two.
+NO_NETWORKS = ("The bff container names no network of proxies: it takes each connection's address for the "
+               "caller's and reads no forwarded header.")
+NETWORKS_SETTING = 'ForwardedHeaders__KnownIPNetworks__'
+
+
+def names_networks(count):
+    return (f"The bff container names {count} network{'' if count == 1 else 's'} of proxies: it believes the "
+            'X-Forwarded-For header of a connection that comes from inside one. No network was shown.')
+
+
+def told(app, *settings, container='bff'):
+    """The app with these settings added to one of its containers: (name, value) for a plain
+    value, a name alone for a reference to a secret, or a whole entry."""
+    (entry,) = [found for found in app['properties']['template']['containers'] if found['name'] == container]
+    entry['env'] = entry['env'] + [
+        setting if isinstance(setting, dict)
+        else {'name': setting, 'secretRef': 'a-secret'} if isinstance(setting, str)
+        else {'name': setting[0], 'value': setting[1]} for setting in settings]
+    return app
 NO_ADDRESS = ('The app is in shape and reports no address (its ingress holds no host name), so there is '
               'nothing to ask: nothing was proved, nothing was moved.')
 EQUAL = ("The pool job's PIN pepper and connection string are the app's: each was listed on both and "
@@ -2294,7 +2316,9 @@ class CheckTests(DeployCase):
         # CONTROL: green as written. Every line the check printed, the smoke test being a stand-in
         # in these tests: nothing of a listing is printed beside them, not how many secrets it
         # held and not how long a value was. Seen red with such a line printed after each listing.
-        self.assertEqual(self.said(), [f'Revision {BEFORE} {ALONE}', *lines])
+        # Since 2026-10-06 the second line is the one about the networks of proxies, which the
+        # app of these tests names none of; until then the lines given followed the first.
+        self.assertEqual(self.said(), [f'Revision {BEFORE} {ALONE}', NO_NETWORKS, *lines])
 
     def assert_no_secret_is_shown(self, text, *more):
         """Neither a value a listing answered, nor eight characters in a row of one."""
@@ -2310,8 +2334,105 @@ class CheckTests(DeployCase):
         self.smoke.assert_called_once_with(f'https://{ADDRESS}', demo=False)
         self.assertEqual(self.azure.writes(), [])
         self.migration.assert_not_called()
-        self.assertEqual(self.said(), [f'Revision {BEFORE} {ALONE}', DEMO_OFF, checked(BEFORE, demo=False)])
+        self.assertEqual(self.said(), [f'Revision {BEFORE} {ALONE}', NO_NETWORKS, DEMO_OFF,
+                                       checked(BEFORE, demo=False)])
         self.assertEqual(self.clock.sleeps, [], 'an app at rest is not waited for')
+
+    def test_it_says_how_many_networks_of_proxies_the_bff_names_and_never_which(self):
+        # A run of the template that was given networks writes one setting for each on the bff
+        # container, numbered from 0 (infra/main.bicep). The check counts them. A network is an
+        # address range of the platform's, typed by whoever measured it: none is printed.
+        planted = ('192.0.2.0/24', '2001:db8:7::/48', '198.51.100.0/24')
+        for count in (1, 2, 3):
+            with self.subTest(count=count):
+                self.clear()
+                self.azure.app = told(app_resource(), *[(f'{NETWORKS_SETTING}{number}', planted[number])
+                                                        for number in range(count)])
+                self.check()
+                self.assertEqual(self.said(), [f'Revision {BEFORE} {ALONE}', names_networks(count), DEMO_OFF,
+                                               checked(BEFORE, demo=False)])
+                for network in planted:
+                    self.assertNotIn(network.split('/')[0], self.printed())
+        # In whatever order the answer lists them, and whatever the case of a name: .NET reads a
+        # setting's name whatever its case, so such a setting is one the BFF reads.
+        self.clear()
+        self.azure.app = told(app_resource(), (f'{NETWORKS_SETTING}1'.upper(), planted[1]),
+                              (f'{NETWORKS_SETTING}0', planted[0]))
+        self.check()
+        self.assertEqual(self.said()[1], names_networks(2))
+        # With the demo on the line stands where it stood, before the pool job is read.
+        self.clear()
+        self.azure.turn_the_demo_on()
+        self.azure.app = told(self.azure.app, (f'{NETWORKS_SETTING}0', planted[0]))
+        self.check()
+        self.assertEqual(self.said(), [f'Revision {BEFORE} {ALONE}', names_networks(1), EQUAL,
+                                       checked(BEFORE, demo=True)])
+        self.assert_nothing_was_moved()
+
+    def test_a_setting_about_forwarded_headers_that_the_template_never_writes_ends_the_check(self):
+        # The template writes the networks on the bff container, each once, as a plain value,
+        # numbered from 0 with no gap, and no other setting about forwarded headers anywhere.
+        # Anything else was set by hand, and the BFF may then believe another header than a count
+        # would say: no count is given, the address is asked nothing, and what was found is not
+        # repeated.
+        first = (f'{NETWORKS_SETTING}0', '192.0.2.0/24')
+        on_the_bff = ("the settings about forwarded headers in the container 'bff' are not what the template "
+                      f'writes ({NETWORKS_SETTING}0 and on with no gap, each once, as a plain value, and no other)')
+        on_the_api = ("the container 'api' carries a setting about forwarded headers, which the template writes "
+                      "on 'bff' alone")
+        cases = (
+            ('a gap', told(app_resource(), first, (f'{NETWORKS_SETTING}2', 'VALUE-MARKER')), on_the_bff),
+            ('numbered from 1', told(app_resource(), (f'{NETWORKS_SETTING}1', 'VALUE-MARKER')), on_the_bff),
+            ('a number twice', told(app_resource(), first, (f'{NETWORKS_SETTING}0', 'VALUE-MARKER')), on_the_bff),
+            ('a number twice, in two cases',
+             told(app_resource(), first, (f'{NETWORKS_SETTING}0'.lower(), 'VALUE-MARKER')), on_the_bff),
+            ('a number with a leading zero',
+             told(app_resource(), (f'{NETWORKS_SETTING}00', 'VALUE-MARKER')), on_the_bff),
+            ('no number', told(app_resource(), (f'{NETWORKS_SETTING}first', 'VALUE-MARKER')), on_the_bff),
+            ('a reference to a secret', told(app_resource(), f'{NETWORKS_SETTING}0'), on_the_bff),
+            ('an empty value', told(app_resource(), (f'{NETWORKS_SETTING}0', '')), on_the_bff),
+            ('a value that is not text',
+             told(app_resource(), {'name': f'{NETWORKS_SETTING}0', 'value': 7}), on_the_bff),
+            ('an exact address beside a network',
+             told(app_resource(), first, ('ForwardedHeaders__KnownProxies__0', 'VALUE-MARKER')), on_the_bff),
+            ('a limit of hops', told(app_resource(), ('ForwardedHeaders__ForwardLimit', 'VALUE-MARKER')), on_the_bff),
+            ('the switch that believes every caller',
+             told(app_resource(), ('ASPNETCORE_FORWARDEDHEADERS_ENABLED', 'VALUE-MARKER')), on_the_bff),
+            ('a network on the api', told(app_resource(), first, container='api'), on_the_api),
+            ('the switch on the api, in lower case',
+             told(app_resource(), ('aspnetcore_forwardedheaders_enabled', 'VALUE-MARKER'), container='api'),
+             on_the_api),
+        )
+        for case, app, drift in cases:
+            with self.subTest(case=case):
+                self.clear()
+                self.azure.app = app
+                with self.assertRaises(deploy.ShapeError) as raised:
+                    self.check()
+                self.assertEqual(str(raised.exception), out_of_shape('The app', drift, when='nothing was moved'))
+                self.assertEqual(self.printed(), '', 'nothing is said of the revision, nor a count given')
+                for planted in ('VALUE-MARKER', '192.0.2'):
+                    self.assertNotIn(planted, str(raised.exception))
+        self.smoke.assert_not_called()
+        self.assert_nothing_was_moved()
+        # CONTROL: green as written. A setting whose name only holds those words is not one of
+        # them: the check passes, and counts no network.
+        self.clear()
+        self.azure.app = told(app_resource(), ('Logging__ForwardedHeaders__Level', 'Warning'),
+                              ('X_ForwardedHeaders__KnownIPNetworks__0', '192.0.2.0/24'))
+        self.check()
+        self.assertEqual(self.said()[1], NO_NETWORKS)
+
+    def test_a_deployment_does_not_read_the_networks_of_proxies(self):
+        # CONTROL: green as written. The count and its refusal are the check's alone: a deployment
+        # moves the images of an app whose bff carries such a setting, by hand or by the
+        # template, and says nothing of it. Seen red with the read added to a deployment.
+        self.azure.app = told(app_resource(), ('ForwardedHeaders__KnownProxies__0', 'VALUE-MARKER'),
+                              (f'{NETWORKS_SETTING}5', 'VALUE-MARKER'))
+        self.deploy()
+        self.assertEqual(self.steps(), ['job azurebank-migrate', 'migration', 'app d', 'smoke'])
+        self.assertNotIn('network', self.printed())
+        self.assertNotIn('VALUE-MARKER', self.printed())
 
     def test_with_the_demo_on_it_reads_the_pool_job_too_and_still_moves_nothing(self):
         self.azure.turn_the_demo_on()

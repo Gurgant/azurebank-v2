@@ -121,8 +121,14 @@ FAKE_AZ = textwrap.dedent('''
         by_state = {'deployed-demo': 'true,true', 'demo-key-missing': 'true,true',
                     'deployed-demo-off': 'false,false', 'demo-disagrees': 'true,false'}
         says = os.environ.get('FAKE_AZ_DEMO', by_state.get(state, '-,-')).split(',')
-        def container(name, own, flag):
-            settings = [{'name': 'ASPNETCORE_ENVIRONMENT', 'value': 'Production'}, own]
+        # What the bff container says of the proxies it believes, as FAKE_AZ_NETWORKS has it:
+        # settings separated by "|", each NAME=VALUE for a plain value, or NAME alone for a
+        # reference to a secret. By default none, as the template writes none.
+        proxies = [{'name': pair.partition('=')[0], 'value': pair.partition('=')[2]} if '=' in pair
+                   else {'name': pair, 'secretRef': 'a-secret'}
+                   for pair in os.environ.get('FAKE_AZ_NETWORKS', '').split('|') if pair]
+        def container(name, own, flag, more=()):
+            settings = [{'name': 'ASPNETCORE_ENVIRONMENT', 'value': 'Production'}, own, *more]
             if flag == 'secret':
                 settings.append({'name': 'Demo__Enabled', 'secretRef': 'a-secret'})
             elif flag == 'twice':
@@ -133,7 +139,7 @@ FAKE_AZ = textwrap.dedent('''
             described = {'name': name, 'image': 'ghcr.io/gurgant/azurebank-' + name + ':' + live['tag']}
             return described if flag == 'nothing' else dict(described, env=settings)
         out({'properties': {'template': {'containers': [
-            container('bff', {'name': 'ServiceCredential__BffKey', 'secretRef': 'service-key'}, says[0]),
+            container('bff', {'name': 'ServiceCredential__BffKey', 'secretRef': 'service-key'}, says[0], proxies),
             container('api', {'name': 'Security__PinPepper', 'secretRef': 'pin-pepper'}, says[1])]}}})
     if args[:2] == ['identity', 'show']:
         out(json.loads(os.environ['FAKE_AZ_IDS'])[args[args.index('--name') + 1]])
@@ -325,8 +331,8 @@ class ScriptCase(unittest.TestCase):
         env = dict(os.environ, FAKE_AZ_STATE=state, FAKE_AZ_LIVE=json.dumps(LIVE), FAKE_AZ_LOG=str(self.log),
                    FAKE_AZ_RULES=str(self.rules), FAKE_AZ_IDS=json.dumps(IDS), FAKE_SEQUENCE=str(self.sequence),
                    PATH=str(self.shim) + os.pathsep + os.environ['PATH'])
-        for name in ('AZUREBANK_ALERT_EMAIL', 'AZUREBANK_ALERT_PUSH_ACCOUNT', 'SQLCMDUSER', 'SQLCMDPASSWORD',
-                     'SQLCMDINI', *VARIABLES):
+        for name in ('AZUREBANK_ALERT_EMAIL', 'AZUREBANK_ALERT_PUSH_ACCOUNT', 'AZUREBANK_PROXY_NETWORKS',
+                     'SQLCMDUSER', 'SQLCMDPASSWORD', 'SQLCMDINI', *VARIABLES):
             env.pop(name, None)
         env.update(environment)
         return subprocess.run([PWSH, '-NoProfile', '-NonInteractive', '-File', str(HERE / script), *args],
@@ -622,6 +628,258 @@ class SecretsScriptTests(ScriptCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn(self.PHONE, self.parameters())
         self.assertNotIn(self.PHONE, result.stderr)
+
+    # The networks of proxies the app believes: the bff container's settings
+    # ForwardedHeaders__KnownIPNetworks__0 and on. Found as the phone's account is: the argument,
+    # then the variable, then what the deployed app holds; none of the three is no value, and
+    # not an error. No line of the report, and no call, holds a network. The ranges below are
+    # the ones kept for documentation: none is a network of any deployment.
+    NETWORKS = 'proxyNetworks'
+    NO_NETWORKS = "proxyNetworks: not written, the template's default applies"
+    SETTING = 'ForwardedHeaders__KnownIPNetworks__'
+    NOT_TAKEN = ('is not a network the app takes (address/prefix-length, written as it is printed, no wider '
+                 'than /8). Nothing was written.')
+    BY_HAND = ('The bff container of the deployed app carries a forwarded-headers setting this template never '
+               'writes. Pass -ProxyNetworks. Nothing was written.')
+
+    def held(self, *networks):
+        """What FAKE_AZ_NETWORKS takes for a bff container that holds these networks, as the template writes them."""
+        return '|'.join(f'{self.SETTING}{number}={network}' for number, network in enumerate(networks))
+
+    def assert_no_network_is_shown(self, result, *more):
+        said = result.stderr + result.stdout + (self.log.read_text(encoding='utf-8') if self.log.exists() else '')
+        for part in ('192.0.2', '198.51.100', '203.0.113', '2001:db8', *more):
+            self.assertNotIn(part, said)
+
+    def test_networks_that_nobody_names_are_not_an_error_and_are_not_written(self):
+        # Before any app, and against a deployed app whose bff container holds none.
+        for state in ('empty', 'deployed'):
+            with self.subTest(state=state):
+                (self.folder / 'parameters.json').unlink(missing_ok=True)
+                result = self.secrets('-Action', 'New', '-DeployApp', *(['-ImageTag', TAG] if state == 'empty' else []),
+                                      state=state)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn(self.NETWORKS, self.parameters())
+                self.assertIn(self.NO_NETWORKS, result.stderr)
+                self.assertEqual(result.stderr.count(f'{self.NETWORKS}: '), 1)
+        # The argument given as empty names none, with -DeployApp and without it: a step of the
+        # runbook passes a variable that is empty until the operator has measured a range. With
+        # it empty the deployed app is still what is read.
+        for more, deployed, expected in ((['-DeployApp'], '', None), ([], '', None),
+                                         (['-DeployApp'], self.held('192.0.2.0/24'), ['192.0.2.0/24'])):
+            with self.subTest(empty_argument_with=more, deployed=bool(deployed)):
+                (self.folder / 'parameters.json').unlink(missing_ok=True)
+                result = self.secrets('-Action', 'New', *more, '-ProxyNetworks', '', state='deployed',
+                                      FAKE_AZ_NETWORKS=deployed)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.parameters().get(self.NETWORKS), expected)
+                self.assertEqual(result.stderr.count(self.NO_NETWORKS), 1 if more and not deployed else 0)
+
+    def test_the_argument_names_the_networks_before_anything_else_does(self):
+        result = self.secrets('-Action', 'New', '-DeployApp', '-ProxyNetworks', '192.0.2.0/24, 2001:db8:7::/48',
+                              state='deployed', AZUREBANK_PROXY_NETWORKS='198.51.100.0/24',
+                              FAKE_AZ_NETWORKS=self.held('203.0.113.0/24'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        values = self.parameters()
+        # A list, in the order given, the blanks around a network dropped.
+        self.assertEqual(values.get(self.NETWORKS), ['192.0.2.0/24', '2001:db8:7::/48'])
+        self.assertIn(f'{self.NETWORKS}: from -ProxyNetworks', result.stderr)
+        self.assertEqual(result.stderr.count(f'{self.NETWORKS}: '), 1)
+        self.assert_no_network_is_shown(result)
+        self.assert_nothing_leaked(result, values)
+        # One network is a list of one, not a text: the template takes an array.
+        (self.folder / 'parameters.json').unlink()
+        result = self.secrets('-Action', 'New', '-DeployApp', '-ProxyNetworks', '192.0.2.0/24', state='deployed')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.parameters().get(self.NETWORKS), ['192.0.2.0/24'])
+
+    def test_the_variable_names_the_networks_and_the_report_does_not_show_them(self):
+        # Before any app, and against a deployed app that holds another network: the variable wins.
+        for state, deployed in (('empty', ''), ('deployed', self.held('203.0.113.0/24'))):
+            with self.subTest(state=state):
+                (self.folder / 'parameters.json').unlink(missing_ok=True)
+                result = self.secrets('-Action', 'New', '-DeployApp', *(['-ImageTag', TAG] if state == 'empty' else []),
+                                      state=state, AZUREBANK_PROXY_NETWORKS='198.51.100.0/24,2001:db8:7::/48',
+                                      FAKE_AZ_NETWORKS=deployed)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.parameters().get(self.NETWORKS), ['198.51.100.0/24', '2001:db8:7::/48'])
+                self.assertIn(f'{self.NETWORKS}: from AZUREBANK_PROXY_NETWORKS', result.stderr)
+                self.assertEqual(result.stderr.count(f'{self.NETWORKS}: '), 1)
+                self.assert_no_network_is_shown(result)
+
+    def test_the_networks_the_deployed_app_believes_are_kept_when_none_is_named(self):
+        # In the order of their numbers, whatever order the answer lists the settings in, and
+        # whatever the case of a name: .NET reads a setting's name whatever its case.
+        in_order = self.held('192.0.2.0/24', '2001:db8:7::/48', '198.51.100.0/24')
+        for case, deployed in (('as the template writes them', in_order),
+                               ('listed last first', '|'.join(reversed(in_order.split('|')))),
+                               ('a name in lower case',
+                                in_order.replace(f'{self.SETTING}1', f'{self.SETTING}1'.lower()))):
+            with self.subTest(case=case):
+                (self.folder / 'parameters.json').unlink(missing_ok=True)
+                result = self.secrets('-Action', 'New', '-DeployApp', state='deployed', FAKE_AZ_NETWORKS=deployed)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                values = self.parameters()
+                self.assertEqual(values.get(self.NETWORKS), ['192.0.2.0/24', '2001:db8:7::/48', '198.51.100.0/24'])
+                self.assertIn(f'{self.NETWORKS}: kept from the deployed resource', result.stderr)
+                self.assertEqual(result.stderr.count(f'{self.NETWORKS}: '), 1)
+                self.assert_no_network_is_shown(result)
+                self.assert_nothing_leaked(result, values)
+
+    def test_the_word_none_writes_an_empty_list_whatever_is_deployed(self):
+        # The way back: an empty list, written, so that the run takes the settings out. Without
+        # it the script would keep what the deployed app holds, and nothing could unset them.
+        deployed = self.held('203.0.113.0/24')
+        for case, arguments, variable, said in (
+                ('the argument', ['-ProxyNetworks', 'none'], '198.51.100.0/24', 'none, asked for with -ProxyNetworks'),
+                ('the variable', [], 'none', 'none, asked for with AZUREBANK_PROXY_NETWORKS')):
+            with self.subTest(case=case):
+                (self.folder / 'parameters.json').unlink(missing_ok=True)
+                result = self.secrets('-Action', 'New', '-DeployApp', *arguments, state='deployed',
+                                      AZUREBANK_PROXY_NETWORKS=variable, FAKE_AZ_NETWORKS=deployed)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.parameters().get(self.NETWORKS, 'not written'), [])
+                self.assertIn(f'{self.NETWORKS}: {said}', result.stderr)
+                self.assertEqual(result.stderr.count(f'{self.NETWORKS}: '), 1)
+                self.assert_no_network_is_shown(result)
+        # Only the word itself, in lower case: anything else is read as a list of networks.
+        (self.folder / 'parameters.json').unlink()
+        result = self.secrets('-Action', 'New', '-DeployApp', '-ProxyNetworks', 'None', state='deployed')
+        self.assertIn(f'-ProxyNetworks: entry 1 of 1 {self.NOT_TAKEN}', self.said(result))
+        self.assertFalse((self.folder / 'parameters.json').exists())
+
+    def test_an_entry_the_app_would_not_take_for_a_network_is_refused_and_not_shown(self):
+        # As an argument, before Azure is asked anything; from the variable and from the deployed
+        # app, before anything is written. Named by its place in the list, never by what it holds.
+        not_taken = (('0.0.0.0/0', '1 of 1'), ('192.0.2.0/24,planted-value', '2 of 2'), ('192.0.2.1/24', '1 of 1'),
+                     ('192.0.2.0/24,', '2 of 2'), ('192.0.2.0/24,,198.51.100.0/24', '2 of 3'))
+        for given, place in not_taken:
+            with self.subTest(given=given, by='the argument'):
+                result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG, '-ProxyNetworks', given)
+                self.assertIn(f'-ProxyNetworks: entry {place} {self.NOT_TAKEN}', self.said(result))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.calls(), [])
+                self.assertFalse(self.folder.exists())
+                self.assert_no_network_is_shown(result, 'planted', '0.0.0.0')
+        for given, place in not_taken:
+            with self.subTest(given=given, by='the variable'):
+                result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG, AZUREBANK_PROXY_NETWORKS=given)
+                self.assertIn(f'AZUREBANK_PROXY_NETWORKS: entry {place} {self.NOT_TAKEN}', self.said(result))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse((self.folder / 'parameters.json').exists())
+                self.assert_no_network_is_shown(result, 'planted', '0.0.0.0')
+                self.assertEqual(result.stdout, '')
+        # The deployed app: a network somebody wrote there by hand, well numbered and not one
+        # the app takes. (An app that held it would not have started: this is a read of settings.)
+        result = self.secrets('-Action', 'New', '-DeployApp', state='deployed',
+                              FAKE_AZ_NETWORKS=self.held('192.0.2.0/24', '0.0.0.0/0'))
+        self.assertIn('The bff container of the deployed app: entry 2 of 2 is not a network the app takes. '
+                      'Pass -ProxyNetworks. Nothing was written.', self.said(result))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.folder / 'parameters.json').exists())
+        self.assert_no_network_is_shown(result, '0.0.0.0')
+
+    def test_networks_without_deploy_app_are_refused_before_azure_is_asked_anything(self):
+        # They are a setting of the app's bff container: a file for the foundation alone cannot
+        # carry them, and an argument dropped in silence would be taken for one that was kept.
+        result = self.secrets('-Action', 'New', '-ProxyNetworks', '192.0.2.0/24', state='deployed')
+        self.assertIn('-ProxyNetworks needs -DeployApp. Nothing was written.', self.said(result))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.calls(), [])
+        self.assertFalse(self.folder.exists())
+        self.assertEqual(result.stdout, '')
+        # The variable is the terminal's and not this run's: the foundation's file leaves it out,
+        # and so it does what the deployed app holds.
+        result = self.secrets('-Action', 'New', state='deployed', AZUREBANK_PROXY_NETWORKS='198.51.100.0/24',
+                              FAKE_AZ_NETWORKS=self.held('203.0.113.0/24'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn(self.NETWORKS, self.parameters())
+        self.assertNotIn(self.NETWORKS, result.stderr)
+
+    def test_a_forwarded_headers_setting_the_template_never_writes_stops_the_run_and_is_not_shown(self):
+        # The template writes one setting a network, each once, as a plain value, numbered from
+        # 0 with no gap, and nothing else under ForwardedHeaders__. Anything else on the bff
+        # container was set by hand: it is not taken for a list, a run would take it out in
+        # silence, and what it holds is not repeated.
+        one = f'{self.SETTING}0=192.0.2.0/24'
+        by_hand = {'a reference to a secret': f'{self.SETTING}0',
+                   'a gap': f'{one}|{self.SETTING}2=198.51.100.0/24',
+                   'numbered from 1': f'{self.SETTING}1=192.0.2.0/24',
+                   'a number twice': f'{one}|{self.SETTING}0=198.51.100.0/24',
+                   'a number twice, in two cases': f'{one}|{self.SETTING.lower()}0=198.51.100.0/24',
+                   'a number with a leading zero': f'{self.SETTING}00=192.0.2.0/24',
+                   'no number': f'{self.SETTING}first=192.0.2.0/24',
+                   'an exact address beside a network': f'{one}|ForwardedHeaders__KnownProxies__0=203.0.113.9',
+                   'an exact address alone': 'ForwardedHeaders__KnownProxies__0=203.0.113.9',
+                   'a limit of hops': 'ForwardedHeaders__ForwardLimit=2'}
+        for case, deployed in by_hand.items():
+            with self.subTest(case=case):
+                (self.folder / 'parameters.json').unlink(missing_ok=True)
+                result = self.secrets('-Action', 'New', '-DeployApp', state='deployed', FAKE_AZ_NETWORKS=deployed)
+                self.assertIn(self.BY_HAND, self.said(result))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse((self.folder / 'parameters.json').exists())
+                self.assert_no_network_is_shown(result)
+                self.assertEqual(result.stdout, '')
+        # A run that names the networks itself is not stopped by them: what it names is written,
+        # and the run of the template writes the bff's settings whole.
+        result = self.secrets('-Action', 'New', '-DeployApp', '-ProxyNetworks', '198.51.100.0/24', state='deployed',
+                              FAKE_AZ_NETWORKS=by_hand['an exact address beside a network'])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.parameters().get(self.NETWORKS), ['198.51.100.0/24'])
+
+    # What takes the script's own rule for a network out of its source and asks it a list of
+    # texts, in one process: the function by its name, defined here as the script defines it.
+    ASK_THE_RULE = textwrap.dedent('''
+        param([string]$Script)
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($Script, [ref]$null, [ref]$null)
+        $rule = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                            $node.Name -eq 'Test-ProxyNetwork' }, $true)
+        if (-not $rule) { throw 'The script has no function Test-ProxyNetwork.' }
+        Invoke-Expression $rule.Extent.Text
+        $answers = @($env:ASKED | ConvertFrom-Json | ForEach-Object { [bool](Test-ProxyNetwork $_) })
+        ConvertTo-Json -InputObject $answers -Compress
+    ''')
+    # The rows of the app's own tests of its rule (ProxyOptionsValidatorTests), by the test that
+    # holds them: the first text of each row is the entry.
+    APP_TAKES = ('Validate_ANetworkInCidrForm_Succeeds',)
+    APP_REFUSES = ('Validate_AnEntryThatIsNotANetwork_Fails', 'Validate_APrefixLengthOutOfRange_Fails',
+                   'Validate_ANetworkThatTrustsEverybody_Fails', 'Validate_ANetworkWiderThanSlash8_Fails',
+                   'Validate_AnEntryTheFrameworkReadsAsAnotherText_Fails_AndSaysWhatItReads',
+                   'Validate_AnIPv4MappedNetwork_Fails_AndAsksForTheIPv4One')
+
+    def test_the_script_takes_for_a_network_what_the_app_takes_and_refuses_what_it_refuses(self):
+        # Two rules, one in the app and one here, and the app's is the authority: a text this
+        # script let through and the app refused would stop a new revision from starting. So the
+        # script's rule is asked every entry the app's own tests hold, taken or refused. The
+        # source of those tests is read as text; nothing of the backend is built or run.
+        source = (HERE.parent / 'backend' / 'tests' / 'AzureBank.Bff.Tests' / 'OptionsValidatorTests.cs').read_text(
+            encoding='utf-8')
+
+        def rows(test):
+            (block,) = re.findall(r'((?:[ \t]*(?://[^\n]*|\[(?:Theory|InlineData\([^\n]*\))\])\r?\n)+)'
+                                  r'[ \t]*public void ' + test + r'\(', source)
+            found = re.findall(r'\[InlineData\("([^"\\]*)"', block)
+            self.assertEqual(len(found), block.count('[InlineData('), f'{test}: a row this test cannot read')
+            return found
+        taken = [entry for test in self.APP_TAKES for entry in rows(test)]
+        refused = [entry for test in self.APP_REFUSES for entry in rows(test)]
+        # That the search finds anything, and what is asked: one of each kind the app refuses.
+        self.assertGreaterEqual(len(taken), 8)
+        self.assertGreaterEqual(len(refused), 30)
+        self.assertLessEqual({'0.0.0.0/0', '::/0', '10.0.0.1/8', '010.0.0.0/8', '10.0.0.0', '::ffff:10.0.0.0/104',
+                              '10.0.0.0/33', 'fc00::/7', ''}, set(refused))
+        harness = self.temp / 'ask-the-rule.ps1'
+        harness.write_text(self.ASK_THE_RULE, encoding='utf-8')
+        asked = [*taken, *refused]
+        result = subprocess.run([PWSH, '-NoProfile', '-NonInteractive', '-File', str(harness),
+                                 str(HERE / 'secrets.ps1')], capture_output=True, text=True, timeout=180,
+                                env=dict(os.environ, ASKED=json.dumps(asked)))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        answers = json.loads(result.stdout)
+        self.assertEqual(len(answers), len(asked))
+        self.assertEqual({entry: answer for entry, answer in zip(asked, answers)},
+                         {**dict.fromkeys(taken, True), **dict.fromkeys(refused, False)})
 
     def test_the_mailbox_the_deployed_alerts_write_to_is_kept_when_none_is_named(self):
         result = self.secrets('-Action', 'New', '-DeployApp', state='deployed')
@@ -1691,10 +1949,26 @@ BEHIND_KEEP_LOGS = ['Microsoft.Insights/diagnosticSettings', 'Microsoft.Operatio
 SECRETS_OF_THE_APP = ['app-connection', 'audit-anchor-key', 'audit-chain-key', 'demo-client-key',
                       'idempotency-hash-key', 'jwt-secret', 'pin-pepper', 'service-key', 'stepup-binding-key']
 # What each container of the app is told, by name and in the template's order. The bff's list has
-# nothing about forwarded headers: which address it takes for a visitor's is not set in this folder.
+# nothing about forwarded headers: these six are what every run writes. Until 2026-10-06 this
+# comment went on "which address it takes for a visitor's is not set in this folder". Since that
+# day a run that names networks of proxies writes one setting more for each, after the six, and a
+# run that names none writes the six alone (NETWORKS_SETTING, and the test of it below).
 SETTINGS_OF_THE_BFF = ['ASPNETCORE_ENVIRONMENT', 'BackendApi__BaseUrl',
                        'ReverseProxy__Clusters__backend-api__Destinations__primary__Address',
                        'ServiceCredential__BffKey', 'Serilog__MinimumLevel__Override__Serilog', 'Demo__Enabled']
+# The six with what each holds, as a run with the demo off works them out: what the bff container
+# was told, whole, before a run could name a network.
+THE_BFF_AS_IT_WAS = [
+    {'name': 'ASPNETCORE_ENVIRONMENT', 'value': 'Production'},
+    {'name': 'BackendApi__BaseUrl', 'value': 'http://localhost:5068'},
+    {'name': 'ReverseProxy__Clusters__backend-api__Destinations__primary__Address', 'value': 'http://localhost:5068'},
+    {'name': 'ServiceCredential__BffKey', 'secretRef': 'service-key'},
+    {'name': 'Serilog__MinimumLevel__Override__Serilog', 'value': 'Warning'},
+    {'name': 'Demo__Enabled', 'value': 'false'}]
+# How the bff container's settings are compiled since 2026-10-06: the six, a variable, and after
+# them one setting for each network of proxies a run names. And what each of those is named.
+BFF_SETTINGS = "[flatten(createArray(variables('bffSettings'), variables('proxyNetworkSettings')))]"
+NETWORKS_SETTING = 'ForwardedHeaders__KnownIPNetworks__'
 SETTINGS_OF_THE_API = ['ASPNETCORE_ENVIRONMENT', 'ASPNETCORE_URLS', 'ConnectionStrings__DefaultConnection',
                        'Jwt__Secret', 'Idempotency__HashKey', 'StepUp__BindingKey', 'ServiceCredential__BffKey',
                        'Audit__ChainKey', 'Audit__AnchorKey', 'Security__PinPepper', 'Demo__Enabled',
@@ -1776,6 +2050,8 @@ def copy_templates(folder, **texts):
 def bicep_literal(value):
     if isinstance(value, bool):
         return 'true' if value else 'false'
+    if isinstance(value, list):
+        return '[' + ', '.join(bicep_literal(entry) for entry in value) + ']'
     return "'" + value.replace('\\', '\\\\').replace("'", "\\'") + "'"
 
 
@@ -1828,11 +2104,38 @@ class TemplateTests(unittest.TestCase):
         (job,) = [resource for resource in self.of_type(JOB) if resource['name'] == name]
         return job
 
+    def settings(self, container):
+        """A container's settings as the compiled template holds them: a list. The bff's are one
+        expression since 2026-10-06, the six that every run writes and after them the networks a
+        run names, so what is returned for it is those six, read from their variable. That the
+        expression is that one, and what a run works it out to, with networks and without:
+        test_the_bff_is_told_the_networks_of_proxies_only_when_a_run_names_them."""
+        settings = container.get('env', [])
+        if settings == BFF_SETTINGS:
+            settings = self.main['variables']['bffSettings']
+        self.assertIsInstance(settings, list, f"the settings of {container['name']} are not a list this test can read")
+        return settings
+
+    def told(self, resource):
+        """A resource's template with each container's settings as `settings` reads them and, for
+        the bff, after its six the one setting a network adds, as it is compiled: everything a
+        container of the resource can be told. Since 2026-10-06 a search of the template alone no
+        longer sees what the bff is told, which stands in two variables."""
+        template = json.loads(json.dumps(resource['properties']['template']))
+        for container in template.get('containers', []):
+            a_network = []
+            if container.get('env') == BFF_SETTINGS:
+                (networks,) = self.main['variables']['copy']
+                self.assertEqual(networks['name'], 'proxyNetworkSettings')
+                a_network = [networks['input']]
+            container['env'] = self.settings(container) + a_network
+        return template
+
     def container(self, name):
-        """The app's container of that name."""
+        """The app's container of that name, with its settings as `settings` reads them."""
         (app,) = self.of_type(APP)
         (container,) = [entry for entry in app['properties']['template']['containers'] if entry['name'] == name]
-        return container
+        return dict(container, env=self.settings(container))
 
     def every_setting(self):
         """Each (resource, container, name of a setting): every container and init container of
@@ -1844,7 +2147,7 @@ class TemplateTests(unittest.TestCase):
             properties = resource.get('properties', {})
             template = properties.get('template', {}) if isinstance(properties, dict) else {}
             for container in [*template.get('containers', []), *template.get('initContainers', [])]:
-                found += [(resource['name'], container['name'], entry['name']) for entry in container.get('env', [])]
+                found += [(resource['name'], container['name'], entry['name']) for entry in self.settings(container)]
         self.assertLessEqual({('azurebank', 'bff'), ('azurebank', 'api'), ('azurebank-migrate', 'migrate'),
                               ('azurebank-pool', 'pool')},
                              {(resource, container) for resource, container, _ in found})
@@ -2144,9 +2447,8 @@ class TemplateTests(unittest.TestCase):
                      {'category': 'ContainerAppSystemLogs', 'enabled': True}]})
 
     def test_the_bff_does_not_keep_its_line_per_request(self):
-        (app,) = self.of_type('Microsoft.App/containerApps')
-        (bff,) = [container for container in app['properties']['template']['containers'] if container['name'] == 'bff']
-        self.assertIn({'name': 'Serilog__MinimumLevel__Override__Serilog', 'value': 'Warning'}, bff['env'])
+        self.assertIn({'name': 'Serilog__MinimumLevel__Override__Serilog', 'value': 'Warning'},
+                      self.container('bff')['env'])
 
     def test_the_role_holds_exactly_the_nine_actions_and_no_data_action(self):
         (role,) = self.of_type('Microsoft.Authorization/roleDefinitions')
@@ -2261,7 +2563,9 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(len(app['properties']['configuration']['secrets']), 9)
         self.assertEqual(len(job['properties']['configuration']['secrets']), 1)
         self.assertEqual(len(pool['properties']['configuration'].get('secrets', [])), 2)
-        text = json.dumps([resource['properties']['template'] for resource in (app, job, pool)])
+        # What each container can be told (`told`): the bff's settings stand in two variables
+        # since 2026-10-06, and until then this read the three templates as they are compiled.
+        text = json.dumps([self.told(resource) for resource in (app, job, pool)])
         self.assertEqual(text.count('"secretRef"'), 13)
         for name in SECURE:
             self.assertNotIn(f"parameters('{name}')", text, f'{name} is a plain value in a container')
@@ -2270,7 +2574,7 @@ class TemplateTests(unittest.TestCase):
         (app,) = self.of_type('Microsoft.App/containerApps')
         job, pool = self.job('azurebank-migrate'), self.job('azurebank-pool')
         handed = {container['name']: sorted(entry['secretRef'] for entry in container['env'] if 'secretRef' in entry)
-                  for container in app['properties']['template']['containers']}
+                  for container in self.told(app)['containers']}
         # The bff faces the internet and can use the app's identity like any container of the app:
         # it is told neither which identity nor which server.
         self.assertEqual(handed, {'bff': ['service-key'], 'api': SECRETS_OF_THE_APP})
@@ -2281,8 +2585,7 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual([entry['secretRef'] for entry in recycle.get('env', []) if 'secretRef' in entry],
                          ['app-connection', 'pin-pepper'])
         # Nor does either reach a container as a plain value: nothing in a container is read from another resource.
-        self.assertNotIn('reference(', json.dumps([resource['properties']['template']
-                                                   for resource in (app, job, pool)]))
+        self.assertNotIn('reference(', json.dumps([self.told(resource) for resource in (app, job, pool)]))
 
     def test_the_pool_job_holds_two_secrets_and_the_pepper_the_app_holds(self):
         # A job has a secret list of its own. The pool's commands need the connection string and
@@ -2361,10 +2664,119 @@ class TemplateTests(unittest.TestCase):
         # Whether the BFF sees a visitor's own address behind the ingress is not measured yet
         # (ADR-0063, decision 14): until it is, no container of any resource is told whose
         # forwarded headers to believe. .NET reads a setting's name whatever its case.
+        # Since 2026-10-06 that holds for what every run writes, which is what `every_setting`
+        # walks: a run that names networks of proxies tells the bff, and the bff alone, to believe
+        # them (the test below), and the switch that would make a host believe every caller is
+        # still written nowhere.
         about_forwarded_headers = re.compile(r'ForwardedHeaders__|ASPNETCORE_FORWARDEDHEADERS_ENABLED$', re.IGNORECASE)
-        for name in ('ForwardedHeaders__KnownProxies__0', 'ASPNETCORE_FORWARDEDHEADERS_ENABLED'):
+        for name in ('ForwardedHeaders__KnownProxies__0', 'ASPNETCORE_FORWARDEDHEADERS_ENABLED',
+                     f'{NETWORKS_SETTING}0'):
             self.assertRegex(name, about_forwarded_headers)
         self.assertEqual([found for found in self.every_setting() if about_forwarded_headers.match(found[2])], [])
+        # The tool reads the deployed app by the same pattern.
+        self.assertEqual(deploy.ABOUT_FORWARDED.pattern, about_forwarded_headers.pattern)
+        self.assertEqual(deploy.ABOUT_FORWARDED.flags, about_forwarded_headers.flags)
+        # And nothing compiled anywhere names such a setting but the one expression that numbers
+        # the networks: not a second list, and not the switch.
+        compiled = json.dumps([self.main['variables'], self.main['resources']])
+        self.assertEqual(len(re.findall('forwardedheaders', compiled, re.IGNORECASE)), 1)
+        self.assertEqual(compiled.count(f"[format('{NETWORKS_SETTING}{{0}}', copyIndex('proxyNetworkSettings'))]"), 1)
+
+    def test_the_bff_is_told_the_networks_of_proxies_only_when_a_run_names_them(self):
+        # The ranges are the ones kept for documentation: none is a network of any deployment.
+        one, two = '192.0.2.0/24', '2001:db8:7::/48'
+        with self.subTest(read='the parameter'):
+            # A plain list, empty unless a run gives it, and not among what the app needs: the
+            # check of the app's values knows nothing of it.
+            networks = self.main['parameters'].get('proxyNetworks', {})
+            self.assertEqual((networks.get('type'), networks.get('defaultValue')), ('array', []))
+            self.assertNotIn('proxyNetworks', GUARDED)
+            self.assertEqual(re.findall(r'[0-9]{1,3}(?:\.[0-9]{1,3}){3}/[0-9]+', json.dumps(self.main)), [])
+        with self.subTest(read='the compiled template'):
+            # The bff's settings are the six and, after them, one for each network; the api's and
+            # each job's are the plain lists they were.
+            (app,) = self.of_type(APP)
+            bff, api = app['properties']['template']['containers']
+            self.assertEqual((bff['name'], bff['env']), ('bff', BFF_SETTINGS))
+            self.assertIsInstance(api['env'], list)
+            self.assertEqual(self.main['variables'].get('copy'), [{
+                'name': 'proxyNetworkSettings', 'count': "[length(parameters('proxyNetworks'))]",
+                'input': {'name': f"[format('{NETWORKS_SETTING}{{0}}', copyIndex('proxyNetworkSettings'))]",
+                          'value': "[parameters('proxyNetworks')[copyIndex('proxyNetworkSettings')]]"}}])
+            for job in self.of_type(JOB):
+                for container in job['properties']['template']['containers']:
+                    self.assertIsInstance(container['env'], list, job['name'])
+        # Worked out offline, as a what-if works a run out.
+        runs = {}
+        with tempfile.TemporaryDirectory() as folder:
+            copy_templates(folder)
+            for case, values, count in (('no network named', {}, 22),
+                                        ('an empty list', {'proxyNetworks': []}, 22),
+                                        ('one network', {'proxyNetworks': [one]}, 22),
+                                        ('two networks', {'proxyNetworks': [one, two]}, 22),
+                                        ('the demo on', {'demo': True}, 24),
+                                        ('the demo on, two networks', {'demo': True, 'proxyNetworks': [one, two]}, 24),
+                                        ('two networks without the app',
+                                         {'proxyNetworks': [one, two], 'deployApp': False}, 14)):
+                with self.subTest(case=case, read='the count'):
+                    code, said, predicted = snapshot(folder, {**APP_INPUTS, **values})
+                    self.assertEqual(code, 0, said)
+                    self.assertEqual(len(predicted), count)
+                    runs[case] = {resource['id']: resource for resource in predicted}
+
+        def told(case):
+            """What a run tells the bff container, what it tells the api container, and every
+            other resource of the run as it is."""
+            (found,) = [key for key, resource in runs.get(case, {}).items() if resource['type'] == APP]
+            bff, api = runs[case][found]['properties']['template']['containers']
+            self.assertEqual((bff['name'], api['name']), ('bff', 'api'))
+            others = {key: resource for key, resource in runs[case].items() if key != found}
+            return bff['env'], api['env'], others, found
+        # CONTROL: green before a run could name a network. With none named the bff is told what
+        # it was told, whole: six settings, each with what it held.
+        with self.subTest(case='no network named'):
+            self.assertEqual(told('no network named')[0], THE_BFF_AS_IT_WAS)
+        # A list named as empty is no network: the same run, resource for resource.
+        with self.subTest(case='an empty list'):
+            self.assertEqual(runs.get('an empty list'), runs['no network named'])
+        # Each network adds one setting to the bff, after the six, numbered from 0 in the order
+        # given. Nothing else of the run changes: not the api container, not another resource,
+        # not the rest of the app. And each network stands in that one place.
+        for case, networks, without in (('one network', [one], 'no network named'),
+                                        ('two networks', [one, two], 'no network named'),
+                                        ('the demo on, two networks', [one, two], 'the demo on')):
+            with self.subTest(case=case):
+                bff, api, others, app = told(case)
+                as_it_was, api_as_it_was, others_as_they_were, _ = told(without)
+                self.assertEqual(bff, as_it_was + [{'name': f'{NETWORKS_SETTING}{number}', 'value': network}
+                                                    for number, network in enumerate(networks)])
+                self.assertEqual((api, others), (api_as_it_was, others_as_they_were))
+                rest_of_the_app = json.loads(json.dumps(runs[case][app]))
+                rest_of_the_app['properties']['template']['containers'][0]['env'] = as_it_was
+                self.assertEqual(rest_of_the_app, runs[without][app])
+                for network in networks:
+                    self.assertEqual(json.dumps(runs[case]).count(network), 1)
+                # The tool counts them on what the template works out, and the secrets script's
+                # name for the setting is the template's: a name typed in all three cannot drift
+                # on one side.
+                self.assertEqual(deploy.proxy_networks(runs[case][app]), len(networks))
+                self.assertEqual(deploy.proxy_networks(runs[without][app]), 0)
+        with self.subTest(read='the names'):
+            self.assertEqual((deploy.NETWORKS_SETTING, deploy.NETWORKS_CONTAINER), (NETWORKS_SETTING, 'bff'))
+            script = (HERE / 'secrets.ps1').read_text(encoding='utf-8')
+            self.assertEqual(re.findall(r"(?m)^\$NetworksSetting = '([^']*)'$", script), [NETWORKS_SETTING])
+            # And it is a name the BFF binds: the section, then the list, then a number
+            # (backend/src/AzureBank.Bff/Options/ProxyOptions.cs, read as text).
+            source = (HERE.parent / 'backend' / 'src' / 'AzureBank.Bff' / 'Options' / 'ProxyOptions.cs').read_text(
+                encoding='utf-8')
+            (section,) = re.findall(r'public const string SectionName = "(\w+)";', source)
+            lists = re.findall(r'public string\[\] (\w+) \{ get; set; \}', source)
+            self.assertIn(NETWORKS_SETTING, [f'{section}__{name}__' for name in lists])
+        # Without the app there is no container to tell.
+        with self.subTest(case='two networks without the app'):
+            self.assertEqual(len(runs.get('two networks without the app', {})), 14)
+            self.assertEqual([key for key, resource in runs.get('two networks without the app', {}).items()
+                              if resource['type'] == APP or one in json.dumps(resource)], [])
 
     def test_the_api_is_handed_the_client_key_by_reference_and_the_cap_as_a_plain_value(self):
         api = self.container('api')
@@ -2699,14 +3111,17 @@ class TemplateTests(unittest.TestCase):
             self.assertLessEqual(foundation, set(self.main['parameters']))
             self.assertLessEqual(required | {'keepLogs'}, foundation,
                                  'the foundation file must give every required parameter')
-            # With -DemoOn, so that the demo's switch is written too, and with an account for the
-            # phone, so that its parameter is: the name the script writes is the template's.
+            # With -DemoOn, so that the demo's switch is written too, with an account for the
+            # phone, so that its parameter is, and with a network of proxies, so that theirs is:
+            # the name the script writes is the template's.
             self.assertEqual(case.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG, '-DemoOn',
                                           '-AlertPushAccount', 'the.phone@example.invalid',
+                                          '-ProxyNetworks', '192.0.2.0/24',
                                           state='foundation').returncode, 0)
             written = set(case.parameters())
             self.assertIn('demo', written)
             self.assertIn('alertPushAccount', written)
+            self.assertIn('proxyNetworks', written)
             self.assertLessEqual(written, set(self.main['parameters']))
             # What the template's own check asks for when deployApp is true.
             self.assertLessEqual(set(self.compiled['app-inputs']['parameters']) | {'deployApp'}, written)
