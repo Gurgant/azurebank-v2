@@ -60,6 +60,9 @@ public class ProblemBodyTests
         UpToTheTraceId + "\"spanId\":\"" + AnIdThatHoldsTheFigure + "\"," + TheTraceId + "}")]
     [InlineData("a traceId inside another member",
         UpToTheTraceId + TheTraceId + ",\"cause\":{\"traceId\":\"" + AnIdThatHoldsTheFigure + "\"}}")]
+    [InlineData("a traceId inside another member, written before the body's own",
+        UpToTheTraceId + "\"cause\":{\"traceId\":\"" + AnIdThatHoldsTheFigure + "\"},"
+        + TheTraceId + "}")]
     [InlineData("an id in the path, which instance repeats",
         UpToTheDetail + "\"detail\":\"You do not have access to this account.\","
         + "\"instance\":\"/api/accounts/019f4242-0c1e-7a6b-9d2f-3b5a8c7e1d04\","
