@@ -115,12 +115,23 @@ export function AccountNumberField({ account }: { account: AccountResponse }) {
           press and keeps focus. The PIN dialog a reveal can bring up gives focus back to the
           control that had it when the dialog opened (`useReturnFocus`), and a spinner in the
           button's place took the button, and focus with it, off the page before the dialog came.
-          (Until 2026-10-06 the spinner took the button's place while the reveal waited.) */}
+          (Until 2026-10-06 the spinner took the button's place while the reveal waited.)
+
+          The spinner is hidden from assistive technology: it is the button's picture, and the
+          button's name is what says the wait. Left exposed it is a progress bar with no name of
+          its own, where the spinner it replaced had one: axe reported it in this state
+          (`aria-progressbar-name`, serious; Chromium, 2026-10-06), and with it hidden, nothing. */}
       <Button
         appearance="subtle"
         size="small"
         icon={
-          isLoading ? <Spinner size="tiny" /> : revealed ? <EyeOff16Regular /> : <Eye16Regular />
+          isLoading ? (
+            <Spinner size="tiny" aria-hidden="true" />
+          ) : revealed ? (
+            <EyeOff16Regular />
+          ) : (
+            <Eye16Regular />
+          )
         }
         // The name says the state; aria-pressed as well read "Hide account number …, pressed".
         aria-label={
