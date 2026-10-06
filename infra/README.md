@@ -28,6 +28,12 @@ of step 20 was refused as written, and once it ran it showed that the alert on t
 not count lines. That alert was deleted, and the template now leaves it out unless it is asked
 for.
 
+*(2026-10-07: "none of it has run on Azure" and "It has not been run", in the paragraph below,
+are no longer so: the demo was turned on on Azure on 2026-10-06. What that session ran and read
+is not written on this page yet. Until it is, every line below that says the demo is off, that a
+step of the third session has not been run, or that a value is expected, stands as it was written
+before that session.)*
+
 **On 2026-10-05 this folder gained what turns the public demo on, and none of it has run on
 Azure.** The template has a switch, `demo`, off unless it is asked for. With it on, both
 containers of the app are told they are the demo, and a second job, `azurebank-pool`, runs
