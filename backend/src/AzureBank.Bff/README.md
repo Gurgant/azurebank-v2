@@ -432,10 +432,11 @@ session's JWT (renewed through `ITokenRefresher` when it runs short). It also ta
 `Cookie` header off the request it forwards, whole and whether or not a session resolves: the API
 reads no cookie, and the session id is the BFF's own secret. The browser's own request keeps the
 header, so the BFF goes on reading the session from it.
-*(Until 2026-10-06 this section did not say what became of the cookie, and it was forwarded: the API
-received the browser's whole `Cookie` header with a proxied request, the session id in it and any
-other cookie beside it. Measured that day on the test host, before the change, on both routes that
-proxy a signed-in request.)*
+*(Until 2026-10-06 this section did not say what became of the cookie, and it was not taken off:
+the forwarded request held the browser's whole `Cookie` header, the session id in it and any other
+cookie beside it. Measured that day on the test host, with a recorder in the API's place, before
+the change: on a read of both routes that proxy a signed-in request, and with other cookies beside
+the session's on a read and on a write of the catch-all route.)*
 A renewal that cannot be had while
 the token has 5 s or less left is answered here with a 503 and `Retry-After`, never forwarded; the
 source also strips the token-road marker and turns the API's refusal of the service key into a 503
