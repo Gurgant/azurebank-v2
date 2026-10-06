@@ -155,10 +155,14 @@ knowingly accepted, time-boxed residual with a concrete deferral trigger.
     `/0`, which trusts everybody; when it is wider than a `/8`, in either family, the width of
     the widest private blocks (`10.0.0.0/8`, `fd00::/8`): a shorter prefix reaches into
     somebody else's addresses and is far more likely a slip than a network; when it is an
-    IPv4-mapped IPv6 network, which matched no address in the measurement and would fail in
-    silence; and when the framework reads it as another network than it shows. The last was
-    measured: `System.Net.IPNetwork.TryParse` reads `10.0.0.1/8` as `10.0.0.0/8`,
-    `010.0.0.0/8` as `8.0.0.0/8` and `10/8` as `0.0.0.0/8`.*
+    IPv4-mapped IPv6 network, ~~which matched no address in the measurement and would fail in
+    silence~~ (corrected later that day: measured on the pipeline with the refusal taken out,
+    `::ffff:10.0.0.0/104` was a listed network for a connection the socket reports as
+    `::ffff:10.0.0.5` and not for one it reports as `10.0.0.5`, and `::ffff:0:0/96` for
+    neither, so such an entry would work or fail, in silence, by how the socket is bound; the
+    IPv4 network holds both forms); and when the framework reads it as another network than it
+    shows. The last was measured: `System.Net.IPNetwork.TryParse` reads `10.0.0.1/8` as
+    `10.0.0.0/8`, `010.0.0.0/8` as `8.0.0.0/8` and `10/8` as `0.0.0.0/8`.*
   - *The header is made a list of addresses and nothing else before the framework reads it
     (added later that day, `StrictForwardedFor`). "The caller is the last entry" was not true of
     the framework's reading alone. It splits the header as a list of quoted strings, and its

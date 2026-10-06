@@ -257,8 +257,10 @@ public class ProxyOptionsValidatorTests
     [Theory]
     // A dual-stack socket reports an IPv4 proxy as ::ffff:a.b.c.d, and the IPv4 network that
     // holds it matches that address (TrustedProxyNetworkTests). A network written in the mapped
-    // form answered false for an address inside it, in its mapped and in its plain form
-    // (System.Net.IPNetwork.Contains, measured on .NET 10): it would match nobody, in silence.
+    // form matches less, and by the socket: on the pipeline, with the refusal taken out, the /104
+    // was a listed network for a connection reported in the mapped form and not for one in the
+    // plain form, and the /96 for neither (measured on .NET 10, 2026-10-06; until later that day
+    // this said the mapped network "would match nobody", which was so of the /96).
     [InlineData("::ffff:10.0.0.0/104")]
     [InlineData("::ffff:0:0/96")]
     [InlineData("::ffff:192.0.2.7/128")]

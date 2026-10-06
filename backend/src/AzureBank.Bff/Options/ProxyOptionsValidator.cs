@@ -30,10 +30,14 @@ namespace AzureBank.Bff.Options;
 /// address;</item>
 /// <item>not an IPv4-mapped IPv6 network (<c>::ffff:a.b.c.d/n</c>). A dual-stack socket reports
 /// an IPv4 proxy in that form, and it is matched by the IPv4 network that holds it
-/// (<c>TrustedProxyNetworkTests</c>). The mapped network itself answered false for an address
-/// inside it, written either way (<c>System.Net.IPNetwork.Contains</c>, measured on .NET 10,
-/// 2026-10-06): such an entry would match nobody, in silence, the same quiet failure as a
-/// mistyped exact address;</item>
+/// (<c>TrustedProxyNetworkTests</c>), as the plain form is. The mapped network matches less,
+/// and by the socket. Measured on this host's pipeline with this refusal taken out (.NET 10,
+/// 2026-10-06): with <c>::ffff:10.0.0.0/104</c> listed the header was read on a connection
+/// reported as <c>::ffff:10.0.0.5</c> and not on one reported as <c>10.0.0.5</c>; with
+/// <c>::ffff:0:0/96</c>, every IPv4 address, on neither of the two. Such an entry would work
+/// or fail, in silence, by how the socket is bound (as first written that day, this said the
+/// mapped network "answered false for an address inside it, written either way" and "would
+/// match nobody": so the /96 did; the /104 and a /128 did not);</item>
 /// <item>written exactly as the framework prints the network it reads. Its parser accepts texts
 /// that mean something else than they show (measured the same day): <c>10.0.0.1/8</c> is
 /// widened to <c>10.0.0.0/8</c>, <c>010.0.0.0/8</c> is read in octal as <c>8.0.0.0/8</c>,
@@ -141,8 +145,8 @@ public sealed class ProxyOptionsValidator : IValidateOptions<ProxyOptions>
 
         if (address.IsIPv4MappedToIPv6)
         {
-            return "is an IPv4-mapped IPv6 network, and no connection is matched against one: an IPv4-mapped " +
-                   "address is matched as the IPv4 address it holds. List the IPv4 network instead.";
+            return "is an IPv4-mapped IPv6 network: it is matched only against a connection the socket reports " +
+                   "in that form, never against the plain IPv4 one. List the IPv4 network instead, which holds both.";
         }
 
         if (!IPNetwork.TryParse(entry, out var network))
