@@ -122,7 +122,7 @@ public sealed class DailyLimitConcurrencySqlServerTests : IDisposable
             // ToListAsync, not SingleAsync: a DECLARE/EXEC batch is non-composable SQL, and EF
             // would wrap SingleAsync as a subquery over it, which its SQL generator refuses
             // ("'SqlQuery' was called with non-composable SQL and with a query composing over it"
-            // — observed while writing the test, NOT measured: no file under plans/daily-limit/
+            // — observed while writing the test, NOT measured: no transcript kept from this work
             // carries that line, so it is not a value the house rule lets this comment claim).
             // The isolation query above does compose under SingleAsync because it starts with
             // SELECT.
@@ -175,7 +175,7 @@ public sealed class DailyLimitConcurrencySqlServerTests : IDisposable
           batch waits at @@LOCK_TIMEOUT — measured -1 on LocalDB, i.e. forever — and only the global
           30-second CommandTimeout ends it, holding a transaction and a pooled connection for half a
           minute per queued same-payer transfer
-          (plans/daily-limit/measure-cr1-2026-09-07.txt, run 1). An assertion on the throw alone
+          (the -1 measured 2026-09-07, review round 1; ADR-0050 D5). An assertion on the throw alone
           would be green under either regime, which is why the ELAPSED time is the assertion and the
           message is the corroboration.
 

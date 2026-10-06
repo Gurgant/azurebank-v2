@@ -158,8 +158,7 @@ describe('the client mints an authorisation and presents it', () => {
       ADR-0050's rung sits ABOVE the PIN on the mint, so this refusal arrives at the same catch a
       wrong PIN does — and must be recovered differently. Every expected value is MEASURED:
       2026-09-07T14:17:53Z (and the 14:46:26Z A4 re-run), PR #156's working tree on 3c30122, merged
-      as fda7ff7, BFF :5000 -> API :7215, AzureBankDev, DailyLimit:Amount default; transcript
-      plans/daily-limit/measure-after-2026-09-07.txt.
+      as fda7ff7, BFF :5000 -> API :7215, AzureBankDev, DailyLimit:Amount default.
 
       ONLY THE MINT IS OVERRIDDEN. `POST /api/transfers` keeps its aligned handler on purpose: a send
       that should never happen is then ANSWERED and visible in the count below, rather than becoming

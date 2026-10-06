@@ -1325,4 +1325,7 @@ under D1.)*
 - `backend/src/AzureBank.Shared/Constants/SecurityEvents.cs` — the event names this table stores
 - [ADR-0009](0009-idempotency-monetary-operations.md) — the enlisting-writer contract D1 copies
 - [ADR-0008](0008-step-up-authentication.md) — the PIN events among them
-- `azurebank-work/plans/audit-trail/` — the measurements behind every number above
+- The working notes that hold the measurements behind every number above; they are kept outside
+  this repository.
+  *(2026-10-05: what was cited here, by path or by name, sits in a private working folder that no
+  reader of this repository can open; the citation is replaced by what it stood for, not struck.)*

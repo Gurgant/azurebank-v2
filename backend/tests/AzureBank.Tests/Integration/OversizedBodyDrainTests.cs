@@ -20,7 +20,7 @@ namespace AzureBank.Tests.Integration;
 /// <summary>
 /// An oversized body on an idempotent endpoint is refused with 413 only after it has been read to
 /// its end, up to 1 MiB, so the refusal does not close the connection under a sender that is still
-/// writing it (backlog row 42). Refused unread, the body was left for Kestrel, which aborted the
+/// writing it. Refused unread, the body was left for Kestrel, which aborted the
 /// connection at the endpoint's 32 KB limit; through the BFF that surfaced as a reset, a 502, or a
 /// 502 for the NEXT request on a pooled connection — 3 of 42 runs of the contract suite's
 /// oversized-body test, measured 2026-09-24 on the running stack, and 0 of 30 with the body drained.

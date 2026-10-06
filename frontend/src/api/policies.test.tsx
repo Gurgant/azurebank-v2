@@ -726,8 +726,8 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
       `z.looseObject` — and the drop is the return literal's allow-list in `toApiProblem`.
 
       MEASURED A8 (2026-09-07T14:17:53Z, PR #156's working tree on 3c30122, merged as fda7ff7, BFF
-      :5000 -> API :7215, AzureBankDev, DailyLimit:Amount default; transcript
-      plans/daily-limit/measure-after-2026-09-07.txt): `limit` / `used` / `requested` arrive as
+      :5000 -> API :7215, AzureBankDev, DailyLimit:Amount default; row A8 of ADR-0050's
+      "After" table): `limit` / `used` / `requested` arrive as
       top-level JSON NUMBERS and `resetsAt` as a STRING, beside errorCode and traceId, unchanged
       through the BFF.
 

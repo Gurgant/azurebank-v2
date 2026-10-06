@@ -729,12 +729,12 @@ jobs:
           echo "API_TOKEN=$TOKEN" >> "$GITHUB_ENV"
 
       # Every check, through the committed configuration -- the file a developer runs, and with it
-      # the hooks (backlog row 41). Until then this step passed its settings as flags and loaded
-      # neither file, and both sat broken with every run green (rows 38, 39); now if either rots,
+      # the hooks (since 2026-09-24). Until then this step passed its settings as flags and loaded
+      # neither file, and both sat broken with every run green; now if either rots,
       # this job is red. The configuration carries the shape of the run and what the checks must
       # be told: the two decided 404s (ADR-0056 D4, ADR-0042) and the list's unknown query
       # parameter. The input-side checks (negative_data_rejection and friends) stayed out until
-      # the API passed them: it read an empty query value as absent, and answered 200 (row 40).
+      # the API passed them: it read an empty query value as absent, and answered 200.
       # No `|| true`: a finding is a red job (ADR-0053 D6).
       - name: Every Schemathesis check (the committed configuration)
         env:

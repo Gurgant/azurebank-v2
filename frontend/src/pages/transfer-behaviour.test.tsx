@@ -422,7 +422,7 @@ describe('money flows — the behaviour the unification must preserve', () => {
 
       The refusal body is MEASURED — 2026-09-07T14:17:53Z (and the 14:46:26Z A4 re-run), PR #156's
       working tree on 3c30122, merged as fda7ff7, BFF :5000 -> API :7215, AzureBankDev,
-      DailyLimit:Amount default; transcript plans/daily-limit/measure-after-2026-09-07.txt.
+      DailyLimit:Amount default.
     */
     const DAILY_MEMBERS = {
       limit: 5000,

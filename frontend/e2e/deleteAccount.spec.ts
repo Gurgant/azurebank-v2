@@ -14,8 +14,8 @@ import { USER } from './fixtures';
  *
  * NO wrong-PIN case here, deliberately: fixtures.ts forbids a wrong PIN on the only seeded user
  * (three misses lock the whole suite for fifteen minutes). The wrong-PIN branch is proven at the
- * mock level (DeleteAccountDialog.test.tsx) and was measured on the real stack (M1,
- * measure-after-main-19742ff-2026-09-06.txt). "No PIN attempt spent" on the funded case is a DB
+ * mock level (DeleteAccountDialog.test.tsx) and was measured on the real stack (row M1,
+ * 2026-09-06, main 19742ff). "No PIN attempt spent" on the funded case is a DB
  * column (PinAccessFailedCount) a browser cannot read; what this spec observes is that the mint
  * answered 422 and the dialog stayed open — the counter is the manual pass ADR-0049 names.
  *
@@ -23,7 +23,7 @@ import { USER } from './fixtures';
  * cannot break stepUp.spec.ts's precondition wherever it sorts. The OTHER way to break it is a
  * leftover: the API does not enforce name uniqueness, and a probe left on the seeded admin adds a
  * masked number to the page that stepUp.spec.ts's strict-mode locators trip over
- * (measure-spa-2026-09-06.txt, run 1). So the names carry a per-run suffix — a leftover can never
+ * (e2e run 1, 2026-09-06). So the names carry a per-run suffix — a leftover can never
  * shadow the next run's locator — and every cleanup step is LOUD: a refused drain or mint throws
  * with its own status instead of leaving the account behind silently.
  */
