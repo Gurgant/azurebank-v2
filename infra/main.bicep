@@ -601,6 +601,11 @@ resource shapeAssignment 'Microsoft.Authorization/policyAssignments@2025-03-01' 
 // (https://learn.microsoft.com/en-us/azure/templates/microsoft.insights/2023-01-01/actiongroups,
 // read on 2026-10-06). Nothing of it has been sent to Azure. Not known: what Azure does with a
 // push for an account that has no app, and what such a notification costs on this offer.
+//
+// Merged so, the compiler does not read the receivers' fields: emailAddress misspelt, in either
+// receiver, builds and lints with nothing on standard error, where the plain object this was
+// until 2026-10-06 put two warnings there. The test that compares the group's properties,
+// worked out, whole, is what holds them.
 resource owner 'Microsoft.Insights/actionGroups@2023-01-01' = if (deployApp) {
   name: 'azurebank-owner'
   location: 'global'

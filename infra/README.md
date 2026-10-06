@@ -3973,6 +3973,14 @@ more, named `owner-phone`, and nothing else of the run different; with an accoun
 app, 14 and no group. That is all "with it empty the template is what it was" rests on. What
 Azure does with the receiver is in none of it.
 
+**What the compiler no longer reads of the action group** (seen the same day, on copies). Merged
+so, the receivers' fields are not checked when the template is compiled: `emailAddress` misspelt
+in the mailbox's receiver, and then in the phone's, built and linted with exit 0 and nothing on
+standard error. The plain object the group was until that day put two warnings there for the
+mailbox's, BCP035 and BCP089. So "nothing on standard error" says nothing of those fields any
+more. What holds them is the test that compares the group's properties, worked out, whole: it
+failed on each of the two misspellings.
+
 `test_deploy.py` tests the deployment script's decisions against invented answers: time is a
 counter and no process is started. One thing is read from the real clock: how old an execution
 is, against the start time a test gives it (until 2026-10-05 this paragraph did not say so). A
