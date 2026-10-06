@@ -5,6 +5,7 @@ using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
 using AzureBank.Shared.Exceptions;
 using AzureBank.Shared.Options;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -179,7 +180,7 @@ public class IdempotencyServiceTests : IDisposable
 
         result.IsReplay.Should().BeTrue();
         result.Record.ResponseStatusCode.Should().Be(201);
-        result.Record.ResponseBody.Should().Be("""{"data":"original"}""");
+        ComparableText.Of(result.Record.ResponseBody).Should().Be(ComparableText.Of("""{"data":"original"}"""));
     }
 
     [Fact]
@@ -373,7 +374,7 @@ public class IdempotencyServiceTests : IDisposable
         persisted.Status.Should().Be(IdempotencyStatus.Completed);
         persisted.ResponseStatusCode.Should().Be(201);
         persisted.ResponseContentType.Should().Be("application/json");
-        persisted.ResponseBody.Should().Be("""{"ok":true}""");
+        ComparableText.Of(persisted.ResponseBody).Should().Be(ComparableText.Of("""{"ok":true}"""));
     }
 
     [Fact]

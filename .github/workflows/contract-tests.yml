@@ -1,5 +1,5 @@
 # The Bruno collection against a live API + SQL Server, on every pull request and every push to
-# main, and still by hand (backlog row 35). It was manual-only until then, and the cost showed:
+# main, and still by hand (since 2026-09-24). It was manual-only until then, and the cost showed:
 # the collection's withdrawal answered 401 on main from #198 until #200, and nothing noticed,
 # because nothing ran it. About two minutes, beside CI's jobs rather than after them.
 # Adapted from the January 2026 workflow; the API now needs the

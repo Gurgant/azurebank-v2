@@ -121,7 +121,7 @@ public class IdempotencyMiddlewareTests
         await running.WaitAsync(Settles);
 
         context.Response.StatusCode.Should().Be(StatusCodes.Status201Created, "the deposit committed: its answer is true");
-        ResponseText(context).Should().Be(Answer, "and it is sent whole");
+        ComparableText.Of(ResponseText(context)).Should().Be(ComparableText.Of(Answer), "and it is sent whole");
     }
 
     [Fact]
@@ -164,7 +164,7 @@ public class IdempotencyMiddlewareTests
 
         context.Response.StatusCode.Should().Be(StatusCodes.Status201Created);
         context.Response.Headers[IdempotencyConstants.ReplayedHeaderName].ToString().Should().Be("true");
-        ResponseText(context).Should().Be(Answer);
+        ComparableText.Of(ResponseText(context)).Should().Be(ComparableText.Of(Answer));
     }
 
     [Fact]

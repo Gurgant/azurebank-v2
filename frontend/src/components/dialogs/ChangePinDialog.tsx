@@ -223,6 +223,7 @@ export function ChangePinDialog({ onClose }: ChangePinDialogProps) {
                     length={PIN_LENGTH}
                     disabled={isLoading || locked}
                     ariaLabel="New PIN"
+                    purpose="new"
                   />
                 </div>
                 <div className={styles.group}>
@@ -237,6 +238,7 @@ export function ChangePinDialog({ onClose }: ChangePinDialogProps) {
                     autoFocus={focusField === 'confirm'}
                     ariaLabel="Confirm new PIN"
                     ariaDescribedBy={describedBy('confirm')}
+                    purpose="new"
                   />
                 </div>
 

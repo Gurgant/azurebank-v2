@@ -181,6 +181,50 @@ http even there, which is why the development profile's cookie is neither (the B
 docker compose up --build -d   # after exporting the eight variables compose.yaml names
 ```
 
+**The public demo on that stack, and in the dev loop.** With `compose.demo.yaml` the page the BFF
+serves has `<meta name="azurebank-demo" content="true">` in its head, and the app is the demo
+(ADR-0063, decision 13): the sign-in page leads with "Try the demo", which claims a copy and
+lands on its dashboard; `/register` leads to the sign-in page; the dashboard says what the
+visitor holds and offers "Start over"; and the browser keeps what signs in to the copy, so that
+"Continue with my copy" opens it again (ADR-0063, "What the browser keeps in demo mode").
+`npm run test:e2e:demo`, from `frontend/`, drives all of that in Chromium on
+`http://localhost:5000`. It is run by hand, on a stack nobody else is using, and by no CI job:
+between its two halves it **restarts the BFF's container and then the API's** with
+`docker restart`, to show that the kept copy still signs in once every session is gone. So it
+needs the `docker` command, and `E2E_DEMO_COMPOSE_PROJECT` when the stack was started with `-p`
+(`frontend/playwright.demo.config.ts` has the rest, and what a run leaves on disk to delete).
+Measured three times on 2026-10-05, each time on three images built from one commit. The
+third time, on commit `8ce36aa0`, after which the change touches documents only: 17 tests
+passed in 25.8 s, and after the two restarts the BFF's `/health/ready`, asked three times,
+said `200 Degraded` twice and then `200 Healthy`. The second time, on `340813a5`: 17 tests
+passed in 23.4 s, with the same three answers. The first time, on an earlier commit, 15 tests
+passed in 35.6 s and the first of the three asks met a request that threw. The default suite,
+`npm run test:e2e`, expects the demo off. On the third set of images, started with
+`compose.yaml` alone, it ran whole once: `48 passed`. On the second set it had run whole
+three times: `1 failed`, `47 passed` twice, then `48 passed`. The red test was the same both
+times, `e2e/pinLockExpiry.spec.ts`, and its own expectations had held: the browser's context
+did not close within the test's 30 s. Why is not known, and the green run on the third set
+does not say; the spec is `main`'s, and ADR-0063, "What the browser keeps in demo mode", has
+the four runs. **A repeated demo run
+meets two caps.** The API hands one client `Demo:Claim:MaxPerClientPerDay` copies, 10 unless
+set, in a rolling 24 hours, and through the one published port every browser on the machine is
+one client (ADR-0063, "What a visitor can still do"); a run claims twice, so five runs fit in a
+day on one volume (arithmetic, not run). That count is rows of the database (ADR-0063, decision
+7), so `docker compose … down -v` and a fresh `up` start it again (read, not run as a sequence).
+The BFF also takes ten sign-ins and claims in 60 s from one address, counted in its own memory:
+a run spends four, three before it restarts the BFF, which starts that count again, and one
+after (read from the specs and from the limiter's registration in the BFF's `Program.cs`; no
+run counted them). **In the dev loop no BFF serves the page,** so nothing puts the tag
+there unless the dev server is started with `AZUREBANK_DEMO=true` in its environment:
+`AZUREBANK_DEMO=true npm run dev` in bash, `$env:AZUREBANK_DEMO = 'true'` and then `npm run dev`
+in PowerShell, and `npm run dev:mock` in place of `npm run dev` for the demo's screens with no
+backend at all (measured on 2026-10-05: in bash with both scripts, in PowerShell with
+`npm run dev:mock` and with `npx vite`). The value is exactly `true`; an env file
+does not set it; and a build never carries the tag, whatever its environment held
+(`frontend/vite.config.ts`). The variable sets the page and not the backend: a BFF with the demo
+off answers the claim 404 (measured on the compose stack the same day), so "Try the demo"
+pressed against one is refused (that pair was not run together).
+
 ## Quality gates
 
 Run all of these before opening a pull request.
@@ -291,9 +335,14 @@ error strings. There the wrong wording is removed rather than struck, because no
 struck line during an incident and a `~~` renders as noise in a terminal. **The second is the root
 README** (since 2026-09-24): it is the first page a visitor reads, often not an engineer, and a line
 about what it used to claim reads there as noise, or as doubt about everything around it. It is
-corrected in place without that line; git keeps what it said. Everything else that describes the
-system AS IT IS rather than as it was decided — `docs/deferred/`, code comments, XML docs — is
-simply corrected in place, with a line saying what it used to claim.
+corrected in place without that line; git keeps what it said. **The third is a citation of
+something no reader of this repository can open** (since 2026-10-05): a path into a private working
+folder, the name of a file kept there, a row number of a private list. A struck path is still a
+published path, so in a decision record the citation is replaced by what it stood for, and a dated
+note against the place says, in kind, what stood there; in a code comment the address is dropped
+with no line about it, because what was measured, when and where does not change. Everything else
+that describes the system AS IT IS rather than as it was decided — `docs/deferred/`, code comments,
+XML docs — is simply corrected in place, with a line saying what it used to claim.
 
 **What this rule does not ask anybody to decide.** An earlier draft of it split corrections by kind
 — a decision that was right when made versus a statement of fact that was never true — and that is a

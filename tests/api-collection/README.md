@@ -261,7 +261,7 @@ tests {
 ### GitHub Actions
 
 What the repository actually runs is `.github/workflows/contract-tests.yml`, on every pull
-request and every push to `main` since backlog row 35. Until then it ran only by hand, and nothing
+request and every push to `main` since 2026-09-24. Until then it ran only by hand, and nothing
 noticed that the collection's withdrawal answered 401 on `main` from #198 until #200. Its shape,
 and the reason for each part:
 

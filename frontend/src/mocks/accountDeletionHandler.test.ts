@@ -5,10 +5,10 @@ import { MOCK_PIN, mockState, resetMockState, seedMockSession } from './state';
  * Executable contract for the account-closure handlers (ADR-0049): the deletion mint and the
  * gated DELETE. A mock/backend alignment tripwire, like `transferHandler.test.ts` — every row here
  * is a row of the after-table, and every expected value is quoted from
- * `azurebank-work/plans/account-deletion/measure-after-main-19742ff-2026-09-06.txt`, measured
+ * one transcript, measured
  * 2026-09-06T19:16Z on main 19742ff through the BFF (:5000 -> :7215, AzureBankDev). The probe
- * letters (M0-M5, D1-D16) are that file's row labels; E1/E2 are the expiry rows of
- * `measure-after-2026-09-06.txt` (d93ba10 working tree, merged as 19742ff).
+ * letters (M0-M5, D1-D16) are that transcript's row labels; E1/E2 are the expiry rows of
+ * the first "after" run, 2026-09-06 (d93ba10 working tree, merged as 19742ff).
  *
  * What the mock does NOT model, so nothing below claims it: the 403 ACCESS_DENIED rows (D14/D15 —
  * `MockAccount` has no owner) and the audit rows (D1's AccountDeletionRefused, D9's
@@ -224,8 +224,8 @@ describe('POST /api/accounts/{id}/deletion-authorizations — the deletion mint'
     /*
       CodeRabbit's finding on the PR: the first version called `request.json()` directly, so a
       malformed body rejected the handler's promise and a JSON `null` threw inside the pin-bind
-      helper. Measured on the real endpoint 2026-09-07T12:30Z, main 19742ff
-      (`plans/account-deletion/measure-badbody-2026-09-07.txt`): every shape below is a 400 in the
+      helper. Measured on the real endpoint 2026-09-07T12:30Z, main 19742ff:
+      every shape below is a 400 in the
       framework envelope (rfc9110 type, `errors`, no `errorCode`) — the `""` key when the body is
       absent or the literal `null`, the `$` key when it could not be parsed or converted. The mock's
       `$` sentence is a stated approximation of the framework's token-bearing text; the KEY and the
@@ -414,7 +414,7 @@ describe('DELETE /api/accounts/{id} — gated by the authorisation', () => {
   });
 
   it('answers an EXPIRED one distinctly, spends no attempt and leaves the row Pending — E1/E2', async () => {
-    // Measured E2 (measure-after-2026-09-06.txt, d93ba10 working tree merged as 19742ff): a DELETE
+    // Measured E2 (2026-09-06, d93ba10 working tree merged as 19742ff): a DELETE
     // 130 s after a mint whose expiresAt was mint+2m (E1) -> 401 AUTHORIZATION_EXPIRED "This
     // authorisation has expired. Enter your PIN again to confirm.", PinAccessFailedCount 0/0,
     // authorisation still Pending, /bff/auth/me 200 after. Aged by editing the stored row, as
