@@ -354,7 +354,21 @@ guesswork into a provable state machine.
   expiry, cross-user/cross-endpoint independence, error-releases-key,
   fencing aborts after takeover).
 - **Concurrency proof**: 24 byte-identical parallel transfers (and
-  deposits) with one key → exactly ONE execution, replays byte-identical,
+  deposits) with one key → exactly ONE execution, ~~replays byte-identical,~~
+  *(Struck 2026-10-06: until this change the proof compared with the winner's
+  answer only the replays that came back inside the parallel burst, and a
+  burst can hold none: a request that finds the key still being processed is
+  answered 409. Each round now sends the same request once more, after the
+  burst has been answered, and requires the `Idempotency-Replayed` header,
+  the winner's status and a decoded response text exactly equal to the
+  winner's: text, not bytes. Seen in `IdempotencyConcurrencyTests`, in
+  memory, and in `IdempotencySqlServerConcurrencyTests`, on LocalDB, ten
+  runs of each. Before the change, with one character of the old comparison's
+  expected text altered on purpose, the transfers test still passed 8 times
+  in memory and 10 on SQL Server, where no burst of its 30 rounds held a
+  replay, and the deposits test 0 and 7. With the change and the same
+  alteration made to the new comparison, all four tests failed 10 of 10, in
+  their first round; with nothing altered, all four passed 10 of 10.)*
   final balances exact — 3 rounds per run, on InMemory everywhere and on
   SQL Server via `AZUREBANK_TEST_SQLSERVER` (LocalDB locally, mssql
   container in CI).
