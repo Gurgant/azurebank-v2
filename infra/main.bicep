@@ -20,6 +20,8 @@ param poolTimeout int = 600
 
 @description('Where the notify-only alerts send their e-mail. Needed only when deployApp is true; never committed.')
 param alertEmail string = ''
+@description('The e-mail address the Azure mobile app on the owner\'s phone was set up with. Given, the action group gains one receiver of that app, so that an alert is expected to reach the phone as a notification too. Empty, the default, adds none: the group is what it was. infra/secrets.ps1 writes it; never committed.')
+param alertPushAccount string = ''
 @description('False leaves the Deny policy out: the fallback if this subscription refuses a custom policy definition.')
 param denyPolicy bool = true
 @description('Trigger types the Deny policy lets every job have. A job that runs on a schedule is not added here: it is named in scheduledJobs.')
@@ -585,13 +587,24 @@ resource shapeAssignment 'Microsoft.Authorization/policyAssignments@2025-03-01' 
   }
 }
 
-// Notify only: nothing here stops the app. One e-mail receiver; three rules on the app, one per
-// meter that traffic can move (requests, bytes out, replica time). A fourth, on the log workspace,
-// is built only when logVolumeAlert is true: see the comment on it below.
+// Notify only: nothing here stops the app. One e-mail receiver, and beside it, when
+// alertPushAccount is given, one receiver of the Azure mobile app, so that an alert is expected to
+// reach the owner's phone as a notification too; three rules on the app, one per meter that
+// traffic can move (requests, bytes out, replica time). A fourth, on the log workspace, is built
+// only when logVolumeAlert is true: see the comment on it below. Until 2026-10-06 this comment
+// said "One e-mail receiver" and the group could hold no other.
+//
+// The phone's receiver is merged in, not written as a list that may be empty: with no account
+// the properties worked out are the three they were, and no fourth. Its name is its own, because
+// a receiver's name must be unique in its group, and its emailAddress is, in the reference's
+// words, "The email address registered for the Azure mobile app"
+// (https://learn.microsoft.com/en-us/azure/templates/microsoft.insights/2023-01-01/actiongroups,
+// read on 2026-10-06). Nothing of it has been sent to Azure. Not known: what Azure does with a
+// push for an account that has no app, and what such a notification costs on this offer.
 resource owner 'Microsoft.Insights/actionGroups@2023-01-01' = if (deployApp) {
   name: 'azurebank-owner'
   location: 'global'
-  properties: {
+  properties: union({
     groupShortName: 'azurebank'
     enabled: true
     emailReceivers: [
@@ -601,7 +614,14 @@ resource owner 'Microsoft.Insights/actionGroups@2023-01-01' = if (deployApp) {
         useCommonAlertSchema: true
       }
     ]
-  }
+  }, empty(alertPushAccount) ? {} : {
+    azureAppPushReceivers: [
+      {
+        name: 'owner-phone'
+        emailAddress: alertPushAccount
+      }
+    ]
+  })
   dependsOn: [
     appInputs
   ]

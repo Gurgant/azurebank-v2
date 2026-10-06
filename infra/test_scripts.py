@@ -1633,10 +1633,12 @@ class TemplateTests(unittest.TestCase):
     def every_setting(self):
         """Each (resource, container, name of a setting): every container and init container of
         every resource the template compiles. A search that walked nothing would find nothing, so
-        the app's two containers and each job's one must be among what this saw."""
+        the app's two containers and each job's one must be among what this saw. Properties that
+        are compiled as one expression hold no container to read: the action group's are (below)."""
         found = []
         for resource in self.resources:
-            template = resource.get('properties', {}).get('template', {})
+            properties = resource.get('properties', {})
+            template = properties.get('template', {}) if isinstance(properties, dict) else {}
             for container in [*template.get('containers', []), *template.get('initContainers', [])]:
                 found += [(resource['name'], container['name'], entry['name']) for entry in container.get('env', [])]
         self.assertLessEqual({('azurebank', 'bff'), ('azurebank', 'api'), ('azurebank-migrate', 'migrate'),
@@ -2375,11 +2377,60 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(alerts['properties']['actions'],
                          [{'actionGroupId': "[resourceId('Microsoft.Insights/actionGroups', 'azurebank-owner')]"}])
         (group,) = self.of_type('Microsoft.Insights/actionGroups')
-        self.assertEqual(list(group['properties']), ['groupShortName', 'enabled', 'emailReceivers'])
-        # The mailbox is a parameter: no address is written in the template.
-        self.assertEqual([receiver['emailAddress'] for receiver in group['properties']['emailReceivers']],
-                         ["[parameters('alertEmail')]"])
+        # The mailbox is a parameter, and so is the account of the phone: no address is written in
+        # the template. The account is empty unless it is given, and is not among what the app needs.
         self.assertEqual(re.findall(r'[\w.+-]+@[\w-]+\.\w+', json.dumps(self.main)), [])
+        with self.subTest(read='the parameter'):
+            account = self.main['parameters'].get('alertPushAccount', {})
+            self.assertEqual((account.get('type'), account.get('defaultValue')), ('string', ''))
+            self.assertNotIn('alertPushAccount', GUARDED)
+        # The group's receivers, worked out offline as a what-if works them out. Until 2026-10-06
+        # this test read three keys in the compiled template: the receivers were one mailbox,
+        # whatever the run was given. Now the phone's receiver is written only when its account is
+        # given, so the properties are compiled as one expression and are read worked out.
+        mailbox, phone = 'the.mailbox@example.invalid', 'the.phone@example.invalid'
+        as_it_was = {'groupShortName': 'azurebank', 'enabled': True, 'emailReceivers': [
+            {'name': 'owner', 'emailAddress': mailbox, 'useCommonAlertSchema': True}]}
+        runs = {}
+        with tempfile.TemporaryDirectory() as folder:
+            copy_templates(folder)
+            for case, values, count in (('no account named', {}, 22),
+                                        ('an empty account', {'alertPushAccount': ''}, 22),
+                                        ('an account given', {'alertPushAccount': phone}, 22),
+                                        ('an account given without the app',
+                                         {'alertPushAccount': phone, 'deployApp': False}, 14)):
+                with self.subTest(case=case, read='the count'):
+                    code, said, predicted = snapshot(folder, {**APP_INPUTS, 'alertEmail': mailbox, **values})
+                    self.assertEqual(code, 0, said)
+                    self.assertEqual(len(predicted), count)
+                    runs[case] = {resource['id']: resource for resource in predicted}
+
+        def receivers(case):
+            """The properties of the one action group of a run, and every other resource of it."""
+            (found,) = [key for key, resource in runs.get(case, {}).items() if resource['type'] == group['type']]
+            return runs[case][found]['properties'], {key: resource for key, resource in runs[case].items()
+                                                     if key != found}
+        # CONTROL: green before the phone's receiver existed. With no account named the group is
+        # what it was: the same three properties and one mailbox, taken from the parameter.
+        with self.subTest(case='no account named'):
+            self.assertEqual(receivers('no account named')[0], as_it_was)
+        # An account named as empty is no account: the same run, resource for resource.
+        with self.subTest(case='an empty account'):
+            self.assertEqual(runs.get('an empty account'), runs['no account named'])
+        # An account given adds one receiver of the Azure mobile app, with that account, under a
+        # name of its own: a receiver's name must be unique in its group. Nothing else of the run
+        # changes, and the account stands in that one place.
+        with self.subTest(case='an account given'):
+            properties, others = receivers('an account given')
+            self.assertEqual(properties, {**as_it_was, 'azureAppPushReceivers': [
+                {'name': 'owner-phone', 'emailAddress': phone}]})
+            self.assertEqual(others, receivers('no account named')[1])
+            self.assertEqual(json.dumps(runs['an account given']).count(phone), 1)
+        # Without the app there is no group to carry it.
+        with self.subTest(case='an account given without the app'):
+            self.assertEqual([resource['type'] for resource in runs.get('an account given without the app', {}).values()
+                              if resource['type'] == group['type'] or phone in json.dumps(resource)], [])
+            self.assertEqual(len(runs.get('an account given without the app', {})), 14)
 
     def test_the_alert_on_the_log_volume_watches_the_workspace_and_is_left_out_unless_asked_for(self):
         (alerts,) = self.of_type('Microsoft.Insights/metricAlerts')
