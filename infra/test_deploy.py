@@ -5104,6 +5104,10 @@ class RunbookTests(unittest.TestCase):
         '; the smoke test passed; nothing was moved.',
         'The pool run ended well',
         'Starting the job ',
+        # Since 2026-10-06, the two lines of a check about the networks of proxies: the one
+        # every check prints until a run has named some, and how the other one ends.
+        'The bff container names no network of proxies',
+        'No network was shown.',
     )
 
     @classmethod

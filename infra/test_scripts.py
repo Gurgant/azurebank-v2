@@ -1142,7 +1142,7 @@ class SecretsScriptTests(ScriptCase):
 
 class SecretsScriptQuotesTests(unittest.TestCase):
     """What the runbook quotes of infra/secrets.ps1 about the demo's switch and, since 2026-10-06,
-    about the account of the owner's phone, held to the script.
+    about the account of the owner's phone and about the networks of proxies, held to the script.
     Both files are read as text and nothing is run: the tests above hold what the script prints,
     and these hold that the page quotes the words the script holds. A step of the runbook gives
     such a line as what is good to read, and a read that differs is a stop there."""
@@ -1189,6 +1189,30 @@ class SecretsScriptQuotesTests(unittest.TestCase):
             with self.subTest(words=words, held_by='the script'):
                 self.assertEqual(self.script.count(words), 1)
         for words in self.PHONE_QUOTED:
+            with self.subTest(words=words, held_by='the runbook'):
+                self.assertIn(words, self.page)
+
+    # The six lines of the report about the networks of proxies the app believes. The script
+    # writes each of them whole, once. The page quotes four: no step of it has the variable name
+    # the networks. And the refusal of a forwarded-headers setting that somebody put on the bff
+    # container by hand, which a row of "When something fails" quotes.
+    NETWORKS_REPORT = ('proxyNetworks: from -ProxyNetworks',
+                       'proxyNetworks: from AZUREBANK_PROXY_NETWORKS',
+                       'proxyNetworks: none, asked for with -ProxyNetworks',
+                       'proxyNetworks: none, asked for with AZUREBANK_PROXY_NETWORKS',
+                       'proxyNetworks: kept from the deployed resource',
+                       "proxyNetworks: not written, the template's default applies")
+    NETWORKS_QUOTED = (NETWORKS_REPORT[0], NETWORKS_REPORT[2], *NETWORKS_REPORT[4:])
+    SET_BY_HAND = ('The bff container of the deployed app carries a forwarded-headers setting this template '
+                   'never writes.')
+
+    def test_the_lines_about_the_networks_of_proxies_that_the_runbook_quotes_are_the_ones_the_script_writes(self):
+        # Seen red with a line of the report reworded in the script, and with a quote taken out
+        # of the page.
+        for words in (*self.NETWORKS_REPORT, self.SET_BY_HAND):
+            with self.subTest(words=words, held_by='the script'):
+                self.assertEqual(self.script.count(words), 1)
+        for words in (*self.NETWORKS_QUOTED, self.SET_BY_HAND):
             with self.subTest(words=words, held_by='the runbook'):
                 self.assertIn(words, self.page)
 
