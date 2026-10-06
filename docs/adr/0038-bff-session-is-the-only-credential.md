@@ -51,6 +51,13 @@ tighter `auth` rate-limit policy. `RateLimiterTests` already says so — *"the p
 before the cookie branch rather than inside it. `BearerTokenTransformProvider` is registered with
 `AddTransforms<T>()`, which applies it to **every** route, so this covers all four proxied routes
 including the two auth ones — a per-route fix would not have.
+*(2026-10-06: the browser's `Cookie` header is taken off the outbound request in the same place and
+the same way: whole, on every proxied route, and whether or not a session resolves. Until then
+YARP's default header copy carried it to the API beside the injected bearer. Measured that day on
+the BFF's test host, with a recorder in the API's place, before the change: the forwarded request
+held the session's cookie and the two other cookies sent beside it. The API reads no cookie, and
+the session id is the BFF's own secret. Only the outbound copy goes: the BFF reads the session from
+the browser's request as before. `BrowserCookieStaysInTheBffTests` pins it.)*
 
 **And make the step-up gate fail closed.** No resolvable session on a PIN-protected route is a
 refusal the BFF issues itself, not a question forwarded to the API. The header strip already makes

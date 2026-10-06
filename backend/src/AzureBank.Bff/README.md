@@ -428,7 +428,16 @@ public class UserSession
 ### Bearer Token Transform
 
 The `BearerTokenTransformProvider` first clears any inbound `Authorization` header, then injects the
-session's JWT (renewed through `ITokenRefresher` when it runs short). A renewal that cannot be had while
+session's JWT (renewed through `ITokenRefresher` when it runs short). It also takes the browser's
+`Cookie` header off the request it forwards, whole and whether or not a session resolves: the API
+reads no cookie, and the session id is the BFF's own secret. The browser's own request keeps the
+header, so the BFF goes on reading the session from it.
+*(Until 2026-10-06 this section did not say what became of the cookie, and it was not taken off:
+the forwarded request held the browser's whole `Cookie` header, the session id in it and any other
+cookie beside it. Measured that day on the test host, with a recorder in the API's place, before
+the change: on a read of both routes that proxy a signed-in request, and with other cookies beside
+the session's on a read and on a write of the catch-all route.)*
+A renewal that cannot be had while
 the token has 5 s or less left is answered here with a 503 and `Retry-After`, never forwarded; the
 source also strips the token-road marker and turns the API's refusal of the service key into a 503
 (ADR-0057 §4.2, §4.7). When the API does not answer within `BackendApi:TimeoutSeconds`, cannot be
@@ -449,6 +458,11 @@ public void Apply(TransformBuilderContext context)
         // inbound headers by default, so without this a caller's own bearer rode through to the
         // API whenever no session resolved (ADR-0038). The session is the only credential.
         transformContext.ProxyRequest.Headers.Authorization = null;
+
+        // The browser's Cookie header stops here, whole: the API reads no cookie, and the session
+        // id is this host's secret. Off the outbound request only: the lookup below reads the
+        // browser's own request, which keeps it.
+        transformContext.ProxyRequest.Headers.Remove(HeaderNames.Cookie);
 
         if (httpContext.Request.Cookies.TryGetValue(cookieName, out var sessionId)
             && !string.IsNullOrEmpty(sessionId))
