@@ -85,7 +85,12 @@ start with the demo on and a shorter one. `Demo__Claim__MaxPerClientPerDay` is 1
 container and on the job, from one variable, as ADR-0063's decision 14 asks until the address the
 BFF sees behind the ingress has been measured. Every other number of the demo stays at its
 default on all three, so no two can differ. No container carries a key id of the pepper, a
-previous pepper or a forwarded-headers setting.
+previous pepper ~~or a forwarded-headers setting~~ *(struck 2026-10-06, ADR-0013's note of that
+day: a run that names networks of proxies writes one setting for each on the `bff` container,
+`ForwardedHeaders__KnownIPNetworks__0` and on, so that the BFF counts a visitor by the visitor's
+own address behind the ingress. The parameter, `proxyNetworks`, is empty by default: a run that
+names none tells the `bff` the six settings it was told, which a test compares worked out, and
+no run has named any)*.
 
 **3. One job, `azurebank-pool`, runs `recycle` on a schedule as the app's database identity.**
 The tools image, one container, the argument `recycle`, the identity `azurebank-app`. No second
