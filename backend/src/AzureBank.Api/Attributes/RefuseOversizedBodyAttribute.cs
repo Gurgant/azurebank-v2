@@ -17,8 +17,7 @@ public sealed class RefuseOversizedBodyAttribute : Attribute, IAsyncResourceFilt
     public async Task OnResourceExecutionAsync(ResourceExecutingContext context, ResourceExecutionDelegate next)
     {
         var httpContext = context.HttpContext;
-        var limit = httpContext.GetEndpoint()?.Metadata.GetMetadata<IRequestSizeLimitMetadata>()?.MaxRequestBodySize
-            ?? context.ActionDescriptor.EndpointMetadata.OfType<IRequestSizeLimitMetadata>().FirstOrDefault()?.MaxRequestBodySize;
+        var limit = httpContext.GetEndpoint()?.Metadata.GetMetadata<IRequestSizeLimitMetadata>()?.MaxRequestBodySize;
 
         if (limit is not null && httpContext.Request.ContentLength > limit.Value)
         {
@@ -29,8 +28,7 @@ public sealed class RefuseOversizedBodyAttribute : Attribute, IAsyncResourceFilt
 
         var executedContext = await next();
 
-        if (executedContext.Exception is BadHttpRequestException { StatusCode: StatusCodes.Status413PayloadTooLarge }
-            || executedContext.Exception?.InnerException is BadHttpRequestException { StatusCode: StatusCodes.Status413PayloadTooLarge })
+        if (executedContext.Exception is BadHttpRequestException { StatusCode: StatusCodes.Status413PayloadTooLarge })
         {
             executedContext.Exception = new PayloadTooLargeException();
         }
