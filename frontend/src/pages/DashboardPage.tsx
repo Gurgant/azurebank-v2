@@ -672,7 +672,11 @@ export function DashboardPage() {
           <Text as="h1" className={styles.sectionTitle}>
             Welcome to AzureBank
           </Text>
-          <Text className={styles.muted}>Open your first account to start banking.</Text>
+          {/* A block under the title: both are inline `Text`, and side by side they ran together
+              as "Welcome to AzureBankOpen your first account to start banking.". */}
+          <Text block className={styles.muted} style={{ marginTop: 8 }}>
+            Open your first account to start banking.
+          </Text>
           <div style={{ marginTop: 12 }}>
             <Button appearance="primary" onClick={() => navigate('/accounts')}>
               Create your first account
@@ -828,7 +832,13 @@ export function DashboardPage() {
                 // Rendered rather than hidden. In a bank "nothing is pending" IS information — it is
                 // reassurance — and a section that vanishes makes the page reshuffle itself between
                 // one day and the next.
-                <Text className={styles.muted}>Nothing needs your attention.</Text>
+                //
+                // In a row of its own, as an entry below would be. The title and this sentence are
+                // both inline `Text`, and side by side they read as one line with no space between:
+                // "Needs attentionNothing needs your attention.".
+                <div className={styles.railRow}>
+                  <Text className={styles.muted}>Nothing needs your attention.</Text>
+                </div>
               ) : (
                 pending.map((t) => (
                   <div key={t.id} className={styles.railRow}>
