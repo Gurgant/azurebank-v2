@@ -151,10 +151,14 @@ DEMO_FLAG = 'Demo__Enabled'
 # on the bff container alone: this prefix and a number, from 0. infra/secrets.ps1 reads them by
 # the same prefix, and a test holds the three equal (infra/test_scripts.py). ABOUT_FORWARDED is
 # every setting that could tell a host whose forwarded headers to believe, whatever its case, as
-# .NET reads a name: the template writes none but those.
+# .NET reads a name: the template writes none but those. The framework's own switch is one, and a
+# host reads it under three names: ASPNETCORE_FORWARDEDHEADERS_ENABLED, DOTNET_FORWARDEDHEADERS_ENABLED
+# and ForwardedHeaders_Enabled with no prefix. Measured on 2026-10-06 on the BFF, on a loopback
+# socket with nothing listed: under each of the three it took the address a caller wrote in
+# X-Forwarded-For for the caller's. Until later that day only the first name was matched here.
 NETWORKS_SETTING = 'ForwardedHeaders__KnownIPNetworks__'
 NETWORKS_CONTAINER = 'bff'
-ABOUT_FORWARDED = re.compile(r'ForwardedHeaders__|ASPNETCORE_FORWARDEDHEADERS_ENABLED$', re.IGNORECASE)
+ABOUT_FORWARDED = re.compile(r'ForwardedHeaders__|(?:ASPNETCORE_|DOTNET_)?FORWARDEDHEADERS_ENABLED$', re.IGNORECASE)
 # What the public demo shows of itself without spending a copy, both under
 # backend/src/AzureBank.Bff: the tag the BFF puts in the page's head
 # (Extensions/SpaHostingExtensions.cs, DemoTag), and its own door for a registration, which the

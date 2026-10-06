@@ -206,7 +206,12 @@ forwarded-headers setting" of every run. The framework's own switch for forwarde
 `ASPNETCORE_FORWARDEDHEADERS_ENABLED`, is written nowhere, and `--check` refuses a deployed app
 that carries it: with it set to `true` the BFF believed whatever a caller wrote (measured on a
 local process on 2026-10-06: twelve sign-ins, each naming another address in `X-Forwarded-For`,
-were all answered, where without it the eleventh and the twelfth were refused). The connection
+were all answered, where without it the eleventh and the twelfth were refused). A host reads
+that switch under two more names, `DOTNET_FORWARDEDHEADERS_ENABLED` and `ForwardedHeaders_Enabled`
+with no prefix. Measured later that day, on the BFF on a loopback socket: under each of the
+three it took the address a caller wrote for the caller's, and with a network listed the switch
+brought back the reading of the header that the strict one closes (ADR-0013's note of that
+day). `--check` refuses all three; until then it matched the first alone. The connection
 limits are the hosts' own defaults (ADR-0058); the template sets none.
 
 Three container images, public in GHCR, tagged with the full commit SHA: `azurebank-api`,

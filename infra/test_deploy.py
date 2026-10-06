@@ -2398,6 +2398,15 @@ class CheckTests(DeployCase):
             ('a limit of hops', told(app_resource(), ('ForwardedHeaders__ForwardLimit', 'VALUE-MARKER')), on_the_bff),
             ('the switch that believes every caller',
              told(app_resource(), ('ASPNETCORE_FORWARDEDHEADERS_ENABLED', 'VALUE-MARKER')), on_the_bff),
+            # The same switch under the two other names the host reads it by. Added later on
+            # 2026-10-06, when the BFF on a loopback socket took the address a caller wrote under
+            # each of the three; until then only the name above ended the check.
+            ('the same switch, by the name of every .NET host',
+             told(app_resource(), ('DOTNET_FORWARDEDHEADERS_ENABLED', 'VALUE-MARKER')), on_the_bff),
+            ('the same switch, with no prefix',
+             told(app_resource(), ('ForwardedHeaders_Enabled', 'VALUE-MARKER')), on_the_bff),
+            ('the same switch with no prefix, on the api',
+             told(app_resource(), ('FORWARDEDHEADERS_ENABLED', 'VALUE-MARKER'), container='api'), on_the_api),
             ('a network on the api', told(app_resource(), first, container='api'), on_the_api),
             ('the switch on the api, in lower case',
              told(app_resource(), ('aspnetcore_forwardedheaders_enabled', 'VALUE-MARKER'), container='api'),
@@ -2419,7 +2428,8 @@ class CheckTests(DeployCase):
         # them: the check passes, and counts no network.
         self.clear()
         self.azure.app = told(app_resource(), ('Logging__ForwardedHeaders__Level', 'Warning'),
-                              ('X_ForwardedHeaders__KnownIPNetworks__0', '192.0.2.0/24'))
+                              ('X_ForwardedHeaders__KnownIPNetworks__0', '192.0.2.0/24'),
+                              ('X_FORWARDEDHEADERS_ENABLED', 'true'), ('ForwardedHeaders_Enabled_Once', 'true'))
         self.check()
         self.assertEqual(self.said()[1], NO_NETWORKS)
 

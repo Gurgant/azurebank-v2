@@ -579,7 +579,16 @@ an entry.
   `ASPNETCORE_FORWARDEDHEADERS_ENABLED=true` in its environment this host believed whatever a
   caller wrote: twelve sign-ins over one connection, each naming another address in
   `X-Forwarded-For`, were all answered, where without it the eleventh and the twelfth were
-  refused (measured on a local process, 2026-10-06). Nothing in this repository sets it.
+  refused (measured on a local process, 2026-10-06). Nothing in this repository sets it. The
+  host reads the switch under two more names, `DOTNET_FORWARDEDHEADERS_ENABLED` and
+  `ForwardedHeaders_Enabled` with no prefix, and under each of the three, with nothing listed, a
+  claim was made for the address its caller wrote (measured later that day on a loopback socket,
+  the address read where the scripted API received it). With a network listed and the switch
+  on, a caller behind the proxy that wrote a zone and a quotation mark was believed again: the
+  framework's own middleware then reads the header before `StrictForwardedFor` rewrites it. With
+  a network listed that did not hold the connection's address, the header was not read, switch
+  or no switch. This host starts with the switch on: nothing here refuses it but the deployment's
+  `--check`, which ends on any of the three names (`infra/deploy.py`).
 
 On the proxied road to the API nothing reads a forwarded header. The proxy writes
 `X-Forwarded-For`, `X-Forwarded-Host` and `X-Forwarded-Proto` itself. The first holds the

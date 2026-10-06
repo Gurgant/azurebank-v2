@@ -2691,10 +2691,12 @@ class TemplateTests(unittest.TestCase):
         # Since 2026-10-06 that holds for what every run writes, which is what `every_setting`
         # walks: a run that names networks of proxies tells the bff, and the bff alone, to believe
         # them (the test below), and the switch that would make a host believe every caller is
-        # still written nowhere.
-        about_forwarded_headers = re.compile(r'ForwardedHeaders__|ASPNETCORE_FORWARDEDHEADERS_ENABLED$', re.IGNORECASE)
+        # still written nowhere. Under none of its three names: the two beside ASPNETCORE_'s were
+        # added later that day, when the BFF was measured to believe a caller under each.
+        about_forwarded_headers = re.compile(
+            r'ForwardedHeaders__|(?:ASPNETCORE_|DOTNET_)?FORWARDEDHEADERS_ENABLED$', re.IGNORECASE)
         for name in ('ForwardedHeaders__KnownProxies__0', 'ASPNETCORE_FORWARDEDHEADERS_ENABLED',
-                     f'{NETWORKS_SETTING}0'):
+                     'DOTNET_FORWARDEDHEADERS_ENABLED', 'ForwardedHeaders_Enabled', f'{NETWORKS_SETTING}0'):
             self.assertRegex(name, about_forwarded_headers)
         self.assertEqual([found for found in self.every_setting() if about_forwarded_headers.match(found[2])], [])
         # The tool reads the deployed app by the same pattern.
