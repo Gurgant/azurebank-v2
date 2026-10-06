@@ -72,6 +72,30 @@ test.describe('anonymous visitors', () => {
     // The real claim: it never rendered AT ANY POINT, not merely that it is absent now.
     expect(await sawProtectedContent(page)).toBe(false);
   });
+
+  test('are offered "Create account" on the sign-in page, and no "Try the demo"', async ({
+    page,
+  }) => {
+    // CONTROL: green before this change
+    /*
+      THE DEMO IS OFF HERE, and the page says so. A deployment that turns the demo on serves the
+      same build with one tag in its head (src/features/demo/demoMode.ts), and the sign-in page
+      then leads with "Try the demo" and has no link to a registration that is closed
+      (src/pages/LoginPage.tsx). This suite's stack has the demo off, and its specs lean on that:
+      the register page's scan, for one, opens /register (accessibility.spec.ts), which the demo
+      closes (src/features/demo/ClosedInDemo.tsx).
+
+      It asks the page and nothing else, and it is never skipped: against a page that carries the
+      tag it is meant to fail, and the one comparison prints both counts when it does.
+    */
+    await page.goto('/login');
+    await expect(page.getByLabel('Email address', { exact: true })).toBeVisible();
+
+    expect({
+      createAccount: await page.getByRole('link', { name: 'Create account', exact: true }).count(),
+      tryTheDemo: await page.getByRole('button', { name: 'Try the demo', exact: true }).count(),
+    }).toEqual({ createAccount: 1, tryTheDemo: 0 });
+  });
 });
 
 test.describe('a signed-in visitor', () => {

@@ -33,6 +33,13 @@ browser does. Playwright owns the vite server (`webServer`) and does NOT own the
 [ADR-0054](0054-the-bff-serves-the-built-spa-under-a-csp-measured-against-it.md): the real-stack
 job runs the suite against the build the BFF serves, under its real CSP, with `E2E_BASE_URL` set
 and no vite. Locally this topology is still the default.)*
+*(2026-10-05, [ADR-0063](0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md): the
+public demo has a run of its own, `npm run test:e2e:demo` (`frontend/playwright.demo.config.ts`,
+the specs in `frontend/e2e-demo/`), and that run does own part of the backend, for one step. On
+the compose stack with the demo on, it restarts the BFF's container and then the API's with
+`docker restart`, to show that the copy a browser keeps still signs in once every session is
+gone. It is started by hand and is part of no other run and of no CI job. The run this record
+decides, `npm run test:e2e`, still owns none of the backend.)*
 
 **2. One login per run, reused via `storageState`.** Not an optimisation: the BFF allows 10 auth
 requests per 60s per IP, so a suite that signed in per test would rate-limit itself into red before
@@ -141,6 +148,13 @@ tab driven over CDP.
   its own audit (U8) and belongs there.
 - **Transfers and withdrawals**, for the same reason as ADR-0030: the dev database seeds one account
   and one user, so both need a counterparty that does not exist.
+  *(2026-10-05, [ADR-0063](0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md): the
+  demo's own run, `npm run test:e2e:demo`, sends one transfer through the stack: one euro from
+  the owner of a copy it claimed to that copy's first contact, with the PIN the page prints. A
+  demo copy comes with two contacts to pay, which is the counterparty this line says is missing.
+  Measured that day on the compose stack with the demo on: `POST /api/transfers/authorizations`
+  201, `POST /api/transfers` 201, and the page said "Transfer Complete". That run is not this
+  record's suite and no CI job runs it.)*
 - **Session expiry in the UI** — the warning dialog and the forced sign-out. Reaching it means
   waiting out a 10-minute inactivity window; it needs a clock the suite can control, which is its
   own piece of work.

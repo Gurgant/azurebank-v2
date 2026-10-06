@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Route, Routes, useLocation } from 'react-router-dom';
 import { server } from '../../mocks/server';
 import { MOCK_USER, mockState, seedMockSession, type MockSessionUser } from '../../mocks/state';
+import { enableDemoMode } from '../../test/demoMode';
 import { makeTestStore, renderWithProviders } from '../../test/renderWithProviders';
 import { TEST_PIN } from '../../test/pinFlow';
 import { SettingsPage } from '../../pages/SettingsPage';
@@ -250,5 +251,43 @@ describe('ChangePinDialog', () => {
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(await sent()).toEqual([]);
+  });
+
+  it('in the demo only "Current PIN" carries the hint', async () => {
+    /*
+      On the demo the page prints the PIN every demo copy starts with under boxes that ask for a
+      PIN the visitor already has. Of this dialog's three groups only the first asks for one. The
+      other two take a PIN that is being chosen, and the starting digits under them would read as
+      the PIN to choose.
+
+      The sentence is typed out, not imported from the product.
+    */
+    const hint = 'Demo PIN: 123456, unless you changed it.';
+    enableDemoMode();
+    await renderSettings();
+    const dialog = await openDialog();
+
+    /** What a group says it is described by: each id's words; `null` for no description. */
+    const describedBy = (name: 'Current PIN' | 'New PIN' | 'Confirm new PIN') => {
+      const attribute = group(name).getAttribute('aria-describedby');
+      if (attribute === null) return null;
+      return attribute.split(' ').map((id) => document.getElementById(id)?.textContent ?? null);
+    };
+    const hints = within(dialog).queryAllByText(hint);
+
+    expect({
+      hints: hints.length,
+      // Each hint sits right under some boxes: these are the boxes' names.
+      under: hints.map((each) => each.previousElementSibling?.getAttribute('aria-label') ?? null),
+      'Current PIN': describedBy('Current PIN'),
+      'New PIN': describedBy('New PIN'),
+      'Confirm new PIN': describedBy('Confirm new PIN'),
+    }).toEqual({
+      hints: 1,
+      under: ['Current PIN'],
+      'Current PIN': [hint],
+      'New PIN': null,
+      'Confirm new PIN': null,
+    });
   });
 });
