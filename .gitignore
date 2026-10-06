@@ -35,6 +35,9 @@ graphify-out/
 # Playwright (ADR-0031). The auth state holds a LIVE session cookie and must never be committed;
 # reports and traces are per-run debugging artefacts.
 frontend/e2e/.auth/
+# The demo's own run (frontend/e2e-demo) saves a LIVE session too, and with it a demo copy's sign-in:
+# its email, password and PIN, as the browser keeps them, and the passwords of the copies it claimed.
+frontend/e2e-demo/.auth/
 frontend/playwright-report/
 frontend/test-results/
 frontend/blob-report/

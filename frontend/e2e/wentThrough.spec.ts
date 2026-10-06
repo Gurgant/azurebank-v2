@@ -36,7 +36,7 @@ const SENTENCE = {
 
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'];
 const GATED_IMPACTS = ['serious', 'critical'];
-/** Fluent's focus sentinels, focusable and aria-hidden on purpose: see `accessibility.spec.ts`. */
+/** Fluent's focus sentinels, focusable and aria-hidden on purpose: see `axeScan.ts`. */
 const TABSTER_SENTINEL = '[data-tabster-dummy]';
 const SHOTS = 'test-results/went-through';
 
@@ -622,7 +622,7 @@ async function measure(
   await expect(sentence).toHaveText(sentenceText);
   const viewHistory = page.locator(scope).getByRole('button', { name: 'View History' });
 
-  // A settled view, not a fading one: axe reads computed colours (see `accessibility.spec.ts`).
+  // A settled view, not a fading one: axe reads computed colours (see `axeScan.ts`).
   await page.evaluate(() =>
     Promise.all(
       document

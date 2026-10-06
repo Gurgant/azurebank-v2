@@ -4,6 +4,7 @@
  * Reset between tests by src/test/setup.ts.
  */
 import type { AccountType, TransactionStatus, TransactionType } from '../api/enums';
+import { isDemoMode } from '../features/demo/demoMode';
 
 export interface StoredIdempotentResponse {
   /** Fingerprint of the RAW request body bytes — the backend hashes bytes, not JSON. */
@@ -232,6 +233,12 @@ interface MockState {
   transactions: MockLedgerEntry[];
   /** Exact-match transfer-recipient directory. Looking up self returns exists:false. */
   recipients: MockRecipient[];
+  /**
+   * The demo copies that have been claimed, in the order they were claimed. Each signs in with its
+   * own pair, and while the page is the demo they are the only accounts that sign in at all. A
+   * sign-out leaves a copy claimed: what a claim spends is the pool's entry, not the session.
+   */
+  demoCopies: MockDemoCopy[];
 }
 
 /** Seeded recipients — 'friend' backs the stepup.test contract; the rest are demo handles. */
@@ -512,6 +519,7 @@ export const mockState: MockState = {
   accounts: defaultAccounts(),
   transactions: defaultTransactions(),
   recipients: defaultRecipients(),
+  demoCopies: [],
 };
 
 /** Test helper: start authenticated without walking the login flow. */
@@ -536,6 +544,199 @@ export function setMockSessionCookie(present: boolean): void {
   document.cookie = present
     ? `${MOCK_SESSION_COOKIE}=mock-session; Path=/`
     : `${MOCK_SESSION_COOKIE}=; Path=/; Max-Age=0`;
+}
+
+/** One demo copy of the pool: its owner, what signs in to it, and whom it can pay. */
+export interface MockDemoCopy {
+  user: MockSessionUser;
+  password: string;
+  /** The handles of the copy's two other users, bare: Jane's, then Mike's. */
+  contacts: string[];
+}
+
+/** The `copy` of a claim's answer, member for member. */
+export interface MockDemoCopyInfo {
+  email: string;
+  password: string;
+  pin: string;
+  contacts: string[];
+  expiresAt: string;
+}
+
+function poolCopy(n: number, suffix: string, address: string, password: string): MockDemoCopy {
+  return {
+    user: {
+      id: `019f7b3f-0000-7000-8000-0000000dc00${n}`,
+      email: `demo-${address}@azurebank.example`,
+      firstName: 'John',
+      lastName: 'Smith',
+      azureTag: `john_${suffix}`,
+      hasPin: true,
+    },
+    password,
+    contacts: [`jane_${suffix}`, `mike_${suffix}`],
+  };
+}
+
+/**
+ * The mock's pool of demo copies: three, so a visitor can claim one, start over twice, and meet an
+ * empty pool on the fourth claim.
+ *
+ * Each has the shape the seeder gives a copy
+ * (backend/tools/AzureBank.Seeder/Pool/DemoCredentials.cs): the owner is John Smith, his handle
+ * and his two contacts' share one suffix of four characters, and the address is `demo-` and
+ * sixteen characters drawn apart from the suffix, all in lower case. The first fixture's address
+ * is the exception: it begins with its own suffix, because it is the pair
+ * src/api/bffSchemas.test.ts and src/features/demo/claim.test.ts already use, so a test that
+ * looks for `k7m2` finds the address as well as the handles. The passwords have the shape a claim
+ * draws (backend/src/AzureBank.Api/Security/DemoPasswordGenerator.cs): four groups of four,
+ * joined by hyphens. They are fixtures: no server knows any of them.
+ */
+export const MOCK_DEMO_POOL: readonly MockDemoCopy[] = [
+  poolCopy(1, 'k7m2', 'k7m2x9q4w8e1r5t3', 'Xk7p-Rm3w-Hn8d-Tq5v'),
+  poolCopy(2, 'p3x8', '4h9d2s7f1g6j3k8a', 'Fb4t-Wy9c-Kz2g-Ne6s'),
+  poolCopy(3, 'w5n9', 'z8c3v6b1n5m0q2w7', 'Gh8u-Pd5x-Yj3r-Ma7f'),
+];
+
+/**
+ * Is the page the mock answers the demo? The page says so with one tag, and the mock asks the
+ * page the way the app does, so the two cannot disagree about what the tag says.
+ *
+ * Off where there is no page: the contract suite runs these handlers in node, and there the mock
+ * is the one it was before the demo existed.
+ */
+export function mockDemoEnabled(): boolean {
+  if (typeof document === 'undefined') return false;
+  return isDemoMode();
+}
+
+/**
+ * `Demo:CopyLifetimeHours`, 24 unless a deployment sets another
+ * (backend/src/AzureBank.Shared/Options/DemoOptions.cs).
+ */
+const MOCK_DEMO_COPY_LIFETIME_MS = 24 * 60 * 60_000;
+
+/**
+ * What every copy starts with: "Main Savings" 12,450.00, the primary one, and "Checking" 2,300.00
+ * (backend/tools/AzureBank.Seeder/Pool/DemoCopyBuilder.cs).
+ *
+ * On the mock's two account ids, so the seeded ledger still points at accounts that exist. The
+ * constants are named after the mock's own two accounts; here the first carries the copy's
+ * primary account and the second its other one.
+ */
+function demoCopyAccounts(): MockAccount[] {
+  return [
+    {
+      id: MAIN_ACCOUNT_ID,
+      accountNumber: 'AB-****-****-45',
+      name: 'Main Savings',
+      type: 'Savings',
+      balance: 12450,
+      isPrimary: true,
+      createdAt: '2026-07-01T09:00:00.0000000Z',
+    },
+    {
+      id: SAVINGS_ACCOUNT_ID,
+      accountNumber: 'AB-****-****-23',
+      name: 'Checking',
+      type: 'Checking',
+      balance: 2300,
+      isPrimary: false,
+      createdAt: '2026-07-01T09:00:00.0000000Z',
+    },
+  ];
+}
+
+/** Jane Smith and Mike Brown, as the directory masks a name, in the order of `contacts`. */
+const DEMO_CONTACT_DISPLAY_NAMES = ['Jane S.', 'Mike B.'];
+
+/**
+ * Hands out the next free copy of the pool and signs its owner in, or returns `null` when all
+ * three are claimed. The claim's handler and `seedMockDemoCopy` both come through here, so a
+ * test that starts on a copy starts where a claim would have left the mock.
+ *
+ * The session is opened as a sign-in opens one: the owner, level 1 whatever the session before
+ * had reached, and both clocks at now. The session's cookie is put on the page as well, which
+ * `seedMockSession` does and the mock's sign-in handler does not: the mock slides a session's
+ * clock only for a request that carries it. The mock's data then becomes the copy's: its two
+ * accounts, the seeded ledger ending on their balances, its two contacts as the only people it
+ * can pay, and the demo's PIN with no miss counted and no lock, since the copy is another user
+ * and nothing the last one did to its PIN is this one's.
+ *
+ * The mock keeps one set of accounts, so what it shows is always the last copy claimed: signing
+ * in again to an earlier copy shows the later one's money.
+ *
+ * Everything handed out is a copy of the pool's entry, and so is the session's user: the pool is
+ * one constant for every test of a file, and a handle renamed on one copy must not be the handle
+ * the next test is handed.
+ */
+export function claimMockDemoCopy(): { user: MockSessionUser; copy: MockDemoCopyInfo } | null {
+  const free = MOCK_DEMO_POOL.find(
+    (entry) => !mockState.demoCopies.some((taken) => taken.user.id === entry.user.id),
+  );
+  if (!free) return null;
+  const claimed: MockDemoCopy = {
+    user: { ...free.user },
+    password: free.password,
+    contacts: [...free.contacts],
+  };
+  mockState.demoCopies.push(claimed);
+
+  const now = Date.now();
+  mockState.session = { ...claimed.user };
+  setMockSessionCookie(true);
+  mockState.authLevel = 1;
+  mockState.sessionCreatedAt = now;
+  mockState.sessionLastActivity = now;
+
+  mockState.pin = MOCK_PIN;
+  mockState.pinAttempts = 0;
+  mockState.pinLockedUntil = null;
+
+  mockState.accounts = demoCopyAccounts();
+  mockState.transactions = withRunningBalance(seedEntries(), mockState.accounts);
+  mockState.recipients = claimed.contacts.map((azureTag, index) => ({
+    azureTag,
+    displayName: DEMO_CONTACT_DISPLAY_NAMES[index],
+  }));
+
+  return {
+    user: { ...claimed.user },
+    copy: {
+      email: claimed.user.email,
+      password: claimed.password,
+      // `DemoCopyDefaults.Pin` (backend/src/AzureBank.Shared/Constants/DemoCopyDefaults.cs), which
+      // is also the mock's own.
+      pin: MOCK_PIN,
+      // Bare and sorted, which is how the pool holds them.
+      contacts: [...claimed.contacts],
+      // The copy's end, counted from the claim, with seven fractional digits and a `Z`: the
+      // longest form the stack writes, and not the only one. The BFF writes a claim's answer
+      // with ASP.NET's own JSON writer and no date converter of its own
+      // (backend/src/AzureBank.Bff/Controllers/BffAuthController.cs), and that writer writes no
+      // trailing zero of a fraction: a real end has from no fraction to seven digits. Measured
+      // 2026-10-05 on compose.yaml with compose.demo.yaml (Production), in an answer whose
+      // `Date` header was 09:25:46 GMT: "expiresAt":"2026-10-06T09:25:47.0900766Z" in
+      // `data.copy`, 24 hours on, and beside `user` in the same answer the access token's end
+      // with no fraction, "2026-10-05T09:40:47Z". `/bff/auth/me`, asked next, gave the
+      // session's end six digits: "2026-10-05T10:25:47.635338Z". The mock always writes seven,
+      // four of them zeros, which is a string the stack does not write; src/api/bffSchemas.test.ts
+      // holds that the app takes the shorter forms. (`mockAccessTokenExpiry` below is sign-in's
+      // too and writes three digits.)
+      expiresAt: new Date(now + MOCK_DEMO_COPY_LIFETIME_MS)
+        .toISOString()
+        .replace(/\.(\d{3})Z$/, '.$10000Z'),
+    },
+  };
+}
+
+/** Test helper: start signed in to a claimed demo copy without walking the claim. */
+export function seedMockDemoCopy(): { user: MockSessionUser; copy: MockDemoCopyInfo } {
+  const claimed = claimMockDemoCopy();
+  if (!claimed) {
+    throw new Error('The mock has three demo copies and this test has claimed all three.');
+  }
+  return claimed;
 }
 
 export function markMockActivity(): void {
@@ -617,4 +818,6 @@ export function resetMockState(): void {
   mockState.accounts = defaultAccounts();
   mockState.transactions = defaultTransactions();
   mockState.recipients = defaultRecipients();
+  // A claimed copy signs in, so one left behind would be an account the next test never made.
+  mockState.demoCopies = [];
 }

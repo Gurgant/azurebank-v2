@@ -10,15 +10,18 @@ import {
   modelStateProblem,
   problem,
   unreadableBodyProblem,
+  unsupportedMediaTypeProblem,
 } from './problem';
 import { LOGIN_REQUEST, REGISTER_REQUEST, bindMembers, modelStateFor } from './dataAnnotations';
 import {
   MOCK_PASSWORD,
   MOCK_SESSION_COOKIE,
   MOCK_USER,
+  claimMockDemoCopy,
   expireMockSessionIfDue,
   markMockActivity,
   mockAccessTokenExpiry,
+  mockDemoEnabled,
   mockState,
   toWire,
   type MockAccount,
@@ -476,10 +479,12 @@ const pathOf = (request: Request) => new URL(request.url).pathname;
  *
  * The cookie therefore comes from the two places that do NOT feed that store:
  *
- *   jsdom + dev:mock   `document.cookie`, stamped by `seedMockSession` / login / register and
- *                      cleared by logout and `resetMockState`. Verified with the MSW store empty:
- *                      a SAME-ORIGIN request carries it, a cross-origin one does not — which is
- *                      why the unit suite's relative URLs matter.
+ *   jsdom + dev:mock   `document.cookie`, stamped by `seedMockSession` and by a demo claim
+ *                      (`claimMockDemoCopy`) and cleared by `resetMockState`: the callers of
+ *                      `setMockSessionCookie`. The sign-in, registration and sign-out handlers
+ *                      are not among them. Verified with the MSW store empty: a SAME-ORIGIN
+ *                      request carries it, a cross-origin one does not — which is why the unit
+ *                      suite's relative URLs matter.
  *   node (contract)    the client's own jar, seeded for the mock target in `client.ts`. There is
  *                      no `document` there, so `anonymous: true` genuinely sends nothing.
  *
@@ -569,6 +574,14 @@ function authRateLimited(request: Request): Response | null {
   return null;
 }
 
+/** An account a sign-in can name: whose it is and what signs in to it. */
+interface LoginAccount {
+  /** The address as the account spells it: the key of the lockout's state. */
+  email: string;
+  user: MockSessionUser;
+  password: string;
+}
+
 /**
  * The password lockout, which announces itself ONLY when the password is right.
  *
@@ -608,12 +621,30 @@ function authRateLimited(request: Request): Response | null {
  *      rather than the raw input.
  *
  * Returning the account (not a boolean) is what keeps those two honest together: callers key
- * `loginFailures` / `loginLockedUntil` by the value this hands back, so a spelling can neither
+ * `loginFailures` / `loginLockedUntil` by the `email` this hands back, so a spelling can neither
  * open its own counter nor escape an existing lock.
+ *
+ * WHO HAS AN ACCOUNT DEPENDS ON THE DEMO. A claimed demo copy is an account: it is found by its
+ * address in any spelling, and what signs in to it is its own password. While the page is the
+ * demo nobody else has one. The mock's own user is then answered as an address nobody
+ * registered, and so is a copy of the pool that nobody has claimed: the 401 of a wrong password,
+ * and no counter. Measured 2026-10-05 on compose.yaml with compose.demo.yaml (Production), with a
+ * made-up password each time: an address nobody has, and the owner of a free copy (found in the
+ * database, where a free copy's owner has no password), each answered
+ * 401 `INVALID_CREDENTIALS`, the body of a wrong password on a claimed copy but for `traceId`.
+ * Read, not measured there: that neither is counted towards a lock.
  */
-function accountForLogin(email: string | undefined): string | null {
+function accountForLogin(email: string | undefined): LoginAccount | null {
   if (!email) return null;
-  return email.toLowerCase() === MOCK_USER.email.toLowerCase() ? MOCK_USER.email : null;
+  const spelling = email.toLowerCase();
+  const copy = mockState.demoCopies.find(
+    (claimed) => claimed.user.email.toLowerCase() === spelling,
+  );
+  if (copy) return { email: copy.user.email, user: copy.user, password: copy.password };
+  if (mockDemoEnabled()) return null;
+  return spelling === MOCK_USER.email.toLowerCase()
+    ? { email: MOCK_USER.email, user: MOCK_USER, password: MOCK_PASSWORD }
+    : null;
 }
 
 function loginLockedProblem(email: string, now: number) {
@@ -4031,7 +4062,7 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
   const nowMs = Date.now();
   // null for any address that names no account — see `accountForLogin` for the two measurements.
   const account = accountForLogin(email);
-  const locked = account ? loginLockedProblem(account, nowMs) : null;
+  const locked = account ? loginLockedProblem(account.email, nowMs) : null;
   /*
     ORDER IS THE SECURITY PROPERTY, and I had it backwards on the first pass.
 
@@ -4049,14 +4080,14 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
     And while locked the counter is NOT touched: `IncrementAndMaybeLockLoginAsync` is skipped
     entirely (`AuthService.cs:130-134`), so a guesser cannot extend the window by keeping at it.
   */
-  if (!account || password !== MOCK_PASSWORD) {
+  if (!account || password !== account.password) {
     if (account && !locked) {
-      const failures = (mockState.loginFailures[account] ?? 0) + 1;
-      mockState.loginFailures[account] = failures;
+      const failures = (mockState.loginFailures[account.email] ?? 0) + 1;
+      mockState.loginFailures[account.email] = failures;
       if (failures >= MAX_LOGIN_ATTEMPTS) {
         // Reset to 0 as the lock latches: from here the WINDOW is authoritative, not the count.
-        mockState.loginFailures[account] = 0;
-        mockState.loginLockedUntil[account] = apiOffsetInstant(
+        mockState.loginFailures[account.email] = 0;
+        mockState.loginLockedUntil[account.email] = apiOffsetInstant(
           nowMs + LOGIN_LOCKOUT_SECONDS * 1000,
         );
       }
@@ -4084,8 +4115,8 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
   // The one path that reveals the lock: right password, locked account.
   if (locked) return locked;
   // A correct password clears the counter — an expired lock then starts a fresh window at 1.
-  delete mockState.loginFailures[account];
-  mockState.session = { ...MOCK_USER };
+  delete mockState.loginFailures[account.email];
+  mockState.session = { ...account.user };
   /*
     A FRESH SESSION IS ALWAYS LEVEL 1. `SessionService.CreateSession` hardcodes
     `AuthLevel = 1, // Level 1 = authenticated via email/password` (SessionService.cs:45) and mints
@@ -4105,7 +4136,7 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
   return HttpResponse.json({
     // The access token's expiry, which is what the real controller forwards here — NOT the
     // session's absolute cap. They are separate rules with separate lengths.
-    data: { user: { ...MOCK_USER }, expiresAt: mockAccessTokenExpiry() },
+    data: { user: { ...account.user }, expiresAt: mockAccessTokenExpiry() },
     message: 'Login successful',
   });
 });
@@ -4175,6 +4206,97 @@ const register = http.post('*/bff/auth/register', async ({ request }) => {
 });
 
 /**
+ * Whether a request's Content-Type names JSON, as the framework's JSON reader takes it.
+ *
+ * Measured 2026-10-05 on the claim (see `claimDemoCopy`): `application/json` was read, and
+ * `text/plain` and no Content-Type at all were each a 415. Read, not measured there: that the
+ * reader also takes `text/json` and any `application/...+json`, with or without parameters.
+ * They are let through here so that the mock is not stricter than the server on a type the app
+ * never sends.
+ */
+function isJsonMediaType(contentType: string | null): boolean {
+  const mediaType = (contentType ?? '').split(';')[0].trim().toLowerCase();
+  return (
+    mediaType === 'application/json' ||
+    mediaType === 'text/json' ||
+    /^application\/[^/]+\+json$/.test(mediaType)
+  );
+}
+
+/**
+ * POST /bff/auth/demo/claim: on the public demo, take a free demo copy and sign in to it.
+ *
+ * The answer is a sign-in's with the copy beside it, `{ data: { user, expiresAt, copy }, message }`,
+ * and no cache may keep it (`Cache-Control: no-store`): the copy's password is in it. The API's
+ * side of the claim is `ClaimDemoCopy` in backend/src/AzureBank.Api/Controllers/AuthController.cs.
+ *
+ * A refused claim leaves the session it came with as it was. A claim that succeeds replaces it.
+ *
+ * NOT MODELLED: `DEMO_DAILY_LIMIT`. The mock counts no claims per address, so a test that needs
+ * that refusal arms the answer itself.
+ *
+ * MEASURED 2026-10-05, on compose.yaml with compose.demo.yaml and then on compose.yaml alone, both
+ * as Production, the images of one build: each answer below says which. The order of the four
+ * refusals is the order they were met in: the limiter, the 404, the media type, the body.
+ */
+const claimDemoCopy = http.post('*/bff/auth/demo/claim', async ({ request }) => {
+  // The BFF's `auth` limiter, the budget that sign-in, registration and re-authentication draw
+  // on: a claim spends a permit of it, and past the budget the limiter answers and no copy is
+  // taken. It answers before the 404 below. Measured with the demo off, eleven claims in a row
+  // from one address: 404 ten times, then 429 `RATE_LIMIT_EXCEEDED` with `Retry-After: 60` and
+  // the BFF's own path as `instance`. So a claim spends a permit with the demo off as well.
+  const limited = authRateLimited(request);
+  if (limited) return limited;
+  // Middleware, as on the routes above: a claim that arrives with a live session slides its clock
+  // whatever the claim is then answered, the 404 included. See `runSessionActivityMiddleware`:
+  // a path the BFF does not have was measured sliding it.
+  runSessionActivityMiddleware(request);
+  if (!mockDemoEnabled()) {
+    // Off the demo the claim is a path the BFF does not have, whatever was sent. Measured with
+    // the demo off, with `{}` and with no body at all: 404, `Content-Length: 0`, no
+    // Content-Type and no cookie, the header names of `POST /bff/nope`'s answer.
+    return new HttpResponse(null, { status: 404 });
+  }
+  // What the body is called comes before what it holds. Measured with the demo on: no body and
+  // no Content-Type, and `Content-Type: text/plain` with `{}`, were each 415.
+  if (!isJsonMediaType(request.headers.get('Content-Type'))) {
+    return unsupportedMediaTypeProblem();
+  }
+  const claimBody = await readJsonBody(request);
+  if (!claimBody) {
+    // Called JSON and not readable as an object: 400, as the other `/bff/auth` actions answer.
+    // Measured with the demo on and `Content-Type: application/json`: an empty body and `null`
+    // were keyed `""` and `request`; `not json` and `[]` were keyed `$` and `request`.
+    return unreadableBodyProblem(await request.clone().text());
+  }
+  const claimed = claimMockDemoCopy();
+  if (!claimed) {
+    // The API's refusal, forwarded as a sign-in's is: the API's body, with the API's own path as
+    // `instance`. The sentence is `DemoRefusalException.PoolEmptyDetail`
+    // (backend/src/AzureBank.Shared/Exceptions/DemoRefusalException.cs), and this refusal names
+    // no wait: no `retryAfterSeconds`, no `Retry-After`.
+    return problem({
+      status: 429,
+      errorCode: 'DEMO_POOL_EMPTY',
+      detail: 'All demo copies are in use right now. Please try again later.',
+      instance: '/api/auth/demo/claim',
+    });
+  }
+  return HttpResponse.json(
+    {
+      // Two ends, and they are not one value: `expiresAt` here is the access token's, as a
+      // sign-in's is, and `copy.expiresAt` is the copy's.
+      data: { user: claimed.user, expiresAt: mockAccessTokenExpiry(), copy: claimed.copy },
+      // The BFF's own sentence (backend/src/AzureBank.Bff/Controllers/BffAuthController.cs).
+      // Measured with the demo on: "message":"Demo copy claimed", after `data`, whose members
+      // came as `user`, `expiresAt`, `copy`.
+      message: 'Demo copy claimed',
+    },
+    { headers: { 'Cache-Control': 'no-store' } },
+  );
+});
+
+/**
  * POST /bff/auth/reauthenticate — U6.7, the absolute cap.
  *
  * Models the rule that matters: this does not EXTEND the session, it replaces it. The clock restarts
@@ -4198,7 +4320,16 @@ const reauthenticate = http.post('*/bff/auth/reauthenticate', async ({ request }
   if (!mockState.session) {
     return bffProblem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
   }
-  if ((parsed.body.password as string | undefined) !== MOCK_PASSWORD) {
+  // The password of the account the session is on: a claimed demo copy's own, and off the demo
+  // the mock's for every other session.
+  const sessionUserId = mockState.session.id;
+  const sessionCopy = mockState.demoCopies.find((claimed) => claimed.user.id === sessionUserId);
+  const sessionPassword = sessionCopy ? sessionCopy.password : MOCK_PASSWORD;
+  // While the page is the demo a session that is on no claimed copy has no account behind it, as
+  // at sign-in (`accountForLogin`): no password is its password, and the answer is a wrong
+  // password's. Read, not measured: that a running stack answers such a session this way.
+  const outsideEveryCopy = !sessionCopy && mockDemoEnabled();
+  if (outsideEveryCopy || (parsed.body.password as string | undefined) !== sessionPassword) {
     // Re-authentication calls the API's LOGIN endpoint and forwards its answer, so this is the
     // same body the login route produces — `instance` names `/api/auth/login`, not the BFF's own
     // path. Measured rather than assumed to match its sibling, on a throwaway user:
@@ -4445,6 +4576,7 @@ export const handlers = [
   setPin,
   login,
   register,
+  claimDemoCopy,
   reauthenticate,
   me,
   logout,
