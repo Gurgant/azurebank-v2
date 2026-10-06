@@ -29,7 +29,15 @@ and answer every page with 404.
 
 **D2. The shell fallback is a middleware, and it never answers for the server's own paths.** It acts
 only when routing selected no endpoint, only for GET and HEAD, never under `/api`, `/bff` or
-`/health`, and never for a file name. Measured with `MapFallbackToFile` in its place:
+`/health`, and never for a file name.
+*(Amended 2026-10-05: a server path is one whose first non-empty segment is one of those prefixes,
+in any letter case, behind any run of leading slashes and backslashes. The slashes' half is the
+rule the code and `SpaHostingTests` already held, from an earlier change of the same day; ADR-0063,
+Consequences, "Neutral", carries its note. The backslashes are this change's: until it a GET or a
+HEAD of `/%5Capi/accounts` was answered with the page, and it is now 404 with no body. An encoded
+slash is not a separator: `/%2Fapi/accounts` still gets the page, before this change and after it.
+Both seen in the test host, with the demo off and on.)*
+Measured with `MapFallbackToFile` in its place:
 `GET /bff/auth/login` — a POST-only route, 405 on main — answered 200 with the page, and so did
 `GET /bff/nope` and `GET /health/nope`. With the middleware they answer 405, 404 and 404.
 
