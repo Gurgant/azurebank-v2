@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
 import { SAVE_OUTCOME_UNKNOWN } from '../../api/problemMessages';
 import { useRenameAccountMutation } from '../../features/api/apiSlice';
+import { useReturnFocus } from '../../hooks/useReturnFocus';
 import { WaitHint } from '../feedback';
 
 // Mirrors the backend contract: rename touches the name ONLY, 2-100 chars.
@@ -42,6 +43,7 @@ export interface RenameAccountDialogProps {
  * {Account,id} invalidation — the row's tag is provided by the list query.
  */
 export function RenameAccountDialog({ account, onClose }: RenameAccountDialogProps) {
+  useReturnFocus();
   const [renameAccount, { isLoading, error }] = useRenameAccountMutation();
   const problem = error as ApiProblem | undefined;
 

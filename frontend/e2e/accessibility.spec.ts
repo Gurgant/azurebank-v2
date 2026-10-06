@@ -33,6 +33,10 @@ import { fieldContrast } from './fieldContrast';
  * - an exclusion that hides anything but a Tabster sentinel, or a rule the gate names that did not
  *   run at all.
  * Each scan also waits for the page's animations to finish first, so a fade is not measured.
+ *
+ * Three blocks further down are not scans. Each holds, by measuring it, one thing the sweep does
+ * not: that what is typed in a field can be read, that the amount field shows where focus is, and
+ * that a dialog gives focus back when it closes. Each has its own note above it.
  */
 type Scan = { name: string; path: string; title: string; ready: (page: Page) => Promise<void> };
 
@@ -340,6 +344,91 @@ test.describe('the amount field shows where focus is', () => {
         parseFloat(ring.width),
         `${name}: the outline is ${ring.width} wide`,
       ).toBeGreaterThanOrEqual(2);
+    });
+  }
+});
+
+/*
+  A DIALOG GIVES FOCUS BACK. Every dialog here is opened by a control outside it and closed from
+  inside it. While it is open Fluent keeps focus in it; when it closed, focus was left on the page
+  body, so a keyboard visitor's next Tab started again from the top of the page (WCAG 2.4.3).
+  Each row opens a dialog with the keyboard, closes it with Escape, and holds that focus is back
+  on the control that opened it. A dialog chosen from an account's menu goes back to the button
+  of that menu, because the menu's item is gone by then. Nothing is sent: each dialog is opened
+  and closed.
+*/
+const DIALOG_OPENERS: {
+  name: string;
+  path: string;
+  opener: (page: Page) => Locator;
+  item?: string;
+  dialog: RegExp;
+}[] = [
+  {
+    name: 'the deposit dialog',
+    path: '/dashboard',
+    opener: (page) => page.getByRole('button', { name: 'Deposit', exact: true }),
+    dialog: /deposit money/i,
+  },
+  {
+    name: 'the withdrawal dialog',
+    path: '/dashboard',
+    opener: (page) => page.getByRole('button', { name: 'Withdraw', exact: true }),
+    dialog: /withdraw money/i,
+  },
+  {
+    name: 'the new account dialog',
+    path: '/accounts',
+    opener: (page) => page.getByRole('button', { name: 'Add account', exact: true }),
+    dialog: /add new account/i,
+  },
+  {
+    name: 'the rename dialog, from the menu',
+    path: '/accounts',
+    opener: (page) => page.getByRole('button', { name: /^Account actions for / }).first(),
+    item: 'Rename',
+    dialog: /rename account/i,
+  },
+  {
+    name: 'the delete dialog, from the menu',
+    path: '/accounts',
+    opener: (page) => page.getByRole('button', { name: /^Account actions for / }).first(),
+    item: 'Delete',
+    dialog: /delete account/i,
+  },
+  {
+    name: 'the handle dialog',
+    path: '/settings',
+    opener: (page) => page.getByRole('button', { name: 'Change', exact: true }),
+    dialog: /change your handle/i,
+  },
+  {
+    name: 'the Change PIN dialog',
+    path: '/settings',
+    opener: (page) => page.getByRole('button', { name: 'Change PIN', exact: true }),
+    dialog: /change your pin/i,
+  },
+];
+
+test.describe('a dialog gives focus back to the control that opened it', () => {
+  for (const { name, path, opener, item, dialog } of DIALOG_OPENERS) {
+    test(name, async ({ page }) => {
+      await page.goto(path);
+      await heading(1)(page);
+      const control = opener(page);
+      await control.press('Enter');
+      if (item) await page.getByRole('menuitem', { name: item, exact: true }).press('Enter');
+
+      const open = page.getByRole('dialog', { name: dialog });
+      await expect(open).toBeVisible();
+      // Focus is in the dialog before the key that closes it: Escape reaches no dialog from `body`.
+      await expect
+        .poll(() => open.evaluate((element) => element.contains(document.activeElement)))
+        .toBe(true);
+      await page.keyboard.press('Escape');
+      await expect(open).toBeHidden();
+
+      await expect(control, `${name}: focus did not come back to its opener`).toBeFocused();
     });
   }
 });

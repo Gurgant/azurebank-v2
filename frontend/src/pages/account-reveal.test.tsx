@@ -137,6 +137,29 @@ describe('account number reveal (ADR-0020)', () => {
     expect(screen.queryByText(FULL_MAIN)).not.toBeInTheDocument();
   });
 
+  it('the PIN modal gives focus back to the button that brought it up', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<AccountsWithStepUp />, { routerEntries: ['/accounts'] });
+
+    // Cancelled: back on the button, which can be pressed again.
+    const eye = await screen.findByRole('button', { name: revealName });
+    await user.click(eye);
+    await screen.findByText("Verify it's you");
+    await user.click(await screen.findByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByText("Verify it's you")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: revealName })).toHaveFocus());
+
+    // Answered: on the same button, which now hides the number it showed.
+    await user.click(screen.getByRole('button', { name: revealName }));
+    await screen.findByText("Verify it's you");
+    await user.click(await screen.findByLabelText('Digit 1 of 6'));
+    await user.paste('123456');
+    await screen.findByText(FULL_MAIN);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: `Hide account number for ${MAIN}` })).toHaveFocus(),
+    );
+  });
+
   it('leaves the number masked (no error) when the PIN modal is cancelled', async () => {
     const user = userEvent.setup();
     renderWithProviders(<AccountsWithStepUp />, { routerEntries: ['/accounts'] });

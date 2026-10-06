@@ -20,6 +20,7 @@ import { SERVICE_UNAVAILABLE } from '../../api/problemMessages';
 import { useVerifyPinMutation } from '../api/apiSlice';
 import { RetryCountdown, WaitHint, retryDeadline } from '../../components/feedback';
 import { PinInput } from '../../components/PinInput';
+import { useReturnFocus } from '../../hooks/useReturnFocus';
 import { getStepUpSnapshot, settleStepUp, subscribeStepUp } from './stepUpController';
 
 const DEFAULT_PIN_LOCK_SECONDS = 15 * 60;
@@ -83,6 +84,9 @@ export function StepUpModal() {
 function StepUpForm() {
   const styles = useStyles();
   const errorId = useId();
+  // Here and not in `StepUpModal`, which stays mounted between two asks: this form is what comes
+  // with an open and goes with a close.
+  useReturnFocus();
   const [verifyPin, { isLoading }] = useVerifyPinMutation();
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
