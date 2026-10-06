@@ -39,6 +39,8 @@ import { resolveScopedAccountId, type Scope } from './dashboardScope';
 import { formatCurrency, maskAccountNumber } from '../utils/format';
 import { QuickActionButton } from '../components/shared/QuickActionButton';
 import {
+  TransactionBody,
+  TransactionFoot,
   TransactionHead,
   TransactionRow,
   TransactionTable,
@@ -46,10 +48,7 @@ import {
   TransactionEmptyRow,
   StatusPill,
 } from '../components/shared/TransactionRow';
-import {
-  transactionLabel,
-  useTransactionCellStyles,
-} from '../components/shared/transactionRowStyles';
+import { transactionLabel } from '../components/shared/transactionRowStyles';
 import { DepositDialog, WithdrawDialog } from '../components';
 
 /**
@@ -420,14 +419,6 @@ const useStyles = makeStyles({
   // The running balance exists only when the scope is one account (see the file docblock) AND only
   // where there is room for a fifth column.
 
-  tfootCell: {
-    padding: '12px 8px',
-    fontSize: '13px',
-    fontWeight: 600,
-    color: colors.neutral[700],
-    borderTop: `2px solid ${surfaces.border}`,
-  },
-
   // ===== Rail =====
   railRow: {
     display: 'flex',
@@ -470,7 +461,6 @@ function recentRecipients(items: TransactionResponse[], limit: number): string[]
 
 export function DashboardPage() {
   const styles = useStyles();
-  const cells = useTransactionCellStyles();
   const navigate = useNavigate();
 
   const [scope, setScope] = useState<Scope>('all');
@@ -878,7 +868,7 @@ export function DashboardPage() {
               {recentFailed ? null : (
                 <TransactionTable>
                   <TransactionHead showBalance={!!selected} />
-                  <tbody>
+                  <TransactionBody>
                     {recentWaiting
                       ? Array.from({ length: RECENT_PAGE_SIZE }, (_, i) => (
                           <TransactionRowSkeleton key={`sk-${i}`} showBalance={!!selected} />
@@ -897,24 +887,23 @@ export function DashboardPage() {
                         No transactions yet for {scopeLabel}.
                       </TransactionEmptyRow>
                     )}
-                  </tbody>
+                  </TransactionBody>
                   {!recentWaiting && !summaryWaiting && !summaryFailed && entries.length > 0 && (
-                    <tfoot>
-                      <tr>
-                        <td className={styles.tfootCell} colSpan={2}>
+                    <TransactionFoot
+                      showBalance={!!selected}
+                      label={
+                        <>
                           {monthLabel} so far
                           {pending.length > 0 ? ` · ${pending.length} pending` : ''}
-                        </td>
-                        <td className={mergeClasses(styles.tfootCell, cells.number)}>
+                        </>
+                      }
+                      total={
+                        <>
                           {(summary?.netChange ?? 0) >= 0 ? '+' : '-'}
                           {money(Math.abs(summary?.netChange ?? 0))}
-                        </td>
-                        {selected && (
-                          <td className={mergeClasses(styles.tfootCell, cells.balanceOnly)} />
-                        )}
-                        <td className={styles.tfootCell} />
-                      </tr>
-                    </tfoot>
+                        </>
+                      }
+                    />
                   )}
                 </TransactionTable>
               )}
