@@ -56,8 +56,9 @@ Three things those headers say, which you will meet:
 
 ## Get a copy
 
-1. Open the demo's address. You are on the sign-in page. Its title is "Welcome back", and under
-   it: "Try the demo with one click. No sign-up needed."
+1. Open the demo's address. You are on the sign-in page. Its title is "Welcome", and under it:
+   "Try the demo with one click. No sign-up needed." *(Until 2026-10-07 this step said the
+   title is "Welcome back". It still is in a browser that remembers a copy.)*
 2. Press **Try the demo**.
 3. You are on the home page of your copy. At its top is a panel, **Your private copy**.
 
@@ -122,8 +123,9 @@ Account numbers are masked: "AB-••••-••••-50". Showing one in fu
 1. Open **Accounts**.
 2. Beside "Main Savings", press the eye button, "Reveal full account number for Main Savings".
 3. You should see a dialog, "Verify it's you", with six boxes and the line "Demo PIN: 123456,
-   unless you changed it." Its sentence speaks of a transfer here too: "Enter your 6-digit PIN
-   to authorize this transfer."
+   unless you changed it." Its sentence says what the PIN is for: "Enter your 6-digit PIN to
+   show the full account number." *(Until 2026-10-07 this step quoted a sentence that spoke
+   of a transfer here too. The dialog was corrected that day.)*
 4. Type 123456. The sixth digit sends it.
 5. You should see the number in full, in the form AB-1234-5678-90, and two new buttons: one
    hides the number again, one copies it.
@@ -257,9 +259,12 @@ remember it: the page goes on printing "Demo PIN: 123456, unless you changed it.
 Use a phone, or make the browser window about 390 pixels wide.
 
 1. None of these four pages should scroll sideways: the home page, Accounts, History and Send
-   Money. On History the list is nine pixels wider than a window of 390, in a box of its own
-   that scrolls sideways, and the "Completed" label of each row is cut at the right edge
-   (measured by the second walk).
+   Money. On the home page and on History each transaction is on two lines: what it is and
+   its amount, then its date and time and its status, whole. *(Until 2026-10-07 this step
+   said that History's list was nine pixels wider than a window of 390, in a box of its own
+   that scrolled sideways, and that the "Completed" label of each row was cut: so the second
+   walk measured it. Since that day the list is as wide as the window, and a row is two
+   lines.)*
 2. The menu on the left is gone. A bar at the bottom has Home, Accounts, **Transfer**, History
    and **More**.
 3. Press **More**. You should see Contact, Settings and **Sign out**.
