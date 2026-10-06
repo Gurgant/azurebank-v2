@@ -251,6 +251,7 @@ export function PinSetupPage() {
             }}
             autoFocus
             ariaLabel="Create your PIN"
+            purpose="new"
           />
         ) : (
           <PinInput
@@ -274,6 +275,7 @@ export function PinSetupPage() {
             autoFocus
             ariaLabel="Confirm your PIN"
             ariaDescribedBy={error ? errorId : undefined}
+            purpose="new"
           />
         )}
 

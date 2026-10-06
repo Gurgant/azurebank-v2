@@ -361,6 +361,33 @@ export function unreadableBodyProblem(raw: string) {
       });
 }
 
+/**
+ * The framework's answer to a body in a media type the action does not read: 415, before the body
+ * is looked at.
+ *
+ * Its own shape again, and the smallest of them: no `detail`, no `errors`, no `errorCode`.
+ * Measured 2026-10-05 on compose.yaml with compose.demo.yaml (Production),
+ * `POST /bff/auth/demo/claim` with no body and no Content-Type, and with `Content-Type: text/plain`
+ * and the body `{}`:
+ *
+ *   415, Content-Type: application/problem+json; charset=utf-8
+ *   {"type":"https://tools.ietf.org/html/rfc9110#section-15.5.16","title":"Unsupported Media Type",
+ *    "status":415,"traceId":"00-<32 hex>-<16 hex>-01"}
+ *
+ * Only the claim's handler answers with it: no other action here was measured with such a body.
+ */
+export function unsupportedMediaTypeProblem() {
+  return HttpResponse.json(
+    {
+      type: 'https://tools.ietf.org/html/rfc9110#section-15.5.16',
+      title: 'Unsupported Media Type',
+      status: 415,
+      traceId: fakeTraceParent(),
+    },
+    { status: 415, headers: { 'Content-Type': 'application/problem+json' } },
+  );
+}
+
 /** W3C traceparent (`00-<32hex>-<16hex>-01`), which is what the framework path emits. */
 function fakeTraceParent(): string {
   const hex = (n: number) =>

@@ -41,8 +41,14 @@ gaps, one of them a live hole:
    controller, middleware, YARP transform, rate-limit partitioner — picks it up through
    `IOptions`). The browser then refuses the cookie unless Secure + `Path=/` + no `Domain`,
    making it unforgeable from subdomains or insecure origins. Development stays unprefixed
-   and non-Secure: the dev loop runs on `http://localhost`, where prefixed cookies cannot be
-   set at all (and Safari refuses Secure cookies there even unprefixed).
+   and non-Secure: the dev loop runs on `http://localhost`, ~~where prefixed cookies cannot be
+   set at all~~ (and Safari refuses Secure cookies there even unprefixed). *(Struck 2026-10-05:
+   not so in Chromium. Measured that day on the Production images of `compose.yaml` with
+   `compose.demo.yaml`, in headless Chromium 151.0.7922.34, in three runs: the browser kept
+   `__Host-AzureBank.Session`, `Secure`, from an answer on `http://localhost:5000` and sent it
+   back. `docs/engineering-practices.md` says the same of Chromium beside its measurement of
+   2026-09-25. Safari's refusal is the reason that still stands, and was not measured here.
+   The comment above the prefix in the BFF's `Program.cs` still carries the struck clause.)*
 3. **Session cookie, not persistent cookie.** No `Expires`/`Max-Age`; gone when the browser
    closes. Lifetime is enforced server-side (inactivity + absolute timeouts). The logout
    deletion carries the same attributes — a `__Host-` cookie is only evicted by a Secure
@@ -77,6 +83,10 @@ gaps, one of them a live hole:
   is declarative and covers the same non-GET surface.
 - **Keeping a loopback-only CORS policy for dev**: rejected — the dev proxy makes even that
   unnecessary, and an empty policy invites re-widening. Deletion is the honest posture.
-- **`__Host-` in Development too**: impossible over `http://localhost` (prefix mandates
-  Secure), and forcing https into the dev loop costs more than the dev/prod cookie-name
-  asymmetry, which the tests pin explicitly.
+- **`__Host-` in Development too**: ~~impossible over `http://localhost` (prefix mandates
+  Secure),~~ *(Struck 2026-10-05 with the same clause of decision 2: not impossible in
+  Chromium, which kept a `__Host-` cookie set over `http://localhost` and sent it back,
+  measured that day. Decision 2 gives Safari's refusal of a `Secure` cookie there as the
+  reason that stands; it was not measured here. So the prefix in Development would still
+  need https for that browser,)* and forcing https into the dev loop costs more than the
+  dev/prod cookie-name asymmetry, which the tests pin explicitly.

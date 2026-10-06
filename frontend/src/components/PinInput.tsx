@@ -1,6 +1,9 @@
-import { useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react';
-import { makeStyles, mergeClasses, tokens } from '@fluentui/react-components';
+import { useId, useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react';
+import { Text, makeStyles, mergeClasses, tokens } from '@fluentui/react-components';
 import { Eye16Regular, EyeOff16Regular } from '@fluentui/react-icons';
+import { isDemoMode } from '../features/demo/demoMode';
+import { DEMO_PIN } from '../features/demo/demoPin';
+import { demoPinHint } from '../features/demo/demoWords';
 import { colors, transitions } from '../theme/tokens';
 
 // ============================================
@@ -49,6 +52,13 @@ const useStyles = makeStyles({
       border: `2px solid ${colors.semantic.error.main}`,
     },
   },
+  // The demo's line under the boxes: words to read, in the size of the button below it, centred
+  // under the boxes like everything else in the column.
+  hint: {
+    fontSize: '13px',
+    color: colors.neutral[600],
+    textAlign: 'center',
+  },
   reveal: {
     display: 'inline-flex',
     alignItems: 'center',
@@ -91,6 +101,22 @@ export interface PinInputProps {
    * false only where visibility is genuinely required.
    */
   masked?: boolean;
+  /**
+   * What the boxes ask for: a PIN the user already has (`existing`, the default), or one that is
+   * being chosen (`new`).
+   *
+   * On the demo, boxes that ask for an existing PIN have a line under them that prints the PIN
+   * every demo copy starts with. That does not undo the masking above. What the boxes mask is
+   * what somebody typed, a secret they keep in their head. What the line prints is the public
+   * starting PIN of a demo copy, the same on every copy, which the server says is no secret: a
+   * copy is kept private by its owner's sign-in, never by its PIN
+   * (backend/src/AzureBank.Shared/Constants/DemoCopyDefaults.cs). A visitor is handed a copy
+   * with a PIN they never chose, and the line says it at the place where it is asked for.
+   *
+   * Where a PIN is being chosen the line is left out: there is nothing to remind anyone of, and
+   * the starting digits under those boxes would read as the PIN to choose.
+   */
+  purpose?: 'existing' | 'new';
 }
 
 // ============================================
@@ -119,10 +145,15 @@ export function PinInput({
   ariaLabel = 'PIN',
   ariaDescribedBy,
   masked = true,
+  purpose = 'existing',
 }: PinInputProps) {
   const styles = useStyles();
   const refs = useRef<Array<HTMLInputElement | null>>([]);
   const [revealed, setRevealed] = useState(false);
+  const hintId = useId();
+  // Asked here, in the component, and not when this module loads: the page says whether it is the
+  // demo with a tag (src/features/demo/demoMode.ts).
+  const showDemoPin = purpose === 'existing' && isDemoMode();
 
   const focusBox = (index: number) => {
     const clamped = Math.max(0, Math.min(length - 1, index));
@@ -229,7 +260,12 @@ export function PinInput({
         className={styles.group}
         role="group"
         aria-label={ariaLabel}
-        aria-describedby={ariaDescribedBy}
+        // The caller's description first, as the caller wrote it, then the demo's line, and that
+        // one only while it is on the page: an id that names nothing describes nothing. With
+        // neither, no attribute at all.
+        aria-describedby={
+          [ariaDescribedBy, showDemoPin ? hintId : undefined].filter(Boolean).join(' ') || undefined
+        }
       >
         {Array.from({ length }, (_, index) => (
           <input
@@ -255,6 +291,11 @@ export function PinInput({
           />
         ))}
       </div>
+      {showDemoPin && (
+        <Text id={hintId} className={styles.hint}>
+          {demoPinHint(DEMO_PIN)}
+        </Text>
+      )}
       {masked && (
         <button
           type="button"

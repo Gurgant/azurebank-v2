@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { makeStyles, mergeClasses, Text, Button, tokens } from '@fluentui/react-components';
 import { Warning24Regular, Dismiss24Regular } from '@fluentui/react-icons';
 import { colors, safeArea, zIndex, transitions, shadows } from '../../theme/tokens';
@@ -31,6 +31,13 @@ export interface ConfirmDialogProps {
    * owning surface — the dialog stays open so the user reads WHY it was refused).
    */
   errorText?: string | null;
+  /**
+   * What the caller has to say while the dialog is open that is neither its message nor its
+   * error: a wait's hint, for a confirm that takes time. Rendered under the error and above the
+   * buttons. It is outside the message, which is the dialog's description, and outside the
+   * alert, so it is read on its own and never as a part of either.
+   */
+  children?: ReactNode;
 }
 
 // ============================================
@@ -69,6 +76,15 @@ const useStyles = makeStyles({
   overlayOpen: {
     opacity: 1,
     visibility: 'visible',
+    /*
+      Open, only the fade is a transition, so `visibility` turns `visible` at once. Under the
+      closed state's transition on it, the dialog and everything in it is still `hidden` at the
+      instant the dialog opens. A browser gives no focus to a hidden element, and the effect below
+      that moves focus in asks at that instant: focus would stay on the page behind the open
+      dialog (e2e/confirmDialog.spec.ts). Closing goes back to the transition above, which is what
+      keeps the dialog on screen while it fades out.
+    */
+    transition: `opacity ${transitions.normal}`,
   },
 
   dialog: {
@@ -123,7 +139,10 @@ const useStyles = makeStyles({
     justifyContent: 'center',
     cursor: 'pointer',
     color: colors.neutral[500],
-    transition: `all ${transitions.fast}`,
+    // The two colours its hover changes, and not `all`. `all` covers `visibility`, which this
+    // button inherits from the overlay: under it the button is still `hidden` at the instant the
+    // overlay turns visible, and this is the control the dialog gives focus to when it opens.
+    transition: `background-color ${transitions.fast}, color ${transitions.fast}`,
     flexShrink: 0,
     ':hover': {
       backgroundColor: colors.neutral[100],
@@ -135,7 +154,10 @@ const useStyles = makeStyles({
     padding: '16px 20px 24px',
   },
 
+  // A block: Fluent's `Text` draws inline whatever element it is asked for, and an inline title
+  // shares its line with the message that follows it, with the margin below doing nothing.
   title: {
+    display: 'block',
     fontSize: '18px',
     fontWeight: 600,
     color: colors.neutral[800],
@@ -234,6 +256,7 @@ export function ConfirmDialog({
   variant = 'default',
   isLoading = false,
   errorText = null,
+  children,
 }: ConfirmDialogProps) {
   const styles = useStyles();
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -275,13 +298,28 @@ export function ConfirmDialog({
     }
   }, [isOpen]);
 
+  // Keep focus IN when a wait starts while the dialog is open. `isLoading` disables every control
+  // at once, the confirm that was just pressed included, and a browser hands a disabled control's
+  // focus to the page (src/test/outage.ts has the measurement). From the page, Tab never reaches
+  // the handler below, and its next stop is the page behind. So the dialog element takes focus,
+  // as it does when the dialog opens already waiting.
+  useEffect(() => {
+    if (isOpen && isLoading && dialogRef.current) {
+      dialogRef.current.focus();
+    }
+  }, [isOpen, isLoading]);
+
   /*
     CONTAIN Tab, which is the half that was missing.
 
     The element declares `role="alertdialog"` and `aria-modal="true"` — a promise that the rest of
     the page is unreachable — and the effect above only ever moved focus in ONCE. Nothing watched
-    Tab, so focus walked straight out into the page behind, which for this dialog is the delete
-    confirmation or one of the two transfer confirmations: a money surface with live controls.
+    Tab, so focus walked straight out into the page behind, which for this dialog is a transfer
+    page with a send's key live, or the demo's sign-in page or dashboard: live controls each
+    time, and on a transfer page a money surface. (Until 2026-10-05 this said the delete
+    confirmation or one of the two transfer confirmations. Closing an account has a dialog of
+    its own, src/components/dialogs/DeleteAccountDialog.tsx, and what the two transfer pages
+    open is their leave prompt.)
 
     Every other dialog in the app is a Fluent `Dialog` and gets this from tabster. This one is
     hand-rolled — deliberately, for the scrim and safe-area behaviour documented in the styles — so
@@ -293,7 +331,9 @@ export function ConfirmDialog({
         to whichever end the direction calls for, rather than letting the browser step OUT of the
         subtree backwards;
       - with NO focusable children at all — `isLoading` disables all three buttons at once — there
-        is nothing to cycle to, so simply refuse the keystroke and leave focus on the container.
+        is nothing to cycle to, so refuse the keystroke and give focus back to the container.
+        (Until 2026-10-05 this said: simply refuse the keystroke and leave focus on the container.
+        Focus was not always there to leave: the branch below says where it had gone.)
   */
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'Tab' || !dialogRef.current) return;
@@ -301,12 +341,25 @@ export function ConfirmDialog({
     const focusable = focusableWithin(dialogRef.current);
     if (focusable.length === 0) {
       event.preventDefault();
+      // Refusing the key is not enough where this dialog's controls are the document's last Tab
+      // stops (backward: its first). Tabster has heard the key by now, found no stop to go on to
+      // and moved focus to an element of its own, outside the dialog. Refused, the key leaves
+      // focus there, one Tab from the page behind the waiting dialog. So the container takes
+      // focus back. The ref is not empty here: the handler's first line returns when it is.
+      dialogRef.current.focus();
       return;
     }
 
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
-    const active = document.activeElement;
+    // The element the key was pressed on, and not `document.activeElement`: by the time this
+    // handler runs, focus may have left it. Fluent's tabster hears Tab on the window, before
+    // React does, and when the element is the last Tab stop of the whole document (backward: the
+    // first) it moves focus to an element of its own, for the browser's default to carry out of
+    // the page. A trap that asks where focus is by then sees neither of its ends and lets it go:
+    // on a page whose last control is this dialog's, Tab would leave the open dialog for the
+    // page behind it (e2e/confirmDialog.spec.ts).
+    const active = event.target;
     const onContainer = active === dialogRef.current;
 
     if (event.shiftKey && (active === first || onContainer)) {
@@ -318,8 +371,23 @@ export function ConfirmDialog({
     }
   };
 
+  /*
+    CLOSED, THE DIALOG TAKES NO PRESS.
+
+    It stays in the page when it closes, and it stays drawn while it fades: the closed overlay
+    keeps `visibility` in its transition, which is what lets it fade at all. For that long its
+    buttons are on screen and enabled. A press that lands on one then is a press on a dialog that
+    has already answered, and the commonest one is the second press of a double click on the
+    confirm: the answer to the first has closed the dialog, the button is still under the
+    pointer, and the confirm would run twice. So would Enter, while the confirm still holds
+    focus. Each handler below asks whether the dialog is open before it does anything.
+  */
+  const whileOpen = (act: () => void) => () => {
+    if (isOpen) act();
+  };
+
   const handleOverlayClick = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget && !isLoading) {
+    if (isOpen && e.target === e.currentTarget && !isLoading) {
       onClose();
     }
   };
@@ -353,7 +421,7 @@ export function ConfirmDialog({
           </div>
           <button
             className={styles.closeButton}
-            onClick={onClose}
+            onClick={whileOpen(onClose)}
             aria-label="Close"
             type="button"
             disabled={isLoading}
@@ -375,13 +443,14 @@ export function ConfirmDialog({
               {errorText}
             </Text>
           )}
+          {children}
         </div>
 
         {/* Footer */}
         <div className={styles.footer}>
           <Button
             className={mergeClasses(styles.button, styles.cancelButton)}
-            onClick={onClose}
+            onClick={whileOpen(onClose)}
             disabled={isLoading}
           >
             {cancelText}
@@ -391,7 +460,7 @@ export function ConfirmDialog({
               styles.button,
               variant === 'danger' ? styles.confirmButtonDanger : styles.confirmButtonDefault,
             )}
-            onClick={onConfirm}
+            onClick={whileOpen(onConfirm)}
             disabled={isLoading}
           >
             {isLoading ? 'Loading...' : confirmText}

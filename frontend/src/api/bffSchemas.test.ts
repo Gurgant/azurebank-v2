@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  bffDemoClaimResponseSchema,
   bffMeResponseSchema,
   bffSessionStatusResponseSchema,
+  demoCopyInfoSchema,
   userSessionInfoSchema,
 } from './bffSchemas';
 
@@ -53,5 +55,189 @@ describe('BFF response schemas', () => {
   it('strips unknown extra keys (forward-compatible)', () => {
     const parsed = userSessionInfoSchema.parse({ ...validUser, somethingNew: 123 });
     expect(parsed).not.toHaveProperty('somethingNew');
+  });
+});
+
+// A demo claim answers what a sign-in answers, plus the copy the visitor was given: the five
+// members of `DemoCopyInfo` (backend/src/AzureBank.Shared/DTOs/Auth/DemoClaimResponse.cs). The
+// answer carries two ends, the access token's beside `user` and the copy's inside `copy`, and
+// every fixture here puts them on different instants so that neither can stand in for the other.
+describe("a demo claim's answer", () => {
+  // The shape `DemoCredentials.Create` draws for a copy's owner
+  // (backend/tools/AzureBank.Seeder/Pool/DemoCredentials.cs): `demo-`, sixteen characters of
+  // a-z and 0-9, and the reserved domain.
+  const poolAddress = 'demo-k7m2x9q4w8e1r5t3@azurebank.example';
+
+  const user = {
+    id: 'u1',
+    email: poolAddress,
+    firstName: 'John',
+    lastName: 'Smith',
+    azureTag: 'john_k7m2',
+    hasPin: true,
+  };
+
+  const copy = {
+    email: poolAddress,
+    password: 'Fixture-Pass-7!',
+    pin: '987654',
+    contacts: ['jane_k7m2', 'mike_k7m2'],
+    expiresAt: '2026-10-05T09:00:00Z',
+  };
+
+  const tokenEnd = '2026-10-04T09:15:00Z';
+  const answer = { user, expiresAt: tokenEnd, copy };
+
+  it("accepts a claim's answer, keeps its two ends apart, and strips what it does not know", () => {
+    const parsed = bffDemoClaimResponseSchema.parse({
+      ...answer,
+      copy: { ...copy, somethingNew: 123 },
+    });
+
+    expect(parsed.copy).toStrictEqual({
+      email: 'demo-k7m2x9q4w8e1r5t3@azurebank.example',
+      password: 'Fixture-Pass-7!',
+      pin: '987654',
+      contacts: ['jane_k7m2', 'mike_k7m2'],
+      expiresAt: '2026-10-05T09:00:00Z',
+    });
+    expect(parsed.expiresAt).toBe('2026-10-04T09:15:00Z');
+  });
+
+  /** Whether a copy passes: alone, and inside an answer that is whole but for it. */
+  function accepts(candidate: unknown) {
+    return {
+      alone: demoCopyInfoSchema.safeParse(candidate).success,
+      inAnAnswer: bffDemoClaimResponseSchema.safeParse({ ...answer, copy: candidate }).success,
+    };
+  }
+
+  it('refuses an answer with no copy', () => {
+    // A sign-in's answer, whole: it is not a claim's.
+    expect(bffDemoClaimResponseSchema.safeParse({ user, expiresAt: tokenEnd }).success).toBe(false);
+  });
+
+  it('refuses a copy with a member missing or retyped', () => {
+    // One comparison, so a red run prints every case: each of the five members taken out alone;
+    // the address not an address, the password a list, the PIN a number and the contacts a text,
+    // each alone; and each text left empty alone. The end's forms have two tests of their own
+    // below.
+    const without = (member: keyof typeof copy) =>
+      Object.fromEntries(Object.entries(copy).filter(([name]) => name !== member));
+    const passes = { alone: true, inAnAnswer: true };
+    const refused = { alone: false, inAnAnswer: false };
+
+    expect({
+      whole: accepts(copy),
+      noEmail: accepts(without('email')),
+      noPassword: accepts(without('password')),
+      noPin: accepts(without('pin')),
+      noContacts: accepts(without('contacts')),
+      noEnd: accepts(without('expiresAt')),
+      emailNotAnAddress: accepts({ ...copy, email: 'demo-k7m2x9q4w8e1r5t3' }),
+      passwordAsList: accepts({ ...copy, password: ['Fixture-Pass-7!'] }),
+      pinAsNumber: accepts({ ...copy, pin: 987654 }),
+      contactsAsText: accepts({ ...copy, contacts: 'jane_k7m2' }),
+      emptyPassword: accepts({ ...copy, password: '' }),
+      emptyPin: accepts({ ...copy, pin: '' }),
+      emptyHandle: accepts({ ...copy, contacts: ['jane_k7m2', ''] }),
+    }).toStrictEqual({
+      whole: passes,
+      noEmail: refused,
+      noPassword: refused,
+      noPin: refused,
+      noContacts: refused,
+      noEnd: refused,
+      emailNotAnAddress: refused,
+      passwordAsList: refused,
+      pinAsNumber: refused,
+      contactsAsText: refused,
+      emptyPassword: refused,
+      emptyPin: refused,
+      emptyHandle: refused,
+    });
+  });
+
+  it("accepts a copy whose password, PIN and contacts are not shaped as today's", () => {
+    // Today's shapes are the server's: four groups of four characters joined by hyphens
+    // (backend/src/AzureBank.Api/Security/DemoPasswordGenerator.cs), six digits
+    // (`DemoCopyDefaults.Pin`, backend/src/AzureBank.Shared/Constants/DemoCopyDefaults.cs) and
+    // two handles (`DemoCredentials.Create`,
+    // backend/tools/AzureBank.Seeder/Pool/DemoCredentials.cs). None of them is pinned here: a
+    // copy shaped otherwise is still a copy, and a claim that hands one out is not refused.
+    const passes = { alone: true, inAnAnswer: true };
+
+    expect({
+      noContactsAtAll: accepts({ ...copy, contacts: [] }),
+      threeContacts: accepts({ ...copy, contacts: ['jane_k7m2', 'mike_k7m2', 'anna_k7m2'] }),
+      fourDigitPin: accepts({ ...copy, pin: '1234' }),
+      oneCharacterPassword: accepts({ ...copy, password: 'x' }),
+    }).toStrictEqual({
+      noContactsAtAll: passes,
+      threeContacts: passes,
+      fourDigitPin: passes,
+      oneCharacterPassword: passes,
+    });
+  });
+
+  it("refuses a copy's end that names no zone", () => {
+    // `new Date` reads this form as local time, so the copy's end would move by the viewer's
+    // offset from UTC with nothing said. The same instant with a Z is the fixture's own.
+    expect({
+      withZ: accepts({ ...copy, expiresAt: '2026-10-05T09:00:00Z' }),
+      noZone: accepts({ ...copy, expiresAt: '2026-10-05T09:00:00' }),
+    }).toStrictEqual({
+      withZ: { alone: true, inAnAnswer: true },
+      noZone: { alone: false, inAnAnswer: false },
+    });
+  });
+
+  it("accepts a copy's end written with a Z or with an offset", () => {
+    // Seven fractional digits is the most .NET writes for an instant; the offset form is the one
+    // `apiOffsetInstant` in src/mocks/handlers.ts records for a `DateTimeOffset`.
+    //
+    // The third is what the stack wrote, letter for letter: `data.copy.expiresAt` of a claim made
+    // in Chromium on 2026-10-05 against compose.yaml with compose.demo.yaml (Production). A `Z`,
+    // so the form this schema was written for is the one that arrives. The row was green when it
+    // was added: it holds the measured string, it did not change the schema.
+    //
+    // Seven is the most and not the rule. The BFF writes a claim's answer with ASP.NET's own
+    // JSON writer, which writes no trailing zero of a fraction, so a copy's end whose last
+    // digits are zeros arrives shorter (src/mocks/state.ts). The fourth and the fifth are that
+    // writer's strings from the same stack on the same day, for two other instants: a session's
+    // end with six digits and an access token's end with none. The sixth, one digit, is made up
+    // for the form. All three were green when they were added, as the third was: a schema
+    // tightened to seven digits would refuse them, and the mock, which always writes seven,
+    // would not say so.
+    const ends = [
+      '2026-10-05T09:00:00.1234567Z',
+      '2026-10-05T09:00:00.1234567+00:00',
+      '2026-10-06T09:22:42.2604692Z',
+      '2026-10-05T10:25:47.635338Z',
+      '2026-10-05T09:40:47Z',
+      '2026-10-06T09:25:47.5Z',
+    ];
+
+    const parsedCopies = ends.map((end) => {
+      const result = bffDemoClaimResponseSchema.safeParse({
+        ...answer,
+        copy: { ...copy, expiresAt: end },
+      });
+      return result.success ? result.data.copy : 'refused';
+    });
+
+    expect(parsedCopies).toStrictEqual([
+      { ...copy, expiresAt: '2026-10-05T09:00:00.1234567Z' },
+      { ...copy, expiresAt: '2026-10-05T09:00:00.1234567+00:00' },
+      { ...copy, expiresAt: '2026-10-06T09:22:42.2604692Z' },
+      { ...copy, expiresAt: '2026-10-05T10:25:47.635338Z' },
+      { ...copy, expiresAt: '2026-10-05T09:40:47Z' },
+      { ...copy, expiresAt: '2026-10-06T09:25:47.5Z' },
+    ]);
+  });
+
+  it("an address of the pool's shape is an email", () => {
+    // CONTROL: green before this change
+    expect(userSessionInfoSchema.safeParse(user).success).toBe(true);
   });
 });

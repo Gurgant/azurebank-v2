@@ -42,7 +42,13 @@ also holds a one-shot PIN authorisation's id between the PIN and the operation i
 The SPA never receives, stores or sends a JWT. It authenticates with an `HttpOnly`, `Secure`,
 `SameSite=Strict` cookie prefixed `__Host-`; the BFF holds the access and refresh tokens
 server-side and attaches the bearer header itself as it proxies. Nothing in the frontend
-constructs an `Authorization` header, and there is nothing in web storage for a script to steal.
+constructs an `Authorization` header, and web storage holds no token, no session identifier and
+nothing of a real user's for a script to steal. *(Until 2026-10-05 this said "there is nothing in
+web storage for a script to steal". Where the public demo is on, `localStorage` holds one thing
+a script could use: what signs in to the throwaway demo copy a visitor claimed, its password
+included. [ADR-0063](../adr/0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md#what-the-browser-keeps-in-demo-mode-added-2026-10-05)
+says what that is worth to a script and when the browser removes it. With the demo off the
+sentence is as true as it was.)*
 
 Everything downstream is a consequence:
 
