@@ -153,7 +153,9 @@ export const useMoneyDialogStyles = makeStyles({
     '::placeholder': { color: colors.neutral[300] },
   },
   newBalance: { fontSize: '13px', color: colors.neutral[500] },
-  amountHint: { fontSize: '13px', fontWeight: 500, color: colors.semantic.error.main },
+  // `error.dark`, the red for words, as in `transferWizardStyles`: `error.main` measured 3.75 to
+  // 1 here in the light theme, at 13 px. The figure above keeps it: at 48 px it needs 3 to 1.
+  amountHint: { fontSize: '13px', fontWeight: 500, color: colors.semantic.error.dark },
   // Composed ON TOP of amountCurrency/amountInput, so it only needs to restate the colour.
   amountInvalid: { color: colors.semantic.error.main },
   availableRow: { display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: '8px' },

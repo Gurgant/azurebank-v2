@@ -508,7 +508,9 @@ export function SettingsPage() {
             </div>
             <Button
               appearance="secondary"
-              style={{ borderColor: colors.semantic.error.main, color: colors.semantic.error.main }}
+              // The label in the red for words: `error.main`, which the border keeps, measured
+              // 3.92 to 1 as 14 px text on the card in the light theme.
+              style={{ borderColor: colors.semantic.error.main, color: colors.semantic.error.dark }}
               icon={<SignOut24Regular />}
               onClick={() => {
                 void handleLogout();

@@ -104,7 +104,10 @@ export const useTransferWizardStyles = makeStyles({
     width: '170px',
     '::placeholder': { color: colors.neutral[300] },
   },
-  hint: { fontSize: '13px', fontWeight: 500, color: colors.semantic.error.main },
+  // Words to read, so the red that is for text on a pale ground (`error.dark`) and not the red
+  // of an icon (`error.main`): at 13 px that one measured 3.56 to 1 on the canvas and 3.92 on a
+  // card in the light theme. The figure above keeps `error.main`: at 44 px it needs 3 to 1.
+  hint: { fontSize: '13px', fontWeight: 500, color: colors.semantic.error.dark },
   // Composed ON TOP of amountCurrency/amountInput, so it only needs to restate the colour.
   amountInvalid: { color: colors.semantic.error.main },
   subtle: { fontSize: '13px', color: colors.neutral[500] },

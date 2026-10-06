@@ -491,7 +491,76 @@ const FAINT_WORDS: { name: string; reach: (page: Page) => Promise<Locator> }[] =
       return page.getByText(/^AzureBank v/);
     },
   },
+  /*
+    The red of an error icon, worn by the words that say what went wrong: 3.56 to 1 on the canvas
+    and 3.92 on a card, in the light theme. The four below are those words where a visitor meets
+    them without sending anything: an amount over every limit, on the transfer page and in the
+    two money dialogs; a handle nobody has, which costs one lookup; and the label of the button
+    that signs out, which was the same red.
+  */
+  {
+    name: 'the message under an amount that is too large, on the transfer page',
+    reach: async (page) => {
+      await page.goto('/transfer');
+      return amountMessage(page.getByRole('textbox', { name: 'Transfer amount' }));
+    },
+  },
+  {
+    name: 'the message under an amount that is too large, in the deposit dialog',
+    reach: async (page) => {
+      await page.goto('/dashboard');
+      await heading(1)(page);
+      await page.getByRole('button', { name: 'Deposit', exact: true }).click();
+      return amountMessage(
+        page
+          .getByRole('dialog', { name: /deposit money/i })
+          .getByRole('textbox', { name: 'Deposit amount' }),
+      );
+    },
+  },
+  {
+    name: 'the message under an amount that is too large, in the withdrawal dialog',
+    reach: async (page) => {
+      await page.goto('/dashboard');
+      await heading(1)(page);
+      await page.getByRole('button', { name: 'Withdraw', exact: true }).click();
+      return amountMessage(
+        page
+          .getByRole('dialog', { name: /withdraw money/i })
+          .getByRole('textbox', { name: 'Withdraw amount' }),
+      );
+    },
+  },
+  {
+    name: 'the message under a handle nobody has, on the transfer page',
+    reach: async (page) => {
+      await page.goto('/transfer');
+      const handle = page.getByRole('textbox', { name: 'Recipient handle' });
+      await handle.fill('@nobody_has_this_handle_zz9');
+      await handle.press('Enter');
+      return page.getByText(/^We couldn't find /);
+    },
+  },
+  {
+    name: 'the label of the button that signs out, on Settings',
+    reach: async (page) => {
+      await page.goto('/settings');
+      return page.getByRole('main').getByRole('button', { name: /^(Log|Sign) out$/ });
+    },
+  },
 ];
+
+/**
+ * Types an amount over every limit into an amount field and returns the message the field then
+ * points at (`aria-describedby`), which is how a screen reader finds it too.
+ */
+async function amountMessage(amount: Locator) {
+  await amount.fill('99999999');
+  await expect(amount).toHaveAttribute('aria-invalid', 'true');
+  const id = await amount.getAttribute('aria-describedby');
+  if (id === null) throw new Error('the amount field points at no message');
+  return amount.page().locator(`[id="${id}"]`);
+}
 
 test.describe('words that were too faint to read', () => {
   for (const theme of ['light', 'dark'] as const) {
