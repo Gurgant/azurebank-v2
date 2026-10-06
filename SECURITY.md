@@ -1,7 +1,11 @@
 # Security Policy
 
-This is a solo portfolio project, not a service with users: it is not deployed, holds no real data,
-and has no supported version or response-time promise. To report a vulnerability, use GitHub's
+This is a solo portfolio project, not a service with users: it is deployed only as a public demo,
+with invented data and registration closed, and has no supported version or response-time promise.
+_(Until 2026-10-06 this said "it is not deployed, holds no real data". The public demo was turned
+on that day; what it is, and what it keeps of a visitor, is under
+[What the demo is, and is not](docs/testing/try-the-demo.md#what-the-demo-is-and-is-not).)_
+To report a vulnerability, use GitHub's
 **private vulnerability reporting** on this repository (Security → Report a vulnerability), not a
 public issue. The most useful findings are about the cryptography, the authorisation rails and the
 audit trail, because those are where the project makes its claims.
@@ -75,8 +79,22 @@ as the address. `.example.com` is a domain reserved by RFC 2606, so mail to it r
   answered 500.)_
 - **The PIN pepper lives outside the database** (ADR-0011), and the audit trail's chain and anchor
   keys are separate secrets from each other and from everything else (ADR-0044).
-- **Nothing here configures a TLS version or encryption at rest.** The project is not deployed, so
-  neither is claimed. _(This section used to list "TLS 1.3 for all connections" and "Sensitive
+- **The public demo is served over HTTPS; no TLS version is claimed for it, and no encryption at
+  rest.** The template turns plain HTTP off at the app's ingress (`allowInsecure: false`,
+  `infra/main.bicep`), and on 2026-10-03 a request over `http://` was answered 301 to `https://`
+  of the same name ([infra/README.md](infra/README.md#measured-on-azure), "Measured on Azure",
+  step 21); so it was again on 2026-10-06, with the demo on. Which TLS versions that ingress
+  accepts, and its certificate, are the platform's own: this project did not set them and did not
+  read them. Towards the database the template sets a minimum of TLS 1.2 on the server
+  (`minimalTlsVersion`; read back as 1.2 on 2026-10-03, the same section, step 4), and the app's
+  connection string asks for encryption and for the server's certificate to be checked
+  (`Encrypt=True;TrustServerCertificate=False`). Encryption at rest is left to the database
+  service's own default: this project did not set it and did not read it, so none is claimed.
+  _(Until 2026-10-06 this said "Nothing here configures a TLS version or encryption at rest. The
+  project is not deployed, so neither is claimed." The public demo was turned on that day. The
+  first sentence had stopped being exact on 2026-10-03, when `infra/main.bicep` came to `main`
+  with the settings named above.)_
+  _(This section used to list "TLS 1.3 for all connections" and "Sensitive
   data encrypted at rest"; no code or configuration in the repository does either.)_
 
 ### Session Security

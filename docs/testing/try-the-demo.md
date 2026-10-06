@@ -25,7 +25,11 @@ network address is kept with the copy and removed when the copy is deleted."
 
 ## Where it runs
 
-Open **the demo's address** in your browser. The public address is not published yet.
+Open **the demo's address** in your browser. The public address is in
+[the README](../../README.md#try-it); what is different there for now, a slow first page and
+limits shared by all visitors, is under its
+[Status and known limits](../../README.md#status-and-known-limits). *(Until 2026-10-06 this
+line said: "The public address is not published yet.")*
 
 **For a developer: start it on one machine.** You need Docker and this repository. Two files at
 the repository's root start it, and their headers are the instructions:
