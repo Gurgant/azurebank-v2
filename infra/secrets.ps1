@@ -9,19 +9,38 @@
     * Without -DeployApp: what the foundation needs (the Microsoft Entra administrator and
       deployApp=false). That file holds no secret; it stays in the folder because the
       administrator's sign-in name is shaped like an e-mail address.
-    * With -DeployApp: also the image tag, the address the alerts write to, and the seven
-      application secrets. Each secret comes from the first place that has it: the deployed app,
-      then a file left by a run that stopped, then the system's random generator.
+    * With -DeployApp: also the image tag, the address the alerts write to, the account of the
+      Azure mobile app they also notify if one is named, and the eight application secrets.
+      Each secret comes from the first place that has it: the deployed app, then a file left by
+      a run that stopped, then the system's random generator.
     * No database password is written, because none exists: the app and the migrate job sign in
       as managed identities.
     * The alerts write to -AlertEmail; without it to AZUREBANK_ALERT_EMAIL; without that to the
       address the deployed alerts already write to; and only then to the signed-in account's own
       mailbox.
+    * The alerts also notify the Azure mobile app of the account -AlertPushAccount names;
+      without it, of the one AZUREBANK_ALERT_PUSH_ACCOUNT names; without that, of the one account
+      the deployed alerts already notify so, which is why a later run does not forget it. With
+      none of the three nothing is written and no such receiver is asked for: that is not an
+      error. The signed-in account is never taken for it: whether its sign-in name is the
+      account the app on the phone was set up with is not known here. Without -DeployApp the
+      argument is refused, since the group that would carry it is built with the app.
     * keepLogs is what the deployed environment does now: true if it sends its logs to Azure
       Monitor, false if it sends them nowhere. -LogsOff writes false whatever is deployed. With no
       environment yet and no -LogsOff the template's own default applies.
+    * demo, written only with -DeployApp, is what the deployed app does now: true if both of its
+      containers carry Demo__Enabled as true, false if each carries it as false or does not
+      carry it. -DemoOn writes true. The app is the only thing that remembers the switch: with
+      no app deployed and no -DemoOn nothing is written and the template's default, off,
+      applies, whatever the database holds. Two containers that disagree stop the script. So
+      does a container that carries the setting any other way than the template writes it
+      (another word or another case, an empty value, a reference to a secret, the setting
+      twice): it is read as neither on nor off, and what it holds is not repeated.
     * "Could not read" is never taken for "absent": a failed az call, or a deployed app without
-      one of its secrets, stops the script and no file is written.
+      one of its secrets, stops the script and no file is written. One secret is the exception,
+      the eighth: the demo's client key. An app deployed before the demo existed never held it,
+      so it is generated for a deployed app that lacks it while that app's demo is off, and
+      never while it is on.
     * Once the app exists its images move through the deploy workflow only: another -ImageTag is
       refused, and without one the running tag is written back.
 
@@ -36,8 +55,10 @@ param(
     [Parameter(Mandatory)][ValidateSet('New', 'Remove')][string]$Action,
     [string]$ResourceGroup = 'azurebank-demo',
     [switch]$DeployApp,
+    [switch]$DemoOn,
     [string]$ImageTag = '',
     [string]$AlertEmail = '',
+    [string]$AlertPushAccount = '',
     [switch]$LogsOff,
     [string]$Directory = ''
 )
@@ -46,6 +67,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $AppName = 'azurebank'
+# The setting both containers of the app read to know whether they are the public demo.
+$DemoFlag = 'Demo__Enabled'
 $EnvironmentName = 'azurebank-env'
 $AlertGroupName = 'azurebank-owner'
 $Api = '2025-01-01'
@@ -112,6 +135,12 @@ if ($Action -eq 'Remove') {
 $mailbox = '^[^@\s]+@[^@\s]+\.[^@\s]+$'
 if ($DeployApp -and $ImageTag -and $ImageTag -cnotmatch '^[0-9a-f]{40}$') { throw 'ImageTag must be a full lowercase commit SHA.' }
 if ($AlertEmail -and $AlertEmail -notmatch $mailbox) { throw '-AlertEmail is not an e-mail address. Nothing was written.' }
+if ($AlertPushAccount -and $AlertPushAccount -notmatch $mailbox) { throw '-AlertPushAccount is not an e-mail address. Nothing was written.' }
+# The demo is a setting of the app's two containers: a file for the foundation alone has no use for it.
+if ($DemoOn -and -not $DeployApp) { throw '-DemoOn needs -DeployApp. Nothing was written.' }
+# Nor for the phone's account: the action group is built with the app. Refused, not dropped: an
+# argument left out in silence would be taken for one that was carried.
+if ($AlertPushAccount -and -not $DeployApp) { throw '-AlertPushAccount needs -DeployApp. Nothing was written.' }
 
 Protect-Directory $Directory
 
@@ -124,6 +153,18 @@ function Deployed([string]$Type, [string]$Name) {
     @($resources | Where-Object { $_['type'] -ieq $Type -and $_['name'] -eq $Name }).Count -eq 1
 }
 $appExists = Deployed 'Microsoft.App/containerApps' $AppName
+
+function Get-DemoFlag($App, [string]$Container) {
+    # What one container of the deployed app says about the demo: 'true' or 'false'. One that does
+    # not carry the setting is off, as the app reads it. The template writes the setting once, as
+    # a plain value, true or false: anything else was set by hand, is taken for neither, and is
+    # not repeated in the error.
+    $found = @($App['properties']['template']['containers'] | Where-Object { $_['name'] -eq $Container })
+    $settings = @($found[0]['env'] | Where-Object { $_ -and $_['name'] -eq $DemoFlag })
+    if ($settings.Count -eq 0) { return 'false' }
+    if ($settings.Count -eq 1 -and $settings[0]['value'] -cin 'true', 'false') { return $settings[0]['value'] }
+    throw "The $Container container of the deployed app carries $DemoFlag with something this template never writes. Nothing was written."
+}
 
 $report = [System.Collections.Generic.List[string]]::new()
 
@@ -147,6 +188,8 @@ if ($LogsOff) {
 
 # What already exists, in order of authority: the deployed app, then a file left by a run that stopped.
 $live = @{}
+# Whether the deployed app is the demo now. With no app deployed nothing says so.
+$deployedDemo = $false
 if ($DeployApp -and $appExists) {
     foreach ($s in (Invoke-Az rest --method POST --url (Url "Microsoft.App/containerApps/$AppName/listSecrets"))['value']) { $live[$s['name']] = $s['value'] }
     # Once the app exists its images move only through the deploy workflow, which migrates first.
@@ -155,14 +198,36 @@ if ($DeployApp -and $appExists) {
     $liveTag = ($bff -split ':')[-1]
     if ($ImageTag -and $ImageTag -ne $liveTag) { throw 'The app is deployed: its images move through the deploy workflow, not through this file. Nothing was written.' }
     $ImageTag = $liveTag
+    # On in one container and off in the other is not a state this folder deploys: no side is chosen.
+    $says = @('bff', 'api' | ForEach-Object { Get-DemoFlag $app $_ })
+    if ($says[0] -cne $says[1]) { throw "The two containers of the deployed app disagree about $DemoFlag. Nothing was written." }
+    $deployedDemo = $says[0] -ceq 'true'
 }
+
+# Whether the demo is on is kept the way keepLogs is: what the deployed app does now, so that no
+# later run turns the demo off by forgetting it, or on by accident. The app is the only thing that
+# remembers it. With no app deployed there is nothing to read, and what the database holds is not
+# known here: without -DemoOn the file says nothing, and the template's default, off, applies.
+$demo = $null
+if ($DemoOn) {
+    $demo = $true
+    $report.Add('demo: true, asked for with -DemoOn')
+} elseif ($DeployApp -and $appExists) {
+    $demo = $deployedDemo
+    $report.Add('demo: kept from the deployed resource')
+} elseif ($DeployApp) {
+    $report.Add("demo: not written, the template's default applies")
+}
+
 $previous = @{}
 if (Test-Path -LiteralPath $File) {
     $old = Get-Content -LiteralPath $File -Raw | ConvertFrom-Json -AsHashtable
     foreach ($name in $old['parameters'].Keys) { $previous[$name] = $old['parameters'][$name]['value'] }
 }
 
-# parameter -> the secret of the app that holds it once deployed, and how a new one is made
+# parameter -> the secret of the app that holds it once deployed, and how a new one is made.
+# NewWhileTheDemoIsOff marks the one secret a deployed app may lack: the demo's client key, which
+# an app deployed before the demo existed never held and, with its demo off, never used.
 $plan = [ordered]@{
     jwtSecret               = @{ Secret = 'jwt-secret';           New = { New-Key 64 } }
     idempotencyHashKey      = @{ Secret = 'idempotency-hash-key'; New = { New-Key 32 } }
@@ -171,6 +236,7 @@ $plan = [ordered]@{
     auditChainKey           = @{ Secret = 'audit-chain-key';      New = { New-Key 32 } }
     auditAnchorKey          = @{ Secret = 'audit-anchor-key';     New = { New-Key 32 } }
     securityPinPepper       = @{ Secret = 'pin-pepper';           New = { New-Key 48 } }
+    demoClientKeySecret     = @{ Secret = 'demo-client-key';      New = { New-Key 48 }; NewWhileTheDemoIsOff = $true }
 }
 
 $me = Invoke-Az ad signed-in-user show
@@ -184,6 +250,7 @@ if ($null -ne $keepLogs) { $parameters['keepLogs'] = @{ value = $keepLogs } }
 if ($DeployApp) {
     if ($ImageTag -cnotmatch '^[0-9a-f]{40}$') { throw 'Pass -ImageTag with the full SHA of the commit whose three images are published. Nothing was written.' }
     $parameters['imageTag'] = @{ value = $ImageTag }
+    if ($null -ne $demo) { $parameters['demo'] = @{ value = $demo } }
 
     # Where the alerts write. The report says which source, never the address.
     $address = $AlertEmail
@@ -192,12 +259,38 @@ if ($DeployApp) {
         $address = $env:AZUREBANK_ALERT_EMAIL
         $source = 'from AZUREBANK_ALERT_EMAIL'
     }
-    if (-not $address -and (Deployed 'Microsoft.Insights/actionGroups' $AlertGroupName)) {
+    # The account of the Azure mobile app the alerts also notify: the e-mail address that app was
+    # set up with on the owner's phone. Found as the mailbox is, in the same order, but for the
+    # last place: an account nobody names is no account, and never the signed-in one. Each line
+    # of the report about it is written whole, once, because the runbook quotes it.
+    $account = $AlertPushAccount
+    $accountSaid = 'alertPushAccount: from -AlertPushAccount'
+    if (-not $account) {
+        $account = $env:AZUREBANK_ALERT_PUSH_ACCOUNT
+        $accountSaid = 'alertPushAccount: from AZUREBANK_ALERT_PUSH_ACCOUNT'
+    }
+    # One read of the deployed group serves both, and it is made when either is still not named:
+    # a run that names the mailbox alone must not forget the phone. Until 2026-10-06 the group was
+    # read only when no mailbox was named.
+    if ((-not $address -or -not $account) -and (Deployed 'Microsoft.Insights/actionGroups' $AlertGroupName)) {
         $group = Invoke-Az rest --method GET --url (Url "Microsoft.Insights/actionGroups/$AlertGroupName" '2023-01-01')
-        $receivers = @($group['properties']['emailReceivers'])
-        if ($receivers.Count -ne 1) { throw "The deployed alerts write to $($receivers.Count) addresses, not one. Pass -AlertEmail. Nothing was written." }
-        $address = $receivers[0]['emailAddress']
-        $source = 'kept from the deployed resource'
+        if (-not $address) {
+            $receivers = @($group['properties']['emailReceivers'])
+            if ($receivers.Count -ne 1) { throw "The deployed alerts write to $($receivers.Count) addresses, not one. Pass -AlertEmail. Nothing was written." }
+            $address = $receivers[0]['emailAddress']
+            $source = 'kept from the deployed resource'
+        }
+        if (-not $account) {
+            # A group with no such receiver may say so with no property, an empty list or a null:
+            # which one Azure gives has not been read, and each is "none". The template writes
+            # one receiver: more were put there by hand, and no side is chosen.
+            $phones = @($group['properties']['azureAppPushReceivers'] | Where-Object { $_ })
+            if ($phones.Count -gt 1) { throw "The deployed alerts notify $($phones.Count) accounts of the Azure mobile app, not one. Pass -AlertPushAccount. Nothing was written." }
+            if ($phones.Count -eq 1) {
+                $account = $phones[0]['emailAddress']
+                $accountSaid = 'alertPushAccount: kept from the deployed resource'
+            }
+        }
     }
     if (-not $address) {
         $address = if ($me.ContainsKey('mail')) { $me['mail'] } else { $null }
@@ -208,12 +301,25 @@ if ($DeployApp) {
     }
     $parameters['alertEmail'] = @{ value = $address }
     $report.Add("alertEmail: $source")
+    if ($account) {
+        if ($account -notmatch $mailbox) {
+            throw 'The account for the Azure mobile app is not an e-mail address. Pass -AlertPushAccount or set AZUREBANK_ALERT_PUSH_ACCOUNT. Nothing was written.'
+        }
+        $parameters['alertPushAccount'] = @{ value = $account }
+        $report.Add($accountSaid)
+    } else {
+        # Not an error: the file says nothing, and the template's default, no such receiver, applies.
+        $report.Add("alertPushAccount: not written, the template's default applies")
+    }
 
     foreach ($name in $plan.Keys) {
         $entry = $plan[$name]
         $value = $live[$entry.Secret]
         $source = 'kept from the deployed resource'
-        if (-not $value -and $appExists) {
+        # The key is asked for with ContainsKey: only one row has it, and under strict mode a
+        # key that is missing cannot be read by dot.
+        $mayBeNew = $entry.ContainsKey('NewWhileTheDemoIsOff') -and -not $deployedDemo
+        if (-not $value -and $appExists -and -not $mayBeNew) {
             # A deployed app without one of its secrets is not a case to paper over with a new value.
             throw "$name could not be read from the deployed resource. Nothing was written."
         }

@@ -127,7 +127,13 @@ public demo's database is an Azure SQL one, and they are what fills its pool and
   `azurebank_app` (`db_datareader`, `db_datawriter`), bound to the identity `azurebank-app`, and
   `azurebank_migrator` (the same and `db_ddladmin`), bound to `azurebank-migrate`. There the job,
   which does not exist yet, is to carry `azurebank-app`, and ADR-0062's decision 13 says what
-  else adding it changes. The two roles of the login measured below are `azurebank_app`'s.
+  else adding it changes.* (2026-10-05,
+  [ADR-0064](0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md): the job is in
+  the template now, `azurebank-pool`, built only with a switch that is off by default. There it
+  carries `azurebank-app`, runs `["recycle"]` for the first fill as well, since `recycle` fills
+  a database that holds no copy, and is given the pepper with no key id, as the `api` container
+  is. On Azure it does not exist until the runbook's third session has run.) *The two roles of
+  the login measured below are `azurebank_app`'s.
   Measured 2026-10-03: a login holding
   `db_datareader` and `db_datawriter` alone ran both through a whole cycle, copies built, a
   claimed copy and a stale one deleted, the sweeps run, on LocalDB from an empty database, roles

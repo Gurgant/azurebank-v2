@@ -12,14 +12,19 @@ resource shape 'Microsoft.Authorization/policyDefinitions@2025-03-01' = {
   properties: {
     policyType: 'Custom'
     mode: 'All'
-    displayName: 'AzureBank: one small replica, manual jobs'
-    description: 'Refuses a container app with more than one replica, a minimum above zero, several active revisions, plain HTTP, more than two containers, an init container or a container above half a vCPU; and a job with another trigger, parallel runs, an init container or a container above half a vCPU.'
+    displayName: 'AzureBank: one small replica, manual jobs, the pool job scheduled'
+    description: 'Refuses a container app with more than one replica, a minimum above zero, several active revisions, plain HTTP, more than two containers, an init container or a container above half a vCPU; and a job with another trigger, unless it is named for a schedule, or with parallel runs, an init container or a container above half a vCPU.'
     parameters: {
       allowedJobTriggers: {
         type: 'Array'
         defaultValue: [
           'Manual'
         ]
+      }
+      // Names of the jobs that may run on a schedule. None by default: main.bicep hands over its own.
+      scheduledJobs: {
+        type: 'Array'
+        defaultValue: []
       }
     }
     policyRule: {
@@ -63,6 +68,16 @@ resource shape 'Microsoft.Authorization/policyDefinitions@2025-03-01' = {
                     allOf: [
                       { field: '${job}/configuration.triggerType', exists: true }
                       { field: '${job}/configuration.triggerType', notIn: '[parameters(\'allowedJobTriggers\')]' }
+                      // One exception: a job named for it may run on a schedule. Every other job
+                      // keeps the list above.
+                      {
+                        not: {
+                          allOf: [
+                            { field: '${job}/configuration.triggerType', equals: 'Schedule' }
+                            { field: 'name', in: '[parameters(\'scheduledJobs\')]' }
+                          ]
+                        }
+                      }
                     ]
                   }
                   // One run at a time, whatever starts it: a trigger allowed later must not bring

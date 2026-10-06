@@ -3,9 +3,11 @@ name: Deploy
 # Run by hand, from main only (infra/README.md):
 #   build-push  builds the three images of this commit and pushes them to GHCR, tagged with its SHA.
 #               A tag is written once: an image that is already there is left as it is.
-#   deploy      runs the database migration, then moves the app to those images, then checks the
-#               address. If the check fails, the script tries to put the app back on the images
-#               it ran before, and the run says so if that fails too.
+#   deploy      runs the database migration; then, when the app says it is the public demo, moves
+#               the scheduled pool job to the same tools image, and never starts that job; then
+#               moves the app to those images, and checks the address. If the check fails, the
+#               script tries to put the app back on the images it ran before, and the run says
+#               so if that fails too.
 # The infrastructure itself is never created or changed from here.
 
 on:
@@ -107,9 +109,11 @@ jobs:
     name: Migrate and deploy
     if: inputs.action == 'deploy'
     runs-on: ubuntu-24.04
-    # The tools image 5, the migration 16, the new revision 15, the old one going inactive 3, the
-    # smoke test with its waits 10, a put-back 15, and the steps around them.
-    timeout-minutes: 70
+    # The tools image on each of two jobs 5 and 5, the migration 16, the new revision 15, the old
+    # one going inactive 3, the smoke test with its waits 15 (the page 5, the sign-in up to 4.6,
+    # and as much again for a second probe that waits as the sign-in does), a put-back 15: 74,
+    # and the steps around them.
+    timeout-minutes: 80
     # The deployment identity trusts this environment and nothing else; the environment allows
     # main only, and holds the three Azure identifiers as its secrets.
     environment: demo

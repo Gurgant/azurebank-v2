@@ -146,7 +146,11 @@ and then migrated an empty database):
   it on its own scope first, or a stop does nothing until the process is killed (`seed` before
   this: exit 137 and no line).
 - **`migrate` leaves a schema with no rows**: no roles, no users. The roles come from `seed`. Where
-  `seed` never runs, whatever creates the first user has to create the roles.
+  `seed` never runs, whatever creates the first user has to create the roles. `seed-pool` and
+  `recycle` do, before their first copy. A registration through the app does not, and fails:
+  measured on 2026-10-05 on the compose stack, with a database only `migrate` had touched, it was
+  answered 500 and left no user and no role; after `seed` had run, the same request was answered
+  201 ([infra/README.md](../../../infra/README.md), "Not measured yet").
 - **`seed` fills an empty database only.** The seeders skip what is already there, so a seed that
   was cut short is not completed by running it again: it exits 1 every time, and `reset` starts
   over.
@@ -168,7 +172,11 @@ and then migrated an empty database):
 - **Give them a login that reads and writes rows and nothing more**: where a deployment gives the
   app and its migration database users of their own, the app's, never the migration's. On the
   Azure deployment, which has no pool job yet, that is the identity `azurebank-app` and the user
-  `azurebank_app`, never `azurebank-migrate`. Measured
+  `azurebank_app`, never `azurebank-migrate`. Since 2026-10-05 the deployment's template holds
+  that job, `azurebank-pool`, with that identity: `recycle` every four hours, the app's pepper
+  with no key id, and `Demo__Claim__MaxPerClientPerDay` at the value the API is given there.
+  It is built when the demo is turned on, which has not been done on Azure
+  ([infra/README.md](../../../infra/README.md), "Turn the demo on"). Measured
   2026-10-03, a login with `db_datareader` and `db_datawriter` alone ran `seed-pool` and `recycle`
   through a whole cycle (copies built, a claimed copy and a stale one deleted, the sweeps), exit 0,
   on LocalDB from an empty database, roles included, and on the compose SQL Server, where the roles
@@ -185,7 +193,11 @@ and then migrated an empty database):
   claims leave room for. Every copy is still whole, nothing is deleted twice, and the extra copies
   are deleted when they grow too old to count. Measured on LocalDB with a run held in its top-up
   while another ran whole: a target of 2, both exited 0, 4 free copies. Give the job a schedule
-  whose runs end before the next starts, and refill by hand between two runs.
+  whose runs end before the next starts, and refill by hand between two runs. The Azure
+  deployment's template does the first: four hours between two runs, and a timeout of 14 minutes
+  at most for one. Its refill by hand is `python infra/deploy.py --pool-run`, which starts
+  nothing while a run is in progress; a run the schedule starts after it has looked is not seen
+  ([infra/README.md](../../../infra/README.md), "Reading the logs").
 - **`reset` refuses the demo's database too**, with the flag off, as `seed` does: after its prompt
   and before its drop it reads whether the pool's migration was applied and counts the pool's rows,
   and one row, a record included, ends it with exit 2. A database that does not exist, or one
