@@ -52,7 +52,10 @@ public class PublishedPayloadTooLargeTests
         var responses = operation.GetProperty("responses");
 
         responses.TryGetProperty("413", out var tooLarge).Should().BeTrue();
-        tooLarge.GetProperty("description").GetString().Should().Contain(ErrorCodes.PayloadTooLarge);
+        // The money endpoints' code, IDEMPOTENCY_PAYLOAD_TOO_LARGE, contains this one: the code is
+        // asked for with the brackets the description puts round it, and the money code refused.
+        tooLarge.GetProperty("description").GetString().Should().Contain($"({ErrorCodes.PayloadTooLarge})")
+            .And.NotContain(ErrorCodes.IdempotencyPayloadTooLarge);
 
         var schema = tooLarge.GetProperty("content").GetProperty("application/json").GetProperty("schema");
         schema.GetProperty("$ref").GetString().Should().Be("#/components/schemas/ProblemDetails");
