@@ -175,7 +175,8 @@ const useStyles = makeStyles({
     marginTop: '12px',
     fontSize: '13px',
     fontWeight: 500,
-    color: colors.semantic.error.main,
+    // The red for words on a pale ground, not the icon's: see `hint` in `transferWizardStyles`.
+    color: colors.semantic.error.dark,
   },
 
   footer: {

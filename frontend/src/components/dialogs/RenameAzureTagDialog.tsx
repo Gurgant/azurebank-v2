@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
 import { SAVE_OUTCOME_UNKNOWN } from '../../api/problemMessages';
 import { useRenameAzureTagMutation } from '../../features/api/apiSlice';
+import { useReturnFocus } from '../../hooks/useReturnFocus';
 import { WaitHint } from '../feedback';
 
 // Mirrors the backend AzureTag rules (ValidationRules.AzureTagPattern): 3-20 chars, must start
@@ -47,6 +48,7 @@ export interface RenameAzureTagDialogProps {
  * mutation invalidates Session, so getMe refetches and the settings page shows the new handle.
  */
 export function RenameAzureTagDialog({ currentTag, onClose }: RenameAzureTagDialogProps) {
+  useReturnFocus();
   const [renameAzureTag, { isLoading, error }] = useRenameAzureTagMutation();
   const problem = error as ApiProblem | undefined;
 

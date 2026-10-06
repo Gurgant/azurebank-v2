@@ -122,9 +122,7 @@ export function TransactionHead({ showBalance = false }: { showBalance?: boolean
             Balance
           </th>
         )}
-        <th className={styles.th} style={{ width: '18%' }}>
-          Status
-        </th>
+        <th className={mergeClasses(styles.th, styles.statusHead)}>Status</th>
       </tr>
     </thead>
   );
@@ -207,7 +205,11 @@ export function TransactionEmptyRow({
 /** Shared table shell, so the two ledgers cannot disagree about borders or layout either. */
 export function TransactionTable({ children }: { children: React.ReactNode }) {
   const styles = useStyles();
-  return <table className={styles.table}>{children}</table>;
+  return (
+    <div className={styles.frame}>
+      <table className={styles.table}>{children}</table>
+    </div>
+  );
 }
 
 export default TransactionRow;

@@ -111,22 +111,28 @@ export function AccountNumberField({ account }: { account: AccountResponse }) {
         {revealed ? fullNumber : maskAccountNumber(account.accountNumber)}
       </Text>
 
-      {isLoading ? (
-        <Spinner size="tiny" aria-label={`Revealing account number for ${account.name}`} />
-      ) : (
-        <Button
-          appearance="subtle"
-          size="small"
-          icon={revealed ? <EyeOff16Regular /> : <Eye16Regular />}
-          // The name says the state; aria-pressed as well read "Hide account number …, pressed".
-          aria-label={
-            revealed
+      {/* One button through the wait, with the spinner in it: while it waits it says so, takes no
+          press and keeps focus. The PIN dialog a reveal can bring up gives focus back to the
+          control that had it when the dialog opened (`useReturnFocus`), and a spinner in the
+          button's place took the button, and focus with it, off the page before the dialog came.
+          (Until 2026-10-06 the spinner took the button's place while the reveal waited.) */}
+      <Button
+        appearance="subtle"
+        size="small"
+        icon={
+          isLoading ? <Spinner size="tiny" /> : revealed ? <EyeOff16Regular /> : <Eye16Regular />
+        }
+        // The name says the state; aria-pressed as well read "Hide account number …, pressed".
+        aria-label={
+          isLoading
+            ? `Revealing account number for ${account.name}`
+            : revealed
               ? `Hide account number for ${account.name}`
               : `Reveal full account number for ${account.name}`
-          }
-          onClick={revealed ? hide : reveal}
-        />
-      )}
+        }
+        disabledFocusable={isLoading}
+        onClick={revealed ? hide : reveal}
+      />
 
       {revealed && (
         <Button

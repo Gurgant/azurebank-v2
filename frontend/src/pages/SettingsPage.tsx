@@ -140,11 +140,19 @@ const useStyles = makeStyles({
     color: colors.neutral[800],
   },
 
+  // Beside the avatar, in a flex row: without a minimum width of zero this block is as wide as
+  // its longest word, and an email address is one word.
+  profileText: { minWidth: 0 },
+
   profileEmail: {
     display: 'block',
     fontSize: '14px',
     fontWeight: 400,
     color: colors.neutral[500],
+    // An address has no space to wrap at. A demo copy's is 39 characters, and at 375 px it ran
+    // out of the card and past the screen's edge. `BreakableEmail` gives it one good place to
+    // break; this is for an address that is too long even so.
+    overflowWrap: 'anywhere',
   },
 
   // ===== Read-only identity grid =====
@@ -179,6 +187,8 @@ const useStyles = makeStyles({
     alignItems: 'center',
     fontSize: '15px',
     color: colors.neutral[800],
+    // The email is shown here too, and under 375 px it ran out of this box as it did above.
+    overflowWrap: 'anywhere',
   },
 
   // ===== Handle row (editable) =====
@@ -256,6 +266,11 @@ const useStyles = makeStyles({
     gap: '4px',
   },
 
+  // The row's button keeps the width of its label. Left free to shrink, it lost to the sentence
+  // beside it on a phone: at 375 px it was squeezed to its 96 px minimum and its label broke in
+  // two ("Log" / "out"). The sentence wraps instead.
+  actionButton: { flexShrink: 0 },
+
   actionTitle: {
     fontSize: '15px',
     fontWeight: 500,
@@ -268,12 +283,29 @@ const useStyles = makeStyles({
     color: colors.neutral[500],
   },
 
+  // On the canvas, not on a card: there the grey of the page's other sentences, neutral[500],
+  // is 4.39 to 1, so this is the step above it. It was neutral[400], 2.31 to 1.
   version: {
     textAlign: 'center',
     fontSize: '12px',
-    color: colors.neutral[400],
+    color: colors.neutral[600],
   },
 });
+
+/**
+ * An email address that may break after its `@`. It has no space, so without this a browser
+ * breaks it only where it has to, which can be one letter from the end.
+ */
+function BreakableEmail({ address }: { address: string }) {
+  const afterAt = address.indexOf('@') + 1;
+  return (
+    <>
+      {address.slice(0, afterAt)}
+      <wbr />
+      {address.slice(afterAt)}
+    </>
+  );
+}
 
 /**
  * Account settings. Identity (name / email) comes from the session and is read-only — the only
@@ -329,12 +361,12 @@ export function SettingsPage() {
             <div className={styles.avatar}>
               <Text className={styles.avatarInitials}>{displayInitials}</Text>
             </div>
-            <div>
+            <div className={styles.profileText}>
               <Text as="p" className={styles.profileName}>
                 {displayName}
               </Text>
               <Text as="p" className={styles.profileEmail}>
-                {displayEmail}
+                <BreakableEmail address={displayEmail} />
               </Text>
             </div>
           </div>
@@ -352,7 +384,12 @@ export function SettingsPage() {
 
           <div className={styles.field}>
             <Text className={styles.fieldLabel}>Email address</Text>
-            <div className={styles.fieldValue}>{displayEmail}</div>
+            <div className={styles.fieldValue}>
+              {/* One element, so that the box, a flex row, has one item to lay out and not two. */}
+              <span>
+                <BreakableEmail address={displayEmail} />
+              </span>
+            </div>
           </div>
 
           {/* The one editable field: the public payment handle. */}
@@ -392,12 +429,17 @@ export function SettingsPage() {
               </Text>
             </div>
             {user?.hasPin ? (
-              <Button appearance="secondary" onClick={() => setChangePinOpen(true)}>
+              <Button
+                appearance="secondary"
+                className={styles.actionButton}
+                onClick={() => setChangePinOpen(true)}
+              >
                 Change PIN
               </Button>
             ) : (
               <Button
                 appearance="secondary"
+                className={styles.actionButton}
                 onClick={() => navigate('/pin-setup?returnTo=/settings')}
                 disabled={!user}
               >
@@ -430,7 +472,9 @@ export function SettingsPage() {
             <Radio value="light" label="Light" />
             <Radio value="dark" label="Dark" />
           </RadioGroup>
-          <Text className={styles.comingSubtitle}>
+          {/* A sentence to read, so the grey of the page's other sentences, and not the fainter
+              one of the disabled "Coming soon" rows it used to wear: 2.54 to 1 on the card. */}
+          <Text className={styles.actionSubtitle}>
             {preference === 'system'
               ? `Following your device, which is currently ${resolved}.`
               : 'This device will stay on your choice.'}
@@ -474,7 +518,10 @@ export function SettingsPage() {
             </div>
             <Button
               appearance="secondary"
-              style={{ borderColor: colors.semantic.error.main, color: colors.semantic.error.main }}
+              className={styles.actionButton}
+              // The label in the red for words: `error.main`, which the border keeps, measured
+              // 3.92 to 1 as 14 px text on the card in the light theme.
+              style={{ borderColor: colors.semantic.error.main, color: colors.semantic.error.dark }}
               icon={<SignOut24Regular />}
               onClick={() => {
                 void handleLogout();

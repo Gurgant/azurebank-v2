@@ -104,7 +104,10 @@ export const useTransferWizardStyles = makeStyles({
     width: '170px',
     '::placeholder': { color: colors.neutral[300] },
   },
-  hint: { fontSize: '13px', fontWeight: 500, color: colors.semantic.error.main },
+  // Words to read, so the red that is for text on a pale ground (`error.dark`) and not the red
+  // of an icon (`error.main`): at 13 px that one measured 3.56 to 1 on the canvas and 3.92 on a
+  // card in the light theme. The figure above keeps `error.main`: at 44 px it needs 3 to 1.
+  hint: { fontSize: '13px', fontWeight: 500, color: colors.semantic.error.dark },
   // Composed ON TOP of amountCurrency/amountInput, so it only needs to restate the colour.
   amountInvalid: { color: colors.semantic.error.main },
   subtle: { fontSize: '13px', color: colors.neutral[500] },
@@ -201,7 +204,10 @@ export const useTransferWizardStyles = makeStyles({
     justifyContent: 'center',
     color: colors.semantic.warning.dark,
   },
-  successTitle: { fontSize: '24px', fontWeight: 700, color: colors.semantic.success.main },
+  // The green for words (`success.dark`), which the ledger's pill uses too. The icon's green
+  // (`success.main`) measured 2.78 to 1 here on the canvas in the light theme, under the 3 that
+  // 24 px bold text needs. The same value as `moneyDialogStyles`.
+  successTitle: { fontSize: '24px', fontWeight: 700, color: colors.semantic.success.dark },
   stateTitle: { fontSize: '20px', fontWeight: 700, color: colors.neutral[800] },
   stateBody: { fontSize: '15px', color: colors.neutral[500], lineHeight: '1.5' },
   successAmount: { fontSize: '32px', fontWeight: 700, color: colors.neutral[800] },

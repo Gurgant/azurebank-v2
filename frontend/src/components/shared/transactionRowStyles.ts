@@ -98,6 +98,33 @@ export const useTransactionRowStyles = makeStyles({
     borderBottom: `1px solid ${surfaces.border}`,
   },
 
+  /**
+   * The Status column's width, set on its heading: the table's layout is fixed, so a column is as
+   * wide as its first cell says and never as wide as what is in it.
+   *
+   * It was 18 % of the table at every width. Under a table of 480 px that is narrower than the
+   * pill, which does not wrap: at 375 px it ran 11 px past its cell on History, off the screen,
+   * and 25 px on the dashboard, over the card's edge (measured in Chromium, 2026-10-06).
+   *
+   * Three values, the middle one clamped between the other two, all in `cqi`: 1 % of the width of
+   * `frame` below, which is the table's width. Percentages will not do it: with them in this
+   * same `clamp`, Chromium laid the column out as one with no width at all and split what was
+   * left evenly with Entry, 194 px each on the dashboard at 1440 px (measured the same day). The
+   * viewport's width is no help either: on one phone the dashboard's table is 74 px narrower
+   * than History's.
+   * - `88px` is the widest pill, "Completed" at 71 px, with the cell's 16 px of padding.
+   * - `58cqi - 84px` is what is left for this column once the Entry column has 84 px: When and
+   *   Amount take 22 % and 20 %. So on a table too narrow for both, under 297 px, the pill
+   *   gives way before a word such as "Withdrawal" (70 px) runs into the amount beside it. A flat
+   *   88 px did that at 320 px on the dashboard: measured, the entry ran 23 px past its cell.
+   * - `18cqi` is the 18 % it was, and is the larger from 489 px of table up: no table that wide
+   *   changes.
+   */
+  statusHead: { width: 'clamp(18cqi, calc(58cqi - 84px), 88px)' },
+
+  /** Around the table and as wide as it: what `cqi` above is a share of. */
+  frame: { containerType: 'inline-size' },
+
   table: {
     width: '100%',
     borderCollapse: 'collapse',
