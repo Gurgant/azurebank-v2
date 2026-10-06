@@ -194,8 +194,9 @@ AzureBank.Bff/
 
 ### Proxied Routes
 
-`/api/*` is proxied to the backend API with the session's JWT injected — once the request has passed
-`AuthLevelMiddleware`, which refuses three things locally (see Middleware Pipeline below):
+The bare `/api` path and `/api/*` are proxied to the backend API with the session's JWT injected —
+once the request has passed `AuthLevelMiddleware`, which refuses three things locally (see
+Middleware Pipeline below):
 
 | BFF Route | Backend Route | What the BFF requires |
 |-----------|---------------|-----------------------|
@@ -204,7 +205,7 @@ AzureBank.Bff/
 | `/api/transactions` | `/api/transactions` | session (level 1) |
 | `/api/transfers` | `/api/transfers` | session (level 1) — **PIN NOT checked here** |
 | `/api/accounts/*/full-number` | `/api/accounts/*/full-number` | level 2 (PIN verified in this session) |
-| every other `/api/*` route, any method | same path | session (level 1) |
+| the bare `/api` path and every other `/api/*` route, any method | same path | session (level 1) |
 
 Since [ADR-0041](../../../docs/adr/0041-the-api-verifies-the-transfer-pin.md) the **API** verifies
 a transfer's PIN rather than the BFF, and since
@@ -220,10 +221,12 @@ in its own body any more. The BFF no longer gates a transfer at level 2, because
 leave the weaker of the two checks in the path and keep the five-minute session window alive for
 money movement. `/full-number` is the only route behind the level-2 gate. The no-session refusal is
 not transfer-specific either: since `d74603c` (2026-08-20) every `/api/*` request that is not one of
-the seven 404'd auth paths above, any method, is refused at the BFF with the API's own 401 shape
-unless a live session resolves.
+the seven 404'd auth paths above, and since 2026-10-05 the bare `/api` path too, any method, is
+refused at the BFF with the API's own 401 shape unless a live session resolves.
 *(Until 2026-10-05 this paragraph said a withdrawal was the one money move that still sends its PIN
-in the body; that had been false since ADR-0056, `267d33e` (2026-09-22).)*
+in the body; that had been false since ADR-0056, `267d33e` (2026-09-22). Until the same day it did
+not name the bare `/api` path, which the proxy's catch-all route takes too: with no session a
+request for that path was forwarded.)*
 
 ---
 
@@ -247,10 +250,14 @@ Adds OWASP-recommended security headers to all responses:
 
 When `Spa:RootPath` names a Vite build (`frontend/dist`), the BFF serves it: fingerprinted files
 under `/assets` as `immutable`, everything else revalidated, and the page shell for any GET
-navigation no endpoint claimed. Never under `/api`, `/bff` or `/health`, and never for a file name,
-so an unknown API route stays a 404 and a POST-only route stays a 405. Unset, the BFF serves no
-pages and vite does, as in the dev loop; set to a directory with no `index.html`, the host refuses
-to start. ADR-0054.
+navigation no endpoint claimed. Never under `/api`, `/bff` or `/health`, whatever run of slashes
+and backslashes the path begins with (`//api/accounts`, `/%5Capi/accounts`), and never for a file
+name, so an unknown API route stays a 404 and a POST-only route stays a 405. An encoded slash is
+not a separator: `/%2Fapi/accounts` still gets the shell. Unset, the BFF serves no pages and vite
+does, as in the dev loop; set to a directory with no `index.html`, the host refuses to start.
+ADR-0054.
+*(Until 2026-10-05 this said only "Never under `/api`, `/bff` or `/health`", and a server path
+behind a leading backslash was answered with the shell.)*
 
 On the public demo (`Demo:Enabled`) the page carries one tag,
 `<meta name="azurebank-demo" content="true">`, put right before its `</head>` when the host
@@ -295,8 +302,10 @@ private static readonly HashSet<string> BlockedProxiedAuthPaths =
 
 // EVERY proxied request — any method — needs a live session, decided HERE rather than delegated to
 // the API. There is no exception list: the set that used to hold one is deleted, not emptied.
+// (Until 2026-10-05 this tested only the "/api/" prefix, missing the bare "/api" path.)
 private static bool RequiresSession(string path) =>
-    path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase);
+    path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase)
+    || path.Equals("/api", StringComparison.OrdinalIgnoreCase);
 
 // Level 2 has two branches. The exact-path set is EMPTY since ADR-0041 — a transfer is authorised
 // at the API (since ADR-0042 by a one-shot authorisation the API binds and spends) and is not
@@ -320,7 +329,7 @@ three paths joined it with `bd4fa39` (2026-09-29).)*
 |---|---|---|
 | `/api/auth/login`, `/api/auth/register`, `/api/auth/refresh`, `/api/auth/revoke`, `/api/auth/logout`, `/api/auth/session-stamps` | any, even a live one | `404` |
 | `/api/auth/demo/claim` (not in the measurements above: on the compose stack, Production, the demo on, 2026-10-04) | live | `404`, no body. With no session it is `404` too, where a path under `/api` that names nothing is `401` (`AuthLevelMiddlewareTests`) |
-| any other `/api/*` route, any method | none, never issued, or replayed after logout | `401` — the API's own `AUTH_TOKEN_MISSING` body, no `X-Auth-Level-*` header |
+| `/api` itself (not in the measurements above: on the test host, 2026-10-05) and any other `/api/*` route, any method | none, never issued, or replayed after logout | `401` — the API's own `AUTH_TOKEN_MISSING` body, no `X-Auth-Level-*` header |
 | `GET /api/accounts/{id}/full-number` | live, level 1 | `403 STEP_UP_REQUIRED`, `X-Auth-Level-Required: 2`, `X-Auth-Level-Current: 1` |
 | `POST /api/transfers` | live, level 1 | proxied — `400` model-state from the API on `{}`; its proof is the one-shot authorisation in the `Step-Up-Authorization` header, which the API binds and spends (ADR-0042) |
 
@@ -419,7 +428,16 @@ public class UserSession
 ### Bearer Token Transform
 
 The `BearerTokenTransformProvider` first clears any inbound `Authorization` header, then injects the
-session's JWT (renewed through `ITokenRefresher` when it runs short). A renewal that cannot be had while
+session's JWT (renewed through `ITokenRefresher` when it runs short). It also takes the browser's
+`Cookie` header off the request it forwards, whole and whether or not a session resolves: the API
+reads no cookie, and the session id is the BFF's own secret. The browser's own request keeps the
+header, so the BFF goes on reading the session from it.
+*(Until 2026-10-06 this section did not say what became of the cookie, and it was not taken off:
+the forwarded request held the browser's whole `Cookie` header, the session id in it and any other
+cookie beside it. Measured that day on the test host, with a recorder in the API's place, before
+the change: on a read of both routes that proxy a signed-in request, and with other cookies beside
+the session's on a read and on a write of the catch-all route.)*
+A renewal that cannot be had while
 the token has 5 s or less left is answered here with a 503 and `Retry-After`, never forwarded; the
 source also strips the token-road marker and turns the API's refusal of the service key into a 503
 (ADR-0057 §4.2, §4.7). When the API does not answer within `BackendApi:TimeoutSeconds`, cannot be
@@ -440,6 +458,11 @@ public void Apply(TransformBuilderContext context)
         // inbound headers by default, so without this a caller's own bearer rode through to the
         // API whenever no session resolved (ADR-0038). The session is the only credential.
         transformContext.ProxyRequest.Headers.Authorization = null;
+
+        // The browser's Cookie header stops here, whole: the API reads no cookie, and the session
+        // id is this host's secret. Off the outbound request only: the lookup below reads the
+        // browser's own request, which keeps it.
+        transformContext.ProxyRequest.Headers.Remove(HeaderNames.Cookie);
 
         if (httpContext.Request.Cookies.TryGetValue(cookieName, out var sessionId)
             && !string.IsNullOrEmpty(sessionId))

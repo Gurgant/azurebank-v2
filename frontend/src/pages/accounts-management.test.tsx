@@ -143,7 +143,7 @@ describe('delete account (A7)', () => {
     await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
     await screen.findByRole('dialog', { name: 'Delete account?' });
     await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
-    // A WRONG pin on purpose, as M2 was measured (measure-after-main-19742ff-2026-09-06.txt: 422
+    // A WRONG pin on purpose, as row M2 was measured (2026-09-06, main 19742ff: 422
     // NON_ZERO_BALANCE, PinAccessFailedCount unchanged). With the correct pin the counter reads 0
     // in either order (checkPinInBand resets it on a match); with this one a mock that consulted
     // the PIN first answers 401 INVALID_PIN and the counter reads 1.

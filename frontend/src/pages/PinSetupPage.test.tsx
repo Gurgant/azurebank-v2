@@ -3,6 +3,8 @@ import { cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { PinInput } from '../components/PinInput';
+import { enableDemoMode } from '../test/demoMode';
 import { makeTestStore, renderWithProviders, type TestStore } from '../test/renderWithProviders';
 import { PinSetupPage } from './PinSetupPage';
 import { MOCK_PASSWORD, MOCK_USER, seedMockSession } from '../mocks/state';
@@ -166,6 +168,40 @@ describe('PIN setup wizard (PR-10)', () => {
     renderPinSetup();
     await userEvent.click(screen.getByRole('button', { name: 'Skip for now' }));
     expect(await screen.findByText('ACCOUNTS PAGE')).toBeInTheDocument();
+  });
+
+  it('in the demo, choosing a PIN shows no hint', async () => {
+    /*
+      On the demo the page prints the PIN every demo copy starts with under boxes that ask for a
+      PIN the visitor already has. Both steps of this page take a PIN that is being chosen: the
+      starting digits under them would read as the PIN to choose.
+
+      The sentence is typed out, not imported from the product.
+    */
+    const hint = 'Demo PIN: 123456, unless you changed it.';
+    const hints = () => screen.queryAllByText(hint).length;
+    const describedBy = (name: string) =>
+      screen.getByRole('group', { name }).getAttribute('aria-describedby');
+    enableDemoMode();
+
+    // Boxes that ask for a PIN the visitor has, on this same page of the demo: seen first, so that
+    // the zeros below are counts of something that is drawn.
+    const asked = renderWithProviders(<PinInput value="" onChange={() => {}} />);
+    const underBoxesThatAskForOne = hints();
+    asked.unmount();
+
+    renderPinSetup();
+    const choosing = { hints: hints(), describedBy: describedBy('Create your PIN') };
+    await pasteDigits('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByText('Confirm your PIN');
+    const confirming = { hints: hints(), describedBy: describedBy('Confirm your PIN') };
+
+    expect({ underBoxesThatAskForOne, choosing, confirming }).toEqual({
+      underBoxesThatAskForOne: 1,
+      choosing: { hints: 0, describedBy: null },
+      confirming: { hints: 0, describedBy: null },
+    });
   });
 });
 

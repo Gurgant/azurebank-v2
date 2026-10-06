@@ -209,15 +209,17 @@ public static class SpaHostingExtensions
     /// A page navigation: GET or HEAD, not a server path, and not a file name — a missing
     /// <c>/assets/x.js</c> must stay a 404 rather than come back as HTML the browser tries to run.
     /// A server path is one whose first non-empty segment is a server prefix, in any letter case:
-    /// <c>/api/accounts</c>, and the same behind any number of extra slashes
-    /// (<c>//api/accounts</c>).
+    /// <c>/api/accounts</c>, and the same behind any run of leading slashes and backslashes
+    /// (<c>//api/accounts</c>, <c>/%5Capi/accounts</c>).
     /// (Until 2026-10-05 this said "outside the server's prefixes", and the prefixes were tested
     /// against the path as it was sent: a server path behind extra slashes was answered with the
     /// shell.)
+    /// (Until 2026-10-05 this said "behind any number of extra slashes", and only leading slashes
+    /// were trimmed: a server path behind a leading backslash was answered with the shell.)
     /// </summary>
     private static bool ServesShell(HttpRequest request) =>
         (HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method))
         && !ServerPrefixes.Any(prefix =>
-            new PathString("/" + request.Path.Value?.TrimStart('/')).StartsWithSegments(prefix))
+            new PathString("/" + request.Path.Value?.TrimStart('/', '\\')).StartsWithSegments(prefix))
         && !Path.HasExtension(request.Path.Value);
 }

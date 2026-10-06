@@ -31,6 +31,7 @@ import {
   useGetTransactionsQuery,
   useGetTransactionSummaryQuery,
 } from '../features/api/apiSlice';
+import { DemoCopyPanel } from '../features/demo';
 import { abortRunning, useWaitLanding } from '../hooks/useWaitLanding';
 import { readWait } from '../hooks/useWaitPhase';
 import { AlertSlot, WaitHint } from '../components/feedback';
@@ -657,6 +658,14 @@ export function DashboardPage() {
           </MessageBar>
         )}
       </AlertSlot>
+
+      {/* On the demo, what the visitor holds. A child of the page's column, under its alert and
+          above everything the accounts decide: it is there while they load, when they could not
+          be read and in the welcome state, so "Start over" and the copy's sign-in details are
+          within reach on a dashboard that shows nothing else. Off the demo it draws nothing, and
+          it is handed the card to wear rather than wrapped in one, so no empty card is left in
+          its place. */}
+      <DemoCopyPanel className={styles.card} />
 
       {welcome && (
         <div className={styles.card}>

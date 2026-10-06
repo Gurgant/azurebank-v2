@@ -10,15 +10,18 @@ import {
   modelStateProblem,
   problem,
   unreadableBodyProblem,
+  unsupportedMediaTypeProblem,
 } from './problem';
 import { LOGIN_REQUEST, REGISTER_REQUEST, bindMembers, modelStateFor } from './dataAnnotations';
 import {
   MOCK_PASSWORD,
   MOCK_SESSION_COOKIE,
   MOCK_USER,
+  claimMockDemoCopy,
   expireMockSessionIfDue,
   markMockActivity,
   mockAccessTokenExpiry,
+  mockDemoEnabled,
   mockState,
   toWire,
   type MockAccount,
@@ -304,9 +307,8 @@ function visibleTransactions(): typeof mockState.transactions {
  * transaction rows survive — so a sum built on it would hand the day's headroom back by closing an
  * account. D3 says the real query calls `IgnoreQueryFilters()` for exactly that reason. MEASURED A6
  * (2026-09-07T14:17:53Z, PR #156's working tree on 3c30122, merged as fda7ff7, BFF :5000 -> API
- * :7215, AzureBankDev, DailyLimit:Amount default; transcript plans/daily-limit/
- * measure-after-2026-09-07.txt): transfer 4,600 from a spare, DELETE the drained spare, mint 500 ->
- * 422 with `used 4600.0`.
+ * :7215, AzureBankDev, DailyLimit:Amount default; row A6 of ADR-0050's "After" table): transfer
+ * 4,600 from a spare, DELETE the drained spare, mint 500 -> 422 with `used 4600.0`.
  *
  * (ii) THERE IS NO DAY TERM, and that is the one half of D1 the mock does not model. Every ledger
  * row the mock writes carries a FIXED `2026-07-22` stamp (the deposit, withdraw, external-transfer
@@ -476,10 +478,12 @@ const pathOf = (request: Request) => new URL(request.url).pathname;
  *
  * The cookie therefore comes from the two places that do NOT feed that store:
  *
- *   jsdom + dev:mock   `document.cookie`, stamped by `seedMockSession` / login / register and
- *                      cleared by logout and `resetMockState`. Verified with the MSW store empty:
- *                      a SAME-ORIGIN request carries it, a cross-origin one does not — which is
- *                      why the unit suite's relative URLs matter.
+ *   jsdom + dev:mock   `document.cookie`, stamped by `seedMockSession` and by a demo claim
+ *                      (`claimMockDemoCopy`) and cleared by `resetMockState`: the callers of
+ *                      `setMockSessionCookie`. The sign-in, registration and sign-out handlers
+ *                      are not among them. Verified with the MSW store empty: a SAME-ORIGIN
+ *                      request carries it, a cross-origin one does not — which is why the unit
+ *                      suite's relative URLs matter.
  *   node (contract)    the client's own jar, seeded for the mock target in `client.ts`. There is
  *                      no `document` there, so `anonymous: true` genuinely sends nothing.
  *
@@ -569,6 +573,14 @@ function authRateLimited(request: Request): Response | null {
   return null;
 }
 
+/** An account a sign-in can name: whose it is and what signs in to it. */
+interface LoginAccount {
+  /** The address as the account spells it: the key of the lockout's state. */
+  email: string;
+  user: MockSessionUser;
+  password: string;
+}
+
 /**
  * The password lockout, which announces itself ONLY when the password is right.
  *
@@ -608,12 +620,30 @@ function authRateLimited(request: Request): Response | null {
  *      rather than the raw input.
  *
  * Returning the account (not a boolean) is what keeps those two honest together: callers key
- * `loginFailures` / `loginLockedUntil` by the value this hands back, so a spelling can neither
+ * `loginFailures` / `loginLockedUntil` by the `email` this hands back, so a spelling can neither
  * open its own counter nor escape an existing lock.
+ *
+ * WHO HAS AN ACCOUNT DEPENDS ON THE DEMO. A claimed demo copy is an account: it is found by its
+ * address in any spelling, and what signs in to it is its own password. While the page is the
+ * demo nobody else has one. The mock's own user is then answered as an address nobody
+ * registered, and so is a copy of the pool that nobody has claimed: the 401 of a wrong password,
+ * and no counter. Measured 2026-10-05 on compose.yaml with compose.demo.yaml (Production), with a
+ * made-up password each time: an address nobody has, and the owner of a free copy (found in the
+ * database, where a free copy's owner has no password), each answered
+ * 401 `INVALID_CREDENTIALS`, the body of a wrong password on a claimed copy but for `traceId`.
+ * Read, not measured there: that neither is counted towards a lock.
  */
-function accountForLogin(email: string | undefined): string | null {
+function accountForLogin(email: string | undefined): LoginAccount | null {
   if (!email) return null;
-  return email.toLowerCase() === MOCK_USER.email.toLowerCase() ? MOCK_USER.email : null;
+  const spelling = email.toLowerCase();
+  const copy = mockState.demoCopies.find(
+    (claimed) => claimed.user.email.toLowerCase() === spelling,
+  );
+  if (copy) return { email: copy.user.email, user: copy.user, password: copy.password };
+  if (mockDemoEnabled()) return null;
+  return spelling === MOCK_USER.email.toLowerCase()
+    ? { email: MOCK_USER.email, user: MOCK_USER, password: MOCK_PASSWORD }
+    : null;
 }
 
 function loginLockedProblem(email: string, now: number) {
@@ -1127,9 +1157,8 @@ const setPrimaryAccount = api.patch(
  * `AccountService.RefuseIfNotClosable`, balance then primary, in one place so the deletion mint
  * and the DELETE cannot drift from each other (ADR-0049 D4: the mint runs the same guards).
  *
- * Every value below is quoted from `azurebank-work/plans/account-deletion/
- * measure-after-main-19742ff-2026-09-06.txt`, measured 2026-09-06T19:16Z on main 19742ff through
- * the BFF (:5000 -> :7215, AzureBankDev); probe letters are that file's row labels.
+ * Every value below is quoted from one transcript, measured 2026-09-06T19:16Z on main 19742ff
+ * through the BFF (:5000 -> :7215, AzureBankDev); probe letters are that transcript's row labels.
  *
  * Returns the refusal to send, or null when the account is closable.
  */
@@ -1166,8 +1195,8 @@ function refuseIfNotClosable(account: MockAccount, request: Request): Response |
 
 /**
  * DELETE /api/accounts/{id} — a closure costs a PIN, on the transfer's authorisation rail
- * (ADR-0049). The ORDER is the contract (ADR-0049 D6) and every rung quotes a probe of
- * `measure-after-main-19742ff-2026-09-06.txt` (2026-09-06T19:16Z, main 19742ff, through the BFF):
+ * (ADR-0049). The ORDER is the contract (ADR-0049 D6) and every rung quotes a probe of the
+ * re-measurement on main (2026-09-06T19:16Z, main 19742ff, through the BFF):
  *
  *   binding 400 -> ownership 404 -> balance 422 -> primary 422 -> presence 401 -> validate 401
  *   -> spend + remove 200
@@ -1242,9 +1271,10 @@ const deleteAccount = api.delete('/api/accounts/{id}', ({ params, request, respo
     field-by-field compare refuses every closure. Measured D5 (a random GUID) and D6 (a TRANSFER
     authorisation minted from the same account) -> 401 AUTHORIZATION_INVALID "This authorisation
     cannot be used.", uniform on purpose — the mock is no more an oracle than the server. Expiry:
-    E1/E2 (measure-after-2026-09-06.txt, d93ba10 working tree merged as 19742ff) — a DELETE 130 s
-    after a mint whose expiresAt was mint+2m -> 401 AUTHORIZATION_EXPIRED "This authorisation has
-    expired. Enter your PIN again to confirm.", PinAccessFailedCount 0/0, row still Pending.
+    E1/E2 (2026-09-06, d93ba10 working tree merged as 19742ff; row 11 of ADR-0049's "After"
+    table) — a DELETE 130 s after a mint whose expiresAt was mint+2m -> 401 AUTHORIZATION_EXPIRED
+    "This authorisation has expired. Enter your PIN again to confirm.", PinAccessFailedCount 0/0,
+    row still Pending.
   */
   const authorization = validateAuthorization(stepUp.id, request, {
     operation: 'AccountDeletion',
@@ -1920,8 +1950,8 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
   /*
     THE PIN LADDER LEFT WITH THE PIN (ADR-0056), AND THE ORDER BELOW IS MEASURED, NOT REASONED.
 
-    Taken against the running API on 2026-09-21 (evidence-withdraw-after-2026-09-21.txt in the
-    working-state repo), one real request per row:
+    Taken against the running API on 2026-09-21 (the run ADR-0056 tabulates under "Before → After,
+    measured"), one real request per row:
 
       withdraw 5000 (over balance), NO authorisation   -> 422 INSUFFICIENT_FUNDS
       withdraw 10,  NO authorisation                   -> 401 AUTHORIZATION_REQUIRED
@@ -2275,8 +2305,8 @@ function checkPinInBand(
   ============================================================================================
 
   Every status and errorCode below was MEASURED against the running API on 2026-08-16 and is quoted
-  beside the branch that produces it. Full transcript with bodies:
-  `azurebank-work/plans/step-up-and-audit/A2-PR2-MEASURED-CONTRACT.md`.
+  beside the branch that produces it. The full transcript, with bodies, is the measured step-up
+  contract whose rows transferHandler.test.ts quotes at its assertions.
 
   Two off-by-ones the mock must NOT invent, both measured:
     - the lock lands ON the third wrong PIN, not after it (checkPinInBand already does this);
@@ -2762,8 +2792,8 @@ const authoriseTransfer = api.post(
       correction.
 
       MEASURED A1 (2026-09-07T14:17:53Z, PR #156's working tree on 3c30122, merged as fda7ff7, BFF
-      :5000 -> API :7215, AzureBankDev, DailyLimit:Amount default; transcript
-      plans/daily-limit/measure-after-2026-09-07.txt): an over-limit mint with a WRONG PIN answers
+      :5000 -> API :7215, AzureBankDev, DailyLimit:Amount default; row A1 of ADR-0050's "After"
+      table): an over-limit mint with a WRONG PIN answers
       422 DAILY_LIMIT_EXCEEDED and never 401, spends no attempt (`PinAccessFailedCount` 0 -> 0 after
       three of them) and mints nothing. That is the behaviour change ADR-0050 states plainly, and
       PLACEMENT ALONE buys it here: `mockState.pinAttempts` and `mockState.pinLockedUntil` are
@@ -2811,8 +2841,8 @@ const authoriseTransfer = api.post(
     // MEASURED: 422 PIN_REQUIRED · 429 PIN_LOCKED (retryAfterSeconds 900, on the THIRD miss) ·
     // 401 INVALID_PIN. Same helper the transfer uses, so the two cannot drift.
     // The PIN_REQUIRED sentence: measured 2026-09-06T19:16Z on the DELETION mint (main 19742ff;
-    // M0 in measure-after-main-19742ff-2026-09-06.txt) as "PIN must be set before authorising
-    // this operation."; StepUpAuthorizationService.cs is the ONE producer for all three mints, so
+    // row M0 of that run) as "PIN must be set before authorising this operation.";
+    // StepUpAuthorizationService.cs is the ONE producer for all three mints, so
     // the transfer mints say the same — code says, not re-measured on /api/transfers/authorizations
     // after the change (ADR-0049 D4 generalised it from "…authorising a transfer.").
     const pinRefusal = checkPinInBand(
@@ -2838,8 +2868,8 @@ const authoriseTransfer = api.post(
  * POST /api/transactions/withdraw/authorizations — mint one for a WITHDRAWAL (ADR-0056).
  *
  * Refusal order mirrors `TransactionService.AuthoriseWithdrawalAsync`: binding, then OWNERSHIP of
- * the account, then the PIN. Measured on the running API 2026-09-21
- * (evidence-withdraw-after-2026-09-21.txt):
+ * the account, then the PIN. Measured on the running API 2026-09-21 (the run ADR-0056 tabulates
+ * under "Before → After, measured"):
  *
  *   mint 10,   correct PIN                    -> 201 "Withdrawal authorised"
  *   mint 5000  (OVER the balance), correct PIN -> 201  <- the mint does NOT check funds
@@ -3033,9 +3063,9 @@ const authoriseInternalTransfer = api.post(
  * The third mint, on the same rail as the two above and refused in the order
  * `AccountService.AuthoriseDeletionAsync` refuses: binding, then OWNERSHIP, then the two closure
  * guards, then the PIN — so a wrong PIN on a funded or primary account costs no attempt, and an
- * account the caller does not own costs nothing at all. Every status below quotes a row of
- * `azurebank-work/plans/account-deletion/measure-after-main-19742ff-2026-09-06.txt`, measured
- * 2026-09-06T19:16Z on main 19742ff through the BFF (:5000 -> :7215, AzureBankDev):
+ * account the caller does not own costs nothing at all. Every status below quotes a row of one
+ * transcript, measured 2026-09-06T19:16Z on main 19742ff through the BFF (:5000 -> :7215,
+ * AzureBankDev):
  *
  *   M4  unknown id, correct pin        -> 404 ACCOUNT_NOT_FOUND (stepUpAuthorizations untouched)
  *   M2  funded account, WRONG pin      -> 422 NON_ZERO_BALANCE, PinAccessFailedCount unchanged
@@ -3071,7 +3101,7 @@ const authoriseAccountDeletion = api.post(
       directly: malformed JSON rejected the promise (an MSW error, not a response), and a JSON
       `null` reached `mintPinBindFailure`, which reads `body.pin` off it and threw. CodeRabbit
       raised it on the PR. Measured on THIS endpoint before accepting, 2026-09-07T12:30Z on main
-      19742ff through the BFF (`plans/account-deletion/measure-badbody-2026-09-07.txt`):
+      19742ff through the BFF:
 
         body `{pin:`   -> 400 {"$":["'p' is an invalid start of a property name. ..."], "request":[...]}
         body `null`    -> 400 {"":["A non-empty request body is required."], "request":[...]}
@@ -3127,8 +3157,8 @@ const authoriseAccountDeletion = api.post(
       amount: 0,
     });
 
-    // Measured M5: 201, expiresAt = mint + 2m (E1 in measure-after-2026-09-06.txt: 10:44:53 ->
-    // 10:46:53), message from AccountController.cs.
+    // Measured M5: 201, expiresAt = mint + 2m (E1 of the first "after" run, 2026-09-06: 10:44:53
+    // -> 10:46:53), message from AccountController.cs.
     return response(201).json({ data: minted, message: 'Account closure authorised' });
   },
 );
@@ -3329,9 +3359,9 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     THE DAILY RUNG ON THE TRANSFER, AND IT SITS ABOVE THE BALANCE (ADR-0050 D4 item 2). That order is
     the whole point of the A4 re-run.
 
-    MEASURED A4, the 14:46:26Z re-run (PR #156's working tree on 3c30122, merged as fda7ff7, BFF
-    :5000 -> API :7215, AzureBankDev, DailyLimit:Amount default; transcript
-    plans/daily-limit/measure-after-2026-09-07.txt): used 4,900, balance 300, spend 400 ->
+    MEASURED A4, the 14:46:26Z re-run of 2026-09-07 (PR #156's working tree on 3c30122, merged as
+    fda7ff7, BFF :5000 -> API :7215, AzureBankDev, DailyLimit:Amount default; row A4 of ADR-0050's
+    "After" table): used 4,900, balance 300, spend 400 ->
     `422 errorCode=DAILY_LIMIT_EXCEEDED extra={"limit": 5000, "used": 4900.0, "requested": 400,
     "resetsAt": "2026-09-08T00:00:00Z"}` — NOT INSUFFICIENT_FUNDS, though both bounds were violated.
     Cite the 14:46Z block and not the 14:17Z A4 rows: A4.3 is a MINT (which reads no balance) and
@@ -4031,7 +4061,7 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
   const nowMs = Date.now();
   // null for any address that names no account — see `accountForLogin` for the two measurements.
   const account = accountForLogin(email);
-  const locked = account ? loginLockedProblem(account, nowMs) : null;
+  const locked = account ? loginLockedProblem(account.email, nowMs) : null;
   /*
     ORDER IS THE SECURITY PROPERTY, and I had it backwards on the first pass.
 
@@ -4049,14 +4079,14 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
     And while locked the counter is NOT touched: `IncrementAndMaybeLockLoginAsync` is skipped
     entirely (`AuthService.cs:130-134`), so a guesser cannot extend the window by keeping at it.
   */
-  if (!account || password !== MOCK_PASSWORD) {
+  if (!account || password !== account.password) {
     if (account && !locked) {
-      const failures = (mockState.loginFailures[account] ?? 0) + 1;
-      mockState.loginFailures[account] = failures;
+      const failures = (mockState.loginFailures[account.email] ?? 0) + 1;
+      mockState.loginFailures[account.email] = failures;
       if (failures >= MAX_LOGIN_ATTEMPTS) {
         // Reset to 0 as the lock latches: from here the WINDOW is authoritative, not the count.
-        mockState.loginFailures[account] = 0;
-        mockState.loginLockedUntil[account] = apiOffsetInstant(
+        mockState.loginFailures[account.email] = 0;
+        mockState.loginLockedUntil[account.email] = apiOffsetInstant(
           nowMs + LOGIN_LOCKOUT_SECONDS * 1000,
         );
       }
@@ -4084,8 +4114,8 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
   // The one path that reveals the lock: right password, locked account.
   if (locked) return locked;
   // A correct password clears the counter — an expired lock then starts a fresh window at 1.
-  delete mockState.loginFailures[account];
-  mockState.session = { ...MOCK_USER };
+  delete mockState.loginFailures[account.email];
+  mockState.session = { ...account.user };
   /*
     A FRESH SESSION IS ALWAYS LEVEL 1. `SessionService.CreateSession` hardcodes
     `AuthLevel = 1, // Level 1 = authenticated via email/password` (SessionService.cs:45) and mints
@@ -4105,7 +4135,7 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
   return HttpResponse.json({
     // The access token's expiry, which is what the real controller forwards here — NOT the
     // session's absolute cap. They are separate rules with separate lengths.
-    data: { user: { ...MOCK_USER }, expiresAt: mockAccessTokenExpiry() },
+    data: { user: { ...account.user }, expiresAt: mockAccessTokenExpiry() },
     message: 'Login successful',
   });
 });
@@ -4175,6 +4205,97 @@ const register = http.post('*/bff/auth/register', async ({ request }) => {
 });
 
 /**
+ * Whether a request's Content-Type names JSON, as the framework's JSON reader takes it.
+ *
+ * Measured 2026-10-05 on the claim (see `claimDemoCopy`): `application/json` was read, and
+ * `text/plain` and no Content-Type at all were each a 415. Read, not measured there: that the
+ * reader also takes `text/json` and any `application/...+json`, with or without parameters.
+ * They are let through here so that the mock is not stricter than the server on a type the app
+ * never sends.
+ */
+function isJsonMediaType(contentType: string | null): boolean {
+  const mediaType = (contentType ?? '').split(';')[0].trim().toLowerCase();
+  return (
+    mediaType === 'application/json' ||
+    mediaType === 'text/json' ||
+    /^application\/[^/]+\+json$/.test(mediaType)
+  );
+}
+
+/**
+ * POST /bff/auth/demo/claim: on the public demo, take a free demo copy and sign in to it.
+ *
+ * The answer is a sign-in's with the copy beside it, `{ data: { user, expiresAt, copy }, message }`,
+ * and no cache may keep it (`Cache-Control: no-store`): the copy's password is in it. The API's
+ * side of the claim is `ClaimDemoCopy` in backend/src/AzureBank.Api/Controllers/AuthController.cs.
+ *
+ * A refused claim leaves the session it came with as it was. A claim that succeeds replaces it.
+ *
+ * NOT MODELLED: `DEMO_DAILY_LIMIT`. The mock counts no claims per address, so a test that needs
+ * that refusal arms the answer itself.
+ *
+ * MEASURED 2026-10-05, on compose.yaml with compose.demo.yaml and then on compose.yaml alone, both
+ * as Production, the images of one build: each answer below says which. The order of the four
+ * refusals is the order they were met in: the limiter, the 404, the media type, the body.
+ */
+const claimDemoCopy = http.post('*/bff/auth/demo/claim', async ({ request }) => {
+  // The BFF's `auth` limiter, the budget that sign-in, registration and re-authentication draw
+  // on: a claim spends a permit of it, and past the budget the limiter answers and no copy is
+  // taken. It answers before the 404 below. Measured with the demo off, eleven claims in a row
+  // from one address: 404 ten times, then 429 `RATE_LIMIT_EXCEEDED` with `Retry-After: 60` and
+  // the BFF's own path as `instance`. So a claim spends a permit with the demo off as well.
+  const limited = authRateLimited(request);
+  if (limited) return limited;
+  // Middleware, as on the routes above: a claim that arrives with a live session slides its clock
+  // whatever the claim is then answered, the 404 included. See `runSessionActivityMiddleware`:
+  // a path the BFF does not have was measured sliding it.
+  runSessionActivityMiddleware(request);
+  if (!mockDemoEnabled()) {
+    // Off the demo the claim is a path the BFF does not have, whatever was sent. Measured with
+    // the demo off, with `{}` and with no body at all: 404, `Content-Length: 0`, no
+    // Content-Type and no cookie, the header names of `POST /bff/nope`'s answer.
+    return new HttpResponse(null, { status: 404 });
+  }
+  // What the body is called comes before what it holds. Measured with the demo on: no body and
+  // no Content-Type, and `Content-Type: text/plain` with `{}`, were each 415.
+  if (!isJsonMediaType(request.headers.get('Content-Type'))) {
+    return unsupportedMediaTypeProblem();
+  }
+  const claimBody = await readJsonBody(request);
+  if (!claimBody) {
+    // Called JSON and not readable as an object: 400, as the other `/bff/auth` actions answer.
+    // Measured with the demo on and `Content-Type: application/json`: an empty body and `null`
+    // were keyed `""` and `request`; `not json` and `[]` were keyed `$` and `request`.
+    return unreadableBodyProblem(await request.clone().text());
+  }
+  const claimed = claimMockDemoCopy();
+  if (!claimed) {
+    // The API's refusal, forwarded as a sign-in's is: the API's body, with the API's own path as
+    // `instance`. The sentence is `DemoRefusalException.PoolEmptyDetail`
+    // (backend/src/AzureBank.Shared/Exceptions/DemoRefusalException.cs), and this refusal names
+    // no wait: no `retryAfterSeconds`, no `Retry-After`.
+    return problem({
+      status: 429,
+      errorCode: 'DEMO_POOL_EMPTY',
+      detail: 'All demo copies are in use right now. Please try again later.',
+      instance: '/api/auth/demo/claim',
+    });
+  }
+  return HttpResponse.json(
+    {
+      // Two ends, and they are not one value: `expiresAt` here is the access token's, as a
+      // sign-in's is, and `copy.expiresAt` is the copy's.
+      data: { user: claimed.user, expiresAt: mockAccessTokenExpiry(), copy: claimed.copy },
+      // The BFF's own sentence (backend/src/AzureBank.Bff/Controllers/BffAuthController.cs).
+      // Measured with the demo on: "message":"Demo copy claimed", after `data`, whose members
+      // came as `user`, `expiresAt`, `copy`.
+      message: 'Demo copy claimed',
+    },
+    { headers: { 'Cache-Control': 'no-store' } },
+  );
+});
+
+/**
  * POST /bff/auth/reauthenticate — U6.7, the absolute cap.
  *
  * Models the rule that matters: this does not EXTEND the session, it replaces it. The clock restarts
@@ -4198,7 +4319,16 @@ const reauthenticate = http.post('*/bff/auth/reauthenticate', async ({ request }
   if (!mockState.session) {
     return bffProblem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
   }
-  if ((parsed.body.password as string | undefined) !== MOCK_PASSWORD) {
+  // The password of the account the session is on: a claimed demo copy's own, and off the demo
+  // the mock's for every other session.
+  const sessionUserId = mockState.session.id;
+  const sessionCopy = mockState.demoCopies.find((claimed) => claimed.user.id === sessionUserId);
+  const sessionPassword = sessionCopy ? sessionCopy.password : MOCK_PASSWORD;
+  // While the page is the demo a session that is on no claimed copy has no account behind it, as
+  // at sign-in (`accountForLogin`): no password is its password, and the answer is a wrong
+  // password's. Read, not measured: that a running stack answers such a session this way.
+  const outsideEveryCopy = !sessionCopy && mockDemoEnabled();
+  if (outsideEveryCopy || (parsed.body.password as string | undefined) !== sessionPassword) {
     // Re-authentication calls the API's LOGIN endpoint and forwards its answer, so this is the
     // same body the login route produces — `instance` names `/api/auth/login`, not the BFF's own
     // path. Measured rather than assumed to match its sibling, on a throwaway user:
@@ -4445,6 +4575,7 @@ export const handlers = [
   setPin,
   login,
   register,
+  claimDemoCopy,
   reauthenticate,
   me,
   logout,

@@ -1,6 +1,7 @@
 import { createApi } from '@reduxjs/toolkit/query/react';
 import type { FetchBaseQueryMeta } from '@reduxjs/toolkit/query';
 import type {
+  BffDemoClaimResponse,
   BffLoginResponse,
   BffMeResponse,
   BffPinVerificationResponse,
@@ -8,6 +9,7 @@ import type {
 } from '../../api/bffTypes';
 import { unwrap } from '../../api/envelope';
 import {
+  bffDemoClaimResponseSchema,
   bffLoginResponseSchema,
   bffMeResponseSchema,
   bffPinVerificationResponseSchema,
@@ -249,7 +251,7 @@ export const apiSlice = createApi({
           // `undefined` still serialises as an EMPTY header on some transports, and
           // `[FromHeader] Guid?` binds an empty value to null, so the API would answer 401
           // AUTHORIZATION_REQUIRED as though nothing had been sent. Measured on THIS endpoint:
-          // D2/D3 in measure-after-main-19742ff-2026-09-06.txt ('' and '   ' -> 401), 19:16Z.
+          // rows D2/D3, 2026-09-06T19:16Z on main 19742ff ('' and '   ' -> 401).
           ...(stepUpAuthorizationId ? { 'Step-Up-Authorization': stepUpAuthorizationId } : {}),
         },
       }),
@@ -489,8 +491,8 @@ export const apiSlice = createApi({
     /*
       The closure's mint (ADR-0049 D4): operation in the path segment, the PIN in the JSON body and
       nowhere else — never a query string, never a header. The API runs ownership -> the two 422
-      guards -> the PIN, so a wrong PIN on a funded or primary account costs no attempt (M2,
-      measure-after-main-19742ff-2026-09-06.txt). Same StepUpAuthorizationResponse as the transfer
+      guards -> the PIN, so a wrong PIN on a funded or primary account costs no attempt (row M2,
+      measured 2026-09-06 on main 19742ff). Same StepUpAuthorizationResponse as the transfer
       mints, so the STRICT unwrap is one schema.
     */
     authoriseAccountDeletion: builder.mutation<
@@ -575,6 +577,27 @@ export const apiSlice = createApi({
       transformResponse: (response: { data?: BffLoginResponse | null }) =>
         unwrap(response, bffLoginResponseSchema),
       invalidatesTags: (_result, error) => (error ? [] : ['Session']),
+    }),
+
+    /**
+     * Claim a private demo copy. The answer is a sign-in's plus the copy, its password and PIN
+     * among the rest, and it is checked as it arrives like a sign-in's.
+     *
+     * The request is an empty JSON object, not a bare POST: `body: {}` is what makes
+     * fetchBaseQuery write `{}` and a JSON content type, where a mutation written like `logout`
+     * below sends neither. src/features/demo/claim.test.ts holds both.
+     *
+     * No `invalidatesTags`, where the sign-ins beside it each have one. A claim that succeeded
+     * drops the whole cache (src/features/auth/sessionMiddleware.ts), and with that reset in
+     * place a `Session` tag here asked for nothing: `/bff/auth/me` was asked again once after a
+     * claim with the tag and once without it. What asks is the app's mounted probe
+     * (src/features/auth/AuthBootstrap.tsx), for what the reset took from it. The same test file
+     * holds that count, and it is the reset it holds: take the reset out and the count stays put.
+     */
+    claimDemoCopy: builder.mutation<BffDemoClaimResponse, void>({
+      query: () => ({ url: '/bff/auth/demo/claim', method: 'POST', body: {} }),
+      transformResponse: (response: { data?: BffDemoClaimResponse | null }) =>
+        unwrap(response, bffDemoClaimResponseSchema),
     }),
 
     /**
@@ -717,6 +740,7 @@ export const {
   // BFF auth
   useLoginMutation,
   useRegisterMutation,
+  useClaimDemoCopyMutation,
   useReauthenticateMutation,
   useGetMeQuery,
   useLogoutMutation,

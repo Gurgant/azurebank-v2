@@ -64,7 +64,7 @@ What the two files add to that line:
   the token of a user who already exists. CI hands over the seeded demo user's.
 - **`schemathesis.toml`** sets the base URL and the shape of the run (one worker, 100 examples
   per operation, positive and negative inputs, all four phases, seed 42), loads `hooks.py`, and
-  runs every check. CI's conformance job runs this same file (backlog row 41); until then the file
+  runs every check. CI's conformance job runs this same file (since 2026-09-24); until then the file
   ran CI's four response checks and no others, and CI loaded neither file.
 
 **Measured on 2026-09-24**, against a local API on a LocalDB database just reset and seeded by
@@ -144,7 +144,7 @@ check.
 
 ### What every check found
 
-The Quick Start runs every check since backlog row 41, and CI runs the same file. Until then it ran
+The Quick Start runs every check since 2026-09-24, and CI runs the same file. Until then it ran
 CI's four response checks, and `--checks all` on top of it exited 1: five failures from the
 input-side checks CI left out on purpose, and three more that showed only once the first were
 gone:
@@ -167,7 +167,7 @@ gone:
   stops sending the list one, rather than the API starting to refuse them.
 
 This section was "Verbose Output" until 2026-09-23, which `--checks all` never had anything to do
-with, and "Every check, not only CI's four" until backlog row 41.
+with, and "Every check, not only CI's four" until 2026-09-24.
 
 ### Specific Endpoint
 
@@ -237,7 +237,7 @@ Schemathesis automatically:
 | `hooks.py` | The service key and the token-road marker on every request, and a bearer token on every operation that is not anonymous: a throwaway user's, or the one `AZUREBANK_CONTRACT_TOKEN` hands over | ✅ imports — the runs above |
 | `README.md` | This documentation | — |
 
-Both were v3-era until 2026-09-23, and 4.27.1 refused them (backlog rows 38 and 39). Measured
+Both were v3-era until 2026-09-23, and 4.27.1 refused them. Measured
 again that day, before the repair, the configuration stopped at
 `Missing required properties: - 'title'` and `hooks.py` at
 `Hook 'before_call' takes 3 arguments but 2 is defined`.
@@ -253,7 +253,7 @@ Two files were removed instead of repaired, each measured the same day first:
   `No such option '--hypothesis-seed'`, so it printed `CONTRACT TESTS FAILED (exit code: 2)`.
   The Quick Start is what it was trying to be.
 
-CI runs both since backlog row 41: its conformance job loads the configuration, and with it the
+CI runs both since 2026-09-24: its conformance job loads the configuration, and with it the
 hooks, after logging the seeded demo user in and handing its token over in
 `AZUREBANK_CONTRACT_TOKEN`. Until then it passed the token, the key and the checks as flags, and
 depended on neither file.

@@ -237,8 +237,8 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
     /*
       A COOKIE THE STORE CANNOT RESOLVE IS NOT A SESSION AT LEVEL 0 — it is no session.
 
-      The three tests below pin the row the mock got wrong for three and a half weeks (work-log
-      item 232). The SPA's MSW mock answered 403 STEP_UP_REQUIRED with X-Auth-Level-Current: 0 for
+      The three tests below pin the row the mock got wrong for three and a half weeks.
+      The SPA's MSW mock answered 403 STEP_UP_REQUIRED with X-Auth-Level-Current: 0 for
       a cookie that had outlived its session, quoting a measurement from before ADR-0038 removed
       the "No session cookie - let the API handle 401" fall-through. Nothing on this side pinned
       the other half: every cookie this file sent came from CreateSession. Measured 2026-09-03 on
@@ -804,6 +804,155 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
         }
 
         await AssertLooksLikeTheApisOwn401(nothing);
+    }
+
+    // The bare prefix, with nothing after it, is a proxied path too: the proxy's catch-all route
+    // takes it. With no live session it gets the session gate's answer: 401 with the API's own
+    // body, no step-up header, nothing forwarded. Red before RequiresSession named the bare path:
+    // each row 200 from the recording backend, and the path forwarded as it was sent. Falsified,
+    // never committed: with the bare path compared with its letter case kept, the /API and /Api
+    // rows alone go red, the same way. Observed on the test host (2026-10-06, the whole project).
+    [Theory]
+    [InlineData("GET", "/api", "none")]
+    [InlineData("HEAD", "/api", "none")]
+    [InlineData("POST", "/api", "none")]
+    [InlineData("PUT", "/api", "none")]
+    [InlineData("PATCH", "/api", "none")]
+    [InlineData("DELETE", "/api", "none")]
+    [InlineData("OPTIONS", "/api", "none")]
+    [InlineData("GET", "/api?x=1", "none")]
+    [InlineData("GET", "/API", "none")]
+    [InlineData("POST", "/Api", "none")]
+    [InlineData("GET", "/api", "never-issued")]
+    [InlineData("POST", "/api", "never-issued")]
+    [InlineData("GET", "/api", "revoked")]
+    [InlineData("HEAD", "/api?x=1", "revoked")]
+    [InlineData("GET", "/api", "bearer")]
+    public async Task BareApiPath_WithoutLiveSession_Answers401AndForwardsNothing(
+        string method, string path, string sessionKind)
+    {
+        var (factory, backend) = WithRecorder();
+        var client = factory.CreateClient();
+
+        HttpRequestMessage request;
+        switch (sessionKind)
+        {
+            case "none":
+                request = new HttpRequestMessage(new HttpMethod(method), path);
+                break;
+            case "never-issued":
+                request = Request(new HttpMethod(method), path, CookieName(factory), NeverIssuedSessionId);
+                break;
+            case "revoked":
+                var (sessionId, cookieName, sessions) = CreateSession(factory);
+                sessions.EndSession(sessionId);
+                request = Request(new HttpMethod(method), path, cookieName, sessionId);
+                break;
+            case "bearer":
+                request = BearerOnly(new HttpMethod(method), path);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(sessionKind), sessionKind, null);
+        }
+
+        var response = await client.SendAsync(request);
+
+        using (new AssertionScope())
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            backend.ForwardedPaths.Should().BeEmpty();
+        }
+
+        AssertNoStepUpHeaders(response);
+        await AssertLooksLikeTheApisOwn401(response);
+    }
+
+    // CONTROL: green before and after. With a live session the bare /api is forwarded as before:
+    // one forwarded path, carrying the session's token; the same for /api?x=1 and for /API.
+    // Observed on the test host (2026-10-06).
+    [Theory]
+    [InlineData("GET", "/api")]
+    [InlineData("HEAD", "/api")]
+    [InlineData("POST", "/api")]
+    [InlineData("DELETE", "/api")]
+    [InlineData("GET", "/api?x=1")]
+    [InlineData("GET", "/API")]
+    public async Task BareApiPath_WithLiveSession_IsForwardedWithBearerToken(string method, string path)
+    {
+        var (factory, backend) = WithRecorder();
+        var (sessionId, cookieName, _) = CreateSession(factory);
+        var client = factory.CreateClient();
+
+        var request = Request(new HttpMethod(method), path, cookieName, sessionId);
+        var response = await client.SendAsync(request);
+
+        using (new AssertionScope())
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            backend.ForwardedPaths.Should().ContainSingle();
+            backend.ForwardedAuthorization.Should().ContainSingle().Which.Should().Be("Bearer fake-jwt");
+        }
+    }
+
+    // CONTROL: green before and after. The gate keeps its segment boundary and its one prefix.
+    // With no session, and no Spa:RootPath (WithRecorder sets none), a path that only begins like
+    // the prefix (/apix, /api-docs, /api.json) and the bare /bff and /health are answered 404 with
+    // an empty body, and nothing is forwarded. Falsified, never committed: with the prefix tested
+    // with no boundary (starts with "/api"), the five /apix, /api-docs and /api.json rows alone go
+    // red, 401 where 404 is expected. Observed on the test host (2026-10-06, the whole project).
+    [Theory]
+    [InlineData("GET", "/apix")]
+    [InlineData("GET", "/apix/thing")]
+    [InlineData("POST", "/apix/thing")]
+    [InlineData("GET", "/api-docs")]
+    [InlineData("GET", "/api.json")]
+    [InlineData("GET", "/bff")]
+    [InlineData("POST", "/bff")]
+    [InlineData("GET", "/health")]
+    public async Task WithoutSession_UngatedPaths_Answer404WithEmptyBodyAndNothingForwarded(string method, string path)
+    {
+        var (factory, backend) = WithRecorder();
+        var client = factory.CreateClient();
+
+        var request = new HttpRequestMessage(new HttpMethod(method), path);
+        var response = await client.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+
+        using (new AssertionScope())
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+            backend.ForwardedPaths.Should().BeEmpty();
+            body.Should().BeEmpty();
+        }
+    }
+
+    // CONTROL: green before and after. The prefix with nothing after its slash, in either letter
+    // case, and a path under it that names nothing were under the gate already: with no session,
+    // 401 with the API's own body and nothing forwarded. Falsified, never committed: with a path
+    // under the prefix gated only when something follows the slash, the /api/ and /API/ rows alone
+    // go red; with the prefix compared with its letter case kept, the /API/ row alone; each 200
+    // from the recording backend and the path forwarded as it was sent. Observed on the test host
+    // (2026-10-06, the whole project).
+    [Theory]
+    [InlineData("GET", "/api/")]
+    [InlineData("GET", "/API/")]
+    [InlineData("GET", "/api/nope")]
+    public async Task ApiPrefixWithItsSlash_AndUnderIt_WithoutSession_Answer401AndForwardNothing(
+        string method, string path)
+    {
+        var (factory, backend) = WithRecorder();
+        var client = factory.CreateClient();
+
+        var response = await client.SendAsync(new HttpRequestMessage(new HttpMethod(method), path));
+
+        using (new AssertionScope())
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            backend.ForwardedPaths.Should().BeEmpty();
+        }
+
+        AssertNoStepUpHeaders(response);
+        await AssertLooksLikeTheApisOwn401(response);
     }
 
     [Fact]

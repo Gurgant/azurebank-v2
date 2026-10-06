@@ -28,12 +28,12 @@ module loads from the environment -- 4.27.1 has no --hooks flag:
 
     SCHEMATHESIS_HOOKS=tests.contract.hooks schemathesis run docs/api/openapiv1.json --url http://localhost:5068
 
-CI's conformance job loads this module too, through the configuration file (backlog row 41), so
+CI's conformance job loads this module too, through the configuration file (since 2026-09-24), so
 a broken hook is a red job. It logs the seeded demo user in first and hands the token over in
-AZUREBANK_CONTRACT_TOKEN. Until row 41 it loaded neither file and passed the token and the key as
+AZUREBANK_CONTRACT_TOKEN. Until then it loaded neither file and passed the token and the key as
 -H arguments, so nothing in CI proved this file worked.
 
-Until 2026-09-23 this was a v3-era file that 4.27.1 refused at import (backlog row 38).
+Until 2026-09-23 this was a v3-era file that 4.27.1 refused at import.
 """
 
 import os

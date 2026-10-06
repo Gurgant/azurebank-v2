@@ -643,7 +643,7 @@ describe('the PIN gates at the MINT, in the order the API applies them (ADR-0042
  * €500, one spent twice, a header that is not a GUID — which is exactly where a mock that is merely
  * "green" stops matching the server.
  *
- * Every expectation is a row of `A2-PR2-MEASURED-CONTRACT.md`, captured with curl against the API
+ * Every expectation is a row of the measured step-up contract, captured with curl against the API
  * on `:5068` and quoted at the assertion rather than summarised.
  */
 
@@ -1479,10 +1479,10 @@ describe('a route GUID takes every format, because MVC binds it', () => {
 /**
  * THE DAILY OUTGOING-TRANSFER BOUND (ADR-0050), one row per probe letter.
  *
- * Every expected value below is quoted from `azurebank-work/plans/daily-limit/
- * measure-after-2026-09-07.txt`, measured 2026-09-07T14:17:53Z, and the A4 re-run at 14:46:26Z, on
+ * Every expected value below is quoted from one transcript,
+ * measured 2026-09-07T14:17:53Z, and the A4 re-run at 14:46:26Z, on
  * PR #156's working tree at 3c30122 (merged as fda7ff7), BFF :5000 -> API :7215, AzureBankDev,
- * DailyLimit:Amount default. A1..A9 are that file's row labels.
+ * DailyLimit:Amount default. A1..A9 are the row labels of ADR-0050's "After" table.
  *
  * The rows that need a used-up day drive `mockState.dailyTransferLimit` DOWN rather than pushing
  * 5,000 of mock money through the handlers — the mock's `SetDailyLimit(500)`, which is how the

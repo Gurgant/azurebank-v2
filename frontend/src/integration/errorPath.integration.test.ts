@@ -170,8 +170,7 @@ describe('integration: problemBaseQuery normalises real backend errors', () => {
     /*
       The same rule on the account closure (ADR-0049), which is the row the transfer measurement
       above could not stand in for. Measured 2026-09-06T19:16Z on main 19742ff through the BFF
-      (:5000 -> :7215), the cookie alive at level 1 — D1 in
-      azurebank-work/plans/account-deletion/measure-after-main-19742ff-2026-09-06.txt:
+      (:5000 -> :7215), the cookie alive at level 1 — row D1 of that run:
 
         DELETE /api/accounts/{spare}, NO Step-Up-Authorization header
           -> 401 {"detail":"This account closure has not been authorised.",

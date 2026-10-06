@@ -7,8 +7,8 @@ import { transactionSummarySchema } from '../api/responseSchemas';
  * Close an account the way ADR-0049 requires: mint a deletion authorisation from the seeded PIN,
  * then DELETE with it in `Step-Up-Authorization`. The three tests below that close an account are
  * about identity and the ledger, not about the second factor, so the mint-then-delete shape lives
- * here once. A headerless DELETE answers 401 AUTHORIZATION_REQUIRED on the aligned mock (D1 in
- * measure-after-main-19742ff-2026-09-06.txt), which is what `accountDeletionHandler.test.ts` pins.
+ * here once. A headerless DELETE answers 401 AUTHORIZATION_REQUIRED on the aligned mock (row D1,
+ * measured 2026-09-06 on main 19742ff), which is what `accountDeletionHandler.test.ts` pins.
  */
 async function closeInMock(id: string): Promise<Response> {
   const minted = await fetch(`/api/accounts/${id}/deletion-authorizations`, {

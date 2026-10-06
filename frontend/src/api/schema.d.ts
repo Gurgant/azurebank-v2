@@ -753,6 +753,15 @@ export interface paths {
                         "application/problem+json": components["schemas"]["ProblemDetails"];
                     };
                 };
+                /** @description Payload Too Large - the request body exceeds the 32 KB limit for this endpoint (PAYLOAD_TOO_LARGE). */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
                 /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
                 415: {
                     headers: {
@@ -1006,8 +1015,9 @@ export interface paths {
         /**
          * Claim a demo copy
          * @description On the public demo, take one free demo copy for a visitor and sign in to it: the answer
-         *     carries the tokens and the user a login answers, and what signs in to the copy again. The
-         *     copy's password exists in this answer only. A 429 names its reason in `errorCode`:
+         *     carries the tokens and the user a login answers, and what signs in to the copy again. On
+         *     the server the copy's password exists in this answer only: the database holds its hash.
+         *     The browser that made the claim keeps it. A 429 names its reason in `errorCode`:
          *     `DEMO_POOL_EMPTY` when no copy is free, `DEMO_DAILY_LIMIT` when this client has claimed as
          *     many copies as one client may in a day, with `retryAfterSeconds`.
          */
@@ -2210,6 +2220,15 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
+                /** @description Payload Too Large - the request body exceeds the 32 KB limit for this endpoint (PAYLOAD_TOO_LARGE). */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
                 /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
                 415: {
                     headers: {
@@ -2522,6 +2541,15 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
+                /** @description Payload Too Large - the request body exceeds the 32 KB limit for this endpoint (PAYLOAD_TOO_LARGE). */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
                 /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
                 415: {
                     headers: {
@@ -2656,6 +2684,15 @@ export interface paths {
                 };
                 /** @description Not Found */
                 404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Payload Too Large - the request body exceeds the 32 KB limit for this endpoint (PAYLOAD_TOO_LARGE). */
+                413: {
                     headers: {
                         [name: string]: unknown;
                     };
