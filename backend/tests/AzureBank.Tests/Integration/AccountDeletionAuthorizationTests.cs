@@ -27,9 +27,9 @@ namespace AzureBank.Tests.Integration;
 /// real ones. Status and error codes below are quoted beside the assertion with their provenance,
 /// and only what one of the two filed transcripts shows is called measured: the closure guards,
 /// the ownership refusals and the success message were MEASURED on the running stack on 2026-09-06
-/// at 09:24Z (main d93ba10, before this change — measure-before-2026-09-06.txt, rows D1-D10/R1);
+/// at 09:24Z (main d93ba10, before this change — the "before" transcript, rows D1-D10/R1);
 /// what the change introduces was MEASURED on the same stack at 10:44Z on this working tree
-/// (measure-after-2026-09-06.txt, rows M0-M5, D1-D16, E1-E2) and cites its row. Anything neither
+/// (the "after" transcript, rows M0-M5, D1-D16, E1-E2) and cites its row. Anything neither
 /// transcript contains is marked as expected from the code, and says which code.
 /// </para>
 ///
@@ -191,7 +191,7 @@ public class AccountDeletionAuthorizationTests : IntegrationTestBase
         var mintedAt = DateTime.UtcNow;
         var minted = await MintOkAsync(spare);
 
-        // Measured 2026-09-06T10:44Z on the running stack (M5, measure-after-2026-09-06.txt): 201
+        // Measured 2026-09-06T10:44Z on the running stack (row M5 of the "after" transcript): 201
         // "Account closure authorised", {authorizationId, expiresAt = mint + 2m}, row
         // "AccountDeletion Pending NULL".
         minted.AuthorizationId.Should().NotBeEmpty();
@@ -314,11 +314,11 @@ public class AccountDeletionAuthorizationTests : IntegrationTestBase
     public async Task Delete_PresentingNoAuthorisation_IsRefused_AndLeavesARefusalRow()
     {
         /*
-          THE POINT OF THE WHOLE CHANGE. Measured 2026-09-06 on main d93ba10, before it (D4 in
-          measure-before-2026-09-06.txt, 09:24Z): a DELETE of this shape — empty non-primary
+          THE POINT OF THE WHOLE CHANGE. Measured 2026-09-06 on main d93ba10, before it (row D4 of
+          the "before" transcript, 09:24Z): a DELETE of this shape — empty non-primary
           account — CARRYING a Step-Up-Authorization header answered 200 "Account deleted
           successfully". The transcript records only that D4 carried a header; the probe script
-          (del-before-probe.py) sent a random well-formed GUID. The header was never consulted. A
+          sent a random well-formed GUID. The header was never consulted. A
           HEADERLESS DELETE on a spare was NOT measured in that run — the probe's D5 was gated on
           the account surviving D4, and D4 had closed it — and no headerless 200 is claimed from it;
           at d93ba10 AccountController/AccountService read no header at all, so the two took the
@@ -489,8 +489,7 @@ public class AccountDeletionAuthorizationTests : IntegrationTestBase
           closest shape an attacker holding the user's transfer flow can obtain — is refused.
 
           MUTATED 2026-09-06 with the operation name deleted from the binding hash (a test run, not
-          a running-stack measurement; output filed in azurebank-work/plans/account-deletion/
-          measure-tests-2026-09-06.txt): this test STAYED GREEN and only
+          a running-stack measurement; ADR-0049 D3 records it): this test STAYED GREEN and only
           StepUpAuthorizationServiceTests.ComputeBindingHash_ForAccountDeletion… went red. A
           transfer authorisation cannot be minted with the closure's exact shape — the
           transfer mint requires a payee and an amount of at least 0.01, and both are in the hash —
@@ -635,7 +634,7 @@ public class AccountDeletionAuthorizationTests : IntegrationTestBase
         // a second refusal row would name an account that no longer stands.
         var again = await DeleteAsync(spare, authorizationId: null);
 
-        // NOT measured before this change: measure-before-2026-09-06.txt has no repeat DELETE of
+        // NOT measured before this change: the "before" transcript has no repeat DELETE of
         // the closed account (its only 404 is D3, a random id). Measured after it,
         // 2026-09-06T10:44Z (D10 with the spent header, D11 with none): 404 ACCOUNT_NOT_FOUND both,
         // refusal rows for the user unchanged — the ownership rung reads through the global query

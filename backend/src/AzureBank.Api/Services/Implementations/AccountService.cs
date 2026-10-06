@@ -304,8 +304,8 @@ public class AccountService : IAccountService
           An EMPTY Step-Up-Authorization header binds to null exactly like an absent one, so both
           land here; a header that is present but not a UUID never reaches this method — MVC model
           binding refuses it upstream with a 400 keyed on the header name (measured on the transfer
-          endpoints, ADR-0042, and on this one 2026-09-06T10:44Z — D4 in
-          measure-after-2026-09-06.txt: 400 model-state keyed "Step-Up-Authorization").
+          endpoints, ADR-0042, and on this one 2026-09-06T10:44Z — row D4 of the run ADR-0049
+          quotes under "After": 400 model-state keyed "Step-Up-Authorization").
         */
         if (stepUpAuthorizationId is not { } authorizationId)
         {
@@ -354,9 +354,8 @@ public class AccountService : IAccountService
           authorisation that committed first. Without the outer loop those losers surfaced as an
           unmapped concurrency exception, which is a 500: the first version of the eight-way proof
           answered one 200 and seven 500s (the test's own output, the implementer's ~10:20Z run on
-          2026-09-06, filed in the working-state repo as
-          plans/account-deletion/measure-tests-2026-09-06.txt — a test run, not a running-stack
-          measurement). Bounded by ConcurrencyRetry.MaxAttempts, jittered between attempts, and the
+          2026-09-06 — a test run, not a running-stack measurement; ADR-0049 D8 quotes its
+          statuses). Bounded by ConcurrencyRetry.MaxAttempts, jittered between attempts, and the
           last failure propagates.
         */
         for (var attempt = 1; ; attempt++)
