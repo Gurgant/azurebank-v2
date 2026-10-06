@@ -21,8 +21,8 @@ namespace AzureBank.Tests.Integration;
 /// same Idempotency-Key (the burst) must produce EXACTLY ONE execution, and
 /// the same request sent once more, after the whole burst has been answered,
 /// must be answered as a replay: the winner's status, the Idempotency-Replayed
-/// header and a response text exactly equal to the winner's (the text a body
-/// decodes to: no bytes are compared).
+/// header with the value true, and a response text exactly equal to the
+/// winner's (the text a body decodes to: no bytes are compared).
 /// (Until 2026-10-06 this spoke of the burst alone, and only the replays that
 /// came back inside it were compared with the winner's answer. Whether one
 /// does is timing: a burst with none compared nothing.)
@@ -160,7 +160,7 @@ internal static class IdempotencyConcurrencyProof
         var key = Guid.NewGuid();
         log($"firing {parallelism} identical parallel POST {url} with key {key}...");
 
-        async Task<(HttpStatusCode Status, bool Replayed, string Body)> SendOnceAsync()
+        async Task<(HttpStatusCode Status, bool Replayed, string? ReplayedValue, string Body)> SendOnceAsync()
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, url)
             {
@@ -173,8 +173,12 @@ internal static class IdempotencyConcurrencyProof
                 request.Headers.Add(StepUpConstants.HeaderName, authorizationId.ToString());
             }
             var response = await client.SendAsync(request);
+            var replayed = response.Headers.TryGetValues(IdempotencyConstants.ReplayedHeaderName, out var values)
+                ? string.Join(",", values)
+                : null;
             return (Status: response.StatusCode,
-                    Replayed: response.Headers.Contains(IdempotencyConstants.ReplayedHeaderName),
+                    Replayed: replayed is not null,
+                    ReplayedValue: replayed,
                     Body: await response.Content.ReadAsStringAsync());
         }
 
@@ -221,8 +225,8 @@ internal static class IdempotencyConcurrencyProof
         var again = await SendOnceAsync();
         again.Status.Should().Be(winners[0].Status,
             "the identical request sent after the burst must replay the winner's status");
-        again.Replayed.Should().BeTrue(
-            "the identical request sent after the burst must carry the replay header");
+        again.ReplayedValue.Should().Be("true",
+            "the identical request sent after the burst must carry the replay header, and the header must say true");
         ComparableText.Of(again.Body).Should().Be(ComparableText.Of(winners[0].Body),
             "the identical request sent after the burst must replay the winner's exact response text");
 
