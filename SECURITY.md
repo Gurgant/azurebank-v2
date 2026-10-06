@@ -2,8 +2,9 @@
 
 This is a solo portfolio project, not a service with users: it is deployed only as a public demo,
 with invented data and registration closed, and has no supported version or response-time promise.
-_(Until 2026-10-06 this said "it is not deployed, holds no real data". The public demo was turned
-on that day; what it is, and what it keeps of a visitor, is under
+_(Until 2026-10-06 this said "it is not deployed, holds no real data". The app had been on Azure
+since 2026-10-03 ([infra/README.md](infra/README.md)), and the public demo was turned on on
+2026-10-06; what it is, and what it keeps of a visitor, is under
 [What the demo is, and is not](docs/testing/try-the-demo.md#what-the-demo-is-and-is-not).)_
 To report a vulnerability, use GitHub's
 **private vulnerability reporting** on this repository (Security → Report a vulnerability), not a
@@ -91,9 +92,9 @@ as the address. `.example.com` is a domain reserved by RFC 2606, so mail to it r
   (`Encrypt=True;TrustServerCertificate=False`). Encryption at rest is left to the database
   service's own default: this project did not set it and did not read it, so none is claimed.
   _(Until 2026-10-06 this said "Nothing here configures a TLS version or encryption at rest. The
-  project is not deployed, so neither is claimed." The public demo was turned on that day. The
-  first sentence had stopped being exact on 2026-10-03, when `infra/main.bicep` came to `main`
-  with the settings named above.)_
+  project is not deployed, so neither is claimed." The public demo was turned on that day. Neither
+  sentence had been exact since 2026-10-03: that day `infra/main.bicep` came to `main` with the
+  settings named above, and the app was first deployed with it.)_
   _(This section used to list "TLS 1.3 for all connections" and "Sensitive
   data encrypted at rest"; no code or configuration in the repository does either.)_
 
