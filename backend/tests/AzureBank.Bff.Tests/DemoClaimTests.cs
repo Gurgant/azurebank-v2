@@ -665,11 +665,11 @@ public class DemoClaimTests : IClassFixture<WebApplicationFactory<Program>>, IDi
         (await Eventually(() => log.Any(e => e.MessageTemplate.Text.StartsWith("HTTP {RequestMethod}", StringComparison.Ordinal))))
             .Should().BeTrue("ARRANGE: the request's own line is written last, so the claim's lines are all in");
 
-        // Each event as one text: its message, the value of every property, its exception. With
-        // parentheses for braces, as AnswerOfAsync does and for its reason.
+        // Each event as one text: its message, the value of every property, its exception. The
+        // lines are searched as written.
+        // (Until 2026-10-06 this said parentheses for braces, as AnswerOfAsync does and for its reason.)
         var written = log
             .Select(e => string.Join(" ", e.Properties.Select(p => p.Value.ToString()).Prepend(e.RenderMessage()).Append(e.Exception?.ToString())))
-            .Select(line => line.Replace('{', '(').Replace('}', ')'))
             .ToList();
         using (new AssertionScope())
         {

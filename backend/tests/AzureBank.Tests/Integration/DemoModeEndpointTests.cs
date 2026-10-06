@@ -417,14 +417,14 @@ public sealed class DemoModeEndpointTests : IDisposable
         (await EventuallyAsync(() => RequestLinesFor(_demo, ClaimPath) >= 1)).Should().BeTrue(
             "ARRANGE: the request's own line is written last, so the claim's events are all in");
 
-        // With parentheses for braces, as ShapeOfAsync does and for its reason.
+        // The lines are searched as written.
+        // (Until 2026-10-06 this said parentheses for braces, as ShapeOfAsync does and for its reason.)
         var written = _demo.CapturedEvents
             .Select(e => string.Join(
                 " ",
                 e.Properties.Select(p => p.Value.ToString())
                     .Prepend(e.RenderMessage(CultureInfo.InvariantCulture))
                     .Append(e.Exception?.ToString())))
-            .Select(line => line.Replace('{', '(').Replace('}', ')'))
             .ToList();
         var kept = new (string What, string? Value)[]
         {
