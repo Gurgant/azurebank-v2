@@ -66,8 +66,11 @@ public sealed class TrustedProxyNetworkTests : IClassFixture<WebApplicationFacto
         }
     }
 
-    /// <summary>The scripted API: the address each claim was made for, in arrival order.</summary>
-    private sealed class Api
+    /// <summary>
+    /// The scripted API: the address each claim was made for, in arrival order. Internal, not
+    /// private, since 2026-10-06: <see cref="ForwardedForOnARealConnectionTests"/> reads the same.
+    /// </summary>
+    internal sealed class Api
     {
         private int _claims;
 
@@ -344,6 +347,27 @@ public sealed class TrustedProxyNetworkTests : IClassFixture<WebApplicationFacto
             Caller
         },
         { "an over-long entry: 65,536 characters that are no address", [$"{Claimed}, {new string('a', 65536)}"], Proxy },
+
+        // Added 2026-10-06, with StrictForwardedFor, which says what the framework's own reading
+        // did with the first five: an address after a zone and a quotation mark was BELIEVED, as
+        // written or as its /64, and a quotation mark alone made the caller the proxy itself.
+        { "an IPv4-mapped address, a zone and a quotation mark, before the proxy's entry", [$"::ffff:{Claimed}%\", {Caller}"], Caller },
+        { "the same with no blank after the comma", [$"::ffff:{Claimed}%\",{Caller}"], Caller },
+        { "the same with an IPv6 address", [$"2001:db8:dead:beef::1%\", {Caller}"], Caller },
+        { "the same after an entry of another proxy's", [$"192.0.2.1, ::ffff:{Claimed}%\", {Caller}"], Caller },
+        { "a quotation mark alone before the proxy's entry", [$"\", {Caller}"], Caller },
+        { "an address in quotation marks before the proxy's entry", [$"\"{Claimed}\", {Caller}"], Caller },
+        { "a zone with no quotation mark: the comma ends the entry", [$"::ffff:{Claimed}%, {Caller}"], Caller },
+        { "a tab after the comma", [$"{Claimed},\t{Caller}"], Caller },
+        // A last entry that is not written as an address is none, however a lenient parser reads
+        // it. No proxy writes its entry so; until that day each of these four WAS read, as the
+        // address in the marks, as fe80::/64 twice, and as 203.0.113.9.
+        { "a last entry in quotation marks", [$"{Claimed}, \"{Caller}\""], Proxy },
+        { "a last entry with a numbered zone", [$"{Claimed}, fe80::1%3"], Proxy },
+        { "a last entry with a named zone", [$"{Claimed}, fe80::1%eth0"], Proxy },
+        { "a last entry in hexadecimal", [$"{Claimed}, 0xcb.0.113.9"], Proxy },
+        { "an IPv4 address in brackets", [$"{Claimed}, [{Caller}]"], Proxy },
+        { "a semicolon for the comma", [$"{Claimed}; {Caller}"], Proxy },
     };
 
     [Theory]
@@ -358,6 +382,46 @@ public sealed class TrustedProxyNetworkTests : IClassFixture<WebApplicationFacto
 
         status.Should().Be(HttpStatusCode.OK, what);
         api.ClaimedFor.Should().Equal([expected], what);
+    }
+
+    [Theory]
+    [MemberData(nameof(Headers))]
+    public async Task FromOutsideTheNetwork_AHeaderOfNoShapeIsRead(string what, string[] headers, string _)
+    {
+        // The rows above, sent over a connection that is not the proxy's: whatever each would be
+        // read as from inside, here the caller is the connection.
+        const string Outside = "192.0.2.44";
+        var (host, api) = NewHost([(NetworksKey, Network)]);
+        using var client = Browser(host);
+
+        var status = await ClaimAsync(client, Outside, headers);
+
+        status.Should().Be(HttpStatusCode.OK, what);
+        api.ClaimedFor.Should().Equal([Outside], what);
+    }
+
+    [Fact]
+    public async Task ACallerBehindTheProxy_GetsNoNewBudgetByWritingAnAddress()
+    {
+        // TwoCallersBehindTheProxy_AreTwoClients, turned round: ONE caller that names another
+        // address in each request, the way that was believed until 2026-10-06, is one client.
+        var (host, api) = NewHost([(NetworksKey, Network), ("RateLimiting:AuthPermitLimit", "2")]);
+        using var client = Browser(host);
+
+        var statuses = new List<HttpStatusCode>();
+        for (var i = 0; i < 3; i++)
+        {
+            statuses.Add(await ClaimAsync(client, Proxy, $"::ffff:198.51.100.{i}%\", {Caller}"));
+        }
+
+        using (new AssertionScope())
+        {
+            statuses.Should().Equal(
+                [HttpStatusCode.OK, HttpStatusCode.OK, HttpStatusCode.TooManyRequests],
+                "the limit here is 2 for one client, whatever it writes");
+            api.ClaimedFor.Should().Equal(
+                [Caller, Caller], "and the API counts the day's copies of the same one caller");
+        }
     }
 
     [Fact]
@@ -383,6 +447,8 @@ public sealed class TrustedProxyNetworkTests : IClassFixture<WebApplicationFacto
     // Two hops allowed, and the last entry is not a listed proxy: the walk stops there, and the
     // entry before it, which that stranger wrote, is not believed.
     [InlineData("2", $"{Claimed}, {Caller}", Caller)]
+    // The same, the stranger's entry written the way that hid the comma after it until 2026-10-06.
+    [InlineData("2", $"192.0.2.1, ::ffff:{Claimed}%\", {Caller}", Caller)]
     public async Task ForwardLimit_IsStillTheNumberOfHopsBelieved(string forwardLimit, string header, string expected)
     {
         var (host, api) = NewHost([(NetworksKey, Network), ("ForwardedHeaders:ForwardLimit", forwardLimit)]);

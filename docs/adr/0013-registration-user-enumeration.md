@@ -159,6 +159,20 @@ knowingly accepted, time-boxed residual with a concrete deferral trigger.
     silence; and when the framework reads it as another network than it shows. The last was
     measured: `System.Net.IPNetwork.TryParse` reads `10.0.0.1/8` as `10.0.0.0/8`,
     `010.0.0.0/8` as `8.0.0.0/8` and `10/8` as `0.0.0.0/8`.*
+  - *The header is made a list of addresses and nothing else before the framework reads it
+    (added later that day, `StrictForwardedFor`). "The caller is the last entry" was not true of
+    the framework's reading alone. It splits the header as a list of quoted strings, and its
+    address parser drops whatever follows a `%` as an IPv6 zone: a caller that wrote
+    `::ffff:198.51.100.200%"` before the proxy's entry was taken for `198.51.100.200`, and it
+    could name another address in every request, each a new budget at both limits and a new
+    day's allowance of copies; a quotation mark alone made the caller the proxy itself
+    (measured on the BFF's pipeline and on a loopback socket, .NET 10). Against anybody who
+    knew it, listing a proxy would then have been worse than listing none. So the
+    header's lines are split at every comma, and an entry that holds any character an address
+    is not written with becomes the word `unknown`; which entries are believed stays the
+    framework's. Refused: writing a reader of the header in place of the framework's, which
+    would have carried its own mistakes; and leaving it to the platform's ingress, which
+    nothing here has measured.*
   - *A public range is not refused. A proxy may have public addresses, and whether a range is
     the proxy's cannot be read from the range: that is measured on the deployment and proved
     there. `KnownProxies` is checked as it was: the same lenient parser reads its entries, and a
@@ -176,7 +190,8 @@ knowingly accepted, time-boxed residual with a concrete deferral trigger.
   forwarded header: the proxy writes `X-Forwarded-For` itself, from the address the BFF holds by
   then, the browser's own `X-Real-IP` goes on as sent, and with a proxy listed the framework's
   `X-Original-For` goes on too, holding the proxy's address. Held by
-  `TrustedProxyNetworkTests` and `ProxyOptionsValidatorTests`.)*
+  `TrustedProxyNetworkTests`, `ForwardedForOnARealConnectionTests`, `StrictForwardedForTests`
+  and `ProxyOptionsValidatorTests`.)*
 - **Security config fails fast.** Both controls are validated at startup
   (`IValidateOptions` + `ValidateOnStart`, mirroring the pepper validator in ADR-0011): a
   non-positive rate-limit value or an unparseable `KnownProxies` entry stops the app. Both

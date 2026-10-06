@@ -463,11 +463,27 @@ try
     // address (a Unix socket, a named pipe, a test server) comes from no listed proxy and from
     // no listed network, so it is left as it is, and its caller is the one key "unknown". Until
     // that day the middleware ran on every request once an exact address was listed.
+    //
+    // And the header it reads is first made a list of addresses and nothing else. Read as the
+    // framework reads it, a caller behind the listed proxy chose its own address: with
+    // StrictForwardedFor.Rewrite taken out, the rows of TrustedProxyNetworkTests and of
+    // ForwardedForOnARealConnectionTests that name a zone and a quotation mark fail, the claim
+    // made for the address the caller wrote (measured on .NET 10, 2026-10-06; StrictForwardedFor
+    // says how). Inside this branch only: with nothing listed neither runs, and a request's
+    // headers are as they arrived.
     if (trustForwardedFor)
     {
         app.UseWhen(
             context => context.Connection.RemoteIpAddress is not null,
-            behindAProxy => behindAProxy.UseForwardedHeaders());
+            behindAProxy =>
+            {
+                behindAProxy.Use((context, next) =>
+                {
+                    StrictForwardedFor.Rewrite(context.Request.Headers);
+                    return next(context);
+                });
+                behindAProxy.UseForwardedHeaders();
+            });
     }
 
     // 0. Correlation id — FIRST, so every line below (including the request log) can name the

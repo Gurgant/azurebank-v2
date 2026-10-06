@@ -168,6 +168,7 @@ AzureBank.Bff/
 │
 ├── 📄 RateLimitPolicies.cs             # "auth" / "lookup" policy names
 ├── 📄 ClientAddress.cs                 # The client a request comes from: the limiters' key, and what the demo claim tells the API
+├── 📄 StrictForwardedFor.cs            # X-Forwarded-For as a list of addresses and nothing else, before the framework reads it
 ├── 📄 Program.cs                       # Application setup
 ├── 📄 appsettings.json                 # Configuration
 └── 📄 appsettings.Development.json     # Dev overrides (session 10/20, PIN 10)
@@ -555,6 +556,16 @@ an entry.
   caller wrote before it is not believed, and a last entry that is no address (`unknown`, a host
   name, anything that does not parse) leaves the proxy's address in place. A port is dropped; an
   IPv4-mapped entry is the IPv4 address; an IPv6 entry is keyed by its /64.
+- **The header is first made a list of addresses and nothing else** (`StrictForwardedFor`, since
+  2026-10-06, later the same day). Its lines are split at every comma, a quotation mark being a
+  character like another, and an entry that holds anything but what an address is written with
+  (`0-9 a-f A-F . : [ ]`) becomes the word `unknown`. Read as the framework alone reads it, the
+  sentence above was false: a caller that wrote `::ffff:198.51.100.200%"` before the proxy's
+  entry was taken for `198.51.100.200`, an address of its choosing and a new budget with every
+  request, because the quotation mark hid the comma after it and the parser dropped everything
+  after the `%` as an IPv6 zone; and a quotation mark alone made the caller the proxy itself
+  (measured on this host's pipeline and on a loopback socket, .NET 10). So a last entry with a
+  zone, in quotation marks or in hexadecimal is no address here, where the framework read one.
 - **At startup** `ProxyOptionsValidator` refuses, in a sentence that names the entry, a network
   that is not `address/prefix-length`; whose prefix length is outside its family's range; that
   is `/0`, or wider than a `/8`; that is an IPv4-mapped IPv6 network; or that .NET reads as
@@ -575,8 +586,11 @@ On the proxied road to the API nothing reads a forwarded header. The proxy write
 address the BFF has for the caller by then, in place of whatever a browser sent under that name;
 a browser's own `X-Real-IP` goes on as it was sent; and with a proxy listed the framework adds
 `X-Original-For`, the proxy's own address, which goes on too. Those three were measured in
-`TrustedProxyNetworkTests`, which holds everything above on the real pipeline; what the proxy
-does with a browser's own `X-Forwarded-Host` or `X-Forwarded-Proto` was not. The API learns a
+`TrustedProxyNetworkTests`, which holds everything above on the real pipeline;
+`ForwardedForOnARealConnectionTests` holds the reading of the header on a loopback socket, where
+the connection's address is the socket's own and the server refuses a line break, a NUL or a
+byte that is not ASCII in the header with 400 before the app sees it. What the proxy does with a
+browser's own `X-Forwarded-Host` or `X-Forwarded-Proto` was not measured. The API learns a
 visitor's address from one place only: the body of the demo's claim, which the BFF's own client
 writes from the same key.
 
