@@ -180,6 +180,33 @@ public sealed class BrowserCookieStaysInTheBffTests : IClassFixture<WebApplicati
         }
     }
 
+    [Fact]
+    public async Task AWriteWithABody_GoesWithTheBearer_AndNoCookieHeader()
+    {
+        // Every other row that looks for the cookie sends a GET. A write is forwarded with its
+        // body, and its cookie stays behind like a read's: a drop made only on a GET passes all of
+        // those rows and fails this one.
+        var (host, api) = NewHost();
+        var session = SignIn(host, "jwt-held-for-this-session");
+        using var client = host.CreateClient();
+
+        var write = Proxied(HttpMethod.Post, "/api/transfers", $"theme=dark; {session}");
+        write.Content = new StringContent("""{"amount":1}""", Encoding.UTF8, "application/json");
+        var response = await client.SendAsync(write);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK, "the request has to reach the API to say anything");
+        var forwarded = api.Requests.Should().ContainSingle().Subject;
+        using (new AssertionScope())
+        {
+            forwarded.Method.Should().Be("POST");
+            forwarded.PathAndQuery.Should().Be("/api/transfers");
+            forwarded.Values("Authorization").Should().Equal(
+                ["Bearer jwt-held-for-this-session"], "the session resolved, and its token is what the API is called with");
+            forwarded.Values("Cookie").Should().BeEmpty(
+                "a write's cookie is no more the API's to read than a read's");
+        }
+    }
+
     [Theory]
     // Where the session's cookie sits among the others, and the three sent as one header or as two.
     [InlineData("theme=dark; SESSION; _ga=GA1.2.345.678")]
