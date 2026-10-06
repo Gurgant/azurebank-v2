@@ -88,7 +88,17 @@ FAKE_AZ = textwrap.dedent('''
         logs = None if destination == '(absent)' else {'destination': destination}
         out({'properties': {'appLogsConfiguration': logs}})
     if 'actionGroups/azurebank-owner?' in url:
-        out({'properties': {'emailReceivers': [{'name': 'owner', 'emailAddress': 'deployed.alerts@example.invalid'}]}})
+        # What the deployed group says of the phone, as FAKE_AZ_PUSH has it. By default nothing:
+        # the answer does not hold the property. "none" is an empty list and "null" a null; what
+        # Azure answers for a group with no such receiver has not been read. Anything else is the
+        # accounts of its receivers of the Azure mobile app, separated by commas.
+        group = {'emailReceivers': [{'name': 'owner', 'emailAddress': 'deployed.alerts@example.invalid'}]}
+        push = os.environ.get('FAKE_AZ_PUSH', 'absent')
+        if push != 'absent':
+            accounts = [] if push in ('none', 'null') else push.split(',')
+            group['azureAppPushReceivers'] = None if push == 'null' else [
+                {'name': 'phone-' + str(number), 'emailAddress': account} for number, account in enumerate(accounts)]
+        out({'properties': group})
     if 'containerApps/azurebank/listSecrets' in url:
         names = ['app-connection', 'jwt-secret', 'idempotency-hash-key', 'stepup-binding-key',
                  'service-key', 'audit-chain-key', 'audit-anchor-key', 'pin-pepper']
@@ -311,7 +321,8 @@ class ScriptCase(unittest.TestCase):
         env = dict(os.environ, FAKE_AZ_STATE=state, FAKE_AZ_LIVE=json.dumps(LIVE), FAKE_AZ_LOG=str(self.log),
                    FAKE_AZ_RULES=str(self.rules), FAKE_AZ_IDS=json.dumps(IDS), FAKE_SEQUENCE=str(self.sequence),
                    PATH=str(self.shim) + os.pathsep + os.environ['PATH'])
-        for name in ('AZUREBANK_ALERT_EMAIL', 'SQLCMDUSER', 'SQLCMDPASSWORD', 'SQLCMDINI', *VARIABLES):
+        for name in ('AZUREBANK_ALERT_EMAIL', 'AZUREBANK_ALERT_PUSH_ACCOUNT', 'SQLCMDUSER', 'SQLCMDPASSWORD',
+                     'SQLCMDINI', *VARIABLES):
             env.pop(name, None)
         env.update(environment)
         return subprocess.run([PWSH, '-NoProfile', '-NonInteractive', '-File', str(HERE / script), *args],
@@ -431,13 +442,151 @@ class SecretsScriptTests(ScriptCase):
         self.assertEqual(self.parameters()['alertEmail'], 'given@example.invalid')
         self.assertIn('alertEmail: from -AlertEmail', result.stderr)
         self.assertNotIn('given@', result.stderr + self.log.read_text(encoding='utf-8'))
-        self.assertEqual([call for call in self.calls() if 'actionGroups' in ' '.join(call)], [])
+        # Until 2026-10-06 this test held that the deployed group is then not asked at all. It is
+        # asked once now, for the phone's account, which this run does not name: the mailbox
+        # written is the argument's all the same (above), and with both named nothing is asked
+        # (test_the_argument_names_the_phones_account_before_anything_else_does).
+        self.assertEqual(len([call for call in self.calls() if 'actionGroups' in ' '.join(call)]), 1)
+        self.assertNotIn('alertPushAccount', self.parameters())
 
     def test_a_mailbox_that_is_not_an_address_is_refused(self):
         result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG, '-AlertEmail', 'not an address')
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.folder / 'parameters.json').exists())
         self.assertEqual(self.calls(), [])
+
+    # The account of the Azure mobile app that the alerts also notify. It is found as the mailbox
+    # is, but for the last place: an account nobody names is no account, and never the signed-in one.
+    PHONE = 'alertPushAccount'
+    NO_PHONE = "alertPushAccount: not written, the template's default applies"
+
+    def test_an_account_for_the_phone_that_nobody_names_is_not_an_error_and_is_not_written(self):
+        # Before any app, and against a deployed group that says nothing of a phone, in the three
+        # ways an answer can say nothing: no such property, an empty list, a null.
+        for state, push in (('empty', None), ('deployed', None), ('deployed', 'none'), ('deployed', 'null')):
+            with self.subTest(state=state, push=push):
+                (self.folder / 'parameters.json').unlink(missing_ok=True)
+                self.log.unlink(missing_ok=True)
+                result = self.secrets('-Action', 'New', '-DeployApp', *(['-ImageTag', TAG] if state == 'empty' else []),
+                                      state=state, **({'FAKE_AZ_PUSH': push} if push else {}))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                values = self.parameters()
+                self.assertNotIn(self.PHONE, values)
+                self.assertIn(self.NO_PHONE, result.stderr)
+                self.assertEqual(result.stderr.count(f'{self.PHONE}: '), 1)
+                # The mailbox is still found, where it was found before: the account's own, or the group's.
+                self.assertEqual(values['alertEmail'], 'owner.mailbox@example.invalid' if state == 'empty'
+                                 else 'deployed.alerts@example.invalid')
+                # One read of the group serves both, and with no group deployed there is none.
+                self.assertEqual(len([call for call in self.calls() if 'actionGroups' in ' '.join(call)]),
+                                 0 if state == 'empty' else 1)
+                self.assert_nothing_leaked(result, values)
+
+    def test_the_argument_names_the_phones_account_before_anything_else_does(self):
+        result = self.secrets('-Action', 'New', '-DeployApp', '-AlertPushAccount', 'given.phone@example.invalid',
+                              state='deployed', AZUREBANK_ALERT_PUSH_ACCOUNT='phone.elsewhere@example.invalid',
+                              FAKE_AZ_PUSH='deployed.phone@example.invalid')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        values = self.parameters()
+        self.assertEqual(values.get(self.PHONE), 'given.phone@example.invalid')
+        self.assertIn(f'{self.PHONE}: from -AlertPushAccount', result.stderr)
+        self.assertEqual(result.stderr.count(f'{self.PHONE}: '), 1)
+        self.assertNotIn('phone@', result.stderr + self.log.read_text(encoding='utf-8'))
+        self.assertNotIn('phone.elsewhere', result.stderr + self.log.read_text(encoding='utf-8'))
+        # The mailbox was not named, so the group was asked for it, once; with both named it is not asked.
+        self.assertEqual(values['alertEmail'], 'deployed.alerts@example.invalid')
+        self.assertEqual(len([call for call in self.calls() if 'actionGroups' in ' '.join(call)]), 1)
+        self.log.unlink()
+        result = self.secrets('-Action', 'New', '-DeployApp', '-AlertPushAccount', 'given.phone@example.invalid',
+                              '-AlertEmail', 'given@example.invalid', state='deployed',
+                              FAKE_AZ_PUSH='deployed.phone@example.invalid')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.parameters()['alertEmail'], self.parameters().get(self.PHONE)),
+                         ('given@example.invalid', 'given.phone@example.invalid'))
+        self.assertEqual([call for call in self.calls() if 'actionGroups' in ' '.join(call)], [])
+        self.assert_nothing_leaked(result, self.parameters())
+
+    def test_the_variable_names_the_phones_account_and_the_report_does_not_show_it(self):
+        # Before any app, and against a deployed group that notifies another account: the variable wins.
+        for state, push in (('empty', None), ('deployed', 'deployed.phone@example.invalid')):
+            with self.subTest(state=state):
+                (self.folder / 'parameters.json').unlink(missing_ok=True)
+                result = self.secrets('-Action', 'New', '-DeployApp', *(['-ImageTag', TAG] if state == 'empty' else []),
+                                      state=state, AZUREBANK_ALERT_PUSH_ACCOUNT='phone.elsewhere@example.invalid',
+                                      **({'FAKE_AZ_PUSH': push} if push else {}))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.parameters().get(self.PHONE), 'phone.elsewhere@example.invalid')
+                self.assertIn(f'{self.PHONE}: from AZUREBANK_ALERT_PUSH_ACCOUNT', result.stderr)
+                self.assertEqual(result.stderr.count(f'{self.PHONE}: '), 1)
+                self.assertNotIn('phone.elsewhere', result.stderr + self.log.read_text(encoding='utf-8'))
+                self.assertNotIn('deployed.phone', result.stderr)
+
+    def test_the_phones_account_the_deployed_alerts_notify_is_kept_when_none_is_named(self):
+        # With nothing named, and with the mailbox named and the phone not: a run that names one
+        # of the two must not forget the other.
+        for more, mailbox in (([], 'deployed.alerts@example.invalid'),
+                              (['-AlertEmail', 'given@example.invalid'], 'given@example.invalid')):
+            with self.subTest(more=more):
+                (self.folder / 'parameters.json').unlink(missing_ok=True)
+                self.log.unlink(missing_ok=True)
+                result = self.secrets('-Action', 'New', '-DeployApp', *more, state='deployed',
+                                      FAKE_AZ_PUSH='deployed.phone@example.invalid')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                values = self.parameters()
+                self.assertEqual((values['alertEmail'], values.get(self.PHONE)),
+                                 (mailbox, 'deployed.phone@example.invalid'))
+                self.assertIn(f'{self.PHONE}: kept from the deployed resource', result.stderr)
+                self.assertEqual(result.stderr.count(f'{self.PHONE}: '), 1)
+                self.assertNotIn('deployed.phone', result.stderr)
+                self.assertEqual(len([call for call in self.calls() if 'actionGroups' in ' '.join(call)]), 1)
+                self.assert_nothing_leaked(result, values)
+
+    def test_deployed_alerts_that_notify_two_phones_stop_the_run_unless_one_is_named(self):
+        # The template writes one such receiver. Two were put there by hand, and no side is chosen.
+        two = 'first.phone@example.invalid,second.phone@example.invalid'
+        result = self.secrets('-Action', 'New', '-DeployApp', state='deployed', FAKE_AZ_PUSH=two)
+        self.assertIn('The deployed alerts notify 2 accounts of the Azure mobile app, not one. '
+                      'Pass -AlertPushAccount. Nothing was written.', self.said(result))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.folder / 'parameters.json').exists())
+        self.assertNotIn('phone@', result.stderr)
+        self.assertEqual(result.stdout, '')
+        result = self.secrets('-Action', 'New', '-DeployApp', '-AlertPushAccount', 'given.phone@example.invalid',
+                              state='deployed', FAKE_AZ_PUSH=two)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.parameters().get(self.PHONE), 'given.phone@example.invalid')
+
+    def test_an_account_for_the_phone_that_is_not_an_address_is_refused(self):
+        # As an argument, before Azure is asked anything; from the variable, before anything is written.
+        result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG, '-AlertPushAccount', 'not an address')
+        self.assertIn('-AlertPushAccount is not an e-mail address. Nothing was written.', self.said(result))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.folder / 'parameters.json').exists())
+        self.assertEqual(self.calls(), [])
+        result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG,
+                              AZUREBANK_ALERT_PUSH_ACCOUNT='planted value')
+        self.assertIn('The account for the Azure mobile app is not an e-mail address. Pass -AlertPushAccount or '
+                      'set AZUREBANK_ALERT_PUSH_ACCOUNT. Nothing was written.', self.said(result))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.folder / 'parameters.json').exists())
+        self.assertNotIn('planted', result.stderr)
+        self.assertEqual(result.stdout, '')
+
+    def test_an_account_for_the_phone_without_deploy_app_is_refused_before_azure_is_asked_anything(self):
+        # The group that carries it is built with the app: a file for the foundation alone cannot
+        # carry it, and an argument that is dropped in silence would be taken for one that was kept.
+        result = self.secrets('-Action', 'New', '-AlertPushAccount', 'given.phone@example.invalid', state='deployed')
+        self.assertIn('-AlertPushAccount needs -DeployApp. Nothing was written.', self.said(result))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.calls(), [])
+        self.assertFalse(self.folder.exists())
+        self.assertEqual(result.stdout, '')
+        # The variable is the terminal's and not this run's: the foundation's file leaves it out.
+        result = self.secrets('-Action', 'New', state='deployed',
+                              AZUREBANK_ALERT_PUSH_ACCOUNT='phone.elsewhere@example.invalid')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn(self.PHONE, self.parameters())
+        self.assertNotIn(self.PHONE, result.stderr)
 
     def test_the_mailbox_the_deployed_alerts_write_to_is_kept_when_none_is_named(self):
         result = self.secrets('-Action', 'New', '-DeployApp', state='deployed')
@@ -2495,11 +2644,14 @@ class TemplateTests(unittest.TestCase):
             self.assertLessEqual(foundation, set(self.main['parameters']))
             self.assertLessEqual(required | {'keepLogs'}, foundation,
                                  'the foundation file must give every required parameter')
-            # With -DemoOn, so that the demo's switch is written too.
+            # With -DemoOn, so that the demo's switch is written too, and with an account for the
+            # phone, so that its parameter is: the name the script writes is the template's.
             self.assertEqual(case.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG, '-DemoOn',
+                                          '-AlertPushAccount', 'the.phone@example.invalid',
                                           state='foundation').returncode, 0)
             written = set(case.parameters())
             self.assertIn('demo', written)
+            self.assertIn('alertPushAccount', written)
             self.assertLessEqual(written, set(self.main['parameters']))
             # What the template's own check asks for when deployApp is true.
             self.assertLessEqual(set(self.compiled['app-inputs']['parameters']) | {'deployApp'}, written)

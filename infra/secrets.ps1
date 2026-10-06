@@ -9,14 +9,22 @@
     * Without -DeployApp: what the foundation needs (the Microsoft Entra administrator and
       deployApp=false). That file holds no secret; it stays in the folder because the
       administrator's sign-in name is shaped like an e-mail address.
-    * With -DeployApp: also the image tag, the address the alerts write to, and the eight
-      application secrets. Each secret comes from the first place that has it: the deployed app,
-      then a file left by a run that stopped, then the system's random generator.
+    * With -DeployApp: also the image tag, the address the alerts write to, the account of the
+      Azure mobile app they also notify if one is named, and the eight application secrets.
+      Each secret comes from the first place that has it: the deployed app, then a file left by
+      a run that stopped, then the system's random generator.
     * No database password is written, because none exists: the app and the migrate job sign in
       as managed identities.
     * The alerts write to -AlertEmail; without it to AZUREBANK_ALERT_EMAIL; without that to the
       address the deployed alerts already write to; and only then to the signed-in account's own
       mailbox.
+    * The alerts also notify the Azure mobile app of the account -AlertPushAccount names;
+      without it, of the one AZUREBANK_ALERT_PUSH_ACCOUNT names; without that, of the one account
+      the deployed alerts already notify so, which is why a later run does not forget it. With
+      none of the three nothing is written and no such receiver is asked for: that is not an
+      error. The signed-in account is never taken for it: whether its sign-in name is the
+      account the app on the phone was set up with is not known here. Without -DeployApp the
+      argument is refused, since the group that would carry it is built with the app.
     * keepLogs is what the deployed environment does now: true if it sends its logs to Azure
       Monitor, false if it sends them nowhere. -LogsOff writes false whatever is deployed. With no
       environment yet and no -LogsOff the template's own default applies.
@@ -50,6 +58,7 @@ param(
     [switch]$DemoOn,
     [string]$ImageTag = '',
     [string]$AlertEmail = '',
+    [string]$AlertPushAccount = '',
     [switch]$LogsOff,
     [string]$Directory = ''
 )
@@ -126,8 +135,12 @@ if ($Action -eq 'Remove') {
 $mailbox = '^[^@\s]+@[^@\s]+\.[^@\s]+$'
 if ($DeployApp -and $ImageTag -and $ImageTag -cnotmatch '^[0-9a-f]{40}$') { throw 'ImageTag must be a full lowercase commit SHA.' }
 if ($AlertEmail -and $AlertEmail -notmatch $mailbox) { throw '-AlertEmail is not an e-mail address. Nothing was written.' }
+if ($AlertPushAccount -and $AlertPushAccount -notmatch $mailbox) { throw '-AlertPushAccount is not an e-mail address. Nothing was written.' }
 # The demo is a setting of the app's two containers: a file for the foundation alone has no use for it.
 if ($DemoOn -and -not $DeployApp) { throw '-DemoOn needs -DeployApp. Nothing was written.' }
+# Nor for the phone's account: the action group is built with the app. Refused, not dropped: an
+# argument left out in silence would be taken for one that was carried.
+if ($AlertPushAccount -and -not $DeployApp) { throw '-AlertPushAccount needs -DeployApp. Nothing was written.' }
 
 Protect-Directory $Directory
 
@@ -246,12 +259,38 @@ if ($DeployApp) {
         $address = $env:AZUREBANK_ALERT_EMAIL
         $source = 'from AZUREBANK_ALERT_EMAIL'
     }
-    if (-not $address -and (Deployed 'Microsoft.Insights/actionGroups' $AlertGroupName)) {
+    # The account of the Azure mobile app the alerts also notify: the e-mail address that app was
+    # set up with on the owner's phone. Found as the mailbox is, in the same order, but for the
+    # last place: an account nobody names is no account, and never the signed-in one. Each line
+    # of the report about it is written whole, once, because the runbook quotes it.
+    $account = $AlertPushAccount
+    $accountSaid = 'alertPushAccount: from -AlertPushAccount'
+    if (-not $account) {
+        $account = $env:AZUREBANK_ALERT_PUSH_ACCOUNT
+        $accountSaid = 'alertPushAccount: from AZUREBANK_ALERT_PUSH_ACCOUNT'
+    }
+    # One read of the deployed group serves both, and it is made when either is still not named:
+    # a run that names the mailbox alone must not forget the phone. Until 2026-10-06 the group was
+    # read only when no mailbox was named.
+    if ((-not $address -or -not $account) -and (Deployed 'Microsoft.Insights/actionGroups' $AlertGroupName)) {
         $group = Invoke-Az rest --method GET --url (Url "Microsoft.Insights/actionGroups/$AlertGroupName" '2023-01-01')
-        $receivers = @($group['properties']['emailReceivers'])
-        if ($receivers.Count -ne 1) { throw "The deployed alerts write to $($receivers.Count) addresses, not one. Pass -AlertEmail. Nothing was written." }
-        $address = $receivers[0]['emailAddress']
-        $source = 'kept from the deployed resource'
+        if (-not $address) {
+            $receivers = @($group['properties']['emailReceivers'])
+            if ($receivers.Count -ne 1) { throw "The deployed alerts write to $($receivers.Count) addresses, not one. Pass -AlertEmail. Nothing was written." }
+            $address = $receivers[0]['emailAddress']
+            $source = 'kept from the deployed resource'
+        }
+        if (-not $account) {
+            # A group with no such receiver may say so with no property, an empty list or a null:
+            # which one Azure gives has not been read, and each is "none". The template writes
+            # one receiver: more were put there by hand, and no side is chosen.
+            $phones = @($group['properties']['azureAppPushReceivers'] | Where-Object { $_ })
+            if ($phones.Count -gt 1) { throw "The deployed alerts notify $($phones.Count) accounts of the Azure mobile app, not one. Pass -AlertPushAccount. Nothing was written." }
+            if ($phones.Count -eq 1) {
+                $account = $phones[0]['emailAddress']
+                $accountSaid = 'alertPushAccount: kept from the deployed resource'
+            }
+        }
     }
     if (-not $address) {
         $address = if ($me.ContainsKey('mail')) { $me['mail'] } else { $null }
@@ -262,6 +301,16 @@ if ($DeployApp) {
     }
     $parameters['alertEmail'] = @{ value = $address }
     $report.Add("alertEmail: $source")
+    if ($account) {
+        if ($account -notmatch $mailbox) {
+            throw 'The account for the Azure mobile app is not an e-mail address. Pass -AlertPushAccount or set AZUREBANK_ALERT_PUSH_ACCOUNT. Nothing was written.'
+        }
+        $parameters['alertPushAccount'] = @{ value = $account }
+        $report.Add($accountSaid)
+    } else {
+        # Not an error: the file says nothing, and the template's default, no such receiver, applies.
+        $report.Add("alertPushAccount: not written, the template's default applies")
+    }
 
     foreach ($name in $plan.Keys) {
         $entry = $plan[$name]
