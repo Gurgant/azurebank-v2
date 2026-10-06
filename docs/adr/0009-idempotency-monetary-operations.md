@@ -268,13 +268,15 @@ minute longer than `RequestDeadline:Seconds`.)*
   2026-09-21, ADR-0056: no monetary body carries a PIN any more — the
   withdrawal's moved to its own mint, which is not an idempotent endpoint. The
   threshold is unchanged; what is gone is the secret that made spooling one to
-  disk the sharpest reason for it.)* *(Amended 2026-09-24, backlog row 42:
+  disk the sharpest reason for it.)* *(Amended 2026-09-24:
   refused unread, an oversized body let Kestrel abort the connection under the
   BFF's proxy — a reset for the sender, or a 502 for the next request on that
   connection. The middleware now reads and discards a body of up to 1 MiB before
   the 413, never buffering or hashing it, and for five seconds at most; above
   that size, or once the five seconds are up, it answers `Connection: close`.
-  `docs/engineering-traps.md` has the measurements.)* *(Amended 2026-10-06:
+  `docs/engineering-traps.md` has the measurements.)* *(2026-10-06: the
+  2026-09-24 note named a row of a private list, which no reader of this
+  repository can open; dropped, not struck.)* *(Amended 2026-10-06:
   the four authorisation mints, which are not idempotent endpoints, answer a
   body over their limit with 413 `PAYLOAD_TOO_LARGE`, a ProblemDetails, once
   the caller is authenticated; with no token the 401 still comes first. Until
