@@ -197,8 +197,13 @@ row, which it names by id, so an enrolment whose notice cannot be recorded does 
 and writes each as an RFC 5322 message into a pickup directory, at-least-once (ADR-0048).
 `Notices:Runner` says which runner is live — the API's own hosted loop, or the same sweep as an
 Azure Function on a timer, rehearsed locally against Azurite (ADR-0051) — and defaults to `None`: as
-shipped nothing delivers, and an owed notice waits for the operator's `notify` verb. Nothing is
-deployed and nothing sends: it stops at a file nobody has seen.
+shipped nothing delivers, and an owed notice waits for the operator's `notify` verb. No runner is
+deployed and nothing sends: it stops at a file nobody has seen. *(Until 2026-10-07 this said
+"Nothing is deployed and nothing sends". The app itself has been on Azure since 2026-10-03
+([infra/README.md](../../infra/README.md)) and is a public demo since 2026-10-06
+([README](../../README.md#status-and-known-limits)). The template that deploys it sets no runner
+and holds no Function, so there `Notices:Runner` is left at `None`: read in `infra/main.bicep`,
+not measured on Azure.)*
 
 ## Keeping the two halves honest
 
