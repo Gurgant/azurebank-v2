@@ -18,7 +18,14 @@ namespace AzureBank.Tests.Integration;
 /// <summary>
 /// THE concurrency proof of ADR-0009, reusable against any host (EF InMemory
 /// smoke and real SQL Server): N byte-identical parallel requests with the
-/// same Idempotency-Key must produce EXACTLY ONE execution.
+/// same Idempotency-Key (the burst) must produce EXACTLY ONE execution, and
+/// the same request sent once more, after the whole burst has been answered,
+/// must be answered as a replay: the winner's status, the Idempotency-Replayed
+/// header with the value true, and a response text exactly equal to the
+/// winner's (the text a body decodes to: no bytes are compared).
+/// (Until 2026-10-06 this spoke of the burst alone, and only the replays that
+/// came back inside it were compared with the winner's answer. Whether one
+/// does is timing: a burst with none compared nothing.)
 ///
 /// Every helper is parallel-safe: authorization travels per request message,
 /// never via HttpClient.DefaultRequestHeaders.
@@ -34,10 +41,15 @@ internal static class IdempotencyConcurrencyProof
     /// <summary>
     /// N identical parallel transfers, one key → exactly one execution:
     /// - exactly ONE 201 without Idempotency-Replayed
-    /// - every other response is a byte-identical replay (201 + header) or
-    ///   a 409 IDEMPOTENCY_IN_FLIGHT
+    /// - every other response is a replay (201 + header) whose text is exactly
+    ///   the winner's, or a 409 IDEMPOTENCY_IN_FLIGHT; they can all be 409s
+    /// - the same request sent once more after the burst is a replay: the
+    ///   winner's status, the header, and exactly the winner's text
     /// - balances move exactly once (mathematically verified)
     /// - exactly one TransferOut / TransferIn transaction pair exists
+    /// (Until 2026-10-06 the second line said "a byte-identical replay", where
+    /// the proof compares the decoded texts, and no line said that the burst
+    /// can come back with no replay, so that nothing was compared.)
     /// </summary>
     public static async Task RunTransferProofAsync(
         HttpClient client, int parallelism, Action<string> log)
@@ -85,7 +97,9 @@ internal static class IdempotencyConcurrencyProof
 
     /// <summary>
     /// Same proof for deposits: N identical parallel deposits, one key →
-    /// the balance grows by the amount exactly once.
+    /// the balance grows by the amount exactly once, and the same request
+    /// sent once more after the burst is a replay of the winner's answer.
+    /// (Until 2026-10-06 this said nothing of replays.)
     /// </summary>
     public static async Task RunDepositProofAsync(
         HttpClient client, int parallelism, Action<string> log)
@@ -146,24 +160,30 @@ internal static class IdempotencyConcurrencyProof
         var key = Guid.NewGuid();
         log($"firing {parallelism} identical parallel POST {url} with key {key}...");
 
-        var responses = await Task.WhenAll(
-            Enumerable.Range(0, parallelism).Select(async _ =>
+        async Task<(HttpStatusCode Status, bool Replayed, string? ReplayedValue, string Body)> SendOnceAsync()
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, url)
             {
-                using var request = new HttpRequestMessage(HttpMethod.Post, url)
-                {
-                    Content = new StringContent(rawBody, Encoding.UTF8, "application/json")
-                };
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-                request.Headers.Add(IdempotencyConstants.HeaderName, key.ToString());
-                if (stepUpAuthorizationId is { } authorizationId)
-                {
-                    request.Headers.Add(StepUpConstants.HeaderName, authorizationId.ToString());
-                }
-                var response = await client.SendAsync(request);
-                return (Status: response.StatusCode,
-                        Replayed: response.Headers.Contains(IdempotencyConstants.ReplayedHeaderName),
-                        Body: await response.Content.ReadAsStringAsync());
-            }));
+                Content = new StringContent(rawBody, Encoding.UTF8, "application/json")
+            };
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            request.Headers.Add(IdempotencyConstants.HeaderName, key.ToString());
+            if (stepUpAuthorizationId is { } authorizationId)
+            {
+                request.Headers.Add(StepUpConstants.HeaderName, authorizationId.ToString());
+            }
+            var response = await client.SendAsync(request);
+            var replayed = response.Headers.TryGetValues(IdempotencyConstants.ReplayedHeaderName, out var values)
+                ? string.Join(",", values)
+                : null;
+            return (Status: response.StatusCode,
+                    Replayed: replayed is not null,
+                    ReplayedValue: replayed,
+                    Body: await response.Content.ReadAsStringAsync());
+        }
+
+        var responses = await Task.WhenAll(
+            Enumerable.Range(0, parallelism).Select(_ => SendOnceAsync()));
 
         var winners = responses.Where(r => r.Status == HttpStatusCode.Created && !r.Replayed).ToList();
         var replays = responses.Where(r => r.Status == HttpStatusCode.Created && r.Replayed).ToList();
@@ -191,6 +211,24 @@ internal static class IdempotencyConcurrencyProof
         {
             conflict.Body.Should().Contain(ErrorCodes.IdempotencyInFlight);
         }
+
+        /*
+          Inside the burst a replay is a matter of timing: a request that finds the key still being
+          processed is answered 409, and every one but the winner can be. So the same request goes
+          once more here, with every answer of the burst in hand: the API stores the winner's
+          answer before sending it, and must answer this request with the same. Started before the
+          burst has been awaited, it can be one more 409. It is a 409 too when the API could not
+          store the winner's answer, which it sends all the same. The first assertion below fails
+          with one message for both; the API's log tells them apart, with an Error line for the
+          second: "Failed to store idempotency response".
+        */
+        var again = await SendOnceAsync();
+        again.Status.Should().Be(winners[0].Status,
+            "the identical request sent after the burst must replay the winner's status");
+        again.ReplayedValue.Should().Be("true",
+            "the identical request sent after the burst must carry the replay header, and the header must say true");
+        ComparableText.Of(again.Body).Should().Be(ComparableText.Of(winners[0].Body),
+            "the identical request sent after the burst must replay the winner's exact response text");
 
         return new ProofOutcome(replays.Count, conflicts.Count);
     }
