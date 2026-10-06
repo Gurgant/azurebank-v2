@@ -7,6 +7,12 @@ templates are compiled by the Bicep CLI and the compiled JSON is read; the CLI's
 works them out offline with given values, as a what-if does. What Azure itself answers is
 checked on the first deployment (README.md).
 
+The deploy script is imported, and nothing of it is run against Azure: its names for the app
+and the jobs, and the shape checks it makes before it moves anything, are asked of what the
+templates work out, so that a name typed in both cannot drift on one side. Its own decisions
+are tested in test_deploy.py. One source of the backend is read as text, for the names of the
+settings the template writes.
+
 On a developer's machine a missing tool skips its tests; in CI a missing tool is an error.
 """
 
@@ -20,6 +26,8 @@ import sys
 import tempfile
 import textwrap
 import unittest
+
+import deploy
 
 HERE = pathlib.Path(__file__).resolve().parent
 TAG = 'a' * 40
@@ -80,17 +88,53 @@ FAKE_AZ = textwrap.dedent('''
         logs = None if destination == '(absent)' else {'destination': destination}
         out({'properties': {'appLogsConfiguration': logs}})
     if 'actionGroups/azurebank-owner?' in url:
-        out({'properties': {'emailReceivers': [{'name': 'owner', 'emailAddress': 'deployed.alerts@example.invalid'}]}})
+        # What the deployed group says of the phone, as FAKE_AZ_PUSH has it. By default nothing:
+        # the answer does not hold the property. "none" is an empty list and "null" a null; what
+        # Azure answers for a group with no such receiver has not been read. Anything else is the
+        # accounts of its receivers of the Azure mobile app, separated by commas. The mailboxes it
+        # writes to are the ones FAKE_AZ_MAIL has, separated by commas: by default one, as the
+        # template writes one.
+        mailboxes = os.environ.get('FAKE_AZ_MAIL', 'deployed.alerts@example.invalid').split(',')
+        group = {'emailReceivers': [{'name': 'owner' + str(number or ''), 'emailAddress': mailbox}
+                                    for number, mailbox in enumerate(mailboxes)]}
+        push = os.environ.get('FAKE_AZ_PUSH', 'absent')
+        if push != 'absent':
+            accounts = [] if push in ('none', 'null') else push.split(',')
+            group['azureAppPushReceivers'] = None if push == 'null' else [
+                {'name': 'phone-' + str(number), 'emailAddress': account} for number, account in enumerate(accounts)]
+        out({'properties': group})
     if 'containerApps/azurebank/listSecrets' in url:
         names = ['app-connection', 'jwt-secret', 'idempotency-hash-key', 'stepup-binding-key',
                  'service-key', 'audit-chain-key', 'audit-anchor-key', 'pin-pepper']
         if state == 'key-missing':
             names.remove('pin-pepper')
+        # The demo's client key is held by an app that was deployed with it. 'deployed' is the app
+        # as it was before the key existed, and 'demo-key-missing' a demo that lost it.
+        if state in ('deployed-demo', 'deployed-demo-off', 'demo-disagrees'):
+            names.append('demo-client-key')
         out({'value': [{'name': n, 'value': live[n]} for n in names]})
     if 'containerApps/azurebank?' in url:
+        # What the bff and the api container say about the demo, by state, or as FAKE_AZ_DEMO has
+        # it: a value for Demo__Enabled, "-" for a container that does not carry the setting,
+        # "nothing" for one with no settings at all, "secret" for the setting as a reference,
+        # "twice" for the setting carried twice.
+        by_state = {'deployed-demo': 'true,true', 'demo-key-missing': 'true,true',
+                    'deployed-demo-off': 'false,false', 'demo-disagrees': 'true,false'}
+        says = os.environ.get('FAKE_AZ_DEMO', by_state.get(state, '-,-')).split(',')
+        def container(name, own, flag):
+            settings = [{'name': 'ASPNETCORE_ENVIRONMENT', 'value': 'Production'}, own]
+            if flag == 'secret':
+                settings.append({'name': 'Demo__Enabled', 'secretRef': 'a-secret'})
+            elif flag == 'twice':
+                # Off, then on: which of the two a container reads is not this script's to guess.
+                settings += [{'name': 'Demo__Enabled', 'value': value} for value in ('false', 'true')]
+            elif flag not in ('-', 'nothing'):
+                settings.append({'name': 'Demo__Enabled', 'value': flag})
+            described = {'name': name, 'image': 'ghcr.io/gurgant/azurebank-' + name + ':' + live['tag']}
+            return described if flag == 'nothing' else dict(described, env=settings)
         out({'properties': {'template': {'containers': [
-            {'name': 'bff', 'image': 'ghcr.io/gurgant/azurebank-bff:' + live['tag']},
-            {'name': 'api', 'image': 'ghcr.io/gurgant/azurebank-api:' + live['tag']}]}}})
+            container('bff', {'name': 'ServiceCredential__BffKey', 'secretRef': 'service-key'}, says[0]),
+            container('api', {'name': 'Security__PinPepper', 'secretRef': 'pin-pepper'}, says[1])]}}})
     if args[:2] == ['identity', 'show']:
         out(json.loads(os.environ['FAKE_AZ_IDS'])[args[args.index('--name') + 1]])
     if args[:3] == ['sql', 'server', 'list']:
@@ -237,11 +281,14 @@ LIVE = {
     'jwt-secret': 'live-jwt-0000000000', 'idempotency-hash-key': 'live-idem-000000000',
     'stepup-binding-key': 'live-stepup-0000000', 'service-key': 'live-service-000000',
     'audit-chain-key': 'live-chain-00000000', 'audit-anchor-key': 'live-anchor-0000000',
-    'pin-pepper': 'live-pepper-0000000',
+    'pin-pepper': 'live-pepper-0000000', 'demo-client-key': 'live-client-key-0000000000000000',
 }
 # The application secrets the template takes and the script writes. No database credential is among them.
 SEVEN = ['jwtSecret', 'idempotencyHashKey', 'stepUpBindingKey', 'serviceCredentialBffKey', 'auditChainKey',
          'auditAnchorKey', 'securityPinPepper']
+# The key the demo hashes a visitor's address with before it stores it: an eighth secret, beside the seven.
+CLIENT_KEY = 'demoClientKeySecret'
+SECURE = [*SEVEN, CLIENT_KEY]
 # Identifiers and names, not secrets: they may appear in a call or in the report's last line.
 NOT_SECRET = ('imageTag', 'entraAdminObjectId', 'entraAdminLogin')
 
@@ -278,7 +325,8 @@ class ScriptCase(unittest.TestCase):
         env = dict(os.environ, FAKE_AZ_STATE=state, FAKE_AZ_LIVE=json.dumps(LIVE), FAKE_AZ_LOG=str(self.log),
                    FAKE_AZ_RULES=str(self.rules), FAKE_AZ_IDS=json.dumps(IDS), FAKE_SEQUENCE=str(self.sequence),
                    PATH=str(self.shim) + os.pathsep + os.environ['PATH'])
-        for name in ('AZUREBANK_ALERT_EMAIL', 'SQLCMDUSER', 'SQLCMDPASSWORD', 'SQLCMDINI', *VARIABLES):
+        for name in ('AZUREBANK_ALERT_EMAIL', 'AZUREBANK_ALERT_PUSH_ACCOUNT', 'SQLCMDUSER', 'SQLCMDPASSWORD',
+                     'SQLCMDINI', *VARIABLES):
             env.pop(name, None)
         env.update(environment)
         return subprocess.run([PWSH, '-NoProfile', '-NonInteractive', '-File', str(HERE / script), *args],
@@ -328,6 +376,7 @@ class SecretsScriptTests(ScriptCase):
         self.assertEqual(sorted(self.parameters()), ['deployApp', 'entraAdminLogin', 'entraAdminObjectId', 'keepLogs'])
 
     def test_no_database_password_is_generated_read_or_written(self):
+        # CONTROL: green before this change. The eighth generated value joins the exception below.
         for state in ('empty', 'deployed'):
             with self.subTest(state=state):
                 result = self.secrets('-Action', 'New', '-DeployApp', *(['-ImageTag', TAG] if state == 'empty' else []),
@@ -337,9 +386,9 @@ class SecretsScriptTests(ScriptCase):
                 for word in ('password', 'connection', 'Server='):
                     self.assertNotIn(word.lower(), written.lower())
                 # Three letters can occur by chance in a random key, and did ("...ulsqlw="): "sql"
-                # is looked for in every name and in every value but the seven generated ones.
+                # is looked for in every name and in every value but the eight generated ones.
                 parameters = json.loads(written)['parameters']
-                self.assertNotIn('sql', json.dumps({name: None if name in SEVEN else entry
+                self.assertNotIn('sql', json.dumps({name: None if name in SECURE else entry
                                                     for name, entry in parameters.items()}).lower())
                 # The job holds one secret, its connection string: nothing here asks for it.
                 self.assertEqual([call for call in self.calls() if 'jobs/' in ' '.join(call)], [])
@@ -358,19 +407,21 @@ class SecretsScriptTests(ScriptCase):
         self.assertEqual(self.folder.stat().st_mode & 0o777, 0o700)
         self.assertEqual((self.folder / 'parameters.json').stat().st_mode & 0o777, 0o600)
 
-    def test_first_app_file_generates_seven_distinct_values_and_prints_none(self):
+    def test_first_app_file_generates_eight_distinct_values_and_prints_none(self):
         result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG)
         self.assertEqual(result.returncode, 0, result.stderr)
         values = self.parameters()
+        # No app is deployed, so nothing remembers whether the demo is on: the file does not say.
         self.assertEqual(sorted(values), sorted(['entraAdminObjectId', 'entraAdminLogin', 'deployApp', 'imageTag',
-                                                 'alertEmail', *SEVEN]))
+                                                 'alertEmail', *SECURE]))
         self.assertEqual(values['imageTag'], TAG)
         self.assertIs(values['deployApp'], True)
-        self.assertEqual(len({values[name] for name in SEVEN}), 7)
-        for name in SEVEN:
+        self.assertEqual(len({values[name] for name in SECURE}), 8)
+        for name in SECURE:
             self.assertGreaterEqual(len(values[name]), 44, f'{name}: at least 32 random bytes')
             self.assertIn(f'{name}: generated', result.stderr)
-        self.assertEqual(result.stderr.count(': generated'), 7)
+        self.assertEqual(result.stderr.count(': generated'), 8)
+        self.assertIn("demo: not written, the template's default applies", result.stderr)
         self.assert_nothing_leaked(result, values)
 
     def test_the_alerts_write_to_the_accounts_own_mailbox_and_the_report_does_not_show_it(self):
@@ -395,13 +446,182 @@ class SecretsScriptTests(ScriptCase):
         self.assertEqual(self.parameters()['alertEmail'], 'given@example.invalid')
         self.assertIn('alertEmail: from -AlertEmail', result.stderr)
         self.assertNotIn('given@', result.stderr + self.log.read_text(encoding='utf-8'))
-        self.assertEqual([call for call in self.calls() if 'actionGroups' in ' '.join(call)], [])
+        # Until 2026-10-06 this test held that the deployed group is then not asked at all. It is
+        # asked once now, for the phone's account, which this run does not name: the mailbox
+        # written is the argument's all the same (above), and with both named nothing is asked
+        # (test_the_argument_names_the_phones_account_before_anything_else_does).
+        self.assertEqual(len([call for call in self.calls() if 'actionGroups' in ' '.join(call)]), 1)
+        self.assertNotIn('alertPushAccount', self.parameters())
+        # "Not asked at all" also held that nothing the group says of its mailboxes can stop a run
+        # that names one, and one read does not hold it. A group that writes to two addresses
+        # stops a run that names none, and tells it to pass -AlertEmail: passed, the run goes on
+        # with the argument's mailbox, and keeps the phone that group notifies.
+        # CONTROL: green as written. Seen red twice: with the group's mailboxes counted before the
+        # argument is looked at, and with the first of two kept where the run names none.
+        two = 'first.alerts@example.invalid,second.alerts@example.invalid'
+        (self.folder / 'parameters.json').unlink()
+        result = self.secrets('-Action', 'New', '-DeployApp', state='deployed', FAKE_AZ_MAIL=two,
+                              FAKE_AZ_PUSH='deployed.phone@example.invalid')
+        self.assertIn('The deployed alerts write to 2 addresses, not one. Pass -AlertEmail. Nothing was written.',
+                      self.said(result))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.folder / 'parameters.json').exists())
+        result = self.secrets('-Action', 'New', '-DeployApp', '-AlertEmail', 'given@example.invalid',
+                              state='deployed', FAKE_AZ_MAIL=two, FAKE_AZ_PUSH='deployed.phone@example.invalid')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.parameters()['alertEmail'], self.parameters().get('alertPushAccount')),
+                         ('given@example.invalid', 'deployed.phone@example.invalid'))
+        self.assertNotIn('alerts@', result.stderr)
 
     def test_a_mailbox_that_is_not_an_address_is_refused(self):
         result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG, '-AlertEmail', 'not an address')
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.folder / 'parameters.json').exists())
         self.assertEqual(self.calls(), [])
+
+    # The account of the Azure mobile app that the alerts also notify. It is found as the mailbox
+    # is, but for the last place: an account nobody names is no account, and never the signed-in one.
+    PHONE = 'alertPushAccount'
+    NO_PHONE = "alertPushAccount: not written, the template's default applies"
+
+    def test_an_account_for_the_phone_that_nobody_names_is_not_an_error_and_is_not_written(self):
+        # Before any app, and against a deployed group that says nothing of a phone, in the three
+        # ways an answer can say nothing: no such property, an empty list, a null.
+        for state, push in (('empty', None), ('deployed', None), ('deployed', 'none'), ('deployed', 'null')):
+            with self.subTest(state=state, push=push):
+                (self.folder / 'parameters.json').unlink(missing_ok=True)
+                self.log.unlink(missing_ok=True)
+                result = self.secrets('-Action', 'New', '-DeployApp', *(['-ImageTag', TAG] if state == 'empty' else []),
+                                      state=state, **({'FAKE_AZ_PUSH': push} if push else {}))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                values = self.parameters()
+                self.assertNotIn(self.PHONE, values)
+                self.assertIn(self.NO_PHONE, result.stderr)
+                self.assertEqual(result.stderr.count(f'{self.PHONE}: '), 1)
+                # The mailbox is still found, where it was found before: the account's own, or the group's.
+                self.assertEqual(values['alertEmail'], 'owner.mailbox@example.invalid' if state == 'empty'
+                                 else 'deployed.alerts@example.invalid')
+                # One read of the group serves both, and with no group deployed there is none.
+                self.assertEqual(len([call for call in self.calls() if 'actionGroups' in ' '.join(call)]),
+                                 0 if state == 'empty' else 1)
+                self.assert_nothing_leaked(result, values)
+        # CONTROL: green as written (the script already took an empty argument for none). The
+        # argument given as empty is no account either, with -DeployApp and without it: the
+        # runbook's step 25 passes a variable that is empty when the owner goes without the phone.
+        # Seen red with the argument refused when it is empty.
+        for more in (['-DeployApp'], []):
+            with self.subTest(empty_argument_with=more):
+                (self.folder / 'parameters.json').unlink(missing_ok=True)
+                result = self.secrets('-Action', 'New', *more, '-AlertPushAccount', '', state='deployed')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn(self.PHONE, self.parameters())
+                self.assertEqual(result.stderr.count(self.NO_PHONE), 1 if more else 0)
+
+    def test_the_argument_names_the_phones_account_before_anything_else_does(self):
+        result = self.secrets('-Action', 'New', '-DeployApp', '-AlertPushAccount', 'given.phone@example.invalid',
+                              state='deployed', AZUREBANK_ALERT_PUSH_ACCOUNT='phone.elsewhere@example.invalid',
+                              FAKE_AZ_PUSH='deployed.phone@example.invalid')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        values = self.parameters()
+        self.assertEqual(values.get(self.PHONE), 'given.phone@example.invalid')
+        self.assertIn(f'{self.PHONE}: from -AlertPushAccount', result.stderr)
+        self.assertEqual(result.stderr.count(f'{self.PHONE}: '), 1)
+        self.assertNotIn('phone@', result.stderr + self.log.read_text(encoding='utf-8'))
+        self.assertNotIn('phone.elsewhere', result.stderr + self.log.read_text(encoding='utf-8'))
+        # The mailbox was not named, so the group was asked for it, once; with both named it is not asked.
+        self.assertEqual(values['alertEmail'], 'deployed.alerts@example.invalid')
+        self.assertEqual(len([call for call in self.calls() if 'actionGroups' in ' '.join(call)]), 1)
+        self.log.unlink()
+        result = self.secrets('-Action', 'New', '-DeployApp', '-AlertPushAccount', 'given.phone@example.invalid',
+                              '-AlertEmail', 'given@example.invalid', state='deployed',
+                              FAKE_AZ_PUSH='deployed.phone@example.invalid')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.parameters()['alertEmail'], self.parameters().get(self.PHONE)),
+                         ('given@example.invalid', 'given.phone@example.invalid'))
+        self.assertEqual([call for call in self.calls() if 'actionGroups' in ' '.join(call)], [])
+        self.assert_nothing_leaked(result, self.parameters())
+
+    def test_the_variable_names_the_phones_account_and_the_report_does_not_show_it(self):
+        # Before any app, and against a deployed group that notifies another account: the variable wins.
+        for state, push in (('empty', None), ('deployed', 'deployed.phone@example.invalid')):
+            with self.subTest(state=state):
+                (self.folder / 'parameters.json').unlink(missing_ok=True)
+                result = self.secrets('-Action', 'New', '-DeployApp', *(['-ImageTag', TAG] if state == 'empty' else []),
+                                      state=state, AZUREBANK_ALERT_PUSH_ACCOUNT='phone.elsewhere@example.invalid',
+                                      **({'FAKE_AZ_PUSH': push} if push else {}))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.parameters().get(self.PHONE), 'phone.elsewhere@example.invalid')
+                self.assertIn(f'{self.PHONE}: from AZUREBANK_ALERT_PUSH_ACCOUNT', result.stderr)
+                self.assertEqual(result.stderr.count(f'{self.PHONE}: '), 1)
+                self.assertNotIn('phone.elsewhere', result.stderr + self.log.read_text(encoding='utf-8'))
+                self.assertNotIn('deployed.phone', result.stderr)
+
+    def test_the_phones_account_the_deployed_alerts_notify_is_kept_when_none_is_named(self):
+        # With nothing named, and with the mailbox named and the phone not: a run that names one
+        # of the two must not forget the other.
+        for more, mailbox in (([], 'deployed.alerts@example.invalid'),
+                              (['-AlertEmail', 'given@example.invalid'], 'given@example.invalid')):
+            with self.subTest(more=more):
+                (self.folder / 'parameters.json').unlink(missing_ok=True)
+                self.log.unlink(missing_ok=True)
+                result = self.secrets('-Action', 'New', '-DeployApp', *more, state='deployed',
+                                      FAKE_AZ_PUSH='deployed.phone@example.invalid')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                values = self.parameters()
+                self.assertEqual((values['alertEmail'], values.get(self.PHONE)),
+                                 (mailbox, 'deployed.phone@example.invalid'))
+                self.assertIn(f'{self.PHONE}: kept from the deployed resource', result.stderr)
+                self.assertEqual(result.stderr.count(f'{self.PHONE}: '), 1)
+                self.assertNotIn('deployed.phone', result.stderr)
+                self.assertEqual(len([call for call in self.calls() if 'actionGroups' in ' '.join(call)]), 1)
+                self.assert_nothing_leaked(result, values)
+
+    def test_deployed_alerts_that_notify_two_phones_stop_the_run_unless_one_is_named(self):
+        # The template writes one such receiver. Two were put there by hand, and no side is chosen.
+        two = 'first.phone@example.invalid,second.phone@example.invalid'
+        result = self.secrets('-Action', 'New', '-DeployApp', state='deployed', FAKE_AZ_PUSH=two)
+        self.assertIn('The deployed alerts notify 2 accounts of the Azure mobile app, not one. '
+                      'Pass -AlertPushAccount. Nothing was written.', self.said(result))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.folder / 'parameters.json').exists())
+        self.assertNotIn('phone@', result.stderr)
+        self.assertEqual(result.stdout, '')
+        result = self.secrets('-Action', 'New', '-DeployApp', '-AlertPushAccount', 'given.phone@example.invalid',
+                              state='deployed', FAKE_AZ_PUSH=two)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.parameters().get(self.PHONE), 'given.phone@example.invalid')
+
+    def test_an_account_for_the_phone_that_is_not_an_address_is_refused(self):
+        # As an argument, before Azure is asked anything; from the variable, before anything is written.
+        result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG, '-AlertPushAccount', 'not an address')
+        self.assertIn('-AlertPushAccount is not an e-mail address. Nothing was written.', self.said(result))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.folder / 'parameters.json').exists())
+        self.assertEqual(self.calls(), [])
+        result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG,
+                              AZUREBANK_ALERT_PUSH_ACCOUNT='planted value')
+        self.assertIn('The account for the Azure mobile app is not an e-mail address. Pass -AlertPushAccount or '
+                      'set AZUREBANK_ALERT_PUSH_ACCOUNT. Nothing was written.', self.said(result))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.folder / 'parameters.json').exists())
+        self.assertNotIn('planted', result.stderr)
+        self.assertEqual(result.stdout, '')
+
+    def test_an_account_for_the_phone_without_deploy_app_is_refused_before_azure_is_asked_anything(self):
+        # The group that carries it is built with the app: a file for the foundation alone cannot
+        # carry it, and an argument that is dropped in silence would be taken for one that was kept.
+        result = self.secrets('-Action', 'New', '-AlertPushAccount', 'given.phone@example.invalid', state='deployed')
+        self.assertIn('-AlertPushAccount needs -DeployApp. Nothing was written.', self.said(result))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.calls(), [])
+        self.assertFalse(self.folder.exists())
+        self.assertEqual(result.stdout, '')
+        # The variable is the terminal's and not this run's: the foundation's file leaves it out.
+        result = self.secrets('-Action', 'New', state='deployed',
+                              AZUREBANK_ALERT_PUSH_ACCOUNT='phone.elsewhere@example.invalid')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn(self.PHONE, self.parameters())
+        self.assertNotIn(self.PHONE, result.stderr)
 
     def test_the_mailbox_the_deployed_alerts_write_to_is_kept_when_none_is_named(self):
         result = self.secrets('-Action', 'New', '-DeployApp', state='deployed')
@@ -451,8 +671,9 @@ class SecretsScriptTests(ScriptCase):
         result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG)
         second = self.parameters()
         self.assertEqual(second, first)
-        self.assertEqual(result.stderr.count(': kept from the earlier file'), 7)
+        self.assertEqual(result.stderr.count(': kept from the earlier file'), 8)
         self.assertIn('jwtSecret: kept from the earlier file', result.stderr)
+        self.assertIn(f'{CLIENT_KEY}: kept from the earlier file', result.stderr)
         self.assert_nothing_leaked(result, second)
 
     def test_a_deployed_app_is_the_authority_and_its_images_are_left_alone(self):
@@ -466,8 +687,136 @@ class SecretsScriptTests(ScriptCase):
             'auditChainKey': LIVE['audit-chain-key'], 'auditAnchorKey': LIVE['audit-anchor-key'],
             'securityPinPepper': LIVE['pin-pepper']})
         self.assertIs(values['keepLogs'], True)
-        self.assertNotIn('generated', result.stderr)
+        # This app was deployed before the demo existed: its containers say nothing of the demo and
+        # it holds no client key. That key is the one value generated against a deployed app, and
+        # only because the app's demo is off; the demo stays as the app has it.
+        self.assertIn(f'{CLIENT_KEY}: generated', result.stderr)
+        self.assertEqual(result.stderr.count('generated'), 1)
+        self.assertGreaterEqual(len(values[CLIENT_KEY]), 44)
+        self.assertIs(values.get('demo'), False)
+        self.assertIn('demo: kept from the deployed resource', result.stderr)
         self.assert_nothing_leaked(result, values)
+
+    def test_the_client_key_is_kept_once_the_deployed_app_holds_it(self):
+        # With the demo on, and with it off: an app that holds the key keeps it, and keeps its demo.
+        for state, demo in (('deployed-demo', True), ('deployed-demo-off', False)):
+            with self.subTest(state=state):
+                result = self.secrets('-Action', 'New', '-DeployApp', state=state)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                values = self.parameters()
+                self.assertEqual(values.get(CLIENT_KEY), LIVE['demo-client-key'])
+                self.assertIn(f'{CLIENT_KEY}: kept from the deployed resource', result.stderr)
+                self.assertNotIn('generated', result.stderr)
+                self.assertIs(values.get('demo'), demo)
+                self.assertIn('demo: kept from the deployed resource', result.stderr)
+                self.assert_nothing_leaked(result, values)
+
+    def test_a_deployed_demo_without_its_client_key_stops_the_run(self):
+        # The exception is for an app whose demo is off. A demo that is on has hashed addresses
+        # with its key: a new one would be another key, so this is the seven's refusal, and
+        # -DemoOn does not get past it.
+        # CONTROL, the case with -DemoOn: green as written (the script already refused it). Seen
+        # red with -DemoOn let through the exception: the run ended well, with a new key.
+        for more in ([], ['-DemoOn']):
+            with self.subTest(more=more):
+                (self.folder / 'parameters.json').unlink(missing_ok=True)
+                result = self.secrets('-Action', 'New', '-DeployApp', *more, state='demo-key-missing')
+                self.assertIn(f'{CLIENT_KEY} could not be read from the deployed resource. Nothing was written.',
+                              self.said(result))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse((self.folder / 'parameters.json').exists())
+                self.assertNotIn('generated', result.stderr)
+
+    def test_demo_on_is_written_when_asked_for(self):
+        # Against the app as it is deployed today, and against one whose demo is already on.
+        for state, key in (('deployed', 'generated'), ('deployed-demo', 'kept from the deployed resource')):
+            with self.subTest(state=state):
+                result = self.secrets('-Action', 'New', '-DeployApp', '-DemoOn', state=state)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                values = self.parameters()
+                self.assertIs(values.get('demo'), True)
+                self.assertIn('demo: true, asked for with -DemoOn', result.stderr)
+                self.assertEqual(result.stderr.count('demo: '), 1)
+                self.assertIn(f'{CLIENT_KEY}: {key}', result.stderr)
+                self.assert_nothing_leaked(result, values)
+
+    def test_demo_on_without_deploy_app_is_refused_before_azure_is_asked_anything(self):
+        result = self.secrets('-Action', 'New', '-DemoOn', state='deployed')
+        self.assertIn('-DemoOn needs -DeployApp. Nothing was written.', self.said(result))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.calls(), [])
+        self.assertFalse(self.folder.exists())
+        self.assertEqual(result.stdout, '')
+
+    def test_with_no_app_deployed_nothing_remembers_the_demo(self):
+        # The app is the one thing that remembers the switch. Before the first app, or after the
+        # app was deleted, the script has nothing to read and does not guess: without -DemoOn the
+        # file says nothing and the template's default, off, applies.
+        result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG, state='foundation')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('demo', self.parameters())
+        self.assertIn("demo: not written, the template's default applies", result.stderr)
+        self.assertEqual(result.stderr.count(': generated'), 8)
+        (self.folder / 'parameters.json').unlink()
+        result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG, '-DemoOn', state='foundation')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIs(self.parameters().get('demo'), True)
+        self.assertIn('demo: true, asked for with -DemoOn', result.stderr)
+        self.assertNotIn('demo: not written', result.stderr)
+        self.assertEqual(result.stderr.count(': generated'), 8)
+        # CONTROL: green as written (the script already forgot it). Nor does the file an earlier
+        # run left remember the switch: its eight secrets are kept, its demo is not. Seen red with
+        # the demo taken from that file: the third run wrote it as on.
+        result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG, state='foundation')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('demo', self.parameters())
+        self.assertIn("demo: not written, the template's default applies", result.stderr)
+        self.assertEqual(result.stderr.count(': kept from the earlier file'), 8)
+
+    def test_containers_that_disagree_about_the_demo_stop_the_run(self):
+        # On in one container and off in the other is an app nobody deployed from this folder:
+        # the script does not choose a side, with -DemoOn or without it. A container that does not
+        # carry the setting is off, as the app reads it.
+        cases = (('demo-disagrees', None, []), ('deployed-demo', 'false,true', []), ('deployed-demo', 'true,-', []),
+                 ('deployed-demo', '-,true', []), ('deployed-demo', 'nothing,true', []),
+                 ('demo-disagrees', None, ['-DemoOn']))
+        for state, says, more in cases:
+            with self.subTest(state=state, says=says, more=more):
+                # Each case answers for itself: a file a case before it left is not this one's.
+                (self.folder / 'parameters.json').unlink(missing_ok=True)
+                result = self.secrets('-Action', 'New', '-DeployApp', *more, state=state,
+                                      **({'FAKE_AZ_DEMO': says} if says else {}))
+                self.assertIn('The two containers of the deployed app disagree about Demo__Enabled. '
+                              'Nothing was written.', self.said(result))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse((self.folder / 'parameters.json').exists())
+                self.assertEqual(result.stdout, '')
+
+    def test_a_container_without_the_setting_is_off_like_one_that_says_false(self):
+        for says in ('false,-', '-,false', 'nothing,nothing'):
+            with self.subTest(says=says):
+                result = self.secrets('-Action', 'New', '-DeployApp', state='deployed-demo-off', FAKE_AZ_DEMO=says)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIs(self.parameters().get('demo'), False)
+                self.assertIn('demo: kept from the deployed resource', result.stderr)
+
+    def test_a_demo_setting_the_template_never_writes_stops_the_run_and_is_not_shown(self):
+        # The template writes the text true or false, as a plain value, once. Anything else was
+        # set by hand: it is not read as on or as off, and what it holds is not repeated.
+        # CONTROL, the two cases with the setting twice: green as written (the script already
+        # refused them). Seen red with the count of one taken out of the script: both runs ended
+        # well, the demo "kept from the deployed resource".
+        for says in ('planted-value,planted-value', 'True,True', 'true,secret', 'secret,secret', ',false',
+                     'twice,twice', 'false,twice'):
+            with self.subTest(says=says):
+                (self.folder / 'parameters.json').unlink(missing_ok=True)
+                result = self.secrets('-Action', 'New', '-DeployApp', state='deployed-demo', FAKE_AZ_DEMO=says)
+                self.assertIn('carries Demo__Enabled with something this template never writes. Nothing was written.',
+                              self.said(result))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse((self.folder / 'parameters.json').exists())
+                self.assertNotIn('planted-value', result.stderr)
+                self.assertEqual(result.stdout, '')
 
     def test_another_image_tag_is_refused_once_the_app_exists(self):
         result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG, state='deployed')
@@ -482,7 +831,7 @@ class SecretsScriptTests(ScriptCase):
         self.assertEqual(result.stdout, '')
 
     def test_a_resource_list_that_fails_is_not_an_empty_resource_group(self):
-        # Read as "no app yet", it would generate seven new secrets for an app that holds seven.
+        # Read as "no app yet", it would generate every secret anew for an app that holds its own.
         result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG, state='resources-unreadable')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('az resource list failed', result.stderr)
@@ -490,7 +839,11 @@ class SecretsScriptTests(ScriptCase):
         self.assertNotIn('generated', result.stderr)
 
     def test_a_deployed_app_missing_a_key_stops_the_run(self):
+        # CONTROL: green before this change, which lets one secret, the eighth, be new for a deployed
+        # app. This is one of the seven: it is refused whether the app's demo is on or off.
         result = self.secrets('-Action', 'New', '-DeployApp', state='key-missing')
+        self.assertIn('securityPinPepper could not be read from the deployed resource. Nothing was written.',
+                      self.said(result))
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.folder / 'parameters.json').exists())
         self.assertNotIn('generated', result.stderr)
@@ -527,6 +880,59 @@ class SecretsScriptTests(ScriptCase):
         result = self.secrets('-Action', 'Remove')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.folder.exists())
+
+
+class SecretsScriptQuotesTests(unittest.TestCase):
+    """What the runbook quotes of infra/secrets.ps1 about the demo's switch and, since 2026-10-06,
+    about the account of the owner's phone, held to the script.
+    Both files are read as text and nothing is run: the tests above hold what the script prints,
+    and these hold that the page quotes the words the script holds. A step of the runbook gives
+    such a line as what is good to read, and a read that differs is a stop there."""
+
+    # The three lines of the report that say what was done with the switch.
+    REPORT = ('demo: true, asked for with -DemoOn', "demo: not written, the template's default applies",
+              'demo: kept from the deployed resource')
+    # The two refusals about the switch, as the script's source writes them: the second names the
+    # setting through the script's own variable. The page quotes the second and not the first.
+    NEEDS_THE_APP = '-DemoOn needs -DeployApp. Nothing was written.'
+    DISAGREE = 'The two containers of the deployed app disagree about $DemoFlag. Nothing was written.'
+
+    @classmethod
+    def setUpClass(cls):
+        cls.script = (HERE / 'secrets.ps1').read_text(encoding='utf-8')
+        # Every run of blanks and line ends as one blank: a quote that is wrapped is still found.
+        cls.page = ' '.join((HERE / 'README.md').read_text(encoding='utf-8').split())
+
+    def test_the_lines_about_the_demo_that_the_runbook_quotes_are_the_ones_the_script_writes(self):
+        # CONTROL: green as written: each quote was the script's when this was written. Seen red
+        # with a line of the report reworded in the script, with the refusal reworded there, and
+        # with a quote taken out of the page.
+        for words in (*self.REPORT, self.NEEDS_THE_APP, self.DISAGREE):
+            with self.subTest(words=words, held_by='the script'):
+                self.assertEqual(self.script.count(words), 1)
+        (flag,) = re.findall(r"(?m)^\$DemoFlag = '([^']*)'$", self.script)
+        for words in (*self.REPORT, self.DISAGREE.replace('$DemoFlag', flag)):
+            with self.subTest(words=words, held_by='the runbook'):
+                self.assertIn(words, self.page)
+
+    # The four lines of the report that say where the account of the owner's phone came from, or
+    # that nobody named one. The script writes each of them whole, once. The page quotes three:
+    # no step of it has the variable name the account.
+    PHONE_REPORT = ('alertPushAccount: from -AlertPushAccount',
+                    'alertPushAccount: from AZUREBANK_ALERT_PUSH_ACCOUNT',
+                    'alertPushAccount: kept from the deployed resource',
+                    "alertPushAccount: not written, the template's default applies")
+    PHONE_QUOTED = (PHONE_REPORT[0], *PHONE_REPORT[2:])
+
+    def test_the_lines_about_the_phones_account_that_the_runbook_quotes_are_the_ones_the_script_writes(self):
+        # Seen red with each line of the report reworded in the script, and with each quote
+        # taken out of the page.
+        for words in self.PHONE_REPORT:
+            with self.subTest(words=words, held_by='the script'):
+                self.assertEqual(self.script.count(words), 1)
+        for words in self.PHONE_QUOTED:
+            with self.subTest(words=words, held_by='the runbook'):
+                self.assertIn(words, self.page)
 
 
 class UsersCase(ScriptCase):
@@ -1260,10 +1666,15 @@ NINE_ACTIONS = [
 BEHIND_DEPLOY_APP = ['Microsoft.App/containerApps', 'Microsoft.App/jobs', 'Microsoft.Authorization/roleAssignments',
                      'Microsoft.Authorization/roleAssignments', 'Microsoft.Insights/actionGroups',
                      'Microsoft.Resources/deployments']
+# What needs the demo's switch as well as the app's: the pool job, and the deployment role's
+# assignment on it. BEHIND_DEPLOY_APP above is what needs the app's switch alone.
+BEHIND_THE_DEMO = ['Microsoft.App/jobs', 'Microsoft.Authorization/roleAssignments']
 # The module that refuses deployApp=true without these values (app-inputs.bicep), and what it asks
-# of each: a length of exactly 40 for the image tag, at least 1 for the others.
+# of each: a length of exactly 40 for the image tag, at least 32 for the demo's client key (with
+# the demo on the API does not start on a shorter one), at least 1 for the others.
 GUARD = 'azurebank-app-inputs'
-GUARDED = {'imageTag': (40, 40), 'alertEmail': (1, None), **dict.fromkeys(SEVEN, (1, None))}
+GUARDED = {'imageTag': (40, 40), 'alertEmail': (1, None), **dict.fromkeys(SEVEN, (1, None)),
+           CLIENT_KEY: (32, None)}
 # What every snapshot below is evaluated against: none of it is real.
 SNAPSHOT_CONTEXT = ['--subscription-id', '00000000-0000-4000-8000-00000000000a', '--resource-group', 'azurebank-demo',
                     '--location', 'italynorth', '--tenant-id', '00000000-0000-4000-8000-00000000000b']
@@ -1277,8 +1688,19 @@ FOUNDATION = ['Microsoft.App/managedEnvironments', 'Microsoft.Authorization/lock
               'Microsoft.Sql/servers', 'Microsoft.Sql/servers/databases', 'Microsoft.Sql/servers/firewallRules']
 BEHIND_DENY_POLICY = ['Microsoft.Authorization/policyAssignments', 'Microsoft.Resources/deployments']
 BEHIND_KEEP_LOGS = ['Microsoft.Insights/diagnosticSettings', 'Microsoft.OperationalInsights/workspaces']
-SECRETS_OF_THE_APP = ['app-connection', 'audit-anchor-key', 'audit-chain-key', 'idempotency-hash-key', 'jwt-secret',
-                      'pin-pepper', 'service-key', 'stepup-binding-key']
+SECRETS_OF_THE_APP = ['app-connection', 'audit-anchor-key', 'audit-chain-key', 'demo-client-key',
+                      'idempotency-hash-key', 'jwt-secret', 'pin-pepper', 'service-key', 'stepup-binding-key']
+# What each container of the app is told, by name and in the template's order. The bff's list has
+# nothing about forwarded headers: which address it takes for a visitor's is not set in this folder.
+SETTINGS_OF_THE_BFF = ['ASPNETCORE_ENVIRONMENT', 'BackendApi__BaseUrl',
+                       'ReverseProxy__Clusters__backend-api__Destinations__primary__Address',
+                       'ServiceCredential__BffKey', 'Serilog__MinimumLevel__Override__Serilog', 'Demo__Enabled']
+SETTINGS_OF_THE_API = ['ASPNETCORE_ENVIRONMENT', 'ASPNETCORE_URLS', 'ConnectionStrings__DefaultConnection',
+                       'Jwt__Secret', 'Idempotency__HashKey', 'StepUp__BindingKey', 'ServiceCredential__BffKey',
+                       'Audit__ChainKey', 'Audit__AnchorKey', 'Security__PinPepper', 'Demo__Enabled',
+                       'Demo__ClientKeySecret', 'Demo__Claim__MaxPerClientPerDay']
+# One switch, written as text to every container of the app.
+DEMO_FLAG = {'name': 'Demo__Enabled', 'value': "[if(parameters('demo'), 'true', 'false')]"}
 SERVER = "resourceId('Microsoft.Sql/servers', format('azurebank-{0}', uniqueString(resourceGroup().id)))"
 # Everything the Deny policy refuses, as Azure receives it. A rule that is dropped or loosened
 # fails the comparison below; so does a new one, until it is written here too.
@@ -1295,8 +1717,12 @@ REFUSED_ON_AN_APP = [
                'where': {'field': f'{APP}/template.containers[*].resources.cpu', 'greater': 0.5}}, 'greater': 0},
 ]
 REFUSED_ON_A_JOB = [
+    # A trigger outside the list that holds for every job, with one exception: a job whose name is
+    # in the second list may run on a schedule.
     {'allOf': [{'field': f'{JOB}/configuration.triggerType', 'exists': True},
-               {'field': f'{JOB}/configuration.triggerType', 'notIn': "[parameters('allowedJobTriggers')]"}]},
+               {'field': f'{JOB}/configuration.triggerType', 'notIn': "[parameters('allowedJobTriggers')]"},
+               {'not': {'allOf': [{'field': f'{JOB}/configuration.triggerType', 'equals': 'Schedule'},
+                                  {'field': 'name', 'in': "[parameters('scheduledJobs')]"}]}}]},
     {'field': f'{JOB}/configuration.manualTriggerConfig.parallelism', 'greater': 1},
     {'field': f'{JOB}/configuration.scheduleTriggerConfig.parallelism', 'greater': 1},
     {'field': f'{JOB}/configuration.eventTriggerConfig.parallelism', 'greater': 1},
@@ -1356,7 +1782,7 @@ def bicep_literal(value):
 # The values of a run with the app, none of them real, and of one without it.
 FOUNDATION_INPUTS = {'entraAdminObjectId': '00000000-0000-4000-8000-000000000001', 'entraAdminLogin': 'owner'}
 APP_INPUTS = {**FOUNDATION_INPUTS, 'deployApp': True, 'imageTag': TAG, 'alertEmail': 'owner',
-              **dict.fromkeys(SEVEN, 'x')}
+              **dict.fromkeys(SECURE, 'x')}
 
 
 def snapshot(folder, values):
@@ -1397,13 +1823,71 @@ class TemplateTests(unittest.TestCase):
     def of_type(self, kind):
         return [resource for resource in self.resources if resource['type'] == kind]
 
+    def job(self, name):
+        """The one job of that name."""
+        (job,) = [resource for resource in self.of_type(JOB) if resource['name'] == name]
+        return job
+
+    def container(self, name):
+        """The app's container of that name."""
+        (app,) = self.of_type(APP)
+        (container,) = [entry for entry in app['properties']['template']['containers'] if entry['name'] == name]
+        return container
+
+    def every_setting(self):
+        """Each (resource, container, name of a setting): every container and init container of
+        every resource the template compiles. A search that walked nothing would find nothing, so
+        the app's two containers and each job's one must be among what this saw. Properties that
+        are compiled as one expression hold no container to read: the action group's are (below)."""
+        found = []
+        for resource in self.resources:
+            properties = resource.get('properties', {})
+            template = properties.get('template', {}) if isinstance(properties, dict) else {}
+            for container in [*template.get('containers', []), *template.get('initContainers', [])]:
+                found += [(resource['name'], container['name'], entry['name']) for entry in container.get('env', [])]
+        self.assertLessEqual({('azurebank', 'bff'), ('azurebank', 'api'), ('azurebank-migrate', 'migrate'),
+                              ('azurebank-pool', 'pool')},
+                             {(resource, container) for resource, container, _ in found})
+        return found
+
     def conditions(self, condition):
         return sorted(resource['type'] for resource in self.resources if resource.get('condition') == condition)
 
     def test_the_app_and_all_that_needs_it_are_behind_deploy_app(self):
         self.assertEqual(self.conditions("[parameters('deployApp')]"), sorted(BEHIND_DEPLOY_APP))
 
+    def test_the_pool_job_and_its_role_are_behind_the_demo_switch(self):
+        # Two switches, and the job needs both. A job that builds copies while the app's flags are
+        # off is the state ADR-0063 warns of ("With the flag on the job and on neither container"),
+        # so with the demo off the template writes no such job; and without the app nobody could
+        # be handed a copy.
+        both = "[and(parameters('deployApp'), parameters('demo'))]"
+        self.assertEqual(self.conditions(both), sorted(BEHIND_THE_DEMO))
+        # Which two: the job by its name, and the assignment by the job it is on.
+        self.assertEqual(sorted((resource['type'], resource.get('scope', resource['name']))
+                                for resource in self.resources if resource.get('condition') == both),
+                         [(JOB, 'azurebank-pool'),
+                          ('Microsoft.Authorization/roleAssignments', f"[resourceId('{JOB}', 'azurebank-pool')]")])
+        # What needed the app's switch alone before there was a pool job still needs that one alone,
+        # and no other condition reads the demo's switch.
+        self.assertEqual(self.conditions("[parameters('deployApp')]"), sorted(BEHIND_DEPLOY_APP))
+        self.assertEqual(sorted({resource['condition'] for resource in self.resources
+                                 if "parameters('demo')" in resource.get('condition', '')}), [both])
+
+    def test_the_pool_job_waits_for_the_app(self):
+        # Written after the app, never beside it. Expected of Azure and not provoked: a run in
+        # which the app's own update fails then creates no job, where a job created beside an app
+        # whose flags are still off would be the state the test above names.
+        (app,) = self.of_type(APP)
+        after_the_app = f"[resourceId('{APP}', '{app['name']}')]"
+        self.assertIn(after_the_app, self.job('azurebank-pool').get('dependsOn', []))
+        # The text is the one Bicep writes for such a wait: the role assignment on the app has it.
+        (on_the_app,) = [resource for resource in self.of_type('Microsoft.Authorization/roleAssignments')
+                         if resource['scope'] == after_the_app]
+        self.assertIn(after_the_app, on_the_app['dependsOn'])
+
     def test_the_app_is_named_by_a_plain_value_and_no_resource_id_reads_a_secret(self):
+        # CONTROL: green before this change. The walk below covers the eighth secure parameter too.
         # A what-if works out no expression that reads a secure parameter. On 2026-10-03 the app's
         # name went through one, and the what-if listed the app and the role assignment on it as
         # Unsupported (README.md, "Measured on Azure"). What makes a resource's ID: its name,
@@ -1414,7 +1898,7 @@ class TemplateTests(unittest.TestCase):
         self.assertRegex((HERE / 'deploy.py').read_text(encoding='utf-8'), r"(?m)^APP = 'azurebank'$")
         self.assertRegex((HERE / 'secrets.ps1').read_text(encoding='utf-8'), r"(?m)^\$AppName = 'azurebank'$")
         # Each secure parameter, and each variable that reads one, directly or through another.
-        reads_a_secret = {f"parameters('{name}')" for name in SEVEN}
+        reads_a_secret = {f"parameters('{name}')" for name in SECURE}
         variables = {f"variables('{name}')": json.dumps(value)
                      for name, value in self.main.get('variables', {}).items()}
         while True:
@@ -1441,17 +1925,18 @@ class TemplateTests(unittest.TestCase):
                          GUARDED)
         # Secure inside it as well: a plain parameter of a nested deployment is kept in its history.
         self.assertEqual(sorted(name for name, entry in declared.items() if entry['type'].lower() == 'securestring'),
-                         sorted(SEVEN))
+                         sorted(SECURE))
         self.assertEqual(sorted(name for name, entry in declared.items() if 'defaultValue' in entry), [])
         # It creates nothing and gives nothing back.
         self.assertEqual(guard['properties']['template']['resources'], [])
         self.assertNotIn('outputs', guard['properties']['template'])
-        # The app, the job and the action group wait for it; the role assignments and the alerts
-        # wait for them.
+        # The app, each of the two jobs and the action group wait for it; the role assignments and
+        # the alerts wait for them.
         waits = f"[resourceId('Microsoft.Resources/deployments', '{GUARD}')]"
-        self.assertEqual(sorted(resource['type'] for resource in self.resources
+        self.assertEqual(sorted((resource['type'], resource['name']) for resource in self.resources
                                 if waits in resource.get('dependsOn', [])),
-                         sorted([APP, JOB, 'Microsoft.Insights/actionGroups']))
+                         [(APP, 'azurebank'), (JOB, 'azurebank-migrate'), (JOB, 'azurebank-pool'),
+                          ('Microsoft.Insights/actionGroups', 'azurebank-owner')])
 
     def test_a_what_if_can_name_everything_the_app_run_creates(self):
         # Offline, with values of the shapes secrets.ps1 writes: fourteen things and eight more, and
@@ -1480,10 +1965,80 @@ class TemplateTests(unittest.TestCase):
             self.assertEqual(len(predicted), 14)
             self.assertNotIn(APP, [resource['type'] for resource in predicted])
 
+    def test_with_the_demo_on_the_run_also_creates_the_pool_job_and_its_role(self):
+        # Offline, as above. By default the run creates the 22 it created before there was a pool
+        # job. With the demo on it creates those and two more: the job, and the deployment role's
+        # assignment on it. Asking for the demo without the app adds nothing to the fourteen.
+        group = f'/subscriptions/{SNAPSHOT_CONTEXT[1]}/resourceGroups/azurebank-demo/providers'
+        with tempfile.TemporaryDirectory() as folder:
+            copy_templates(folder)
+            runs = {}
+            for case, values, count in (
+                    ('by default', {}, 22),
+                    ('the demo on', {'demo': True}, 24),
+                    ('the demo on, and the alert on the workspace', {'demo': True, 'logVolumeAlert': True}, 25),
+                    ('the demo asked for without the app', {'demo': True, 'deployApp': False}, 14)):
+                code, said, predicted = snapshot(folder, {**APP_INPUTS, **values})
+                self.assertEqual(code, 0, said)
+                self.assertEqual([resource['id'] for resource in predicted if resource['id'].startswith('[')], [], case)
+                self.assertEqual(len(predicted), count, case)
+                runs[case] = {resource['id']: resource for resource in predicted}
+        default, on = runs['by default'], runs['the demo on']
+        job = f'{group}/{JOB}/azurebank-pool'
+        self.assertEqual(sorted(set(default) - set(on)), [])
+        added = sorted(set(on) - set(default))
+        self.assertEqual(added[:1], [job])
+        self.assertEqual(len(added), 2, added)
+        self.assertTrue(added[1].startswith(job + '/providers/Microsoft.Authorization/roleAssignments/'), added[1])
+        # The policy is handed the one name it lets run on a schedule, and it is this job's.
+        (assignment,) = [resource for resource in on.values()
+                         if resource['type'] == 'Microsoft.Authorization/policyAssignments']
+        self.assertEqual(assignment['properties']['parameters'],
+                         {'allowedJobTriggers': {'value': ['Manual']}, 'scheduledJobs': {'value': [on[job]['name']]}})
+        # The job as the run would send it: every four hours, one run at a time, ten minutes at most.
+        configuration = on[job]['properties']['configuration']
+        self.assertEqual((configuration['triggerType'], configuration['replicaTimeout'],
+                          configuration['scheduleTriggerConfig']),
+                         ('Schedule', 600, {'cronExpression': '0 */4 * * *', 'parallelism': 1,
+                                            'replicaCompletionCount': 1}))
+
+        # And a run sends the job exactly when it tells both containers of the app that the demo is on.
+        def told(run):
+            return {(resource['name'], container['name']): entry['value']
+                    for resource in run.values() if resource['type'] in (APP, JOB)
+                    for container in resource['properties']['template']['containers']
+                    for entry in container['env'] if entry['name'] == 'Demo__Enabled'}
+        self.assertEqual(told(default), {('azurebank', 'bff'): 'false', ('azurebank', 'api'): 'false'})
+        self.assertEqual(told(on), {('azurebank', 'bff'): 'true', ('azurebank', 'api'): 'true',
+                                    ('azurebank-pool', 'pool'): 'true'})
+
+        # CONTROL: green as written, from here to the end. The deploy script is asked itself. It
+        # types the names of the app, of the two jobs and of their containers, the identity each
+        # carries, the pool job's arguments and the demo's setting; this file types them again
+        # for the template. A name changed in the template and in the lists above left every
+        # test green and the script refusing that job at each deployment with the demo on. So
+        # what a run would send is handed to the script's own checks: it finds each resource by
+        # its name, in shape, with the container it moves, and reads the demo as the run set it.
+        # Seen red with the pool job's container, its name, its arguments and the demo's setting
+        # each renamed in the template and in the lists above.
+        app = f'{group}/{APP}/{deploy.APP}'
+        self.assertEqual(sorted(f'{group}/{JOB}/{name}' for name in deploy.JOBS),
+                         sorted(found for found, resource in on.items() if resource['type'] == JOB))
+        self.assertEqual(job, f'{group}/{JOB}/{deploy.POOL_JOB}')
+        self.assertEqual(deploy.pool_drift(on[job]), [])
+        self.assertEqual(deploy.job_drift(on[f'{group}/{JOB}/{deploy.MIGRATE_JOB}']), [])
+        self.assertEqual(deploy.app_drift(on[app]), [])
+        for name, container in deploy.JOBS.items():
+            self.assertEqual(list(deploy.images(on[f'{group}/{JOB}/{name}'])), [container], name)
+        self.assertIs(deploy.demo_of(on[app]), True)
+        self.assertIs(deploy.demo_of(default[app]), False)
+        self.assertEqual(deploy.app_drift(default[app]), [])
+
     def test_deploy_app_true_is_refused_with_a_tag_that_is_not_40_characters_or_no_address(self):
-        # Offline, as above. The seven secrets cannot be tried this way: like a what-if, this
-        # evaluation works out no secure value. Their checks are read from the compiled template
-        # above, and a local deployment saw each one refuse (README.md, "Checking these files").
+        # Offline, as above. The secrets cannot be tried this way: like a what-if, this evaluation
+        # works out no secure value. Their checks are read from the compiled template above. A
+        # local deployment saw each of the seven refuse (README.md, "Checking these files"); the
+        # demo's client key, which must be 32 characters, has not been seen refused by any engine.
         with tempfile.TemporaryDirectory() as folder:
             copy_templates(folder)
             for name, value, why in (('imageTag', TAG[:39], "greater than or equal to '40'"),
@@ -1503,8 +2058,8 @@ class TemplateTests(unittest.TestCase):
     def test_the_policy_can_be_switched_off_and_nothing_else_hangs_on_that_switch(self):
         self.assertEqual(self.conditions("[parameters('denyPolicy')]"), sorted(BEHIND_DENY_POLICY))
         self.assertEqual(self.conditions(ALERTS_CONDITION), ['Microsoft.Insights/metricAlerts'])
-        self.assertEqual(len(self.resources), len(BEHIND_DEPLOY_APP) + len(FOUNDATION) + len(BEHIND_DENY_POLICY)
-                         + len(BEHIND_KEEP_LOGS) + 1)
+        self.assertEqual(len(self.resources), len(BEHIND_DEPLOY_APP) + len(BEHIND_THE_DEMO) + len(FOUNDATION)
+                         + len(BEHIND_DENY_POLICY) + len(BEHIND_KEEP_LOGS) + 1)
 
     def test_the_logs_go_to_one_capped_workspace_that_takes_no_key(self):
         self.assertEqual(self.conditions("[parameters('keepLogs')]"), sorted(BEHIND_KEEP_LOGS))
@@ -1613,15 +2168,31 @@ class TemplateTests(unittest.TestCase):
                                                     'subject': 'repo:Gurgant/azurebank-v2:environment:demo',
                                                     'audiences': ['api://AzureADTokenExchange']})
 
-    def test_the_role_is_assigned_on_the_app_and_on_the_job_and_nowhere_else(self):
+    def test_the_role_is_assigned_on_the_app_and_on_each_job_and_nowhere_else(self):
         assignments = self.of_type('Microsoft.Authorization/roleAssignments')
         scopes = sorted(resource['scope'] for resource in assignments)
-        self.assertEqual(len(scopes), 2)
-        self.assertIn("resourceId('Microsoft.App/containerApps'", scopes[0])
-        self.assertIn("resourceId('Microsoft.App/jobs', 'azurebank-migrate')", scopes[1])
-        # Both go to the deployment identity: the two database identities hold no role on anything in Azure.
+        self.assertEqual(scopes, [f"[resourceId('{APP}', 'azurebank')]", f"[resourceId('{JOB}', 'azurebank-migrate')]",
+                                  f"[resourceId('{JOB}', 'azurebank-pool')]"])
+        # All three go to the deployment identity: the two database identities hold no role on anything in Azure.
         self.assertEqual({resource['properties']['principalId'] for resource in assignments},
                          {f"[reference(resourceId('{IDENTITIES}', 'azurebank-deploy'), '2023-01-31').principalId]"})
+        # One role, the nine actions above, and each assignment is named for the resource it is on.
+        self.assertEqual({resource['properties']['roleDefinitionId'] for resource in assignments},
+                         {"[variables('deployRoleId')]"})
+        # CONTROL, the last two lines of the loop: green as written (the three assignments had
+        # both). The role's ID in an assignment is a variable, and Bicep works out no wait from
+        # one: the wait for the role definition is written by hand, once for each. Expected of
+        # Azure and not provoked: in a run that creates the definition and an assignment
+        # together, an assignment that does not wait can be sent first. And each says its
+        # principal is a service principal. Seen red with the pool job's assignment without its
+        # wait, which Bicep compiles and lints with no warning, and with its principal made a user.
+        (role,) = self.of_type('Microsoft.Authorization/roleDefinitions')
+        after_the_role = f"[resourceId('{role['type']}', {role['name'][1:-1]})]"
+        for resource in assignments:
+            self.assertEqual(resource['name'], f"[guid({resource['scope'][1:-1]}, "
+                             f"resourceId('{IDENTITIES}', 'azurebank-deploy'), variables('deployRoleId'))]")
+            self.assertIn(after_the_role, resource['dependsOn'], resource['scope'])
+            self.assertEqual(resource['properties']['principalType'], 'ServicePrincipal', resource['scope'])
 
     def test_the_lock_is_on_the_database_not_on_the_server(self):
         (lock,) = self.of_type('Microsoft.Authorization/locks')
@@ -1648,31 +2219,35 @@ class TemplateTests(unittest.TestCase):
         for word in ('password', 'pwd', 'administratorlogin'):
             self.assertNotIn(word, text)
 
-    def test_the_app_and_the_job_each_carry_their_own_database_identity_and_no_other(self):
+    def test_the_app_and_each_job_carry_their_own_database_identity_and_no_other(self):
         (app,) = self.of_type('Microsoft.App/containerApps')
-        (job,) = self.of_type('Microsoft.App/jobs')
-        for resource, name in ((app, 'azurebank-app'), (job, 'azurebank-migrate')):
+        # The pool job signs in to the database as the app does, to read and write rows, and
+        # never as the identity that changes the schema (ADR-0062).
+        for resource, name in ((app, 'azurebank-app'), (self.job('azurebank-migrate'), 'azurebank-migrate'),
+                               (self.job('azurebank-pool'), 'azurebank-app')):
             self.assertEqual(resource.get('identity'), {'type': 'UserAssigned', 'userAssignedIdentities': {
-                f"[format('{{0}}', resourceId('{IDENTITIES}', '{name}'))]": {}}}, resource['type'])
+                f"[format('{{0}}', resourceId('{IDENTITIES}', '{name}'))]": {}}}, resource['name'])
 
     def test_each_connection_string_names_its_own_identity_and_holds_no_credential(self):
         (app,) = self.of_type('Microsoft.App/containerApps')
-        (job,) = self.of_type('Microsoft.App/jobs')
         for resource, secret, identity in ((app, 'app-connection', 'azurebank-app'),
-                                           (job, 'migration-connection', 'azurebank-migrate')):
-            (value,) = [entry['value'] for entry in resource['properties']['configuration']['secrets']
-                        if entry['name'] == secret]
-            self.assertEqual(value, connection_of(identity), secret)
+                                           (self.job('azurebank-migrate'), 'migration-connection', 'azurebank-migrate'),
+                                           (self.job('azurebank-pool'), 'app-connection', 'azurebank-app')):
+            self.assertEqual([entry['value'] for entry in resource['properties']['configuration'].get('secrets', [])
+                              if entry['name'] == secret], [connection_of(identity)], (resource['name'], secret))
 
-    def test_seven_parameters_are_secure_and_only_two_must_be_given(self):
+    def test_eight_parameters_are_secure_and_only_two_must_be_given(self):
         parameters = self.main['parameters']
         secure = sorted(name for name, entry in parameters.items() if entry['type'].lower() == 'securestring')
-        self.assertEqual(secure, sorted(SEVEN))
+        self.assertEqual(secure, sorted(SECURE))
         required = sorted(name for name, entry in parameters.items() if 'defaultValue' not in entry)
         self.assertEqual(required, ['entraAdminLogin', 'entraAdminObjectId'])
         self.assertEqual((parameters['replicaTimeout']['minValue'], parameters['replicaTimeout']['maxValue']),
                          (60, 840))
         self.assertIs(parameters['deployApp']['defaultValue'], False)
+        # The demo is a switch of its own, and off unless it is asked for.
+        demo = parameters.get('demo', {})
+        self.assertEqual((demo.get('type'), demo.get('defaultValue')), ('bool', False))
 
     def test_no_output_is_a_secret(self):
         self.assertEqual({name: entry['type'] for name, entry in self.main['outputs'].items()},
@@ -1682,17 +2257,18 @@ class TemplateTests(unittest.TestCase):
 
     def test_every_secret_reaches_a_container_by_reference_only(self):
         (app,) = self.of_type('Microsoft.App/containerApps')
-        (job,) = self.of_type('Microsoft.App/jobs')
-        self.assertEqual(len(app['properties']['configuration']['secrets']), 8)
+        job, pool = self.job('azurebank-migrate'), self.job('azurebank-pool')
+        self.assertEqual(len(app['properties']['configuration']['secrets']), 9)
         self.assertEqual(len(job['properties']['configuration']['secrets']), 1)
-        text = json.dumps([app['properties']['template'], job['properties']['template']])
-        self.assertEqual(text.count('"secretRef"'), 10)
-        for name in SEVEN:
+        self.assertEqual(len(pool['properties']['configuration'].get('secrets', [])), 2)
+        text = json.dumps([resource['properties']['template'] for resource in (app, job, pool)])
+        self.assertEqual(text.count('"secretRef"'), 13)
+        for name in SECURE:
             self.assertNotIn(f"parameters('{name}')", text, f'{name} is a plain value in a container')
 
-    def test_only_the_api_container_and_the_job_are_handed_a_connection_string(self):
+    def test_only_the_api_container_and_the_two_jobs_are_handed_a_connection_string(self):
         (app,) = self.of_type('Microsoft.App/containerApps')
-        (job,) = self.of_type('Microsoft.App/jobs')
+        job, pool = self.job('azurebank-migrate'), self.job('azurebank-pool')
         handed = {container['name']: sorted(entry['secretRef'] for entry in container['env'] if 'secretRef' in entry)
                   for container in app['properties']['template']['containers']}
         # The bff faces the internet and can use the app's identity like any container of the app:
@@ -1700,8 +2276,115 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(handed, {'bff': ['service-key'], 'api': SECRETS_OF_THE_APP})
         (migrate,) = job['properties']['template']['containers']
         self.assertEqual([entry.get('secretRef') for entry in migrate['env']], ['migration-connection'])
+        # The pool job is handed the app's string and the pepper, each a secret of its own (below).
+        (recycle,) = pool['properties']['template']['containers']
+        self.assertEqual([entry['secretRef'] for entry in recycle.get('env', []) if 'secretRef' in entry],
+                         ['app-connection', 'pin-pepper'])
         # Nor does either reach a container as a plain value: nothing in a container is read from another resource.
-        self.assertNotIn('reference(', json.dumps([app['properties']['template'], job['properties']['template']]))
+        self.assertNotIn('reference(', json.dumps([resource['properties']['template']
+                                                   for resource in (app, job, pool)]))
+
+    def test_the_pool_job_holds_two_secrets_and_the_pepper_the_app_holds(self):
+        # A job has a secret list of its own. The pool's commands need the connection string and
+        # the PIN pepper, "which must be the API's" (backend/tools/AzureBank.Seeder/README.md), so
+        # the template writes the job's two from what it writes the app's from: one run of it
+        # cannot give the job and the app two peppers.
+        (app,) = self.of_type(APP)
+        pool = self.job('azurebank-pool')
+        of_the_app = {entry['name']: entry['value'] for entry in app['properties']['configuration']['secrets']}
+        secrets = pool['properties']['configuration'].get('secrets', [])
+        self.assertEqual([entry['name'] for entry in secrets], ['app-connection', 'pin-pepper'])
+        self.assertEqual({entry['name']: entry['value'] for entry in secrets},
+                         {name: of_the_app[name] for name in ('app-connection', 'pin-pepper')})
+        self.assertEqual(of_the_app['pin-pepper'], "[parameters('securityPinPepper')]")
+        # Its container is handed the two by reference, under the names the api container reads
+        # them by, and nothing else of the job is a secret.
+        (container,) = pool['properties']['template']['containers']
+        by_reference = [entry for entry in container.get('env', []) if 'secretRef' in entry]
+        self.assertEqual(by_reference, [{'name': 'ConnectionStrings__DefaultConnection', 'secretRef': 'app-connection'},
+                                        {'name': 'Security__PinPepper', 'secretRef': 'pin-pepper'}])
+        for entry in by_reference:
+            self.assertIn(entry, self.container('api')['env'])
+        # No other secure parameter is read anywhere in the job: not the client key, which only
+        # the api hashes an address with, and none of the six other keys.
+        self.assertEqual([name for name in SECURE if f"parameters('{name}')" in json.dumps(pool)],
+                         ['securityPinPepper'])
+
+    def test_the_demo_is_off_unless_asked_and_one_switch_says_it_to_both_containers(self):
+        # Both hosts read the flag: the bff closes registration and marks the page by it, the api
+        # hands out the copies by it. One parameter writes it to both as the same text, so the
+        # template cannot set the two apart.
+        self.assertEqual({name: [entry for entry in self.container(name)['env'] if entry['name'] == 'Demo__Enabled']
+                          for name in ('bff', 'api')}, {'bff': [DEMO_FLAG], 'api': [DEMO_FLAG]})
+        self.assertIs(self.main['parameters']['demo']['defaultValue'], False)
+
+    def test_both_scripts_read_the_demo_by_the_setting_and_the_containers_the_template_writes(self):
+        # CONTROL: green as written. infra/secrets.ps1 and infra/deploy.py each read from the
+        # deployed app whether the demo is on, by a name typed in each, and a setting that is not
+        # found reads as off. A name that differed from the template's would make the secrets
+        # script write demo=false for a demo that is on, and report it as "kept from the deployed
+        # resource". Seen red with the name changed in the script, and with the two containers
+        # it asks changed there.
+        (app,) = self.of_type(APP)
+        containers = [container['name'] for container in app['properties']['template']['containers']]
+        script = (HERE / 'secrets.ps1').read_text(encoding='utf-8')
+        self.assertEqual(re.findall(r"(?m)^\$DemoFlag = '([^']*)'$", script), [DEMO_FLAG['name']])
+        asks = r"(?m)^ *\$says = @\('(\w+)', '(\w+)' \| ForEach-Object \{ Get-DemoFlag \$app \$_ \}\)$"
+        self.assertEqual(re.findall(asks, script), [tuple(containers)])
+        self.assertEqual(deploy.DEMO_FLAG, DEMO_FLAG['name'])
+
+    def test_every_setting_of_the_demo_is_one_the_backend_binds(self):
+        # CONTROL: green as written. A setting whose name the backend does not bind is not an
+        # error anywhere: the host starts and the default applies. For the cap on one address's
+        # claims that default is 10 where the template means 1,000 (ADR-0063, decision 14). So
+        # each name the template writes under the demo's section is walked through the classes
+        # of backend/src/AzureBank.Shared/Options/DemoOptions.cs, read as text: the section,
+        # then a property of each class on the way. Seen red with the cap's name changed in the
+        # template and in the lists above.
+        source = (HERE.parent / 'backend' / 'src' / 'AzureBank.Shared' / 'Options' / 'DemoOptions.cs').read_text(
+            encoding='utf-8')
+        classes = {name: dict((prop, kind) for kind, prop in re.findall(r'public (\S+) (\w+) \{ get; set; \}', body))
+                   for name, body in re.findall(r'(?ms)^public class (\w+)\n\{\n(.*?)^\}', source)}
+        (section,) = re.findall(r'public const string SectionName = "(\w+)";', source)
+        written = sorted({name for _, _, name in self.every_setting() if name.startswith(f'{section}__')})
+        self.assertEqual(written, ['Demo__Claim__MaxPerClientPerDay', 'Demo__ClientKeySecret', 'Demo__Enabled'])
+        for name in written:
+            with self.subTest(name=name):
+                kind = 'DemoOptions'
+                for part in name.split('__')[1:]:
+                    self.assertIn(part, classes.get(kind, {}), f'{kind} has no such property')
+                    kind = classes[kind][part]
+                self.assertIn(kind, ('bool', 'int', 'string?'), 'the name stops at a section, not at a value')
+
+    def test_the_bff_is_handed_the_flag_and_nothing_about_forwarded_headers(self):
+        self.assertEqual([entry['name'] for entry in self.container('bff')['env']], SETTINGS_OF_THE_BFF)
+        # Whether the BFF sees a visitor's own address behind the ingress is not measured yet
+        # (ADR-0063, decision 14): until it is, no container of any resource is told whose
+        # forwarded headers to believe. .NET reads a setting's name whatever its case.
+        about_forwarded_headers = re.compile(r'ForwardedHeaders__|ASPNETCORE_FORWARDEDHEADERS_ENABLED$', re.IGNORECASE)
+        for name in ('ForwardedHeaders__KnownProxies__0', 'ASPNETCORE_FORWARDEDHEADERS_ENABLED'):
+            self.assertRegex(name, about_forwarded_headers)
+        self.assertEqual([found for found in self.every_setting() if about_forwarded_headers.match(found[2])], [])
+
+    def test_the_api_is_handed_the_client_key_by_reference_and_the_cap_as_a_plain_value(self):
+        api = self.container('api')
+        self.assertEqual([entry['name'] for entry in api['env']], SETTINGS_OF_THE_API)
+        # The key a visitor's address is hashed with: a secret of the app, handed to the api alone.
+        (app,) = self.of_type(APP)
+        self.assertIn({'name': 'demo-client-key', 'value': f"[parameters('{CLIENT_KEY}')]"},
+                      app['properties']['configuration']['secrets'])
+        self.assertIn({'name': 'Demo__ClientKeySecret', 'secretRef': 'demo-client-key'}, api['env'])
+        # How many copies one address may claim in a day: one variable, the range's maximum
+        # (ADR-0063, decision 14), written as text.
+        self.assertIn({'name': 'Demo__Claim__MaxPerClientPerDay', 'value': "[variables('demoClaimsPerClient')]"},
+                      api['env'])
+        self.assertEqual(self.main['variables'].get('demoClaimsPerClient'), '1000')
+        # No key id and no earlier pepper on any container of any resource: with neither set, the
+        # one pepper is key 1 wherever it is read (ADR-0062).
+        about_pepper_keys = re.compile(r'Security__PinPepperKeyId$|Security__PreviousPinPeppers__', re.IGNORECASE)
+        for name in ('Security__PinPepperKeyId', 'Security__PreviousPinPeppers__1'):
+            self.assertRegex(name, about_pepper_keys)
+        self.assertEqual([found for found in self.every_setting() if about_pepper_keys.match(found[2])], [])
 
     def test_the_app_keeps_the_shape_the_deploy_script_and_the_policy_expect(self):
         (app,) = self.of_type('Microsoft.App/containerApps')
@@ -1715,7 +2398,7 @@ class TemplateTests(unittest.TestCase):
                          [('bff', {'cpu': "[json('0.25')]", 'memory': '0.5Gi'}),
                           ('api', {'cpu': "[json('0.5')]", 'memory': '1Gi'})])
         self.assertNotIn('initContainers', template)
-        (job,) = self.of_type('Microsoft.App/jobs')
+        job = self.job('azurebank-migrate')
         configuration = job['properties']['configuration']
         self.assertEqual((configuration['triggerType'], configuration['replicaRetryLimit'],
                           configuration['manualTriggerConfig']['parallelism']), ('Manual', 0, 1))
@@ -1723,6 +2406,110 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual((migrate['name'], migrate['args'], migrate['resources']),
                          ('migrate', ['migrate'], {'cpu': "[json('0.25')]", 'memory': '0.5Gi'}))
         self.assertNotIn('initContainers', job['properties']['template'])
+
+    def test_the_pool_job_keeps_the_shape_the_deploy_script_and_the_policy_expect(self):
+        pool, migrate = self.job('azurebank-pool'), self.job('azurebank-migrate')
+        configuration, template = pool['properties']['configuration'], pool['properties']['template']
+        # On a schedule, one run at a time, and a run is never tried again: `recycle` ends a run
+        # that found something to say with an exit code from 10 to 15 (docs/runbooks/demo-pool.md),
+        # and with a retry Azure is expected to take such a run for a failed one and to try it again.
+        self.assertEqual((configuration.get('triggerType'), configuration.get('replicaRetryLimit')), ('Schedule', 0))
+        self.assertEqual(configuration.get('scheduleTriggerConfig'),
+                         {'cronExpression': "[variables('poolSchedule')]", 'parallelism': 1,
+                          'replicaCompletionCount': 1})
+        self.assertEqual(sorted(key for key in configuration if key.endswith('TriggerConfig')),
+                         ['scheduleTriggerConfig'])
+        # Every four hours, on the hour. One variable: no parameter of a run can change it.
+        self.assertEqual(self.main['variables'].get('poolSchedule'), '0 */4 * * *')
+        self.assertNotIn('poolSchedule', self.main['parameters'])
+        # A timeout of its own, within the bounds the migrate job's has.
+        self.assertEqual(configuration.get('replicaTimeout'), "[parameters('poolTimeout')]")
+        timeout = self.main['parameters'].get('poolTimeout', {})
+        self.assertEqual({key: timeout.get(key) for key in ('type', 'minValue', 'maxValue', 'defaultValue')},
+                         {'type': 'int', 'minValue': 60, 'maxValue': 840, 'defaultValue': 600})
+        # In the environment and on the profile of the migrate job, and nothing else is set on it.
+        self.assertEqual(sorted(pool['properties']),
+                         ['configuration', 'environmentId', 'template', 'workloadProfileName'])
+        for key in ('environmentId', 'workloadProfileName'):
+            self.assertEqual(pool['properties'][key], migrate['properties'][key], key)
+        # One container: the tools image at the commit a run names (`imageTag`), which is the
+        # migrate job's image; `recycle`; a quarter of a vCPU. The policy refuses an init
+        # container and anything above half a vCPU.
+        (container,) = template['containers']
+        (tool,) = migrate['properties']['template']['containers']
+        # CONTROL: green as written. The text itself, once: compared with each other only, the
+        # two jobs' images could both be another image, or the tools image at no commit. Seen
+        # red with both made the api's image, and with both made the tools image at `latest`.
+        self.assertEqual(tool['image'], "[format('ghcr.io/gurgant/azurebank-tools:{0}', parameters('imageTag'))]")
+        self.assertEqual((container['name'], container.get('image'), container.get('args'), container.get('resources')),
+                         ('pool', tool['image'], ['recycle'], {'cpu': "[json('0.25')]", 'memory': '0.5Gi'}))
+        self.assertEqual(sorted(template), ['containers'])
+        # CONTROL: green as written. Nothing else is set on the container or in the
+        # configuration: the job carries the app's database identity and the pepper, so what it
+        # runs is held whole. A `command` is expected to replace the image's entry point
+        # (backend/tools/AzureBank.Seeder/Dockerfile) and to leave `recycle` an argument of
+        # something else. Seen red with a `command` on the container, and with an empty
+        # `registries` in the configuration.
+        self.assertEqual(sorted(container), ['args', 'env', 'image', 'name', 'resources'])
+        self.assertEqual(sorted(configuration),
+                         ['replicaRetryLimit', 'replicaTimeout', 'scheduleTriggerConfig', 'secrets', 'triggerType'])
+        # What it is told: where the database is and the pepper, by reference; that the demo is
+        # on, as a plain word, because the template writes the job only with the demo on; and the
+        # cap on one address's claims, the one expression the api container has.
+        (cap,) = [entry for entry in self.container('api')['env'] if entry['name'] == 'Demo__Claim__MaxPerClientPerDay']
+        self.assertEqual(container.get('env'), [
+            {'name': 'ConnectionStrings__DefaultConnection', 'secretRef': 'app-connection'},
+            {'name': 'Security__PinPepper', 'secretRef': 'pin-pepper'},
+            {'name': 'Demo__Enabled', 'value': 'true'},
+            cap])
+
+    def test_two_scheduled_runs_cannot_overlap(self):
+        # Two pool runs at once can build up to twice the pool's target
+        # (backend/tools/AzureBank.Seeder/README.md), so the template leaves no room for it: a run
+        # every H hours, where H divides the day (the gap across midnight is then H hours like
+        # every other), and H hours are longer than the longest timeout a run may be given. One
+        # try a run: the test above holds the retry at 0. It holds for what the template writes.
+        # It says nothing of a job that is deployed, whose schedule and timeout whoever may write
+        # the job can change.
+        schedule = self.main['variables'].get('poolSchedule', '')
+        form = re.fullmatch(r'([0-5]?[0-9]) \*/([1-9][0-9]?) \* \* \*', schedule)
+        self.assertIsNotNone(form, f'not of the form "M */H * * *": {schedule!r}')
+        hours = int(form.group(2))
+        self.assertEqual(24 % hours, 0, schedule)
+        longest = self.main['parameters'].get('poolTimeout', {}).get('maxValue')
+        self.assertIsInstance(longest, int)
+        self.assertGreater(hours * 3600, longest)
+        # And the timeout the job is given is that parameter, so its bound is the job's.
+        configuration = self.job('azurebank-pool')['properties']['configuration']
+        self.assertEqual(configuration.get('replicaTimeout'), "[parameters('poolTimeout')]")
+
+    def test_the_schedule_the_tool_expects_is_the_one_the_template_writes(self):
+        # infra/deploy.py reads the deployed job's expression against a constant of its own, at a
+        # deployment: the test above holds the template, and this one holds the tool to it.
+        tool = (HERE / 'deploy.py').read_text(encoding='utf-8')
+        self.assertEqual(re.findall(r"(?m)^POOL_SCHEDULE = '([^']*)'$", tool),
+                         [self.main['variables']['poolSchedule']])
+
+    def test_the_timeouts_the_tool_takes_on_the_pool_job_are_the_ones_the_template_allows(self):
+        tool = (HERE / 'deploy.py').read_text(encoding='utf-8')
+        timeout = self.main['parameters']['poolTimeout']
+        self.assertEqual(re.findall(r'(?m)^POOL_TIMEOUTS = \((\d+), (\d+)\)$', tool),
+                         [(str(timeout['minValue']), str(timeout['maxValue']))])
+
+    def test_the_secrets_the_tool_compares_are_the_ones_the_template_writes(self):
+        # CONTROL: green as written. `python infra/deploy.py --check` lists the pool job's secrets
+        # and the app's, and compares the two it names in a constant of its own. The test of the
+        # two secrets holds the template, and this one holds the tool to it: a name changed in one
+        # of the two only would leave that check unable to compare, at every run. Seen red with a
+        # name changed in the tool, and with one changed in the template.
+        tool = (HERE / 'deploy.py').read_text(encoding='utf-8')
+        compared = re.findall(r"(?m)^POOL_SECRETS = \{'([a-z-]+)': '[^']*', '([a-z-]+)': '[^']*'\}$", tool)
+        secrets = self.job('azurebank-pool')['properties']['configuration'].get('secrets', [])
+        self.assertEqual([sorted(names) for names in compared], [sorted(entry['name'] for entry in secrets)])
+        # Each is a secret of the app under the same name: the one it is compared with.
+        (app,) = self.of_type(APP)
+        of_the_app = [entry['name'] for entry in app['properties']['configuration']['secrets']]
+        self.assertEqual([name for names in compared for name in names if name not in of_the_app], [])
 
     def test_the_policy_definition_sits_at_subscription_scope_and_denies(self):
         self.assertEqual(sorted(module['name'] for module in self.of_type('Microsoft.Resources/deployments')),
@@ -1751,14 +2538,37 @@ class TemplateTests(unittest.TestCase):
             {'allOf': [{'field': 'type', 'equals': APP}, {'anyOf': REFUSED_ON_AN_APP}]},
             {'allOf': [{'field': 'type', 'equals': JOB}, {'anyOf': REFUSED_ON_A_JOB}]}]})
 
-    def test_a_job_may_only_be_started_by_hand_unless_the_template_is_told_otherwise(self):
+    def test_a_job_is_started_by_hand_unless_it_is_named_for_a_schedule(self):
+        # Two lists. The first holds for every job and stays as it was. The second names the jobs
+        # that may run on a schedule: the definition by itself names none, main.bicep names one,
+        # and the assignment hands over both.
         definition = self.compiled['guardrails']['resources'][0]['properties']
         self.assertEqual(definition['parameters'],
-                         {'allowedJobTriggers': {'type': 'Array', 'defaultValue': ['Manual']}})
-        self.assertEqual(self.main['parameters']['allowedJobTriggers']['defaultValue'], ['Manual'])
+                         {'allowedJobTriggers': {'type': 'Array', 'defaultValue': ['Manual']},
+                          'scheduledJobs': {'type': 'Array', 'defaultValue': []}})
+        self.assertEqual({name: self.main['parameters'].get(name, {}).get('defaultValue')
+                          for name in ('allowedJobTriggers', 'scheduledJobs')},
+                         {'allowedJobTriggers': ['Manual'], 'scheduledJobs': ['azurebank-pool']})
         (assignment,) = self.of_type('Microsoft.Authorization/policyAssignments')
         self.assertEqual(assignment['properties']['parameters'],
-                         {'allowedJobTriggers': {'value': "[parameters('allowedJobTriggers')]"}})
+                         {'allowedJobTriggers': {'value': "[parameters('allowedJobTriggers')]"},
+                          'scheduledJobs': {'value': "[parameters('scheduledJobs')]"}})
+
+    def test_the_policy_is_named_for_what_it_refuses_and_the_removal_finds_it(self):
+        # The name is what a refusal is expected to show (not yet read on Azure), so the definition
+        # and its assignment carry the same one. The runbook's removal looks for the words the name
+        # opens with and not for the whole of it: the name it had before this one opens with them too.
+        opens_with = 'AzureBank: one small replica'
+        name = opens_with + ', manual jobs, the pool job scheduled'
+        definition = self.compiled['guardrails']['resources'][0]['properties']
+        (assignment,) = self.of_type('Microsoft.Authorization/policyAssignments')
+        self.assertEqual((definition['displayName'], assignment['properties']['displayName']), (name, name))
+        # The description says what is refused, and so it says the exception too.
+        self.assertIn('a job with another trigger, unless it is named for a schedule', definition['description'])
+        runbook = (HERE / 'README.md').read_text(encoding='utf-8')
+        self.assertNotIn(f"-eq '{opens_with}, manual jobs'", runbook)
+        self.assertIn(f"Where-Object {{ $_.policyType -eq 'Custom' -and $_.displayName -like '{opens_with}*' }} |",
+                      runbook)
 
     def test_every_alert_rule_notifies_one_action_group_and_stops_nothing(self):
         # Four rules are written. Three are built, and the fourth when it is asked for (below).
@@ -1771,11 +2581,60 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(alerts['properties']['actions'],
                          [{'actionGroupId': "[resourceId('Microsoft.Insights/actionGroups', 'azurebank-owner')]"}])
         (group,) = self.of_type('Microsoft.Insights/actionGroups')
-        self.assertEqual(list(group['properties']), ['groupShortName', 'enabled', 'emailReceivers'])
-        # The mailbox is a parameter: no address is written in the template.
-        self.assertEqual([receiver['emailAddress'] for receiver in group['properties']['emailReceivers']],
-                         ["[parameters('alertEmail')]"])
+        # The mailbox is a parameter, and so is the account of the phone: no address is written in
+        # the template. The account is empty unless it is given, and is not among what the app needs.
         self.assertEqual(re.findall(r'[\w.+-]+@[\w-]+\.\w+', json.dumps(self.main)), [])
+        with self.subTest(read='the parameter'):
+            account = self.main['parameters'].get('alertPushAccount', {})
+            self.assertEqual((account.get('type'), account.get('defaultValue')), ('string', ''))
+            self.assertNotIn('alertPushAccount', GUARDED)
+        # The group's receivers, worked out offline as a what-if works them out. Until 2026-10-06
+        # this test read three keys in the compiled template: the receivers were one mailbox,
+        # whatever the run was given. Now the phone's receiver is written only when its account is
+        # given, so the properties are compiled as one expression and are read worked out.
+        mailbox, phone = 'the.mailbox@example.invalid', 'the.phone@example.invalid'
+        as_it_was = {'groupShortName': 'azurebank', 'enabled': True, 'emailReceivers': [
+            {'name': 'owner', 'emailAddress': mailbox, 'useCommonAlertSchema': True}]}
+        runs = {}
+        with tempfile.TemporaryDirectory() as folder:
+            copy_templates(folder)
+            for case, values, count in (('no account named', {}, 22),
+                                        ('an empty account', {'alertPushAccount': ''}, 22),
+                                        ('an account given', {'alertPushAccount': phone}, 22),
+                                        ('an account given without the app',
+                                         {'alertPushAccount': phone, 'deployApp': False}, 14)):
+                with self.subTest(case=case, read='the count'):
+                    code, said, predicted = snapshot(folder, {**APP_INPUTS, 'alertEmail': mailbox, **values})
+                    self.assertEqual(code, 0, said)
+                    self.assertEqual(len(predicted), count)
+                    runs[case] = {resource['id']: resource for resource in predicted}
+
+        def receivers(case):
+            """The properties of the one action group of a run, and every other resource of it."""
+            (found,) = [key for key, resource in runs.get(case, {}).items() if resource['type'] == group['type']]
+            return runs[case][found]['properties'], {key: resource for key, resource in runs[case].items()
+                                                     if key != found}
+        # CONTROL: green before the phone's receiver existed. With no account named the group is
+        # what it was: the same three properties and one mailbox, taken from the parameter.
+        with self.subTest(case='no account named'):
+            self.assertEqual(receivers('no account named')[0], as_it_was)
+        # An account named as empty is no account: the same run, resource for resource.
+        with self.subTest(case='an empty account'):
+            self.assertEqual(runs.get('an empty account'), runs['no account named'])
+        # An account given adds one receiver of the Azure mobile app, with that account, under a
+        # name of its own: a receiver's name must be unique in its group. Nothing else of the run
+        # changes, and the account stands in that one place.
+        with self.subTest(case='an account given'):
+            properties, others = receivers('an account given')
+            self.assertEqual(properties, {**as_it_was, 'azureAppPushReceivers': [
+                {'name': 'owner-phone', 'emailAddress': phone}]})
+            self.assertEqual(others, receivers('no account named')[1])
+            self.assertEqual(json.dumps(runs['an account given']).count(phone), 1)
+        # Without the app there is no group to carry it.
+        with self.subTest(case='an account given without the app'):
+            self.assertEqual([resource['type'] for resource in runs.get('an account given without the app', {}).values()
+                              if resource['type'] == group['type'] or phone in json.dumps(resource)], [])
+            self.assertEqual(len(runs.get('an account given without the app', {})), 14)
 
     def test_the_alert_on_the_log_volume_watches_the_workspace_and_is_left_out_unless_asked_for(self):
         (alerts,) = self.of_type('Microsoft.Insights/metricAlerts')
@@ -1840,9 +2699,14 @@ class TemplateTests(unittest.TestCase):
             self.assertLessEqual(foundation, set(self.main['parameters']))
             self.assertLessEqual(required | {'keepLogs'}, foundation,
                                  'the foundation file must give every required parameter')
-            self.assertEqual(case.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG,
+            # With -DemoOn, so that the demo's switch is written too, and with an account for the
+            # phone, so that its parameter is: the name the script writes is the template's.
+            self.assertEqual(case.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG, '-DemoOn',
+                                          '-AlertPushAccount', 'the.phone@example.invalid',
                                           state='foundation').returncode, 0)
             written = set(case.parameters())
+            self.assertIn('demo', written)
+            self.assertIn('alertPushAccount', written)
             self.assertLessEqual(written, set(self.main['parameters']))
             # What the template's own check asks for when deployApp is true.
             self.assertLessEqual(set(self.compiled['app-inputs']['parameters']) | {'deployApp'}, written)

@@ -284,9 +284,14 @@ that looks behind it, is in [`docs/runbooks/demo-pool.md`](../runbooks/demo-pool
   migration's where a deployment has the two, is ADR-0060's note on its decision 5.
 - **On the Azure deployment no job runs them yet**
   ([ADR-0061](0061-the-demo-is-deployed-to-azure-container-apps-with-no-database-password.md)),
-  and the change that adds one amends that record. A job that is not manual is refused by the
+  and the change that adds one amends that record. ~~A job that is not manual is refused by the
   resource group's Deny policy until `Schedule` is in `allowedJobTriggers` (`infra/main.bicep`;
-  ADR-0061's decision 2). The PIN pepper becomes a secret of the job too, where ADR-0061's
+  ADR-0061's decision 2).~~ *(struck 2026-10-05,
+  [ADR-0064](0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md), decision 4:
+  not through that parameter, which holds for every job and would let the migrate job be
+  scheduled too. The policy has a second one, `scheduledJobs`, and a job whose name is in it
+  may run on a schedule: `main.bicep` names `azurebank-pool`.)* The PIN pepper becomes a secret
+  of the job too, where ADR-0061's
   decision 9 keeps it in the app. The job carries the identity `azurebank-app` and a connection
   string like the one only the `api` container references today, where `infra/README.md`'s
   read-back expects each database identity on exactly one resource. And the deployment identity
@@ -294,11 +299,35 @@ that looks behind it, is in [`docs/runbooks/demo-pool.md`](../runbooks/demo-pool
   API there sets no `Security__PinPepperKeyId`,
   so the key id the job holds is 1. An execution that exited 7 read `Failed` in ADR-0061's trial,
   so the signals 10 to 15 may show there as failed executions; that was not tried.
+  *(2026-10-05, [ADR-0064](0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md):
+  that change is written, and on Azure nothing of it has run. `infra/main.bicep` holds the job,
+  `azurebank-pool`, behind a switch that is off by default: `recycle` every four hours, the
+  identity `azurebank-app`, and two secrets of its own, a copy of the app's connection string and
+  of its pepper. The deployment identity's role is assigned a third time, on that job. The
+  read-backs with each identity on one resource are left as they were measured, and the
+  runbook's third session says what they are expected to give with the demo on. A start by hand
+  ends by the run's exit code and not by the execution's status, since how Azure shows the
+  signals is still not tried. No job runs the commands on Azure until that session has.)*
 - **On Azure the app goes live on an empty database with its registration open**
-  (`infra/README.md`, "What is not here"). A user who registers before the first `seed-pool`
+  (`infra/README.md`, "What is not here"). ~~A user who registers before the first `seed-pool`
   makes it exit 13 on the demo's own database and write nothing, as on any database with users
-  and no pool row, until a person removes that user. Whether registration closes before the first
-  fill is for the change that adds the job.
+  and no pool row, until a person removes that user.~~ *(struck 2026-10-05,
+  [ADR-0064](0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md): on the
+  database a first deployment leaves, nobody can register before the first fill. Measured that
+  day on a local stack whose database only `migrate` had touched, 17 migrations and no row: one
+  registration with a body that passes the rules was answered 500 and left 0 users and 0 roles,
+  and the API's console said why, `Role USER does not exist.` After `seed` had run on that
+  database the same body was answered 201. The registration gives the new user a role inside
+  its one transaction, and `migrate` creates none: the roles come with the pool's first run,
+  which creates them before its first copy. So the user that makes a run exit 13 is one who
+  registers after that run, through an app whose flags are off. The exit 13 on a database with
+  users and no pool row stands as it was measured. Not measured on Azure.)* ~~Whether
+  registration closes before the first fill is for the change that adds the job.~~ *(struck
+  2026-10-05, ADR-0064: it does. One run of the template turns the flag on in both containers
+  and builds the job, the job after the app. The job then fills the pool by itself at its next
+  run, so step 25 of the runbook keeps that run from coming before the app has been read as the
+  demo: it begins more than an hour before it, and deletes the job or stops the app if that
+  read fails. Not run on Azure.)*
 - **`seed` and `reset` refuse demo mode** (exit 2, nothing opened): `seed`'s four users have a
   password and a PIN in this repository, and `reset` drops the database. **Both also refuse a
   database that holds any pool row**, a record included, whatever the flag says: a job whose

@@ -211,10 +211,17 @@ The first step needs no image: the environment, the log workspace, the SQL serve
 three identities, the custom role and the policy, fourteen things. The second adds the app, the
 migration job, two role assignments, the action group and ~~four alerts, nine things~~ three
 alerts, eight things *(struck 2026-10-03: the fourth alert is built only when it is asked for,
-decision 10; the first deployment created the nine)*. A run of the second step without the image
-tag, the alerts' address or one of the seven secrets is refused by a module of its own,
+decision 10; the first deployment created the nine)*. *(2026-10-05,
+[ADR-0064](0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md): with the
+template's switch `demo` on, the second step adds two more, the pool job and a third role
+assignment. Off, which is the default, it adds these eight. Nothing of the switch has run on
+Azure.)* A run of the second step without the image
+tag, the alerts' address or ~~one of the seven secrets~~ one of the eight secrets *(struck
+2026-10-05, ADR-0064: the eighth is the demo's client key, of which the check asks 32
+characters)* is refused by a module of its own,
 `app-inputs.bicep`, whose parameters carry the lengths those values must have; the app, the job
-and the action group wait for it, and the app's name stays a plain value that a what-if can work
+and the action group wait for it *(2026-10-05: and so does the pool job, when it is built)*, and
+the app's name stays a plain value that a what-if can work
 out. The workflow never creates or changes infrastructure. The environment names
 its mode, `WorkloadProfiles`, on an API version that has the property: on this subscription a
 request that names none is taken as Express, which has neither jobs nor a second container, and is
@@ -225,7 +232,13 @@ HTTPS ingress; the API listens on `127.0.0.1:5068` and nothing outside the repli
 (ADR-0055). One replica because the BFF keeps its sessions in memory (ADR-0057) and the pool is
 sized for it (ADR-0058). A Deny policy on the resource group refuses any other shape, whoever
 asks: a second replica, a minimum above zero, several active revisions, plain HTTP, a third
-container, an init container, a container above half a vCPU, a job that is not manual. The
+container, an init container, a container above half a vCPU, ~~a job that is not manual~~ a job
+that is not manual, but for one named for a schedule *(struck 2026-10-05,
+[ADR-0064](0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md), decision 4:
+the rule on a job's trigger has one exception, by name. A job whose name is in the policy's
+second parameter, `scheduledJobs`, may have the trigger `Schedule`, and `main.bicep` names one,
+`azurebank-pool`. Every other job stays manual, the migrate job among them. No request under
+the changed rule has been sent to Azure)*. The
 deployment identity cannot change a policy.
 
 **3. The database is Azure SQL Basic, 5 DTU and 2 GB, with a lock on the database.** On the
@@ -259,20 +272,39 @@ sign-in for an address nobody can register, which must be refused with the API's
 that answer needs the BFF, the API, the schema and the database sign-in together. If the new
 revision never gets ready, the app reads back out of the shape it must keep, or the check gets a
 wrong answer, the app goes back to the template it had. The schema is never put back.
+*(2026-10-05, [ADR-0064](0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md),
+decisions 7 to 10: a deployment first reads from the app's two containers whether the demo is
+on. With it off it is what this decision says. With it on it also checks the pool job's shape,
+does not start beside a run of that job, moves that job's image once the migration has
+succeeded, and its check asks the address two things more: the demo's tag in the page, and a
+registration that must be refused as closed. Not run on Azure.)*
 
 **8. The deployment identity can move images and start the job, and nothing else.** GitHub signs
 in as it only from the environment `demo`, which the owner sets to allow `main` only and to ask for
 a reviewer. Its custom role has nine actions: read and write the app and the job, start the job,
-read executions, revisions and replicas. It cannot list secrets, and on every run it tries and
+read executions, revisions and replicas. *(2026-10-05,
+[ADR-0064](0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md), decision 5: with
+the demo on, the same role is assigned a third time, on the pool job, so "the job" is then each
+of two. The nine actions are the same nine. A deployment moves the pool job's image and never
+starts it.)* It cannot list secrets, and on every run it tries and
 goes on only if Azure refuses. It has no user in the database and no right on the workspace. **It
 gets no role on the two database identities**: if Azure asks for one before it accepts a change,
 the run stops and the refusal goes to the owner.
 
-**9. The seven application secrets exist only as secrets of the app.** They are generated on the
+**9.** ~~**The seven application secrets exist only as secrets of the app.**~~ **The eight
+application secrets are secrets of the app, and one of them is also a secret of the pool job.**
+*(struck 2026-10-05,
+[ADR-0064](0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md), decisions 2, 3
+and 6: the eighth is the demo's client key, which the app holds whether the demo is on or off.
+And with the demo on the PIN pepper is a secret of the pool job too, beside a copy of the app's
+connection string: the tool that builds the copies hashes their PINs with the pepper the API
+verifies them with. The template writes the job's two from the expressions it writes the app's
+from, and `deploy.py --check` compares them and shows neither.)* They are generated on the
 owner's machine into one file outside the repository, which is removed when the session ends. The
 three Azure identifiers are secrets of the GitHub environment, so that a public log never prints
 them. The two connection strings are secrets too, although they hold no password, and only the
-`api` container and the job reference them: the BFF is handed neither the server's name nor the
+`api` container and the job reference them *(2026-10-05: and the pool job, which references its
+copy of the app's)*: the BFF is handed neither the server's name nor the
 client ID. That keeps both out of the container that faces the internet. It is not a lock:
 neither is a secret.
 
@@ -286,6 +318,10 @@ metric cannot count lines here. The fourth alert, which the first deployment had
 deleted, and the template builds it only with `logVolumeAlert=true`, for whoever measures again.
 A rule that does count lines is a log search rule, which is billed; the owner decided against
 one for now.)* Three alerts send an e-mail, all on the app: requests, data out and replica time.
+*(2026-10-06, [ADR-0064](0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md),
+decision 16: with an account given, the same three also notify the owner's phone through the
+Azure mobile app, by a second receiver of the action group. The receiver has not been sent to
+Azure, and no notification has been seen. Nothing is stopped by it either.)*
 Nothing warns of the log's volume. The owner stops the app by hand. The logs are switched off by
 rule: any cost on their meter, a day above twice the cap, or no line ever arriving.
 
@@ -661,7 +697,10 @@ is left out by default, and the owner decided against a log search rule for now.
   `Unit/Tools/SeederCommandTests`: `migrate`'s line for a refused login names both ways to sign
   in.
 - `infra/test_scripts.py` and `infra/test_deploy.py`, 267 tests *(272 since 2026-10-03, with the
-  five added after the second session: four for `--job-log`, one for the alerts)*: the two
+  five added after the second session: four for `--job-log`, one for the alerts; 444 since
+  2026-10-05, with those of
+  [ADR-0064](0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md); 452 since
+  2026-10-06, with the eight of its decision 16)*: the two
   PowerShell scripts run
   for real against a stand-in for the Azure CLI and a stand-in for `sqlcmd`; the users file is
   read as text, to keep each guard, every `WHERE` and every `IF` where it is; the compiled
@@ -698,7 +737,13 @@ is left out by default, and the owner decided against a log search rule for now.
 - The compiled template: 21 resources, 19 parameters of which 7 secure and 2 required, 8 outputs,
   none secure; 14 resources without the app and 9 more with it *(2026-10-03: 8 more by default,
   9 with `logVolumeAlert=true`, decision 10)*, and with them the check of the app's values, a
-  nested deployment that creates nothing. `bicep build` and `bicep lint` exit 0
+  nested deployment that creates nothing. *(2026-10-05,
+  [ADR-0064](0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md): 23 resources
+  and 23 parameters, of which 8 secure and 2 required, and the same 8 outputs. The two resources
+  more are the pool job and its role assignment, built only with the switch `demo` on: off, a
+  run still predicts 14 without the app and 8 more with it. Since 2026-10-06, 24 parameters: the
+  one more is the account for the owner's phone, empty by default, and with it empty a run
+  predicts the same resources with the same properties.)* `bicep build` and `bicep lint` exit 0
   with nothing on standard error for the three templates; an unused parameter puts a warning
   there. One warning is silenced, on one line: BCP081, because Bicep 0.47.16 has no types for the
   environment's API version. Without that line the warning is back. `app-inputs.bicep` silences

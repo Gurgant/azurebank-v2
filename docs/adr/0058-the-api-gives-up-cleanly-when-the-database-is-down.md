@@ -30,7 +30,16 @@ struck below; the first remains.)*
    `Database:MaxPoolSize` so the sum stays within 30. *(2026-10-01, ADR-0060: the Seeder's
    `migrate` is such a job, at 5. A deployment runs it to its end before it moves the app, so it
    runs beside one API process, not two: 12 + 5, or 12 + 5 + 5 with a second job at 5 beside it.
-   Two jobs at 5 beside two API processes would be 34.)*
+   Two jobs at 5 beside two API processes would be 34.)* *(2026-10-05,
+   [ADR-0064](0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md): the second
+   job is written. It is the pool job of the Azure deployment, which runs `recycle` every four
+   hours with the tools image's pool of 5: by itself beside the app, 12 + 5. A deployment does
+   not start while a run of it is in progress, by one read before any change. A run the
+   schedule starts after that read is not seen: beside the migration that is the 12 + 5 + 5
+   above, and beside two API processes while a revision is replaced it is 2 × 12 + 5 = 29,
+   because the migration has ended by then. The 34 would need both jobs beside two API
+   processes, which the order of a deployment does not produce. Arithmetic on the three pool
+   sizes: nothing of it has run on Azure.)*
 2. ~~**A migration run gets the same connection limits in its own change.** `dotnet ef` builds its
    context from `DesignTimeDbContextFactory`, which sets its own options and applies no
    `SqlConnectionDefaults`, so a migration run that way still opens with SqlClient's defaults

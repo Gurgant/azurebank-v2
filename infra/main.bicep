@@ -3,22 +3,34 @@ targetScope = 'resourceGroup'
 param location string = 'italynorth'
 @description('Full commit SHA shared by the three public GHCR images. Needed only when deployApp is true.')
 param imageTag string = ''
-@description('False creates what needs no image: the environment, the log workspace, SQL, the three identities and the deployment role. True adds the app, the migrate job and the two role assignments.')
+@description('False creates what needs no image: the environment, the log workspace, SQL, the three identities and the deployment role. True adds the app, the migrate job and the two role assignments; with demo true as well, the pool job and a third role assignment.')
 param deployApp bool = false
+@description('True turns the public demo on: the flag on both containers of the app, and the pool job with its role assignment. infra/secrets.ps1 writes it: what the deployed app does now, or true with -DemoOn. False removes nothing: a pool job that already exists is expected to stay and to keep its schedule.')
+param demo bool = false
 param entraAdminObjectId string
 param entraAdminLogin string
 @description('Seconds a migrate run may take. Kept under 15 minutes.')
 @minValue(60)
 @maxValue(840)
 param replicaTimeout int = 600
+@description('Seconds a pool run may take. Kept under 15 minutes, and under the four hours between two runs.')
+@minValue(60)
+@maxValue(840)
+param poolTimeout int = 600
 
 @description('Where the notify-only alerts send their e-mail. Needed only when deployApp is true; never committed.')
 param alertEmail string = ''
+@description('The e-mail address the Azure mobile app on the owner\'s phone was set up with. Given, the action group gains one receiver of that app, so that an alert is expected to reach the phone as a notification too. Empty, the default, adds none: the group is what it was. infra/secrets.ps1 writes it; never committed.')
+param alertPushAccount string = ''
 @description('False leaves the Deny policy out: the fallback if this subscription refuses a custom policy definition.')
 param denyPolicy bool = true
-@description('Trigger types the Deny policy lets a job have. The pool job adds Schedule.')
+@description('Trigger types the Deny policy lets every job have. A job that runs on a schedule is not added here: it is named in scheduledJobs.')
 param allowedJobTriggers array = [
   'Manual'
+]
+@description('Names of the jobs the Deny policy lets run on a schedule. Every other job is started by hand.')
+param scheduledJobs array = [
+  'azurebank-pool'
 ]
 @description('False keeps no logs: no workspace, no diagnostic setting, and what the containers print goes nowhere. It deletes neither a workspace nor a setting that already exists.')
 param keepLogs bool = true
@@ -27,7 +39,8 @@ param logDailyCapGb string = '0.05'
 @description('True adds the alert on the log workspace. Left out since 2026-10-03: at step 20 of the runbook its metric had no time series for an hour in which the workspace ingested 446 rows. True is for whoever measures again.')
 param logVolumeAlert bool = false
 
-// The seven values below are needed only when deployApp is true; infra/secrets.ps1 supplies them.
+// The eight values below are needed only when deployApp is true; infra/secrets.ps1 supplies them.
+// The eighth is the demo's: the app holds it whether the demo is on or off, and uses it only when on.
 @secure()
 param jwtSecret string = ''
 @secure()
@@ -42,6 +55,8 @@ param auditChainKey string = ''
 param auditAnchorKey string = ''
 @secure()
 param securityPinPepper string = ''
+@secure()
+param demoClientKeySecret string = ''
 
 // Bicep 0.47.16 has no types for this API version (BCP081): test_scripts.py checks the properties instead.
 #disable-next-line BCP081
@@ -67,7 +82,7 @@ resource environment 'Microsoft.App/managedEnvironments@2026-07-01' = {
   }
 }
 
-// What the app and the job print, kept 30 days. The daily cap is the one bound on this meter, and
+// What the app and its jobs print, kept 30 days. The daily cap is the one bound on this meter, and
 // not a hard one: the workspace stops taking lines some time after the cap is reached, and what
 // got through by then is billed. No shared key: nothing here sends or reads with one.
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (keepLogs) {
@@ -178,8 +193,9 @@ resource githubFederation 'Microsoft.ManagedIdentity/userAssignedIdentities/fede
   }
 }
 
-// What the app and the migrate job sign in to the database as. Neither has a role on any Azure
-// resource: each is only a user inside the database, created by infra/sql-principals.ps1.
+// What the app and the migrate job sign in to the database as; the pool job signs in as the app
+// does. Neither has a role on any Azure resource: each is only a user inside the database, created
+// by infra/sql-principals.ps1.
 resource appIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: 'azurebank-app'
   location: location
@@ -191,7 +207,8 @@ resource migrateIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-
 }
 
 // Each string names the identity to ask a token for and holds no credential. The two are secrets
-// all the same, referenced by the api container and by the job only. An identity can be used by
+// all the same, referenced by the api container and by the two jobs only: the app's string by the
+// api container and by the pool job, the other by the migrate job. An identity can be used by
 // every container of the app, the bff included, and the bff faces the internet: it is handed
 // neither the server's name nor the client ID. That is not a lock, because neither is a secret;
 // it keeps both out of that container, and out of every read of the app and of an execution.
@@ -199,9 +216,9 @@ resource migrateIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-
 var appConnection = 'Server=tcp:${sql.properties.fullyQualifiedDomainName},1433;Database=AzureBank;Authentication=Active Directory Managed Identity;User ID=${appIdentity.properties.clientId};Encrypt=True;TrustServerCertificate=False'
 var migrationConnection = 'Server=tcp:${sql.properties.fullyQualifiedDomainName},1433;Database=AzureBank;Authentication=Active Directory Managed Identity;User ID=${migrateIdentity.properties.clientId};Encrypt=True;TrustServerCertificate=False'
 
-// Refuses deployApp=true without the image tag, the alerts' address or one of the seven secrets:
-// the checks are the parameters of app-inputs.bicep, and the app, the job and the action group
-// wait for it. The app's name stays a plain value, which a what-if can work out (README.md,
+// Refuses deployApp=true without the image tag, the alerts' address or one of the eight secrets:
+// the checks are the parameters of app-inputs.bicep, and the app, the two jobs and the action
+// group wait for it. The app's name stays a plain value, which a what-if can work out (README.md,
 // "Measured on Azure").
 module appInputs 'app-inputs.bicep' = if (deployApp) {
   name: 'azurebank-app-inputs'
@@ -215,8 +232,14 @@ module appInputs 'app-inputs.bicep' = if (deployApp) {
     auditChainKey: auditChainKey
     auditAnchorKey: auditAnchorKey
     securityPinPepper: securityPinPepper
+    demoClientKeySecret: demoClientKeySecret
   }
 }
+
+// How many copies of the demo one address may claim in a day, as text for a container's setting.
+// 1,000 is the range's maximum: until what the BFF sees as a visitor's address behind the ingress
+// has been measured, the default of 10 could be ten copies a day for everybody (ADR-0063, decision 14).
+var demoClaimsPerClient = '1000'
 
 resource app 'Microsoft.App/containerApps@2025-01-01' = if (deployApp) {
   name: 'azurebank'
@@ -247,6 +270,7 @@ resource app 'Microsoft.App/containerApps@2025-01-01' = if (deployApp) {
         { name: 'audit-chain-key', value: auditChainKey }
         { name: 'audit-anchor-key', value: auditAnchorKey }
         { name: 'pin-pepper', value: securityPinPepper }
+        { name: 'demo-client-key', value: demoClientKeySecret }
       ]
     }
     template: {
@@ -267,6 +291,9 @@ resource app 'Microsoft.App/containerApps@2025-01-01' = if (deployApp) {
             // is not kept: it is most of what a day writes and the cheapest way to fill the log's
             // daily cap. Every warning stays, and so does the request line of a 5xx (an Error).
             { name: 'Serilog__MinimumLevel__Override__Serilog', value: 'Warning' }
+            // The demo's switch, the same text on both containers. With it on, this one closes
+            // registration and marks the page, and the api hands out the copies (ADR-0063).
+            { name: 'Demo__Enabled', value: demo ? 'true' : 'false' }
           ]
           probes: [for probe in [
             { type: 'Startup', path: '/health/live', timeout: 1 }
@@ -304,6 +331,12 @@ resource app 'Microsoft.App/containerApps@2025-01-01' = if (deployApp) {
             { name: 'Audit__ChainKey', secretRef: 'audit-chain-key' }
             { name: 'Audit__AnchorKey', secretRef: 'audit-anchor-key' }
             { name: 'Security__PinPepper', secretRef: 'pin-pepper' }
+            { name: 'Demo__Enabled', value: demo ? 'true' : 'false' }
+            // The key a visitor's address is hashed with before a claimed copy's row stores it.
+            // With the demo off the api uses neither it nor the cap below; the cap's range is
+            // checked when the api starts, on or off.
+            { name: 'Demo__ClientKeySecret', secretRef: 'demo-client-key' }
+            { name: 'Demo__Claim__MaxPerClientPerDay', value: demoClaimsPerClient }
           ]
         }
       ]
@@ -366,11 +399,90 @@ resource migrate 'Microsoft.App/jobs@2025-01-01' = if (deployApp) {
   ]
 }
 
-// What a deployment needs: read and write the app and the job, start the job, read its executions,
+// When the pool job is asked to run: every four hours, on the hour. Azure is expected to read the
+// expression in UTC; no run on a schedule has been seen here. A variable and not a parameter: an
+// override could make the interval shorter than the job's timeout, and two runs at once can build
+// up to twice the pool's target (backend/tools/AzureBank.Seeder/README.md).
+var poolSchedule = '0 */4 * * *'
+
+// The job that keeps the demo's pool of copies: `recycle` tops the pool up and deletes the copies
+// whose time is over (ADR-0062). Built only with the demo on: a job that carries the flag beside
+// an app whose two containers do not is the state ADR-0063 warns of, where visitors register
+// beside the pool and every run exits 13. It signs in to the database as the app does, never as
+// the identity that changes the schema. A job has a secret list of its own, so its two secrets
+// are written here from what the app's are written from: the same connection string and the same
+// pepper. No retry: `recycle` ends a run that found something to say with an exit code from 10 to
+// 15 (docs/runbooks/demo-pool.md), and with a retry Azure is expected to take such a run for a
+// failed one and to try it again.
+resource pool 'Microsoft.App/jobs@2025-01-01' = if (deployApp && demo) {
+  name: 'azurebank-pool'
+  location: location
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${appIdentity.id}': {}
+    }
+  }
+  properties: {
+    environmentId: environment.id
+    workloadProfileName: 'Consumption'
+    configuration: {
+      triggerType: 'Schedule'
+      replicaRetryLimit: 0
+      replicaTimeout: poolTimeout
+      scheduleTriggerConfig: {
+        cronExpression: poolSchedule
+        parallelism: 1
+        replicaCompletionCount: 1
+      }
+      secrets: [
+        { name: 'app-connection', value: appConnection }
+        { name: 'pin-pepper', value: securityPinPepper }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'pool'
+          image: 'ghcr.io/gurgant/azurebank-tools:${imageTag}'
+          args: [
+            'recycle'
+          ]
+          resources: {
+            cpu: json('0.25')
+            memory: '0.5Gi'
+          }
+          env: [
+            { name: 'ConnectionStrings__DefaultConnection', secretRef: 'app-connection' }
+            { name: 'Security__PinPepper', secretRef: 'pin-pepper' }
+            // A plain word and not the switch: this template writes the job only with the demo on,
+            // and the pool's commands refuse to run with it off
+            // (backend/tools/AzureBank.Seeder/README.md). A later run with demo false sends no job
+            // and is not expected to delete this one: it would keep this word, and its schedule,
+            // beside an app whose two flags are off, the state named over the job.
+            { name: 'Demo__Enabled', value: 'true' }
+            { name: 'Demo__Claim__MaxPerClientPerDay', value: demoClaimsPerClient }
+          ]
+        }
+      ]
+    }
+  }
+  // After the app, not beside it. Expected of Azure and not provoked: when the app's own update
+  // fails, a job that waits for it is not created, so no scheduled job is left beside an app whose
+  // flags are still off. It does not cover a new revision that never gets ready: for Azure the
+  // app's update has then succeeded. What is done in that case, before the job's next run, is
+  // the runbook's to say (infra/README.md).
+  dependsOn: [
+    appInputs
+    app
+  ]
+}
+
+// What a deployment needs: read and write the app and its jobs, start a job, read its executions,
 // read the app's revisions and replicas (why a revision is not ready). It cannot list secrets,
-// delete, stop, or touch the environment or the resource group. It CAN write the whole app and the
-// whole job, so it can run any image with the secrets in its environment and with the database
-// identity attached to it: see the README.
+// delete, stop, or touch the environment or the resource group. It CAN write the whole app and
+// each whole job, so it can run any image with the secrets in its environment and with the
+// database identity attached to it: see the README.
 var deployRoleName = guid(resourceGroup().id, 'azurebank-deploy')
 // The form every role assignment stores, whatever scope the definition was written at.
 var deployRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', deployRoleName)
@@ -379,7 +491,7 @@ resource deployRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' = {
   name: deployRoleName
   properties: {
     roleName: 'AzureBank deploy ${uniqueString(resourceGroup().id)}'
-    description: 'Move the images of the AzureBank app and of its migrate job, and start that job.'
+    description: 'Move the images of the AzureBank app and of its jobs, and start a job.'
     type: 'CustomRole'
     assignableScopes: [
       resourceGroup().id
@@ -431,6 +543,23 @@ resource jobRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (depl
   ]
 }
 
+// The same role a third time, on the pool job: without it a deployment could neither read that job
+// nor move its image with the commit. No new action. The pool job carries the app's database
+// identity and two of the app's secrets, which the role can already run any image with through
+// the app (above).
+resource poolRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployApp && demo) {
+  name: guid(pool.id, deployIdentity.id, deployRoleId)
+  scope: pool
+  properties: {
+    principalId: deployIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: deployRoleId
+  }
+  dependsOn: [
+    deployRole
+  ]
+}
+
 // The shape the app and its jobs must keep, refused by the platform whoever asks: the deployment
 // identity cannot change a policy.
 module shape 'guardrails.bicep' = if (denyPolicy) {
@@ -444,24 +573,43 @@ module shape 'guardrails.bicep' = if (denyPolicy) {
 resource shapeAssignment 'Microsoft.Authorization/policyAssignments@2025-03-01' = if (denyPolicy) {
   name: 'azurebank-shape'
   properties: {
-    displayName: 'AzureBank: one small replica, manual jobs'
+    displayName: 'AzureBank: one small replica, manual jobs, the pool job scheduled'
     policyDefinitionId: shape!.outputs.definitionId
     enforcementMode: 'Default'
     parameters: {
       allowedJobTriggers: {
         value: allowedJobTriggers
       }
+      scheduledJobs: {
+        value: scheduledJobs
+      }
     }
   }
 }
 
-// Notify only: nothing here stops the app. One e-mail receiver; three rules on the app, one per
-// meter that traffic can move (requests, bytes out, replica time). A fourth, on the log workspace,
-// is built only when logVolumeAlert is true: see the comment on it below.
+// Notify only: nothing here stops the app. One e-mail receiver, and beside it, when
+// alertPushAccount is given, one receiver of the Azure mobile app, so that an alert is expected to
+// reach the owner's phone as a notification too; three rules on the app, one per meter that
+// traffic can move (requests, bytes out, replica time). A fourth, on the log workspace, is built
+// only when logVolumeAlert is true: see the comment on it below. Until 2026-10-06 this comment
+// said "One e-mail receiver" and the group could hold no other.
+//
+// The phone's receiver is merged in, not written as a list that may be empty: with no account
+// the properties worked out are the three they were, and no fourth. Its name is its own, because
+// a receiver's name must be unique in its group, and its emailAddress is, in the reference's
+// words, "The email address registered for the Azure mobile app"
+// (https://learn.microsoft.com/en-us/azure/templates/microsoft.insights/2023-01-01/actiongroups,
+// read on 2026-10-06). Nothing of it has been sent to Azure. Not known: what Azure does with a
+// push for an account that has no app, and what such a notification costs on this offer.
+//
+// Merged so, the compiler does not read the receivers' fields: emailAddress misspelt, in either
+// receiver, builds and lints with nothing on standard error, where the plain object this was
+// until 2026-10-06 put two warnings there. The test that compares the group's properties,
+// worked out, whole, is what holds them.
 resource owner 'Microsoft.Insights/actionGroups@2023-01-01' = if (deployApp) {
   name: 'azurebank-owner'
   location: 'global'
-  properties: {
+  properties: union({
     groupShortName: 'azurebank'
     enabled: true
     emailReceivers: [
@@ -471,7 +619,14 @@ resource owner 'Microsoft.Insights/actionGroups@2023-01-01' = if (deployApp) {
         useCommonAlertSchema: true
       }
     ]
-  }
+  }, empty(alertPushAccount) ? {} : {
+    azureAppPushReceivers: [
+      {
+        name: 'owner-phone'
+        emailAddress: alertPushAccount
+      }
+    ]
+  })
   dependsOn: [
     appInputs
   ]
