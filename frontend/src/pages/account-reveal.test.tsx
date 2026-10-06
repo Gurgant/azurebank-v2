@@ -137,6 +137,19 @@ describe('account number reveal (ADR-0020)', () => {
     expect(screen.queryByText(FULL_MAIN)).not.toBeInTheDocument();
   });
 
+  it('the PIN modal says what the PIN is asked for, and no transfer', async () => {
+    // The number's reveal is the only thing that brings this modal up (ADR-0041), and until
+    // 2026-10-06 it asked for the PIN "to authorize this transfer".
+    const user = userEvent.setup();
+    renderWithProviders(<AccountsWithStepUp />, { routerEntries: ['/accounts'] });
+
+    await user.click(await screen.findByRole('button', { name: revealName }));
+
+    const modal = await screen.findByRole('alertdialog', { name: /verify it's you/i });
+    expect(modal).toHaveTextContent('Enter your 6-digit PIN to show the full account number.');
+    expect(modal).not.toHaveTextContent(/transfer/i);
+  });
+
   it('the PIN modal gives focus back to the button that brought it up', async () => {
     const user = userEvent.setup();
     renderWithProviders(<AccountsWithStepUp />, { routerEntries: ['/accounts'] });

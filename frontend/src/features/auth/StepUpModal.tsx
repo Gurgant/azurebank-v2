@@ -44,7 +44,14 @@ const useStyles = makeStyles({
     justifyContent: 'center',
     color: colors.brand[60],
   },
-  subtitle: { fontSize: '14px', color: colors.neutral[500], lineHeight: '1.5' },
+  // Centred here as well as on `intro`: Fluent's `Text` sets `text-align: start` on itself, so a
+  // sentence that wraps (this one does at 375 px) would sit left-aligned under a centred title.
+  subtitle: {
+    fontSize: '14px',
+    color: colors.neutral[500],
+    lineHeight: '1.5',
+    textAlign: 'center',
+  },
   pinArea: { display: 'flex', justifyContent: 'center', padding: '12px 0' },
 });
 
@@ -53,9 +60,10 @@ const useStyles = makeStyles({
  * entirely by the module-level stepUpController: when a level-2-gated request 403s, the
  * base-query wrapper calls requestStepUp() and this modal appears. Since ADR-0041 the only
  * route that 403s this way is the account-number reveal — a transfer's PIN goes to the
- * authorisation mint instead (ADR-0042) and never through here. ⚠️ The subtitle below still says
- * "authorize this transfer": stale user-facing copy, and it belongs to the UI/UX train (U8), not
- * to a comment sweep. The user's PIN elevates the
+ * authorisation mint instead (ADR-0042) and never through here. The subtitle below says what
+ * that one route asks the PIN for, so a second route that came to open this modal would need
+ * words of its own. (Until 2026-10-06 the subtitle said "authorize this transfer", and this
+ * comment called it stale and left it to the UI/UX train.) The user's PIN elevates the
  * SESSION via /bff/auth/verify-pin; on success it settles 'elevated' and the wrapper replays
  * the original request. Because a
  * wrong PIN is HTTP 200 { verified:false } (never a 4xx), success is read from data.verified,
@@ -128,8 +136,9 @@ function StepUpForm() {
         setError(SERVICE_UNAVAILABLE);
         setPin('');
       } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
-        // A transport blip must NOT silently abandon the transfer — keep the modal open so
-        // the user can retry the PIN without re-driving the whole flow.
+        // A transport blip must NOT silently abandon what the PIN was asked for — keep the modal
+        // open so the user can retry the PIN without re-driving the whole flow. (Until 2026-10-06
+        // this said "abandon the transfer", which no longer comes through here.)
         setError("Couldn't verify right now — check your connection and try again.");
         setPin('');
       } else if (problem.status === 401) {
@@ -159,7 +168,7 @@ function StepUpForm() {
       <DialogContent>
         <div className={styles.intro}>
           <Text className={styles.subtitle}>
-            Enter your 6-digit PIN to authorize this transfer.
+            Enter your 6-digit PIN to show the full account number.
           </Text>
           <div className={styles.pinArea}>
             <PinInput
