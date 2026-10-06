@@ -1370,7 +1370,10 @@ public sealed class DemoClaimSqlServerTests
 
     /// <summary>A response as status, media type and body, without the trace id, which differs between two requests.</summary>
     /// <remarks>
-    /// With parentheses where the body has braces: a brace in a text the assertion library compares
+    /// Returned through <see cref="ComparableText"/>, so the text is exact. A failure shows
+    /// <c>%7B</c> and <c>%7D</c> where the braces are, and the index counts the encoded text.
+    /// (Until 2026-10-06 this said parentheses where the body has braces.)
+    /// A brace in a text the assertion library compares
     /// makes a comparison that fails throw <see cref="FormatException"/> in place of its message
     /// (<c>DemoModeEndpointTests.ShapeOfAsync</c> says how it was measured).
     /// </remarks>
@@ -1383,8 +1386,8 @@ public sealed class DemoClaimSqlServerTests
             body = json.ToJsonString();
         }
 
-        return $"{(int)response.StatusCode} {response.Content.Headers.ContentType?.MediaType} {body}"
-            .Replace('{', '(').Replace('}', ')');
+        return ComparableText.Of(
+            $"{(int)response.StatusCode} {response.Content.Headers.ContentType?.MediaType} {body}");
     }
 
     /// <summary>A user no failed sign-in was counted for, and whom nothing locks.</summary>
