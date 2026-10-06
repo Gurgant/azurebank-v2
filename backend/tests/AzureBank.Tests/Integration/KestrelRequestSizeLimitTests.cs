@@ -191,8 +191,11 @@ public sealed class KestrelRequestSizeLimitTests : IDisposable
         }
     }
 
-    // Controls: the inclusive boundary and authentication must keep their existing answers.
-    // The oversized unauthenticated request is last: Kestrel can abort after its keep-alive 401.
+    // Controls, green before and after the mints' 413: the largest body a mint still takes gets its
+    // usual answer, and 40,000 bytes with no token get the 401 first. With a Content-Length that body
+    // is 32,768 bytes; in one chunk it is 32,755, because the server counts the chunk's 13 bytes of
+    // framing as well (the theory above has 32,756 in one chunk refused). The request with no token
+    // is the last this test sends: Kestrel can abort the connection after its keep-alive 401.
     [Theory]
     [InlineData("/api/transfers/authorizations", false)]
     [InlineData("/api/transfers/authorizations", true)]

@@ -5,8 +5,11 @@ using Microsoft.OpenApi;
 namespace AzureBank.Api.Transformers;
 
 /// <summary>
-/// Declares the 413 response on [RefuseOversizedBody] endpoints: bodies over 32 KB are refused with
-/// PAYLOAD_TOO_LARGE.
+/// Declares the 413 on the operations marked <c>[RefuseOversizedBody]</c>, the marker that answers
+/// it: a body over the endpoint's 32,768-byte limit is refused with <c>PAYLOAD_TOO_LARGE</c>.
+/// Filled in through <see cref="ProblemDetailsResponses"/>, so the body is the shared component.
+/// The four money operations' 413 is not declared here: <c>IdempotencyOperationTransformer</c>
+/// assigns it.
 /// </summary>
 public sealed class PayloadTooLargeResponseTransformer : IOpenApiOperationTransformer
 {

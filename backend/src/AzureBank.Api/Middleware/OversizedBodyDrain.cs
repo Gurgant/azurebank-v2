@@ -3,6 +3,14 @@ using Microsoft.AspNetCore.Http.Features;
 
 namespace AzureBank.Api.Middleware;
 
+/// <summary>
+/// Reads and throws away an oversized request body before its 413, or marks the answer
+/// <c>Connection: close</c> when it cannot. One implementation for its two callers:
+/// <see cref="IdempotencyMiddleware"/>, for the four money endpoints, and
+/// <c>[RefuseOversizedBody]</c>, for the four authorisation mints. Each passes the host's
+/// <see cref="TimeProvider"/>, so a test's clock runs the five seconds. The measurements in the
+/// remarks below were taken on the money endpoints, before the mints called this.
+/// </summary>
 internal sealed class OversizedBodyDrain(TimeProvider timeProvider)
 {
     private readonly TimeProvider _timeProvider = timeProvider;
