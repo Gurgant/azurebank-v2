@@ -14,6 +14,7 @@ test.
 | [`api/`](api/README.md) | The generated OpenAPI contract, and how to read it |
 | [`architecture/overview.md`](architecture/overview.md) | How AzureBank works |
 | [`runbooks/`](runbooks/) | What to do when the audit chain is unavailable, a PIN enrolment is repudiated, a refresh token's reuse is recorded, or a run of the demo pool ends with a signal |
+| [`testing/`](testing/) | The public demo: [how to try it by hand](testing/try-the-demo.md), and [how an automated tester walks it](testing/test-the-demo-as-an-agent.md) |
 | [`deferred/`](deferred/README.md) | What was understood well enough to build and chosen not to, and why |
 | [`audit/`](audit/README.md) | A sample of the audit trail's exported anchor copy |
 | [`notices/`](notices/README.md) | The notices a PIN enrolment or change sends, as rendered |
