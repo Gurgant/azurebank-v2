@@ -34,12 +34,13 @@ import { fieldContrast, textContrast } from './contrast';
  *   run at all.
  * Each scan also waits for the page's animations to finish first, so a fade is not measured.
  *
- * Seven blocks further down are not scans. Each holds, by measuring it, one thing the sweep
- * does not: that what is typed in a field can be read, that the amount field shows where focus
- * is, that a dialog gives focus back when it closes, that a status pill stays in its column at
- * phone width, that the two money tiles share a row there, that a button of Settings keeps its
- * label on one line there, and that certain words which were too faint stay readable. Each has
- * its own note above it.
+ * Six blocks further down are not scans. Each holds, by measuring it, one thing the sweep does
+ * not: that what is typed in a field can be read, that the amount field shows where focus is,
+ * that a dialog gives focus back when it closes, that the two money tiles share a row at phone
+ * width, that a button of Settings keeps its label on one line there, and that certain words
+ * which were too faint stay readable. Each has its own note above it. Two more of the kind need
+ * an entry in the ledger, which this suite's user is not seeded with, so they are in
+ * `deposit.spec.ts`, after the deposit that leaves one.
  */
 type Scan = { name: string; path: string; title: string; ready: (page: Page) => Promise<void> };
 
@@ -437,38 +438,6 @@ test.describe('a dialog gives focus back to the control that opened it', () => {
 });
 
 /*
-  AT PHONE WIDTH A STATUS PILL STAYS IN ITS COLUMN. The two ledgers share one table with fixed
-  columns, and its last column was 18 % wide: at 375 px that is narrower than the pill in it, which
-  does not wrap. The pill then ran past its cell: off the screen on History, where the last letter
-  of "Completed" was cut, and over the card's edge on the dashboard. Each row reads every pill of
-  the page against the cell it is in. A page with no pill would pass, so the count is held first.
-*/
-test.describe('at phone width a status pill stays in its column', () => {
-  for (const path of ['/dashboard', '/history']) {
-    test(`on ${path}`, async ({ page }) => {
-      await page.setViewportSize({ width: 375, height: 812 });
-      await page.goto(path);
-      await heading(1)(page);
-      await expect(page.locator('table tbody tr td:nth-child(4)').first()).toBeVisible();
-
-      // How far each pill reaches past the right edge of its cell, in px: 0 or less when inside.
-      const past = await page.locator('table tbody tr').evaluateAll((rows) =>
-        rows.flatMap((row) => {
-          const status = row.children.length >= 4 ? row.lastElementChild : null;
-          const pill = status?.querySelector('span');
-          if (!status || !pill) return [];
-          return [pill.getBoundingClientRect().right - status.getBoundingClientRect().right];
-        }),
-      );
-      expect(past.length, `${path}: no status pill was found to measure`).toBeGreaterThan(0);
-      expect(Math.max(...past), `${path}: a pill reaches past its cell, in px`).toBeLessThanOrEqual(
-        0,
-      );
-    });
-  }
-});
-
-/*
   AT PHONE WIDTH THE TWO MONEY TILES SHARE A ROW. Their grid counted its columns by the tiles'
   200 px cap, and a phone's row holds one such column: the tiles stacked, 200 px wide each, with
   the rest of the row empty (143 of 343 px at 375 px). The row reads where the two are drawn.
@@ -588,20 +557,6 @@ const FAINT_WORDS: { name: string; reach: (page: Page) => Promise<Locator> }[] =
     reach: async (page) => {
       await page.goto('/settings');
       return page.getByRole('main').getByRole('button', { name: /^(Log|Sign) out$/ });
-    },
-  },
-  {
-    // The green of an icon, as 13 px words on the badge's own pale green: 2.69 to 1.
-    name: "the Completed badge on a transaction's page",
-    reach: async (page) => {
-      await page.goto('/history');
-      const completed = page
-        .locator('table tbody tr')
-        .filter({ has: page.locator('td:last-child', { hasText: 'Completed' }) });
-      await completed.first().getByRole('button').first().click();
-      // The transaction's own page, or the pill of the list it came from would be measured.
-      await expect(page).toHaveTitle('Transaction Details · AzureBank');
-      return page.getByRole('main').getByText('Completed', { exact: true }).first();
     },
   },
 ];

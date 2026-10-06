@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { textContrast } from './contrast';
 
 /**
  * A deposit, all the way through: a real form, a real POST, real money in SQL Server, and — the
@@ -82,4 +83,76 @@ test('a deposit moves the money and the dashboard figure follows', async ({ page
   */
   await expect(balance).toHaveText(predicted, { timeout: 20_000 });
   expect(predicted).not.toBe(before);
+});
+
+/*
+  THE ENTRY A DEPOSIT LEAVES, LOOKED AT. Two things can be measured only on a ledger with an entry
+  in it, and this suite's user is seeded with one account and no history: the deposit above is
+  what leaves the first. So they are held here, after it, and not in `accessibility.spec.ts`,
+  which runs before any entry exists. Each says so if it finds the ledger empty, which is what a
+  run of one of them alone on a new database would meet.
+
+  THE STATUS PILL STAYS IN ITS COLUMN AT PHONE WIDTH. The two ledgers share one table with fixed
+  columns, and its last column was 18 % wide: at 375 px that is narrower than the pill in it,
+  which does not wrap. The pill then ran past its cell: off the screen on History, where the last
+  letter of "Completed" was cut, and over the card's edge on the dashboard. Each row reads every
+  pill of the page against the cell it is in.
+
+  THE "COMPLETED" BADGE OF A TRANSACTION'S PAGE CAN BE READ. Its words wore the green of an icon
+  on the badge's own pale green: 2.69 to 1 in the light theme, where 13 px text needs 4.5. Held
+  in both themes, with the theme asserted first: a row that asked for dark and was drawn light
+  would measure the light pair.
+*/
+const EMPTY_LEDGER =
+  'the ledger has no entry to look at: the deposit at the top of this file leaves one';
+
+test.describe('the entry a deposit leaves', () => {
+  for (const path of ['/dashboard', '/history']) {
+    test(`its status pill stays in its column at phone width, on ${path}`, async ({ page }) => {
+      await page.setViewportSize({ width: 375, height: 812 });
+      await page.goto(path);
+      await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible();
+      await expect(
+        page.locator('table tbody tr td:nth-child(4)').first(),
+        `${path}: ${EMPTY_LEDGER}`,
+      ).toBeVisible();
+
+      // How far each pill reaches past the right edge of its cell, in px: 0 or less when inside.
+      const past = await page.locator('table tbody tr').evaluateAll((rows) =>
+        rows.flatMap((row) => {
+          const status = row.children.length >= 4 ? row.lastElementChild : null;
+          const pill = status?.querySelector('span');
+          if (!status || !pill) return [];
+          return [pill.getBoundingClientRect().right - status.getBoundingClientRect().right];
+        }),
+      );
+      expect(past.length, `${path}: no status pill was found to measure`).toBeGreaterThan(0);
+      expect(Math.max(...past), `${path}: a pill reaches past its cell, in px`).toBeLessThanOrEqual(
+        0,
+      );
+    });
+  }
+
+  for (const theme of ['light', 'dark'] as const) {
+    test(`the Completed badge of its page can be read, in the ${theme} theme`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme: theme });
+      await page.goto('/history');
+      const completed = page
+        .locator('table tbody tr')
+        .filter({ has: page.locator('td:last-child', { hasText: 'Completed' }) });
+      await expect(completed.first(), EMPTY_LEDGER).toBeVisible();
+      await completed.first().getByRole('button').first().click();
+      // The transaction's own page, or the pill of the list it came from would be measured.
+      await expect(page).toHaveTitle('Transaction Details · AzureBank');
+      await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+
+      const badge = page.getByRole('main').getByText('Completed', { exact: true }).first();
+      await expect(badge).toBeVisible();
+      const seen = await textContrast(badge);
+      expect(
+        seen.ratio,
+        `the Completed badge (${theme}): ${seen.colours.text} on ${seen.colours.ground}`,
+      ).toBeGreaterThanOrEqual(4.5);
+    });
+  }
 });

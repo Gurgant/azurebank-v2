@@ -78,15 +78,18 @@ focus sentinels, which axe flags as `aria-hidden-focus` two per page, are exclud
 spec proves matches nothing else. Every page carries its own title, and a route change is announced
 and moves focus to the new page. The per-scan JSON reports are a CI artifact.
 
-The same spec holds seven more things by measuring them, where the sweep only reports or cannot
+The same spec holds six more things by measuring them, where the sweep only reports or cannot
 see: what is typed in the app's three plain text fields, and their placeholder, can be read in
 both themes; each amount field shows where focus is; seven dialogs give focus back to the control
-that opened them; at 375 px a status pill stays in its column, the two money tiles share a row and
-two buttons of Settings keep their label on one line; and eight texts that measured under 4.5 to 1
-stay at or above it in both themes. That is 37 rows, added on 2026-10-06. That day 24 of them
-failed before the fix they hold, and all 37 passed after it, against `npm run dev:mock` with the
-mock's user signed in at each page load by a seed kept outside the repository. None was run that
-day in this suite's own configuration, which needs the real stack.
+that opened them; at 375 px the two money tiles share a row and two buttons of Settings keep their
+label on one line; and seven texts that measured under 4.5 to 1 stay at or above it in both
+themes. Two more need an entry in the ledger, which the suite's user is not seeded with, so
+`e2e/deposit.spec.ts` holds them after its deposit: at 375 px a status pill stays in its column,
+and the "Completed" badge of a transaction's page can be read in both themes. That is 37 rows, 33
+and 4, added on 2026-10-06. That day 24 of them failed before the fix they hold, and all 37 passed
+after it, against `npm run dev:mock` with the mock's user signed in at each page load by a seed
+kept outside the repository. None was run that day in this suite's own configuration, which needs
+the real stack.
 
 The public demo's screens are scanned by the same gate only in `npm run test:e2e:demo`, which is
 run by hand: the sign-in page as the demo shows it to a browser that keeps no copy, the
