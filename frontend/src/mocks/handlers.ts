@@ -307,9 +307,8 @@ function visibleTransactions(): typeof mockState.transactions {
  * transaction rows survive — so a sum built on it would hand the day's headroom back by closing an
  * account. D3 says the real query calls `IgnoreQueryFilters()` for exactly that reason. MEASURED A6
  * (2026-09-07T14:17:53Z, PR #156's working tree on 3c30122, merged as fda7ff7, BFF :5000 -> API
- * :7215, AzureBankDev, DailyLimit:Amount default; transcript plans/daily-limit/
- * measure-after-2026-09-07.txt): transfer 4,600 from a spare, DELETE the drained spare, mint 500 ->
- * 422 with `used 4600.0`.
+ * :7215, AzureBankDev, DailyLimit:Amount default; row A6 of ADR-0050's "After" table): transfer
+ * 4,600 from a spare, DELETE the drained spare, mint 500 -> 422 with `used 4600.0`.
  *
  * (ii) THERE IS NO DAY TERM, and that is the one half of D1 the mock does not model. Every ledger
  * row the mock writes carries a FIXED `2026-07-22` stamp (the deposit, withdraw, external-transfer
@@ -1158,9 +1157,8 @@ const setPrimaryAccount = api.patch(
  * `AccountService.RefuseIfNotClosable`, balance then primary, in one place so the deletion mint
  * and the DELETE cannot drift from each other (ADR-0049 D4: the mint runs the same guards).
  *
- * Every value below is quoted from `azurebank-work/plans/account-deletion/
- * measure-after-main-19742ff-2026-09-06.txt`, measured 2026-09-06T19:16Z on main 19742ff through
- * the BFF (:5000 -> :7215, AzureBankDev); probe letters are that file's row labels.
+ * Every value below is quoted from one transcript, measured 2026-09-06T19:16Z on main 19742ff
+ * through the BFF (:5000 -> :7215, AzureBankDev); probe letters are that transcript's row labels.
  *
  * Returns the refusal to send, or null when the account is closable.
  */
@@ -1197,8 +1195,8 @@ function refuseIfNotClosable(account: MockAccount, request: Request): Response |
 
 /**
  * DELETE /api/accounts/{id} — a closure costs a PIN, on the transfer's authorisation rail
- * (ADR-0049). The ORDER is the contract (ADR-0049 D6) and every rung quotes a probe of
- * `measure-after-main-19742ff-2026-09-06.txt` (2026-09-06T19:16Z, main 19742ff, through the BFF):
+ * (ADR-0049). The ORDER is the contract (ADR-0049 D6) and every rung quotes a probe of the
+ * re-measurement on main (2026-09-06T19:16Z, main 19742ff, through the BFF):
  *
  *   binding 400 -> ownership 404 -> balance 422 -> primary 422 -> presence 401 -> validate 401
  *   -> spend + remove 200
@@ -1273,9 +1271,10 @@ const deleteAccount = api.delete('/api/accounts/{id}', ({ params, request, respo
     field-by-field compare refuses every closure. Measured D5 (a random GUID) and D6 (a TRANSFER
     authorisation minted from the same account) -> 401 AUTHORIZATION_INVALID "This authorisation
     cannot be used.", uniform on purpose — the mock is no more an oracle than the server. Expiry:
-    E1/E2 (measure-after-2026-09-06.txt, d93ba10 working tree merged as 19742ff) — a DELETE 130 s
-    after a mint whose expiresAt was mint+2m -> 401 AUTHORIZATION_EXPIRED "This authorisation has
-    expired. Enter your PIN again to confirm.", PinAccessFailedCount 0/0, row still Pending.
+    E1/E2 (2026-09-06, d93ba10 working tree merged as 19742ff; row 11 of ADR-0049's "After"
+    table) — a DELETE 130 s after a mint whose expiresAt was mint+2m -> 401 AUTHORIZATION_EXPIRED
+    "This authorisation has expired. Enter your PIN again to confirm.", PinAccessFailedCount 0/0,
+    row still Pending.
   */
   const authorization = validateAuthorization(stepUp.id, request, {
     operation: 'AccountDeletion',
@@ -1951,8 +1950,8 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
   /*
     THE PIN LADDER LEFT WITH THE PIN (ADR-0056), AND THE ORDER BELOW IS MEASURED, NOT REASONED.
 
-    Taken against the running API on 2026-09-21 (evidence-withdraw-after-2026-09-21.txt in the
-    working-state repo), one real request per row:
+    Taken against the running API on 2026-09-21 (the run ADR-0056 tabulates under "Before → After,
+    measured"), one real request per row:
 
       withdraw 5000 (over balance), NO authorisation   -> 422 INSUFFICIENT_FUNDS
       withdraw 10,  NO authorisation                   -> 401 AUTHORIZATION_REQUIRED
@@ -2306,8 +2305,8 @@ function checkPinInBand(
   ============================================================================================
 
   Every status and errorCode below was MEASURED against the running API on 2026-08-16 and is quoted
-  beside the branch that produces it. Full transcript with bodies:
-  `azurebank-work/plans/step-up-and-audit/A2-PR2-MEASURED-CONTRACT.md`.
+  beside the branch that produces it. The full transcript, with bodies, is the measured step-up
+  contract whose rows transferHandler.test.ts quotes at its assertions.
 
   Two off-by-ones the mock must NOT invent, both measured:
     - the lock lands ON the third wrong PIN, not after it (checkPinInBand already does this);
@@ -2793,8 +2792,8 @@ const authoriseTransfer = api.post(
       correction.
 
       MEASURED A1 (2026-09-07T14:17:53Z, PR #156's working tree on 3c30122, merged as fda7ff7, BFF
-      :5000 -> API :7215, AzureBankDev, DailyLimit:Amount default; transcript
-      plans/daily-limit/measure-after-2026-09-07.txt): an over-limit mint with a WRONG PIN answers
+      :5000 -> API :7215, AzureBankDev, DailyLimit:Amount default; row A1 of ADR-0050's "After"
+      table): an over-limit mint with a WRONG PIN answers
       422 DAILY_LIMIT_EXCEEDED and never 401, spends no attempt (`PinAccessFailedCount` 0 -> 0 after
       three of them) and mints nothing. That is the behaviour change ADR-0050 states plainly, and
       PLACEMENT ALONE buys it here: `mockState.pinAttempts` and `mockState.pinLockedUntil` are
@@ -2842,8 +2841,8 @@ const authoriseTransfer = api.post(
     // MEASURED: 422 PIN_REQUIRED · 429 PIN_LOCKED (retryAfterSeconds 900, on the THIRD miss) ·
     // 401 INVALID_PIN. Same helper the transfer uses, so the two cannot drift.
     // The PIN_REQUIRED sentence: measured 2026-09-06T19:16Z on the DELETION mint (main 19742ff;
-    // M0 in measure-after-main-19742ff-2026-09-06.txt) as "PIN must be set before authorising
-    // this operation."; StepUpAuthorizationService.cs is the ONE producer for all three mints, so
+    // row M0 of that run) as "PIN must be set before authorising this operation.";
+    // StepUpAuthorizationService.cs is the ONE producer for all three mints, so
     // the transfer mints say the same — code says, not re-measured on /api/transfers/authorizations
     // after the change (ADR-0049 D4 generalised it from "…authorising a transfer.").
     const pinRefusal = checkPinInBand(
@@ -2869,8 +2868,8 @@ const authoriseTransfer = api.post(
  * POST /api/transactions/withdraw/authorizations — mint one for a WITHDRAWAL (ADR-0056).
  *
  * Refusal order mirrors `TransactionService.AuthoriseWithdrawalAsync`: binding, then OWNERSHIP of
- * the account, then the PIN. Measured on the running API 2026-09-21
- * (evidence-withdraw-after-2026-09-21.txt):
+ * the account, then the PIN. Measured on the running API 2026-09-21 (the run ADR-0056 tabulates
+ * under "Before → After, measured"):
  *
  *   mint 10,   correct PIN                    -> 201 "Withdrawal authorised"
  *   mint 5000  (OVER the balance), correct PIN -> 201  <- the mint does NOT check funds
@@ -3064,9 +3063,9 @@ const authoriseInternalTransfer = api.post(
  * The third mint, on the same rail as the two above and refused in the order
  * `AccountService.AuthoriseDeletionAsync` refuses: binding, then OWNERSHIP, then the two closure
  * guards, then the PIN — so a wrong PIN on a funded or primary account costs no attempt, and an
- * account the caller does not own costs nothing at all. Every status below quotes a row of
- * `azurebank-work/plans/account-deletion/measure-after-main-19742ff-2026-09-06.txt`, measured
- * 2026-09-06T19:16Z on main 19742ff through the BFF (:5000 -> :7215, AzureBankDev):
+ * account the caller does not own costs nothing at all. Every status below quotes a row of one
+ * transcript, measured 2026-09-06T19:16Z on main 19742ff through the BFF (:5000 -> :7215,
+ * AzureBankDev):
  *
  *   M4  unknown id, correct pin        -> 404 ACCOUNT_NOT_FOUND (stepUpAuthorizations untouched)
  *   M2  funded account, WRONG pin      -> 422 NON_ZERO_BALANCE, PinAccessFailedCount unchanged
@@ -3102,7 +3101,7 @@ const authoriseAccountDeletion = api.post(
       directly: malformed JSON rejected the promise (an MSW error, not a response), and a JSON
       `null` reached `mintPinBindFailure`, which reads `body.pin` off it and threw. CodeRabbit
       raised it on the PR. Measured on THIS endpoint before accepting, 2026-09-07T12:30Z on main
-      19742ff through the BFF (`plans/account-deletion/measure-badbody-2026-09-07.txt`):
+      19742ff through the BFF:
 
         body `{pin:`   -> 400 {"$":["'p' is an invalid start of a property name. ..."], "request":[...]}
         body `null`    -> 400 {"":["A non-empty request body is required."], "request":[...]}
@@ -3158,8 +3157,8 @@ const authoriseAccountDeletion = api.post(
       amount: 0,
     });
 
-    // Measured M5: 201, expiresAt = mint + 2m (E1 in measure-after-2026-09-06.txt: 10:44:53 ->
-    // 10:46:53), message from AccountController.cs.
+    // Measured M5: 201, expiresAt = mint + 2m (E1 of the first "after" run, 2026-09-06: 10:44:53
+    // -> 10:46:53), message from AccountController.cs.
     return response(201).json({ data: minted, message: 'Account closure authorised' });
   },
 );
@@ -3360,9 +3359,9 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     THE DAILY RUNG ON THE TRANSFER, AND IT SITS ABOVE THE BALANCE (ADR-0050 D4 item 2). That order is
     the whole point of the A4 re-run.
 
-    MEASURED A4, the 14:46:26Z re-run (PR #156's working tree on 3c30122, merged as fda7ff7, BFF
-    :5000 -> API :7215, AzureBankDev, DailyLimit:Amount default; transcript
-    plans/daily-limit/measure-after-2026-09-07.txt): used 4,900, balance 300, spend 400 ->
+    MEASURED A4, the 14:46:26Z re-run of 2026-09-07 (PR #156's working tree on 3c30122, merged as
+    fda7ff7, BFF :5000 -> API :7215, AzureBankDev, DailyLimit:Amount default; row A4 of ADR-0050's
+    "After" table): used 4,900, balance 300, spend 400 ->
     `422 errorCode=DAILY_LIMIT_EXCEEDED extra={"limit": 5000, "used": 4900.0, "requested": 400,
     "resetsAt": "2026-09-08T00:00:00Z"}` — NOT INSUFFICIENT_FUNDS, though both bounds were violated.
     Cite the 14:46Z block and not the 14:17Z A4 rows: A4.3 is a MINT (which reads no balance) and
