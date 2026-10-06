@@ -630,9 +630,12 @@ public class TransactionEndpointTests : IntegrationTestBase
         var response = await Client.GetAsync(
             $"/api/transactions/summary?AccountId={ownersAccountId}");
 
-        // Assert — refused, and the body carries no figure from the account it refused.
+        // Assert — refused, and the body carries no figure from the account it refused. The
+        // search leaves the traceId out: it is 32 random hexadecimal characters, new on every
+        // request, and about one id in 2,260 holds 4242 by chance (ProblemBody).
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
-        (await response.Content.ReadAsStringAsync()).Should().NotContain("4242");
+        var body = await response.Content.ReadAsStringAsync();
+        ProblemBody.WithoutTraceId(body).Should().NotContain("4242");
     }
 
     [Fact]

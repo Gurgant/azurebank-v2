@@ -47,7 +47,7 @@ function isActionOf(action: unknown, endpointName: string): boolean {
  *      GET /bff/auth/me straight after -> 200, authLevel unchanged
  *
  *    and, since the account closure joined the rail (ADR-0049), measured 2026-09-06T19:16Z on
- *    main 19742ff (D1, measure-after-main-19742ff-2026-09-06.txt in the working-state repo):
+ *    main 19742ff (row D1 of that run):
  *
  *      DELETE /api/accounts/{id}, no Step-Up-Authorization header
  *        -> 401 {"detail":"This account closure has not been authorised.",

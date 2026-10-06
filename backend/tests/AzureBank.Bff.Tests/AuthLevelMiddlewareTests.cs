@@ -237,8 +237,8 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
     /*
       A COOKIE THE STORE CANNOT RESOLVE IS NOT A SESSION AT LEVEL 0 — it is no session.
 
-      The three tests below pin the row the mock got wrong for three and a half weeks (work-log
-      item 232). The SPA's MSW mock answered 403 STEP_UP_REQUIRED with X-Auth-Level-Current: 0 for
+      The three tests below pin the row the mock got wrong for three and a half weeks.
+      The SPA's MSW mock answered 403 STEP_UP_REQUIRED with X-Auth-Level-Current: 0 for
       a cookie that had outlived its session, quoting a measurement from before ADR-0038 removed
       the "No session cookie - let the API handle 401" fall-through. Nothing on this side pinned
       the other half: every cookie this file sent came from CreateSession. Measured 2026-09-03 on
