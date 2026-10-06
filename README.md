@@ -150,11 +150,11 @@ CodeQL analyses the C#, the TypeScript and the workflows on every pull request a
   instead (measured on 2026-10-06: twelve sign-ins in under eight seconds from one connection were
   all answered, where the limit is ten a minute for one caller, and the limiter's warnings named
   two internal addresses). So [the limits](docs/testing/try-the-demo.md#the-limits) that are for
-  one network are shared by every visitor for now: a burst from one caller can make the sign-in
-  page say "Too many attempts from your connection." to everybody for about a minute. The change
-  that makes the app read the visitor's own address is written and under review; until it is
-  deployed, the daily cap of copies for one caller is set high on the deployment, and what bounds
-  new copies is the pool.
+  one network are shared by every visitor for now: a burst from one caller, or many visitors in
+  the same minute, can make the sign-in page say "Too many attempts from your connection." to
+  everybody for about a minute. The change that makes the app read the visitor's own address is
+  written and under review; until it is deployed, the daily cap of copies for one caller is set
+  high on the deployment, and what bounds new copies is the pool.
 - axe runs in CI over nine pages and two dialogs and fails on any serious or critical finding
   except colour contrast, which is left to the UI/UX phase; the details are in
   [frontend/README.md](frontend/README.md).
