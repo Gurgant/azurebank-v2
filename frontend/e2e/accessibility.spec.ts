@@ -34,9 +34,10 @@ import { fieldContrast } from './fieldContrast';
  *   run at all.
  * Each scan also waits for the page's animations to finish first, so a fade is not measured.
  *
- * Three blocks further down are not scans. Each holds, by measuring it, one thing the sweep does
- * not: that what is typed in a field can be read, that the amount field shows where focus is, and
- * that a dialog gives focus back when it closes. Each has its own note above it.
+ * Four blocks further down are not scans. Each holds, by measuring it, one thing the sweep does
+ * not: that what is typed in a field can be read, that the amount field shows where focus is,
+ * that a dialog gives focus back when it closes, and that a status pill stays in its column at
+ * phone width. Each has its own note above it.
  */
 type Scan = { name: string; path: string; title: string; ready: (page: Page) => Promise<void> };
 
@@ -429,6 +430,38 @@ test.describe('a dialog gives focus back to the control that opened it', () => {
       await expect(open).toBeHidden();
 
       await expect(control, `${name}: focus did not come back to its opener`).toBeFocused();
+    });
+  }
+});
+
+/*
+  AT PHONE WIDTH A STATUS PILL STAYS IN ITS COLUMN. The two ledgers share one table with fixed
+  columns, and its last column was 18 % wide: at 375 px that is narrower than the pill in it, which
+  does not wrap. The pill then ran past its cell: off the screen on History, where the last letter
+  of "Completed" was cut, and over the card's edge on the dashboard. Each row reads every pill of
+  the page against the cell it is in. A page with no pill would pass, so the count is held first.
+*/
+test.describe('at phone width a status pill stays in its column', () => {
+  for (const path of ['/dashboard', '/history']) {
+    test(`on ${path}`, async ({ page }) => {
+      await page.setViewportSize({ width: 375, height: 812 });
+      await page.goto(path);
+      await heading(1)(page);
+      await expect(page.locator('table tbody tr td:nth-child(4)').first()).toBeVisible();
+
+      // How far each pill reaches past the right edge of its cell, in px: 0 or less when inside.
+      const past = await page.locator('table tbody tr').evaluateAll((rows) =>
+        rows.flatMap((row) => {
+          const status = row.children.length >= 4 ? row.lastElementChild : null;
+          const pill = status?.querySelector('span');
+          if (!status || !pill) return [];
+          return [pill.getBoundingClientRect().right - status.getBoundingClientRect().right];
+        }),
+      );
+      expect(past.length, `${path}: no status pill was found to measure`).toBeGreaterThan(0);
+      expect(Math.max(...past), `${path}: a pill reaches past its cell, in px`).toBeLessThanOrEqual(
+        0,
+      );
     });
   }
 });
