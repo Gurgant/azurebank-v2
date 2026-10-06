@@ -271,6 +271,42 @@ public sealed class KestrelRequestSizeLimitTests : IDisposable
         }
     }
 
+    // Control, green before and after the mints' 413: a body the server refuses for another reason
+    // than its size keeps the answer it had. A chunk whose size line is no number is the server's
+    // 400, not its 413, so the mint's filter leaves it to the 400 every such request gets. Its proof
+    // is the filter turning ANY refusal of the server's into the 413: these four rows then read 413.
+    [Theory]
+    [InlineData("/api/transfers/authorizations")]
+    [InlineData("/api/transfers/internal/authorizations")]
+    [InlineData("/api/transactions/withdraw/authorizations")]
+    [InlineData("/api/accounts/{id}/deletion-authorizations")]
+    public async Task Control_MintBadChunkSize_KeepsTheMalformed400(string path)
+    {
+        var (token, accountId) = await RegisterAsync();
+        path = path.Replace("{id}", accountId.ToString(), StringComparison.Ordinal);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var socket = new System.Net.Sockets.TcpClient();
+        await socket.ConnectAsync(IPAddress.Loopback, _client.BaseAddress!.Port, deadline.Token);
+        await using var stream = socket.GetStream();
+        var head = new StringBuilder($"POST {path} HTTP/1.1\r\nHost: {_client.BaseAddress!.Authority}\r\n");
+        foreach (var header in _client.DefaultRequestHeaders)
+        {
+            head.Append(header.Key).Append(": ").Append(string.Join(", ", header.Value)).Append("\r\n");
+        }
+        head.Append("Authorization: Bearer ").Append(token).Append("\r\n")
+            .Append("Content-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n")
+            .Append("zz\r\n");
+        await stream.WriteAsync(Encoding.ASCII.GetBytes(head.ToString()), deadline.Token);
+        var response = await ReadWireResponseAsync(stream, deadline.Token);
+
+        _output.WriteLine($"{response.Status}: {response.Body}");
+        response.Status.Should().Be(400, "the server refused the chunk's framing, not the body's size");
+        using var problem = JsonDocument.Parse(response.Body);
+        problem.RootElement.GetProperty("detail").GetString()
+            .Should().Be("The request is malformed or contains invalid characters.");
+        problem.RootElement.TryGetProperty("errorCode", out _).Should().BeFalse("that 400 names no code");
+    }
+
     private static string MintBody(string path, Guid accountId)
     {
         object body = path switch
