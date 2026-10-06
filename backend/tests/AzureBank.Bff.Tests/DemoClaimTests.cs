@@ -359,9 +359,9 @@ public class DemoClaimTests : IClassFixture<WebApplicationFactory<Program>>, IDi
             .Select(header => header.Key)
             .Order(StringComparer.OrdinalIgnoreCase);
         // Percent first, then each brace: the same three calls as ComparableText.Of
-        // (backend/tests/AzureBank.Tests/Fixtures/ComparableText.cs), held by
-        // backend/tests/AzureBank.Tests/Unit/ComparableTextTests.cs. This project does not
-        // reference that one.
+        // (backend/tests/AzureBank.Tests/Fixtures/ComparableText.cs), copied because this project
+        // does not reference that one. The original's tests,
+        // backend/tests/AzureBank.Tests/Unit/ComparableTextTests.cs, do not hold this copy.
         return $"{(int)response.StatusCode} | {response.Content.Headers.ContentType} | {string.Join(",", headers)} | {body}"
             .Replace("%", "%%").Replace("{", "%7B").Replace("}", "%7D");
     }
