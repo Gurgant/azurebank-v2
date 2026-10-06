@@ -140,11 +140,19 @@ const useStyles = makeStyles({
     color: colors.neutral[800],
   },
 
+  // Beside the avatar, in a flex row: without a minimum width of zero this block is as wide as
+  // its longest word, and an email address is one word.
+  profileText: { minWidth: 0 },
+
   profileEmail: {
     display: 'block',
     fontSize: '14px',
     fontWeight: 400,
     color: colors.neutral[500],
+    // An address has no space to wrap at. A demo copy's is 39 characters, and at 375 px it ran
+    // out of the card and past the screen's edge. `BreakableEmail` gives it one good place to
+    // break; this is for an address that is too long even so.
+    overflowWrap: 'anywhere',
   },
 
   // ===== Read-only identity grid =====
@@ -179,6 +187,8 @@ const useStyles = makeStyles({
     alignItems: 'center',
     fontSize: '15px',
     color: colors.neutral[800],
+    // The email is shown here too, and under 375 px it ran out of this box as it did above.
+    overflowWrap: 'anywhere',
   },
 
   // ===== Handle row (editable) =====
@@ -276,6 +286,21 @@ const useStyles = makeStyles({
 });
 
 /**
+ * An email address that may break after its `@`. It has no space, so without this a browser
+ * breaks it only where it has to, which can be one letter from the end.
+ */
+function BreakableEmail({ address }: { address: string }) {
+  const afterAt = address.indexOf('@') + 1;
+  return (
+    <>
+      {address.slice(0, afterAt)}
+      <wbr />
+      {address.slice(afterAt)}
+    </>
+  );
+}
+
+/**
  * Account settings. Identity (name / email) comes from the session and is read-only — the only
  * editable field is the public AzureTag handle (a payment @tag, not legal identity; ADR-0015).
  * Everything not yet backed by an endpoint is an honest "Coming soon" row rather than a dead
@@ -329,12 +354,12 @@ export function SettingsPage() {
             <div className={styles.avatar}>
               <Text className={styles.avatarInitials}>{displayInitials}</Text>
             </div>
-            <div>
+            <div className={styles.profileText}>
               <Text as="p" className={styles.profileName}>
                 {displayName}
               </Text>
               <Text as="p" className={styles.profileEmail}>
-                {displayEmail}
+                <BreakableEmail address={displayEmail} />
               </Text>
             </div>
           </div>
@@ -352,7 +377,12 @@ export function SettingsPage() {
 
           <div className={styles.field}>
             <Text className={styles.fieldLabel}>Email address</Text>
-            <div className={styles.fieldValue}>{displayEmail}</div>
+            <div className={styles.fieldValue}>
+              {/* One element, so that the box, a flex row, has one item to lay out and not two. */}
+              <span>
+                <BreakableEmail address={displayEmail} />
+              </span>
+            </div>
           </div>
 
           {/* The one editable field: the public payment handle. */}
