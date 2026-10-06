@@ -2009,8 +2009,10 @@ screen: the BFF's refusal starts "ForwardedHeaders:KnownIPNetworks contains" and
 Then this step again with the networks put right, or the way back, below.
 
 **4. The proof, from the two networks of the first measurement** (reads; it spends A's own
-sign-in limit, twice). Not sooner than two minutes after `--check` passed, so that no earlier
-sign-in is still counted. No request of the block has been sent.
+sign-in limit, three times). Not sooner than two minutes after `--check` passed, so that no
+earlier sign-in is still counted. No request of the block has been sent to Azure. Its fourth run
+was added later on 2026-10-06, with the strict reading of the header (ADR-0013's note of that
+day): until then the block ended at the third run, and this paragraph said "twice".
 
 ```powershell
 $site = az containerapp show --name azurebank --resource-group $group --query properties.configuration.ingress.fqdn --output tsv
@@ -2025,15 +2027,26 @@ $signIn = { param([string]$Named)
 & $signIn                                                    # at once, from network B: one
 Start-Sleep -Seconds 90                                      # A's twelve leave the limiter's window
 1..12 | ForEach-Object { & $signIn "203.0.113.$_" }          # from A: each names another address as its own
-Remove-Item "$env:TEMP\sign-in.json"
+Start-Sleep -Seconds 90                                      # those twelve leave the window too
+1..12 | ForEach-Object {                                     # from A: an address, a percent sign and a quotation mark
+    Set-Content "$env:TEMP\header.txt" ('X-Forwarded-For: ::ffff:198.51.100.{0}%"' -f $_)
+    curl.exe --silent --output NUL --write-out '%{http_code}' --request POST --header 'Content-Type: application/json' `
+        --header "@$env:TEMP\header.txt" --data-binary "@$env:TEMP\sign-in.json" "https://$site/bff/auth/login" }
+Remove-Item "$env:TEMP\sign-in.json", "$env:TEMP\header.txt"
 ```
+
+The fourth run's header holds a quotation mark, and how a shell hands one to a program is not
+the same in every version of PowerShell. So that run writes the header's line into a file and
+`curl.exe` reads it from there (`--header` with `@` and the file's name, as `--data-binary` reads
+the body): the mark arrives as it is written.
 
 | Measurement | What is read | Expected |
 | --- | --- | --- |
 | Twelve sign-ins from A, inside a minute | The twelve statuses | Ten times 401, then 429 at the eleventh and at the twelfth: the ten a minute are A's own |
 | One from B, at once | Its status | 401. **This is the proof.** Before the networks were set, B was answered 429 with A: one limit for everybody |
 | Twelve more from A, each with an `X-Forwarded-For` header of its own that names another address | The twelve statuses | Ten times 401, then 429 twice, as the first twelve. The ingress is expected to append A's own address after whatever A wrote, and the app believes the last entry only. **Twelve times 401 is a stop:** the app believes what a caller writes, each lie is a client of its own, and the limit stops nobody. The way back, at once |
-| `python infra/deploy.py --app-log 15`, not sooner than eight minutes after the last sign-in | The partition of the limiter's warnings, compared with A's own public address | "A's own address" (for an IPv6 address, its /64) on every warning of both runs, and never one of the addresses the third run named. What is written down is that sentence and the count of warnings: never the value |
+| Twelve more from A, each with the header `X-Forwarded-For: ::ffff:198.51.100.N%"`, N from 1 to 12: an address, a percent sign and a quotation mark | The twelve statuses | Ten times 401, then 429 twice. It is the header with which a caller chose its own address while the app read it as the framework alone does (`backend/src/AzureBank.Bff/StrictForwardedFor.cs` says how). An address written plainly before the proxy's entry was not believed by such an app either: the third run passes on it too, and this one does not. **Twelve times 401 is a stop,** as at the third run. Another status, the same twelve times, is the ingress's own answer to such a header: it is written down, and nothing else is read from this run |
+| `python infra/deploy.py --app-log 20`, not sooner than eight minutes after the last sign-in (twenty minutes and not the first measurement's fifteen: with the two waits and the change of network, the first run's warnings are older than eleven minutes by then) | The partition of the limiter's warnings, compared with A's own public address | "A's own address" (for an IPv6 address, its /64) on every warning of A's three runs, and never one of the addresses the third or the fourth run named. What is written down is that sentence and the count of warnings: never the value |
 
 What each other answer means:
 
@@ -2042,6 +2055,7 @@ What each other answer means:
 | B is answered 429, and the warnings name the client they named before this step | The header was not read: the connection does not come from inside a listed network. The ingress moved, or the address was misread | Nothing is worse than before the step. Step 1 again, on these warnings; then this step with the networks put right |
 | B is answered 429, and the warnings name one client that is neither A's address nor the one of before | The last entry of the header is not the visitor: another proxy of the platform's stands between. The app believes one hop (`ForwardedHeaders:ForwardLimit` is 1, and this template sets no other) | Stop. It is the measurement for the next change: two hops. Nothing is worse than before; the way back, or leave it and note it |
 | The third run is answered 401 twelve times | The app believes an entry a caller wrote | The way back, at once, and before the link is published |
+| The fourth run is answered 401 twelve times, the third as expected | The app that answers reads the header as the framework alone does: its `bff` image is older than the strict reading, or the ingress passes on a header no test here sent | The way back, at once, and before the link is published. Then the images are read, as step 22 reads them: no image built before this change holds the strict reading |
 
 **The same pattern, seen on a local process and not on Azure** (2026-10-06; the BFF with this
 change in it, started by hand on this machine with no API behind it, so a sign-in that is let
@@ -4005,7 +4019,16 @@ and no value. The proof sent twelve sign-ins, one, and twelve more, each of the 
 `X-Forwarded-For` header of its own, and removed its body file. The way back handed the script
 the word `none`. As it was first written the proof's block handed `curl.exe` an empty argument
 where no header was named: seen in that run, and put right before the page was committed. No
-Azure answered any of them. On 2026-10-03 the tests also
+Azure answered any of them. The proof's fourth run, added later still that day, was sent and not
+only handed to stand-ins: the block as it stands, with `http` for `https` and functions standing
+in for `az` and `Start-Sleep` alone, to a listener on this machine's loopback, on a port the
+system chose, that kept the bytes of every request and answered 401. Twice, once with the
+`curl.exe` that Windows ships and once with Git's (both 8.21.0, from PowerShell 7.6.6): 37
+requests each time, 13 with no `X-Forwarded-For` line, 12 naming 203.0.113.1 to 203.0.113.12, and
+12 with the one line `X-Forwarded-For: ::ffff:198.51.100.N%"`, the quotation mark as it is
+written; no empty argument, and both files removed. The 68 blocks still parse, and a block with
+an error planted in it is still reported. That is what the block sends. What the ingress and the
+app make of it is step 30's to show. On 2026-10-03 the tests also
 ran on Linux, in WSL
 (Ubuntu 24.04, Python 3.12, PowerShell 7.6.6 and Bicep 0.47.16), from an archive of the branch:
 all passed, among them the Linux half of two (the folder's and the file's modes, and the
