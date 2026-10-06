@@ -502,7 +502,7 @@ const FAINT_WORDS: { name: string; reach: (page: Page) => Promise<Locator> }[] =
   },
   /*
     The red of an error icon, worn by the words that say what went wrong: 3.56 to 1 on the canvas
-    and 3.92 on a card, in the light theme. The four below are those words where a visitor meets
+    and 3.92 on a card, in the light theme. The five below are those words where a visitor meets
     them without sending anything: an amount over every limit, on the transfer page and in the
     two money dialogs; a handle nobody has, which costs one lookup; and the label of the button
     that signs out, which was the same red.

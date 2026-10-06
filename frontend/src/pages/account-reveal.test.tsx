@@ -1,6 +1,8 @@
 import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { http } from 'msw';
+import { server } from '../mocks/server';
 import { mockState, seedMockSession } from '../mocks/state';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { StepUpModal } from '../features/auth/StepUpModal';
@@ -102,6 +104,38 @@ describe('account number reveal (ADR-0020)', () => {
 
     expect(await screen.findByText(FULL_MAIN)).toBeInTheDocument();
     expect(screen.queryByText("Verify it's you")).not.toBeInTheDocument();
+  });
+
+  it('while the reveal waits, its button says so and no progress bar without a name is exposed', async () => {
+    // Elevated, so no modal comes up and the page stays in the accessibility tree; the read is
+    // held, so the wait can be looked at. The button carries a spinner while it waits, and the
+    // button's name is what says the wait. A spinner left exposed inside it is a progress bar
+    // with no name of its own: axe reported that in a browser on 2026-10-06
+    // (`aria-progressbar-name`, serious), where the spinner this button replaced had a name.
+    mockState.authLevel = 2;
+    let answer = () => {};
+    const held = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    // It answers nothing itself: once released, the mock's own handler answers the read.
+    server.use(
+      http.get('*/api/accounts/:id/full-number', async () => {
+        await held;
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<AccountsWithStepUp />, { routerEntries: ['/accounts'] });
+
+    await user.click(await screen.findByRole('button', { name: revealName }));
+
+    const waiting = await screen.findByRole('button', {
+      name: `Revealing account number for ${MAIN}`,
+    });
+    expect(waiting).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+
+    answer();
+    expect(await screen.findByText(FULL_MAIN)).toBeInTheDocument();
   });
 
   it('copies the revealed number to the clipboard and shows a Copied status', async () => {
