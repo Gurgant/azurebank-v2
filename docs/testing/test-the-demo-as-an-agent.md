@@ -9,6 +9,12 @@ in a Chromium browser without a window driven by a browser automation tool, one 
 worker. What that walk did not meet is marked **read**, with the file it is read from.
 [Where each fact comes from](#where-each-fact-comes-from) is the last section.
 
+**Executed once more.** The same day a second walk ran the steps below in order, from this
+page alone, with a script of its own on another copy: each control found by the role and the
+name given here, each status and code as written. Where it had to guess, the step now says
+what it needed. Where it found a line wrong, the line is corrected and says what it said
+before.
+
 ## 1. Before you start
 
 **One parameter: `BASE`**, the demo's base address. Every path below is under it. On a stack
@@ -71,14 +77,16 @@ The demo is small on purpose, and on one machine every tester shares it.
   sign-out and the claim are not counted (read: ADR-0063, decision 11). Nothing gives a change
   back. **Never loop over a request that changes something.** The walk itself sent 25 such
   requests, five more than the steps below: two deposits made from the keyboard and, once the
-  PIN's lock was over, one more check of the PIN with two reveals.
+  PIN's lock was over, one more check of the PIN with two reveals. The second walk sent 20 on
+  the copy it ran these steps on: the 17 of the steps, two more reveals, and one wrong PIN.
 - **The sign-in doors.** `POST /bff/auth/login`, `/bff/auth/register`, `/bff/auth/demo/claim`
   and `/bff/auth/reauthenticate`, and `PATCH /bff/auth/azuretag`, share one allowance for one
   address (read: [`BffAuthController.cs`] and [the BFF's `Program.cs`]). A refused request
   spends one too. **Leave six seconds between two of them. After a 429, wait the seconds its
   `Retry-After` names and ask once more, not more.**
-- **One worker.** One browser context at a time, the steps in order. Each step stands on the
-  one before, and the budgets above count every parallel request.
+- **One worker.** One browser context at a time, the steps in order; step 20 alone opens a
+  second context beside the first. Each step stands on the one before, and the budgets above
+  count every parallel request.
 - **Never a load test, a fuzzer or a crawler.** The limits above are the product's own
   protection, held by its own tests. Reaching them on a shared stack only locks the others out.
 - **Never the repository's demo run on a stack somebody else uses.** `npm run test:e2e:demo`
@@ -99,6 +107,19 @@ The demo is small on purpose, and on one machine every tester shares it.
 - **Arm a wait for an answer before the press that sends the request**, and read the status from
   the answer, never from the screen.
 - **Each "Assert" line is one assertion.** A step is done when all of them hold.
+- **Give the screen time.** The page draws after an answer arrives, and a move from one page
+  to the next is not a load that a wait for the network notices. Let an assertion on the
+  screen come true for a few seconds before calling it failed: the second walk allowed six,
+  and no assertion that holds needed more. Read at the instant the answer arrived, the two
+  new buttons of step 6 and the heading of step 9 were not there yet.
+- **"Holds" and "is on the page" are about words, not about one element.** Take the visible
+  text of the page or of the dialog, read each run of white space as one space, and look for
+  the text in that. `Amount €1.00`, `To Main Savings` and `New balance €12,500.00` are each a
+  label and a value in two elements: a search for one element with that text finds none.
+- **A dialog hides the page behind it.** While one is open, `TOTAL` and the page's own controls
+  cannot be found by role. Close the dialog first.
+- **The transfer's pages stand alone.** `Send Money`, `Move Money` and their review, PIN and
+  receipt pages have no `Main navigation` and no `main` landmark, only their own controls.
 - **A text in code style that runs over two lines here is one text.** Read the line break as
   one space.
 - The page asks `GET /bff/auth/me` when it loads. With no session that is a 401, and the browser
@@ -157,7 +178,8 @@ Action: open `/register?next=%2Fdashboard#frag`.
 
 Assert: the address ends at `/login`, with no query and no fragment.
 
-Only if you can spare a request at the doors: `POST /bff/auth/register` with the JSON body `{}`.
+Only if you can spare a request at the doors: from the page, `POST /bff/auth/register` as
+`application/json` with the body `{}`.
 
 Assert: 403; `errorCode` is `REGISTRATION_CLOSED`; `detail` is `Registration is closed on this
 demo.`; `instance` is `/bff/auth/register`.
@@ -278,9 +300,9 @@ Assert:
   `New balance €12,500.00`;
 - after `Done`, `TOTAL` is `€14,800.00`: up by the amount, exactly.
 
-Three reads, if wanted, typed and not sent. `100000.01`: an alert `Maximum deposit is
-€100,000.`, and the button is disabled. `0`: an alert `Minimum deposit is €0.01.` `1.005`: the
-textbox holds `1.00`.
+Three reads, if wanted, typed and not sent: open the dialog again for them, and leave it by
+its button `Close`. `100000.01`: an alert `Maximum deposit is €100,000.`, and the button is
+disabled. `0`: an alert `Minimum deposit is €0.01.` `1.005`: the textbox holds `1.00`.
 
 **A trap, seen.** A deposit with no description is listed under "Recent activity" as a button
 named `Deposit`. From then on `Deposit`, matched exactly, is two buttons on the dashboard.
@@ -289,17 +311,26 @@ Describe every deposit, or take the first match.
 ### Step 8. Withdraw
 
 Action: press `Withdraw`. In the dialog `Withdraw Money`, press the account button whose name
-starts with `Checking`, and fill the textbox `Withdraw amount` with `20`.
+starts with `Checking`.
 
-Assert: the text `Available: €2,300.00` is in the dialog, and a button is named
-`Continue · €20.00`.
+Assert: the text `Available: €2,300.00` is in the dialog.
+
+Action: fill the textbox `Withdraw amount` with `20`.
+
+Assert: the dialog holds `New balance: €2,280.00` and no `Available:` any more, and a button is
+named `Continue · €20.00`. *(This step first asserted `Available: €2,300.00` with the amount
+typed. That line is drawn while the box is empty or holds more than the balance; a valid
+amount puts `New balance:` in its place. Read in [`WithdrawDialog.tsx`], seen on two
+copies.)*
 
 Action: press it.
 
-Assert: the dialog holds `Verify Withdrawal` and `Enter your 6-digit PIN to confirm withdrawing
-€20.00 from Checking.`, and a button `Withdraw €20.00` that is disabled.
+Assert: the dialog, still named `Withdraw Money`, holds `Verify Withdrawal` and `Enter your
+6-digit PIN to confirm withdrawing €20.00 from Checking.`, and a button `Withdraw €20.00` that
+is disabled.
 
-Action: type `123456`, then press `Withdraw €20.00`. Here the sixth digit sends nothing.
+Action: type `123456` into `Digit 1 of 6`, then press `Withdraw €20.00`. Here the sixth digit
+sends nothing.
 
 Assert:
 
@@ -335,8 +366,12 @@ Assert:
 
 - both answer 201, and the second was sent with `Idempotency-Key` and `Step-Up-Authorization`;
 - the level-1 heading is `Transfer Complete`, and the page holds `Transfer Sent!`, `-€1.00` and
-  a reference that matches `TXN-\d{8}-[0-9A-Z]{11}`;
+  a reference that matches `TXN-\d{8}-[0-9A-Z]{10}[0-9A-Z*~$=]`;
 - after `Done` the address is `/dashboard` and `TOTAL` is down by 1.00, exactly.
+
+The reference's last character is a check symbol: one of the letters and digits the ten before
+it are drawn from, or `*`, `~`, `$`, `=` or `U` (read: [`IdGenerator.cs`]). *(The pattern here
+was first `[0-9A-Z]{11}`. On the second walk the reference of step 10's move ended in `=`.)*
 
 ### Step 10. Move money between the two accounts
 
@@ -346,7 +381,7 @@ Assert: the level-1 heading is `Move Money` and the address is `/transfer/intern
 `To Main Savings` is disabled while `From Main Savings` is pressed.
 
 Action: press `To Checking`. Fill `Transfer amount` with `100`. Press `Review Transfer`, then
-`Continue`, then type the PIN.
+`Continue`, then type the PIN into `Digit 1 of 6`: the sixth digit sends both requests.
 
 Assert:
 
@@ -365,13 +400,26 @@ Assert:
 - the level-1 heading is `History`, and `GET /api/transactions?Page=1&PageSize=20` answers 200;
 - the group `Filter transactions by type` has the buttons `All`, `Deposits`, `Withdrawals` and
   `Transfers`, and `All` is pressed;
-- the first rows are this run's, newest first: the move in and out, `To @H` with `-€1.00`, the
-  withdrawal, and the deposit by its description.
+- the first rows are this run's, newest first: `Internal transfer from Main Savings` with
+  `+€100.00`, `Internal transfer to Checking` with `-€100.00`, `To @H` with `-€1.00`,
+  `Withdrawal` with `-€20.00`, and the deposit by its description with `+€50.00`. Each name is
+  a button in its row.
 
 Action: press `Deposits`, `Withdrawals`, `Transfers` and `All`, one after another.
 
-Assert: the one pressed has `aria-pressed` `true`; the rows are of that kind only; and no
-request is sent. The filter works on the rows already loaded.
+Assert: the one pressed has `aria-pressed` `true`, and it alone; no request is sent; and the
+rows are of that kind only:
+
+| Pressed | Of this run's five rows, the table holds | Every amount in the table |
+|---|---|---|
+| `Deposits` | the deposit | starts with `+` |
+| `Withdrawals` | `Withdrawal` | starts with `-` |
+| `Transfers` | the two `Internal transfer` rows and `To @H` | either |
+| `All` | all five | either |
+
+The filter works on the rows already loaded. The three sums above the table, `Income`,
+`Expenses` and `Net`, do not follow it: they add up every loaded row, whatever its kind (read:
+[`HistoryPage.tsx`](../../frontend/src/pages/HistoryPage.tsx); seen under all four buttons).
 
 Action: press `Load more`.
 
@@ -386,8 +434,9 @@ page holds `+€50.00`, `Completed` and a transaction number that starts with `T
 ### Step 12. The accounts page
 
 Action: follow `Accounts`. Press the button `Add account`. In the dialog `Add New Account`, fill
-the textbox `Account name`, choose `Savings` in the combobox `Account type`, and press
-`Create Account`.
+the textbox `Account name`, select the option `Savings` of the combobox `Account type`, and
+press `Create Account`. The combobox is a native `select`: set its value. A click aimed at one
+of its options never lands (seen by the second walk).
 
 Assert: `POST /api/accounts` answers 201, and the page has a new account with `€0.00` and a
 button `Account actions for <its name>`.
@@ -413,9 +462,10 @@ From here on the dashboard reads `Across 3 accounts`.
 
 Action: follow `Settings`.
 
-Assert: the level-1 heading is `Settings`; the page holds `Public handle` and the copy's handle
-with its `@`; it has the buttons `Change`, `Change PIN` and `Log out`, and a radiogroup `Theme`
-with the radios `System`, `Light` and `Dark`.
+Assert: the level-1 heading is `Settings`; the page holds `Public handle` and, with its `@`,
+the copy's own handle, `data.user.azureTag` of step 3; it has the buttons `Change`,
+`Change PIN` and `Log out`, and a radiogroup `Theme` with the radios `System`, `Light` and
+`Dark`.
 
 Action: press `Change`, read the dialog, press `Cancel`. Press `Change PIN`, read the dialog,
 press `Cancel`.
@@ -454,14 +504,14 @@ Assert: `GET /api/users/zz_nobody_here` answers 200 with `data.exists` `false`; 
 `We couldn't find @zz_nobody_here. Check the handle and try again.`; `Review Transfer` is
 disabled. The copy's own handle is answered the same way.
 
-**More than the account holds.** Press `From Checking`, verify `H`, and fill `Transfer amount`
-with `99999`.
+**More than the account holds.** Press `From Checking`, fill `Recipient handle` with `H`, press
+`Verify`, and fill `Transfer amount` with `99999`.
 
 Assert: an alert reads `Exceeds available balance of €2,380.00.`, with the account's own
 balance; `Review Transfer` is disabled; no request is sent.
 
-**More than the day allows.** Press `From Main Savings`, verify `H`, fill the amount with
-`6000`, press `Review Transfer` and `Continue`, and type the PIN.
+**More than the day allows.** Press `From Main Savings`: `H` stays verified. Fill the amount
+with `6000`, press `Review Transfer` and `Continue`, and type the PIN into `Digit 1 of 6`.
 
 Assert:
 
@@ -472,20 +522,23 @@ Assert:
 - no `POST /api/transfers` follows;
 - the level-1 heading is still `Confirm with PIN`, and an alert matches
   `^Daily transfer limit reached — €[\d,]+\.\d{2} left today\. The limit resets on .+\.$`;
-- `TOTAL` is unchanged afterwards.
+- the page's button `Close` leads to `/dashboard` and asks no question, and `TOTAL` there is
+  unchanged.
 
 Changes counted: 1, the refused request.
 
 ### Step 16. One request, sent twice
 
-**Two presses.** Open the deposit dialog, fill the amount with `5`, and double-click
-`Deposit €5.00`.
+**Two presses.** On the dashboard open the deposit dialog, fill the amount with `5` and the
+description, and double-click `Deposit €5.00`.
 
-Assert: one `POST /api/transactions/deposit` was sent, and `TOTAL` is up by 5.00, not by 10.00.
+Assert: one `POST /api/transactions/deposit` was sent, and after `Done` `TOTAL` is up by 5.00,
+not by 10.00.
 
 **Two sends of one request.** From the page, so that the cookie rides along, read an account's
 `id` and `balance` from `GET /api/accounts`. Then send `POST /api/transactions/deposit` four
-times, with the JSON body `{"accountId": "<id>", "amount": 5, "description": "<yours>"}`:
+times, as `application/json`, with the body
+`{"accountId": "<id>", "amount": 5, "description": "<yours>"}`:
 
 | Send | `Idempotency-Key` | Amount | Expect |
 |---|---|---|---|
@@ -516,7 +569,8 @@ Assert: the dialog is hidden; no `POST /bff/auth/demo/claim` was sent; `TOTAL` i
 
 Confirming is a second claim. The repository's own run confirms it and expects a 200, the words
 `You have a new copy.`, `TOTAL` `€14,750.00` and another address in the kept key (read:
-[`demo.spec.ts`](../../frontend/e2e-demo/demo.spec.ts)).
+[`demo.spec.ts`](../../frontend/e2e-demo/demo.spec.ts)). The second walk confirmed it once, as
+its second and last claim, and met all four (seen); the words were in a list item of the page.
 
 ### Step 18. Sign out, then the Back button
 
@@ -533,7 +587,9 @@ Assert:
 Action: go back in the browser's history. Then open `/accounts`.
 
 Assert: both times the address ends at `/login`, no text on the page matches `€\d`, and the page
-does not say `Your session has expired`.
+does not say `Your session has expired`. Going back needs an earlier page of the app in the
+tab's history: in a tab opened straight on the dashboard it left the app for the blank page
+the tab began on (seen by the second walk).
 
 If a second tab of the same context was left on the dashboard, press its link `History`.
 
@@ -545,10 +601,11 @@ Assert: its `GET /bff/auth/me` answers 401, its address becomes `/login`, and th
 Action: at least six seconds after the last request at the doors, arm a wait for the answer to
 `POST /bff/auth/login`. Press `Continue with my copy`.
 
-Assert: the answer is 200, and `TOTAL` is what it was before the sign-out.
+Assert: the answer is 200, and on the dashboard `TOTAL` is what it was before the sign-out.
 
 Where it lands: `/dashboard`, or the protected page a sign-in was last asked for. After step
-18's visit to `/accounts`, the walk landed on `/accounts`.
+18's visit to `/accounts`, both walks landed on `/accounts`: follow `Home` from there to read
+`TOTAL`.
 
 ### Step 20. Another browser, with the copy's own details
 
@@ -596,8 +653,13 @@ the PIN, so it is last.
   six boxes are disabled.
 
 The count is one count for both places: the walk's wrong PIN in the reveal's dialog was the
-first, and its second wrong PIN on the transfer was answered `PIN_LOCKED`. The lock ends by
-itself: 23 minutes after it the right PIN was answered `data.verified` `true`.
+first, the next, on a transfer, was answered `INVALID_PIN`, and the one after that, the third
+in a row, `PIN_LOCKED`. The lock ends by itself: 23 minutes after it the right PIN was answered
+`data.verified` `true`. *(This paragraph first read as if the second wrong PIN had locked.)*
+
+The second walk locked no PIN. It typed one wrong PIN in each place, on two copies, and met
+rows A and B as written. After B the right PIN, typed into `Digit 1 of 6` again, sent the
+transfer.
 
 ### Step 22. Leave
 
@@ -615,7 +677,8 @@ and 9). Do not "Start over" to tidy up: that takes a second copy and leaves the 
 
 ## 5. The endpoints behind the steps
 
-A success is `{ "data": …, "message": … }`; a list adds `pagination`. A refusal is a problem
+A success is `{ "data": …, "message": … }`; a list adds `pagination`; `session-status` alone
+answers its members bare, with no `data` around them. A refusal is a problem
 body with `type`, `title`, `status`, `detail`, `instance`, `errorCode` and `traceId`, and the
 members its code adds; section 6 marks the three refusals that have no `errorCode`. The answers
 that were looked at for it carried an `X-Correlation-ID` header. All of these were seen.
@@ -649,7 +712,8 @@ that were looked at for it carried an `X-Correlation-ID` header. All of these we
 | `POST /api/transfers/internal` | 201 |
 
 - An account in `GET /api/accounts` has `id`, `accountNumber`, `name`, `type`, `balance`,
-  `isPrimary` and `createdAt`. `balance` is a number, and `accountNumber` is masked there.
+  `isPrimary` and `createdAt`. `balance` is a number, and `accountNumber` is masked there with
+  asterisks, as `AB-****-****-26`; the page draws the same number with dots, `AB-••••-••••-26`.
 - A row of `GET /api/transactions` has `id`, `transactionNumber`, `type`, `amount`,
   `balanceAfter`, `description`, `recipientAzureTag`, `senderAzureTag`, `status` and
   `createdAt`.
@@ -668,7 +732,19 @@ that were looked at for it carried an `X-Correlation-ID` header. All of these we
   using it. You will be signed out in 1:59.` In the browser that keeps the copy it had the same
   two buttons and no password field. There `Stay signed in` sent
   `POST /bff/auth/reauthenticate`, a request at the doors, which answered 200; the next
-  `session-status` gave 899 and 3,599 seconds, and `TOTAL` was unchanged.
+  `session-status` gave 899 and 3,599 seconds, and `TOTAL` was unchanged. The second walk met
+  all of that again, 3,481 seconds after "Continue with my copy", with the focus on
+  `Stay signed in`.
+- In a browser that does not keep the copy, signed in with the copy's own pair as in step 20,
+  the second walk met both warnings. The first came 781 to 783 seconds after the page's last
+  request, four times running, and `Stay signed in` answered each. The second came 3,482
+  seconds after the sign-in, with the same sentence and other controls: a textbox
+  `Enter your password to continue` with the focus in it, the text `This starts a new
+  session.`, a button `Sign out now`, and a button `Sign in again` that is disabled while the
+  box is empty. With the copy's password in the box, `Sign in again` sent
+  `POST /bff/auth/reauthenticate`, which answered 200; the dialog closed, the address was
+  still `/dashboard`, the next `session-status` gave 899 and 3,599 seconds, and `TOTAL` was
+  unchanged.
 
 ## 6. The refusals
 
@@ -801,10 +877,12 @@ These differ from copy to copy, from day to day, or from run to run.
 | How long a request takes | The machine is shared |
 | The seconds left on a lock or a session | They run while you look |
 | `Across 2 accounts`, after step 12 | You added a third |
+| That History's three sums follow its filter | They add up every loaded row |
+| A reference's last character as a letter or digit | It is a check symbol (step 9) |
 | Colour contrast | The suite's own scans report it and do not fail on it |
 
-In the walk's copy the history held a payment of 25.00 dated the same UTC day, so `used` was 26
-after step 9's one euro. In another copy that payment can fall on the day before.
+In both walks' copies the history held a payment of 25.00 dated the same UTC day, so `used` was
+26 after step 9's one euro. In another copy that payment can fall on the day before.
 
 ## 9. How to report
 
@@ -840,7 +918,7 @@ sixth digit to send, and a withdrawal waits for its button.
 
 | Fact | Source |
 |---|---|
-| Names, texts, statuses, codes, headers not marked "read" | The walk of 2026-10-06 |
+| Names, texts, statuses, codes, headers not marked "read" | The two walks of 2026-10-06 |
 | 10 copies a day, one client on one machine | The header of [`compose.demo.yaml`] |
 | 200 changes, and what is counted | ADR-0063, decisions 7 and 11; [the Seeder's README] |
 | 10, 20 and 300 a minute; 15 and 60 minutes | [The BFF's `appsettings.json`] |
@@ -852,18 +930,29 @@ sixth digit to send, and a withdrawal waits for its button.
 | What a copy holds | ADR-0062, decision 1; [the Seeder's README] |
 | What the browser keeps, and when it goes | ADR-0063, "What the browser keeps in demo mode" |
 
-**Where the stack and a file disagree, the stack's answer is the one to write down.** The walk
-met no such place. One thing could be taken for one. A comment in
+**Where the stack and a file disagree, the stack's answer is the one to write down.** Neither
+walk met such a place between the stack and the code. Between the stack and this page as it
+was first written the second walk met a few, each corrected where it stood. One thing in the
+code could be taken for a disagreement. A comment in
 [`ChangePinDialog.tsx`](../../frontend/src/components/dialogs/ChangePinDialog.tsx) says a
 `PIN_LOCKED` answer comes with "NO Retry-After header". It is about the request that changes a
 PIN, which the walk did not send. On `POST /api/transfers/authorizations` the walk's
 `PIN_LOCKED` carried `Retry-After: 900`.
 
-**Not met by the walk, and so only read:** the three 429s a claim can answer, the lock of a
-password, a copy past its 200 changes, a copy past its 24 hours, a confirmed "Start over",
-a transfer to another copy's handle, a changed handle or PIN, a deleted account, the session's
-fixed end in a browser that does not keep the copy, any browser but Chromium, and any address
-but `http://localhost:5000`.
+**Not met by either walk, and so only read:** the three 429s a claim can answer, the lock of
+a password, a copy past its 200 changes, a copy past its 24 hours, a changed handle or PIN, a
+deleted account, any browser but Chromium, and any address but `http://localhost:5000`.
+
+**Met by the second walk alone:** a confirmed "Start over" (step 17); the session's fixed end
+in a browser that does not keep the copy (section 5); and another copy's handle: looked up
+from a second copy, it was answered 200 with `data.exists` `false`, as a handle nobody has
+is. **Met by the first walk alone:** the third wrong PIN and its lock (step 21, row C), and
+`GET /api/accounts/{id}/balance`.
+
+**What the second walk spent:** two copies, one claimed in step 3 and one by confirming
+"Start over" once; 20 and 15 requests that the two copies' budgets count; and twelve requests
+at the doors in an hour and a half, never two inside six seconds. Two of the twelve were the
+re-authentications at the two sessions' fixed ends, each waited for with a page left open.
 
 The decisions behind all of it are
 [ADR-0062](../adr/0062-demo-visitors-get-private-copies-from-a-prepared-pool.md) and
@@ -881,3 +970,5 @@ operator does about the pool is in [the runbook](../runbooks/demo-pool.md).
 [`DemoRefusalException.cs`]: ../../backend/src/AzureBank.Shared/Exceptions/DemoRefusalException.cs
 [`IdempotencyConstants.cs`]: ../../backend/src/AzureBank.Shared/Constants/IdempotencyConstants.cs
 [`StepUpConstants.cs`]: ../../backend/src/AzureBank.Shared/Constants/StepUpConstants.cs
+[`IdGenerator.cs`]: ../../backend/src/AzureBank.Shared/Utilities/IdGenerator.cs
+[`WithdrawDialog.tsx`]: ../../frontend/src/components/dialogs/WithdrawDialog.tsx
