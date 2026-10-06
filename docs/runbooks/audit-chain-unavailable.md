@@ -1098,7 +1098,7 @@ The address never appears on the console, in a receipt, or in a file name; it is
 Measured 2026-09-03, one enrolment on a throwaway store, the verb run twice:
 
 ```
-NOTIFIED 1 of 1 waiting notices into C:\Users\Drako\AppData\Local\Temp\azurebank-notices-t13
+NOTIFIED 1 of 1 waiting notices into C:\…\azurebank-notices-t13
   Each file is a complete message addressed to the email held on the account, and it has
   reached this machine's disk and nobody else: nothing here sends. Point a relay at the
   directory or move the files yourself, and delete the spool afterwards.

@@ -69,7 +69,7 @@ public class TransferService : ITransferService
 
       THE WAIT IS BOUNDED HERE, AND IT WAS NOT UNTIL THIS PARAMETER EXISTED. Called without
       @LockTimeout, sp_getapplock waits at @@LOCK_TIMEOUT, and that session default is -1 — wait
-      forever. MEASURED on LocalDB 2026-09-07 (plans/daily-limit/measure-cr1-2026-09-07.txt): the
+      forever. MEASURED on LocalDB 2026-09-07 (review round 1; ADR-0050 D5 has the figures): the
       waiter read its own @@LOCK_TIMEOUT as -1, and with @LockTimeout = 2000 supplied it was refused
       -1 after 2,006-2,012 ms across three runs. So the only bound before this was the global
       30-second CommandTimeout (AddInfrastructure, sqlOptions.CommandTimeout(30)) — which covers the

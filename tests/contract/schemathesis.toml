@@ -7,7 +7,7 @@
 #
 # What it adds to that command: the service key and the token-road marker on every request, and
 # a bearer token on every operation the document does not declare anonymous (hooks.py), and the
-# shape of the run. CI's conformance job runs this same file (backlog row 41), so a local
+# shape of the run. CI's conformance job runs this same file (since 2026-09-24), so a local
 # run and CI run the same checks: every one of them. At the bottom, three operations carry what
 # those checks have to be told about them.
 #
@@ -15,7 +15,7 @@
 # parents. From tests/contract/ it therefore applies without the flag -- and stops the run there,
 # because the `hooks` module below resolves only from the repository root.
 #
-# Until 2026-09-23 this was a v3-era file that 4.27.1 refused to load (backlog row 39): a
+# Until 2026-09-23 this was a v3-era file that 4.27.1 refused to load: a
 # [[project]] without the `title` 4.27.1 requires, a list where [phases] takes a boolean, and a
 # [network] section 4.27.1 does not have. Everything now sits at the root, so no project title
 # has to match the document's.
@@ -53,8 +53,8 @@ max-examples = 100
 mode = "all"
 
 # No [checks] section, so every check runs, the input-side ones included -- here and in CI. Until
-# backlog row 41 this section ran CI's four response checks and nothing else, because the API
-# failed the input-side ones: it read an empty query value as an absent one (row 40).
+# 2026-09-24 this section ran CI's four response checks and nothing else, because the API
+# failed the input-side ones: it read an empty query value as an absent one.
 
 # Two answers the missing_required_header check calls wrong and the ADRs decided.
 # POST /api/transactions/withdraw and POST /api/transfers without Step-Up-Authorization, for an

@@ -5,7 +5,7 @@ import { FIXTURES } from './target';
 /**
  * The step-up protocol (ADR-0042), asserted against WHICHEVER backend is listening.
  *
- * These are the rows of `A2-PR2-MEASURED-CONTRACT.md` that can be checked without moving money or
+ * These are the rows of the measured step-up contract that can be checked without moving money or
  * spending a PIN attempt — which is most of them, and the choice is deliberate rather than timid.
  * The real target runs against a database that persists between runs, so a suite that transferred
  * on every pass would drift balances until an unrelated assertion started failing, and a suite that
@@ -81,8 +81,8 @@ describe('contract: step-up authorisations', () => {
       row and its header already states the no-spend rules this obeys.
 
       MEASURED A1.1 — 2026-09-07T14:17:53Z (and the 14:46:26Z A4 re-run), PR #156's working tree on
-      3c30122, merged as fda7ff7, BFF :5000 -> API :7215, AzureBankDev, DailyLimit:Amount default;
-      transcript `azurebank-work/plans/daily-limit/measure-after-2026-09-07.txt`:
+      3c30122, merged as fda7ff7, BFF :5000 -> API :7215, AzureBankDev, DailyLimit:Amount default
+      (the run of ADR-0050's "After" table):
         422 errorCode=DAILY_LIMIT_EXCEEDED detail="Daily transfer limit exceeded."
         extra={"limit": 5000, "used": 0.0, "requested": 5000.01, "resetsAt": "2026-09-08T00:00:00Z"}
 
@@ -492,8 +492,8 @@ describe('contract: step-up authorisations', () => {
  * seeded admin's first account is the primary, and a headerless DELETE on it answers 422
  * PRIMARY_ACCOUNT_DELETE (D8), not the 401 the presence pin wants — and closes it in `finally`.
  *
- * Every expected value is quoted from `azurebank-work/plans/account-deletion/
- * measure-after-main-19742ff-2026-09-06.txt`, measured 2026-09-06T19:16Z on main 19742ff through
+ * Every expected value is quoted from one transcript,
+ * measured 2026-09-06T19:16Z on main 19742ff through
  * the BFF (:5000 -> :7215, AzureBankDev).
  *
  * REAL-STACK NOTE: each run leaves one `AccountDeletionRefused` audit row per headerless DELETE

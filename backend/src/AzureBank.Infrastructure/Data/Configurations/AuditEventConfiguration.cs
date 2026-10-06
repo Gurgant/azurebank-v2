@@ -23,7 +23,7 @@ public class AuditEventConfiguration : IEntityTypeConfiguration<AuditEvent>
           preference. An IDENTITY column exists only on a relational provider, so on the EF InMemory
           provider — where ~585 of this project's tests run — Sequence would stay 0 on every row and
           the chain would have no order at all. The first version ordered by Id instead and was
-          wrong for a reason STATE.md already warns about in capitals: Guid ordering in .NET is not
+          wrong for a reason docs/engineering-traps.md records: Guid ordering in .NET is not
           creation order, and SQL Server collates uniqueidentifier differently again. Assigning the
           number ourselves under the same lock that reads the tail makes the order explicit,
           identical on both providers, and therefore actually testable where the tests are.
