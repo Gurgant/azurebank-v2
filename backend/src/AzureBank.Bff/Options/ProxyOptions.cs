@@ -31,6 +31,12 @@ public class ProxyOptions
     /// </summary>
     public string[] KnownIPNetworks { get; set; } = [];
 
-    /// <summary>Number of trusted proxy hops to walk back through X-Forwarded-For.</summary>
+    /// <summary>
+    /// Number of trusted proxy hops to walk back through X-Forwarded-For. Never more than the
+    /// proxies there really are: each hop is believed only while the one before it is a listed
+    /// proxy, so with a limit of 2 and one proxy a caller whose own address is inside a listed
+    /// network is taken for the second proxy, and the entry it wrote itself is believed
+    /// (<c>TrustedProxyNetworkTests.ForwardLimit_IsStillTheNumberOfHopsBelieved</c>).
+    /// </summary>
     public int ForwardLimit { get; set; } = 1;
 }

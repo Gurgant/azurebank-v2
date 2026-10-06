@@ -543,7 +543,7 @@ an entry.
 |---------|-------|----------------------|
 | `ForwardedHeaders:KnownProxies` | The exact addresses of the proxies to believe | `ForwardedHeaders__KnownProxies__0`, `__1`, ... |
 | `ForwardedHeaders:KnownIPNetworks` | Their networks, in CIDR form: `192.0.2.0/24`, `2001:db8:7::/48`. For a platform that may move its proxy inside a range it owns: an exact address stops matching the day it moves, in silence. Since 2026-10-06 | `ForwardedHeaders__KnownIPNetworks__0`, `__1`, ... |
-| `ForwardedHeaders:ForwardLimit` | How many proxies in a row are believed: 1 | `ForwardedHeaders__ForwardLimit` |
+| `ForwardedHeaders:ForwardLimit` | How many proxies in a row are believed: 1. **Never more than the proxies there really are:** with 2 and one proxy, a caller whose own address is inside a listed network is taken for the second proxy, and the entry it wrote is believed (`TrustedProxyNetworkTests`) | `ForwardedHeaders__ForwardLimit` |
 
 - **With both lists empty** `X-Forwarded-For` is not read, and the framework's forwarded-headers
   middleware is not in the pipeline.

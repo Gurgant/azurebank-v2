@@ -449,6 +449,11 @@ public sealed class TrustedProxyNetworkTests : IClassFixture<WebApplicationFacto
     [InlineData("2", $"{Claimed}, {Caller}", Caller)]
     // The same, the stranger's entry written the way that hid the comma after it until 2026-10-06.
     [InlineData("2", $"192.0.2.1, ::ffff:{Claimed}%\", {Caller}", Caller)]
+    // THE DANGER of a limit above the number of proxies there really are: a caller whose own
+    // address is inside a listed network is taken for a proxy, and the entry it wrote is believed.
+    // With the limit that ships, 1, the same header names the caller itself.
+    [InlineData("2", $"{Claimed}, 10.9.9.9", Claimed)]
+    [InlineData("1", $"{Claimed}, 10.9.9.9", "10.9.9.9")]
     public async Task ForwardLimit_IsStillTheNumberOfHopsBelieved(string forwardLimit, string header, string expected)
     {
         var (host, api) = NewHost([(NetworksKey, Network), ("ForwardedHeaders:ForwardLimit", forwardLimit)]);
