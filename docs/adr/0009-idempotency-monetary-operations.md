@@ -276,7 +276,29 @@ minute longer than `RequestDeadline:Seconds`.)*
   that size, or once the five seconds are up, it answers `Connection: close`.
   `docs/engineering-traps.md` has the measurements.)* *(2026-10-06: the
   2026-09-24 note named a row of a private list, which no reader of this
-  repository can open; dropped, not struck.)*
+  repository can open; dropped, not struck.)* *(Amended 2026-10-06:
+  the four authorisation mints, which are not idempotent endpoints, answer a
+  body over their limit with 413 `PAYLOAD_TOO_LARGE`, a ProblemDetails, once
+  the caller is authenticated; with no token the 401 still comes first. Until
+  then they answered the 400 that calls the body malformed, with
+  `Connection: close`, with a `Content-Length` and chunked alike. A body whose
+  `Content-Length` is over 32,768 bytes is read and discarded before the 413
+  by the type this middleware uses, `OversizedBodyDrain`: one implementation,
+  so the same 1 MiB and five seconds, beyond which the 413 says
+  `Connection: close`. A chunked body has no length to check first: the
+  server's own refusal during the read becomes the same 413, the rest unread,
+  with `Connection: close`. Verified on Kestrel by
+  `KestrelRequestSizeLimitTests`: the 413 without `Connection: close` at
+  32,769 and 40,000 bytes with a `Content-Length`, and with it at 32,756 and
+  40,000 bytes in one chunk; the usual answer at 32,768 bytes with a
+  `Content-Length` and at 32,755 in one chunk; the 401 at 40,000 bytes with no
+  token; a second request answered on the connection of a 40,000-byte body
+  sent in two writes; and the server's 400 kept for a chunk whose size line is
+  no number. Verified in memory by `MintOversizedBodyDrainTests`: 40,000 bytes
+  read to their end; 2,000,000 left unread, with `Connection: close`; and, at
+  one mint, a body that stops arriving given up on when the host's clock
+  reaches five seconds, with `Connection: close`. On Kestrel no test sends a
+  mint more than 1 MiB or stalls a body.)*
 - The BFF needs no changes: YARP forwards `Idempotency-Key` and
   `Idempotency-Replayed` by default (verified; its transform only adds
   `Authorization`).
