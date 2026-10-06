@@ -91,8 +91,12 @@ FAKE_AZ = textwrap.dedent('''
         # What the deployed group says of the phone, as FAKE_AZ_PUSH has it. By default nothing:
         # the answer does not hold the property. "none" is an empty list and "null" a null; what
         # Azure answers for a group with no such receiver has not been read. Anything else is the
-        # accounts of its receivers of the Azure mobile app, separated by commas.
-        group = {'emailReceivers': [{'name': 'owner', 'emailAddress': 'deployed.alerts@example.invalid'}]}
+        # accounts of its receivers of the Azure mobile app, separated by commas. The mailboxes it
+        # writes to are the ones FAKE_AZ_MAIL has, separated by commas: by default one, as the
+        # template writes one.
+        mailboxes = os.environ.get('FAKE_AZ_MAIL', 'deployed.alerts@example.invalid').split(',')
+        group = {'emailReceivers': [{'name': 'owner' + str(number or ''), 'emailAddress': mailbox}
+                                    for number, mailbox in enumerate(mailboxes)]}
         push = os.environ.get('FAKE_AZ_PUSH', 'absent')
         if push != 'absent':
             accounts = [] if push in ('none', 'null') else push.split(',')
@@ -448,6 +452,26 @@ class SecretsScriptTests(ScriptCase):
         # (test_the_argument_names_the_phones_account_before_anything_else_does).
         self.assertEqual(len([call for call in self.calls() if 'actionGroups' in ' '.join(call)]), 1)
         self.assertNotIn('alertPushAccount', self.parameters())
+        # "Not asked at all" also held that nothing the group says of its mailboxes can stop a run
+        # that names one, and one read does not hold it. A group that writes to two addresses
+        # stops a run that names none, and tells it to pass -AlertEmail: passed, the run goes on
+        # with the argument's mailbox, and keeps the phone that group notifies.
+        # CONTROL: green as written. Seen red twice: with the group's mailboxes counted before the
+        # argument is looked at, and with the first of two kept where the run names none.
+        two = 'first.alerts@example.invalid,second.alerts@example.invalid'
+        (self.folder / 'parameters.json').unlink()
+        result = self.secrets('-Action', 'New', '-DeployApp', state='deployed', FAKE_AZ_MAIL=two,
+                              FAKE_AZ_PUSH='deployed.phone@example.invalid')
+        self.assertIn('The deployed alerts write to 2 addresses, not one. Pass -AlertEmail. Nothing was written.',
+                      self.said(result))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.folder / 'parameters.json').exists())
+        result = self.secrets('-Action', 'New', '-DeployApp', '-AlertEmail', 'given@example.invalid',
+                              state='deployed', FAKE_AZ_MAIL=two, FAKE_AZ_PUSH='deployed.phone@example.invalid')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.parameters()['alertEmail'], self.parameters().get('alertPushAccount')),
+                         ('given@example.invalid', 'deployed.phone@example.invalid'))
+        self.assertNotIn('alerts@', result.stderr)
 
     def test_a_mailbox_that_is_not_an_address_is_refused(self):
         result = self.secrets('-Action', 'New', '-DeployApp', '-ImageTag', TAG, '-AlertEmail', 'not an address')
