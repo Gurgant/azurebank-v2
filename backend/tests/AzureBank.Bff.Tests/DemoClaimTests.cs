@@ -342,7 +342,13 @@ public class DemoClaimTests : IClassFixture<WebApplicationFactory<Program>>, IDi
 
     /// <summary>
     /// A response as one text: its status, its content type, the names of its headers and its
-    /// body. With parentheses where the body has braces: the assertion library builds a failure's
+    /// body. Braces are written as in <c>ComparableText</c>
+    /// (backend/tests/AzureBank.Tests/Fixtures/ComparableText.cs), percent first, so the text is
+    /// exact: a failure shows <c>%7B</c> and <c>%7D</c> where the braces are, <c>%%</c> for a
+    /// percent sign, and the index counts the encoded text. This project does not reference that
+    /// one, so the three calls are copied here.
+    /// (Until 2026-10-06 this said parentheses where the body has braces.)
+    /// The assertion library builds a failure's
     /// message with <c>string.Format</c>, and a brace in either of two texts that differ can make
     /// it throw in place of the message that shows where they differ.
     /// </summary>
@@ -352,8 +358,12 @@ public class DemoClaimTests : IClassFixture<WebApplicationFactory<Program>>, IDi
         var headers = response.Headers.Concat(response.Content.Headers)
             .Select(header => header.Key)
             .Order(StringComparer.OrdinalIgnoreCase);
+        // Percent first, then each brace: the same three calls as ComparableText.Of
+        // (backend/tests/AzureBank.Tests/Fixtures/ComparableText.cs), held by
+        // backend/tests/AzureBank.Tests/Unit/ComparableTextTests.cs. This project does not
+        // reference that one.
         return $"{(int)response.StatusCode} | {response.Content.Headers.ContentType} | {string.Join(",", headers)} | {body}"
-            .Replace('{', '(').Replace('}', ')');
+            .Replace("%", "%%").Replace("{", "%7B").Replace("}", "%7D");
     }
 
     // ── The claim, with the demo off ─────────────────────────────────────────────────────────────
