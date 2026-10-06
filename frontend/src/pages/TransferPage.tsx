@@ -477,11 +477,22 @@ export function TransferPage() {
     nothing for good: name it here.
 
     While the check runs "Verify" is busy and cannot be pressed, so the line does not ask for it.
+
+    A handle the check found nobody for is not sent back to "Verify": the same press gets the
+    same answer, so the line asks for another handle, under the check's own sentence, which
+    names the one it could not find. Until a second change of 2026-10-06 it went on saying
+    "Press Verify to check the handle." there; seen in Chromium that day, right under "We
+    couldn't find…". Three things together say the handle in the field is that one: the
+    check's sentence is still up (a key press in the field takes it down), the check's last
+    answer is that nobody has the handle, and that answer is the latest (the same handle
+    checked again and turned away, as the limiter turns a check away, is a handle to check).
   */
   const reviewHintId = useId();
   const amountCanBeSent = transferFormSchema(availableBalance).shape.amount.safeParse(
     watch('amount'),
   ).success;
+  const nobodyHasTheHandle =
+    recipientError !== null && !lookupState.isError && lookupState.currentData?.exists === false;
   const reviewWaitsFor = canReview
     ? null
     : !selectedAccount
@@ -491,7 +502,9 @@ export function TransferPage() {
         : !recipient
           ? lookupState.isFetching
             ? 'Checking the handle…'
-            : 'Press Verify to check the handle.'
+            : nobodyHasTheHandle
+              ? 'Change the handle to continue.'
+              : 'Press Verify to check the handle.'
           : amountNumber <= 0
             ? 'Enter an amount to continue.'
             : !amountCanBeSent

@@ -29,6 +29,7 @@ const WORDS = {
   noHandle: "Enter the recipient's @handle to continue.",
   notVerified: 'Press Verify to check the handle.',
   checking: 'Checking the handle…',
+  nobodyHasIt: 'Change the handle to continue.',
   noAmount: 'Enter an amount to continue.',
   amountCannotBeSent: 'Change the amount to continue.',
 } as const;
@@ -107,6 +108,13 @@ async function textsDuring(line: Element, act: () => Promise<void>): Promise<str
   return [...before, line.textContent ?? ''];
 }
 
+/** Too many lookups, as the API's limiter turns a check away (`TransferPage.test.tsx`). */
+const tooManyLookups = () =>
+  HttpResponse.json(
+    { type: 'https://httpstatuses.com/429', title: 'Too Many Requests', status: 429 },
+    { status: 429, headers: { 'Retry-After': '90' } },
+  );
+
 /** The page with its accounts loaded and nothing typed. */
 async function openTheForm() {
   const view = renderTransfer();
@@ -166,13 +174,53 @@ describe('what "Review Transfer" is still waiting for', () => {
     });
   });
 
-  it('a handle nobody has is still a handle to check', async () => {
+  it('a handle nobody has: to change it, and once it is changed, to check it', async () => {
+    /*
+      Until a second change of 2026-10-06 this test was "a handle nobody has is still a handle
+      to check": under the check's own refusal the line went on asking for "Verify", the press
+      the visitor had just made, which gets the same answer again.
+    */
     await openTheForm();
     await userEvent.type(handleField(), 'nobody');
     await userEvent.click(verify());
     await screen.findByText(/We couldn't find @nobody/);
+    const refused = now();
+    // One more letter, and it is a handle nobody has checked.
+    await userEvent.type(handleField(), 'x');
+
+    expect({ refused, typedSince: now() }).toStrictEqual({
+      refused: { disabled: true, describedBy: [WORDS.nobodyHasIt] },
+      typedSince: { disabled: true, describedBy: [WORDS.notVerified] },
+    });
+  });
+
+  it('a check the bank turned away is still a check to make: "Verify", not another handle', async () => {
+    // CONTROL: green before the line for a handle nobody has
+    server.use(http.get('*/api/users/:azureTag', tooManyLookups));
+    await openTheForm();
+    await userEvent.type(handleField(), 'friend');
+    await userEvent.click(verify());
+    await screen.findByText(/Too many lookups/);
 
     expect(now()).toStrictEqual({ disabled: true, describedBy: [WORDS.notVerified] });
+  });
+
+  it('a handle nobody had, checked again and turned away: "Verify" again', async () => {
+    await openTheForm();
+    await userEvent.type(handleField(), 'nobody');
+    await userEvent.click(verify());
+    await screen.findByText(/We couldn't find @nobody/);
+    const refused = now();
+    // The same handle, and this time the check gets no answer about it: the answer before is
+    // not the last word, and the handle may be a good one.
+    server.use(http.get('*/api/users/:azureTag', tooManyLookups));
+    await userEvent.click(verify());
+    await screen.findByText(/Too many lookups/);
+
+    expect({ refused, turnedAway: now() }).toStrictEqual({
+      refused: { disabled: true, describedBy: [WORDS.nobodyHasIt] },
+      turnedAway: { disabled: true, describedBy: [WORDS.notVerified] },
+    });
   });
 
   it('a handle checked: the amount', async () => {
@@ -218,7 +266,8 @@ describe('what "Review Transfer" is still waiting for', () => {
     expect({
       ...now(),
       hasADescription: review().hasAttribute('aria-describedby'),
-      // None of the six sentences is left on the page.
+      // None of the seven sentences is left on the page (six, until the one for a handle nobody
+      // has).
       sentencesOnThePage: Object.values(WORDS).filter((words) => screen.queryByText(words)),
     }).toStrictEqual({
       disabled: false,
