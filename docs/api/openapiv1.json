@@ -1125,7 +1125,7 @@
           "Auth"
         ],
         "summary": "Claim a demo copy",
-        "description": "On the public demo, take one free demo copy for a visitor and sign in to it: the answer\r\ncarries the tokens and the user a login answers, and what signs in to the copy again. The\r\ncopy's password exists in this answer only. A 429 names its reason in `errorCode`:\r\n`DEMO_POOL_EMPTY` when no copy is free, `DEMO_DAILY_LIMIT` when this client has claimed as\r\nmany copies as one client may in a day, with `retryAfterSeconds`.",
+        "description": "On the public demo, take one free demo copy for a visitor and sign in to it: the answer\r\ncarries the tokens and the user a login answers, and what signs in to the copy again. On\r\nthe server the copy's password exists in this answer only: the database holds its hash.\r\nThe browser that made the claim keeps it. A 429 names its reason in `errorCode`:\r\n`DEMO_POOL_EMPTY` when no copy is free, `DEMO_DAILY_LIMIT` when this client has claimed as\r\nmany copies as one client may in a day, with `retryAfterSeconds`.",
         "requestBody": {
           "description": "The visitor's address, as the BFF saw it",
           "content": {
