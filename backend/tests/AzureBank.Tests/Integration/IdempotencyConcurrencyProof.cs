@@ -213,7 +213,10 @@ internal static class IdempotencyConcurrencyProof
           processed is answered 409, and every one but the winner can be. So the same request goes
           once more here, with every answer of the burst in hand: the API stores the winner's
           answer before sending it, and must answer this request with the same. Started before the
-          burst has been awaited, it can be one more 409.
+          burst has been awaited, it can be one more 409. It is a 409 too when the API could not
+          store the winner's answer, which it sends all the same. The first assertion below fails
+          with one message for both; the API's log tells them apart, with an Error line for the
+          second: "Failed to store idempotency response".
         */
         var again = await SendOnceAsync();
         again.Status.Should().Be(winners[0].Status,
