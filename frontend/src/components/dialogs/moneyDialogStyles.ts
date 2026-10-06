@@ -92,6 +92,9 @@ export const useMoneyDialogStyles = makeStyles({
     overflowY: 'auto',
   },
   sectionLabel: {
+    // A block, or the margin below does nothing: Fluent's `Text` is inline, and a vertical
+    // margin does not apply to inline text. The label sat 1 px above the first account card.
+    display: 'block',
     fontSize: '14px',
     fontWeight: 500,
     color: colors.neutral[500],
