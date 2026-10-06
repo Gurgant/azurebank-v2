@@ -129,6 +129,24 @@ const useRecipientStyles = makeStyles({
   },
   recipientName: { fontSize: '15px', fontWeight: 600, color: colors.neutral[800] },
   recipientTag: { fontSize: '13px', color: colors.neutral[500] },
+  /*
+    The line under "Review Transfer" that says what the button is still waiting for. One line
+    tall whether it has words or not (`minHeight` is its `lineHeight`), so the link under it
+    never moves when the words come, change or go. `display: block` because Fluent's `Text`
+    renders inline whatever element it is asked for, and an inline box has no minimum height.
+    Fluent's second foreground, as the words of a wait are (`WaitHint`): 9.13 to 1 on the light
+    page and 12.68 on the dark one, measured. The palette's `neutral[500]`, which the page's
+    other small lines take, is 4.39 to 1 on the light page: under the 4.5 words this small need.
+  */
+  reviewHint: {
+    display: 'block',
+    margin: 0,
+    minHeight: '20px',
+    fontSize: '13px',
+    lineHeight: '20px',
+    textAlign: 'center',
+    color: tokens.colorNeutralForeground2,
+  },
 });
 
 // ============================================
@@ -439,6 +457,46 @@ export function TransferPage() {
   // The schema owns account/tag-format/amount validity; the VERIFIED recipient is the
   // extra, server-truth gate that Zod cannot own (D6).
   const canReview = formState.isValid && !!selectedAccount && !!recipient;
+  /*
+    What "Review Transfer" is still waiting for, while it cannot be pressed: the first of
+    `canReview`'s conditions that is not met, taken in the order the page asks for them (an
+    account, a handle, the handle checked, an amount). Said in one line under the button, which
+    is described by it. Until 2026-10-06 the page said nothing, and a visitor who had typed a
+    handle and an amount had no word that "Verify" was the step left.
+
+    Each condition is read from what the page holds, not from the form's verdict: `isValid`
+    covers the account, the handle and the amount in one flag, and arrives a render after the
+    key press that changed it. The amount is asked of the form's own rule for it, now, against
+    the balance as it stands. Measured in Chromium that day with the last sentence as the plain
+    "everything else": typing the first digit of a good amount put "Change the amount to
+    continue." in the page for the moment before the form agreed. No frame showed it, and it
+    was still a sentence that was not true.
+
+    So in that moment, with every condition this names met and the form a render behind, the
+    line says nothing. A condition added to `canReview` and not named here leaves it saying
+    nothing for good: name it here.
+
+    While the check runs "Verify" is busy and cannot be pressed, so the line does not ask for it.
+  */
+  const reviewHintId = useId();
+  const amountCanBeSent = transferFormSchema(availableBalance).shape.amount.safeParse(
+    watch('amount'),
+  ).success;
+  const reviewWaitsFor = canReview
+    ? null
+    : !selectedAccount
+      ? 'You have no account to send from.'
+      : !normalizeAzureTag(watchedTag)
+        ? "Enter the recipient's @handle to continue."
+        : !recipient
+          ? lookupState.isFetching
+            ? 'Checking the handle…'
+            : 'Press Verify to check the handle.'
+          : amountNumber <= 0
+            ? 'Enter an amount to continue.'
+            : !amountCanBeSent
+              ? 'Change the amount to continue.'
+              : null;
   const newBalance = availableBalance - amountNumber;
 
   /**
@@ -1101,9 +1159,17 @@ export function TransferPage() {
                 style={{ width: '100%', height: '48px' }}
                 onClick={() => wizard.toReview()}
                 disabled={!canReview}
+                aria-describedby={reviewWaitsFor ? reviewHintId : undefined}
               >
                 Review Transfer
               </Button>
+              {/* Always on the page, and empty once the button can be pressed: its room is kept,
+                  so nothing under it moves. Words to read and the button's description, not a
+                  region that speaks by itself: at an amount the bank cannot send, the field's
+                  own alert speaks at the same key press, and the two would be said together. */}
+              <Text as="p" id={reviewHintId} className={styles.reviewHint}>
+                {reviewWaitsFor}
+              </Text>
               <button className={styles.linkBtn} onClick={() => requestLeave('/transfer/internal')}>
                 <ArrowSwap24Regular style={{ width: '18px', height: '18px' }} />
                 Between your own accounts
