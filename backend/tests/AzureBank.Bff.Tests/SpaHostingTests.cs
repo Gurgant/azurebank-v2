@@ -27,6 +27,8 @@ namespace AzureBank.Bff.Tests;
 /// once, 43 bytes longer than the file.
 /// The rows behind extra slashes (<c>//api/accounts</c>, <c>//settings</c>) are not among them
 /// either: the comment over each of their two theories says where its statuses were observed.
+/// Nor are the rows behind a leading backslash, nor the control that follows them: the comment
+/// over each of those two theories says the same.
 /// </para>
 /// </remarks>
 public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Program>>, IDisposable
@@ -405,6 +407,104 @@ public sealed class SpaHostingTests : IClassFixture<WebApplicationFactory<Progra
             // 200 to the 404 at the pipeline's end, and carries the security headers as before.
             SecurityHeadersTests.AssertTheWholeSet(response);
             SecurityHeadersTests.AssertTheWholeSet(there);
+        }
+    }
+
+    // A server path behind leading backslashes, alone or mixed with slashes, is not the page: 404
+    // with no body, with the demo off or on, as a path the server does not have ("%5C" is a
+    // backslash by the time the path is read). Not among the statuses the class's remarks date.
+    // Red before the change: each row 200 text/html, the shell's answer. Falsified, never
+    // committed: with the slashes trimmed and then the backslashes, once each, /%5C/api/accounts
+    // alone goes red, the same way. Observed in the test host (2026-10-06, the whole project).
+    [Theory]
+    [InlineData("GET", "/%5Capi/accounts")]
+    [InlineData("GET", "/%5C%5Capi/x")]
+    [InlineData("GET", "/%5CAPI/accounts")]
+    [InlineData("GET", "/%5Capi")]
+    [InlineData("GET", "/%5Cbff")]
+    [InlineData("GET", "/%5Chealth")]
+    [InlineData("GET", "/%5Cbff/nope")]
+    [InlineData("GET", "/%5Cbff/auth/login")]
+    [InlineData("GET", "/%5Chealth/live")]
+    [InlineData("GET", "/%5Chealth/nope")]
+    [InlineData("GET", "/%5C/api/accounts")]
+    [InlineData("GET", "//%5Capi/accounts")]
+    [InlineData("HEAD", "/%5Capi/accounts")]
+    public async Task ServerPrefixPaths_BehindLeadingBackslashes_NeverGetTheShell_WithDemoOffOrOn(string method, string path)
+    {
+        using var host = HostServing(ShellWithAHead, demo: true);
+        using var ordinary = HostServing(ShellWithAHead, demo: false);
+
+        var address = new Uri("http://localhost" + path);
+        var response = await host.CreateClient().SendAsync(new HttpRequestMessage(new HttpMethod(method), address));
+        var there = await ordinary.CreateClient().SendAsync(new HttpRequestMessage(new HttpMethod(method), address));
+
+        using (new AssertionScope())
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+            (await response.Content.ReadAsStringAsync()).Should().BeEmpty();
+            (response.Content.Headers.ContentType?.MediaType).Should().NotBe("text/html");
+
+            there.StatusCode.Should().Be(HttpStatusCode.NotFound);
+            (await there.Content.ReadAsStringAsync()).Should().BeEmpty();
+            (there.Content.Headers.ContentType?.MediaType).Should().NotBe("text/html");
+
+            SecurityHeadersTests.AssertTheWholeSet(response);
+            SecurityHeadersTests.AssertTheWholeSet(there);
+        }
+    }
+
+    // CONTROL: green before and after. What is not a server path behind leading separators stays
+    // a page: an encoded slash is not a separator, a backslash further on is part of its segment,
+    // a first segment that only begins like a prefix is not one, and white space is not a
+    // separator. Not among the statuses the class's remarks date: observed in the test host
+    // (2026-10-06, the whole project). Falsified, never committed, each time those rows alone and
+    // 404 where 200 is expected: with every backslash made a slash, /api%5Caccounts and /api%5C go
+    // red; with the path decoded once more before the test, the first eight rows; with white space
+    // trimmed with the separators, the last two.
+    [Theory]
+    // An encoded slash stays encoded in the path, so the first segment is not a server prefix.
+    [InlineData("/%2Fapi/accounts")]
+    [InlineData("/%2f%2fapi/x")]
+    [InlineData("/%2Fapi")]
+    [InlineData("/%2Fbff/nope")]
+    [InlineData("/%2Fhealth/live")]
+    [InlineData("/api%2Faccounts")]
+    [InlineData("/%5C%2Fapi/accounts")]
+    // No encoded slash here: "%255C" is read as the text "%5C", not as a backslash.
+    [InlineData("/%255Capi/accounts")]
+    // Leading separators only: a backslash further on is part of its segment.
+    [InlineData("/api%5Caccounts")]
+    [InlineData("/api%5C")]
+    [InlineData("/settings/%5Capi")]
+    [InlineData("/settings%5Capi")]
+    // Behind a backslash or not, a first segment that is not exactly a server prefix.
+    [InlineData("/%5Csettings")]
+    [InlineData("/%5Capix/thing")]
+    [InlineData("/api;x/accounts")]
+    [InlineData("/api./accounts")]
+    [InlineData("/api%20/accounts")]
+    // A space or a tab before the prefix is part of the first segment, not a separator.
+    [InlineData("/%20api/accounts")]
+    [InlineData("/%09api/accounts")]
+    public async Task PathsOutsideServerPrefixRules_StillGetTheShell_WithDemoOffOrOn(string path)
+    {
+        using var host = HostServing(ShellWithAHead, demo: true);
+        using var ordinary = HostServing(ShellWithAHead, demo: false);
+
+        var address = new Uri("http://localhost" + path);
+        var response = await host.CreateClient().GetAsync(address);
+        var there = await ordinary.CreateClient().GetAsync(address);
+
+        using (new AssertionScope())
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            (response.Content.Headers.ContentType?.MediaType).Should().Be("text/html");
+            (await response.Content.ReadAsByteArrayAsync()).Should().Equal(Encoding.UTF8.GetBytes(TaggedShell));
+
+            there.StatusCode.Should().Be(HttpStatusCode.OK);
+            (there.Content.Headers.ContentType?.MediaType).Should().Be("text/html");
+            (await there.Content.ReadAsByteArrayAsync()).Should().Equal(Encoding.UTF8.GetBytes(ShellWithAHead));
         }
     }
 

@@ -535,7 +535,14 @@ public class ApplicationUser : IdentityUser<Guid>
 >
 > **Every `/api` request reads the level, since `d74603c` (2026-08-20).** `RequiresSession` matches
 > the `/api/` prefix with no method condition and no exemption list, so the gate is entered on every
-> proxied request, not on three paths. When a session cookie is present the middleware calls
+> proxied request, not on three paths. *(amended 2026-10-06: on every proxied request but one,
+> until the change this note comes with. The proxy's catch-all route takes the bare path `/api`
+> too, with nothing after it, and the `/api/` prefix does not match it: with no live session it
+> was forwarded. `RequiresSession` now matches the bare path as well, so with no live session it
+> is answered 401, as every path under `/api/` is, and nothing is forwarded;
+> [ADR-0041](0041-the-api-verifies-the-transfer-pin.md)'s amendment of 2026-10-05 says where both
+> were seen.)*
+> When a session cookie is present the middleware calls
 > `SessionService.GetAuthLevel` — the lazy-downgrade reader the Timeout Handling note describes
 > — on all of them, so an expired elevation is now written back to the store by the first
 > proxied request after the deadline, not only by the next step-up attempt. The reader count is
