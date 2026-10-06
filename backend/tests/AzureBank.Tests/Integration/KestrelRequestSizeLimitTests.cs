@@ -216,10 +216,50 @@ public sealed class KestrelRequestSizeLimitTests : IDisposable
         boundary.StatusCode.Should().Be(expected.Status);
         await AssertErrorCodeAsync(boundary, expected.Code);
 
-        using var unauthenticated = await SendAsync(path, body.PadRight(40_000),
-            token: null, chunked: chunked, idempotent: false);
-        unauthenticated.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
-        await AssertErrorCodeAsync(unauthenticated, ErrorCodes.TokenMissing);
+        var unauthenticatedBody = Encoding.UTF8.GetBytes(body.PadRight(40_000));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var socket = new System.Net.Sockets.TcpClient();
+        await socket.ConnectAsync(IPAddress.Loopback, _client.BaseAddress!.Port, deadline.Token);
+        await using var stream = socket.GetStream();
+        await stream.WriteAsync(
+            MintRequestHead(path, token: null, unauthenticatedBody.Length, chunked: chunked), deadline.Token);
+
+        if (chunked)
+        {
+            await stream.WriteAsync(
+                Encoding.ASCII.GetBytes($"{16_000:x}\r\n"), deadline.Token);
+            await stream.WriteAsync(unauthenticatedBody.AsMemory(0, 16_000), deadline.Token);
+            await stream.WriteAsync("\r\n"u8.ToArray(), deadline.Token);
+        }
+        else
+        {
+            await stream.WriteAsync(unauthenticatedBody.AsMemory(0, 16_000), deadline.Token);
+        }
+
+        var unauthenticated = await ReadWireResponseAsync(stream, deadline.Token);
+
+        try
+        {
+            if (chunked)
+            {
+                await stream.WriteAsync(
+                    Encoding.ASCII.GetBytes($"{24_000:x}\r\n"), deadline.Token);
+                await stream.WriteAsync(unauthenticatedBody.AsMemory(16_000), deadline.Token);
+                await stream.WriteAsync("\r\n0\r\n\r\n"u8.ToArray(), deadline.Token);
+            }
+            else
+            {
+                await stream.WriteAsync(unauthenticatedBody.AsMemory(16_000), deadline.Token);
+            }
+            await stream.FlushAsync(deadline.Token);
+        }
+        catch (Exception ex) when (ex is IOException or System.Net.Sockets.SocketException or ObjectDisposedException)
+        {
+        }
+
+        unauthenticated.Status.Should().Be((int)HttpStatusCode.Unauthorized);
+        using var unauthenticatedProblem = JsonDocument.Parse(unauthenticated.Body);
+        unauthenticatedProblem.RootElement.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.TokenMissing);
     }
 
     [Theory]
@@ -347,15 +387,27 @@ public sealed class KestrelRequestSizeLimitTests : IDisposable
         problem.GetProperty("traceId").GetString().Should().NotBeNullOrWhiteSpace();
     }
 
-    private byte[] MintRequestHead(string path, string token, int length)
+    private byte[] MintRequestHead(
+        string path, string? token, int? length = null, bool chunked = false)
     {
         var head = new StringBuilder($"POST {path} HTTP/1.1\r\nHost: {_client.BaseAddress!.Authority}\r\n");
         foreach (var header in _client.DefaultRequestHeaders)
         {
             head.Append(header.Key).Append(": ").Append(string.Join(", ", header.Value)).Append("\r\n");
         }
-        head.Append("Authorization: Bearer ").Append(token).Append("\r\n")
-            .Append("Content-Type: application/json\r\nContent-Length: ").Append(length).Append("\r\n\r\n");
+        if (token is not null)
+        {
+            head.Append("Authorization: Bearer ").Append(token).Append("\r\n");
+        }
+        head.Append("Content-Type: application/json\r\n");
+        if (chunked)
+        {
+            head.Append("Transfer-Encoding: chunked\r\n\r\n");
+        }
+        else
+        {
+            head.Append("Content-Length: ").Append(length).Append("\r\n\r\n");
+        }
         return Encoding.ASCII.GetBytes(head.ToString());
     }
 
