@@ -1,7 +1,7 @@
 import { AxeBuilder } from '@axe-core/playwright';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { scan } from './axeScan';
-import { fieldContrast } from './fieldContrast';
+import { fieldContrast, textContrast } from './contrast';
 
 /**
  * The accessibility sweep: measured, reported, and gated on serious and critical findings.
@@ -34,10 +34,11 @@ import { fieldContrast } from './fieldContrast';
  *   run at all.
  * Each scan also waits for the page's animations to finish first, so a fade is not measured.
  *
- * Four blocks further down are not scans. Each holds, by measuring it, one thing the sweep does
+ * Five blocks further down are not scans. Each holds, by measuring it, one thing the sweep does
  * not: that what is typed in a field can be read, that the amount field shows where focus is,
- * that a dialog gives focus back when it closes, and that a status pill stays in its column at
- * phone width. Each has its own note above it.
+ * that a dialog gives focus back when it closes, that a status pill stays in its column at
+ * phone width, and that certain words which were too faint stay readable. Each has its own note
+ * above it.
  */
 type Scan = { name: string; path: string; title: string; ready: (page: Page) => Promise<void> };
 
@@ -463,6 +464,51 @@ test.describe('at phone width a status pill stays in its column', () => {
         0,
       );
     });
+  }
+});
+
+/*
+  WORDS THAT WERE TOO FAINT TO READ, HELD AT 4.5 TO 1. The sweep reports colour contrast and
+  never gates it: most of what it finds is the palette on the grey canvas, which waits for the
+  UI/UX phase. The words below are not that. Each was far under the threshold for a reason of
+  its own, a colour meant for something else, and was corrected by itself; a row holds each in
+  both themes, so that the correction stays. The theme is asserted first, as above.
+*/
+const FAINT_WORDS: { name: string; reach: (page: Page) => Promise<Locator> }[] = [
+  {
+    // It wore the grey of the "Coming soon" rows, which are disabled: 2.54 to 1 on the card.
+    name: 'the sentence under the theme choice on Settings',
+    reach: async (page) => {
+      await page.goto('/settings');
+      return page.getByText(/^(Following your device|This device will stay)/);
+    },
+  },
+  {
+    // The same grey, on the canvas: 2.31 to 1.
+    name: 'the version line on Settings',
+    reach: async (page) => {
+      await page.goto('/settings');
+      return page.getByText(/^AzureBank v/);
+    },
+  },
+];
+
+test.describe('words that were too faint to read', () => {
+  for (const theme of ['light', 'dark'] as const) {
+    for (const { name, reach } of FAINT_WORDS) {
+      test(`${name}, in the ${theme} theme`, async ({ page }) => {
+        await page.emulateMedia({ colorScheme: theme });
+        const words = await reach(page);
+        await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+        await expect(words).toBeVisible();
+
+        const seen = await textContrast(words);
+        expect(
+          seen.ratio,
+          `${name} (${theme}): ${seen.colours.text} on ${seen.colours.ground}`,
+        ).toBeGreaterThanOrEqual(4.5);
+      });
+    }
   }
 });
 

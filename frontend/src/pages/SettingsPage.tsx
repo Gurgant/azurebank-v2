@@ -278,10 +278,12 @@ const useStyles = makeStyles({
     color: colors.neutral[500],
   },
 
+  // On the canvas, not on a card: there the grey of the page's other sentences, neutral[500],
+  // is 4.39 to 1, so this is the step above it. It was neutral[400], 2.31 to 1.
   version: {
     textAlign: 'center',
     fontSize: '12px',
-    color: colors.neutral[400],
+    color: colors.neutral[600],
   },
 });
 
@@ -460,7 +462,9 @@ export function SettingsPage() {
             <Radio value="light" label="Light" />
             <Radio value="dark" label="Dark" />
           </RadioGroup>
-          <Text className={styles.comingSubtitle}>
+          {/* A sentence to read, so the grey of the page's other sentences, and not the fainter
+              one of the disabled "Coming soon" rows it used to wear: 2.54 to 1 on the card. */}
+          <Text className={styles.actionSubtitle}>
             {preference === 'system'
               ? `Following your device, which is currently ${resolved}.`
               : 'This device will stay on your choice.'}
