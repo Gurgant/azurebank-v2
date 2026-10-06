@@ -140,6 +140,170 @@ public class ProxyOptionsValidatorTests
         result.Failed.Should().BeTrue();
         result.FailureMessage.Should().Contain("ForwardLimit");
     }
+
+    // ── Networks of proxies (KnownIPNetworks) ────────────────────────────────────────────────────
+    // A network is believed whole: every address in it may name a caller's address. So an entry
+    // that reads as another network than the one written, or as one nobody should trust, stops
+    // the host with a sentence that names it.
+
+    private ValidateOptionsResult Networks(params string[] entries) =>
+        _sut.Validate(null, new ProxyOptions { KnownIPNetworks = entries });
+
+    private void AssertRefused(string entry, string because)
+    {
+        var result = Networks(entry);
+
+        result.Failed.Should().BeTrue($"'{entry}' must not be believed");
+        result.FailureMessage.Should().Contain($"ForwardedHeaders:KnownIPNetworks contains '{entry}', which ")
+            .And.Contain(because);
+    }
+
+    [Theory]
+    [InlineData("10.0.0.0/8")]
+    [InlineData("100.64.0.0/10")]
+    [InlineData("192.0.2.0/24")]
+    [InlineData("203.0.113.7/32")]
+    [InlineData("fd00::/8")]
+    [InlineData("FD00::/8")]
+    [InlineData("2001:db8::/32")]
+    [InlineData("2001:db8::1/128")]
+    public void Validate_ANetworkInCidrForm_Succeeds(string entry)
+    {
+        Networks(entry).Succeeded.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Validate_SeveralNetworks_BesideExactAddresses_Succeed()
+    {
+        var options = new ProxyOptions
+        {
+            KnownProxies = ["192.0.2.77"],
+            KnownIPNetworks = ["10.0.0.0/8", "fd00::/8"],
+        };
+
+        _sut.Validate(null, options).Succeeded.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("not-a-network")]
+    [InlineData("")]
+    // An address with no prefix length is one proxy, and belongs in KnownProxies.
+    [InlineData("10.0.0.0")]
+    [InlineData("10.0.0.0/")]
+    [InlineData("/8")]
+    [InlineData("10.0.0.0/8/8")]
+    [InlineData("10.0.0.0/eight")]
+    [InlineData(" 10.0.0.0/8")]
+    [InlineData("10.0.0.0/8 ")]
+    [InlineData("10.0.0.0/ 8")]
+    [InlineData("10.0.0.0-10.0.0.255")]
+    [InlineData("10.0.0.0/255.0.0.0")]
+    public void Validate_AnEntryThatIsNotANetwork_Fails(string entry)
+    {
+        AssertRefused(entry, "is not a network");
+    }
+
+    [Theory]
+    [InlineData("10.0.0.0/33")]
+    [InlineData("10.0.0.0/-1")]
+    [InlineData("10.0.0.0/999999999999")]
+    [InlineData("fd00::/129")]
+    public void Validate_APrefixLengthOutOfRange_Fails(string entry)
+    {
+        AssertRefused(entry, "prefix length");
+    }
+
+    [Theory]
+    [InlineData("0.0.0.0/0")]
+    [InlineData("::/0")]
+    // The prefix decides, whatever address stands before it.
+    [InlineData("10.0.0.0/0")]
+    public void Validate_ANetworkThatTrustsEverybody_Fails(string entry)
+    {
+        AssertRefused(entry, "trusts every address");
+    }
+
+    [Theory]
+    // Half of the IPv4 internet each, and the widest that is still refused.
+    [InlineData("0.0.0.0/1")]
+    [InlineData("128.0.0.0/1")]
+    [InlineData("10.0.0.0/7")]
+    // The whole of the IPv6 unique-local block is a /7: its assigned half, fd00::/8, is accepted.
+    [InlineData("fc00::/7")]
+    [InlineData("2000::/3")]
+    public void Validate_ANetworkWiderThanSlash8_Fails(string entry)
+    {
+        AssertRefused(entry, "wider than a /8");
+    }
+
+    [Theory]
+    // Each of these PARSES, as another network than the one a reader sees (measured on .NET 10,
+    // System.Net.IPNetwork.TryParse): an address inside a network is widened to the network, a
+    // leading zero makes an octet octal, a short form is filled in from the right.
+    [InlineData("10.0.0.1/8", "10.0.0.0/8")]
+    [InlineData("010.0.0.0/8", "8.0.0.0/8")]
+    [InlineData("0x0a.0.0.0/8", "10.0.0.0/8")]
+    [InlineData("10/8", "0.0.0.0/8")]
+    [InlineData("10.0.0/8", "10.0.0.0/8")]
+    [InlineData("10.0.0.0/08", "10.0.0.0/8")]
+    [InlineData("[fd00::]/8", "fd00::/8")]
+    [InlineData("fd00:0:0::/8", "fd00::/8")]
+    [InlineData("2001:db8::1/32", "2001:db8::/32")]
+    public void Validate_AnEntryTheFrameworkReadsAsAnotherText_Fails_AndSaysWhatItReads(string entry, string read)
+    {
+        AssertRefused(entry, $"the framework reads as {read}");
+    }
+
+    [Theory]
+    // A dual-stack socket reports an IPv4 proxy as ::ffff:a.b.c.d, and the IPv4 network that
+    // holds it matches that address (TrustedProxyNetworkTests). A network written in the mapped
+    // form answered false for an address inside it, in its mapped and in its plain form
+    // (System.Net.IPNetwork.Contains, measured on .NET 10): it would match nobody, in silence.
+    [InlineData("::ffff:10.0.0.0/104")]
+    [InlineData("::ffff:0:0/96")]
+    [InlineData("::ffff:192.0.2.7/128")]
+    public void Validate_AnIPv4MappedNetwork_Fails_AndAsksForTheIPv4One(string entry)
+    {
+        AssertRefused(entry, "IPv4-mapped");
+    }
+
+    [Fact]
+    public void Validate_EveryBadNetworkIsNamed_NotOnlyTheFirst()
+    {
+        var result = Networks("10.0.0.0/8", "0.0.0.0/0", "not-a-network");
+
+        result.Failed.Should().BeTrue();
+        result.FailureMessage.Should().Contain("'0.0.0.0/0'").And.Contain("'not-a-network'")
+            .And.NotContain("'10.0.0.0/8'");
+    }
+
+    [Fact]
+    public void Validate_NullKnownIPNetworks_Fails()
+    {
+        var result = _sut.Validate(null, new ProxyOptions { KnownIPNetworks = null! });
+
+        result.Failed.Should().BeTrue();
+        result.FailureMessage.Should().Contain("KnownIPNetworks");
+    }
+
+    [Fact]
+    public void Validate_NonPositiveForwardLimit_WithNetworks_Fails()
+    {
+        var options = new ProxyOptions { KnownIPNetworks = ["10.0.0.0/8"], ForwardLimit = 0 };
+
+        var result = _sut.Validate(null, options);
+
+        result.Failed.Should().BeTrue();
+        result.FailureMessage.Should().Contain("ForwardLimit");
+    }
+
+    // CONTROL: green before this change. With nothing listed the limit is not read, so any value
+    // of it starts the host, as it did.
+    [Fact]
+    public void Validate_NonPositiveForwardLimit_WithNothingListed_Succeeds()
+    {
+        _sut.Validate(null, new ProxyOptions { ForwardLimit = 0 }).Succeeded.Should().BeTrue();
+    }
 }
 
 /// <summary>

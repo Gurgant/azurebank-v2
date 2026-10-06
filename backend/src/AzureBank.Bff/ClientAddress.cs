@@ -16,8 +16,10 @@ namespace AzureBank.Bff;
 /// </para>
 /// <para>
 /// The address is the connection's, which behind a proxy is the proxy's unless
-/// <c>ForwardedHeaders:KnownProxies</c> names it: only then is it rewritten from
-/// <c>X-Forwarded-For</c>, before anything reads it (<c>Program.cs</c>).
+/// <c>ForwardedHeaders:KnownProxies</c> names it or a network of
+/// <c>ForwardedHeaders:KnownIPNetworks</c> holds it: only then is it rewritten from
+/// <c>X-Forwarded-For</c>, before anything reads it (<c>Program.cs</c>). Until 2026-10-06 this
+/// named <c>KnownProxies</c> alone: an exact address was the only way to list a proxy.
 /// </para>
 /// <para>
 /// One place, because two callers must agree: a limiter that keyed a client one way and a claim
