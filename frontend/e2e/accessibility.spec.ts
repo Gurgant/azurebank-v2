@@ -576,7 +576,9 @@ const FAINT_WORDS: { name: string; reach: (page: Page) => Promise<Locator> }[] =
     reach: async (page) => {
       await page.goto('/transfer');
       const handle = page.getByRole('textbox', { name: 'Recipient handle' });
-      await handle.fill('@nobody_has_this_handle_zz9');
+      // A handle the API takes as one and nobody has. Longer than 20 characters and the API
+      // refuses it as malformed, which the page words with another sentence.
+      await handle.fill('@nobody_zz9_qx7');
       await handle.press('Enter');
       return page.getByText(/^We couldn't find /);
     },
