@@ -152,6 +152,274 @@ public sealed class KestrelRequestSizeLimitTests : IDisposable
         events.IndexOf(applied).Should().BeLessThan(authenticationIndex);
     }
 
+    [Theory]
+    [InlineData("/api/transfers/authorizations", 40_000, false)]
+    [InlineData("/api/transfers/authorizations", 40_000, true)]
+    [InlineData("/api/transfers/authorizations", 32_769, false)]
+    [InlineData("/api/transfers/authorizations", 32_756, true)]
+    [InlineData("/api/transfers/internal/authorizations", 40_000, false)]
+    [InlineData("/api/transfers/internal/authorizations", 40_000, true)]
+    [InlineData("/api/transfers/internal/authorizations", 32_769, false)]
+    [InlineData("/api/transfers/internal/authorizations", 32_756, true)]
+    [InlineData("/api/transactions/withdraw/authorizations", 40_000, false)]
+    [InlineData("/api/transactions/withdraw/authorizations", 40_000, true)]
+    [InlineData("/api/transactions/withdraw/authorizations", 32_769, false)]
+    [InlineData("/api/transactions/withdraw/authorizations", 32_756, true)]
+    [InlineData("/api/accounts/{id}/deletion-authorizations", 40_000, false)]
+    [InlineData("/api/accounts/{id}/deletion-authorizations", 40_000, true)]
+    [InlineData("/api/accounts/{id}/deletion-authorizations", 32_769, false)]
+    [InlineData("/api/accounts/{id}/deletion-authorizations", 32_756, true)]
+    public async Task MintOversizedBody_Is413WithItsCodeAndConnectionPolicy(string path, int size, bool chunked)
+    {
+        var (token, accountId) = await RegisterAsync();
+        var body = MintBody(path, accountId).PadRight(size);
+        path = path.Replace("{id}", accountId.ToString(), StringComparison.Ordinal);
+        using var response = await SendAsync(path, body, token, chunked, idempotent: false);
+
+        response.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
+        (response.Content.Headers.ContentType?.MediaType).Should().Be("application/json");
+        var json = await response.Content.ReadAsStringAsync();
+        _output.WriteLine($"{(chunked ? "chunked" : "Content-Length")} {size}: {json}");
+        AssertMintTooLarge(json, path);
+        if (chunked)
+        {
+            response.Headers.ConnectionClose.Should().BeTrue("the chunked body is left unread");
+        }
+        else
+        {
+            response.Headers.ConnectionClose.Should().NotBe(true, "a drained connection can be kept alive");
+        }
+    }
+
+    // Controls, green before and after the mints' 413: the largest body a mint still takes gets its
+    // usual answer, and 40,000 bytes with no token get the 401 first. With a Content-Length that body
+    // is 32,768 bytes; in one chunk it is 32,755, because the server counts the chunk's 13 bytes of
+    // framing as well (the theory above has 32,756 in one chunk refused). The request with no token
+    // is the last this test sends: Kestrel can abort the connection after its keep-alive 401.
+    [Theory]
+    [InlineData("/api/transfers/authorizations", false)]
+    [InlineData("/api/transfers/authorizations", true)]
+    [InlineData("/api/transfers/internal/authorizations", false)]
+    [InlineData("/api/transfers/internal/authorizations", true)]
+    [InlineData("/api/transactions/withdraw/authorizations", false)]
+    [InlineData("/api/transactions/withdraw/authorizations", true)]
+    [InlineData("/api/accounts/{id}/deletion-authorizations", false)]
+    [InlineData("/api/accounts/{id}/deletion-authorizations", true)]
+    public async Task Control_MintBoundaryAndMissingToken_KeepTheirAnswers(string path, bool chunked)
+    {
+        var (token, accountId) = await RegisterAsync();
+        var body = MintBody(path, accountId);
+        var expected = MintUsualAnswer(path);
+        path = path.Replace("{id}", accountId.ToString(), StringComparison.Ordinal);
+        using var boundary = await SendAsync(path, body.PadRight(chunked ? 32_755 : 32_768),
+            token, chunked, idempotent: false);
+        boundary.StatusCode.Should().Be(expected.Status);
+        await AssertErrorCodeAsync(boundary, expected.Code);
+
+        using var unauthenticated = await SendAsync(path, body.PadRight(40_000),
+            token: null, chunked: chunked, idempotent: false);
+        unauthenticated.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        await AssertErrorCodeAsync(unauthenticated, ErrorCodes.TokenMissing);
+    }
+
+    [Theory]
+    [InlineData("/api/transfers/authorizations")]
+    [InlineData("/api/transfers/internal/authorizations")]
+    [InlineData("/api/transactions/withdraw/authorizations")]
+    [InlineData("/api/accounts/{id}/deletion-authorizations")]
+    public async Task MintSplitBody_Delivers413AndThenTheUsualAnswerOnTheSameConnection(string path)
+    {
+        var (token, accountId) = await RegisterAsync();
+        var small = MintBody(path, accountId);
+        var expected = MintUsualAnswer(path);
+        path = path.Replace("{id}", accountId.ToString(), StringComparison.Ordinal);
+        var body = Encoding.UTF8.GetBytes(small.PadRight(40_000));
+
+        for (var round = 0; round < 5; round++)
+        {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            using var socket = new System.Net.Sockets.TcpClient();
+            await socket.ConnectAsync(IPAddress.Loopback, _client.BaseAddress!.Port, deadline.Token);
+            await using var stream = socket.GetStream();
+            WireResponse? first = null;
+            WireResponse? second = null;
+            string? transportError = null;
+            try
+            {
+                await stream.WriteAsync(MintRequestHead(path, token, body.Length), deadline.Token);
+                await stream.WriteAsync(body.AsMemory(0, 16_000), deadline.Token);
+                await Task.Delay(300, deadline.Token);
+                await stream.WriteAsync(body.AsMemory(16_000), deadline.Token);
+                first = await ReadWireResponseAsync(stream, deadline.Token);
+                await stream.WriteAsync(MintRequestHead(path, token, Encoding.UTF8.GetByteCount(small)), deadline.Token);
+                await stream.WriteAsync(Encoding.UTF8.GetBytes(small), deadline.Token);
+                second = await ReadWireResponseAsync(stream, deadline.Token);
+            }
+            catch (Exception ex) when (ex is IOException or System.Net.Sockets.SocketException or OperationCanceledException)
+            {
+                transportError = $"{ex.GetType().Name}: {ex.Message}";
+            }
+
+            transportError.Should().BeNull($"round {round + 1} must deliver both answers, including while the sender writes");
+            first.Should().NotBeNull();
+            first!.Status.Should().Be(413);
+            first.Headers["Content-Type"].Should().StartWith("application/json");
+            first.Headers.GetValueOrDefault("Connection").Should().NotBe("close");
+            AssertMintTooLarge(first.Body, path);
+            second.Should().NotBeNull();
+            second!.Status.Should().Be((int)expected.Status);
+            using var usual = JsonDocument.Parse(second.Body);
+            usual.RootElement.GetProperty("errorCode").GetString().Should().Be(expected.Code);
+            _output.WriteLine($"Round {round + 1}: 413 then {second.Status} on the same TCP connection.");
+        }
+    }
+
+    // Control, green before and after the mints' 413: a body the server refuses for another reason
+    // than its size keeps the answer it had. A chunk whose size line is no number is the server's
+    // 400, not its 413, so the mint's filter leaves it to the 400 every such request gets. Its proof
+    // is the filter turning ANY refusal of the server's into the 413: these four rows then read 413.
+    [Theory]
+    [InlineData("/api/transfers/authorizations")]
+    [InlineData("/api/transfers/internal/authorizations")]
+    [InlineData("/api/transactions/withdraw/authorizations")]
+    [InlineData("/api/accounts/{id}/deletion-authorizations")]
+    public async Task Control_MintBadChunkSize_KeepsTheMalformed400(string path)
+    {
+        var (token, accountId) = await RegisterAsync();
+        path = path.Replace("{id}", accountId.ToString(), StringComparison.Ordinal);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var socket = new System.Net.Sockets.TcpClient();
+        await socket.ConnectAsync(IPAddress.Loopback, _client.BaseAddress!.Port, deadline.Token);
+        await using var stream = socket.GetStream();
+        var head = new StringBuilder($"POST {path} HTTP/1.1\r\nHost: {_client.BaseAddress!.Authority}\r\n");
+        foreach (var header in _client.DefaultRequestHeaders)
+        {
+            head.Append(header.Key).Append(": ").Append(string.Join(", ", header.Value)).Append("\r\n");
+        }
+        head.Append("Authorization: Bearer ").Append(token).Append("\r\n")
+            .Append("Content-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n")
+            .Append("zz\r\n");
+        await stream.WriteAsync(Encoding.ASCII.GetBytes(head.ToString()), deadline.Token);
+        var response = await ReadWireResponseAsync(stream, deadline.Token);
+
+        _output.WriteLine($"{response.Status}: {response.Body}");
+        response.Status.Should().Be(400, "the server refused the chunk's framing, not the body's size");
+        using var problem = JsonDocument.Parse(response.Body);
+        problem.RootElement.GetProperty("detail").GetString()
+            .Should().Be("The request is malformed or contains invalid characters.");
+        problem.RootElement.TryGetProperty("errorCode", out _).Should().BeFalse("that 400 names no code");
+    }
+
+    private static string MintBody(string path, Guid accountId)
+    {
+        object body = path switch
+        {
+            "/api/transfers/authorizations" =>
+                new { fromAccountId = accountId, recipientAzureTag = "missing_payee", amount = 1m, pin = "123456" },
+            "/api/transfers/internal/authorizations" =>
+                new { fromAccountId = accountId, toAccountId = Guid.NewGuid(), amount = 1m, pin = "123456" },
+            "/api/transactions/withdraw/authorizations" => new { accountId, amount = 1m, pin = "123456" },
+            "/api/accounts/{id}/deletion-authorizations" => new { pin = "123456" },
+            _ => throw new ArgumentOutOfRangeException(nameof(path)),
+        };
+        return JsonSerializer.Serialize(body, Json);
+    }
+
+    private static (HttpStatusCode Status, string Code) MintUsualAnswer(string path) => path switch
+    {
+        "/api/transfers/authorizations" or "/api/transfers/internal/authorizations" =>
+            (HttpStatusCode.NotFound, ErrorCodes.AccountNotFound),
+        "/api/transactions/withdraw/authorizations" => (HttpStatusCode.UnprocessableEntity, ErrorCodes.PinRequired),
+        "/api/accounts/{id}/deletion-authorizations" => (HttpStatusCode.UnprocessableEntity, ErrorCodes.PrimaryAccountDelete),
+        _ => throw new ArgumentOutOfRangeException(nameof(path)),
+    };
+
+    private static void AssertMintTooLarge(string json, string path)
+    {
+        using var document = JsonDocument.Parse(json);
+        var problem = document.RootElement;
+        problem.GetProperty("type").GetString().Should().Be("https://httpstatuses.com/413");
+        problem.GetProperty("title").GetString().Should().Be("Payload Too Large");
+        problem.GetProperty("status").GetInt32().Should().Be(413);
+        problem.GetProperty("detail").GetString().Should().Be("The request body exceeds the 32 KB limit for this endpoint.");
+        problem.GetProperty("instance").GetString().Should().Be(path);
+        problem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.PayloadTooLarge);
+        problem.GetProperty("traceId").GetString().Should().NotBeNullOrWhiteSpace();
+    }
+
+    private byte[] MintRequestHead(string path, string token, int length)
+    {
+        var head = new StringBuilder($"POST {path} HTTP/1.1\r\nHost: {_client.BaseAddress!.Authority}\r\n");
+        foreach (var header in _client.DefaultRequestHeaders)
+        {
+            head.Append(header.Key).Append(": ").Append(string.Join(", ", header.Value)).Append("\r\n");
+        }
+        head.Append("Authorization: Bearer ").Append(token).Append("\r\n")
+            .Append("Content-Type: application/json\r\nContent-Length: ").Append(length).Append("\r\n\r\n");
+        return Encoding.ASCII.GetBytes(head.ToString());
+    }
+
+    private sealed record WireResponse(int Status, Dictionary<string, string> Headers, string Body);
+
+    private static async Task<WireResponse> ReadWireResponseAsync(Stream stream, CancellationToken cancellationToken)
+    {
+        var status = await ReadWireLineAsync(stream, cancellationToken);
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        string line;
+        while ((line = await ReadWireLineAsync(stream, cancellationToken)).Length != 0)
+        {
+            var colon = line.IndexOf(':');
+            headers.Add(line[..colon], line[(colon + 1)..].Trim());
+        }
+
+        using var body = new MemoryStream();
+        if (headers.TryGetValue("Transfer-Encoding", out var transfer) && transfer == "chunked")
+        {
+            while (true)
+            {
+                var sizeLine = await ReadWireLineAsync(stream, cancellationToken);
+                var size = Convert.ToInt32(sizeLine.Split(';')[0], 16);
+                if (size == 0)
+                {
+                    while ((await ReadWireLineAsync(stream, cancellationToken)).Length != 0)
+                    {
+                    }
+                    break;
+                }
+                var chunk = new byte[size];
+                await stream.ReadExactlyAsync(chunk, cancellationToken);
+                body.Write(chunk);
+                (await ReadWireLineAsync(stream, cancellationToken)).Should().BeEmpty();
+            }
+        }
+        else
+        {
+            headers.Should().ContainKey("Content-Length", "both responses must have explicit HTTP/1.1 framing");
+            var bytes = new byte[int.Parse(headers["Content-Length"], System.Globalization.CultureInfo.InvariantCulture)];
+            await stream.ReadExactlyAsync(bytes, cancellationToken);
+            body.Write(bytes);
+        }
+        return new WireResponse(int.Parse(status.Split(' ')[1], System.Globalization.CultureInfo.InvariantCulture),
+            headers, Encoding.UTF8.GetString(body.ToArray()));
+    }
+
+    private static async Task<string> ReadWireLineAsync(Stream stream, CancellationToken cancellationToken)
+    {
+        using var line = new MemoryStream();
+        var one = new byte[1];
+        while (true)
+        {
+            await stream.ReadExactlyAsync(one, cancellationToken);
+            if (one[0] == '\n')
+            {
+                return Encoding.ASCII.GetString(line.ToArray()).TrimEnd('\r');
+            }
+            line.WriteByte(one[0]);
+            line.Length.Should().BeLessThan(65_536, "a response header cannot grow without bound");
+        }
+    }
+
+
     private async Task<(string Token, Guid AccountId)> RegisterAsync()
     {
         var unique = Guid.NewGuid().ToString("N")[..8];

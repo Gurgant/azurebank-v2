@@ -61,6 +61,7 @@ public class TransferController : ControllerBase
     /// </remarks>
     [HttpPost("authorizations")]
     [RequestSizeLimit(32_768)]
+    [RefuseOversizedBody]
     [ProducesResponseType(typeof(ApiResponse<StepUpAuthorizationResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
@@ -98,6 +99,7 @@ public class TransferController : ControllerBase
     /// </remarks>
     [HttpPost("internal/authorizations")]
     [RequestSizeLimit(32_768)]
+    [RefuseOversizedBody]
     [ProducesResponseType(typeof(ApiResponse<StepUpAuthorizationResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]

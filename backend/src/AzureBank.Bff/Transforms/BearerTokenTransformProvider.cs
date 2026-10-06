@@ -5,6 +5,7 @@ using AzureBank.Bff.Services.Interfaces;
 using AzureBank.Shared.Exceptions;
 using AzureBank.Shared.Options;
 using Microsoft.Extensions.Options;
+using Microsoft.Net.Http.Headers;
 using Yarp.ReverseProxy.Forwarder;
 using Yarp.ReverseProxy.Model;
 using Yarp.ReverseProxy.Transforms;
@@ -90,6 +91,25 @@ public class BearerTokenTransformProvider : ITransformProvider
               past that list.
             */
             transformContext.ProxyRequest.Headers.Remove(ServiceCredentialOptions.TokenRoadHeaderName);
+
+            /*
+              AND THE BROWSER'S COOKIE HEADER, WHOLE, WHETHER OR NOT A SESSION RESOLVES. YARP's
+              header copy puts it on the outbound request with the rest: without this line the
+              session id goes to the API beside the bearer it has just been exchanged for, and with
+              it every other cookie the browser holds for this origin. The API reads no cookie, and
+              the session id is this host's secret: presented here, it is the session.
+
+              The whole header, not the session's cookie picked out by name: none of the others is
+              the API's to read either. Here, not in the branch below that sets the bearer: a
+              request whose session ended after the gate let it through is still forwarded, with no
+              bearer, and its cookie has no more reason to leave than a live one's.
+
+              OFF THE OUTBOUND REQUEST ONLY. The browser's own request keeps its header: the session
+              lookup below reads it, as the gate and the rate limiter's partition did on the way
+              here. Taken off that request instead, the lookup finds nothing and every proxied call
+              goes to the API with no bearer.
+            */
+            transformContext.ProxyRequest.Headers.Remove(HeaderNames.Cookie);
 
             /*
               OVER TLS OR TO THIS MACHINE ONLY, AND NOTHING IS FORWARDED OTHERWISE. Startup refuses
