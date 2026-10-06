@@ -165,9 +165,18 @@ them in a minute.
 
 - **No tokens, session identifiers, PINs or personal data in web storage** — not in
   `localStorage`, not in `sessionStorage`, not in IndexedDB, and not in a persisted Redux store.
-  The `__Host-` session cookie described above is the deliberate exception and the only one: it is
-  `HttpOnly`, so the page cannot read it, which is exactly why it is the right place for that
-  state.
+  The `__Host-` session cookie described above is the deliberate exception for session state: it
+  is `HttpOnly`, so the page cannot read it, which is exactly why it is the right place for that
+  state. **In demo mode there is a second exception, and it is one key.** Where a deployment runs
+  with `Demo:Enabled` set, `localStorage["azurebank.demoCopy"]` keeps what signs in to the demo
+  copy a visitor claimed, so that the visitor can come back to it: the copy's address, its
+  generated password, the demo PIN, the handles of its two contacts and the instant it ends.
+  None of it is a real person's, a token or a session identifier: a copy is a throwaway account
+  of invented money that nobody registered for, and it is closed and deleted when its time is
+  over. With the demo off the key is never read, and no screen sends the claim that writes it.
+  [ADR-0063](docs/adr/0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md#what-the-browser-keeps-in-demo-mode-added-2026-10-05)
+  has the key's shape, when it is removed, and what a script that read it would gain. _(Until
+  2026-10-05 this called the cookie "the deliberate exception and the only one".)_
 - **The SPA never constructs an `Authorization` header.** Access tokens live server-side in the BFF
   and are attached by its proxy transform (ADR-0001, ADR-0021). Frontend code that builds a bearer
   header is a defect regardless of where it got the token.

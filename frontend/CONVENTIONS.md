@@ -39,9 +39,44 @@ in all three the countdown is **computed client-side from the response's `retryA
 Never trust an absolute `lockedUntil` timestamp from the server: the browser's clock is not the
 server's, and a skewed clock either unlocks early or hangs forever.
 
+**In demo mode a claim adds three 429s, and two of them are worded with no countdown, by
+decision.** `RATE_LIMIT_EXCEEDED` is the BFF's limiter, which the claim shares with sign-in: on the
+sign-in page it is counted down as sign-in's is, and in the "Start over" dialog it is one fixed
+sentence. `DEMO_POOL_EMPTY` and `DEMO_DAILY_LIMIT` are each worded by their code, in the app's
+sentences and never the server's, and neither is counted down, although the day's limit names a
+wait in `retryAfterSeconds`: the countdowns of the sign-in page belong to the lock and to the
+limiter, by their codes (`src/pages/LoginPage.tsx`). A fourth code, `DEMO_COPY_LIMIT`, can answer
+any change made in a copy that is past its budget of changes (ADR-0063, decision 11). Nothing is
+built for it: each surface shows the fallback it has, which where that prints the problem's
+`detail` is the API's own sentence. (The one kept test that answers a request with that code is
+the "Start over" dialog's, `src/features/demo/StartOverDialog.test.tsx`, `any other refusal:
+what the server said, or the fallback`. It shows that the dialog prints a `detail` it has no
+sentence for, with an answer made for the test: the dialog sends the claim, which the budget
+never counts. What the surfaces the code can reach would show is read from the code; no kept
+test and no run on a stack met it.)
+_(This paragraph was added on 2026-10-05. The three places above are the 429s the app meets
+with the demo off; until that day this section knew no 429 without a countdown.)_
+
+**One place holds an instant the server gave against the browser's clock and acts on it for
+good: a kept demo copy's end, on the sign-in page.** It is not a countdown. (A wait has one such
+comparison too: a `Retry-After` header that is a date, and not a number of seconds, is turned
+into seconds against the browser's clock in `src/api/problemBaseQuery.ts`. The BFF's own limiter
+sends seconds.) The page reads the clock once, when it opens, and a
+copy whose `expiresAt` is not after that instant is not offered and is removed from the browser.
+So a browser whose clock is ahead of the server's by more than the copy has left forgets a living
+copy for good, with nothing said, and that copy is never sent to the server; one whose clock is
+behind offers a copy that has ended, and there the server's 401 to "Continue with my copy" is
+what says so. ADR-0063's section "What the browser keeps in demo mode" has why it is built that
+way and what it costs.
+
 **Errors surface through one root `<Toaster>`.** Error toasts persist rather than auto-dismissing,
 and they carry a copyable `traceId` — that identifier is the only bridge between what a user saw and
 the server-side trace (ADR-0016, ADR-0017). A toast that drops the traceId breaks the only link.
+**One toast is a success:** "You have a new copy.", said through the same outlet once the
+"Start over" dialog's claim has succeeded and the dialog has closed
+(`src/features/demo/useNewCopyToast.tsx`). It names no timeout, so it leaves by itself, and it
+carries no `traceId`: nothing in it has to be read or reported. _(Until 2026-10-05 the outlet
+carried errors only.)_
 
 **Region discipline for async state**: a first load renders a skeleton shaped like the content it
 replaces; a background refetch keeps the stale data and shows a small inline indicator; a failed
@@ -114,6 +149,62 @@ two sets of accessibility behaviour.
 development path, because a frontend developed only against mocks drifts from the real contract and
 nobody finds out until integration.
 
+## Demo mode
+
+The public demo is one build with one switch, and the switch is not in the build (ADR-0063).
+
+**The page says whether it is the demo, with one tag, and `isDemoMode()` is its only reader.**
+`<meta name="azurebank-demo" content="true">` in the page's head turns the demo on. A page with no
+such tag is not the demo, and neither is one whose `content` is anything but exactly `true`. The
+BFF puts the tag in where it serves the page with `Demo:Enabled` set (ADR-0063, decision 13). The
+Vite dev server adds the same tag only when it was started with `AZUREBANK_DEMO=true` in its
+environment, and a build never carries it (`vite.config.ts`, whose comment says why the variable
+has no `VITE_` prefix). `isDemoMode()` (`src/features/demo/demoMode.ts`) reads the page each time
+it is asked, never once when a module loads: ask it in the component or the handler that needs
+the answer. The app has no second place to learn the mode from.
+
+**The demo keeps one key in `localStorage`, `azurebank.demoCopy`, and only a claimed copy's
+sign-in details go under it:** `{ v: 1, email, password, pin, contacts, expiresAt }`. It is
+written in one place, where a claim's answer arrives (`src/features/auth/sessionMiddleware.ts`),
+and read through `src/features/demo/demoCopyStorage.ts` alone. Nothing else of the demo's is
+stored there or beside it: no token, no session identifier, nothing a visitor typed. (The app's
+other key, `azurebank.theme`, holds the theme preference, on the demo or off it:
+`src/theme/themePreference.ts`.) `SECURITY.md`'s storage invariant names this key as its
+exception in demo mode. What comes back from the key is input: it is parsed with the
+definition the claim's answer is checked by, and a string that fails is removed, not repaired.
+The key is read at each ask, so never copy the snapshot into a state or a module variable: a copy
+held that way is how a second tab would go on holding a password the first was told to forget.
+(The storage module holds one copy that way itself: the one a browser refused to store. While
+it does, that tab does not read the key, and what another tab forgot or replaced does not reach
+it.) "Try the demo" asks at the press as well, and sends no claim over a copy another tab left.
+Off the demo the key is never read. Every kept value is rendered as text. ADR-0063's section
+"What the browser keeps in demo mode" has when the key is removed.
+
+**Inside `src/features`, the demo's helpers are imported by file** (`../demo/demoCopyStorage`,
+`../demo/demoMode`). `src/features/demo/index.ts` hands out the four components and nothing else:
+the session middleware imports the storage module, and through the barrel it would pull every
+component in behind it.
+
+**A test turns the demo on with `enableDemoMode()`** (`src/test/demoMode.ts`), which puts the tag
+on the test page, and leaves a kept copy with `rememberDemoCopy(...)`, a raw write of the key as
+the product would have left it. `src/test/setup.ts` takes the tag off and empties the key after
+every test, so no test hands the demo to the next. That helper types the tag's name and the key
+out and imports neither from the product: a helper that asked the product for a name would follow
+it to any name. With the tag on the page the mock is the demo too: it hands out three fixed
+copies and signs in the owner of a claimed copy and nobody else, so the mock's own user is
+refused there (`accountForLogin` in `src/mocks/handlers.ts`).
+
+**The demo's own sentences live in `src/features/demo/demoWords.ts`,** a constant each, or a
+function where a sentence has a blank. The digits of the demo PIN are one constant of
+`demoPin.ts` beside it, and the `pin` a kept copy carries is never rendered.
+
+**What the demo spells as the backend does is held against the backend's source** by
+`src/features/demo/demoContract.test.ts`: the tag, the claim's route, the two refusals the app
+words, the sentences a fixture types out for a refusal, and the demo PIN's digits. It finds the
+app's side by walking `src`. A file that is not a test and names one of the demo's codes in a
+string, and any file that types a refusal out with its sentence, has to be written into that
+test's expectations: until it is, the test fails and names the file.
+
 ## Testing with Fluent and jsdom
 
 These five have each cost a debugging session, and none of them fails in a way that points at the
@@ -152,15 +243,28 @@ Five commands, not one. `vitest run` covers the unit and component tests; the `c
 `integration/` directories are excluded by configuration, so a green `vitest run` is not a green
 suite and has never been one.
 
+A sixth command, `npm run test:e2e:demo`, is no part of that suite. It is run by hand, against
+the compose stack with the demo on (`playwright.demo.config.ts`), where the suite's own
+`test:e2e` holds that its stack has the demo off.
+
 The last three need the real stack up: seed `AzureBankE2E`, the API on **`https://localhost:7215`**,
 and the BFF on `:5000` via `dotnet run --project backend/src/AzureBank.Bff --launch-profile http`.
 
 ⚠️ **The launch profile is not optional, and an earlier version of this note implied it was.** It is
 the only thing setting `ASPNETCORE_ENVIRONMENT=Development`, and two things hang off that: the dev
 certificate is trusted on the BFF→API hop, and the session cookie keeps its plain name. Outside
-Development `Program.cs` prefixes it `__Host-`, which **cannot be set over `http://localhost:5000`**
-at all — so a run without the profile fails on TLS and then on login, and neither failure names the
-profile. No cluster override is needed locally: `appsettings.json` already points cluster
+Development `Program.cs` prefixes it `__Host-`, and the cookie is written `Secure`
+(`BuildSessionCookieOptions` in the BFF's `BffAuthController.cs`). A run without the profile
+fails on TLS, on that BFF→API hop, and the failure does not name the profile. _(Until
+2026-10-05 this said a `__Host-` cookie "cannot be set over `http://localhost:5000` at all",
+and that such a run therefore fails on login as well. Measured that day, on the Production
+images of `compose.yaml` with `compose.demo.yaml`, in headless Chromium 151.0.7922.34: the
+browser kept `__Host-AzureBank.Session` (`Secure`, `HttpOnly`, `SameSite=Strict`, host
+`localhost`) from a claim made on `http://localhost:5000` and sent it back, and Playwright's
+own request context sent it to `localhost` too. So the cookie's name is not what stops a
+browser there. What the two suites that run in node, which carry the cookie themselves, meet
+at sign-in outside Development was not measured.)_ No cluster override is needed locally:
+`appsettings.json` already points cluster
 `backend-api` at `https://localhost:7215`. The `--ReverseProxy:Clusters:backend-api:…` arguments you
 will see in `ci.yml` are CI-only, because CI moves the API to `:5068`; they are passed as
 command-line config rather than environment variables because the cluster id `backend-api` contains

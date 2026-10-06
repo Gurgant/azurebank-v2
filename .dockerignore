@@ -27,5 +27,6 @@ frontend/dist/
 frontend/test-results/
 frontend/playwright-report/
 frontend/e2e/.auth/
+frontend/e2e-demo/.auth/
 frontend/screenshots/.auth/
 frontend/screenshots/output/

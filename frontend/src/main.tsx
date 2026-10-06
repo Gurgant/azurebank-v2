@@ -12,12 +12,11 @@ import App from './App.tsx';
 async function enableMocking() {
   if (import.meta.env.MODE !== 'mock') return;
   const { worker } = await import('./mocks/browser');
+  const { mockStartupLine } = await import('./mocks/startupLine');
   // Let real dev-server / asset requests through; only the mocked API/BFF routes are intercepted.
   await worker.start({ onUnhandledRequest: 'bypass' });
-  console.info(
-    '%c[MSW] Mock backend ON — sign in with demo@azurebank.dev / Password1! (PIN 123456)',
-    'color:#0a7',
-  );
+  // How to get in, which depends on whether the page is the demo (src/mocks/startupLine.ts).
+  console.info(`%c${mockStartupLine()}`, 'color:#0a7');
 }
 
 void enableMocking().then(() => {

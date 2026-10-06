@@ -1,4 +1,5 @@
 import { z, type ZodType } from 'zod';
+import type { DemoCopyInfo } from './bffTypes';
 import type { components } from './schema';
 import {
   AccountNumberResponse,
@@ -63,6 +64,21 @@ export type _GeneratedSchemasMatchSpec = [
     Schemas['StepUpAuthorizationResponse'],
     z.infer<typeof StepUpAuthorizationResponse>
   >,
+  /*
+    One pair that is not about a generated schema. `DemoCopyInfo` on the left is HAND-WRITTEN
+    (bffSchemas.ts): a demo claim's answer is the BFF's, and the BFF's answers are not in the spec.
+    But the copy inside that answer is the API's `DemoCopyInfo`, which the BFF passes on as it got
+    it (`Copy = claim.Copy`, backend/src/AzureBank.Bff/Controllers/BffAuthController.cs), and that
+    one is in the spec. So the two are held to each other, both ways, and both hold: a member the
+    server adds, drops, renames or retypes stops the build, where otherwise nothing would fail
+    until a visitor pressed "Try the demo" and the answer was refused.
+
+    What the pair cannot see is everything the hand-written schema asks beyond a type: that the
+    address is one, that no text is empty, that the copy's end names a zone. To the compiler each
+    of those is a `string`. They are checked when an answer arrives (bffSchemas.test.ts).
+  */
+  AssertExtends<DemoCopyInfo, Schemas['DemoCopyInfo']>,
+  AssertExtends<Schemas['DemoCopyInfo'], DemoCopyInfo>,
 ];
 
 // ===== A — STRICT money schemas (fail-closed everywhere) =====
