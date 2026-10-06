@@ -5,7 +5,8 @@
 (decision 1: a switch adds two resources to the second step; decision 2: one job, by name, may
 run on a schedule; decision 7: a deployment reads whether the demo is on, moves a second job and
 asks the address two things more; decision 8: a third role assignment; decision 9: an eighth
-application secret, and two secrets on a second job),
+application secret, and two secrets on a second job; decision 10: the three alerts may also
+notify the owner's phone),
 [ADR-0062](0062-demo-visitors-get-private-copies-from-a-prepared-pool.md) decision 13 (the job
 that runs `recycle` on Azure is in the template),
 [ADR-0063](0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md) decision 14 (what
@@ -15,8 +16,9 @@ same job) and [ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down
 precondition (a deployment does not start beside a pool run)
 
 **Where the code is.** `infra/main.bicep` (the switch `demo`, the pool job, its role assignment,
-the two variables), `infra/guardrails.bicep` (the exception by name), `infra/app-inputs.bicep`
-(the client key's length), `infra/secrets.ps1` (`-DemoOn`, and the eighth secret),
+the two variables, and the phone's receiver in the action group), `infra/guardrails.bicep` (the
+exception by name), `infra/app-inputs.bicep` (the client key's length), `infra/secrets.ps1`
+(`-DemoOn`, the eighth secret, and `-AlertPushAccount`),
 `infra/deploy.py` (`demo_of`, `pool_drift`, `check`, `pool_run`, the two checks of the smoke test)
 and `.github/workflows/deploy.yml` (its time limit). The runbook is `infra/README.md`: its third
 session, "Turn the demo on", is steps 22 to 33, and its section "Turning the demo back" holds the
@@ -209,6 +211,39 @@ creates the job again, since the script keeps the switch; up to 50 free copies a
 out; and nothing sweeps. The job is deleted only as the first step of a road that ends with the
 demo off.
 
+**16. The alerts may also reach the owner's phone, through one optional receiver of the Azure
+mobile app.** Decided on 2026-10-06, a day after the fifteen above. The three alert rules wrote
+to one action group with one mailbox, and the owner asked for the same warnings on his phone.
+
+- **One parameter of the template, `alertPushAccount`, empty by default**: the e-mail address
+  the Azure mobile app on the phone was set up with. Given, the action group gains one receiver
+  of that app with that address, under a name of its own, `owner-phone`, since a receiver's name
+  must be unique in its group. Empty, the group is what it was: worked out offline, a run
+  predicts the same resources with the same properties. The address comes from the parameter
+  and is written in no file of the repository.
+- **`infra/secrets.ps1` finds the account as it finds the alerts' mailbox**, so that no later
+  run forgets it: `-AlertPushAccount`, else the variable `AZUREBANK_ALERT_PUSH_ACCOUNT`, else
+  the one such receiver the deployed group holds. None of the three is no account, which is not
+  an error. **The signed-in account is never taken for it**: whether the sign-in name the
+  template knows as `entraAdminLogin` is the address the app was set up with is not known. Two
+  such receivers on the deployed group stop the script, and so does the argument without the
+  app.
+- **The account travels in the run that turns the demo on**, the third session's one run of
+  the template with the app (the runbook's step 25). Before it, by the owner's own hands: the
+  app installed, signed in, and allowed to notify. After `--check` has passed, one test
+  notification names both receivers, and the read is what the owner sees, on the phone and in
+  the mailbox, with the delay of each written down; the answer of the request alone is not the
+  read.
+- **It warns and stops nothing.** The phone is a second road for the same three warnings: no
+  rule is added, decision 13 stands, and so does decision 10 of ADR-0061, that nothing stops the
+  app automatically.
+
+Not known, and not claimed: what Azure does with a push for an account that has no app; what
+such a notification costs on this offer; and whether the offer takes a test notification at
+all, since it refused the first deployment's on 2026-10-03 (ADR-0061, "What would change
+this"). If it refuses again, the phone's road is proved by the first alert that fires and not
+before.
+
 ## Rejected
 
 - **`Schedule` in `allowedJobTriggers`.** It is one list for every job of the group, so it would
@@ -233,6 +268,12 @@ demo off.
 - **A database user of the job's own.** ADR-0062 says what would give it one; nothing here
   needs it.
 - **A longer connect timeout for the job now** (decision 14).
+- **The signed-in account taken for the phone's**, as its mailbox is taken for the alerts' when
+  nobody names one. What Azure does with a push for an address the app is not registered with
+  is not known, and it may be nothing anybody sees: an account nobody named is no account
+  (decision 16).
+- **The phone's receiver written as a list that may be empty.** With no account it would send a
+  fourth property of the action group on every run, where the group is to stay what it was.
 
 ## Consequences
 
@@ -271,6 +312,10 @@ demo off.
   provoked on Azure.
 - **The offline tests read more than this folder**: eight source files of the backend and two
   runbooks, as text.
+- **The phone's account rides the session's most delicate run** (decision 16). If Azure does
+  not take the receiver, that run fails, and a deployment that fails is not expected to undo
+  the app and the job it wrote beside it: the runbook's step reads `--check` at once and then
+  runs again with no account, and the phone waits for a run of its own. Expected, not provoked.
 - **The sentences of the earlier records about what Azure holds stay as they are.** "No job runs
   them yet", "the demo is still off" and the read-backs with one job are true until the session
   has run; the change that records it flips them.
@@ -296,6 +341,23 @@ Offline, on one machine (Windows, Python 3.14, PowerShell 7.6, Bicep 0.47.16), o
   run, twelve since 2026-10-06 with the line printed before a start by hand is sent, and three
   of `secrets.ps1`. A step's other quotes are held by no test of `infra/`.
 - **`bicep build` and `bicep lint`** of the three templates: nothing on standard error.
+- **On 2026-10-06, with decision 16**, on the same machine: the same command ran 452 tests,
+  with no failure and no error; 2 were skipped, the same two. Eight are new. Seven are of
+  `secrets.ps1`: the three places it finds the account in, the case where nobody names one, two
+  receivers on the deployed group, an account that is not shaped like an address, and the
+  argument without the app. The eighth holds three more quotes of `secrets.ps1` that the runbook
+  gives, six with the three above. And the test of the action group changed: it reads the
+  group's properties as a run works them out, with no account named, with an empty one and with
+  one given, and holds that nothing else of the run differs. That test and the seven were seen
+  failing without their code; the test of the quotes was green as written and failed with each
+  line reworded on either side. One assertion of an earlier test changed its claim: with the
+  mailbox named and the phone not, the deployed group is now read once, where it was not read
+  at all. `bicep build` and `bicep lint` of the three templates: nothing on standard
+  error. The compiled template holds the 23 resources it held and 24 parameters, one more. The
+  runbook's blocks for the phone ran against a function standing in for `az`, with invented
+  answers. The backend's gate was not run again: no file under `backend/` changed, and of its
+  tests that read documents one reads the decision records, for a string this change does not
+  write (read in their sources, not run).
 - **The backend's gate**, since documents its tests read were edited: the Release build, the
   whitespace check, and `dotnet test` with and without a SQL Server, each with no failure, on
   the documents as they were first written. After the corrections of the same day: the build,
@@ -327,6 +389,8 @@ Offline, on one machine (Windows, Python 3.14, PowerShell 7.6, Bicep 0.47.16), o
   browser;
 - what the BFF sees as a visitor's address;
 - what a stopped app answers, and which property says it is stopped;
+- that Azure takes the action group's second receiver, that a notification reaches the owner's
+  phone, after how long, and what it costs;
 - every way back.
 
 `infra/README.md`, "Not measured yet", lists each with the step where it shows.
@@ -343,6 +407,9 @@ Offline, on one machine (Windows, Python 3.14, PowerShell 7.6, Bicep 0.47.16), o
 - **The two metrics have been read** (step 31): an alert on a failed pool run and on the
   database's size, built on what they showed.
 - **Two exits 1 in a row at the job's first open:** a longer connect timeout for the job.
+- **The test notification is refused again, or is taken and nothing shows on the phone:** the
+  alerts go on by e-mail, the phone's road stays unproved until an alert fires, and a dated note
+  here says what was read (step 25).
 - **A need to tell the job's writes from the app's, or to revoke the job alone:** a database user
   of its own (ADR-0062).
 - **A pepper rotation on Azure:** the template carries a key id and a previous pepper for the

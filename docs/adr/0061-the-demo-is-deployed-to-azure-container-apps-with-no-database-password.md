@@ -318,6 +318,10 @@ metric cannot count lines here. The fourth alert, which the first deployment had
 deleted, and the template builds it only with `logVolumeAlert=true`, for whoever measures again.
 A rule that does count lines is a log search rule, which is billed; the owner decided against
 one for now.)* Three alerts send an e-mail, all on the app: requests, data out and replica time.
+*(2026-10-06, [ADR-0064](0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md),
+decision 16: with an account given, the same three also notify the owner's phone through the
+Azure mobile app, by a second receiver of the action group. The receiver has not been sent to
+Azure, and no notification has been seen. Nothing is stopped by it either.)*
 Nothing warns of the log's volume. The owner stops the app by hand. The logs are switched off by
 rule: any cost on their meter, a day above twice the cap, or no line ever arriving.
 
@@ -695,7 +699,8 @@ is left out by default, and the owner decided against a log search rule for now.
 - `infra/test_scripts.py` and `infra/test_deploy.py`, 267 tests *(272 since 2026-10-03, with the
   five added after the second session: four for `--job-log`, one for the alerts; 444 since
   2026-10-05, with those of
-  [ADR-0064](0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md))*: the two
+  [ADR-0064](0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md); 452 since
+  2026-10-06, with the eight of its decision 16)*: the two
   PowerShell scripts run
   for real against a stand-in for the Azure CLI and a stand-in for `sqlcmd`; the users file is
   read as text, to keep each guard, every `WHERE` and every `IF` where it is; the compiled
@@ -736,7 +741,9 @@ is left out by default, and the owner decided against a log search rule for now.
   [ADR-0064](0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md): 23 resources
   and 23 parameters, of which 8 secure and 2 required, and the same 8 outputs. The two resources
   more are the pool job and its role assignment, built only with the switch `demo` on: off, a
-  run still predicts 14 without the app and 8 more with it.)* `bicep build` and `bicep lint` exit 0
+  run still predicts 14 without the app and 8 more with it. Since 2026-10-06, 24 parameters: the
+  one more is the account for the owner's phone, empty by default, and with it empty a run
+  predicts the same resources with the same properties.)* `bicep build` and `bicep lint` exit 0
   with nothing on standard error for the three templates; an unused parameter puts a warning
   there. One warning is silenced, on one line: BCP081, because Bicep 0.47.16 has no types for the
   environment's API version. Without that line the warning is back. `app-inputs.bicep` silences
