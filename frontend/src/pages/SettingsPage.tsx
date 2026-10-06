@@ -266,6 +266,11 @@ const useStyles = makeStyles({
     gap: '4px',
   },
 
+  // The row's button keeps the width of its label. Left free to shrink, it lost to the sentence
+  // beside it on a phone: at 375 px it was squeezed to its 96 px minimum and its label broke in
+  // two ("Log" / "out"). The sentence wraps instead.
+  actionButton: { flexShrink: 0 },
+
   actionTitle: {
     fontSize: '15px',
     fontWeight: 500,
@@ -424,12 +429,17 @@ export function SettingsPage() {
               </Text>
             </div>
             {user?.hasPin ? (
-              <Button appearance="secondary" onClick={() => setChangePinOpen(true)}>
+              <Button
+                appearance="secondary"
+                className={styles.actionButton}
+                onClick={() => setChangePinOpen(true)}
+              >
                 Change PIN
               </Button>
             ) : (
               <Button
                 appearance="secondary"
+                className={styles.actionButton}
                 onClick={() => navigate('/pin-setup?returnTo=/settings')}
                 disabled={!user}
               >
@@ -508,6 +518,7 @@ export function SettingsPage() {
             </div>
             <Button
               appearance="secondary"
+              className={styles.actionButton}
               // The label in the red for words: `error.main`, which the border keeps, measured
               // 3.92 to 1 as 14 px text on the card in the light theme.
               style={{ borderColor: colors.semantic.error.main, color: colors.semantic.error.dark }}

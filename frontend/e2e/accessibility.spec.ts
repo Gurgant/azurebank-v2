@@ -34,11 +34,12 @@ import { fieldContrast, textContrast } from './contrast';
  *   run at all.
  * Each scan also waits for the page's animations to finish first, so a fade is not measured.
  *
- * Six blocks further down are not scans. Each holds, by measuring it, one thing the sweep does
- * not: that what is typed in a field can be read, that the amount field shows where focus is,
- * that a dialog gives focus back when it closes, that a status pill stays in its column at
- * phone width, that the two money tiles share a row there, and that certain words which were
- * too faint stay readable. Each has its own note above it.
+ * Seven blocks further down are not scans. Each holds, by measuring it, one thing the sweep
+ * does not: that what is typed in a field can be read, that the amount field shows where focus
+ * is, that a dialog gives focus back when it closes, that a status pill stays in its column at
+ * phone width, that the two money tiles share a row there, that a button of Settings keeps its
+ * label on one line there, and that certain words which were too faint stay readable. Each has
+ * its own note above it.
  */
 type Scan = { name: string; path: string; title: string; ready: (page: Page) => Promise<void> };
 
@@ -484,6 +485,26 @@ test('at phone width the Deposit and Withdraw tiles share a row', async ({ page 
   expect(withdraw.x, 'the Withdraw tile does not start after the Deposit tile').toBeGreaterThan(
     deposit.x + deposit.width,
   );
+});
+
+/*
+  AT PHONE WIDTH A BUTTON OF SETTINGS KEEPS ITS LABEL ON ONE LINE. The button of a row with a
+  sentence beside it could shrink, and at 375 px the sentence won: "Change PIN" and the sign-out
+  button were squeezed to their 96 px minimum and broke their labels in two. Each is held as
+  tall as "Change", the page's button with one word, which cannot break.
+*/
+test('at phone width the buttons of Settings keep their label on one line', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto('/settings');
+  await heading(1)(page);
+  const main = page.getByRole('main');
+  const oneLine = await main.getByRole('button', { name: 'Change', exact: true }).boundingBox();
+  if (oneLine === null) throw new Error('the Change button is not drawn');
+
+  for (const name of [/^Change PIN$/, /^(Log|Sign) out$/]) {
+    const box = await main.getByRole('button', { name }).boundingBox();
+    expect(box?.height, `${name}: the button is not one line tall`).toBe(oneLine.height);
+  }
 });
 
 /*
