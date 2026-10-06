@@ -84,12 +84,25 @@ both themes; each amount field shows where focus is; seven dialogs give focus ba
 that opened them; at 375 px the two money tiles share a row and two buttons of Settings keep their
 label on one line; and seven texts that measured under 4.5 to 1 stay at or above it in both
 themes. Two more need an entry in the ledger, which the suite's user is not seeded with, so
-`e2e/deposit.spec.ts` holds them after its deposit: at 375 px a status pill stays in its column,
-and the "Completed" badge of a transaction's page can be read in both themes. That is 37 rows, 33
+`e2e/deposit.spec.ts` holds them after its deposit: at 375 px a status pill stays in its cell
+_(its column, until later on 2026-10-06: since then a row has no columns at that width, as the
+next paragraph says)_, and the "Completed" badge of a transaction's page can be read in both
+themes. That is 37 rows, 33
 and 4, added on 2026-10-06. That day 24 of them failed before the fix they hold, and all 37 passed
 after it, against `npm run dev:mock` with the mock's user signed in at each page load by a seed
 kept outside the repository. None was run that day in this suite's own configuration, which needs
 the real stack.
+
+Later that day a transaction's row became two lines wherever its table is under 480 px wide,
+which is a phone held upright: four columns did not fit one, and an amount ran under the status
+beside it. Two more rows of `e2e/deposit.spec.ts` hold that at 375 px, one on the home page and
+one on History, which makes 39. For every row of the page: the entry and the amount are on one
+line, with when and the status on the line under it; the amount is on one line, ends inside the
+row and is over no other cell; the pill is inside the row; and down the row's middle a press
+meets the entry's button over 44 px or more. Each reads the rows as they are drawn and again with
+the longest amount the app can show, "+€12,450.00", written into them. Both failed on the four
+columns and passed on the two lines, against the same mock and the same kind of seed; neither was
+run in this suite's own configuration.
 
 The public demo's screens are scanned by the same gate only in `npm run test:e2e:demo`, which is
 run by hand: the sign-in page as the demo shows it to a browser that keeps no copy, the
