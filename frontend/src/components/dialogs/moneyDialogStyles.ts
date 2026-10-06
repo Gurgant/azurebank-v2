@@ -242,7 +242,10 @@ export const useMoneyDialogStyles = makeStyles({
     justifyContent: 'center',
     color: colors.semantic.warning.dark,
   },
-  successTitle: { fontSize: '24px', fontWeight: 700, color: colors.semantic.success.main },
+  // The green for words (`success.dark`), so that this title stays the one of the transfer
+  // pages, where the icon's green (`success.main`) was under 3 to 1 on the canvas. On the
+  // dialog's white it measured 3.06, which 24 px bold text passes by 0.06.
+  successTitle: { fontSize: '24px', fontWeight: 700, color: colors.semantic.success.dark },
   stateTitle: { fontSize: '20px', fontWeight: 700, color: colors.neutral[800] },
   successAmount: { fontSize: '32px', fontWeight: 700, color: colors.neutral[800] },
   stateBody: { fontSize: '15px', color: colors.neutral[500], lineHeight: '1.5' },

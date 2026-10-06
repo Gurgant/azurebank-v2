@@ -548,6 +548,20 @@ const FAINT_WORDS: { name: string; reach: (page: Page) => Promise<Locator> }[] =
       return page.getByRole('main').getByRole('button', { name: /^(Log|Sign) out$/ });
     },
   },
+  {
+    // The green of an icon, as 13 px words on the badge's own pale green: 2.69 to 1.
+    name: "the Completed badge on a transaction's page",
+    reach: async (page) => {
+      await page.goto('/history');
+      const completed = page
+        .locator('table tbody tr')
+        .filter({ has: page.locator('td:last-child', { hasText: 'Completed' }) });
+      await completed.first().getByRole('button').first().click();
+      // The transaction's own page, or the pill of the list it came from would be measured.
+      await expect(page).toHaveTitle('Transaction Details · AzureBank');
+      return page.getByRole('main').getByText('Completed', { exact: true }).first();
+    },
+  },
 ];
 
 /**

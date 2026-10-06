@@ -204,7 +204,10 @@ export const useTransferWizardStyles = makeStyles({
     justifyContent: 'center',
     color: colors.semantic.warning.dark,
   },
-  successTitle: { fontSize: '24px', fontWeight: 700, color: colors.semantic.success.main },
+  // The green for words (`success.dark`), which the ledger's pill uses too. The icon's green
+  // (`success.main`) measured 2.78 to 1 here on the canvas in the light theme, under the 3 that
+  // 24 px bold text needs. The same value as `moneyDialogStyles`.
+  successTitle: { fontSize: '24px', fontWeight: 700, color: colors.semantic.success.dark },
   stateTitle: { fontSize: '20px', fontWeight: 700, color: colors.neutral[800] },
   stateBody: { fontSize: '15px', color: colors.neutral[500], lineHeight: '1.5' },
   successAmount: { fontSize: '32px', fontWeight: 700, color: colors.neutral[800] },
