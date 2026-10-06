@@ -195,7 +195,12 @@ public sealed class KestrelRequestSizeLimitTests : IDisposable
     // usual answer, and 40,000 bytes with no token get the 401 first. With a Content-Length that body
     // is 32,768 bytes; in one chunk it is 32,755, because the server counts the chunk's 13 bytes of
     // framing as well (the theory above has 32,756 in one chunk refused). The request with no token
-    // is the last this test sends: Kestrel can abort the connection after its keep-alive 401.
+    // is the last this test sends: Kestrel can abort the connection after its keep-alive 401. So it
+    // goes on a socket of its own, and its 401 is read before any of its body is sent: body bytes
+    // that reach the server after it has closed, or that it had not read when it closed, reset the
+    // connection, and a reset throws away an answer nobody has read yet (measured on Windows). Until
+    // 2026-10-06 the HTTP client sent the whole body before it read the answer, and a write the
+    // server's close broke failed the test: "Error while copying content to a stream".
     [Theory]
     [InlineData("/api/transfers/authorizations", false)]
     [InlineData("/api/transfers/authorizations", true)]
@@ -223,19 +228,6 @@ public sealed class KestrelRequestSizeLimitTests : IDisposable
         await using var stream = socket.GetStream();
         await stream.WriteAsync(
             MintRequestHead(path, token: null, unauthenticatedBody.Length, chunked: chunked), deadline.Token);
-
-        if (chunked)
-        {
-            await stream.WriteAsync(
-                Encoding.ASCII.GetBytes($"{16_000:x}\r\n"), deadline.Token);
-            await stream.WriteAsync(unauthenticatedBody.AsMemory(0, 16_000), deadline.Token);
-            await stream.WriteAsync("\r\n"u8.ToArray(), deadline.Token);
-        }
-        else
-        {
-            await stream.WriteAsync(unauthenticatedBody.AsMemory(0, 16_000), deadline.Token);
-        }
-
         var unauthenticated = await ReadWireResponseAsync(stream, deadline.Token);
 
         try
@@ -243,18 +235,18 @@ public sealed class KestrelRequestSizeLimitTests : IDisposable
             if (chunked)
             {
                 await stream.WriteAsync(
-                    Encoding.ASCII.GetBytes($"{24_000:x}\r\n"), deadline.Token);
-                await stream.WriteAsync(unauthenticatedBody.AsMemory(16_000), deadline.Token);
+                    Encoding.ASCII.GetBytes($"{unauthenticatedBody.Length:x}\r\n"), deadline.Token);
+                await stream.WriteAsync(unauthenticatedBody, deadline.Token);
                 await stream.WriteAsync("\r\n0\r\n\r\n"u8.ToArray(), deadline.Token);
             }
             else
             {
-                await stream.WriteAsync(unauthenticatedBody.AsMemory(16_000), deadline.Token);
+                await stream.WriteAsync(unauthenticatedBody, deadline.Token);
             }
-            await stream.FlushAsync(deadline.Token);
         }
-        catch (Exception ex) when (ex is IOException or System.Net.Sockets.SocketException or ObjectDisposedException)
+        catch (IOException)
         {
+            // The server has closed: how much of the body it took is not what this test holds.
         }
 
         unauthenticated.Status.Should().Be((int)HttpStatusCode.Unauthorized);
