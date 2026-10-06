@@ -100,7 +100,9 @@ one on History, which makes 39. For every row of the page: the entry and the amo
 line, with when and the status on the line under it; the amount is on one line, ends inside the
 row and is over no other cell; the pill is inside the row; and down the row's middle a press
 meets the entry's button over 44 px or more. Each reads the rows as they are drawn and again with
-the longest amount the app can show, "+€12,450.00", written into them. Both failed on the four
+the longest amount a row can show, "+€100,000.00", written into them _(until 2026-10-07 the
+amount written was "+€12,450.00", named here as the longest; it is not, since the API takes one
+amount of up to 100,000.00)_. Both failed on the four
 columns and passed on the two lines, against the same mock and the same kind of seed; neither was
 run in this suite's own configuration.
 

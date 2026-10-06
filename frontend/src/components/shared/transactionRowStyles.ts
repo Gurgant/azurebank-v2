@@ -30,6 +30,15 @@ import type { TransactionResponse } from '../../features/api/apiSlice';
  * padding, from 474 px of table up. At 480 a font whose figures are a tenth wider still leaves it
  * inside its own cell.
  *
+ * _(2026-10-07: "+€12,450.00" is not the longest amount a row can show. The API takes one
+ * amount of up to 100,000.00, and "+€100,000.00" is 86.45 px wide in the same font. Measured that
+ * day in the same browser: at 480 px of table it ends 6.45 px into its cell's right padding,
+ * 1.55 px inside the cell and 9.55 px short of the pill. It touches nothing, and it stands that
+ * much to the right of the amounts above and under it; at 512 px it is 0.07 px out of line with
+ * them and from 513 px in line. The condition stays 480: what it has to keep off a phone is an
+ * amount under the status, and under it a row is two lines, where an amount has the width it
+ * needs.)_
+ *
  * The condition is an upper bound, where `theme/breakpoints.ts` asks for `min-width` only, and
  * on purpose. The table is what a wide box keeps, so it stays the unqualified case, rule for rule
  * what it was, and everything under this key only adds to it. _(Since 2026-10-07 the table has

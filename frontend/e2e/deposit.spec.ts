@@ -113,9 +113,11 @@ test('a deposit moves the money and the dashboard figure follows', async ({ page
   - the pill is inside the row;
   - the row is what a finger presses, 44 px tall or more: down its middle, the element under the
     point is the entry's button, which opens the transaction's page.
-  It reads the rows as they are drawn, then again with the longest amount the app can show,
-  "+€12,450.00", and the longest status written into each: this suite's ledger holds one
-  deposit of €1.00, which fits anything. A page that scrolls sideways fails it too.
+  It reads the rows as they are drawn, then again with the longest amount a row can show,
+  "+€100,000.00", and the longest status written into each: this suite's ledger holds one
+  deposit of €1.00, which fits anything. A page that scrolls sideways fails it too. _(Until
+  2026-10-07 the amount written was "+€12,450.00", named here as the longest. It is not: the API
+  takes one amount of up to 100,000.00.)_
 
   IN THE TABLE'S COLUMNS A LONG WORD OF AN ENTRY WRAPS INSIDE ITS OWN. A description is free text
   and may be one word with no space in it. On two lines such a word wrapped; in the columns of a
@@ -133,7 +135,8 @@ test('a deposit moves the money and the dashboard figure follows', async ({ page
 const EMPTY_LEDGER =
   'the ledger has no entry to look at: the deposit at the top of this file leaves one';
 
-const LONGEST_AMOUNT = '+€12,450.00';
+/** A deposit of the most the API takes for one amount, 100,000.00, as a row writes it. */
+const LONGEST_AMOUNT = '+€100,000.00';
 const LONGEST_STATUS = 'Completed';
 
 /** One transaction's row as the browser drew it, in px. Each `past` is 0 or less when inside. */
