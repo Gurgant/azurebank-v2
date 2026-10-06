@@ -61,7 +61,11 @@ public sealed class DemoModeEndpointTests : IDisposable
 
     /// <summary>A response as status, media type and body, without the one member that differs between two requests.</summary>
     /// <remarks>
-    /// With parentheses where the body has braces. The assertion library builds a failure's message
+    /// Returned through <see cref="ComparableText"/>, so two answers compare exactly: a parenthesis
+    /// where a brace belongs fails, and a failure shows <c>%7B</c> and <c>%7D</c> where the braces
+    /// are, <c>%%</c> for a percent sign, with the index counting the encoded text.
+    /// (Until 2026-10-06 this said parentheses where the body has braces.)
+    /// The assertion library builds a failure's message
     /// with <c>string.Format</c>, and a brace in either of two long texts that differ makes it throw
     /// <see cref="FormatException"/> in place of the message that shows where they differ; inside
     /// an assertion scope that exception is then lost behind the scope's own, with every assertion
@@ -76,8 +80,8 @@ public sealed class DemoModeEndpointTests : IDisposable
             body = json.ToJsonString();
         }
 
-        return $"{(int)response.StatusCode} {response.Content.Headers.ContentType?.MediaType} {body}"
-            .Replace('{', '(').Replace('}', ')');
+        return ComparableText.Of(
+            $"{(int)response.StatusCode} {response.Content.Headers.ContentType?.MediaType} {body}");
     }
 
     // ── With the demo off ────────────────────────────────────────────────────────────────────────
@@ -413,14 +417,14 @@ public sealed class DemoModeEndpointTests : IDisposable
         (await EventuallyAsync(() => RequestLinesFor(_demo, ClaimPath) >= 1)).Should().BeTrue(
             "ARRANGE: the request's own line is written last, so the claim's events are all in");
 
-        // With parentheses for braces, as ShapeOfAsync does and for its reason.
+        // The lines are searched as written.
+        // (Until 2026-10-06 this said parentheses for braces, as ShapeOfAsync does and for its reason.)
         var written = _demo.CapturedEvents
             .Select(e => string.Join(
                 " ",
                 e.Properties.Select(p => p.Value.ToString())
                     .Prepend(e.RenderMessage(CultureInfo.InvariantCulture))
                     .Append(e.Exception?.ToString())))
-            .Select(line => line.Replace('{', '(').Replace('}', ')'))
             .ToList();
         var kept = new (string What, string? Value)[]
         {

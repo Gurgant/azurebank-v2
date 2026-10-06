@@ -81,8 +81,12 @@ public sealed class DemoWriteBudgetSqlServerTests
     }
 
     /// <summary>
-    /// A response as status, media type and body, without the trace id, and with parentheses where
-    /// the body has braces: a brace in a text handed to an assertion's message breaks the message.
+    /// A response as status, media type and body, without the trace id. The text is exact, through
+    /// <see cref="ComparableText"/>: a failure shows <c>%7B</c> and <c>%7D</c> where the braces are,
+    /// and <c>%%</c> for a percent sign, and the index counts the encoded text.
+    /// (Until 2026-10-06 this said parentheses where the body has braces, and that a brace in a text
+    /// handed to an assertion's message breaks the message; a brace breaks the message of a failed
+    /// comparison of two such texts.)
     /// </summary>
     private static async Task<string> AnswerOfAsync(HttpResponseMessage response)
     {
@@ -93,8 +97,8 @@ public sealed class DemoWriteBudgetSqlServerTests
             body = json.ToJsonString();
         }
 
-        return $"{(int)response.StatusCode} {response.Content.Headers.ContentType?.MediaType} {body}"
-            .Replace('{', '(').Replace('}', ')');
+        return ComparableText.Of(
+            $"{(int)response.StatusCode} {response.Content.Headers.ContentType?.MediaType} {body}");
     }
 
     /// <summary>The refusal of a change past a copy's limit: its status, its code, its sentence, and no wait named anywhere.</summary>
