@@ -139,7 +139,14 @@ export const useMoneyDialogStyles = makeStyles({
     fontWeight: 700,
     color: colors.neutral[800],
     border: 'none',
+    // `outline: 'none'` alone left this field with no sign of focus but the caret (WCAG 2.4.7).
+    // The ring is the one `transferWizardStyles` draws around the same field on the transfer
+    // pages, for the same reason and at the same offset.
     outline: 'none',
+    ':focus-visible': {
+      outline: `2px solid ${colors.brand[60]}`,
+      outlineOffset: '4px',
+    },
     background: 'transparent',
     textAlign: 'center',
     width: '180px',

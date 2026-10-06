@@ -281,6 +281,69 @@ test.describe('what is typed in a field can be read', () => {
   }
 });
 
+/*
+  THE AMOUNT FIELD SHOWS WHERE FOCUS IS. The figure a visitor types is a borderless `<input>` on a
+  card, styled `outline: none` so that the browser's default ring does not box it. The two
+  transfer pages put a ring of their own in its place; the two money dialogs put nothing, and
+  there the caret was the only sign of focus (WCAG 2.4.7). Each row gives the field focus and
+  holds that an outline of 2 px or more is then drawn around it. A browser matches
+  `:focus-visible` on a text field however focus got there, so the row has no keys to press.
+*/
+const AMOUNT_FIELDS: { name: string; reach: (page: Page) => Promise<Locator> }[] = [
+  {
+    name: 'the transfer page',
+    reach: async (page) => {
+      await page.goto('/transfer');
+      return page.getByRole('textbox', { name: 'Transfer amount' });
+    },
+  },
+  {
+    name: 'the transfer between own accounts',
+    reach: async (page) => {
+      await page.goto('/transfer/internal');
+      return page.getByRole('textbox', { name: 'Transfer amount' });
+    },
+  },
+  {
+    name: 'the deposit dialog',
+    reach: async (page) => {
+      await page.goto('/dashboard');
+      await heading(1)(page);
+      await page.getByRole('button', { name: 'Deposit', exact: true }).click();
+      return page
+        .getByRole('dialog', { name: /deposit money/i })
+        .getByRole('textbox', { name: 'Deposit amount' });
+    },
+  },
+  {
+    name: 'the withdrawal dialog',
+    reach: async (page) => {
+      await page.goto('/dashboard');
+      await heading(1)(page);
+      await page.getByRole('button', { name: 'Withdraw', exact: true }).click();
+      return page
+        .getByRole('dialog', { name: /withdraw money/i })
+        .getByRole('textbox', { name: 'Withdraw amount' });
+    },
+  },
+];
+
+test.describe('the amount field shows where focus is', () => {
+  for (const { name, reach } of AMOUNT_FIELDS) {
+    test(`on ${name}`, async ({ page }) => {
+      const amount = await reach(page);
+      await amount.focus();
+      await expect(amount).toBeFocused();
+      const ring = await amount.evaluate(focusRing);
+      expect(ring.style, `${name}: no outline is drawn around the focused amount`).not.toBe('none');
+      expect(
+        parseFloat(ring.width),
+        `${name}: the outline is ${ring.width} wide`,
+      ).toBeGreaterThanOrEqual(2);
+    });
+  }
+});
+
 test.describe('accessibility, signed out', () => {
   // No session: login and register, reached as a visitor reaches them.
   test.use({ storageState: { cookies: [], origins: [] } });
