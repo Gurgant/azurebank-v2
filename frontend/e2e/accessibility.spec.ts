@@ -1,6 +1,7 @@
 import { AxeBuilder } from '@axe-core/playwright';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { scan } from './axeScan';
+import { fieldContrast } from './fieldContrast';
 
 /**
  * The accessibility sweep: measured, reported, and gated on serious and critical findings.
@@ -204,6 +205,79 @@ test.describe('accessibility while a read is slow', () => {
         `${name}: the hint fails colour contrast`,
       ).toEqual([]);
     });
+  }
+});
+
+/*
+  WHAT IS TYPED CAN BE READ. Three text fields are plain `<input>`s that the app styles itself, not
+  Fluent's: the recipient's handle on the transfer page and the description in the deposit and the
+  withdrawal dialogs. Each took its text colour from the theme and no background, so the browser
+  painted it its own white: in the dark theme the typed words were the theme's near-white on a
+  white field, 1.19 to 1, in headless Chromium on 2026-10-06, and only the placeholder showed.
+
+  Each row types into the field and holds the two texts a visitor reads in it, against the field's
+  own ground, at 4.5 to 1 or more: what was typed, and the placeholder, which has to be read
+  before anything is typed and sits on the same ground. Both themes, because a pair that suits one
+  is how this got in. The sweep above does not hold it: there colour contrast is reported and
+  never gated, and it scans these fields empty.
+
+  The theme is asserted first. A row that asked for dark and was drawn light would measure the
+  light pair and pass.
+*/
+const TYPED_FIELDS: { name: string; reach: (page: Page) => Promise<Locator> }[] = [
+  {
+    name: "the transfer's recipient handle",
+    reach: async (page) => {
+      await page.goto('/transfer');
+      return page.getByRole('textbox', { name: 'Recipient handle' });
+    },
+  },
+  {
+    name: "the deposit dialog's description",
+    reach: async (page) => {
+      await page.goto('/dashboard');
+      await heading(1)(page);
+      await page.getByRole('button', { name: 'Deposit', exact: true }).click();
+      return page
+        .getByRole('dialog', { name: /deposit money/i })
+        .getByRole('textbox', { name: 'Description' });
+    },
+  },
+  {
+    name: "the withdrawal dialog's description",
+    reach: async (page) => {
+      await page.goto('/dashboard');
+      await heading(1)(page);
+      await page.getByRole('button', { name: 'Withdraw', exact: true }).click();
+      return page
+        .getByRole('dialog', { name: /withdraw money/i })
+        .getByRole('textbox', { name: 'Description' });
+    },
+  },
+];
+
+test.describe('what is typed in a field can be read', () => {
+  for (const theme of ['light', 'dark'] as const) {
+    for (const { name, reach } of TYPED_FIELDS) {
+      test(`${name}, in the ${theme} theme`, async ({ page }) => {
+        await page.emulateMedia({ colorScheme: theme });
+        const field = await reach(page);
+        await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+
+        const empty = await fieldContrast(field);
+        expect(
+          empty.placeholder,
+          `${name} (${theme}): the placeholder ${empty.colours.placeholder} on ${empty.colours.ground}`,
+        ).toBeGreaterThanOrEqual(4.5);
+
+        await field.fill('Can this be read?');
+        const typed = await fieldContrast(field);
+        expect(
+          typed.typed,
+          `${name} (${theme}): the typed text ${typed.colours.text} on ${typed.colours.ground}`,
+        ).toBeGreaterThanOrEqual(4.5);
+      });
+    }
   }
 });
 

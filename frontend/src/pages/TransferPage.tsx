@@ -102,6 +102,12 @@ const useRecipientStyles = makeStyles({
     fontSize: '15px',
     fontFamily: 'inherit',
     color: colors.neutral[800],
+    // A plain <input> the stylesheet gives no background is painted the browser's own, which is
+    // white in either theme, and its placeholder the browser's grey. The text colour above
+    // follows the theme, so in the dark theme the typed handle was near-white on white. Both are
+    // the tokens Fluent's own fields take, so this one sits on the same ground as theirs.
+    backgroundColor: tokens.colorNeutralBackground1,
+    '::placeholder': { color: tokens.colorNeutralForeground4 },
     outline: 'none',
     ':focus': { border: `1px solid ${colors.brand[60]}` },
     ':disabled': { backgroundColor: colors.neutral[100] },

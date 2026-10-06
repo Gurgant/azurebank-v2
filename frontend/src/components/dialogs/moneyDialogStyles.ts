@@ -195,6 +195,11 @@ export const useMoneyDialogStyles = makeStyles({
     fontSize: '14px',
     fontFamily: 'inherit',
     color: colors.neutral[800],
+    // Declared, or the browser paints a plain <input> its own white and its placeholder its own
+    // grey in either theme, under a text colour that follows the theme: near-white on white in
+    // the dark one. The tokens are the ones Fluent's own fields take.
+    backgroundColor: tokens.colorNeutralBackground1,
+    '::placeholder': { color: tokens.colorNeutralForeground4 },
     outline: 'none',
     ':focus': { border: `1px solid ${colors.brand[60]}` },
   },
