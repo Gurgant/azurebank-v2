@@ -87,6 +87,10 @@ $DemoFlag = 'Demo__Enabled'
 # What the bff container's settings for the networks of proxies start with: main.bicep writes one
 # a network, numbered from 0, and nothing else under ForwardedHeaders__.
 $NetworksSetting = 'ForwardedHeaders__KnownIPNetworks__'
+# The framework's own switch for forwarded headers, under each of the three names a host reads
+# it by, whatever their case. No template of this folder writes it: with it on, the BFF
+# believed whatever a caller wrote (infra/README.md, "What this creates").
+$ForwardedSwitch = '^(ASPNETCORE_|DOTNET_)?FORWARDEDHEADERS_ENABLED$'
 $EnvironmentName = 'azurebank-env'
 $AlertGroupName = 'azurebank-owner'
 $Api = '2025-01-01'
@@ -228,11 +232,14 @@ function Get-DemoFlag($App, [string]$Container) {
 function Get-ProxyNetworks($App) {
     # The networks the bff container of the deployed app is told, in the order of their numbers.
     # The template writes one setting a network, each once, as a plain value, numbered from 0
-    # with no gap, and nothing else whose name starts with ForwardedHeaders__. Anything else was
-    # set by hand: it is not taken for a list, and what it holds is not repeated. A name is
-    # matched whatever its case, as .NET reads it.
+    # with no gap, and nothing else whose name starts with ForwardedHeaders__, nor the framework's
+    # own switch under any of its names. Anything else was set by hand: it is not taken for a
+    # list, and what it holds is not repeated. A name is matched whatever its case, as .NET
+    # reads it. (Until 2026-10-07 the switch was not looked for here: a run that named no
+    # networks went on beside it, and the run of the template then took it out in silence.)
     $found = @($App['properties']['template']['containers'] | Where-Object { $_['name'] -eq 'bff' })
-    $settings = @($found[0]['env'] | Where-Object { $_ -and $_['name'] -like 'ForwardedHeaders__*' })
+    $settings = @($found[0]['env'] | Where-Object {
+        $_ -and ($_['name'] -like 'ForwardedHeaders__*' -or $_['name'] -match $ForwardedSwitch) })
     $byHand = "The bff container of the deployed app carries a forwarded-headers setting this template never writes. Pass -ProxyNetworks. Nothing was written."
     $values = @{}
     foreach ($setting in $settings) {

@@ -211,8 +211,12 @@ that switch under two more names, `DOTNET_FORWARDEDHEADERS_ENABLED` and `Forward
 with no prefix. Measured later that day, on the BFF on a loopback socket: under each of the
 three it took the address a caller wrote for the caller's, and with a network listed the switch
 brought back the reading of the header that the strict one closes (ADR-0013's note of that
-day). `--check` refuses all three; until then it matched the first alone. The connection
-limits are the hosts' own defaults (ADR-0058); the template sets none.
+day). `--check` refuses all three; until then it matched the first alone. So does
+`secrets.ps1` when it takes the networks from the deployed app: any of the three on the `bff`
+container stops it with the line it has for a forwarded-headers setting set by hand; until
+2026-10-07 it looked only at names that begin `ForwardedHeaders__`, and a run that named no
+networks went on beside the switch, which the run of the template then took out in silence.
+The connection limits are the hosts' own defaults (ADR-0058); the template sets none.
 
 Three container images, public in GHCR, tagged with the full commit SHA: `azurebank-api`,
 `azurebank-bff`, `azurebank-tools`.

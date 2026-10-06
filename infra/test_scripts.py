@@ -811,7 +811,14 @@ class SecretsScriptTests(ScriptCase):
                    'no number': f'{self.SETTING}first=192.0.2.0/24',
                    'an exact address beside a network': f'{one}|ForwardedHeaders__KnownProxies__0=203.0.113.9',
                    'an exact address alone': 'ForwardedHeaders__KnownProxies__0=203.0.113.9',
-                   'a limit of hops': 'ForwardedHeaders__ForwardLimit=2'}
+                   'a limit of hops': 'ForwardedHeaders__ForwardLimit=2',
+                   # The framework's own switch for forwarded headers, under each of the three names a
+                   # host reads it by, and in another case: with it on the BFF believed any caller.
+                   "the framework's switch": 'ASPNETCORE_FORWARDEDHEADERS_ENABLED=true',
+                   "the framework's switch, its second name": 'DOTNET_FORWARDEDHEADERS_ENABLED=true',
+                   "the framework's switch, with no prefix": 'ForwardedHeaders_Enabled=true',
+                   "the framework's switch, in small letters": 'aspnetcore_forwardedheaders_enabled=true',
+                   "the framework's switch, off, beside a network": f'{one}|ASPNETCORE_FORWARDEDHEADERS_ENABLED=false'}
         for case, deployed in by_hand.items():
             with self.subTest(case=case):
                 (self.folder / 'parameters.json').unlink(missing_ok=True)
@@ -821,6 +828,15 @@ class SecretsScriptTests(ScriptCase):
                 self.assertFalse((self.folder / 'parameters.json').exists())
                 self.assert_no_network_is_shown(result)
                 self.assertEqual(result.stdout, '')
+        # THE CONTROL: a name that only resembles the switch is not one, and stops nothing: the run
+        # goes on and writes no networks.
+        for deployed in ('X_FORWARDEDHEADERS_ENABLED=true', 'ForwardedHeaders_Enabled_Once=true'):
+            with self.subTest(control=deployed):
+                (self.folder / 'parameters.json').unlink(missing_ok=True)
+                result = self.secrets('-Action', 'New', '-DeployApp', state='deployed', FAKE_AZ_NETWORKS=deployed)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn(self.BY_HAND, self.said(result))
+                self.assertNotIn(self.NETWORKS, self.parameters())
         # A run that names the networks itself is not stopped by them: what it names is written,
         # and the run of the template writes the bff's settings whole.
         result = self.secrets('-Action', 'New', '-DeployApp', '-ProxyNetworks', '198.51.100.0/24', state='deployed',
