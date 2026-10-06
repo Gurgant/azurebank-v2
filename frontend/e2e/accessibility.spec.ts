@@ -34,11 +34,11 @@ import { fieldContrast, textContrast } from './contrast';
  *   run at all.
  * Each scan also waits for the page's animations to finish first, so a fade is not measured.
  *
- * Five blocks further down are not scans. Each holds, by measuring it, one thing the sweep does
+ * Six blocks further down are not scans. Each holds, by measuring it, one thing the sweep does
  * not: that what is typed in a field can be read, that the amount field shows where focus is,
  * that a dialog gives focus back when it closes, that a status pill stays in its column at
- * phone width, and that certain words which were too faint stay readable. Each has its own note
- * above it.
+ * phone width, that the two money tiles share a row there, and that certain words which were
+ * too faint stay readable. Each has its own note above it.
  */
 type Scan = { name: string; path: string; title: string; ready: (page: Page) => Promise<void> };
 
@@ -465,6 +465,25 @@ test.describe('at phone width a status pill stays in its column', () => {
       );
     });
   }
+});
+
+/*
+  AT PHONE WIDTH THE TWO MONEY TILES SHARE A ROW. Their grid counted its columns by the tiles'
+  200 px cap, and a phone's row holds one such column: the tiles stacked, 200 px wide each, with
+  the rest of the row empty (143 of 343 px at 375 px). The row reads where the two are drawn.
+*/
+test('at phone width the Deposit and Withdraw tiles share a row', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto('/dashboard');
+  await heading(1)(page);
+  const deposit = await page.getByRole('button', { name: 'Deposit', exact: true }).boundingBox();
+  const withdraw = await page.getByRole('button', { name: 'Withdraw', exact: true }).boundingBox();
+  if (deposit === null || withdraw === null) throw new Error('a tile is not drawn');
+
+  expect(withdraw.y, 'the Withdraw tile is not level with the Deposit tile').toBe(deposit.y);
+  expect(withdraw.x, 'the Withdraw tile does not start after the Deposit tile').toBeGreaterThan(
+    deposit.x + deposit.width,
+  );
 });
 
 /*

@@ -366,9 +366,14 @@ const useStyles = makeStyles({
 
   // `1fr 1fr` gave each tile half the measure — ~340px of card for an icon and one word. Capped,
   // so they stay hand-sized next to a transfer target that is meant to dominate.
+  //
+  // Two columns at every width, each as wide as the row allows up to the cap. (Until 2026-10-06
+  // this was `repeat(auto-fit, minmax(120px, 200px))`, which counts its columns by the 200 px
+  // cap: a phone's row holds one such column, so the two tiles stacked at 200 px each and left
+  // the rest of the row empty, 143 px of 343 at 375 px.)
   tileRow: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 200px))',
+    gridTemplateColumns: 'repeat(2, minmax(0, 200px))',
     gap: '12px',
     marginTop: '12px',
   },
