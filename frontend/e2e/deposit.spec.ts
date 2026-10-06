@@ -135,6 +135,15 @@ test('a deposit moves the money and the dashboard figure follows', async ({ page
 const EMPTY_LEDGER =
   'the ledger has no entry to look at: the deposit at the top of this file leaves one';
 
+/**
+ * The status cell of the first row that is a transaction: what a row of this file waits for
+ * before it measures. The status is a row's LAST cell, not its fourth: with one account in
+ * view the row has a fifth, the running balance, which sits fourth and is not drawn on a phone.
+ * (Until 2026-10-07 the rows waited for the fourth cell. On the real stack the suite's user has
+ * one account, so at phone width on the dashboard they waited for a cell that is never drawn.)
+ */
+const FIRST_STATUS_CELL = 'table tbody tr:has(td:nth-child(4)) td:last-child';
+
 /** A deposit of the most the API takes for one amount, 100,000.00, as a row writes it. */
 const LONGEST_AMOUNT = '+€100,000.00';
 const LONGEST_STATUS = 'Completed';
@@ -305,7 +314,7 @@ test.describe('the entry a deposit leaves', () => {
       await page.goto(path);
       await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible();
       await expect(
-        page.locator('table tbody tr td:nth-child(4)').first(),
+        page.locator(FIRST_STATUS_CELL).first(),
         `${path}: ${EMPTY_LEDGER}`,
       ).toBeVisible();
 
@@ -329,7 +338,7 @@ test.describe('the entry a deposit leaves', () => {
       await page.goto(path);
       await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible();
       await expect(
-        page.locator('table tbody tr td:nth-child(4)').first(),
+        page.locator(FIRST_STATUS_CELL).first(),
         `${path}: ${EMPTY_LEDGER}`,
       ).toBeVisible();
 
@@ -377,7 +386,7 @@ test.describe('the entry a deposit leaves', () => {
       await page.goto(path);
       await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible();
       await expect(
-        page.locator('table tbody tr td:nth-child(4)').first(),
+        page.locator(FIRST_STATUS_CELL).first(),
         `${path}: ${EMPTY_LEDGER}`,
       ).toBeVisible();
 
