@@ -86,9 +86,10 @@ test('a deposit moves the money and the dashboard figure follows', async ({ page
 });
 
 /*
-  THE ENTRY A DEPOSIT LEAVES, LOOKED AT. Two things can be measured only on a ledger with an entry
-  in it, and this suite's user is seeded with one account and no history: the deposit above is
-  what leaves the first. So they are held here, after it, and not in `accessibility.spec.ts`,
+  THE ENTRY A DEPOSIT LEAVES, LOOKED AT. Two things _(four since 2026-10-07: the two lines of a
+  phone's row and the long word of an entry came after)_ can be measured only on a ledger with an
+  entry in it, and this suite's user is seeded with one account and no history: the deposit above
+  is what leaves the first. So they are held here, after it, and not in `accessibility.spec.ts`,
   which runs before any entry exists. Each says so if it finds the ledger empty, which is what a
   run of one of them alone on a new database would meet.
 
@@ -115,6 +116,14 @@ test('a deposit moves the money and the dashboard figure follows', async ({ page
   It reads the rows as they are drawn, then again with the longest amount the app can show,
   "+€12,450.00", and the longest status written into each: this suite's ledger holds one
   deposit of €1.00, which fits anything. A page that scrolls sideways fails it too.
+
+  IN THE TABLE'S COLUMNS A LONG WORD OF AN ENTRY WRAPS INSIDE ITS OWN. A description is free text
+  and may be one word with no space in it. On two lines such a word wrapped; in the columns of a
+  wider table nothing broke it, and it ran on over the amount and the status. Held at 800 px of
+  screen, where both tables have their columns, which each row asserts first: with sixty letters
+  written as the entry of every row, what the entry draws ends inside its own cell and is over no
+  other, and the amount is still on one line. Before the fix the sixty letters ended 509 px past
+  the Entry column on the dashboard and 473 px on History (headless Chromium, 2026-10-07).
 
   THE "COMPLETED" BADGE OF A TRANSACTION'S PAGE CAN BE READ. Its words wore the green of an icon
   on the badge's own pale green: 2.69 to 1 in the light theme, where 13 px text needs 4.5. Held
@@ -218,6 +227,74 @@ function drawnRows(rows: Element[], longest: { amount: string; status: string } 
   return drawn;
 }
 
+/** Sixty letters and no space: wider than the Entry column of either table, in any font. */
+const UNBROKEN_WORD = 'W'.repeat(60);
+
+/** One transaction's row with `UNBROKEN_WORD` as its entry, in px: `past` is 0 or less inside. */
+type EntryDrawn = {
+  amount: string;
+  inColumns: boolean;
+  entryPastCell: number;
+  entryOver: string[];
+  amountLines: number;
+};
+
+/**
+ * Runs in the page, over every `<tr>` of the table's body: writes `word` over the words of each
+ * transaction's entry, in the text node that is there, and measures what the entry then draws
+ * against its own cell and the three others.
+ */
+function entriesDrawn(rows: Element[], word: string) {
+  const drawn: EntryDrawn[] = [];
+  for (const row of rows) {
+    if (row.children.length < 4) continue;
+    const [when, entry, amount] = Array.from(row.children);
+    const status = row.lastElementChild!;
+    const words = entry.querySelector('button')?.firstChild;
+    if (!words) continue;
+    words.textContent = word;
+    row.scrollIntoView({ block: 'center' });
+
+    // What an element draws: the boxes of its text, which is what leaves a cell too narrow.
+    const inked = (element: Element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      return Array.from(range.getClientRects()).filter((box) => box.width > 0 && box.height > 0);
+    };
+    const lines = inked(entry);
+    if (lines.length === 0) continue;
+    const text = {
+      left: Math.min(...lines.map((box) => box.left)),
+      right: Math.max(...lines.map((box) => box.right)),
+      top: Math.min(...lines.map((box) => box.top)),
+      bottom: Math.max(...lines.map((box) => box.bottom)),
+    };
+    const over = (other: Element) => {
+      const box = other.getBoundingClientRect();
+      const wide = Math.min(text.right, box.right) - Math.max(text.left, box.left);
+      const tall = Math.min(text.bottom, box.bottom) - Math.max(text.top, box.top);
+      return wide > 0.5 && tall > 0.5;
+    };
+
+    const cells = [when, entry, amount, status].map((cell) => cell.getBoundingClientRect());
+    drawn.push({
+      amount: amount.textContent ?? '',
+      // Side by side, each cell ending where the next begins: the table's columns.
+      inColumns: cells.every(
+        (box, index) => index === 0 || cells[index - 1].right <= box.left + 0.5,
+      ),
+      entryPastCell: Math.max(text.right - cells[1].right, cells[1].left - text.left),
+      entryOver: [
+        over(when) ? 'when' : '',
+        over(amount) ? 'amount' : '',
+        over(status) ? 'status' : '',
+      ].filter(Boolean),
+      amountLines: new Set(inked(amount).map((line) => Math.round(line.top))).size,
+    });
+  }
+  return drawn;
+}
+
 test.describe('the entry a deposit leaves', () => {
   for (const path of ['/dashboard', '/history']) {
     test(`its status pill stays in its column at phone width, on ${path}`, async ({ page }) => {
@@ -285,6 +362,40 @@ test.describe('the entry a deposit leaves', () => {
         });
         expect(wrong, `${path}, ${pass}: what is wrong with a row`).toEqual([]);
       }
+
+      const sideways = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      );
+      expect(sideways, `${path}: the page scrolls sideways, by px`).toBeLessThanOrEqual(0);
+    });
+
+    test(`a long word of its entry wraps inside its column, on ${path}`, async ({ page }) => {
+      await page.setViewportSize({ width: 800, height: 900 });
+      await page.goto(path);
+      await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible();
+      await expect(
+        page.locator('table tbody tr td:nth-child(4)').first(),
+        `${path}: ${EMPTY_LEDGER}`,
+      ).toBeVisible();
+
+      const drawn = await page.locator('table tbody tr').evaluateAll(entriesDrawn, UNBROKEN_WORD);
+      expect(drawn.length, `${path}: no row was found to measure`).toBeGreaterThan(0);
+      // This row is about the columns: at a width where the table has none it would hold nothing.
+      expect(
+        drawn.filter((row) => !row.inColumns).length,
+        `${path}: rows that are not drawn in columns at 800 px`,
+      ).toBe(0);
+
+      const wrong = drawn.flatMap((row) => {
+        const said: string[] = [];
+        if (row.entryPastCell > 0.5)
+          said.push(`its entry ends ${row.entryPastCell} px past its own cell`);
+        if (row.entryOver.length > 0)
+          said.push(`its entry is over another cell: ${row.entryOver.join(', ')}`);
+        if (row.amountLines !== 1) said.push(`its amount is on ${row.amountLines} lines`);
+        return said.map((what) => `the row of ${row.amount}: ${what}`);
+      });
+      expect(wrong, `${path}: what is wrong with a row`).toEqual([]);
 
       const sideways = await page.evaluate(
         () => document.documentElement.scrollWidth - document.documentElement.clientWidth,

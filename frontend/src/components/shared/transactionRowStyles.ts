@@ -32,8 +32,10 @@ import type { TransactionResponse } from '../../features/api/apiSlice';
  *
  * The condition is an upper bound, where `theme/breakpoints.ts` asks for `min-width` only, and
  * on purpose. The table is what a wide box keeps, so it stays the unqualified case, rule for rule
- * what it was, and everything under this key only adds to it. There is no second condition here
- * for it to fight at the boundary. Where one of these rules meets a media rule on the same
+ * what it was, and everything under this key only adds to it. _(Since 2026-10-07 the table has
+ * one rule more than it had, at every width: a long word of the entry wraps, `cellEntry` below.)_
+ * There is no second condition here for it to fight at the boundary.
+ * Where one of these rules meets a media rule on the same
  * element (`balance`), it wins by the order the styling library writes them in, container rules
  * after media rules, and not by weight.
  *
@@ -163,7 +165,18 @@ export const useTransactionRowStyles = makeStyles({
   },
   /** A cell of that row: a box of the grid, with nothing of the table cell's own left on it. */
   cell: { [NARROW]: { display: 'block', minWidth: 0, padding: 0, borderBottom: 'none' } },
-  cellEntry: { [NARROW]: { gridArea: 'entry', overflowWrap: 'anywhere' } },
+  /**
+   * The entry wraps inside a word at EVERY width, in the table's columns as on the two lines
+   * (since 2026-10-07; on 2026-10-06 it did so under `NARROW` only). A description is free text of
+   * up to 500 characters and may be one word with no space in it. In the columns nothing broke
+   * such a word: it ran out of the Entry column, over the amount and the status. Measured that
+   * day in Chromium at an 800 px screen with sixty letters written as the entry: they ended
+   * 509 px past the Entry column on the dashboard and 473 px on History.
+   *
+   * The table's layout is fixed, so no column is wider or narrower for this, and a word that
+   * fitted its line is drawn where it was.
+   */
+  cellEntry: { overflowWrap: 'anywhere', [NARROW]: { gridArea: 'entry' } },
   cellAmount: { [NARROW]: { gridArea: 'amount', justifySelf: 'end' } },
   cellWhen: { [NARROW]: { gridArea: 'when', justifySelf: 'start', alignSelf: 'center' } },
   cellStatus: { [NARROW]: { gridArea: 'status', justifySelf: 'end', alignSelf: 'center' } },

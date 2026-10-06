@@ -104,6 +104,15 @@ the longest amount the app can show, "+€12,450.00", written into them. Both fa
 columns and passed on the two lines, against the same mock and the same kind of seed; neither was
 run in this suite's own configuration.
 
+On 2026-10-07 two more rows of the same file, which makes 41, hold a long word of an entry where
+the table has its columns. A description is free text and may be one word with no space in it;
+on two lines such a word wrapped, and in the columns nothing broke it, so it ran over the amount
+and the status. At 800 px of screen, where both tables have columns, sixty letters written as the
+entry of every row end inside the Entry column and are over no other cell, and the amount stays
+on one line. Both failed before the entry was let wrap inside a word at every width and passed
+after it, against the same mock and the same kind of seed; neither was run in this suite's own
+configuration.
+
 The public demo's screens are scanned by the same gate only in `npm run test:e2e:demo`, which is
 run by hand: the sign-in page as the demo shows it to a browser that keeps no copy, the
 dashboard with its panel, once with the copy's sign-in details closed and once with them open,
