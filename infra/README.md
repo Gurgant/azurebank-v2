@@ -41,6 +41,12 @@ It has not been run: every value in it is what the code and the records lead to 
 says so. The steps of the first two sessions, and what they read back, are left as they were
 measured, with the demo off.
 
+**On 2026-10-06 it gained one thing more, and that has not run on Azure either: the alerts can
+also reach the owner's phone.** The action group takes one receiver of the Azure mobile app when
+a run names the account that app was set up with, and holds the mailbox alone when none does.
+Step 25 is where the account is carried, the road tried once and what arrives read; what is not
+known of it is under [Not measured yet](#not-measured-yet).
+
 What ran on Azure before, on 2026-10-02, is a throwaway trial: a resource group in the same
 subscription and region, created and deleted that day, in which requests of the shapes this
 folder makes were sent by hand, with `az rest` and go-sqlcmd, and not by this folder's template
@@ -132,8 +138,8 @@ to one identity, by its client ID, and with no password. `azurebank_app` reads a
 | `azurebank` | The app: the BFF (0.25 vCPU, 0.5 GiB) and the API (0.5 vCPU, 1 GiB) in one replica, zero to one replica, single revision, with the identity `azurebank-app` attached. HTTPS ingress to the BFF's port 8080. The API listens on `127.0.0.1:5068` only: nothing outside the replica can reach it. Three probes, on the BFF. Nine secrets, each reaching a container by reference: eight application keys and the connection string, which holds a server name and a client ID and no password. The eighth key is the demo's, `demo-client-key`: only the `api` container is handed it, and nothing uses it while the demo is off. Both containers carry `Demo__Enabled`, written as `false` unless `demo` is true, and the `api` container `Demo__Claim__MaxPerClientPerDay=1000` (below). The BFF does not keep its one line per request (`Serilog__MinimumLevel__Override__Serilog=Warning`); its warnings and its 5xx lines stay. Until 2026-10-05 this row counted eight secrets, seven of them keys, and no setting of the demo: that is the app the first deployment created, and it stays so until the next run of the template ([Changing the infrastructure later](#changing-the-infrastructure-later)) |
 | `azurebank-migrate` | A manual job: the tools image with the argument `migrate`, no retry, 600 s, the identity `azurebank-migrate` attached, one secret (its own connection string, no password) |
 | two role assignments | The custom role, to the deployment identity, on the app and on the job and nowhere else. From here the workflow can change the app |
-| `azurebank-owner` | An action group with one e-mail receiver, given as a parameter |
-| three alert rules | E-mail only, all on the app: more than 66,667 requests in an hour; more than 3.3 GiB sent in a day; the replica running more than about 2.2 hours in a day (an average replica count above 0.093) |
+| `azurebank-owner` | An action group with one e-mail receiver, given as a parameter. Since 2026-10-06 a second parameter, `alertPushAccount`, adds one receiver of the Azure mobile app beside it, named `owner-phone`, for the e-mail address that app was set up with on the owner's phone. The parameter is empty by default, and the group is then the one it was, the mailbox and no other receiver. No run has sent that receiver to Azure: the group the first deployment created holds the mailbox alone (step 25) |
+| three alert rules | By e-mail, and with the phone's receiver in the group also as a notification of the Azure mobile app; all on the app: more than 66,667 requests in an hour; more than 3.3 GiB sent in a day; the replica running more than about 2.2 hours in a day (an average replica count above 0.093). Until 2026-10-06 this row said "E-mail only" |
 
 **With `demo=true` as well: two more, and the app is told it is the demo.** The switch is a
 parameter of the template, `false` by default. `secrets.ps1` writes it: what the deployed app
@@ -174,9 +180,11 @@ as the nested deployment `azurebank-app-inputs`. Its parameters are the values t
 with the length it must have: the image tag exactly 40 characters, the alerts' address and seven
 of the eight secrets at least one character, and the eighth, the demo's client key, at least 32:
 the API refuses to start with the demo on and a shorter one (the eight stay secure parameters
-there too). A value that does not fit fails that deployment, and the app, the migrate job, the
-pool job and the action group wait for it, so none of them is sent without its values: seen
-offline and on a local engine for the tag, the address and the seven
+there too). The account for the owner's phone is not one of them: left empty it adds no
+receiver, and the template checks nothing of it. A value that does not fit fails that
+deployment, and the app, the migrate job, the pool job and the action group wait for it, so none
+of them is sent without its values: seen offline and on a local engine for the tag, the address
+and the seven
 ([Checking these files](#checking-these-files)), not yet on Azure. The client key's 32 characters
 have not been seen refused by any engine: the offline tests read the decorator in the compiled
 check. Until 2026-10-05 the check asked for seven secrets, and three resources waited for it.
@@ -222,6 +230,13 @@ are billed on the app's two meters and count against the same free amounts. If n
 free, a second of a run is $0.0000105 by the two rates above: $0.06 a month at 30 s a run, $1.13
 at 600 s, $1.59 at 840 s. No pool run has been timed on this database: the first fill's seconds
 (step 26) replace these.
+
+**A notification on the phone: not read.** What Azure bills for a push notification of an action
+group, and whether this offer has a free amount of them, was not looked up: the table above has
+no row for a notification of either kind, and none was added for a price nobody read. No alert
+has been seen firing, so no notification of either kind has been seen billed
+([Not measured yet](#not-measured-yet)). A charge would show in the cost by meter
+([Afterwards](#afterwards)).
 
 **The logs: $0 expected.** A cap of 0.05 GB a day is 1.50 to 1.55 GB a month, under the free 5 GB.
 Three things are not certain:
@@ -306,10 +321,13 @@ the demo stops being usable. All of it is read from the code and its defaults, n
   theirs, and never an audit row (`docs/runbooks/demo-pool.md`, section 7). The database is Basic,
   2 GB, and no alert watches its size.
 
-**What warns:** the three alert rules, by e-mail, all on the app. Nothing warns of the log's
-volume: the rule that was meant to did not count lines (step 20). And nothing warns that the cap
-itself was reached: the alert Microsoft documents for that is a log search rule, $0.50 a month or
-more, and is not used.
+**What warns:** the three alert rules, all on the app, by e-mail; and, once a run has given the
+action group the account of the Azure mobile app on the owner's phone (step 25), as a
+notification on that phone too. The phone is a second road for the same three warnings, not a
+fourth warning, and no notification has been seen on it. Until 2026-10-06 this line said "by
+e-mail" and named no other road. Nothing warns of the log's volume: the rule that was meant to
+did not count lines (step 20). And nothing warns that the cap itself was reached: the alert
+Microsoft documents for that is a log search rule, $0.50 a month or more, and is not used.
 **What stops the app:** the owner, by hand ([Stop the app by hand](#stop-the-app-by-hand)).
 **What stops the logs:** the owner, by rule ([Switching the logs off](#switching-the-logs-off)).
 Nothing stops either automatically.
@@ -328,11 +346,16 @@ Nothing stops either automatically.
 - The resource providers `Microsoft.App`, `Microsoft.Sql`, `microsoft.insights`,
   `Microsoft.ManagedIdentity`, `Microsoft.Authorization`, `Microsoft.OperationalInsights` registered
   (measured: all six are).
+- For the alerts on the owner's phone, which step 25 adds and which a session can go without: the
+  Azure mobile app on that phone, signed in, with the phone's settings allowing its
+  notifications, and the e-mail address the app was set up with. Whether that address is the
+  sign-in name `secrets.ps1` takes from `az login` is not known, so the script never takes one
+  for the other.
 
-Two people act below. **The owner** signs in, clicks in GitHub's settings, approves a deployment
-and reads the mailbox. **The operator** types the commands in a terminal where the owner has run
-`az login` and `gh auth login`; it can be the owner. Every step that writes is run on the owner's
-word, given for that step.
+Two people act below. **The owner** signs in, clicks in GitHub's settings, approves a deployment,
+reads the mailbox and, from step 25, looks at his phone. **The operator** types the commands in
+a terminal where the owner has run `az login` and `gh auth login`; it can be the owner. Every
+step that writes is run on the owner's word, given for that step.
 
 Rules for every command in this file:
 
@@ -866,6 +889,14 @@ variable `AZUREBANK_ALERT_EMAIL`; without that from the address the deployed ale
 and only then from the signed-in account's own mailbox. Its report names which, never the address.
 Example: `-AlertEmail owner@example.invalid`.
 
+Since 2026-10-06 it finds the account of the Azure mobile app the alerts also notify in the same
+order, but for the last place: `-AlertPushAccount`; without it the variable
+`AZUREBANK_ALERT_PUSH_ACCOUNT`; without that the one such account the deployed alerts already
+notify. With none of the three it writes nothing, which is not an error, and its report says
+`alertPushAccount: not written, the template's default applies`: the group then holds the mailbox
+alone. The signed-in account is never taken for it. Steps 9 and 15 ran before the argument
+existed; step 25 is where it is first passed.
+
 #### 10. End of the first session (operator)
 
 When the lines of the probe job are due, look for them: in the portal, the workspace
@@ -1251,7 +1282,9 @@ is expected is a stop, unless the step names what is done instead.
 
 **Before it.** `main` holds this folder as it is now and the application's screens for the claim,
 and its CI is green. The owner is at the machine: every step that writes waits for the owner's
-word, given for that step, as in the first two sessions.
+word, given for that step, as in the first two sessions. For the alerts on his phone the owner
+has done three things by his own hands before step 25's clock starts, which that step lists;
+without them the step is run with no account, and the alerts go by e-mail alone, as they do now.
 
 **The order, and why.** The policy first, in a run of its own (step 23): how soon a changed
 definition is enforced has not been measured. Then a deployment with the demo still off
@@ -1261,7 +1294,9 @@ backend/src/AzureBank.Bff` prints nothing, so a flag set on them would be read b
 the demo on (step 25), the first fill by hand (26), a browser (27), a deployment with the demo on
 (28), two refusals made due (29), the address the app sees (30), a run that ends with a signal
 (31), the stop and the start (32), and the end (33). Each step is meant to leave a state that
-fails closed.
+fails closed. Step 25's run is the only one of the session that carries the app, so it is also
+the one that carries the phone's account to the action group; the one test of that road waits
+until `--check` has passed.
 
 **Not near a run of the pool job.** By its schedule the job is expected to start at minute 0 of
 the hours 0, 4, 8, 12, 16 and 20, UTC. Step 25 is started only when the next of those is more
@@ -1283,8 +1318,9 @@ $env:AZURE_SUBSCRIPTION_ID = az account show --query id --output tsv
 $env:AZURE_RESOURCE_GROUP  = $group
 ```
 
-Two functions more, for the reads of steps 25 and 33. Neither has been sent to Azure
-([Not measured yet](#not-measured-yet) says how far each was tried).
+Three functions more, for the reads of steps 22, 25 and 33. None has been sent to Azure
+([Not measured yet](#not-measured-yet) says how far each was tried). Until 2026-10-06 there were
+two: the third reads the action group's receivers.
 
 ```powershell
 # One answer of a list as Azure gives it, read with the API version deploy.py asks with: whether
@@ -1308,6 +1344,17 @@ function Show-Revisions {
     (az rest --method get --url "https://management.azure.com${app}/revisions?api-version=2025-01-01" | ConvertFrom-Json).value |
         ForEach-Object { '{0}: active {1}, replicas {2}' -f $_.name, $_.properties.active, $_.properties.replicas }
 }
+
+# The action group's receivers, by kind: how many, and their names. Never an address. A kind the
+# answer does not hold, or gives as null, is none of that kind.
+function Show-Receivers {
+    $owner = az monitor action-group show --name azurebank-owner --resource-group $group --output json | ConvertFrom-Json
+    if (-not $owner) { throw 'No answer.' }
+    foreach ($kind in 'emailReceivers', 'azureAppPushReceivers') {
+        $found = @($owner.$kind | Where-Object { $null -ne $_ })
+        '{0}: {1} ({2})' -f $kind, $found.Count, (@($found | ForEach-Object { $_.name }) -join ', ')
+    }
+}
 ```
 
 #### 22. Look before writing (operator; reads, and one sign-in that is refused)
@@ -1328,11 +1375,13 @@ az role assignment list --assignee $deploy --all --output json | ConvertFrom-Jso
 az policy assignment show --name azurebank-shape --resource-group $group --output json | ConvertFrom-Json |
     ForEach-Object { $_.displayName; $_.parameters | ConvertTo-Json -Depth 4 -Compress }
 az monitor metrics alert list --resource-group $group --query '[].name' --output tsv
+Show-Receivers
 Show-Executions azurebank-migrate
 ```
 
 The role assignments and the policy assignment go through `ConvertFrom-Json` and print names
-only: as they stand, both answers hold the subscription's ID.
+only: as they stand, both answers hold the subscription's ID. `Show-Receivers` prints counts and
+names: the answer it reads holds the mailbox.
 
 | Read | Expected |
 | --- | --- |
@@ -1340,7 +1389,7 @@ only: as they stand, both answers hold the subscription's ID.
 | The reads of step 1 | As step 1 has them with the demo off: one firewall rule; Entra-only `true`; the cap 0.05 and `RespectQuota` (`OverQuota` means the log is dark, and the last read of this step is then "not run"); one job; two lines of identities; `WorkloadProfiles` |
 | The images, and the `git` command | Two references on one tag. The last one recorded is `8552f935`, for which the command exits 1: the commit that makes the two hosts read the flag, `e5107f0f`, is not among its ancestors |
 | The secret names; the role assignments; the policy assignment | Eight names. Two rows, the custom role on `containerApps/azurebank` and on `jobs/azurebank-migrate`. The name the first deployment gave the policy, ending at "manual jobs", with `allowedJobTriggers` holding `Manual` and no `scheduledJobs` |
-| The alerts; the executions | Three rules; every execution `Succeeded` |
+| The alerts; the action group's receivers; the executions | Three rules; `emailReceivers: 1 (owner)` and `azureAppPushReceivers: 0 ()`, the group as the second session left it; every execution `Succeeded`. Whether the answer for a group with no receiver of the Azure mobile app holds that property at all has not been read: the function prints 0 either way |
 
 The owner, in the portal: Cost analysis for the resource group, by meter, which is the read
 [Afterwards](#afterwards) asks for and the second session did not take. Expected: the database's
@@ -1442,11 +1491,35 @@ puts the app back:** stop. Step 25 is not run on the earlier images.
 Its first note is the UTC time of the job's next run, which must be more than 60 minutes away.
 Only if both `git` commands of step 24 exited 0.
 
+**Before the step's clock, by the owner's own hands, for the alerts on his phone.** Added on
+2026-10-06, and not run. This step's run is the session's one run of the template with the app,
+so it is the one that can carry the account to the action group. Three things, none of which a
+command of this page does:
+
+1. The Azure mobile app is installed on the phone.
+2. The owner signs in to it with his Azure account. The e-mail address he signs in with there is
+   what the step passes: Microsoft's page on action groups asks, for this kind of notification,
+   for the address used as the account ID when the app was set up
+   (<https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/action-groups>, dated
+   2026-07-21, read on 2026-10-06). Whether it is the sign-in name `az login` shows is not known:
+   nothing here takes one for the other.
+3. The phone's settings allow the app's notifications, which Microsoft's page on the app's
+   notifications asks for
+   (<https://learn.microsoft.com/en-us/azure/azure-portal/mobile-app/alerts-notifications>, dated
+   2026-01-21, read on 2026-10-06).
+
+Without them the step is run as it was written before that day: `$phone` stays empty, the
+script's report says `alertPushAccount: not written, the template's default applies`, the action
+group is not expected among what the what-if would change, and the part "The phone" below is
+left out. The variable `AZUREBANK_ALERT_PUSH_ACCOUNT` is not set in this terminal: the step names
+the account by the argument, or not at all.
+
 ```powershell
+$phone = ''   # between the quotes: the address the app on the owner's phone is signed in with
 # First: no deployment may be queued, waiting or running (Deploy a commit, "One deployment at a time").
 gh run list --workflow deploy.yml --limit 5 --json status,displayTitle,createdAt --repo Gurgant/azurebank-v2
 try {
-    ./infra/secrets.ps1 -Action New -DeployApp -DemoOn
+    ./infra/secrets.ps1 -Action New -DeployApp -DemoOn -AlertPushAccount $phone
     Invoke-Template 'demo-on'
 } finally {
     ./infra/secrets.ps1 -Action Remove
@@ -1456,22 +1529,26 @@ python infra/deploy.py --check
 Show-Executions azurebank-pool                                 # nothing
 Show-Executions azurebank-migrate                              # the control: its executions
 Show-List jobs/azurebank-pool/executions startTime             # what a job that never ran answers
+Show-Receivers                                                 # one of each kind, if an account was given
 ```
 
 `-DemoOn` is passed once. From then on the script reads the switch from the app's two containers
 and keeps it, as it keeps the tag and the secrets
-([Changing the infrastructure later](#changing-the-infrastructure-later)).
+([Changing the infrastructure later](#changing-the-infrastructure-later)). So is the phone's
+account: from then on the script reads it from the action group's one receiver of the Azure
+mobile app.
 
 | Read back | Expected |
 | --- | --- |
-| The script's report | Seven secrets "kept from the deployed resource"; `demoClientKeySecret: generated`; `demo: true, asked for with -DemoOn`. No value is shown |
-| The what-if, before "yes" | `Modify` on the app: its secrets, and the settings of both containers. `Create` for the job `azurebank-pool` and for one role assignment. The `Modify` lines of the earlier runs. Nothing to delete |
+| The script's report | Seven secrets "kept from the deployed resource"; `demoClientKeySecret: generated`; `demo: true, asked for with -DemoOn`; `alertPushAccount: from -AlertPushAccount`. No value is shown, and no account |
+| The what-if, before "yes" | `Modify` on the app: its secrets, and the settings of both containers. `Modify` on the action group, for one receiver of the Azure mobile app (expected as `properties.azureAppPushReceivers`). `Create` for the job `azurebank-pool` and for one role assignment. The `Modify` lines of the earlier runs. Nothing to delete. No what-if of this folder has been run on a group that already holds its action group, so what else it prints for that group is not known: a difference there that is not about a receiver is read before "yes", and a group to create or to delete is a "no" |
 | The deployment's answer | `Succeeded` |
 | `az containerapp secret list --name azurebank --resource-group $group --query '[].name' --output tsv` | Nine names |
 | The settings of each container, by name: the block below | `bff`: 6 settings, `Demo__Enabled` `true`. `api`: 13 settings, `Demo__Enabled` `true` |
 | `az containerapp job show --name azurebank-pool --resource-group $group --query properties.configuration`; the same with `--query 'properties.template.containers[0].args'` | `Schedule`, the expression `0 */4 * * *`, parallelism 1, retry limit 0, timeout 600, two secret names; `recycle` |
 | `az containerapp job list --resource-group $group --query '[].name' --output tsv`; `Show-Identities`; `az identity list-resources --resource-group $group --name azurebank-app` | Two jobs; a third line, `azurebank-pool: azurebank-app`; the app and the pool job |
 | The role assignments, as step 22 reads them | Three rows, the custom role on `containerApps/azurebank`, `jobs/azurebank-migrate` and `jobs/azurebank-pool` |
+| `Show-Receivers` | `emailReceivers: 1 (owner)` and `azureAppPushReceivers: 1 (owner-phone)`. With no account given: 0 for the second, as step 22 read it |
 | `--check` | It waits until the revision that answered before this step is inactive, and says so: "no other revision is active: what answers now is that revision". Then "The pool job's PIN pepper and connection string are the app's"; "It is the public demo: the page carries the demo's tag, and a registration with an empty body was refused as closed."; and at the end "the demo is on and the job azurebank-pool is in shape; the smoke test passed; nothing was moved." |
 | The two `Show-Executions` | Nothing for the pool job; the migrate job's executions, so that the silence is the function's answer and not its failure |
 | `Show-List` | `entries: 0`. Whether the answer of a job that never ran holds a list at all is what this read is for: it is recorded nowhere. `deploy.py` reads an answer with no list as no execution, so a deployment and a start by hand go on after it. If the line says `a list: False`, the `Show-Executions` above it prints one line with no name and no code where "nothing" is expected: that line is the function's print of such an answer, not an execution. The same line beside `a list: True` is a list given as `null`: a stop, since `deploy.py` ends a deployment and a `--pool-run` on such an answer in a traceback before any write (the row of that list under "Not measured yet" says what was seen). Write down which it was |
@@ -1490,6 +1567,60 @@ From here the app is the demo with an empty pool: a claim is answered 429 `DEMO_
 registration is closed. That state fails closed and may be left standing until the job's next
 run, which fills the pool by itself.
 
+**The phone, once `--check` has passed and not sooner.** Added on 2026-10-06; the block has not
+been sent. One test notification of the action group, to both of its receivers at once: the
+request names them itself, by the names the template gives them, with the mailbox read from the
+group and the account typed at the top of the step. It is this step's one request of the kind.
+Microsoft's limits allow two test notifications for one action group and five for a subscription
+in five minutes
+(<https://learn.microsoft.com/en-us/azure/azure-monitor/fundamentals/service-limits>, dated
+2025-12-17, read on 2026-10-06). The owner has the phone in his hand before it is sent.
+
+```powershell
+$to = az monitor action-group show --name azurebank-owner --resource-group $group --query 'emailReceivers[0].emailAddress' --output tsv
+$asked = [DateTime]::UtcNow
+$answer = az monitor action-group test-notifications create --action-group-name azurebank-owner --resource-group $group `
+    --alert-type metricstaticthreshold --add-action email owner $to usecommonalertschema `
+    --add-action azureapppush owner-phone $phone --output json | ConvertFrom-Json
+'asked at {0:HH:mm:ss}Z; an answer: {1}; state: {2}' -f $asked, [bool]$answer, $answer.state
+$answer.actionDetails | Where-Object { $null -ne $_ } | ForEach-Object {
+    $sent = if ($_.sendTime) { '{0:HH:mm:ss}Z' -f ([DateTime]$_.sendTime).ToUniversalTime() } else { 'at no time given' }
+    '{0} {1}: {2}, sent {3}' -f $_.mechanismType, $_.name, $_.status, $sent
+}
+```
+
+| Read back | Expected |
+| --- | --- |
+| The answer | **Not known for this offer.** On 2026-10-03 the offer refused step 15's test notification with `(Conflict) Free subscription not supported`, and nobody has asked since. If it is refused: Azure's text, then `an answer: False` and no line for a receiver. If it is taken: `an answer: True`, a state, and one line for each receiver, `owner` and `owner-phone`, with a status and the time it was sent, in UTC. The fields are the ones Microsoft's page of the request names (`state`, `actionDetails`, and in each the mechanism's type, the name, the status and the send time; <https://learn.microsoft.com/en-us/rest/api/monitor/action-groups/create-notifications-at-action-group-resource-level>, read on 2026-10-06) and have not been seen here: `an answer: True` with no state and no line for a receiver is the answer's shape differing from that page, not a failure, and `$answer` is then read on the screen and not pasted, since its `detail` may quote a receiver |
+| What must be seen | On the phone: a notification of the Azure mobile app. In the mailbox: one message, expected with the word "Test" in its subject, as Microsoft's page on action groups says of a test sent from the portal. Both, each by the owner's own eyes: the answer's status says the request was handed on, not that anything arrived |
+| What is written down | The time each of the two was seen, and so its delay from "asked at": to the second for the phone, which the owner is holding, to the minute for the mailbox; which came first; and the answer's two lines. Never the account and never the mailbox |
+
+**If the request is refused as step 15's was:** not a stop, and no second request, by the command
+or by the portal's Test button, which was not tried then and is not tried here. Nothing was sent,
+so nothing is due on the phone or in the mailbox. `Show-Receivers` has shown the receiver in the
+group, and the phone's road stays "not measured": its first proof is then the first alert that
+fires, and none has been seen firing.
+
+**If the request is taken and the phone shows nothing within ten minutes of "asked at"** (the ten
+minutes are this page's choice: no delay has been measured or read). Not a stop: the alerts go by
+e-mail as they did before the step. Three reads, in this order, and which of them differed is
+written down, in words:
+
+1. The answer's line for `owner-phone`, against the line for `owner`: a status that differs is
+   the first finding.
+2. `Show-Receivers`: `azureAppPushReceivers: 1 (owner-phone)`.
+3. On the phone, by the owner: the address the app is signed in with against the one typed at the
+   top of the step, letter for letter; the phone's settings for the app's notifications; and the
+   app's own list of notifications, which may hold what the phone did not show.
+
+What Azure does with a push for an account that has no app, or whose app is signed in with
+another address, is not known: nothing may say so anywhere. That is why the look at the phone is
+the read, and the answer alone is not. A second test notification is the owner's decision, not
+sooner than five minutes after the first, and only after one of the three reads changed
+something. **If the mailbox shows nothing either:** the answer's line for `owner`, the junk
+folder, and step 15's verification of the address; the e-mail road was last seen working that
+day.
+
 **If the policy refuses.** Where a run of the template meets a policy's refusal has not been
 measured: the refusals seen so far were single requests (step 15, and the trial). So the outcome
 is read, not assumed:
@@ -1500,6 +1631,18 @@ is read, not assumed:
 | The deployment fails with `RequestDisallowedByPolicy` | The same three, and the app's latest revision | Nine names, a new revision and one job, and `--check` ends with "The app says the demo is on, and the job azurebank-pool could not be read": the app's part was applied and the job was refused. That sentence is the read: `--check` stops at the job before it asks the address anything, so it cannot show the tag here. The app is the demo with an empty pool and no job, which fails closed. Eight names, the revision step 24 left and `--check` passing with "the demo is off": it was refused before anything was applied. Either way wait 15 minutes and run the step again as written: with nine names the script keeps the eight keys and the switch, with eight it generates the client key again. Anything else: stop |
 
 The third refusal is a stop.
+
+**If the what-if or the deployment fails on the action group** (Azure's text names
+`Microsoft.Insights/actionGroups`, `azurebank-owner` or the receiver). A receiver of this kind
+has never been sent from this folder. A what-if that fails sent nothing: the step again with
+`$phone` empty, which is the step as it was. A deployment that fails there may have written the
+app and the job all the same: a deployment sends its resources side by side, and one that fails
+is not expected to undo the others (expected, not provoked). So `--check` is read at once, before
+the time noted at the top of the step. If it passes, the app is the demo and the job is in shape:
+the step is run again with `$phone` empty, so that the deployment ends `Succeeded`, and the phone
+waits for a run of its own
+([Changing the infrastructure later](#changing-the-infrastructure-later)). If it does not pass:
+the rule below for a deployment that answered `Succeeded`, the pool job first.
 
 **If the deployment answers `Succeeded` and `--check` does not pass, or the app's latest revision
 is not its latest ready one.** "Do not go on" is not a safe stop here: the job exists, it is
@@ -1828,7 +1971,9 @@ The deployment identity can neither stop nor start the app: only the owner's sig
 
 The reads of step 22 once more, with what they are expected to give now: two jobs, three lines of
 identities, nine secret names, three role assignments, three alerts, the policy under its new
-name with `scheduledJobs`. Then the day's log volume by table ([Afterwards](#afterwards)),
+name with `scheduledJobs`, and the action group with one e-mail receiver and one receiver of the
+Azure mobile app (`azureAppPushReceivers: 1 (owner-phone)`; 0 if step 25 ran with no account).
+Then the day's log volume by table ([Afterwards](#afterwards)),
 `Show-Executions` for both jobs, and `Test-Path $folder`, `False`.
 
 **The lists, as Azure gives them.** `deploy.py` reads one answer of a job's executions and of
@@ -2003,6 +2148,9 @@ been sent, so every row is a refusal that has not been seen.
 | --- | --- |
 | The policy definition with its exception by name is refused, or the what-if of step 23 would touch the app, a job, the action group or an alert | Answer "no" where it is the what-if, and stop. The parameter `allowedJobTriggers` with `Schedule` in it is not used to get round it: it would let the migrate job be scheduled too |
 | The run of step 25 is refused by the policy | Step 25's table: three reads say whether the app's part was applied; wait 15 minutes and run the step again as written. The third refusal is a stop |
+| The what-if or the deployment of step 25 fails on the action group or on its receiver of the Azure mobile app | Step 25's own rule. A failed what-if sent nothing. After a failed deployment `--check` is read at once, since the app and the job may have been written all the same. Then the step again with no account, and the phone waits for a run of its own |
+| The test notification of step 25 is refused, as step 15's was on 2026-10-03 | Not a stop, and no second request. The phone's road stays not measured until an alert fires |
+| The test notification of step 25 is taken and nothing shows on the phone | Not a stop: the alerts go by e-mail as before. Step 25 has the three reads; a second test is the owner's decision, not sooner than five minutes later |
 | Step 25's deployment answers `Succeeded` and `--check` does not pass | Before the job's next run: the pool job is deleted if no run of it was ever listed, the app is stopped if one was (step 25). Only then the diagnosis |
 | The start by hand of step 26 is refused | Wait for the job's next run and read that execution |
 | A deployment as the identity is refused naming `userAssignedIdentities/assign/action` on the pool job (step 28) | Stop, as for the migrate job and the app: no role is created |
@@ -2794,6 +2942,9 @@ accepted a new connection from the same address.
    all three are refused inside GitHub Actions; the stop and the start of the app; and, if the
    demo is ever turned back after the pool job has run, the lock and the database, by his own
    hands.
+10. For the alerts on his phone (step 25; since 2026-10-06): the Azure mobile app installed,
+    signed in and allowed to notify; the address he signed in to it with, typed at the top of
+    the step; and the look at the phone, and at the mailbox, when the test notification is sent.
 
 ## Before renaming or transferring the repository
 
@@ -2809,9 +2960,10 @@ The credential trusts the repository by name. After a rename or a transfer, whoe
 ## Changing the infrastructure later
 
 Edit the template, then run it the same way. Without `-ImageTag` the parameter file takes the tag
-the app runs now, the eight secrets it holds now, the address its alerts write to now, what its
-environment does with its logs now and whether its two containers say the demo is on now, so the
-run leaves all five alone (until 2026-10-05: seven secrets, and four things):
+the app runs now, the eight secrets it holds now, the address its alerts write to now, the
+account of the Azure mobile app they notify now if there is one, what its environment does with
+its logs now and whether its two containers say the demo is on now, so the run leaves all six
+alone (until 2026-10-05: seven secrets, and four things; until 2026-10-06: five):
 
 ```powershell
 # First: no deployment may be queued, waiting or running (Deploy a commit, "One deployment at a time").
@@ -2843,6 +2995,19 @@ try {
   the pool job has an execution**: [Turning the demo back](#turning-the-demo-back). A run with
   the switch off does not delete a pool job that exists; it is expected to leave it, with its
   schedule.
+- **The phone's account is passed once, too.** `-AlertPushAccount` at step 25, or in a run of
+  this section if step 25 went without it: the step's three things by the owner's hands first,
+  then its one test notification. Afterwards the script reads the action group's one receiver
+  of the Azure mobile app and writes its account back, and its report says
+  `alertPushAccount: kept from the deployed resource`. With no such receiver it says
+  `alertPushAccount: not written, the template's default applies`, and the run asks for none.
+  Two such receivers stop it, since the template writes one. **To take the phone out** there is
+  no switch: the receiver is removed from the group by hand, in the portal or with
+  `az monitor action-group update --name azurebank-owner --resource-group $group --remove-action owner-phone --output none`,
+  and the next run then finds none, unless `AZUREBANK_ALERT_PUSH_ACCOUNT` is set in the
+  terminal. The command is read in Microsoft's reference
+  (<https://learn.microsoft.com/en-us/cli/azure/monitor/action-group>, read on 2026-10-06) and
+  has not been sent.
 - Images move through the `deploy` workflow only: once the app exists, `secrets.ps1` refuses
   another `-ImageTag`. So a run of the template creates the pool job on the tag the app runs.
 - The server is not changed by a later run: step 3 is where that is seen for the template. The
@@ -3037,8 +3202,10 @@ users go with the group. On this machine, if it is no longer wanted:
 
 ## What is not here
 
-- **Nothing stops the app automatically, and nothing stops the logs.** Three alert rules warn by
-  e-mail, all on the app; the owner stops the app and says when the logs go off.
+- **Nothing stops the app automatically, and nothing stops the logs.** Three alert rules warn,
+  all on the app, by e-mail and, once step 25 has given the action group his account of the
+  Azure mobile app, on the owner's phone; the owner stops the app and says when the logs go off.
+  A warning on the phone stops nothing either. Until 2026-10-06 this line said "by e-mail" alone.
 - No alert on the log's volume and none that its cap was reached. The metric rule that was meant
   for the volume did not count lines and was deleted on 2026-10-03 (step 20); a rule that does
   is a log search rule, which is billed, and the owner decided against one for now.
@@ -3627,7 +3794,16 @@ names only. Every PowerShell block of this page parses, and those ran against fu
 in for `az`, `git`, `python` and `curl.exe`, with invented answers: each sent the request
 written here, with the body its step describes, and removed its body file. `Show-Executions`,
 given an answer that holds no list, printed one line with no name and no code. No Azure answered
-any of them: the shape of every answer in that run was invented. On 2026-10-03 the tests also
+any of them: the shape of every answer in that run was invented. On 2026-10-06 the same was done
+for what the phone's receiver added. The 65 PowerShell blocks of this page parse, one more than
+before, and a block with an error planted in it is reported. `Show-Receivers` sent the request
+written here and printed counts and names, never an address, for five invented answers of the
+action group: no such receivers, an empty list of them, a null, one and two; with no answer it
+threw. Step 25's block for the test notification sent its two requests and printed its lines
+for an answer in the shape Microsoft's page of that request gives, for the same fields in
+another case, for another shape and for a refusal. The run of that step with
+`-AlertPushAccount` was not run as a block: what the script does with the argument, given and
+empty, is in the tests. On 2026-10-03 the tests also
 ran on Linux, in WSL
 (Ubuntu 24.04, Python 3.12, PowerShell 7.6.6 and Bicep 0.47.16), from an archive of the branch:
 all passed, among them the Linux half of two (the folder's and the file's modes, and the
@@ -3727,7 +3903,9 @@ against stand-ins and invented answers, and steps 22 to 33 are where each line w
 | Whether a workflow run that is cancelled reaches `deploy.py` as an interrupt, and so ends in its one sentence, or the script is killed without it. GitHub's page on cancelling a run says the interrupt is sent to the step's shell, and that the process tree is killed if the step is still running ten seconds later; it does not say what a program started by that shell is sent. Seen offline for an interrupt raised inside the script: exit code 1, nothing on standard output, the sentence on standard error | not provoked |
 | That a read of a pool run's exit code can be refused or fail after the run was seen over, and how Azure words it: the sentence for it is tested against an invented refusal | not provoked |
 | The repair of two containers that disagree about the demo; every road of [Turning the demo back](#turning-the-demo-back) | the day they are needed |
-| The CI job `infra` with the tests added on 2026-10-05: its minutes against its limit of 10. On this machine the suite of 428 to 444 tests took from under 6 to 29 minutes, the longer runs with other work beside them. The limit is in `.github/workflows/ci.yml`, which this change does not edit: a job that passes it is put right by a change of that file | the first run of CI on the pull request: that workflow runs on a pull request to `main` and on a push to `main`, not on a push of a branch |
+| Added on 2026-10-06. That Azure takes a receiver of the Azure mobile app from this template, with the account as its `emailAddress` and `owner-phone` as its name, and how a what-if words that change; what a read of the action group answers for a group with no such receiver: no property, an empty list or a null (`secrets.ps1` and `Show-Receivers` read each as none, against invented answers) | step 25: the what-if, the deployment and `Show-Receivers`; step 22 for the group with none |
+| Added on 2026-10-06. That an alert reaches the owner's phone at all: whether the address the app is signed in with is the one the receiver needs (the sign-in name the template knows as `entraAdminLogin` is not taken for it); what Azure does with a push for an account that has no app; the delay; what a notification costs on this offer; and whether this offer still refuses a test notification, as it did on 2026-10-03 | step 25's one test notification, by the owner's eyes; if it is refused, the first alert that fires; the cost by meter afterwards |
+| The CI job `infra` with the tests added on 2026-10-05: its minutes against its limit of 10. On this machine the suite of 428 to 444 tests took from under 6 to 29 minutes, the longer runs with other work beside them; on 2026-10-06, with the eight tests of the phone's receiver, the 452 took 21 minutes in one whole run, again with other work beside it. The limit is in `.github/workflows/ci.yml`, which this change does not edit: a job that passes it is put right by a change of that file | the first run of CI on the pull request: that workflow runs on a pull request to `main` and on a push to `main`, not on a push of a branch |
 
 
 ## Checking these files
@@ -3783,6 +3961,18 @@ no secure value, so the client key's length was not tried by it, and `bicep loca
 not run again: the eighth secret's 32 characters are read in the compiled check and have not
 been refused by any engine.
 
+**With the phone's receiver, on 2026-10-06** (the same Bicep, offline). The compiled template
+holds the 23 resources it held and 24 parameters, one more: `alertPushAccount`, a plain string,
+empty by default, which `app-inputs.bicep` does not check. The action group's properties are
+compiled as one expression, a `union` of the three they were with a fourth that exists only
+when the account is given: written as a list that may be empty, the fourth would have been sent
+on every run. Worked out by `bicep snapshot`: with no account named, and with an empty one, the
+run predicts the 22 resources it predicted, and the group with its three properties and one
+mailbox; with an account given, the same 22, the group with one receiver of the Azure mobile app
+more, named `owner-phone`, and nothing else of the run different; with an account given and no
+app, 14 and no group. That is all "with it empty the template is what it was" rests on. What
+Azure does with the receiver is in none of it.
+
 `test_deploy.py` tests the deployment script's decisions against invented answers: time is a
 counter and no process is started. One thing is read from the real clock: how old an execution
 is, against the start time a test gives it (until 2026-10-05 this paragraph did not say so). A
@@ -3810,7 +4000,9 @@ bounds of its timeout and the names of its two secrets, to hold each equal to th
 one source file of the backend, `backend/src/AzureBank.Shared/Options/DemoOptions.cs`, to hold
 every setting the template writes under the demo's section to a name the backend binds; and this
 page, for four quotes of `secrets.ps1` about the demo's switch: three lines of its report, and
-its refusal of two containers that disagree.
+its refusal of two containers that disagree. Since 2026-10-06 also for three quotes about the
+account of the owner's phone: three of the four lines of its report, the fourth being the one
+for the variable, which no step here uses.
 `test_deploy.py` reads seven source files of the backend as text, never built or run: three of
 the BFF, for the page's tag, the route of a registration, and the status and the member of the
 refusal that closes it; one of the shared library, for the error code; and three of the tool the

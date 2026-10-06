@@ -481,6 +481,17 @@ class SecretsScriptTests(ScriptCase):
                 self.assertEqual(len([call for call in self.calls() if 'actionGroups' in ' '.join(call)]),
                                  0 if state == 'empty' else 1)
                 self.assert_nothing_leaked(result, values)
+        # CONTROL: green as written (the script already took an empty argument for none). The
+        # argument given as empty is no account either, with -DeployApp and without it: the
+        # runbook's step 25 passes a variable that is empty when the owner goes without the phone.
+        # Seen red with the argument refused when it is empty.
+        for more in (['-DeployApp'], []):
+            with self.subTest(empty_argument_with=more):
+                (self.folder / 'parameters.json').unlink(missing_ok=True)
+                result = self.secrets('-Action', 'New', *more, '-AlertPushAccount', '', state='deployed')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn(self.PHONE, self.parameters())
+                self.assertEqual(result.stderr.count(self.NO_PHONE), 1 if more else 0)
 
     def test_the_argument_names_the_phones_account_before_anything_else_does(self):
         result = self.secrets('-Action', 'New', '-DeployApp', '-AlertPushAccount', 'given.phone@example.invalid',
@@ -848,7 +859,8 @@ class SecretsScriptTests(ScriptCase):
 
 
 class SecretsScriptQuotesTests(unittest.TestCase):
-    """What the runbook quotes of infra/secrets.ps1 about the demo's switch, held to the script.
+    """What the runbook quotes of infra/secrets.ps1 about the demo's switch and, since 2026-10-06,
+    about the account of the owner's phone, held to the script.
     Both files are read as text and nothing is run: the tests above hold what the script prints,
     and these hold that the page quotes the words the script holds. A step of the runbook gives
     such a line as what is good to read, and a read that differs is a stop there."""
@@ -876,6 +888,25 @@ class SecretsScriptQuotesTests(unittest.TestCase):
                 self.assertEqual(self.script.count(words), 1)
         (flag,) = re.findall(r"(?m)^\$DemoFlag = '([^']*)'$", self.script)
         for words in (*self.REPORT, self.DISAGREE.replace('$DemoFlag', flag)):
+            with self.subTest(words=words, held_by='the runbook'):
+                self.assertIn(words, self.page)
+
+    # The four lines of the report that say where the account of the owner's phone came from, or
+    # that nobody named one. The script writes each of them whole, once. The page quotes three:
+    # no step of it has the variable name the account.
+    PHONE_REPORT = ('alertPushAccount: from -AlertPushAccount',
+                    'alertPushAccount: from AZUREBANK_ALERT_PUSH_ACCOUNT',
+                    'alertPushAccount: kept from the deployed resource',
+                    "alertPushAccount: not written, the template's default applies")
+    PHONE_QUOTED = (PHONE_REPORT[0], *PHONE_REPORT[2:])
+
+    def test_the_lines_about_the_phones_account_that_the_runbook_quotes_are_the_ones_the_script_writes(self):
+        # Seen red with each line of the report reworded in the script, and with each quote
+        # taken out of the page.
+        for words in self.PHONE_REPORT:
+            with self.subTest(words=words, held_by='the script'):
+                self.assertEqual(self.script.count(words), 1)
+        for words in self.PHONE_QUOTED:
             with self.subTest(words=words, held_by='the runbook'):
                 self.assertIn(words, self.page)
 
