@@ -174,7 +174,11 @@ and then migrated an empty database):
   Azure deployment, which has no pool job yet, that is the identity `azurebank-app` and the user
   `azurebank_app`, never `azurebank-migrate`. Since 2026-10-05 the deployment's template holds
   that job, `azurebank-pool`, with that identity: `recycle` every four hours, the app's pepper
-  with no key id, and `Demo__Claim__MaxPerClientPerDay` at the value the API is given there.
+  with no key id, and no number of the demo, as the API is given none there: both read the
+  defaults, 10 for `Demo__Claim__MaxPerClientPerDay`. *(Until 2026-10-07 this said "and
+  `Demo__Claim__MaxPerClientPerDay` at the value the API is given there": the template gave
+  both 1,000, and a job or an app deployed from it before that day carries that value until
+  the template is run again, [infra/README.md](../../../infra/README.md), step 30.)*
   It is built when the demo is turned on, which has not been done on Azure
   ([infra/README.md](../../../infra/README.md), "Turn the demo on"). Measured
   2026-10-03, a login with `db_datareader` and `db_datawriter` alone ran `seed-pool` and `recycle`
