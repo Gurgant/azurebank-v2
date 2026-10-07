@@ -157,10 +157,11 @@ CodeQL analyses the C#, the TypeScript and the workflows on every pull request a
   two refused, and so again when each of the twelve named another address in a forwarded header;
   in one minute of the limit that connection's ten were answered and its eleventh refused, and a
   phone on another network that asked for a copy in the middle of them got it; and each of the
-  limiter's 179 warnings named the caller's own address. One number is still looser on the
-  deployment than in [the guide](docs/testing/try-the-demo.md#the-limits): the daily cap of
-  copies for one network is 1,000 there, not 10, so what bounds new copies is the pool. A change
-  that takes it back to 10 follows.
+  limiter's 179 warnings named the caller's own address. Until that day the deployment also gave
+  one network up to 1,000 copies a day, because it could not tell visitors apart. Since then it
+  writes no cap of its own, and the application's 10 a day apply, as in
+  [the guide](docs/testing/try-the-demo.md#the-limits): the deployed settings read back that way
+  on 2026-10-07. No visitor has been seen refused an eleventh copy there.
 - axe runs in CI over nine pages and two dialogs and fails on any serious or critical finding
   except colour contrast, which is left to the UI/UX phase; the details are in
   [frontend/README.md](frontend/README.md).

@@ -26,8 +26,8 @@ network address is kept with the copy and removed when the copy is deleted."
 ## Where it runs
 
 Open **the demo's address** in your browser. The public address is in
-[the README](../../README.md#try-it); what is different there for now, a slow first page and
-a daily cap of copies higher than this page's, is under its
+[the README](../../README.md#try-it); what a visitor meets there that this page does not say, a
+slow first page after a quiet spell, is under its
 [Status and known limits](../../README.md#status-and-known-limits). *(Until 2026-10-06 this
 line said: "The public address is not published yet.")*
 
