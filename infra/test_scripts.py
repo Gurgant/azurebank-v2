@@ -2009,10 +2009,16 @@ THE_BFF_AS_IT_WAS = [
 # them one setting for each network of proxies a run names. And what each of those is named.
 BFF_SETTINGS = "[flatten(createArray(variables('bffSettings'), variables('proxyNetworkSettings')))]"
 NETWORKS_SETTING = 'ForwardedHeaders__KnownIPNetworks__'
+# The api's twelve. Until 2026-10-07 a thirteenth closed the list, the cap on one address's
+# claims: the template writes no number of the demo any more, and a test below holds that none
+# comes back (CLAIM_SETTING).
 SETTINGS_OF_THE_API = ['ASPNETCORE_ENVIRONMENT', 'ASPNETCORE_URLS', 'ConnectionStrings__DefaultConnection',
                        'Jwt__Secret', 'Idempotency__HashKey', 'StepUp__BindingKey', 'ServiceCredential__BffKey',
                        'Audit__ChainKey', 'Audit__AnchorKey', 'Security__PinPepper', 'Demo__Enabled',
-                       'Demo__ClientKeySecret', 'Demo__Claim__MaxPerClientPerDay']
+                       'Demo__ClientKeySecret']
+# What the template wrote until that day, on the api container and on the pool job, and the
+# section of the demo's settings it stands in.
+CLAIM_SETTING = 'Demo__Claim__MaxPerClientPerDay'
 # One switch, written as text to every container of the app.
 DEMO_FLAG = {'name': 'Demo__Enabled', 'value': "[if(parameters('demo'), 'true', 'false')]"}
 SERVER = "resourceId('Microsoft.Sql/servers', format('azurebank-{0}', uniqueString(resourceGroup().id)))"
@@ -2678,20 +2684,26 @@ class TemplateTests(unittest.TestCase):
 
     def test_every_setting_of_the_demo_is_one_the_backend_binds(self):
         # CONTROL: green as written. A setting whose name the backend does not bind is not an
-        # error anywhere: the host starts and the default applies. For the cap on one address's
-        # claims that default is 10 where the template means 1,000 (ADR-0063, decision 14). So
-        # each name the template writes under the demo's section is walked through the classes
-        # of backend/src/AzureBank.Shared/Options/DemoOptions.cs, read as text: the section,
-        # then a property of each class on the way. Seen red with the cap's name changed in the
-        # template and in the lists above.
+        # error anywhere: the host starts and the default applies. For the demo's switch that
+        # default is off, where the template means the demo on. So each name the template writes
+        # under the demo's section is walked through the classes of
+        # backend/src/AzureBank.Shared/Options/DemoOptions.cs, read as text: the section, then a
+        # property of each class on the way. Until 2026-10-07 the example here was the cap on one
+        # address's claims, 10 by default where the template meant 1,000 (ADR-0063, decision
+        # 14), and the test was seen red with the cap's name changed in the template and in the
+        # lists above. The template no longer writes the cap: seen red on that day, in the walk,
+        # with the client key's name changed in the template and in the list below. The cap's
+        # own name is walked too, though nothing here writes it: of the three it is the one that
+        # passes through a second class, and docs/runbooks/demo-pool.md names it to whoever
+        # changes the cap.
         source = (HERE.parent / 'backend' / 'src' / 'AzureBank.Shared' / 'Options' / 'DemoOptions.cs').read_text(
             encoding='utf-8')
         classes = {name: dict((prop, kind) for kind, prop in re.findall(r'public (\S+) (\w+) \{ get; set; \}', body))
                    for name, body in re.findall(r'(?ms)^public class (\w+)\n\{\n(.*?)^\}', source)}
         (section,) = re.findall(r'public const string SectionName = "(\w+)";', source)
         written = sorted({name for _, _, name in self.every_setting() if name.startswith(f'{section}__')})
-        self.assertEqual(written, ['Demo__Claim__MaxPerClientPerDay', 'Demo__ClientKeySecret', 'Demo__Enabled'])
-        for name in written:
+        self.assertEqual(written, ['Demo__ClientKeySecret', 'Demo__Enabled'])
+        for name in [*written, CLAIM_SETTING]:
             with self.subTest(name=name):
                 kind = 'DemoOptions'
                 for part in name.split('__')[1:]:
@@ -2704,6 +2716,9 @@ class TemplateTests(unittest.TestCase):
         # Whether the BFF sees a visitor's own address behind the ingress is not measured yet
         # (ADR-0063, decision 14): until it is, no container of any resource is told whose
         # forwarded headers to believe. .NET reads a setting's name whatever its case.
+        # (2026-10-07: it has been measured since, README.md, step 30. Behind the ingress the BFF
+        # saw the platform's addresses, and one run named the ingress's network for it. No file
+        # names one: the sentences below stand.)
         # Since 2026-10-06 that holds for what every run writes, which is what `every_setting`
         # walks: a run that names networks of proxies tells the bff, and the bff alone, to believe
         # them (the test below), and the switch that would make a host believe every caller is
@@ -2820,7 +2835,10 @@ class TemplateTests(unittest.TestCase):
             self.assertEqual([key for key, resource in runs.get('two networks without the app', {}).items()
                               if resource['type'] == APP or one in json.dumps(resource)], [])
 
-    def test_the_api_is_handed_the_client_key_by_reference_and_the_cap_as_a_plain_value(self):
+    def test_the_api_is_handed_the_client_key_by_reference_and_no_number_of_the_demo(self):
+        # Until 2026-10-07 this test ended "and the cap as a plain value": the api's list closed
+        # with the cap on one address's claims, 1,000 from one variable. The test below holds
+        # what is true of it now.
         api = self.container('api')
         self.assertEqual([entry['name'] for entry in api['env']], SETTINGS_OF_THE_API)
         # The key a visitor's address is hashed with: a secret of the app, handed to the api alone.
@@ -2828,17 +2846,43 @@ class TemplateTests(unittest.TestCase):
         self.assertIn({'name': 'demo-client-key', 'value': f"[parameters('{CLIENT_KEY}')]"},
                       app['properties']['configuration']['secrets'])
         self.assertIn({'name': 'Demo__ClientKeySecret', 'secretRef': 'demo-client-key'}, api['env'])
-        # How many copies one address may claim in a day: one variable, the range's maximum
-        # (ADR-0063, decision 14), written as text.
-        self.assertIn({'name': 'Demo__Claim__MaxPerClientPerDay', 'value': "[variables('demoClaimsPerClient')]"},
-                      api['env'])
-        self.assertEqual(self.main['variables'].get('demoClaimsPerClient'), '1000')
         # No key id and no earlier pepper on any container of any resource: with neither set, the
         # one pepper is key 1 wherever it is read (ADR-0062).
         about_pepper_keys = re.compile(r'Security__PinPepperKeyId$|Security__PreviousPinPeppers__', re.IGNORECASE)
         for name in ('Security__PinPepperKeyId', 'Security__PreviousPinPeppers__1'):
             self.assertRegex(name, about_pepper_keys)
         self.assertEqual([found for found in self.every_setting() if about_pepper_keys.match(found[2])], [])
+
+    def test_no_container_is_told_how_many_copies_one_address_may_claim(self):
+        # Until 2026-10-07 the template wrote the cap on one address's claims on the api container
+        # and on the pool job, 1,000 from one variable: behind the ingress the BFF saw the
+        # platform's addresses and never a visitor's, and the default of 10 would have been ten
+        # copies a day for everybody (ADR-0063, decision 14). Since the BFF there counts a
+        # visitor by the visitor's own address (README.md, step 30), nothing writes it, and the
+        # application's default applies on both. A cap that came back would be an error
+        # nowhere: the api starts on any value in its range, and 1,000 stops nobody. So no
+        # container of any resource carries a setting of the claim's section, under either
+        # separator a host reads and whatever its case (.NET reads a setting's name whatever
+        # its case). Seen red on that day three ways: with the template as it stood before, the
+        # variable and both settings; with the setting put back on the api container alone, as a
+        # plain value; and with it put back on the pool job alone.
+        about_the_claim = re.compile(r'Demo(?:__|:)Claim(?:__|:)', re.IGNORECASE)
+        for name in (CLAIM_SETTING, CLAIM_SETTING.upper(), 'Demo:Claim:MaxPerClientPerDay', 'demo__claim__x'):
+            self.assertRegex(name, about_the_claim)
+        self.assertEqual([found for found in self.every_setting() if about_the_claim.match(found[2])], [])
+        # And nowhere else in what the template compiles to: not in a variable, where the cap
+        # stood and where the bff's settings stand now, not in an argument of a job, not in an
+        # expression that would build the name. The compiled text holds no comment, so the one
+        # in main.bicep that says where the cap went is not in it. Seen red on that day with the
+        # cap handed to the pool job as an argument, which the walk above does not read.
+        compiled = json.dumps(self.main).lower()
+        for words in ('maxperclientperday', 'demo__claim', 'demo:claim', 'democlaimsperclient'):
+            with self.subTest(words=words):
+                self.assertEqual(compiled.count(words), 0, 'the compiled template holds these words')
+        # CONTROL: that search reads the settings it is meant to read. The switch's name, which
+        # the template does write, is in the same text.
+        self.assertGreater(compiled.count(DEMO_FLAG['name'].lower()), 0)
+        self.assertNotIn('demoClaimsPerClient', self.main['variables'])
 
     def test_the_app_keeps_the_shape_the_deploy_script_and_the_policy_expect(self):
         (app,) = self.of_type('Microsoft.App/containerApps')
@@ -2907,15 +2951,15 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(sorted(container), ['args', 'env', 'image', 'name', 'resources'])
         self.assertEqual(sorted(configuration),
                          ['replicaRetryLimit', 'replicaTimeout', 'scheduleTriggerConfig', 'secrets', 'triggerType'])
-        # What it is told: where the database is and the pepper, by reference; that the demo is
-        # on, as a plain word, because the template writes the job only with the demo on; and the
-        # cap on one address's claims, the one expression the api container has.
-        (cap,) = [entry for entry in self.container('api')['env'] if entry['name'] == 'Demo__Claim__MaxPerClientPerDay']
+        # What it is told: where the database is and the pepper, by reference; and that the demo
+        # is on, as a plain word, because the template writes the job only with the demo on.
+        # Three settings. Until 2026-10-07 a fourth closed the list, the cap on one address's
+        # claims, the one expression the api container had: neither is told a number of the demo
+        # any more, so both read the application's defaults.
         self.assertEqual(container.get('env'), [
             {'name': 'ConnectionStrings__DefaultConnection', 'secretRef': 'app-connection'},
             {'name': 'Security__PinPepper', 'secretRef': 'pin-pepper'},
-            {'name': 'Demo__Enabled', 'value': 'true'},
-            cap])
+            {'name': 'Demo__Enabled', 'value': 'true'}])
 
     def test_two_scheduled_runs_cannot_overlap(self):
         # Two pool runs at once can build up to twice the pool's target
