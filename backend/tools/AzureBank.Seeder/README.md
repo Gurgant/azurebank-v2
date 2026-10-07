@@ -171,12 +171,23 @@ and then migrated an empty database):
   both write nothing and exit 13.
 - **Give them a login that reads and writes rows and nothing more**: where a deployment gives the
   app and its migration database users of their own, the app's, never the migration's. On the
-  Azure deployment, which has no pool job yet, that is the identity `azurebank-app` and the user
-  `azurebank_app`, never `azurebank-migrate`. Since 2026-10-05 the deployment's template holds
-  that job, `azurebank-pool`, with that identity: `recycle` every four hours, the app's pepper
-  with no key id, and `Demo__Claim__MaxPerClientPerDay` at the value the API is given there.
-  It is built when the demo is turned on, which has not been done on Azure
-  ([infra/README.md](../../../infra/README.md), "Turn the demo on"). Measured
+  Azure deployment that is the identity `azurebank-app` and the user `azurebank_app`, never
+  `azurebank-migrate`. *(Until 2026-10-07 this said "the Azure deployment, which has no pool
+  job yet": on that day the deployment's check read the job `azurebank-pool` there, in shape
+  and with the app's pepper and connection string,
+  [infra/README.md](../../../infra/README.md), step 30.)* Since 2026-10-05 the deployment's
+  template holds that job, with that identity: `recycle` every four hours, the app's pepper
+  with no key id, and no number of the demo, as the API is given none there: a job and an
+  API built from the template as it is now read the defaults, 10 for
+  `Demo__Claim__MaxPerClientPerDay`. *(Until 2026-10-07 this said "and
+  `Demo__Claim__MaxPerClientPerDay` at the value the API is given there": the template gave
+  both 1,000. The job and the app that are on Azure were built from that template: they are
+  expected to carry the 1,000 until the template is run there again, which has not been
+  done, [infra/README.md](../../../infra/README.md), step 30, part 5.)*
+  It is built when the demo is turned on
+  ([infra/README.md](../../../infra/README.md), "Turn the demo on"). *(Until 2026-10-07 this
+  said "which has not been done on Azure": on that day the deployed app had the demo on, and
+  the deployment's check read the job there, step 30 of that page.)* Measured
   2026-10-03, a login with `db_datareader` and `db_datawriter` alone ran `seed-pool` and `recycle`
   through a whole cycle (copies built, a claimed copy and a stale one deleted, the sweeps), exit 0,
   on LocalDB from an empty database, roles included, and on the compose SQL Server, where the roles

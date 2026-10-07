@@ -16,7 +16,9 @@ same job) and [ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down
 precondition (a deployment does not start beside a pool run)
 
 **Where the code is.** `infra/main.bicep` (the switch `demo`, the pool job, its role assignment,
-the two variables, and the phone's receiver in the action group), `infra/guardrails.bicep` (the
+the two variables *(2026-10-07: one since that day, the pool job's schedule; the other, the cap
+on one client's claims, is taken out, decision 2's note of that date)*, and the phone's
+receiver in the action group), `infra/guardrails.bicep` (the
 exception by name), `infra/app-inputs.bicep` (the client key's length), `infra/secrets.ps1`
 (`-DemoOn`, the eighth secret, and `-AlertPushAccount`),
 `infra/deploy.py` (`demo_of`, `pool_drift`, `check`, `pool_run`, the two checks of the smoke test)
@@ -29,7 +31,9 @@ Azure access: the templates compile, the scripts and `deploy.py` are tested offl
 stand-ins and invented answers, and one thing was measured on a local stack. Every sentence
 below about what Azure does is what the code and the earlier records lead to expect. The
 runbook's third session is where each is to be seen, and a later change records what it
-measured.
+measured. *(2026-10-07: one thing of it has been measured on Azure since, what the BFF sees as
+a visitor's address behind the ingress, at the runbook's step 30 on 2026-10-06 and on
+2026-10-07: decision 2's note of that date. This record holds no other measurement on Azure.)*
 
 ## Context
 
@@ -81,10 +85,32 @@ passed again.
 `bff` and on the `api` container, written as `true` or `false` from the switch. The app holds a
 ninth secret, the demo's client key, which the `api` container alone is handed, whether the demo
 is on or off; the check of the app's values asks 32 characters of it, because the API refuses to
-start with the demo on and a shorter one. `Demo__Claim__MaxPerClientPerDay` is 1,000 on the `api`
-container and on the job, from one variable, as ADR-0063's decision 14 asks until the address the
-BFF sees behind the ingress has been measured. Every other number of the demo stays at its
-default on all three, so no two can differ. No container carries a key id of the pepper, a
+start with the demo on and a shorter one. ~~`Demo__Claim__MaxPerClientPerDay` is 1,000 on the
+`api` container and on the job, from one variable, as ADR-0063's decision 14 asks until the
+address the BFF sees behind the ingress has been measured. Every other number of the demo stays
+at its default on all three, so no two can differ.~~ *(struck 2026-10-07: the template writes
+no number of the demo any more. The variable is gone, every number is at the application's
+default on all three, 10 for the cap on one client's claims, so no two can differ, and a test
+holds that no container of the template carries a setting under `Demo__Claim__`. What
+ADR-0063's decision 14 waited for was measured at the runbook's step 30. On 2026-10-06, before
+any network was named, twelve sign-ins sent from one connection in under eight seconds were all
+answered, where the limit is ten a minute for one caller, and the limiter's warnings for nine
+later refusals named two internal addresses, neither of them the caller's. On 2026-10-07 one
+run of the template named the ingress's network on the `bff` container, and the proof was run:
+from one connection, twelve sign-ins in under four seconds were answered ten times and refused
+at the eleventh and at the twelfth, four times over, two of the four with an `X-Forwarded-For`
+header that named another address in each request; the limiter's 52 warnings, as many as that
+caller's refusals up to then, all named that caller's own public address, none an address
+of the ingress and none an address a header had named. The proof's own line, a caller on a
+second network answered while the first is held to its ten, was read in a fifth run: with one
+sign-in a second from that connection, the limiter let eleven requests through inside 13
+seconds, the connection's ten and, in the middle of them, a copy claimed from a phone on a
+mobile network; the connection's next request was refused, and that run's 127 warnings named
+the connection's own address as the 52 had. Not run: the run of the template that takes the
+setting out on Azure. Until it is made
+the deployed `api` container and the deployed job are expected to carry the 1,000: on
+2026-10-07 that container read back 13 settings, the template's count with the cap
+(`infra/README.md`, step 30).)* No container carries a key id of the pepper, a
 previous pepper ~~or a forwarded-headers setting~~ *(struck 2026-10-06, ADR-0013's note of that
 day: a run that names networks of proxies writes one setting for each on the `bff` container,
 `ForwardedHeaders__KnownIPNetworks__0` and on, so that the BFF counts a visitor by the visitor's
@@ -284,7 +310,9 @@ before.
 
 - **Nothing on Azure changes with the merge, and the next run of the template changes the app
   whatever it is for.** With the switch off the template still writes the ninth secret and four
-  settings on the app, the flag as `false` on both containers among them: that is expected to
+  settings on the app *(2026-10-07: three since that day, the cap on one client's claims being
+  written no more: decision 2's note of that date)*, the flag as `false` on both containers
+  among them: that is expected to
   make a new revision, and a new revision ends every session. The role definition's description
   changed too, so a run without the app shows a change on it. Nothing is created or deleted.
 - **The same run changes the policy, with the switch off as with it on.** Its definition gets
@@ -294,9 +322,16 @@ before.
   after every way back, and an override that takes it out holds only until the next run without
   it. While no pool job exists it serves only whoever may create a job in the resource group,
   which the deployment identity may not: its role is assigned on resources that exist.
-- **With the demo on, the pool is the only bound on strangers.** The cap for one client is 1,000
-  until the address is measured, so what is left is 50 free copies, the day's 150 claims and 200
-  changes in a copy. And if the BFF sees one address for every visitor, two of its three rate
+- ~~**With the demo on, the pool is the only bound on strangers.** The cap for one client is
+  1,000 until the address is measured, so what is left is 50 free copies, the day's 150 claims
+  and 200 changes in a copy.~~ *(struck 2026-10-07, decision 2's note of that date: the address
+  is measured and the template sets no cap, so one client is given the default, 10 copies in a
+  rolling 24 hours, and the pool's numbers are what bounds callers who come from many
+  addresses. On the deployed app the 1,000 is expected to stand until the run of the template
+  that takes it out, which has not been made; and since the run that named the ingress's
+  network the limit of ten a minute counts a caller there by the caller's own address, by the
+  function the 300 a minute count by too.)* And if the BFF sees one address
+  for every visitor, two of its three rate
   limits are shared by everybody, the ten a minute of the sign-in doors and the 300 a minute of
   everything else: they count by one function of the caller's address. The third, on recipient
   lookups, counts by the signed-in user.
@@ -392,7 +427,8 @@ Offline, on one machine (Windows, Python 3.14, PowerShell 7.6, Bicep 0.47.16), o
 - that the owner may list the secrets of the app and of a job;
 - the demo's tag and the closed registration through the ingress, and the claim and a PIN from a
   browser;
-- what the BFF sees as a visitor's address;
+- ~~what the BFF sees as a visitor's address;~~ *(struck 2026-10-07: measured, decision 2's
+  note of that date)*
 - what a stopped app answers, and which property says it is stopped;
 - that Azure takes the action group's second receiver, that a notification reaches the owner's
   phone, after how long, and what it costs;
@@ -406,7 +442,9 @@ Offline, on one machine (Windows, Python 3.14, PowerShell 7.6, Bicep 0.47.16), o
   here says which way it went.
 - **The address the BFF sees is measured** (the runbook's step 30): the cap of 1,000 goes back to
   its default, or stays until the BFF reads the client's address through the ingress, which is a
-  change of its code.
+  change of its code. *(2026-10-07: measured. The BFF reads the client's address through the
+  ingress, from the networks of ADR-0013's note of 2026-10-06, and the cap of 1,000 goes back
+  to its default in the template: decision 2's note of this date.)*
 - **The pool is found empty twice in a week with nobody at the terminal:** a workflow action for
   the refill.
 - **The two metrics have been read** (step 31): an alert on a failed pool run and on the
