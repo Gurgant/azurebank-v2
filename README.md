@@ -99,8 +99,10 @@ money rules. [How AzureBank works](docs/architecture/overview.md) follows one re
   <https://azurebank.lemonmoss-e3015c47.italynorth.azurecontainerapps.io/>. One press of
   **Try the demo** gives you a private copy of a bank account with invented money: two accounts
   (Main Savings €12,450.00 and Checking €2,300.00), two months of history and two contacts you can
-  pay. The PIN is `123456`, and the page shows it. The copy works for 24 hours, then it is closed
-  and deleted; **Start over** gives you a fresh one. Don't enter real personal data. The first
+  pay. The PIN is `123456`, and the page shows it. The copy works for 24 hours and is then closed.
+  A job that runs every four hours deletes closed copies: not sooner than five minutes after a
+  copy's end, and a copy somebody is still signed in to at a later run, 48 hours after its end at
+  the latest. **Start over** gives you a fresh one. Don't enter real personal data. The first
   page can take about half a minute. The journeys to try and the limits you can meet are in
   [Try the demo](docs/testing/try-the-demo.md).
 - **The UI alone**, against a mock that runs in the browser — Node only:
