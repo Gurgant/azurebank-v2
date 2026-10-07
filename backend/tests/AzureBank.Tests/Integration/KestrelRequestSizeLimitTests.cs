@@ -195,7 +195,12 @@ public sealed class KestrelRequestSizeLimitTests : IDisposable
     // usual answer, and 40,000 bytes with no token get the 401 first. With a Content-Length that body
     // is 32,768 bytes; in one chunk it is 32,755, because the server counts the chunk's 13 bytes of
     // framing as well (the theory above has 32,756 in one chunk refused). The request with no token
-    // is the last this test sends: Kestrel can abort the connection after its keep-alive 401.
+    // is the last this test sends: Kestrel can abort the connection after its keep-alive 401. So it
+    // goes on a socket of its own, and its 401 is read before any of its body is sent: body bytes
+    // that reach the server after it has closed, or that it had not read when it closed, reset the
+    // connection, and a reset throws away an answer nobody has read yet (measured on Windows). Until
+    // 2026-10-06 the HTTP client sent the whole body before it read the answer, and a write the
+    // server's close broke failed the test: "Error while copying content to a stream".
     [Theory]
     [InlineData("/api/transfers/authorizations", false)]
     [InlineData("/api/transfers/authorizations", true)]
@@ -216,10 +221,37 @@ public sealed class KestrelRequestSizeLimitTests : IDisposable
         boundary.StatusCode.Should().Be(expected.Status);
         await AssertErrorCodeAsync(boundary, expected.Code);
 
-        using var unauthenticated = await SendAsync(path, body.PadRight(40_000),
-            token: null, chunked: chunked, idempotent: false);
-        unauthenticated.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
-        await AssertErrorCodeAsync(unauthenticated, ErrorCodes.TokenMissing);
+        var unauthenticatedBody = Encoding.UTF8.GetBytes(body.PadRight(40_000));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var socket = new System.Net.Sockets.TcpClient();
+        await socket.ConnectAsync(IPAddress.Loopback, _client.BaseAddress!.Port, deadline.Token);
+        await using var stream = socket.GetStream();
+        await stream.WriteAsync(
+            MintRequestHead(path, token: null, unauthenticatedBody.Length, chunked: chunked), deadline.Token);
+        var unauthenticated = await ReadWireResponseAsync(stream, deadline.Token);
+
+        try
+        {
+            if (chunked)
+            {
+                await stream.WriteAsync(
+                    Encoding.ASCII.GetBytes($"{unauthenticatedBody.Length:x}\r\n"), deadline.Token);
+                await stream.WriteAsync(unauthenticatedBody, deadline.Token);
+                await stream.WriteAsync("\r\n0\r\n\r\n"u8.ToArray(), deadline.Token);
+            }
+            else
+            {
+                await stream.WriteAsync(unauthenticatedBody, deadline.Token);
+            }
+        }
+        catch (IOException)
+        {
+            // The server has closed: how much of the body it took is not what this test holds.
+        }
+
+        unauthenticated.Status.Should().Be((int)HttpStatusCode.Unauthorized);
+        using var unauthenticatedProblem = JsonDocument.Parse(unauthenticated.Body);
+        unauthenticatedProblem.RootElement.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.TokenMissing);
     }
 
     [Theory]
@@ -347,15 +379,27 @@ public sealed class KestrelRequestSizeLimitTests : IDisposable
         problem.GetProperty("traceId").GetString().Should().NotBeNullOrWhiteSpace();
     }
 
-    private byte[] MintRequestHead(string path, string token, int length)
+    private byte[] MintRequestHead(
+        string path, string? token, int? length = null, bool chunked = false)
     {
         var head = new StringBuilder($"POST {path} HTTP/1.1\r\nHost: {_client.BaseAddress!.Authority}\r\n");
         foreach (var header in _client.DefaultRequestHeaders)
         {
             head.Append(header.Key).Append(": ").Append(string.Join(", ", header.Value)).Append("\r\n");
         }
-        head.Append("Authorization: Bearer ").Append(token).Append("\r\n")
-            .Append("Content-Type: application/json\r\nContent-Length: ").Append(length).Append("\r\n\r\n");
+        if (token is not null)
+        {
+            head.Append("Authorization: Bearer ").Append(token).Append("\r\n");
+        }
+        head.Append("Content-Type: application/json\r\n");
+        if (chunked)
+        {
+            head.Append("Transfer-Encoding: chunked\r\n\r\n");
+        }
+        else
+        {
+            head.Append("Content-Length: ").Append(length).Append("\r\n\r\n");
+        }
         return Encoding.ASCII.GetBytes(head.ToString());
     }
 
