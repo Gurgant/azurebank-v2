@@ -452,10 +452,9 @@ class SecretsScriptTests(ScriptCase):
         self.assertEqual(self.parameters()['alertEmail'], 'given@example.invalid')
         self.assertIn('alertEmail: from -AlertEmail', result.stderr)
         self.assertNotIn('given@', result.stderr + self.log.read_text(encoding='utf-8'))
-        # Until 2026-10-06 this test held that the deployed group is then not asked at all. It is
-        # asked once now, for the phone's account, which this run does not name: the mailbox
-        # written is the argument's all the same (above), and with both named nothing is asked
-        # (test_the_argument_names_the_phones_account_before_anything_else_does).
+        # The deployed group is asked once, for the phone's account, which this run does not name:
+        # the mailbox written is the argument's all the same (above), and with both named nothing
+        # is asked (test_the_argument_names_the_phones_account_before_anything_else_does).
         self.assertEqual(len([call for call in self.calls() if 'actionGroups' in ' '.join(call)]), 1)
         self.assertNotIn('alertPushAccount', self.parameters())
         # "Not asked at all" also held that nothing the group says of its mailboxes can stop a run
@@ -512,8 +511,8 @@ class SecretsScriptTests(ScriptCase):
                                  0 if state == 'empty' else 1)
                 self.assert_nothing_leaked(result, values)
         # CONTROL: green as written (the script already took an empty argument for none). The
-        # argument given as empty is no account either, with -DeployApp and without it: the
-        # runbook's step 25 passes a variable that is empty when the owner goes without the phone.
+        # argument given as empty is no account either, with -DeployApp and without it: a command
+        # line may pass a variable that is empty when no phone is to be notified.
         # Seen red with the argument refused when it is empty.
         for more in (['-DeployApp'], []):
             with self.subTest(empty_argument_with=more):
@@ -662,9 +661,9 @@ class SecretsScriptTests(ScriptCase):
                 self.assertNotIn(self.NETWORKS, self.parameters())
                 self.assertIn(self.NO_NETWORKS, result.stderr)
                 self.assertEqual(result.stderr.count(f'{self.NETWORKS}: '), 1)
-        # The argument given as empty names none, with -DeployApp and without it: a step of the
-        # runbook passes a variable that is empty until the operator has measured a range. With
-        # it empty the deployed app is still what is read.
+        # The argument given as empty names none, with -DeployApp and without it: a command line
+        # may pass a variable that is empty until a range has been measured. With it empty the
+        # deployed app is still what is read.
         for more, deployed, expected in ((['-DeployApp'], '', None), ([], '', None),
                                          (['-DeployApp'], self.held('192.0.2.0/24'), ['192.0.2.0/24'])):
             with self.subTest(empty_argument_with=more, deployed=bool(deployed)):
@@ -1157,11 +1156,11 @@ class SecretsScriptTests(ScriptCase):
 
 
 class SecretsScriptQuotesTests(unittest.TestCase):
-    """What the runbook quotes of infra/secrets.ps1 about the demo's switch and, since 2026-10-06,
-    about the account of the owner's phone and about the networks of proxies, held to the script.
-    Both files are read as text and nothing is run: the tests above hold what the script prints,
-    and these hold that the page quotes the words the script holds. A step of the runbook gives
-    such a line as what is good to read, and a read that differs is a stop there."""
+    """What the runbook quotes of infra/secrets.ps1 about the demo's switch, about the account of
+    the phone that takes the alerts and about the networks of proxies, held to the script. Both
+    files are read as text and nothing is run: the tests above hold what the script prints, and
+    these hold that the page quotes the words the script holds. The runbook gives such a line as
+    what is good to read, and a read that differs is a stop there."""
 
     # The three lines of the report that say what was done with the switch.
     REPORT = ('demo: true, asked for with -DemoOn', "demo: not written, the template's default applies",
@@ -1189,9 +1188,9 @@ class SecretsScriptQuotesTests(unittest.TestCase):
             with self.subTest(words=words, held_by='the runbook'):
                 self.assertIn(words, self.page)
 
-    # The four lines of the report that say where the account of the owner's phone came from, or
-    # that nobody named one. The script writes each of them whole, once. The page quotes three:
-    # no step of it has the variable name the account.
+    # The four lines of the report that say where the account of the phone came from, or that
+    # none was named. The script writes each of them whole, once. The page quotes three: no step
+    # of it has the variable name the account.
     PHONE_REPORT = ('alertPushAccount: from -AlertPushAccount',
                     'alertPushAccount: from AZUREBANK_ALERT_PUSH_ACCOUNT',
                     'alertPushAccount: kept from the deployed resource',
@@ -1360,7 +1359,7 @@ class UsersToolTests(UsersCase):
 
     def test_there_is_no_switch_for_the_object_id_and_asking_for_one_runs_nothing(self):
         # A user carries its identity's client ID and nothing else (README.md, "Measured on Azure").
-        # Started as an operator starts it: PowerShell refuses the name before the script's first line.
+        # Started from a command line: PowerShell refuses the name before the script's first line.
         result = self.run_script('sql-principals.ps1', '-SqlcmdPath', str(self.tool), '-IdKind', 'ObjectId',
                                  FAKE_SQLCMD_LOG=str(self.tool_log))
         self.assert_refused_before_azure(result, "A parameter cannot be found that matches parameter name 'IdKind'")
@@ -1939,8 +1938,10 @@ class UsersFileTests(unittest.TestCase):
 
 @unittest.skipUnless(PWSH, 'PowerShell 7 (pwsh) is not installed')
 class ParseTests(unittest.TestCase):
-    def test_both_scripts_parse_without_an_error(self):
-        for script in ('secrets.ps1', 'sql-principals.ps1'):
+    def test_each_script_parses_without_an_error(self):
+        # The two scripts the tests above run, and runbook.ps1, the two functions the runbook's
+        # steps dot-source: nothing here runs those, so that it parses is all that is held of it.
+        for script in ('secrets.ps1', 'sql-principals.ps1', 'runbook.ps1'):
             with self.subTest(script=script):
                 command = ('$errors = $null; $tokens = $null; '
                            '$null = [System.Management.Automation.Language.Parser]::ParseFile($args[0], '
@@ -1989,15 +1990,14 @@ BEHIND_KEEP_LOGS = ['Microsoft.Insights/diagnosticSettings', 'Microsoft.Operatio
 SECRETS_OF_THE_APP = ['app-connection', 'audit-anchor-key', 'audit-chain-key', 'demo-client-key',
                       'idempotency-hash-key', 'jwt-secret', 'pin-pepper', 'service-key', 'stepup-binding-key']
 # What each container of the app is told, by name and in the template's order. The bff's list has
-# nothing about forwarded headers: these six are what every run writes. Until 2026-10-06 this
-# comment went on "which address it takes for a visitor's is not set in this folder". Since that
-# day a run that names networks of proxies writes one setting more for each, after the six, and a
-# run that names none writes the six alone (NETWORKS_SETTING, and the test of it below).
+# nothing about forwarded headers: these six are what every run writes. A run that names networks
+# of proxies writes one setting more for each, after the six, and a run that names none writes
+# the six alone (NETWORKS_SETTING, and the test of it below).
 SETTINGS_OF_THE_BFF = ['ASPNETCORE_ENVIRONMENT', 'BackendApi__BaseUrl',
                        'ReverseProxy__Clusters__backend-api__Destinations__primary__Address',
                        'ServiceCredential__BffKey', 'Serilog__MinimumLevel__Override__Serilog', 'Demo__Enabled']
 # The six with what each holds, as a run with the demo off works them out: what the bff container
-# was told, whole, before a run could name a network.
+# is told, whole, by a run that names no network.
 THE_BFF_AS_IT_WAS = [
     {'name': 'ASPNETCORE_ENVIRONMENT', 'value': 'Production'},
     {'name': 'BackendApi__BaseUrl', 'value': 'http://localhost:5068'},
@@ -2005,19 +2005,19 @@ THE_BFF_AS_IT_WAS = [
     {'name': 'ServiceCredential__BffKey', 'secretRef': 'service-key'},
     {'name': 'Serilog__MinimumLevel__Override__Serilog', 'value': 'Warning'},
     {'name': 'Demo__Enabled', 'value': 'false'}]
-# How the bff container's settings are compiled since 2026-10-06: the six, a variable, and after
-# them one setting for each network of proxies a run names. And what each of those is named.
+# How the bff container's settings are compiled: the six, a variable, and after them one setting
+# for each network of proxies a run names. And what each of those is named.
 BFF_SETTINGS = "[flatten(createArray(variables('bffSettings'), variables('proxyNetworkSettings')))]"
 NETWORKS_SETTING = 'ForwardedHeaders__KnownIPNetworks__'
-# The api's twelve. Until 2026-10-07 a thirteenth closed the list, the cap on one address's
-# claims: the template writes no number of the demo any more, and a test below holds that none
-# comes back (CLAIM_SETTING).
+# The api's twelve. The template writes no number of the demo: the cap on one address's claims is
+# the application's default, and a test below holds that the setting does not come back
+# (CLAIM_SETTING).
 SETTINGS_OF_THE_API = ['ASPNETCORE_ENVIRONMENT', 'ASPNETCORE_URLS', 'ConnectionStrings__DefaultConnection',
                        'Jwt__Secret', 'Idempotency__HashKey', 'StepUp__BindingKey', 'ServiceCredential__BffKey',
                        'Audit__ChainKey', 'Audit__AnchorKey', 'Security__PinPepper', 'Demo__Enabled',
                        'Demo__ClientKeySecret']
-# What the template wrote until that day, on the api container and on the pool job, and the
-# section of the demo's settings it stands in.
+# The setting of that cap, which the template writes neither on the api container nor on the pool
+# job, and the section of the demo's settings it stands in.
 CLAIM_SETTING = 'Demo__Claim__MaxPerClientPerDay'
 # One switch, written as text to every container of the app.
 DEMO_FLAG = {'name': 'Demo__Enabled', 'value': "[if(parameters('demo'), 'true', 'false')]"}
@@ -2109,9 +2109,10 @@ APP_INPUTS = {**FOUNDATION_INPUTS, 'deployApp': True, 'imageTag': TAG, 'alertEma
 
 def snapshot(folder, values):
     """`bicep snapshot` of the main.bicep in a folder, given these values: the template worked out
-    offline, the way a what-if works it out. On the template of the first session's step 9 it left
-    the app's name an expression, as that what-if did (README.md, "Measured on Azure"). Returns its
-    exit code, what it printed and the resources it predicts."""
+    offline, the way a what-if works it out. On the template of 2026-10-03, where the app's name
+    went through a secure parameter, it left that name an expression, as the what-if did
+    (README.md, "Measured on Azure"). Returns its exit code, what it printed and the resources it
+    predicts."""
     parameters = pathlib.Path(folder) / 'run.bicepparam'
     parameters.write_text("using 'main.bicep'\n" + ''.join(f'param {name} = {bicep_literal(value)}\n'
                                                            for name, value in values.items()), encoding='utf-8')
@@ -2152,8 +2153,8 @@ class TemplateTests(unittest.TestCase):
 
     def settings(self, container):
         """A container's settings as the compiled template holds them: a list. The bff's are one
-        expression since 2026-10-06, the six that every run writes and after them the networks a
-        run names, so what is returned for it is those six, read from their variable. That the
+        expression, the six that every run writes and after them the networks a run names, so
+        what is returned for it is those six, read from their variable. That the
         expression is that one, and what a run works it out to, with networks and without:
         test_the_bff_is_told_the_networks_of_proxies_only_when_a_run_names_them."""
         settings = container.get('env', [])
@@ -2165,8 +2166,8 @@ class TemplateTests(unittest.TestCase):
     def told(self, resource):
         """A resource's template with each container's settings as `settings` reads them and, for
         the bff, after its six the one setting a network adds, as it is compiled: everything a
-        container of the resource can be told. Since 2026-10-06 a search of the template alone no
-        longer sees what the bff is told, which stands in two variables."""
+        container of the resource can be told. A search of the template alone does not see what
+        the bff is told, which stands in two variables."""
         template = json.loads(json.dumps(resource['properties']['template']))
         for container in template.get('containers', []):
             a_network = []
@@ -2289,9 +2290,8 @@ class TemplateTests(unittest.TestCase):
 
     def test_a_what_if_can_name_everything_the_app_run_creates(self):
         # Offline, with values of the shapes secrets.ps1 writes: fourteen things and eight more, and
-        # every ID worked out. The check creates nothing, and nothing of it is listed. Until
-        # 2026-10-03 it was nine more: the alert on the log workspace is now built only when it is
-        # asked for, and then the run is the 23 it was, with the nine step 9's what-if would create.
+        # every ID worked out. The check creates nothing, and nothing of it is listed. The alert on
+        # the log workspace is built only when it is asked for, and then the run is 23: nine more.
         with tempfile.TemporaryDirectory() as folder:
             copy_templates(folder)
             code, said, predicted = snapshot(folder, {**APP_INPUTS, 'logVolumeAlert': True})
@@ -2386,7 +2386,7 @@ class TemplateTests(unittest.TestCase):
     def test_deploy_app_true_is_refused_with_a_tag_that_is_not_40_characters_or_no_address(self):
         # Offline, as above. The secrets cannot be tried this way: like a what-if, this evaluation
         # works out no secure value. Their checks are read from the compiled template above. A
-        # local deployment saw each of the seven refuse (README.md, "Checking these files"); the
+        # local deployment (`bicep local-deploy`) saw each of the seven refuse when left empty; the
         # demo's client key, which must be 32 characters, has not been seen refused by any engine.
         with tempfile.TemporaryDirectory() as folder:
             copy_templates(folder)
@@ -2609,8 +2609,7 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(len(app['properties']['configuration']['secrets']), 9)
         self.assertEqual(len(job['properties']['configuration']['secrets']), 1)
         self.assertEqual(len(pool['properties']['configuration'].get('secrets', [])), 2)
-        # What each container can be told (`told`): the bff's settings stand in two variables
-        # since 2026-10-06, and until then this read the three templates as they are compiled.
+        # What each container can be told (`told`): the bff's settings stand in two variables.
         text = json.dumps([self.told(resource) for resource in (app, job, pool)])
         self.assertEqual(text.count('"secretRef"'), 13)
         for name in SECURE:
@@ -2688,12 +2687,9 @@ class TemplateTests(unittest.TestCase):
         # default is off, where the template means the demo on. So each name the template writes
         # under the demo's section is walked through the classes of
         # backend/src/AzureBank.Shared/Options/DemoOptions.cs, read as text: the section, then a
-        # property of each class on the way. Until 2026-10-07 the example here was the cap on one
-        # address's claims, 10 by default where the template meant 1,000 (ADR-0063, decision
-        # 14), and the test was seen red with the cap's name changed in the template and in the
-        # lists above. The template no longer writes the cap: seen red on that day, in the walk,
-        # with the client key's name changed in the template and in the list below. The cap's
-        # own name is walked too, though nothing here writes it: of the three it is the one that
+        # property of each class on the way. Seen red, in the walk, with the client key's name
+        # changed in the template and in the list below. The name of the cap on one address's
+        # claims is walked too, though nothing here writes it: of the three it is the one that
         # passes through a second class, and docs/runbooks/demo-pool.md names it to whoever
         # changes the cap.
         source = (HERE.parent / 'backend' / 'src' / 'AzureBank.Shared' / 'Options' / 'DemoOptions.cs').read_text(
@@ -2713,17 +2709,14 @@ class TemplateTests(unittest.TestCase):
 
     def test_the_bff_is_handed_the_flag_and_nothing_about_forwarded_headers(self):
         self.assertEqual([entry['name'] for entry in self.container('bff')['env']], SETTINGS_OF_THE_BFF)
-        # Whether the BFF sees a visitor's own address behind the ingress is not measured yet
-        # (ADR-0063, decision 14): until it is, no container of any resource is told whose
-        # forwarded headers to believe. .NET reads a setting's name whatever its case.
-        # (2026-10-07: it has been measured since, README.md, step 30. Behind the ingress the BFF
-        # saw the platform's addresses, and one run named the ingress's network for it. No file
-        # names one: the sentences below stand.)
-        # Since 2026-10-06 that holds for what every run writes, which is what `every_setting`
-        # walks: a run that names networks of proxies tells the bff, and the bff alone, to believe
-        # them (the test below), and the switch that would make a host believe every caller is
-        # still written nowhere. Under none of its three names: the two beside ASPNETCORE_'s were
-        # added later that day, when the BFF was measured to believe a caller under each.
+        # Behind the ingress the BFF sees the platform's addresses, and a run of the template names
+        # the ingress's network for it (README.md, "Measured on Azure"; ADR-0063, decision 14). No
+        # file names a network: what every run writes, which is what `every_setting` walks, tells
+        # no container whose forwarded headers to believe. A run that names networks of proxies
+        # tells the bff, and the bff alone, to believe them (the test below), and the switch that
+        # would make a host believe every caller is written nowhere, under none of its three
+        # names: the BFF was measured to believe a caller under each. .NET reads a setting's name
+        # whatever its case.
         about_forwarded_headers = re.compile(
             r'ForwardedHeaders__|(?:ASPNETCORE_|DOTNET_)?FORWARDEDHEADERS_ENABLED$', re.IGNORECASE)
         for name in ('ForwardedHeaders__KnownProxies__0', 'ASPNETCORE_FORWARDEDHEADERS_ENABLED',
@@ -2836,9 +2829,7 @@ class TemplateTests(unittest.TestCase):
                               if resource['type'] == APP or one in json.dumps(resource)], [])
 
     def test_the_api_is_handed_the_client_key_by_reference_and_no_number_of_the_demo(self):
-        # Until 2026-10-07 this test ended "and the cap as a plain value": the api's list closed
-        # with the cap on one address's claims, 1,000 from one variable. The test below holds
-        # what is true of it now.
+        # The api's list holds no cap on one address's claims: the test below holds that.
         api = self.container('api')
         self.assertEqual([entry['name'] for entry in api['env']], SETTINGS_OF_THE_API)
         # The key a visitor's address is hashed with: a secret of the app, handed to the api alone.
@@ -2854,27 +2845,24 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual([found for found in self.every_setting() if about_pepper_keys.match(found[2])], [])
 
     def test_no_container_is_told_how_many_copies_one_address_may_claim(self):
-        # Until 2026-10-07 the template wrote the cap on one address's claims on the api container
-        # and on the pool job, 1,000 from one variable: behind the ingress the BFF saw the
-        # platform's addresses and never a visitor's, and the default of 10 would have been a
-        # cap that every visitor shared (ADR-0063, decision 14). Since the BFF there counts a
-        # visitor by the visitor's own address (README.md, step 30), nothing writes it, and the
-        # application's default applies on both. A cap that came back would be an error
-        # nowhere: the api starts on any value in its range, and 1,000 stops nobody. So no
-        # container of any resource carries a setting of the claim's section, under either
-        # separator a host reads and whatever its case (.NET reads a setting's name whatever
-        # its case). Seen red on that day three ways: with the template as it stood before, the
-        # variable and both settings; with the setting put back on the api container alone, as a
-        # plain value; and with it put back on the pool job alone.
+        # The template writes no cap on one address's claims, on the api container or on the pool
+        # job: behind the ingress the BFF counts a visitor by the visitor's own address (README.md,
+        # "Measured on Azure"; ADR-0063, decision 14), so the application's default applies on
+        # both. A cap that came back would be an error nowhere: the api starts on any value in
+        # its range, and 1,000 stops nobody. So no container of any resource carries a setting of
+        # the claim's section, under either separator a host reads and whatever its case (.NET
+        # reads a setting's name whatever its case). Seen red three ways: with a variable and both
+        # settings; with the setting on the api container alone, as a plain value; and with it on
+        # the pool job alone.
         about_the_claim = re.compile(r'Demo(?:__|:)Claim(?:__|:)', re.IGNORECASE)
         for name in (CLAIM_SETTING, CLAIM_SETTING.upper(), 'Demo:Claim:MaxPerClientPerDay', 'demo__claim__x'):
             self.assertRegex(name, about_the_claim)
         self.assertEqual([found for found in self.every_setting() if about_the_claim.match(found[2])], [])
-        # And nowhere else in what the template compiles to: not in a variable, where the cap
-        # stood and where the bff's settings stand now, not in an argument of a job, not in an
-        # expression that would build the name. The compiled text holds no comment, so the one
-        # in main.bicep that says where the cap went is not in it. Seen red on that day with the
-        # cap handed to the pool job as an argument, which the walk above does not read.
+        # And nowhere else in what the template compiles to: not in a variable, where the bff's
+        # settings stand, not in an argument of a job, not in an expression that would build the
+        # name. The compiled text holds no comment, so the one in main.bicep about the cap is not
+        # in it. Seen red with the cap handed to the pool job as an argument, which the walk above
+        # does not read.
         compiled = json.dumps(self.main).lower()
         for words in ('maxperclientperday', 'demo__claim', 'demo:claim', 'democlaimsperclient'):
             with self.subTest(words=words):
@@ -2953,9 +2941,8 @@ class TemplateTests(unittest.TestCase):
                          ['replicaRetryLimit', 'replicaTimeout', 'scheduleTriggerConfig', 'secrets', 'triggerType'])
         # What it is told: where the database is and the pepper, by reference; and that the demo
         # is on, as a plain word, because the template writes the job only with the demo on.
-        # Three settings. Until 2026-10-07 a fourth closed the list, the cap on one address's
-        # claims, the one expression the api container had: neither is told a number of the demo
-        # any more, so both read the application's defaults.
+        # Three settings. Neither this job nor the api container is told a number of the demo, so
+        # both read the application's defaults.
         self.assertEqual(container.get('env'), [
             {'name': 'ConnectionStrings__DefaultConnection', 'secretRef': 'app-connection'},
             {'name': 'Security__PinPepper', 'secretRef': 'pin-pepper'},
@@ -3053,9 +3040,9 @@ class TemplateTests(unittest.TestCase):
                           'scheduledJobs': {'value': "[parameters('scheduledJobs')]"}})
 
     def test_the_policy_is_named_for_what_it_refuses_and_the_removal_finds_it(self):
-        # The name is what a refusal is expected to show (not yet read on Azure), so the definition
-        # and its assignment carry the same one. The runbook's removal looks for the words the name
-        # opens with and not for the whole of it: the name it had before this one opens with them too.
+        # The name is what a refusal shows, so the definition and its assignment carry the same
+        # one. The runbook's removal looks for the words the name opens with and not for the whole
+        # of it: an earlier name of the policy opens with them too.
         opens_with = 'AzureBank: one small replica'
         name = opens_with + ', manual jobs, the pool job scheduled'
         definition = self.compiled['guardrails']['resources'][0]['properties']
@@ -3086,10 +3073,9 @@ class TemplateTests(unittest.TestCase):
             account = self.main['parameters'].get('alertPushAccount', {})
             self.assertEqual((account.get('type'), account.get('defaultValue')), ('string', ''))
             self.assertNotIn('alertPushAccount', GUARDED)
-        # The group's receivers, worked out offline as a what-if works them out. Until 2026-10-06
-        # this test read three keys in the compiled template: the receivers were one mailbox,
-        # whatever the run was given. Now the phone's receiver is written only when its account is
-        # given, so the properties are compiled as one expression and are read worked out.
+        # The group's receivers, worked out offline as a what-if works them out. The phone's
+        # receiver is written only when its account is given, so the properties are compiled as
+        # one expression and are read worked out.
         mailbox, phone = 'the.mailbox@example.invalid', 'the.phone@example.invalid'
         as_it_was = {'groupShortName': 'azurebank', 'enabled': True, 'emailReceivers': [
             {'name': 'owner', 'emailAddress': mailbox, 'useCommonAlertSchema': True}]}
@@ -3141,8 +3127,8 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual({key: rules[3][key] for key in ('name', 'threshold', 'every')},
                          {'name': 'azurebank-log-volume', 'threshold': 50000, 'every': 'PT15M'})
         self.assertEqual(alerts['condition'], ALERTS_CONDITION)
-        # True until 2026-10-03, when the runbook's step 20 found that the rule's metric reported
-        # nothing for an hour in which the workspace ingested rows (README.md, "Measured on Azure").
+        # False: measured on 2026-10-03, the rule's metric reported nothing for an hour in which
+        # the workspace ingested rows (README.md, "Measured on Azure").
         self.assertIs(self.main['parameters']['logVolumeAlert']['defaultValue'], False)
         workspace = "resourceId('Microsoft.OperationalInsights/workspaces', 'azurebank-logs')"
         app = "resourceId('Microsoft.App/containerApps', 'azurebank')"
