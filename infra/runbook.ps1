@@ -44,6 +44,7 @@ function Invoke-Template([string]$Name, [string[]]$Override = @()) {
         if ((Read-Host 'Deploy this? (yes/no)') -ne 'yes') { return }
         az deployment group create --name $Name --resource-group $group --template-file $template `
             --parameters "@$folder\parameters.json" @Override --query properties.provisioningState --output tsv
+        if ($LASTEXITCODE -ne 0) { throw 'The deployment did not succeed.' }
     } finally {
         Remove-Item -LiteralPath $template -ErrorAction Ignore
     }
