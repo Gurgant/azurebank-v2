@@ -196,6 +196,20 @@ knowingly accepted, time-boxed residual with a concrete deferral trigger.
   `X-Original-For` goes on too, holding the proxy's address. Held by
   `TrustedProxyNetworkTests`, `ForwardedForOnARealConnectionTests`, `StrictForwardedForTests`
   and `ProxyOptionsValidatorTests`.)*
+  *(2026-10-07: "None of that has run" is no longer so. Microsoft's page on the networking of a
+  Container Apps environment names the ranges an environment reserves for its own
+  infrastructure; the two addresses the limiter had named the day before, neither of them the
+  caller's, were both inside one of them, and one run of the template named that one on the
+  deployed `bff` container. After it, from one connection, twelve sign-ins in under four seconds
+  were answered ten times and refused at the eleventh and at the twelfth, four times over, two
+  of the four with an `X-Forwarded-For` header that named another address in each request; and
+  the limiter's 52 warnings, as many as that caller's refusals in the whole run, all named that
+  caller's own public address, none an address of the ingress and none an address a header had
+  named. So the entry the BFF believed, the last one, was the caller's own, after whatever the
+  caller wrote: what this note left as "expected, not seen" is seen for one hop. Two proxies in
+  a row are still not seen, and the proof's own line, a caller on a second network answered
+  while the first is refused, was not read as it is written. No network of the deployment is
+  written in any file, as before (`infra/README.md`, step 30).)*
 - **Security config fails fast.** Both controls are validated at startup
   (`IValidateOptions` + `ValidateOnStart`, mirroring the pepper validator in ADR-0011): a
   non-positive rate-limit value or an unparseable `KnownProxies` entry stops the app. Both

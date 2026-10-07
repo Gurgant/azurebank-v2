@@ -28,8 +28,10 @@ of step 20 was refused as written, and once it ran it showed that the alert on t
 not count lines. That alert was deleted, and the template now leaves it out unless it is asked
 for.
 
-**On 2026-10-05 this folder gained what turns the public demo on, and none of it has run on
-Azure.** The template has a switch, `demo`, off unless it is asked for. With it on, both
+**On 2026-10-05 this folder gained what turns the public demo on.** Until 2026-10-07 this line
+went on "and none of it has run on Azure". On that day the deployed app had the demo on: it
+gave a visitor a copy (step 30's note). Of the steps that turned it on, this page records no
+run. The template has a switch, `demo`, off unless it is asked for. With it on, both
 containers of the app are told they are the demo, and a second job, `azurebank-pool`, runs
 `recycle` every four hours as the app's database identity; the Deny policy lets a job of that
 name, and no other, run on a schedule. `deploy.py` reads from the app whether the demo is on,
@@ -156,8 +158,10 @@ to one identity, by its client ID, and with no password. `azurebank_app` reads a
 
 **With `demo=true` as well: two more, and the app is told it is the demo.** The switch is a
 parameter of the template, `false` by default. `secrets.ps1` writes it: what the deployed app
-does now, or `true` with `-DemoOn` (step 25). Added on 2026-10-05; none of it has been sent to
-Azure.
+does now, or `true` with `-DemoOn` (step 25). Added on 2026-10-05. Until 2026-10-07 this line
+ended "none of it has been sent to Azure": on that day the deployed app answered as the demo
+(step 30's note), and what was read of the job and of the third role assignment is not on this
+page.
 
 | Resource | What it is |
 | --- | --- |
@@ -180,11 +184,13 @@ setting under `Demo__Claim__`. Until 2026-10-07 this paragraph was headed "Why 1
 day for one client", and the template wrote 1,000, the range's maximum, on the `api` container
 and on the job, from one variable (ADR-0063, decision 14). The reason was the address. The BFF
 counts a client by the address it sees, and behind the ingress, with no proxy named to it, that
-is not the visitor's: 10 would have been ten copies a day for everybody. Step 30 measured it.
+is not the visitor's: 10 would have been a cap that every visitor shared. Step 30 measured it.
 On 2026-10-06 the limiter's warnings named two internal addresses, neither of them the
 caller's. On 2026-10-07 a run named the ingress's network (the parameter `proxyNetworks`, added
-on 2026-10-06 and empty by default), the step's proof passed, and the warnings named the
-caller's own address. Until 2026-10-06 this paragraph said "no file in this folder tells it to
+on 2026-10-06 and empty by default), the step's proof was run, and every warning named the
+caller's own address. The proof's own line, a second network answered while the first is
+refused, was not read as it is written (the step's note). Until 2026-10-06 this paragraph
+said "no file in this folder tells it to
 trust a proxy's forwarded header", and from that day to 2026-10-07 it ended "No run has named
 any, and the 1,000 stays until one has and step 30's proof has passed".
 
@@ -195,7 +201,7 @@ template that step 30 has as its part 5, which has not been made. And a deployme
 starts with the cap at 10 and no network named: `secrets.ps1` reads the networks from a
 deployed app, and with no app deployed nothing remembers them. Until a run has named them
 (`-ProxyNetworks`, step 30) such an app is expected to take the ingress for every visitor, and
-10 is then ten copies a day for everybody, the gap the 1,000 used to cover. So on a deployment
+10 is then a cap that every visitor shares, the gap the 1,000 used to cover. So on a deployment
 made anew the networks are named, and step 30's proof read, before the link is published; and
 step 30's way back, which takes the networks out, opens the same gap.
 
@@ -1995,8 +2001,9 @@ was run for it the next day. No answer to network B on that day and no third mea
 written here.
 
 **The networks of the ingress: telling the app which proxy to believe.** Operator; **writes**:
-one run of the template, which makes a new revision. Added on 2026-10-06. **Run on Azure on
-2026-10-07: its parts 1 to 4, and not the way back.** The note under the proof's tables says
+one run of the template, which makes a new revision. Added on 2026-10-06. **Run on Azure: its
+part 1 with the read of 2026-10-06, its parts 2 to 4 on 2026-10-07, and not the way back.** The
+note under the proof's tables says
 what was read, and where the run differed from the blocks. Every "expected" below is left as
 it was written before that run, from the code and its offline tests, for whoever runs it
 again. Until 2026-10-07 this paragraph said "None of it has been run on Azure" and "no request
@@ -2162,9 +2169,10 @@ and each status was printed.
 
 **What it shows, and what it does not.** The ten a minute were A's own, with a header that names
 another address as without one, and with the header the strict reading is for. The proof's
-second line was not read as it is written. B sent no sign-in at once after A's twelve: it
-claimed a copy at 00:59:43Z, and A's last two requests, eight and five seconds before, had been
-answered too. At that second A was not being refused, so B's answer alone does not show B
+second line was not read as it is written. What was read of B is not a sign-in sent at once
+after A's twelve: it is a copy claimed at 00:59:43Z, and A's last two requests, eight and five
+seconds before, had been answered too. At that second A was not being refused, so B's answer
+alone does not show B
 answered while A is refused. What shows that the count is one visitor's own is the last row:
 every refusal was counted against A's own address, and none against an address of the ingress.
 Not read on Azure: what the ingress does with two proxies in a row; and a visitor refused the
@@ -3617,8 +3625,9 @@ users go with the group. On this machine, if it is no longer wanted:
   2026-10-05 this line also said "No scheduled job" and "The app's registration endpoint is not
   closed by anything in this folder". Of the folder that is no longer so: it holds a scheduled
   job, behind the switch `demo`, and that switch closes registration on both containers. Of
-  Azure nothing changed with it: none of it has run there, and the deployed app's registration
-  stays open until step 25 has run.
+  Azure this line said until 2026-10-07 "nothing changed with it: none of it has run there, and
+  the deployed app's registration stays open until step 25 has run". On that day the deployed
+  app had the demo on (step 30's note), and this page records no run of step 25.
 - No switch that turns the demo off ([Turning the demo back](#turning-the-demo-back)), and
   nothing that removes a user from the database.
 - No alert on a failed run of the pool job, and none on the database's size. The one rule this
@@ -4289,7 +4298,7 @@ fourth alert does not count lines (step 20).
 | What the `Replicas` metric reports while the app is scaled to zero: 0, or nothing. If nothing, a day's average is 1 on any day the app ran at all, the alert on replica time fires on any use, and that rule has to count another way | the first days after step 16 |
 | What the registry answers for a package that exists and is private, anonymously or to the workflow's token: none of the three packages has been private. Why they were public as soon as they were published | not provoked; not looked into |
 | Whether every visitor shares one sign-in limit behind the Azure ingress, and with it the limit of 300 a minute on every other request, which counts by the same address | Read at step 30, for the sign-in limit. On 2026-10-06, with no network named: the limiter counted by two internal addresses and never by the caller's, and one caller was answered twelve sign-ins in under eight seconds. Since the run of 2026-10-07 that named the ingress's network: the ten a minute were one caller's own, refused at the eleventh four times over, and all 52 warnings named that caller's own address. The limit of 300 a minute was not provoked: it counts by the same function. Until 2026-10-07 this cell said "not provoked; step 30, which has not been run, measures it" |
-| The networks of the ingress, what is left of it (added on 2026-10-06; until 2026-10-07 this row began "all of it" and its second cell said "not run"): whether the address the app's warnings name is the same after a new replica or a new revision; whether the run of the template with `proxyNetworks` made a revision, which is written nowhere here; B answered a sign-in in the seconds in which A is refused; what the ingress does with two proxies in a row; the way back with `none`; what Azure does with a revision whose `bff` refuses to start on a network. Read on 2026-10-07 and written under step 30: what the app's warnings name behind the ingress, before a network was named and after; the what-if of that run and its `Succeeded`; A refused at the eleventh sign-in, with a header that names another address as without one; and so that the entry the app believed, the last one, was A's own address | step 30, at a later run; the way back and the last one are not provoked |
+| The networks of the ingress, what is left of it (added on 2026-10-06; until 2026-10-07 this row began "all of it" and its second cell said "not run"): whether the address the app's warnings name is the same after a new replica or a new revision; whether the run of the template with `proxyNetworks` made a revision, which is written nowhere here; B answered a sign-in in the seconds in which A is refused; what the ingress does with two proxies in a row; the way back with `none`; what Azure does with a revision whose `bff` refuses to start on a network. Read on 2026-10-06 and on 2026-10-07 and written under step 30: what the app's warnings name behind the ingress, before a network was named and after; the what-if of that run and its `Succeeded`; A refused at the eleventh sign-in, with a header that names another address as without one; and so that the entry the app believed, the last one, was A's own address | step 30, at a later run; the way back and the last one are not provoked |
 | The cap of claims at its default on Azure (added on 2026-10-07): what the run of the template that takes the setting out shows in its what-if, for the `api` container and for the pool job, and how Azure words a setting taken out; the settings of the `api` container and of the job after it, by count; what a pool run in progress does when its job is changed; a visitor refused the eleventh copy of one day, and `clientsAtCap` counted by 10 | not run; step 30's part 5. The last two are not provoked |
 | A replica's container states, which `deploy.py` reads only when a new revision does not get ready | a real failure; not provoked |
 | `--app-log` against the workspace: the table has the two columns it reads (`ContainerAppName`, `ContainerName`). Until 2026-10-07 this row went on "and the command has not been run": that day `--app-log 20` printed 52 warnings of the BFF's rate limiter (step 30), and nothing else of what it printed is written here. `--job-log` with its filter on `ContainerGroupName`: tested offline, and the column was read at step 16, but the query has not been sent | the next read of either |
@@ -4304,9 +4313,13 @@ fourth alert does not count lines (step 20).
 | That the identity is refused a scale change, a delete or a stop. One refusal is provoked on every deployment (the secrets listing); the policy's refusal is provoked as the owner | not provoked |
 | Every command under [Switching the logs off](#switching-the-logs-off) but one, the deletion of the alert on the workspace, which ran as step 20's; every command under [Stop the app by hand](#stop-the-app-by-hand), which step 32 would run once, under [If something was stolen](#if-something-was-stolen) and under [Removing everything](#removing-everything). The trial made its own deletions with other commands | the day they are needed |
 
-**Not measured, of what turns the demo on.** Added on 2026-10-05. Nothing of it has run on Azure:
-the switch, the pool job, the policy's exception and the three commands are tested offline,
+**Not measured, of what turns the demo on.** Added on 2026-10-05. The switch, the pool job,
+the policy's exception and the three commands are tested offline,
 against stand-ins and invented answers, and steps 22 to 33 are where each line would show.
+Until 2026-10-07 this paragraph said of them "Nothing of it has run on Azure". On that day step
+30 was run on the deployed app, which had the demo on: `--check` passed there and a visitor was
+given a copy (the step's note). What the steps before it read is not written on this page, so
+the rows below stand as they were written, but for the two that name that day.
 
 | What | Where it shows |
 | --- | --- |
@@ -4329,9 +4342,9 @@ against stand-ins and invented answers, and steps 22 to 33 are where each line w
 | The seconds of a first fill on Basic; the first open as the app's identity from the tools image; the first write this folder asks of `azurebank_app` on Azure SQL | step 26 |
 | What a right that `azurebank_app` lacks looks like on a first fill: exit 1 with SQL Server's 229, by the code | not provoked |
 | `--pool-log` against the workspace: the pool job's lines under its `JobName`, and the query by execution, which has not been sent for either job | step 26 |
-| `--check` on Azure: that the owner may list the secrets of the app and of a job, that a job answers that listing in the shape the app does, and that an app at rest after a run of the template reads `Succeeded` with its latest revision ready | step 25 |
+| `--check` on Azure: that the owner may list the secrets of the app and of a job, that a job answers that listing in the shape the app does, and that an app at rest after a run of the template reads `Succeeded` with its latest revision ready | step 25. On 2026-10-07 `--check` passed on Azure once, at step 30, after that day's run of the template (the step's note); what it read of each of these is not written there |
 | The demo's two answers through the ingress: the tag in the page, and 403 `REGISTRATION_CLOSED` for a registration with the body `{}`. Both were measured on the compose stack with the demo on, on 2026-10-04 (ADR-0063, Validation), and not by `deploy.py`, whose two checks have met invented answers only; the 400 for that body with the demo off was seen on a local stack on 2026-10-05, above. That a closed registration spends a permit of the ten sign-ins share | step 25's `--check`; the permit is not provoked |
-| The claim, the session and a PIN on the deployed demo, from a browser | step 27 |
+| The claim, the session and a PIN on the deployed demo, from a browser | step 27. On 2026-10-07 one claim was read there, from a phone, by the one press on the sign-in page (step 30's note); of the session and of a PIN nothing is written |
 | A job of another name refused a schedule, and the pool job refused two runs at once. That anything refuses a changed expression: nothing does, and `deploy.py`'s shape check is its only read | step 29 |
 | What a stopped app answers, which property says it is stopped, and that the two calls are the ones written here; what a deployment, a `--check` or a run of the template does with a stopped app | step 32; the last three are not provoked |
 | The metrics of the pool job and of the database: their names, their dimensions, and whether either has a time series | step 31 |

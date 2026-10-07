@@ -484,7 +484,9 @@ It lists the job's two secrets and the app's, as the owner, compares them, and p
 job's PIN pepper and connection string are the app's", or which of the two differs. It shows no
 value. It moves nothing, so it is run after anything that could have changed either side: a run
 of the template, a deployment, a start of the job by hand, a stop and a start of the app
-(`infra/README.md`, "Reading the logs"). Not yet run on Azure.
+(`infra/README.md`, "Reading the logs"). Until 2026-10-07 this paragraph ended "Not yet run on
+Azure": that day it was run there once and passed (`infra/README.md`, step 30), and the line it
+printed about the two secrets is not written there.
 
 **Then, after any change of the job's secrets, or after a line that says they differ: from a
 browser.** Claim a copy with the demo's button, open the dashboard, and make one transfer to a

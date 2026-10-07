@@ -96,12 +96,15 @@ ADR-0063's decision 14 waited for was measured at the runbook's step 30. On 2026
 any network was named, twelve sign-ins sent from one connection in under eight seconds were all
 answered, where the limit is ten a minute for one caller, and the limiter's warnings for nine
 later refusals named two internal addresses, neither of them the caller's. On 2026-10-07 one
-run of the template named the ingress's network on the `bff` container, and the proof passed:
+run of the template named the ingress's network on the `bff` container, and the proof was run:
 from one connection, twelve sign-ins in under four seconds were answered ten times and refused
 at the eleventh and at the twelfth, four times over, two of the four with an `X-Forwarded-For`
-header that named another address in each request; the limiter's 52 warnings all named that
-caller's own public address, none an address of the ingress and none an address a header had
-named. Not run: the run of the template that takes the setting out on Azure. Until it is made
+header that named another address in each request; the limiter's 52 warnings, as many as that
+caller's refusals in the whole run, all named that caller's own public address, none an address
+of the ingress and none an address a header had named. The proof's own line, a caller on a
+second network answered while the first is refused, was not read as it is written: the warnings
+are what shows whose the count is. Not run: the run of the template that takes the setting out
+on Azure. Until it is made
 the deployed `api` container and the deployed job are expected to carry the 1,000: on
 2026-10-07 that container read back 13 settings, the template's count with the cap
 (`infra/README.md`, step 30).)* No container carries a key id of the pepper, a

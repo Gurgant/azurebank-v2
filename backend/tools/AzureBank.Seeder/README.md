@@ -179,8 +179,11 @@ and then migrated an empty database):
   `Demo__Claim__MaxPerClientPerDay` at the value the API is given there": the template gave
   both 1,000, and a job or an app deployed from it before that day carries that value until
   the template is run again, [infra/README.md](../../../infra/README.md), step 30.)*
-  It is built when the demo is turned on, which has not been done on Azure
-  ([infra/README.md](../../../infra/README.md), "Turn the demo on"). Measured
+  It is built when the demo is turned on
+  ([infra/README.md](../../../infra/README.md), "Turn the demo on"). *(Until 2026-10-07 this
+  said "which has not been done on Azure": on that day the deployed app had the demo on, since
+  it gave a visitor a copy, step 30 of that page; what was read of the job is not written
+  there.)* Measured
   2026-10-03, a login with `db_datareader` and `db_datawriter` alone ran `seed-pool` and `recycle`
   through a whole cycle (copies built, a claimed copy and a stale one deleted, the sweeps), exit 0,
   on LocalDB from an empty database, roles included, and on the compose SQL Server, where the roles
