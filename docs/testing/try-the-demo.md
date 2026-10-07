@@ -85,8 +85,9 @@ handles end in four characters of their own.
 
 The panel says it in three lines:
 
-- "Other visitors can't see this copy. It works until October 7, 2026 · 4:52 PM, then it is
-  closed and deleted." The date and the time are your copy's end, in your own time zone.
+- "Other visitors can't see this copy. It works until October 7, 2026 · 4:52 PM, then it is closed
+  and deleted." The date and the time are your copy's end, in your own time zone. "Deleted" is the
+  panel's short word: the deletion comes at a later run, as the first section says.
 - "PIN: 123456, unless you changed it"
 - `Contacts you can pay: @jane_02ga and @mike_02ga`
 
