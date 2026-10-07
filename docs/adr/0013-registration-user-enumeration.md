@@ -134,7 +134,68 @@ knowingly accepted, time-boxed residual with a concrete deferral trigger.
   **opt-in and fail-safe**: `X-Forwarded-For` is honoured only when the real proxy IPs are
   listed in `ForwardedHeaders:KnownProxies` (loopback defaults cleared; `UseForwardedHeaders`
   runs before the limiter). With none configured (the BFF is the edge) the header is ignored
-  and the direct connection IP is used. **Any proxied deployment must set `KnownProxies`.**
+  and the direct connection IP is used. ~~**Any proxied deployment must set `KnownProxies`.**~~
+  *(struck 2026-10-06: a proxied deployment must list its proxy, by exact address or by network.
+  The Azure deployment stands behind the platform's ingress, and an exact address stops matching,
+  in silence, the day the platform moves its proxy inside a range it owns: every visitor is then
+  one partition again, and nothing says so. So a second list stands beside the first,
+  `ForwardedHeaders:KnownIPNetworks`, networks in CIDR form, named as the framework names its
+  own. The rule is the one above, for both: the header is honoured only on a connection that
+  comes from a listed address or from inside a listed network, the caller is the last entry, the
+  one that proxy appended (`ForwardLimit` stays 1), and with both lists empty nothing reads the
+  header. Decided with it:*
+
+  - *A connection with no address is not a listed proxy. Once anything is listed the framework's
+    middleware believes the header on such a connection (measured on .NET 10 that day, on the
+    test server, whose connections have none, with the condition taken out; a Unix socket and a
+    named pipe have none either), so it now runs only on a connection that has an address. That
+    holds for exact addresses too.*
+  - *A network is refused at startup, in a sentence that names it, when it is not
+    `address/prefix-length`; when its prefix length is outside its family's range; when it is
+    `/0`, which trusts everybody; when it is wider than a `/8`, in either family, the width of
+    the widest private blocks (`10.0.0.0/8`, `fd00::/8`): a shorter prefix reaches into
+    somebody else's addresses and is far more likely a slip than a network; when it is an
+    IPv4-mapped IPv6 network, ~~which matched no address in the measurement and would fail in
+    silence~~ (corrected later that day: measured on the pipeline with the refusal taken out,
+    `::ffff:10.0.0.0/104` was a listed network for a connection the socket reports as
+    `::ffff:10.0.0.5` and not for one it reports as `10.0.0.5`, and `::ffff:0:0/96` for
+    neither, so such an entry would work or fail, in silence, by how the socket is bound; the
+    IPv4 network holds both forms); and when the framework reads it as another network than it
+    shows. The last was measured: `System.Net.IPNetwork.TryParse` reads `10.0.0.1/8` as
+    `10.0.0.0/8`, `010.0.0.0/8` as `8.0.0.0/8` and `10/8` as `0.0.0.0/8`.*
+  - *The header is made a list of addresses and nothing else before the framework reads it
+    (added later that day, `StrictForwardedFor`). "The caller is the last entry" was not true of
+    the framework's reading alone. It splits the header as a list of quoted strings, and its
+    address parser drops whatever follows a `%` as an IPv6 zone: a caller that wrote
+    `::ffff:198.51.100.200%"` before the proxy's entry was taken for `198.51.100.200`, and it
+    could name another address in every request, each a new budget at both limits and a new
+    day's allowance of copies; a quotation mark alone made the caller the proxy itself
+    (measured on the BFF's pipeline and on a loopback socket, .NET 10). Against anybody who
+    knew it, listing a proxy would then have been worse than listing none. So the
+    header's lines are split at every comma, and an entry that holds any character an address
+    is not written with becomes the word `unknown`; which entries are believed stays the
+    framework's. Refused: writing a reader of the header in place of the framework's, which
+    would have carried its own mistakes; and leaving it to the platform's ingress, which
+    nothing here has measured.*
+  - *A public range is not refused. A proxy may have public addresses, and whether a range is
+    the proxy's cannot be read from the range: that is measured on the deployment and proved
+    there. `KnownProxies` is checked as it was: the same lenient parser reads its entries, and a
+    slip there trusts one other address, not a network of them.*
+  - *On Azure nothing is set by it. `infra/main.bicep` takes the networks as a parameter that is
+    empty by default, on the `bff` container alone, and no network of the deployment is written
+    in any file; `infra/README.md`, step 30, says how the address is read, how the networks are
+    chosen and set, and what proves them. None of that has run.*
+
+  *What it leaves open: every address inside a listed network can name a caller's address, so
+  the list is as good as the measurement behind it; one hop is believed, and behind two proxies
+  in a row every visitor would have the address of the one in front, one client as before; and
+  that the ingress appends the visitor's own address after whatever the visitor wrote is
+  expected, not seen, until the runbook's proof has run. On the road to the API nothing reads a
+  forwarded header: the proxy writes `X-Forwarded-For` itself, from the address the BFF holds by
+  then, the browser's own `X-Real-IP` goes on as sent, and with a proxy listed the framework's
+  `X-Original-For` goes on too, holding the proxy's address. Held by
+  `TrustedProxyNetworkTests`, `ForwardedForOnARealConnectionTests`, `StrictForwardedForTests`
+  and `ProxyOptionsValidatorTests`.)*
 - **Security config fails fast.** Both controls are validated at startup
   (`IValidateOptions` + `ValidateOnStart`, mirroring the pepper validator in ADR-0011): a
   non-positive rate-limit value or an unparseable `KnownProxies` entry stops the app. Both

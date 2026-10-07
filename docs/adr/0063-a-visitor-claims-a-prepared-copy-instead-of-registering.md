@@ -337,7 +337,10 @@ four reasons:
   `{ "clientAddress": ClientAddress.Of(connection) }`, the key its own limiters count the request
   under: an IPv4 address in full, an IPv6 address as its /64, `unknown` for a connection with no
   address, and behind a proxy the proxy's address unless `ForwardedHeaders:KnownProxies` names
-  it. One method for both, so a limiter and the daily cap cannot count one visitor as two.
+  it *(2026-10-06, ADR-0013's note of that day: or a network of
+  `ForwardedHeaders:KnownIPNetworks` holds it; and a connection with no address is `unknown`
+  whatever is listed)*. One method for both, so a limiter and the daily cap cannot count one
+  visitor as two.
 - **The answer is the house envelope,** as at every door of the BFF, and the application's next
   change is written against it:
 
@@ -883,7 +886,10 @@ a parallel load on an index that holds `ClaimedAt`.
   decision 16 rests on.
 - **A measured address behind the ingress.** Once the BFF sees a visitor's own address there
   (`ForwardedHeaders:KnownProxies`), the daily cap means "per visitor" and the 1,000 of decision
-  14 goes back to the default.
+  14 goes back to the default. *(2026-10-06, ADR-0013's note of that day: the setting the
+  deployment's template can now write is `ForwardedHeaders:KnownIPNetworks`, the networks of the
+  ingress, from a parameter that is empty by default. No run has named any, the address is still
+  not measured, and the 1,000 stays.)*
 - **Visitors turned away by the daily cap behind one shared address:** a higher
   `Demo:Claim:MaxPerClientPerDay`, on every service that reads it.
 - **A need to hide that a build has the claim:** the three answers of "What a visitor can still

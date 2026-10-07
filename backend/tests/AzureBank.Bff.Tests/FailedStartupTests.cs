@@ -69,6 +69,36 @@ public sealed class FailedStartupTests
             "one console writes the host's refusal once; a second would print every line twice");
     }
 
+    /// <summary>
+    /// The refusal of a network of proxies (ADR-0013), read where an operator reads it: on the
+    /// console of the real process, under the name a run of the template gives the setting
+    /// (<c>ForwardedHeaders__KnownIPNetworks__0</c> and on). A test host shows that such a host
+    /// does not start and not why (<c>TrustedProxyNetworkTests.AnEntryTheValidatorRefuses_StopsTheHost</c>);
+    /// the sentence is held on the validator alone (<c>ProxyOptionsValidatorTests</c>).
+    /// </summary>
+    [Theory]
+    [InlineData("0.0.0.0/0", "trusts every address")]
+    [InlineData("10.0.0.1/8", "the framework reads as 10.0.0.0/8")]
+    [InlineData("::ffff:10.0.0.0/104", "IPv4-mapped")]
+    public async Task ANetworkOfProxiesTheHostWillNotBelieve_StopsIt_AndTheConsoleNamesTheEntry(
+        string entry, string because)
+    {
+        // A valid key in place of the short one, so that the network is the one refusal; and a
+        // network the host takes before it, which the refusal must not name.
+        var (output, exitCode) = await RunRefusingBff(
+            "Testing",
+            ("ServiceCredential__BffKey", TestServiceCredential.Key),
+            ("ForwardedHeaders__KnownIPNetworks__0", "192.0.2.0/24"),
+            ("ForwardedHeaders__KnownIPNetworks__1", entry));
+
+        output.Should().Contain($"ForwardedHeaders:KnownIPNetworks contains '{entry}', which ")
+            .And.Contain(because)
+            .And.NotContain("'192.0.2.0/24'")
+            .And.NotContain(Refusal, "the key is a valid one here")
+            .And.NotContain("started successfully");
+        exitCode.Should().Be(1);
+    }
+
     private static async Task<(string Output, int ExitCode)> RunRefusingBff(
         string environment, params (string Name, string Value)[] extra)
     {

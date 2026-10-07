@@ -268,13 +268,19 @@ try
     // Forwarded headers (ADR-0013): the rate limiter partitions on the connection IP, which
     // behind a proxy is the PROXY's IP unless we rewrite it from X-Forwarded-For. Trusting
     // X-Forwarded-For from ANY source lets an attacker spoof/rotate IPs and defeat the per-IP
-    // limiter (worse than proxy-collapse), so we honour it ONLY when the real proxy IPs are
-    // configured (ForwardedHeaders:KnownProxies). Default — none configured, e.g. local/dev
+    // limiter (worse than proxy-collapse), so we honour it ONLY when the real proxy is
+    // configured: by its exact IPs (ForwardedHeaders:KnownProxies), by the networks its IPs come
+    // from (ForwardedHeaders:KnownIPNetworks), or both. Default — none configured, e.g. local/dev
     // where the BFF is the edge — do NOT process X-Forwarded-For; partition on the direct
-    // connection IP (fail-safe). Deployments behind a proxy MUST set KnownProxies.
+    // connection IP (fail-safe). Deployments behind a proxy MUST set one of the two. (Until
+    // 2026-10-06 this said "MUST set KnownProxies", the only form there was: an exact address
+    // stops matching, in silence, the day a platform moves its proxy inside its own range.)
     var proxyConfig = builder.Configuration
         .GetSection(ProxyOptions.SectionName).Get<ProxyOptions>() ?? new ProxyOptions();
-    var trustForwardedFor = proxyConfig.KnownProxies.Length > 0;
+    // "is { Length: > 0 }", not ".Length > 0": a list bound as null is the validator's to refuse,
+    // with its sentence, when the host starts, and not a NullReferenceException here.
+    var trustForwardedFor = proxyConfig.KnownProxies is { Length: > 0 }
+        || proxyConfig.KnownIPNetworks is { Length: > 0 };
     if (trustForwardedFor)
     {
         builder.Services.Configure<ForwardedHeadersOptions>(options =>
@@ -284,13 +290,24 @@ try
             // Drop the loopback-only defaults; trust ONLY the configured proxies.
             options.KnownProxies.Clear();
             options.KnownIPNetworks.Clear();
-            foreach (var proxy in proxyConfig.KnownProxies)
+            foreach (var proxy in proxyConfig.KnownProxies ?? [])
             {
                 // ProxyOptionsValidator already failed startup on an unparseable entry, so
                 // nothing is silently dropped here.
                 if (IPAddress.TryParse(proxy, out var ip))
                 {
                     options.KnownProxies.Add(ip);
+                }
+            }
+
+            foreach (var entry in proxyConfig.KnownIPNetworks ?? [])
+            {
+                // The same: the validator has refused whatever is not a network, and whatever is
+                // read as another network than the one written. System.Net's type, by its full
+                // name: Microsoft.AspNetCore.HttpOverrides has an obsolete one of the same name.
+                if (System.Net.IPNetwork.TryParse(entry, out var network))
+                {
+                    options.KnownIPNetworks.Add(network);
                 }
             }
         });
@@ -438,9 +455,35 @@ try
 
     // 0. Rewrite RemoteIpAddress from X-Forwarded-For BEFORE anything reads it (logging,
     // the rate limiter). Only runs when trusted proxies are configured (see above).
+    //
+    // And only on a connection that HAS an address. Once anything is listed, the framework's
+    // middleware believes the header on a connection with none: with this condition taken out,
+    // TrustedProxyNetworkTests.AConnectionWithNoAddress_IsNotAListedProxy fails, the claim made
+    // for the address the header names (measured on .NET 10, 2026-10-06). A connection with no
+    // address (a Unix socket, a named pipe, a test server) comes from no listed proxy and from
+    // no listed network, so it is left as it is, and its caller is the one key "unknown". Until
+    // that day the middleware ran on every request once an exact address was listed.
+    //
+    // And the header it reads is first made a list of addresses and nothing else. Read as the
+    // framework reads it, a caller behind the listed proxy chose its own address: with
+    // StrictForwardedFor.Rewrite taken out, the rows of TrustedProxyNetworkTests and of
+    // ForwardedForOnARealConnectionTests that name a zone and a quotation mark fail, the claim
+    // made for the address the caller wrote (measured on .NET 10, 2026-10-06; StrictForwardedFor
+    // says how). Inside this branch only: with nothing listed neither runs, and a request's
+    // headers are as they arrived.
     if (trustForwardedFor)
     {
-        app.UseForwardedHeaders();
+        app.UseWhen(
+            context => context.Connection.RemoteIpAddress is not null,
+            behindAProxy =>
+            {
+                behindAProxy.Use((context, next) =>
+                {
+                    StrictForwardedFor.Rewrite(context.Request.Headers);
+                    return next(context);
+                });
+                behindAProxy.UseForwardedHeaders();
+            });
     }
 
     // 0. Correlation id — FIRST, so every line below (including the request log) can name the
