@@ -16,8 +16,8 @@ found a line wrong, the line is corrected and says what it said before.
 - **You get a private copy.** One click gives you a bank account that no other visitor can see.
 - **The copy works for 24 hours.** Then it is closed. It is deleted later, at a run of a job that
   runs every four hours on the public demo: a run leaves a copy alone until five minutes after
-  its end, and from 48 hours after its end a run deletes it even if somebody is still signed in
-  to it.
+  its end, and longer while somebody is still signed in to it; from 48 hours after its end a run
+  deletes it whoever is signed in.
 - **Do not enter real personal data.** A description, an account name and a handle are yours to
   invent. The demo asks for no name, no address and no card of yours.
 - **It is not a product.** The sign-in page says so itself: "Demo project — not a real bank."
