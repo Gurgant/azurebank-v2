@@ -1,4 +1,4 @@
-# Dependabot watches the actions the three workflows use, and nothing else here: no package of
+# Dependabot watches the actions the four workflows use, and nothing else here: no package of
 # the backend or the frontend. It opens one pull request a month that groups every update.
 #
 # Until 2026-10-03 nothing watched them. Five actions sat on majors that declared Node 20, and

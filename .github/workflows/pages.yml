@@ -1,0 +1,60 @@
+name: Pages
+
+# Publishes the folder site/ as it is, with no build: the entry page of the live demo, at
+# https://gurgant.github.io/azurebank-v2/ . From main only.
+# The repository's Pages setting must say "Source: GitHub Actions"; this workflow does not set it.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - site/**
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+# Nothing by default: the job names what it needs.
+permissions: {}
+
+jobs:
+  publish:
+    name: Publish the entry page
+    runs-on: ubuntu-24.04
+    # deploy-pages gives up by itself after 10 minutes, its default; the steps before it take
+    # seconds.
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    # One publication at a time, and one that has started is left to finish.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    # What deploy-pages asks for: `pages` to create the deployment, and `id-token` for the OIDC
+    # token in which GitHub reads the run's branch before it accepts the deployment.
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - name: Refuse any branch but main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::The entry page is published from main only."
+          exit 1
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Read the Pages setting
+        uses: actions/configure-pages@v6
+      # actionlint 1.7.12, which ci.yml runs on this file, does not know this major. Measured on
+      # 2026-10-07 with an input that does not exist: it reports it for configure-pages@v6 and
+      # deploy-pages@v5, and says nothing for upload-pages-artifact@v5. `path` is an input in
+      # that major's action.yml.
+      - name: Upload the folder site/
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+      - name: Publish
+        id: deployment
+        uses: actions/deploy-pages@v5
