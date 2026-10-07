@@ -146,17 +146,21 @@ CodeQL analyses the C#, the TypeScript and the workflows on every pull request a
   is the price. Measured once, on 2026-10-06, after it had gone to sleep: 27 seconds until the
   first page arrived, then 6 seconds for the first request to the API; awake, the same two took
   0.2 and 0.6 seconds.
-- The demo does not yet see each visitor's own network address: it sees the platform's ingress
-  instead (measured on 2026-10-06: of twelve sign-ins sent in under eight seconds from one
-  connection none was refused, where the limit is ten a minute for one caller; of the 44 sent in the
-  two and a half minutes after them nine were, and the limiter's warnings for those named two
-  internal addresses, neither of them the caller's). So [the
-  limits](docs/testing/try-the-demo.md#the-limits) that are for one network are shared by every
-  visitor for now: a burst from one caller, or many visitors in the same minute, can make the
-  sign-in page say "Too many attempts from your connection." to everybody for about a minute. The
-  change that makes the app read the visitor's own address is written and under review; until it is
-  deployed, the daily cap of copies for one caller is set high on the deployment, and what bounds
-  new copies is the pool.
+- Since 2026-10-07 the demo counts each visitor by their own network address, so [the
+  limits](docs/testing/try-the-demo.md#the-limits) that are for one network are that network's
+  own. Until that day it saw the platform's ingress for everybody (measured on 2026-10-06: of
+  twelve sign-ins sent in under eight seconds from one connection none was refused, where the
+  limit is ten a minute for one caller; of the 44 sent in the two and a half minutes after them
+  nine were, and the limiter's warnings for those named two internal addresses, neither of them
+  the caller's). Measured on 2026-10-07, after the app had been told the ingress's network: of
+  twelve sign-ins sent in under four seconds from one connection ten were answered and the last
+  two refused, and so again when each of the twelve named another address in a forwarded header;
+  in one minute of the limit that connection's ten were answered and its eleventh refused, and a
+  phone on another network that asked for a copy in the middle of them got it; and each of the
+  limiter's 179 warnings named the caller's own address. One number is still looser on the
+  deployment than in [the guide](docs/testing/try-the-demo.md#the-limits): the daily cap of
+  copies for one network is 1,000 there, not 10, so what bounds new copies is the pool. A change
+  that takes it back to 10 follows.
 - axe runs in CI over nine pages and two dialogs and fails on any serious or critical finding
   except colour contrast, which is left to the UI/UX phase; the details are in
   [frontend/README.md](frontend/README.md).
