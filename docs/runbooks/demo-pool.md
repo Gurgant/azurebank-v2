@@ -21,14 +21,21 @@ fill, or a refill by hand, is `seed-pool`, or `seed-pool <N>` to top up to N fre
 needs `Demo__Enabled=true`, the connection string, and the API's `Security__PinPepper` and
 `Security__PinPepperKeyId`. Where a deployment gives the app and its migration database users of
 their own, it signs in as the app's, never the migration's (ADR-0060, decision 5's note). On the
-Azure deployment (ADR-0061), which has no pool job yet, that job is to carry the identity
+Azure deployment (ADR-0061), which had no pool job when this was written *(2026-10-07: it
+has one, read there that day by the deployment's check, `infra/README.md`, step 30)*, that
+job is to carry the identity
 `azurebank-app` and sign in as `azurebank_app`, never with `azurebank-migrate`; ADR-0062,
 decision 13, says what else adding it changes. `backend/tools/AzureBank.Seeder/README.md` has
 every variable and code; on one machine, `compose.demo.yaml` runs both.
 
-**On the Azure deployment, once the demo is on there.** Written on 2026-10-05 and not yet run:
-Azure has no pool job until the third session of `infra/README.md` has turned the demo on
-([ADR-0064](../adr/0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md)). The
+**On the Azure deployment, once the demo is on there.** Written on 2026-10-05, before any of
+it had run: Azure has no pool job until the third session of `infra/README.md` has turned the
+demo on
+([ADR-0064](../adr/0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md)).
+*(Until 2026-10-07 this paragraph began "Written on 2026-10-05 and not yet run". On that day
+the demo was on there and the deployment's check read the job, in shape and with the app's
+pepper and connection string (`infra/README.md`, step 30). What the commands below printed
+there is not written on that page, so every "expected" below stands as it was written.)* The
 template then holds one job, `azurebank-pool`: `recycle` every four hours, at minute 0 of the
 hours 0, 4, 8, 12, 16 and 20 if Azure reads the schedule in UTC as expected, one run at a time
 and no retry, with the identity `azurebank-app` and the app's pepper with no key id. There is no
@@ -485,8 +492,8 @@ job's PIN pepper and connection string are the app's", or which of the two diffe
 value. It moves nothing, so it is run after anything that could have changed either side: a run
 of the template, a deployment, a start of the job by hand, a stop and a start of the app
 (`infra/README.md`, "Reading the logs"). Until 2026-10-07 this paragraph ended "Not yet run on
-Azure": that day it was run there once and passed (`infra/README.md`, step 30), and the line it
-printed about the two secrets is not written there.
+Azure": that day it was run there once and passed, and the line it printed about the two
+secrets is the one above (`infra/README.md`, step 30).
 
 **Then, after any change of the job's secrets, or after a line that says they differ: from a
 browser.** Claim a copy with the demo's button, open the dashboard, and make one transfer to a

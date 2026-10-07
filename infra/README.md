@@ -160,8 +160,8 @@ to one identity, by its client ID, and with no password. `azurebank_app` reads a
 parameter of the template, `false` by default. `secrets.ps1` writes it: what the deployed app
 does now, or `true` with `-DemoOn` (step 25). Added on 2026-10-05. Until 2026-10-07 this line
 ended "none of it has been sent to Azure": on that day the deployed app answered as the demo
-(step 30's note), and what was read of the job and of the third role assignment is not on this
-page.
+and the deployment's check read the job there, in shape (step 30's note). What was read of the
+third role assignment is not on this page.
 
 | Resource | What it is |
 | --- | --- |
@@ -2159,7 +2159,7 @@ and each status was printed.
 | The script's report | `proxyNetworks: from -ProxyNetworks`, and every other value "kept from the deployed resource" |
 | The what-if, before "yes" | `Modify` on the app, whose detail was one new setting on the `bff` container, beside the `Modify` lines the earlier runs of the session had shown. Nothing to create and nothing to delete |
 | The deployment, named `proxy-networks`, at 00:45Z | `Succeeded` |
-| `python infra/deploy.py --check`, at 00:46:25Z | It passed. Among its lines: "The bff container names 1 network of proxies: it believes the X-Forwarded-For header of a connection that comes from inside one. No network was shown."; and its last line ended "the smoke test passed; nothing was moved." |
+| `python infra/deploy.py --check`, at 00:46:25Z | It passed. Among its lines: "The bff container names 1 network of proxies: it believes the X-Forwarded-For header of a connection that comes from inside one. No network was shown."; "The pool job's PIN pepper and connection string are the app's: each was listed on both and compared here, and no value was shown."; and its last line ended "the demo is on and the job azurebank-pool is in shape; the smoke test passed; nothing was moved." |
 | The settings of each container, by count | `bff`: 7 settings, 1 of them a network of proxies. `api`: 13 settings, 0 of them a network of proxies. Both containers ran the image built from `main`'s commit `597278fd`, which holds the strict reading of the header |
 | The last two revisions, read after `--check` | The one the last deployment of a commit had made: inactive, no replica. A new one, `azurebank--0000002`: active, one replica |
 | From A, from 00:51:02Z: twelve sign-ins in 3.8 s | 401 ten times, then 429 at the eleventh and at the twelfth |
