@@ -157,8 +157,7 @@ the API failed them: it read an empty query value as an absent one and answered 
 first). The configuration declares what the checks must be told: the two decided 404s (ADR-0056
 D4, ADR-0042) and the transaction list's unknown query parameter. The seeded demo user's token
 reaches the hooks, as the bearer reached the flags before. And Bruno, left manual above, runs on
-every pull request too. (2026-10-05: this note named three rows of a private list, which no reader
-of this repository can open; dropped, not struck.)_
+every pull request too._
 
 ## Consequences
 

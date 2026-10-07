@@ -293,8 +293,8 @@ that looks behind it, is in [`docs/runbooks/demo-pool.md`](../runbooks/demo-pool
   may run on a schedule: `main.bicep` names `azurebank-pool`.)* The PIN pepper becomes a secret
   of the job too, where ADR-0061's
   decision 9 keeps it in the app. The job carries the identity `azurebank-app` and a connection
-  string like the one only the `api` container references today, where `infra/README.md`'s
-  read-back expects each database identity on exactly one resource. And the deployment identity
+  string like the one only the `api` container references today, where the deployment's
+  read-back expected each database identity on exactly one resource. And the deployment identity
   holds its role on the app and the migration job and nowhere else (ADR-0061's decision 8). The
   API there sets no `Security__PinPepperKeyId`,
   so the key id the job holds is 1. An execution that exited 7 read `Failed` in ADR-0061's trial,
@@ -305,9 +305,9 @@ that looks behind it, is in [`docs/runbooks/demo-pool.md`](../runbooks/demo-pool
   identity `azurebank-app`, and two secrets of its own, a copy of the app's connection string and
   of its pepper. The deployment identity's role is assigned a third time, on that job. The
   read-backs with each identity on one resource are left as they were measured, and the
-  runbook's third session says what they are expected to give with the demo on. A start by hand
+  runbook's "Turn the demo on" says what they are expected to give with the demo on. A start by hand
   ends by the run's exit code and not by the execution's status, since how Azure shows the
-  signals is still not tried. No job runs the commands on Azure until that session has.)*
+  signals is still not tried. No job runs the commands on Azure until that section has run.)*
 - **On Azure the app goes live on an empty database with its registration open**
   (`infra/README.md`, "What is not here"). ~~A user who registers before the first `seed-pool`
   makes it exit 13 on the demo's own database and write nothing, as on any database with users
@@ -325,8 +325,8 @@ that looks behind it, is in [`docs/runbooks/demo-pool.md`](../runbooks/demo-pool
   registration closes before the first fill is for the change that adds the job.~~ *(struck
   2026-10-05, ADR-0064: it does. One run of the template turns the flag on in both containers
   and builds the job, the job after the app. The job then fills the pool by itself at its next
-  run, so step 25 of the runbook keeps that run from coming before the app has been read as the
-  demo: it begins more than an hour before it, and deletes the job or stops the app if that
+  run, so the runbook's "Turn the demo on" keeps that run from coming before the app has been read
+  as the demo: it begins more than an hour before it, and deletes the job or stops the app if that
   read fails. Not run on Azure.)*
 - **`seed` and `reset` refuse demo mode** (exit 2, nothing opened): `seed`'s four users have a
   password and a PIN in this repository, and `reset` drops the database. **Both also refuse a

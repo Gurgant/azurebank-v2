@@ -94,7 +94,7 @@ response nobody can produce is deleted rather than described.**
 
 ### Why not two components
 
-The plan for this work recommended splitting `ProblemDetails` from a `ValidationProblemDetails`, on
+Splitting `ProblemDetails` from a `ValidationProblemDetails` was the first recommendation, on
 the reasoning that they are genuinely two shapes and an optional-everything object describes
 nothing. Phase 1 measured the thing that decides it: **both shapes arrive at the same declared
 response**. Seventeen 400s say `typeof(ProblemDetails)` and can answer either. Splitting would have

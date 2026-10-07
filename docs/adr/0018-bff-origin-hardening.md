@@ -68,7 +68,7 @@ gaps, one of them a live hole:
 ## Consequences
 
 - The former cross-origin dev mode (frontend on :5173 calling the BFF origin directly) no
-  longer works — dev goes through the Vite proxy (`launch.json` `frontend` + `bff` + `api`),
+  longer works — dev goes through the Vite proxy,
   which is what keeps the cookie first-party and SameSite=Strict honest anyway.
 - `docs/adr/0009` §hardening mentions the loopback dev CORS policy and the CORS-exposed
   replay header; both are superseded by this ADR's deletion.

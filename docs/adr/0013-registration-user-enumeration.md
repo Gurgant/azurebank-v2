@@ -183,8 +183,8 @@ knowingly accepted, time-boxed residual with a concrete deferral trigger.
     slip there trusts one other address, not a network of them.*
   - *On Azure nothing is set by it. `infra/main.bicep` takes the networks as a parameter that is
     empty by default, on the `bff` container alone, and no network of the deployment is written
-    in any file; `infra/README.md`, step 30, says how the address is read, how the networks are
-    chosen and set, and what proves them. None of that has run.*
+    in any file; `infra/README.md`, "Turn the demo on", says how the address is read, how the
+    networks are chosen and set, and what proves them. None of that has run.*
 
   *What it leaves open: every address inside a listed network can name a caller's address, so
   the list is as good as the measurement behind it; one hop is believed, and behind two proxies
@@ -213,7 +213,7 @@ knowingly accepted, time-boxed residual with a concrete deferral trigger.
   and, in the middle of them, a copy claimed from a phone on a mobile network; the
   connection's next request was refused, and that run's 127 warnings named the connection's
   own address as the 52 had. No network of the deployment is written in any file, as before
-  (`infra/README.md`, step 30).)*
+  (`infra/README.md`, "Measured on Azure").)*
 - **Security config fails fast.** Both controls are validated at startup
   (`IValidateOptions` + `ValidateOnStart`, mirroring the pepper validator in ADR-0011): a
   non-positive rate-limit value or an unparseable `KnownProxies` entry stops the app. Both

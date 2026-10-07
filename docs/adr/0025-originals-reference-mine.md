@@ -15,19 +15,18 @@ asset: its flows, its screen designs and its component structure are better deve
 written down here, and it has been mined repeatedly for UI/UX direction.
 
 It is also a hazard, because "the original did it this way" is a persuasive premise that is easy to
-state and expensive to check. Three separate versions of that premise survived until an adversarial
-investigation disproved them — twenty-eight agents across seven analysis passes and twenty-one
-verification passes, three knowledge graphs, roughly 1.9 million tokens and 481 file reads. The
-highest-severity finding is that **porting the originals' idempotency filter would reintroduce a
-real double-spend window** into code that currently does not have one.
+state and expensive to check. Three separate versions of that premise survived until they were
+verified against the actual source and disproved. The highest-severity finding is that **porting
+the originals' idempotency filter would reintroduce a real double-spend window** into code that
+currently does not have one.
 
 Before this ADR none of that was recorded anywhere versioned. The canonical path of the preserved
-copies appeared in **zero** repository files, and the findings lived in a planning document headed
-for the archive — so the cheapest way to re-learn any of it was to run the investigation again.
+copies appeared in **zero** repository files, and the findings in none — so the cheapest way to
+re-learn any of it was to run the investigation again.
 
 ## Decision
 
-1. **`C:\Dev2\azurebank-originals\playground-backupcomplete` is the single canonical source** for
+1. **The original project's copy `playground-backupcomplete` is the single canonical source** for
    all future mining — backend, frontend and documentation alike. The `active` copy is consulted
    for exactly one thing, its `README-FULL.md`, when polishing the root README;
    `frontend-only-TemporalyBackup` is mined out and holds nothing further. **A "port this from the
@@ -68,16 +67,15 @@ comparison unreliable at file granularity.
 extracted, and the design phase still consults them. This ADR fixes their location precisely so
 they can be kept without being trusted.
 
-**Record only the location and leave the findings in the archive.** Rejected: the location without
+**Record only the location and leave the findings unrecorded.** Rejected: the location without
 the register is what produces the "the original had X, should we bring it back" cycle, which is the
 recurring cost this ADR exists to end.
 
 ## Residuals (accepted, documented)
 
-- **The canonical copies live outside the repository**, on one machine, in `C:\Dev2`. They are not
+- **The canonical copies live outside the repository**, on one machine. They are not
   backed up by anything git-shaped. If that disk fails, the design reference is gone — accepted for
-  now, because the material that mattered most has been extracted into planning documents and this
-  ADR.
+  now, because the findings that mattered most are in this ADR.
 - **The do-not-port register is a snapshot.** It was verified against the originals as they stood;
   since the originals are frozen, it will not drift — but it also will not grow. A future mining
   pass that finds a fifth hazard should add it here.
