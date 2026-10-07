@@ -986,9 +986,7 @@ public class AuthServiceTests : IDisposable
           non-duplicate failure has, and the narrowed predicate must let it through. No transient
           SqlException is built for it: the case is an exception with none inside. A test that
           needs one builds it with Fixtures/SqlErrors, as SqlClient builds its own, through its
-          internal factory. (Until 2026-10-04 this said a SqlException has no public constructor
-          and the repository avoids building one by reflection. The first half is true; two unit
-          test classes built one that way all the same, and the fixture holds their code.)
+          internal factory.
 
           The DUPLICATE half of the contract — a real write-time race returning the neutral 409 — is
           proved where a real unique violation can actually be raised:

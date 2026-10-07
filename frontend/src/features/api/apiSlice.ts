@@ -173,8 +173,6 @@ export const HISTORY_PAGE_SIZE = 20;
  * IDEMPOTENCY_RESULT_UNKNOWN, in the mutation itself, with its success tags (`outcomeUnknown`
  * above); INSUFFICIENT_FUNDS, the account it names (`staleBalanceTags`); and the delete dialog's
  * ACCOUNT_NOT_FOUND branch, by hand (the account is already gone; the LIST is stale).
- * (Until 2026-10-01 this said "only on SUCCESS" and that "RESULT_UNKNOWN recovery invalidates
- * explicitly in its flow". No flow did, and nothing was read again after that answer.)
  */
 export const apiSlice = createApi({
   reducerPath: 'api',
@@ -411,10 +409,9 @@ export const apiSlice = createApi({
 
     withdraw: builder.mutation<WithReplay<WithdrawResponse>, IdempotentArg<WithdrawRequest>>({
       /*
-        ~~PIN travels in the BODY (D1) — this endpoint never triggers the step-up interceptor.~~
-        Struck 2026-09-22: ADR-0056 took the PIN off this endpoint entirely. It carries a minted
-        authorisation in `Step-Up-Authorization` exactly as the two transfers do, and an absent one
-        is 401 AUTHORIZATION_REQUIRED.
+        The withdrawal carries no PIN (ADR-0056): it carries a minted authorisation in
+        `Step-Up-Authorization` exactly as the two transfers do, and an absent one is 401
+        AUTHORIZATION_REQUIRED.
 
         The SPREAD rather than a `?? undefined` value, for the reason measured on the transfer
         below: an explicit `undefined` still serialises as a header with an empty VALUE on some

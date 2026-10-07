@@ -462,8 +462,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
                             // transfer delegate on a transient fault, which is exactly
                             // what the transient-retry proof needs to exercise. Not the
                             // same budget -- 3 retries under a 5-second cap here;
-                            // production's is 4 under 10 s unless set (ADR-0058). (Until
-                            // 2026-09-25 this said it mirrored production.)
+                            // production's is 4 under 10 s unless set (ADR-0058).
                             sql.EnableRetryOnFailure(
                                 maxRetryCount: 3,
                                 maxRetryDelay: TimeSpan.FromSeconds(5),

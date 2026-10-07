@@ -183,9 +183,8 @@ public override async Task<int> SaveChangesAsync(...)
 
 A tracked transaction cannot be modified or deleted: `SaveChanges` refuses it. A set-based
 statement (`ExecuteUpdate`, `ExecuteDelete`, raw SQL) tracks nothing and never reaches the check,
-and the Seeder's recycler deletes a demo copy's ledger that way, on purpose (ADR-0062). Until then
-this said transactions cannot be modified or deleted, with no exception. The check, simplified (the
-real one also lets `RelatedTransactionId` be written once):
+and the Seeder's recycler deletes a demo copy's ledger that way, on purpose (ADR-0062). The check,
+simplified (the real one also lets `RelatedTransactionId` be written once):
 
 ```csharp
 foreach (var entry in ChangeTracker.Entries<Transaction>())
@@ -377,15 +376,10 @@ services.AddDbContext<AzureBankDbContext>((serviceProvider, options) =>
 });
 ```
 
-*(Until 2026-09-25 the sample, like the code, fixed the retry budget at 3 and 30 s. Until
-2026-09-30 it said 3 and 30 s unless set, which the code's defaults were until ADR-0058 made them 4
-and 10 s, and it showed the raw connection string going to `UseSqlServer`.)*
-
 `DesignTimeDbContextFactory` below builds its own options, with the same connection limits and
-retry budget for the string it reads from the API's settings. A `dotnet ef … --connection` run
-sets its string after the factory has run, so it keeps the budget and opens with that string's own
-limits. *(Until 2026-10-01 the factory applied none of this, which was ADR-0058's second
-precondition; ADR-0060.)*
+retry budget for the string it reads from the API's settings (ADR-0060). A `dotnet ef …
+--connection` run sets its string after the factory has run, so it keeps the budget and opens
+with that string's own limits.
 
 ---
 
@@ -430,10 +424,8 @@ public class DesignTimeDbContextFactory : IDesignTimeDbContextFactory<AzureBankD
 }
 ```
 
-*(Until 2026-10-01 this sample read `appsettings.json` from the current directory and handed the
-raw string to `UseSqlServer`. The code read it from `../AzureBank.Api` and required the file. No
-environment variable is read: a deployment migrates through the Seeder's `migrate` command,
-ADR-0060.)*
+No environment variable is read: a deployment migrates through the Seeder's `migrate` command
+(ADR-0060).
 
 ---
 

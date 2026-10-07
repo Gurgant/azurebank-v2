@@ -5,8 +5,6 @@ namespace AzureBank.Tests.Unit.Services;
 
 /// <summary>
 /// Unit tests for PasswordHasher service: Argon2id PIN hashing (19MB profile).
-/// Until 2026-09-17 this said "dual profiles (Password: 64MB, PIN: 19MB)"; the password profile
-/// was deleted as uncalled outside these tests.
 /// </summary>
 public class PasswordHasherTests
 {

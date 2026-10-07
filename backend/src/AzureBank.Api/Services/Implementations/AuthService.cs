@@ -832,8 +832,7 @@ public class AuthService : IAuthService
               operator tool's `notify` verb renders it later, addressed to the email held on the
               account — a path the session that enrolled the PIN cannot read, redirect or suppress.
               Not sent from here, and not rendered from here: the relay is a hosted loop outside
-              the request, on a period, and until 2026-09-04 this comment said the API ran no such
-              loop.
+              the request, on a period.
 
               No address is written: it is joined from the account when the notice is rendered.
             */

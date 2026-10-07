@@ -44,7 +44,6 @@ export interface ApiProblem {
   errors?: Record<string, string[]>;
   /**
    * 429s, locks and the outage 503: the body first; the Retry-After header is the fallback.
-   * (Until 2026-10-01 this said the BFF drops upstream Retry-After headers.)
    */
   retryAfterSeconds?: number;
   /**
@@ -53,8 +52,7 @@ export interface ApiProblem {
    * `true` when the API read the key's record as committed; absent otherwise. Read as
    * `applied === false` on the 503, only to choose the words, and as `applied === true` on that
    * 409 (`isProvenCommit`), to say the payment went through. Neither decides the idempotency key:
-   * a 503 keeps it and that 409 drops it, whatever this member says. (Until 2026-10-01 this said
-   * "the money sends' 503 only" and "read only as `applied === false`".)
+   * a 503 keeps it and that 409 drops it, whatever this member says.
    */
   applied?: boolean;
   /** Step-up 403s (D2): the level the endpoint demands, read from the header. */
@@ -68,10 +66,9 @@ export interface ApiProblem {
 
     BRANCH ON `errorCode`, NEVER ON MEMBER PRESENCE. `requested` is NOT exclusive to
     DAILY_LIMIT_EXCEEDED: A4.4 measured INSUFFICIENT_FUNDS on POST /api/transfers carrying
-    `{"available": 300.0, "requested": 400}`. The document called it "DAILY_LIMIT_EXCEEDED only"
-    there until 2026-09-11; it now names both codes, and INSUFFICIENT_FUNDS carries it on the
-    withdrawal and the internal transfer as well. Any consumer inferring the daily refusal from
-    `problem.requested !== undefined` is wrong.
+    `{"available": 300.0, "requested": 400}`. The document names both codes there, and
+    INSUFFICIENT_FUNDS carries it on the withdrawal and the internal transfer as well. Any
+    consumer inferring the daily refusal from `problem.requested !== undefined` is wrong.
 
     `available` stays UNTYPED here because nothing in the SPA reads it. The document declares it
     since 2026-09-11, but the funds gate (useFundsGate) re-reads the balance rather than trusting
@@ -171,8 +168,7 @@ function parseRetryAfterSeconds(
 ): number | undefined {
   // Body first (D13): ACCOUNT_LOCKED / PIN_LOCKED bodies carry retryAfterSeconds and the
   // outage 503 does too; the header is the fallback, for the BFF's own rate limiter, which
-  // sets it and has no body field. (Until 2026-10-01 this said the BFF drops the upstream
-  // Retry-After header.)
+  // sets it and has no body field.
   if (typeof body?.retryAfterSeconds === 'number') return body.retryAfterSeconds;
   const header = headers?.get('Retry-After')?.trim();
   if (!header) return undefined;

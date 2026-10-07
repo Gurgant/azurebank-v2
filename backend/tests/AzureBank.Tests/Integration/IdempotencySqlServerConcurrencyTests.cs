@@ -16,7 +16,7 @@ namespace AzureBank.Tests.Integration;
 /// In every round the same request is sent once more after the parallel
 /// ones have been answered, and must come back as a replay: the winner's
 /// status, the Idempotency-Replayed header and exactly the winner's response
-/// text. (Until 2026-10-06 this said nothing of replays.)
+/// text.
 ///
 /// The factory is created lazily per test with SetConnectionString, which
 /// migrates the database and seeds the Identity roles.

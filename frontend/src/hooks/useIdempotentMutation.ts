@@ -54,8 +54,7 @@ function shouldKeepKey(problem: ApiProblem): boolean {
  * `errorCode` — never on HTTP status. A body-affecting form edit calls `resetIntent`
  * only while no key is held (an edited body with the old key is a byte-fingerprint
  * mismatch → 422); while one is retained the flow calls `requireVerify` instead (below),
- * or keeps its form disabled, as the transfer pages do. (Until 2026-10-01 this said every
- * such edit must call `resetIntent`, which withdraw's edits had stopped doing on 2026-09-23.)
+ * or keeps its form disabled, as the transfer pages do.
  *
  * `IDEMPOTENCY_RESULT_UNKNOWN` drops the key and latches `verifyRequired`: submit
  * refuses to mint a new key until the owning flow's explicit "it didn't go through —

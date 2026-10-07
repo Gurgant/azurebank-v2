@@ -72,8 +72,7 @@ describe('settings page', () => {
       "Nothing focused inside" was half of it. The input IS focused when the dialog opens, and
       tabster moves focus to "Log out" 100ms later because keyborg cannot mark that focus as
       programmatic (test/keyborg.ts). With this click in place, eight busy cores on main 9dc371d
-      still failed this file 2 of 10 runs. (Until 2026-09-17 this comment ended at the paragraph
-      above.)
+      still failed this file 2 of 10 runs.
     */
     await user.click(input);
     fireEvent.change(input, { target: { value: 'newtag' } });

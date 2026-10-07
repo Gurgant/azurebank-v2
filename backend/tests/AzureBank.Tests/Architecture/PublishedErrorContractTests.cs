@@ -15,20 +15,18 @@ namespace AzureBank.Tests.Architecture;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The defect these exist to catch is a contract WIDER than the code, and nothing in the pipeline
-/// could see it. The drift gate regenerates the frontend artefacts from this document and compares
-/// them, which proves the generated code matches the document and never that the document matches
-/// the server. Schemathesis could have caught it and does not: its job in
-/// <c>contract-tests.yml</c> ends with <c>|| true # report, don't gate</c>. (True until
-/// 2026-09-15: Schemathesis is the <c>conformance</c> job in <c>ci.yml</c> now, gating on every
-/// PR, and its first run found the two shapes this document had never declared — 415 on every
-/// body-taking operation and the route-miss 404 as application/problem+json; ADR-0053 D6.)
+/// The defect these exist to catch is a contract WIDER than the code. The drift gate regenerates
+/// the frontend artefacts from this document and compares them, which proves the generated code
+/// matches the document and never that the document matches the server. Schemathesis does check
+/// that: it is the <c>conformance</c> job in <c>ci.yml</c>, gating on every PR, and its first run
+/// found the two shapes this document had never declared — 415 on every body-taking operation
+/// and the route-miss 404 as application/problem+json (ADR-0053 D6).
 /// </para>
 /// <para>
-/// So the document said 58 refusals carried no body at all. Measured, 53 of them answer
-/// <c>application/json</c> with seven keys, and the other five describe a response the code cannot
-/// produce at all. A client generated from it would have had no type for the field it must branch
-/// on, and five branches for answers that never arrive.
+/// Before these tests the document said 58 refusals carried no body at all. Measured, 53 of them
+/// answer <c>application/json</c> with seven keys, and the other five describe a response the code
+/// cannot produce at all. A client generated from it would have had no type for the field it must
+/// branch on, and five branches for answers that never arrive.
 /// </para>
 /// <para>
 /// These read the COMMITTED file rather than a live server on purpose: the committed file is what
@@ -306,9 +304,8 @@ public class PublishedErrorContractTests
         required.Should().NotContain("retryAfterSeconds", "most refusals carry none");
     }
 
-    // Until 2026-10-01 this was Applied_is_declared_on_the_four_money_503s_and_nowhere_else. It reads
-    // 503 schemas only, and since that date the four money 409s declare `applied` too (as true: the
-    // tests below), so "nowhere else" had stopped being what it checks.
+    // It reads 503 schemas only: the four money 409s declare `applied` too (as true: the tests
+    // below).
     [Fact]
     public void Applied_is_declared_on_the_503s_of_the_four_money_operations_only()
     {

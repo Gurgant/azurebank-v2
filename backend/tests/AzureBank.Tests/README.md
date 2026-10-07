@@ -110,9 +110,8 @@ dotnet test --logger "trx;LogFileName=results.trx"
 
 ```bash
 # The ONLY Category trait this suite defines. Everything else is ungrouped, so
-# "Category=Unit", "Category=Integration" and "Category=Architecture" — which this
-# file used to recommend — match ZERO tests and still exit 0. A run that executes
-# nothing is not a run that passed.
+# "Category=Unit", "Category=Integration" and "Category=Architecture" match ZERO
+# tests and still exit 0. A run that executes nothing is not a run that passed.
 dotnet test --filter "Category=SqlServer"
 
 # Everything EXCEPT the SQL-gated ones

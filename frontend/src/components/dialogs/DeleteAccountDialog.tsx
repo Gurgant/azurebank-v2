@@ -171,9 +171,6 @@ export function DeleteAccountDialog({ account, onClose }: DeleteAccountDialogPro
         Already closed (M4 on the mint; D10/D11 on the DELETE: 404 once the account is gone,
         spent header or none alike). Treat it as done — but this mutation invalidates NOTHING on
         error (apiSlice.ts), so the list is refreshed by hand, or the card would stay on screen.
-        (Until 2026-10-01 this added "the way RESULT_UNKNOWN recovery does". No flow ever did
-        that by hand; since that date the four money mutations invalidate on that answer
-        themselves.)
       */
       dispatch(apiSlice.util.invalidateTags([{ type: 'Account', id: 'LIST' }]));
       onClose();
