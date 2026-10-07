@@ -295,12 +295,12 @@ One run each unless a row says otherwise. What is dated 2026-10-02 is from a thr
 | A cold start, a stop and a start | From zero replicas the first request answered after 27.0 s, and on another day after 24.6 s; the first sign-in after it in 6.0 s, against 0.6 s warm, with no 503. Stopped by hand, `runningStatus` read `Stopped` after 14 s and `/health/ready` answered 404; started, it read `Running` after 22 s | 2026-10-06, 2026-10-07 | A visitor waits about 25 s once, and the database sign-in fits its timeout; the two calls of [Operating it](#operating-it) work |
 | The address the app counts a visitor by | With no network named: twelve sign-ins in under eight seconds all answered, and the warnings named two internal addresses. With the ingress's network named: ten sign-ins a minute answered and the eleventh refused, five times; a forged `X-Forwarded-For` ignored; another network served in the same minute; 179 of 179 warnings named the caller's own address | 2026-10-06, 2026-10-07 | Behind the ingress the limits are one visitor's own only with `proxyNetworks` |
 | An alert that fired | The rule on replica time, severity 2: a day's average of 0.0985 against the threshold 0.093. Its e-mail arrived in the same minute and its push notification within a few minutes. The `Replicas` metric reported 0, not nothing, for idle hours | 2026-10-07 | The alerts arrive both ways, and that rule can be computed on an app that scales to zero |
-| The daily cap of copies for one address | After the run of the template that took an override of 1,000 out: 12 settings on `api` where there were 13, 3 on the pool job where there were 4, 7 on `bff` as before, and the next deployment kept them. A refused eleventh claim was not observed | 2026-10-07 | The application's default of 10 applies |
+| The cap of copies for one address in any 24 hours | After the run of the template that took an override of 1,000 out: 12 settings on `api` where there were 13, 3 on the pool job where there were 4, 7 on `bff` as before, and the next deployment kept them. A refused eleventh claim was not observed | 2026-10-07 | The application's default of 10 applies |
 | Cost and log volume | Month to date, three days after the database was created: SQL Database 0.5018 EUR; log ingestion, alert rules and e-mails 0.0000; no row for any Container Apps meter. Logs: 0.19 and 0.22 MB a day of the 50 MB cap, a console line billed 845 bytes on average | 2026-10-03, 2026-10-06 | The database is the one cost so far; the Container Apps meters were absent, not read at 0 |
 
 ## Not measured yet
 
-- A visitor refused the eleventh copy of one day, 429 `DEMO_DAILY_LIMIT`: read in the code.
+- A visitor refused an eleventh copy within 24 hours, 429 `DEMO_DAILY_LIMIT`: read in the code.
 - A registration on a database that only `migrate` has touched. On a local stack (2026-10-05) it
   answered 500 and left no user and no role; after `seed`, the same body answered 201.
 - Whether the free 5 GB of logs apply to this offer, and what a pool run is billed.
@@ -318,7 +318,7 @@ One run each unless a row says otherwise. What is dated 2026-10-02 is from a thr
 - No rotation of an application secret, no Key Vault, no private endpoint, no deployment by
   image digest, no rollback of the schema, and the API in no app of its own.
 - The networks of the ingress are written in no file: a run names them, and a deployment made
-  anew starts with none, so that its visitors share the limits and the daily cap of copies.
+  anew starts with none, so that its visitors share the limits and the cap of copies.
 
 ## Removing everything
 
