@@ -1,13 +1,12 @@
 # Security Policy
 
-This is a solo portfolio project, not a service with users: it is deployed only as a public demo,
-with invented data and registration closed, and has no supported version or response-time promise.
-What the demo is, and what it keeps of a visitor, is under
-[What the demo is, and is not](docs/testing/try-the-demo.md#what-the-demo-is-and-is-not).
-To report a vulnerability, use GitHub's
-**private vulnerability reporting** on this repository (Security → Report a vulnerability), not a
-public issue. The most useful findings are about the cryptography, the authorisation rails and the
-audit trail, because those are where the project makes its claims.
+This is a solo portfolio project, not a production service with customer accounts: it is deployed
+only as a public demo, with invented data and registration closed, and has no supported version or
+response-time promise. What the demo is, and what it keeps of a visitor, is under [What the demo is,
+and is not](docs/testing/try-the-demo.md#what-the-demo-is-and-is-not). To report a vulnerability,
+use GitHub's **private vulnerability reporting** on this repository (Security → Report a
+vulnerability), not a public issue. The most useful findings are about the cryptography, the
+authorisation rails and the audit trail, because those are where the project makes its claims.
 
 _(This section used to promise a 48-hour acknowledgement and give `security@azurebank.example.com`
 as the address. `.example.com` is a domain reserved by RFC 2606, so mail to it reaches nobody.)_
