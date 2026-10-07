@@ -78,15 +78,15 @@ as the address. `.example.com` is a domain reserved by RFC 2606, so mail to it r
   answered 500.)_
 - **The PIN pepper lives outside the database** (ADR-0011), and the audit trail's chain and anchor
   keys are separate secrets from each other and from everything else (ADR-0044).
-- **The public demo is served over HTTPS; no TLS version is claimed for it, and no encryption at
-  rest.** The template turns plain HTTP off at the app's ingress (`allowInsecure: false`,
-  `infra/main.bicep`), and on 2026-10-03 a request over `http://` was answered 301 to `https://`
-  of the same name ([infra/README.md](infra/README.md#measured-on-azure), "Measured on Azure",
-  step 21); so it was again on 2026-10-06, with the demo on. Which TLS versions that ingress
-  accepts, and its certificate, are the platform's own: this project did not set them and did not
-  read them. Towards the database the template sets a minimum of TLS 1.2 on the server
-  (`minimalTlsVersion`; read back as 1.2 on 2026-10-03, the same section, step 4), and the app's
-  connection string asks for encryption and for the server's certificate to be checked
+- **The public demo is served over HTTPS; no TLS version is claimed for it, and encryption at rest
+  is not verified.** The template turns plain HTTP off at the app's ingress (`allowInsecure: false`,
+  `infra/main.bicep`), and on 2026-10-03 a request over `http://` was answered 301 to `https://` of
+  the same name ([infra/README.md](infra/README.md#measured-on-azure), "Measured on Azure", step
+  21); so it was again on 2026-10-06, with the demo on. Which TLS versions that ingress accepts, and
+  its certificate, are the platform's own: this project did not set them and did not read them.
+  Towards the database the template sets a minimum of TLS 1.2 on the server (`minimalTlsVersion`;
+  read back as 1.2 on 2026-10-03, the same section, step 4), and the app's connection string asks
+  for encryption and for the server's certificate to be checked
   (`Encrypt=True;TrustServerCertificate=False`). Encryption at rest is left to the database
   service's own default: this project did not set it and did not read it, so none is claimed.
   _(This section used to list "TLS 1.3 for all connections" and "Sensitive
