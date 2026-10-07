@@ -457,11 +457,14 @@ not know.
   note of 2026-10-06), and the runbook's proof was run: from one connection, twelve sign-ins in
   under four seconds were answered ten times and refused at the eleventh and at the twelfth,
   four times over, two of the four with an `X-Forwarded-For` header that named another address
-  in each request; and the limiter's 52 warnings, as many as that caller's refusals in the
-  whole run, all named that caller's own public address, none an address of the ingress and
+  in each request; and the limiter's 52 warnings, as many as that caller's refusals up to
+  then, all named that caller's own public address, none an address of the ingress and
   none an address a header had named. The proof's own line, a caller on a second network
-  answered while the first is refused, was not read as it is written: the warnings are what
-  shows whose the count is. So `infra/main.bicep`
+  answered while the first is held to its ten, was read in a fifth run: with one sign-in a
+  second from that connection, the limiter let eleven requests through inside 13 seconds, the
+  connection's ten and, in the middle of them, a copy claimed from a phone on a mobile
+  network; the connection's next request was refused, and that run's 127 warnings named the
+  connection's own address as the 52 had. So `infra/main.bicep`
   sets no `Demo__Claim__MaxPerClientPerDay` any more: the variable is gone, the default of 10
   applies on `api` and on the job, and a test holds that no container of the template carries
   a setting under `Demo__Claim__`. Until that day the template set what the note above says,

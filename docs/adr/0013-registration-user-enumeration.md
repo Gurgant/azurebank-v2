@@ -203,13 +203,17 @@ knowingly accepted, time-boxed residual with a concrete deferral trigger.
   deployed `bff` container. After it, from one connection, twelve sign-ins in under four seconds
   were answered ten times and refused at the eleventh and at the twelfth, four times over, two
   of the four with an `X-Forwarded-For` header that named another address in each request; and
-  the limiter's 52 warnings, as many as that caller's refusals in the whole run, all named that
+  the limiter's 52 warnings, as many as that caller's refusals up to then, all named that
   caller's own public address, none an address of the ingress and none an address a header had
   named. So the entry the BFF believed, the last one, was the caller's own, after whatever the
   caller wrote: what this note left as "expected, not seen" is seen for one hop. Two proxies in
-  a row are still not seen, and the proof's own line, a caller on a second network answered
-  while the first is refused, was not read as it is written. No network of the deployment is
-  written in any file, as before (`infra/README.md`, step 30).)*
+  a row are still not seen. The proof's own line, a caller on a second network answered while
+  the first is held to its ten, was read in a fifth run: with one sign-in a second from that
+  connection, the limiter let eleven requests through inside 13 seconds, the connection's ten
+  and, in the middle of them, a copy claimed from a phone on a mobile network; the
+  connection's next request was refused, and that run's 127 warnings named the connection's
+  own address as the 52 had. No network of the deployment is written in any file, as before
+  (`infra/README.md`, step 30).)*
 - **Security config fails fast.** Both controls are validated at startup
   (`IValidateOptions` + `ValidateOnStart`, mirroring the pepper validator in ADR-0011): a
   non-positive rate-limit value or an unparseable `KnownProxies` entry stops the app. Both

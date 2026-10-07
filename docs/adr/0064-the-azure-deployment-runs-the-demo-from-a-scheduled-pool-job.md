@@ -100,11 +100,14 @@ run of the template named the ingress's network on the `bff` container, and the 
 from one connection, twelve sign-ins in under four seconds were answered ten times and refused
 at the eleventh and at the twelfth, four times over, two of the four with an `X-Forwarded-For`
 header that named another address in each request; the limiter's 52 warnings, as many as that
-caller's refusals in the whole run, all named that caller's own public address, none an address
+caller's refusals up to then, all named that caller's own public address, none an address
 of the ingress and none an address a header had named. The proof's own line, a caller on a
-second network answered while the first is refused, was not read as it is written: the warnings
-are what shows whose the count is. Not run: the run of the template that takes the setting out
-on Azure. Until it is made
+second network answered while the first is held to its ten, was read in a fifth run: with one
+sign-in a second from that connection, the limiter let eleven requests through inside 13
+seconds, the connection's ten and, in the middle of them, a copy claimed from a phone on a
+mobile network; the connection's next request was refused, and that run's 127 warnings named
+the connection's own address as the 52 had. Not run: the run of the template that takes the
+setting out on Azure. Until it is made
 the deployed `api` container and the deployed job are expected to carry the 1,000: on
 2026-10-07 that container read back 13 settings, the template's count with the cap
 (`infra/README.md`, step 30).)* No container carries a key id of the pepper, a
