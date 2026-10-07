@@ -17,7 +17,7 @@ found a line wrong, the line is corrected and says what it said before.
 - **The copy works for 24 hours.** Then it is closed. It is deleted later, at a run of a job that
   runs every four hours on the public demo: a run leaves a copy alone until five minutes after
   its end, and from 48 hours after its end a run deletes it even if somebody is still signed in
-  to it. *(Until 2026-10-07 this said "Then it is closed and deleted.")*
+  to it.
 - **Do not enter real personal data.** A description, an account name and a handle are yours to
   invent. The demo asks for no name, no address and no card of yours.
 - **It is not a product.** The sign-in page says so itself: "Demo project — not a real bank."
@@ -31,8 +31,7 @@ network address is kept with the copy and removed when the copy is deleted."
 Open **the demo's address** in your browser. The public address is in
 [the README](../../README.md#try-it); what a visitor meets there that this page does not say, a
 slow first page after a quiet spell, is under its
-[Status and known limits](../../README.md#status-and-known-limits). *(Until 2026-10-06 this
-line said: "The public address is not published yet.")*
+[Status and known limits](../../README.md#status-and-known-limits).
 
 **For a developer: start it on one machine.** You need Docker and this repository. Two files at
 the repository's root start it, and their headers are the instructions:

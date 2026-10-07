@@ -2,10 +2,8 @@
 
 This is a solo portfolio project, not a service with users: it is deployed only as a public demo,
 with invented data and registration closed, and has no supported version or response-time promise.
-_(Until 2026-10-06 this said "it is not deployed, holds no real data". The app had been on Azure
-since 2026-10-03 ([infra/README.md](infra/README.md)), and the public demo was turned on on
-2026-10-06; what it is, and what it keeps of a visitor, is under
-[What the demo is, and is not](docs/testing/try-the-demo.md#what-the-demo-is-and-is-not).)_
+What the demo is, and what it keeps of a visitor, is under
+[What the demo is, and is not](docs/testing/try-the-demo.md#what-the-demo-is-and-is-not).
 To report a vulnerability, use GitHub's
 **private vulnerability reporting** on this repository (Security → Report a vulnerability), not a
 public issue. The most useful findings are about the cryptography, the authorisation rails and the
@@ -91,10 +89,6 @@ as the address. `.example.com` is a domain reserved by RFC 2606, so mail to it r
   connection string asks for encryption and for the server's certificate to be checked
   (`Encrypt=True;TrustServerCertificate=False`). Encryption at rest is left to the database
   service's own default: this project did not set it and did not read it, so none is claimed.
-  _(Until 2026-10-06 this said "Nothing here configures a TLS version or encryption at rest. The
-  project is not deployed, so neither is claimed." The public demo was turned on that day. Neither
-  sentence had been exact since 2026-10-03: that day `infra/main.bicep` came to `main` with the
-  settings named above, and the app was first deployed with it.)_
   _(This section used to list "TLS 1.3 for all connections" and "Sensitive
   data encrypted at rest"; no code or configuration in the repository does either.)_
 
@@ -192,11 +186,10 @@ them in a minute.
   generated password, the demo PIN, the handles of its two contacts and the instant it ends.
   None of it is a real person's, a token or a session identifier: a copy is a throwaway account
   of invented money that nobody registered for, and it is closed when its time is over and
-  deleted by a later run of the pool's job _(until 2026-10-07 this said "it is closed and deleted
-  when its time is over"; a run of that job leaves a copy alone until five minutes past its end,
-  and one somebody is still signed in to until 48 hours past it, from when a run deletes it
-  whoever is signed in: the deletion comes at a run, not at a set time)_. With the demo off the
-  key is never read, and no screen sends the claim that writes it.
+  deleted by a later run of the pool's job: a run leaves a copy alone until five minutes past
+  its end, and one that somebody is still signed in to until 48 hours past it, from when a
+  run deletes it whoever is signed in. With the demo off the key is never read, and no screen
+  sends the claim that writes it.
   [ADR-0063](docs/adr/0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md#what-the-browser-keeps-in-demo-mode-added-2026-10-05)
   has the key's shape, when it is removed, and what a script that read it would gain. _(Until
   2026-10-05 this called the cookie "the deliberate exception and the only one".)_
