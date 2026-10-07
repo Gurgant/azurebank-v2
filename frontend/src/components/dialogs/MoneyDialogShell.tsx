@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Dialog, DialogSurface, mergeClasses } from '@fluentui/react-components';
 import { Dismiss24Regular } from '@fluentui/react-icons';
+import { useReturnFocus } from '../../hooks/useReturnFocus';
 import { useMoneyDialogStyles } from './moneyDialogStyles';
 
 /**
@@ -69,6 +70,9 @@ export function MoneyDialogShell({
   children,
 }: MoneyDialogShellProps) {
   const styles = useMoneyDialogStyles();
+  // Every caller mounts its dialog to open it and unmounts it to close it, which is what the
+  // hook asks for: `open` is true for as long as this shell is on the page.
+  useReturnFocus();
 
   return (
     <Dialog

@@ -1,5 +1,6 @@
 import { useMemo, type ReactNode } from 'react';
 import { createDOMRenderer, FluentProvider, RendererProvider } from '@fluentui/react-components';
+import { useDisabledButtonEdge } from './disabledButtonEdge';
 import { azureBankDarkTheme, azureBankLightTheme } from './fluentTheme';
 import { compareMinWidthMediaQueries } from './mediaQueryOrder';
 import { ThemeContext } from './themeContext';
@@ -19,6 +20,13 @@ import { useThemePreference } from './themePreference';
 const renderer = createDOMRenderer(typeof document === 'undefined' ? undefined : document, {
   compareMediaQueries: compareMinWidthMediaQueries,
 });
+
+/**
+ * The app's own step after the library's styles, one component a key. One object, made once and
+ * not at each render. `Button` alone has a step: a disabled button keeps an edge
+ * (`disabledButtonEdge.ts` has the measurements and why the theme objects could not carry it).
+ */
+const customStyleHooks = { useButtonStyles_unstable: useDisabledButtonEdge };
 
 /**
  * Owns the preference and hands Fluent the matching theme.
@@ -49,7 +57,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   return (
     <ThemeContext.Provider value={value}>
       <RendererProvider renderer={renderer}>
-        <FluentProvider theme={resolved === 'dark' ? azureBankDarkTheme : azureBankLightTheme}>
+        <FluentProvider
+          theme={resolved === 'dark' ? azureBankDarkTheme : azureBankLightTheme}
+          customStyleHooks_unstable={customStyleHooks}
+        >
           {children}
         </FluentProvider>
       </RendererProvider>

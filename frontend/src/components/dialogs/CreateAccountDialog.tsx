@@ -23,6 +23,7 @@ import { ACCOUNT_OUTCOME_UNKNOWN } from '../../api/problemMessages';
 import type { AccountType } from '../../api/enums';
 import { toFieldName } from '../../api/validationErrors';
 import { apiSlice, useCreateAccountMutation } from '../../features/api/apiSlice';
+import { useReturnFocus } from '../../hooks/useReturnFocus';
 import { WaitHint } from '../feedback';
 
 // Mirrors the backend contract: name 2-100 chars; type is the shared PascalCase enum.
@@ -58,6 +59,7 @@ const isOurField = (key: string) => {
 };
 
 export function CreateAccountDialog({ open, onClose }: CreateAccountDialogProps) {
+  useReturnFocus();
   const dispatch = useDispatch();
   const [createAccount, { isLoading, error, reset: resetMutation }] = useCreateAccountMutation();
   const problem = error as ApiProblem | undefined;

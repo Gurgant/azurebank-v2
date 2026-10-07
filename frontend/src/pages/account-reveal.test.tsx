@@ -1,6 +1,8 @@
 import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { http } from 'msw';
+import { server } from '../mocks/server';
 import { mockState, seedMockSession } from '../mocks/state';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { StepUpModal } from '../features/auth/StepUpModal';
@@ -104,6 +106,38 @@ describe('account number reveal (ADR-0020)', () => {
     expect(screen.queryByText("Verify it's you")).not.toBeInTheDocument();
   });
 
+  it('while the reveal waits, its button says so and no progress bar without a name is exposed', async () => {
+    // Elevated, so no modal comes up and the page stays in the accessibility tree; the read is
+    // held, so the wait can be looked at. The button carries a spinner while it waits, and the
+    // button's name is what says the wait. A spinner left exposed inside it is a progress bar
+    // with no name of its own: axe reported that in a browser on 2026-10-06
+    // (`aria-progressbar-name`, serious), where the spinner this button replaced had a name.
+    mockState.authLevel = 2;
+    let answer = () => {};
+    const held = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    // It answers nothing itself: once released, the mock's own handler answers the read.
+    server.use(
+      http.get('*/api/accounts/:id/full-number', async () => {
+        await held;
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<AccountsWithStepUp />, { routerEntries: ['/accounts'] });
+
+    await user.click(await screen.findByRole('button', { name: revealName }));
+
+    const waiting = await screen.findByRole('button', {
+      name: `Revealing account number for ${MAIN}`,
+    });
+    expect(waiting).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+
+    answer();
+    expect(await screen.findByText(FULL_MAIN)).toBeInTheDocument();
+  });
+
   it('copies the revealed number to the clipboard and shows a Copied status', async () => {
     mockState.authLevel = 2;
     const user = userEvent.setup();
@@ -135,6 +169,42 @@ describe('account number reveal (ADR-0020)', () => {
 
     await waitFor(() => expect(screen.getByText(MASKED_MAIN)).toBeInTheDocument());
     expect(screen.queryByText(FULL_MAIN)).not.toBeInTheDocument();
+  });
+
+  it('the PIN modal says what the PIN is asked for, and no transfer', async () => {
+    // The number's reveal is the only thing that brings this modal up (ADR-0041), and until
+    // 2026-10-06 it asked for the PIN "to authorize this transfer".
+    const user = userEvent.setup();
+    renderWithProviders(<AccountsWithStepUp />, { routerEntries: ['/accounts'] });
+
+    await user.click(await screen.findByRole('button', { name: revealName }));
+
+    const modal = await screen.findByRole('alertdialog', { name: /verify it's you/i });
+    expect(modal).toHaveTextContent('Enter your 6-digit PIN to show the full account number.');
+    expect(modal).not.toHaveTextContent(/transfer/i);
+  });
+
+  it('the PIN modal gives focus back to the button that brought it up', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<AccountsWithStepUp />, { routerEntries: ['/accounts'] });
+
+    // Cancelled: back on the button, which can be pressed again.
+    const eye = await screen.findByRole('button', { name: revealName });
+    await user.click(eye);
+    await screen.findByText("Verify it's you");
+    await user.click(await screen.findByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByText("Verify it's you")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: revealName })).toHaveFocus());
+
+    // Answered: on the same button, which now hides the number it showed.
+    await user.click(screen.getByRole('button', { name: revealName }));
+    await screen.findByText("Verify it's you");
+    await user.click(await screen.findByLabelText('Digit 1 of 6'));
+    await user.paste('123456');
+    await screen.findByText(FULL_MAIN);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: `Hide account number for ${MAIN}` })).toHaveFocus(),
+    );
   });
 
   it('leaves the number masked (no error) when the PIN modal is cancelled', async () => {

@@ -39,6 +39,8 @@ import { resolveScopedAccountId, type Scope } from './dashboardScope';
 import { formatCurrency, maskAccountNumber } from '../utils/format';
 import { QuickActionButton } from '../components/shared/QuickActionButton';
 import {
+  TransactionBody,
+  TransactionFoot,
   TransactionHead,
   TransactionRow,
   TransactionTable,
@@ -46,10 +48,7 @@ import {
   TransactionEmptyRow,
   StatusPill,
 } from '../components/shared/TransactionRow';
-import {
-  transactionLabel,
-  useTransactionCellStyles,
-} from '../components/shared/transactionRowStyles';
+import { transactionLabel } from '../components/shared/transactionRowStyles';
 import { DepositDialog, WithdrawDialog } from '../components';
 
 /**
@@ -366,9 +365,14 @@ const useStyles = makeStyles({
 
   // `1fr 1fr` gave each tile half the measure — ~340px of card for an icon and one word. Capped,
   // so they stay hand-sized next to a transfer target that is meant to dominate.
+  //
+  // Two columns at every width, each as wide as the row allows up to the cap. (Until 2026-10-06
+  // this was `repeat(auto-fit, minmax(120px, 200px))`, which counts its columns by the 200 px
+  // cap: a phone's row holds one such column, so the two tiles stacked at 200 px each and left
+  // the rest of the row empty, 143 px of 343 at 375 px.)
   tileRow: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 200px))',
+    gridTemplateColumns: 'repeat(2, minmax(0, 200px))',
     gap: '12px',
     marginTop: '12px',
   },
@@ -415,14 +419,6 @@ const useStyles = makeStyles({
   // The running balance exists only when the scope is one account (see the file docblock) AND only
   // where there is room for a fifth column.
 
-  tfootCell: {
-    padding: '12px 8px',
-    fontSize: '13px',
-    fontWeight: 600,
-    color: colors.neutral[700],
-    borderTop: `2px solid ${surfaces.border}`,
-  },
-
   // ===== Rail =====
   railRow: {
     display: 'flex',
@@ -465,7 +461,6 @@ function recentRecipients(items: TransactionResponse[], limit: number): string[]
 
 export function DashboardPage() {
   const styles = useStyles();
-  const cells = useTransactionCellStyles();
   const navigate = useNavigate();
 
   const [scope, setScope] = useState<Scope>('all');
@@ -672,7 +667,11 @@ export function DashboardPage() {
           <Text as="h1" className={styles.sectionTitle}>
             Welcome to AzureBank
           </Text>
-          <Text className={styles.muted}>Open your first account to start banking.</Text>
+          {/* A block under the title: both are inline `Text`, and side by side they ran together
+              as "Welcome to AzureBankOpen your first account to start banking.". */}
+          <Text block className={styles.muted} style={{ marginTop: 8 }}>
+            Open your first account to start banking.
+          </Text>
           <div style={{ marginTop: 12 }}>
             <Button appearance="primary" onClick={() => navigate('/accounts')}>
               Create your first account
@@ -828,7 +827,13 @@ export function DashboardPage() {
                 // Rendered rather than hidden. In a bank "nothing is pending" IS information — it is
                 // reassurance — and a section that vanishes makes the page reshuffle itself between
                 // one day and the next.
-                <Text className={styles.muted}>Nothing needs your attention.</Text>
+                //
+                // In a row of its own, as an entry below would be. The title and this sentence are
+                // both inline `Text`, and side by side they read as one line with no space between:
+                // "Needs attentionNothing needs your attention.".
+                <div className={styles.railRow}>
+                  <Text className={styles.muted}>Nothing needs your attention.</Text>
+                </div>
               ) : (
                 pending.map((t) => (
                   <div key={t.id} className={styles.railRow}>
@@ -863,7 +868,7 @@ export function DashboardPage() {
               {recentFailed ? null : (
                 <TransactionTable>
                   <TransactionHead showBalance={!!selected} />
-                  <tbody>
+                  <TransactionBody>
                     {recentWaiting
                       ? Array.from({ length: RECENT_PAGE_SIZE }, (_, i) => (
                           <TransactionRowSkeleton key={`sk-${i}`} showBalance={!!selected} />
@@ -882,24 +887,23 @@ export function DashboardPage() {
                         No transactions yet for {scopeLabel}.
                       </TransactionEmptyRow>
                     )}
-                  </tbody>
+                  </TransactionBody>
                   {!recentWaiting && !summaryWaiting && !summaryFailed && entries.length > 0 && (
-                    <tfoot>
-                      <tr>
-                        <td className={styles.tfootCell} colSpan={2}>
+                    <TransactionFoot
+                      showBalance={!!selected}
+                      label={
+                        <>
                           {monthLabel} so far
                           {pending.length > 0 ? ` · ${pending.length} pending` : ''}
-                        </td>
-                        <td className={mergeClasses(styles.tfootCell, cells.number)}>
+                        </>
+                      }
+                      total={
+                        <>
                           {(summary?.netChange ?? 0) >= 0 ? '+' : '-'}
                           {money(Math.abs(summary?.netChange ?? 0))}
-                        </td>
-                        {selected && (
-                          <td className={mergeClasses(styles.tfootCell, cells.balanceOnly)} />
-                        )}
-                        <td className={styles.tfootCell} />
-                      </tr>
-                    </tfoot>
+                        </>
+                      }
+                    />
                   )}
                 </TransactionTable>
               )}

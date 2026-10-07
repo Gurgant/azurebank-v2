@@ -147,8 +147,11 @@ const useStyles = makeStyles({
   statusCompletedDot: {
     backgroundColor: colors.semantic.success.main,
   },
+  // The words of a badge take the tone's colour for words (`dark`); the dot keeps the icon's
+  // (`main`). "Completed" and "Failed" had the icon's, which as 13 px text on the badge's own
+  // pale wash measured 2.69 and 3.33 to 1 in the light theme.
   statusCompletedText: {
-    color: colors.semantic.success.main,
+    color: colors.semantic.success.dark,
   },
   statusPending: {
     backgroundColor: colors.semantic.warning.light,
@@ -166,7 +169,7 @@ const useStyles = makeStyles({
     backgroundColor: colors.semantic.error.main,
   },
   statusFailedText: {
-    color: colors.semantic.error.main,
+    color: colors.semantic.error.dark,
   },
   statusReversed: {
     backgroundColor: colors.neutral[100],

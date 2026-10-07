@@ -162,7 +162,9 @@ Action: open `/login` in the fresh context.
 
 Assert:
 
-- the title is `Sign in · AzureBank`, and a level-1 heading reads `Welcome back`;
+- the title is `Sign in · AzureBank`, and a level-1 heading reads `Welcome`: a fresh context
+  remembers no copy (until 2026-10-07 the heading read `Welcome back` here too, as it still
+  does once a copy is remembered);
 - the text `Try the demo with one click. No sign-up needed.` is on the page;
 - there is one button `Try the demo`, no button `Continue with my copy`, and no link
   `Create account`;

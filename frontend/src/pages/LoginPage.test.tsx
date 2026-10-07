@@ -44,7 +44,10 @@ import { LoginPage } from './LoginPage';
   U+2014.
 */
 const WORDS = {
+  // The page's title: for a browser the demo has a copy for, and for every browser off the demo.
   title: 'Welcome back',
+  // On the demo, for a browser that keeps no copy: whoever opens it has not been here before.
+  titleWithNoCopy: 'Welcome',
   subtitle: 'Try the demo with one click. No sign-up needed.',
   subtitleOffTheDemo: 'Sign in to your account to continue',
   tryTheDemo: 'Try the demo',
@@ -268,11 +271,20 @@ function keptAddress(): string | null {
   return raw === null ? null : (JSON.parse(raw) as { email: string }).email;
 }
 
-/** Which of the harness's pages is on screen. */
+/** The page's one level-one heading, as it reads now: `undefined` for a page with none. */
+const title = () => document.querySelector('h1')?.textContent;
+
+/**
+ * Which of the harness's pages is on screen. The sign-in page is known by its title, which is
+ * one of two since 2026-10-06: which of the two, and when, is held by the tests that name one.
+ */
 function where(): string {
   if (screen.queryByText('DASHBOARD')) return 'the dashboard';
   if (screen.queryByText('TRANSFER')) return 'the transfer page';
-  return document.querySelector('h1')?.textContent === WORDS.title ? 'the sign-in page' : 'nowhere';
+  const heading = title();
+  return heading === WORDS.title || heading === WORDS.titleWithNoCopy
+    ? 'the sign-in page'
+    : 'nowhere';
 }
 
 async function fillTheForm(email: string, password: string) {
@@ -311,6 +323,21 @@ describe('the sign-in page without the demo', () => {
       dividers: 1,
       order: true,
       dialogs: 0,
+    });
+  });
+
+  it('without the tag the title is "Welcome back", with a copy under the key or with none', async () => {
+    // CONTROL: green before this change
+    const withNoCopy = await openSignInPage({ demo: false });
+    const titleWithNoCopy = title();
+    withNoCopy.unmount();
+    // A copy under the key, as a visit to the demo on this origin would have left one.
+    rememberDemoCopy({ ...seedMockDemoCopy().copy, expiresAt: A_FAR_END });
+    await openSignInPage({ demo: false });
+
+    expect({ titleWithNoCopy, titleWithACopy: title() }).toStrictEqual({
+      titleWithNoCopy: WORDS.title,
+      titleWithACopy: WORDS.title,
     });
   });
 
@@ -428,7 +455,8 @@ describe('the sign-in page on the demo, in a browser that keeps no copy', () => 
       // What the form holds is inside it, not beside it.
       formHoldsItsButton: theForm()?.contains(buttonsNamed(WORDS.signIn)[0] ?? null),
     }).toStrictEqual({
-      levelOneHeadings: [WORDS.title],
+      // Not "Welcome back": nobody who is offered a first copy is back.
+      levelOneHeadings: [WORDS.titleWithNoCopy],
       subtitle: WORDS.subtitle,
       buttons: 1,
       notice: `${WORDS.noticeFirst} ${WORDS.noticeRest}`,
@@ -547,6 +575,36 @@ describe('the sign-in page on the demo, in a browser that keeps no copy', () => 
       looked: true,
       offered: [WORDS.tryTheDemo],
     });
+  });
+
+  it('from the press on "Try the demo" to the dashboard the title stays the one of the press', async () => {
+    await openSignInPage();
+    // The title each time the page changed while the sign-in page was on screen. The claim's
+    // answer puts the copy under the key before the page leaves for the dashboard: a title that
+    // followed the key alone would greet the visitor "back" for that moment.
+    const titles: (string | null | undefined)[] = [];
+    const look = () => {
+      if (where() === 'the sign-in page') titles.push(title());
+    };
+    const watcher = new MutationObserver(look);
+    watcher.observe(document.body, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
+    });
+    try {
+      await userEvent.click(tryTheDemo());
+      await waitFor(() => expect(where()).toBe('the dashboard'));
+    } finally {
+      watcher.disconnect();
+    }
+
+    expect({
+      kept: keptAddress(),
+      looked: titles.length > 0,
+      titles: [...new Set(titles)],
+    }).toStrictEqual({ kept: FIRST_COPY, looked: true, titles: [WORDS.titleWithNoCopy] });
   });
 
   it('a copy another tab claimed before "Try the demo" is pressed: nothing is sent, and the copy is offered', async () => {
@@ -1105,6 +1163,54 @@ describe('the sign-in page on the demo, in a browser that keeps a copy', () => {
       signInButtons: 1,
       alerts: [],
       kept: FIRST_COPY,
+    });
+  });
+
+  it('the title follows what the page offers: "Welcome back" beside a copy, "Welcome" once it offers none', async () => {
+    rememberAClaimedCopy();
+    await openSignInPage();
+    const besideTheCopy = { title: title(), continue: buttonsNamed(WORDS.continue).length };
+
+    await userEvent.click(forgetLink());
+
+    expect({
+      besideTheCopy,
+      afterForgetting: { title: title(), continue: buttonsNamed(WORDS.continue).length },
+      levelOneHeadings: document.querySelectorAll('h1').length,
+    }).toStrictEqual({
+      besideTheCopy: { title: WORDS.title, continue: 1 },
+      afterForgetting: { title: WORDS.titleWithNoCopy, continue: 0 },
+      levelOneHeadings: 1,
+    });
+  });
+
+  it('a copy past its end is not offered, and the title is the one for a browser with none', async () => {
+    // Ended a minute ago, by this browser's clock.
+    rememberAClaimedCopy({ expiresAt: new Date(Date.now() - 60_000).toISOString() });
+    await openSignInPage();
+
+    expect({ title: title(), continue: buttonsNamed(WORDS.continue).length }).toStrictEqual({
+      title: WORDS.titleWithNoCopy,
+      continue: 0,
+    });
+  });
+
+  it('a copy that is gone: once the page offers the demo again its title is "Welcome"', async () => {
+    rememberAClaimedCopy({ password: 'Wrong-Pass-1!' });
+    await openSignInPage();
+    const before = title();
+
+    await userEvent.click(continueButton());
+    await waitFor(() => expect(alerts()).toStrictEqual([WORDS.copyGone]));
+
+    expect({
+      before,
+      after: title(),
+      tryTheDemo: buttonsNamed(WORDS.tryTheDemo).length,
+    }).toStrictEqual({
+      before: WORDS.title,
+      after: WORDS.titleWithNoCopy,
+      tryTheDemo: 1,
     });
   });
 
