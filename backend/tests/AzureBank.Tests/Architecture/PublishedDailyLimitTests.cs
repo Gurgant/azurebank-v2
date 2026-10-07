@@ -31,21 +31,15 @@ namespace AzureBank.Tests.Architecture;
 /// untouched).
 /// </para>
 /// <para>
-/// ⚠️ THE FOUR MEMBERS ARE NOW DECLARED, and this remark said the opposite until 2026-09-07. It
-/// read "the extension members <c>limit/used/requested/resetsAt</c> … stay undeclared by the
-/// <c>available/requested</c> precedent", and review asked what that precedent was actually
-/// deciding. It was deciding nothing: <c>available</c> appears zero times in the committed
-/// document, so <c>INSUFFICIENT_FUNDS</c>'s members are an OMISSION, not a ruling — while
-/// ADR-0043's whole thesis is that the document declares the error body so a generated client can
-/// branch on it. They are declared on the two operations that can answer the code, in the INLINE
-/// 422 schema those operations already carry, and asserted below. The ProblemDetails COMPONENT is
-/// untouched, and <c>available</c> / <c>requested</c> are still missing everywhere — named below so
-/// the gap is a known small PR rather than a silence.
+/// THE FOUR MEMBERS ARE DECLARED: <c>limit/used/requested/resetsAt</c>, on the two operations
+/// that can answer the code, in the INLINE 422 schema those operations already carry, and asserted
+/// below. ADR-0043's thesis is that the document declares the error body so a generated client can
+/// branch on it. The ProblemDetails COMPONENT is untouched.
 /// </para>
 /// <para>
-/// That small PR landed on 2026-09-11: <c>INSUFFICIENT_FUNDS</c>'s members are declared on the
-/// three money moves, and <see cref="PublishedRefusalCodesTests"/> pins them. What changed here is
-/// only what that made false: <c>requested</c> now rides two codes.
+/// <c>INSUFFICIENT_FUNDS</c>'s members, <c>available</c> and <c>requested</c>, are declared on the
+/// three money moves, and <see cref="PublishedRefusalCodesTests"/> pins them: <c>requested</c>
+/// rides two codes.
 /// </para>
 /// </remarks>
 public class PublishedDailyLimitTests

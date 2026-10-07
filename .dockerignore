@@ -1,6 +1,6 @@
 # An allowlist: everything stays out of the build context unless it is named below. The working tree
 # holds files git ignores and an image must never carry -- appsettings.Development.json, the Function's
-# local.settings.json, saved Playwright sign-ins (live sessions), local agent notes -- and a denylist
+# local.settings.json, saved Playwright sign-ins (live sessions), local notes -- and a denylist
 # would have to know every one of them in advance.
 *
 

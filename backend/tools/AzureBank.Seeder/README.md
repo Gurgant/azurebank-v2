@@ -52,7 +52,7 @@ connection string and nothing under `Demo`.
 | `Security__PinPepper` | `seed`, `reset`, `seed-pool`, `recycle` | 32 characters or more, equal to the API's (ADR-0011) |
 | `Security__PinPepperKeyId`, `Security__PreviousPinPeppers__<id>` | the same four | Optional: 1 and none. Where the API sets them, the same values: a PIN hash carries the key id of the pepper that made it, and the API verifies it only with the pepper it holds under that id. A previous-pepper key that is not a whole number >= 1, has surrounding whitespace, shares its id with another key (`1` and `01`) or does not hold exactly one value is refused at command start, naming the key and never its value; a key of 32 characters or more, long enough to be a pepper, is named by its length only, and so is a key that is not a whole number and has a section under it, the first part of a pepper that holds `:` or `__`. A value on `Security__PreviousPinPeppers` itself, with no id, is refused the same way. The order of a rotation is in `docs/runbooks/demo-pool.md` |
 | `Demo__Enabled` | `seed-pool` and `recycle`, which run only with `true`; `seed` and `reset`, which run only without it | Off by default |
-| `Demo__CopyLifetimeHours`, `Demo__Pool__TargetFree`, `Demo__Pool__LowMark`, `Demo__Pool__MaxFreeAgeHours`, `Demo__Pool__MaxClaimsPerDay`, `Demo__Claim__MaxPerClientPerDay`, `Demo__Copy__MaxWrites` | `seed-pool`, `recycle`; `seed` and `reset` refuse a value out of range or unreadable too | Optional: 24, 50, 20, 44, 150, 10 and 200. The ranges are in ADR-0062, decision 3; the last two are the claim's caps (ADR-0063). `Demo__Claim__MaxPerClientPerDay` is read here too: both commands count the clients at their cap by it (`clientsAtCap`), so give them the API's value. `Demo__Copy__MaxWrites` is the API's alone and only checked here. `recycle` deletes a claimed copy by `Demo__CopyLifetimeHours`, and the API ends sign-in to a copy by it: give the job the API's value, or a copy can be deleted before the API ends it. *(Until 2026-10-04 this said the last two were only checked here; the per-client cap has been read for `clientsAtCap` since the pool's commands were written.)* |
+| `Demo__CopyLifetimeHours`, `Demo__Pool__TargetFree`, `Demo__Pool__LowMark`, `Demo__Pool__MaxFreeAgeHours`, `Demo__Pool__MaxClaimsPerDay`, `Demo__Claim__MaxPerClientPerDay`, `Demo__Copy__MaxWrites` | `seed-pool`, `recycle`; `seed` and `reset` refuse a value out of range or unreadable too | Optional: 24, 50, 20, 44, 150, 10 and 200. The ranges are in ADR-0062, decision 3; the last two are the claim's caps (ADR-0063). `Demo__Claim__MaxPerClientPerDay` is read here too: both commands count the clients at their cap by it (`clientsAtCap`), so give them the API's value. `Demo__Copy__MaxWrites` is the API's alone and only checked here. `recycle` deletes a claimed copy by `Demo__CopyLifetimeHours`, and the API ends sign-in to a copy by it: give the job the API's value, or a copy can be deleted before the API ends it. |
 | `Database__MaxRetryCount`, `Database__MaxRetryDelay`, `Database__ConnectTimeoutSeconds`, `Database__ConnectRetryCount`, `Database__MaxPoolSize` | every command | Optional. 4, `00:00:10`, 10, 0 and 5 (ADR-0058; the pool of 5 is this tool's own). A keyword in the connection string wins. `migrate` refuses a connect timeout of 0, which means no limit, from either place |
 
 In Development (`DOTNET_ENVIRONMENT=Development`) the two required values come from the project's
@@ -172,22 +172,13 @@ and then migrated an empty database):
 - **Give them a login that reads and writes rows and nothing more**: where a deployment gives the
   app and its migration database users of their own, the app's, never the migration's. On the
   Azure deployment that is the identity `azurebank-app` and the user `azurebank_app`, never
-  `azurebank-migrate`. *(Until 2026-10-07 this said "the Azure deployment, which has no pool
-  job yet": on that day the deployment's check read the job `azurebank-pool` there, in shape
-  and with the app's pepper and connection string,
-  [infra/README.md](../../../infra/README.md), step 30.)* Since 2026-10-05 the deployment's
-  template holds that job, with that identity: `recycle` every four hours, the app's pepper
-  with no key id, and no number of the demo, as the API is given none there: a job and an
-  API built from the template as it is now read the defaults, 10 for
-  `Demo__Claim__MaxPerClientPerDay`. *(Until 2026-10-07 this said "and
-  `Demo__Claim__MaxPerClientPerDay` at the value the API is given there": the template gave
-  both 1,000. The job and the app that are on Azure were built from that template: they are
-  expected to carry the 1,000 until the template is run there again, which has not been
-  done, [infra/README.md](../../../infra/README.md), step 30, part 5.)*
-  It is built when the demo is turned on
-  ([infra/README.md](../../../infra/README.md), "Turn the demo on"). *(Until 2026-10-07 this
-  said "which has not been done on Azure": on that day the deployed app had the demo on, and
-  the deployment's check read the job there, step 30 of that page.)* Measured
+  `azurebank-migrate`. The deployment's template holds the job, `azurebank-pool`, with that
+  identity: `recycle` every four hours, the app's pepper with no key id, and no number of the
+  demo, as the API is given none there, so a job and an API built from the template read the
+  defaults, 10 for `Demo__Claim__MaxPerClientPerDay`. The job is built when the demo is turned
+  on ([infra/README.md](../../../infra/README.md), "Turn the demo on"), and the deployment's
+  check passed on Azure with the job's pepper and connection string the app's (the same page,
+  "Measured on Azure"). Measured
   2026-10-03, a login with `db_datareader` and `db_datawriter` alone ran `seed-pool` and `recycle`
   through a whole cycle (copies built, a claimed copy and a stale one deleted, the sweeps), exit 0,
   on LocalDB from an empty database, roles included, and on the compose SQL Server, where the roles

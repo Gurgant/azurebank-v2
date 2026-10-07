@@ -59,12 +59,10 @@ public sealed class IdempotencyOperationTransformer : IOpenApiOperationTransform
 
         operation.Responses ??= new OpenApiResponses();
 
-        // Until 2026-10-01 the second half read "or it executed but its response was not recorded
-        // (IDEMPOTENCY_RESULT_UNKNOWN: verify via GET /api/transactions)". Two things in it were
-        // wrong for a client. The code is also answered when the key's record is gone and nothing
-        // is known to have executed; and "verify" was the only advice even when the API had read
-        // the record as committed, which left a second payment under a new key as the next step.
-        // The answer now says which of the two it is, through applied, and so does this text.
+        // IDEMPOTENCY_RESULT_UNKNOWN is also answered when the key's record is gone and nothing
+        // is known to have executed, and "verify" alone is the wrong advice when the API has read
+        // the record as committed: it leaves a second payment under a new key as the next step.
+        // So the answer says which of the two it is, through applied, and so does this text.
         operation.Responses["409"] = new OpenApiResponse
         {
             Description =

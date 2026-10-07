@@ -11,14 +11,10 @@ import { expect, test } from '@playwright/test';
  * money leaves the account by another route, you press Continue — and the app stops you there,
  * naming the balance as it is NOW, without ever asking for your PIN.
  *
- * ~~Which matters beyond tidiness: measured against this same API, an over-balance withdrawal with
- * a mistyped PIN answers `401 INVALID_PIN` (the funds check runs AFTER the PIN), so reaching that
- * step on a stale balance spends one of three attempts, and three lock the PIN for fifteen
- * minutes.~~ Struck 2026-09-22, ADR-0056: that measurement was true and D4 is what made it false.
- * The funds check runs ABOVE the authorisation now, so the same request answers
- * `422 INSUFFICIENT_FUNDS` and costs no attempt. What this spec proves did not change — the
- * ceremony is not reached and nothing is sent — but it is now about a wasted round trip and an
- * honest hint, not about a stolen PIN attempt.
+ * The funds check runs ABOVE the authorisation (ADR-0056, D4), so an over-balance withdrawal
+ * answers `422 INSUFFICIENT_FUNDS` and costs no PIN attempt. What this spec proves is that the
+ * ceremony is not reached and nothing is sent: it is about a wasted round trip and an honest
+ * hint, not about a PIN attempt.
  *
  * Uses a THROWAWAY user, never the seeded admin — the rest of the suite shares that account and
  * this spec deliberately empties the one it signs in as.

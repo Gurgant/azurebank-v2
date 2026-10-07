@@ -33,17 +33,11 @@ namespace AzureBank.Tests.Integration;
 /// while the API was the only host that could deliver.
 /// </para>
 /// <para>
-/// ⚠️ TWO SENTENCES HERE OVERSTATED IT UNTIL 2026-09-09, and both are the same mistake. This said
-/// "every rule in the API's root" and "the whole section went unchecked": it was FOUR rules, and
-/// the three <c>[Range]</c> annotations were never runner-guarded —
-/// <c>AnOutOfRangeLease_IsRefusedWhateverTheRunner</c> below is this file's own refutation of it,
-/// and <c>APeriodBelowTheRange_IsRefused_WhateverTheRunner</c> has been green on <c>main</c> the
-/// whole time. It also said "every test below would have passed on <c>main</c> by accepting what it
-/// now refuses", and no test below could have run on <c>main</c> AT ALL: this suite drives
-/// <see cref="FunctionHost.Register"/>, and there is no Function project on <c>main</c> to register.
-/// The true statement is about the RULES, not the tests — on <c>main</c> the four runner rules
-/// applied to nobody but the API. Four of the cases below assert ACCEPTANCE rather than a refusal,
-/// and two assert a registration, so "every test" was wrong twice over.
+/// The gap was in the FOUR runner rules, which applied to nobody but the API. The three
+/// <c>[Range]</c> annotations were never runner-guarded:
+/// <c>AnOutOfRangeLease_IsRefusedWhateverTheRunner</c> below holds that here, and
+/// <c>APeriodBelowTheRange_IsRefused_WhateverTheRunner</c> in <c>NoticeRelayStartupTests</c>.
+/// Four of the cases below assert ACCEPTANCE rather than a refusal, and two assert a registration.
 /// </para>
 /// <para>
 /// Each refusal test asserts the MESSAGE and not merely that something threw, because the message is
@@ -169,11 +163,8 @@ public sealed class NoticeFunctionStartupTests : IDisposable
     {
         /*
           The rule ADR-0045 D4 wrote and ADR-0048 D6 kept: a pickup directory is a spool of addresses
-          at rest, and one under a repository is one commit away from being published. On main this
-          exact configuration started the API without a word. (Not "an API and a Function host",
-          which is what this said until 2026-09-09: there is no Function project on main —
-          `git ls-tree -r --name-only origin/main | grep Functions.NoticeRelay` is empty — so there
-          was no second host to start.)
+          at rest, and one under a repository is one commit away from being published. Before
+          ADR-0051 this exact configuration started the API without a word.
         */
         var inside = Path.Combine(RepoRoot(), "backend", "src", "AzureBank.Functions.NoticeRelay");
 

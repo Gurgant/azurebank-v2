@@ -400,15 +400,14 @@ describe('withdraw (the idempotent mutation; its PIN moved to the mint, ADR-0056
   });
 
   /*
-    ~~ROTATES the key when the PIN is edited between attempts (the PIN is part of the body).~~
-    INVERTED 2026-09-22, ADR-0056: the PIN LEFT the body, so editing it cannot change the
-    fingerprint and must NOT rotate the key.
+    The PIN is not in the body (ADR-0056), so editing it cannot change the fingerprint and must
+    NOT rotate the key.
 
     This is not a formality. `keyRetained` is exactly the state where the key is the only way
     forward -- an attempt whose outcome is unknown -- and the PIN input is live again there,
-    because it is disabled only while submitting. Under the old rule a user who retyped a digit
-    while holding a retained key destroyed their own re-send, and the withdrawal whose answer never
-    arrived became unresettable from the dialog.
+    because it is disabled only while submitting. A user who retyped a digit while holding a
+    retained key would otherwise destroy their own re-send, and the withdrawal whose answer never
+    arrived would become unresettable from the dialog.
   */
   it('KEEPS the key when the PIN is edited between attempts (the PIN is no longer in the body)', async () => {
     const keys: (string | null)[] = [];
@@ -441,11 +440,9 @@ describe('withdraw (the idempotent mutation; its PIN moved to the mint, ADR-0056
   });
 
   /*
-    ~~THE SIBLING THAT STILL ROTATES, kept as the control.~~ Rewritten in review on #199, and the
-    finding is a money one: editing the amount on a RETAINED key minted a new key for a NEW intent
-    while the first attempt's outcome was still unknown, so if the balance covered both, both could
-    debit. That is the double-spend the whole protocol exists to prevent, and a sibling test had it
-    written down as the escape hatch.
+    Editing the amount on a RETAINED key must not mint a new key: that would be a NEW intent
+    while the first attempt's outcome is still unknown, so if the balance covered both, both could
+    debit. That is the double-spend the whole protocol exists to prevent.
 
     It is answered rather than blocked. Blocking the edit would be a hard trap, with Close already
     disabled on `keyLive`; latching verify-first tells the user what is actually true -- the request

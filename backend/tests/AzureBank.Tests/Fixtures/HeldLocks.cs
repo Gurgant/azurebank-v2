@@ -15,8 +15,7 @@ namespace AzureBank.Tests.Fixtures;
 /// the exception's type sees a stop as a failure. An interceptor that throws an error built to
 /// look like that one (<see cref="SqlErrors"/> builds a <c>SqlException</c> as SqlClient builds
 /// its own) would not do here: what matters is that the statement really was on the server when
-/// the stop reached it. (Until 2026-10-04 this said an interceptor cannot make that error, for
-/// want of a public constructor.)
+/// the stop reached it.
 /// </para>
 /// <para>
 /// <see cref="AStatementWaitsAsync"/> asks the server which request waits behind this session, so

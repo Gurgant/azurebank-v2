@@ -54,8 +54,6 @@ what the server said, or the fallback`. It shows that the dialog prints a `detai
 sentence for, with an answer made for the test: the dialog sends the claim, which the budget
 never counts. What the surfaces the code can reach would show is read from the code; no kept
 test and no run on a stack met it.)
-_(This paragraph was added on 2026-10-05. The three places above are the 429s the app meets
-with the demo off; until that day this section knew no 429 without a countdown.)_
 
 **One place holds an instant the server gave against the browser's clock and acts on it for
 good: a kept demo copy's end, on the sign-in page.** It is not a countdown. (A wait has one such
@@ -75,8 +73,7 @@ the server-side trace (ADR-0016, ADR-0017). A toast that drops the traceId break
 **One toast is a success:** "You have a new copy.", said through the same outlet once the
 "Start over" dialog's claim has succeeded and the dialog has closed
 (`src/features/demo/useNewCopyToast.tsx`). It names no timeout, so it leaves by itself, and it
-carries no `traceId`: nothing in it has to be read or reported. _(Until 2026-10-05 the outlet
-carried errors only.)_
+carries no `traceId`: nothing in it has to be read or reported.
 
 **Region discipline for async state**: a first load renders a skeleton shaped like the content it
 replaces; a background refetch keeps the stale data and shows a small inline indicator; a failed
@@ -266,21 +263,19 @@ the compose stack with the demo on (`playwright.demo.config.ts`), where the suit
 The last three need the real stack up: seed `AzureBankE2E`, the API on **`https://localhost:7215`**,
 and the BFF on `:5000` via `dotnet run --project backend/src/AzureBank.Bff --launch-profile http`.
 
-⚠️ **The launch profile is not optional, and an earlier version of this note implied it was.** It is
-the only thing setting `ASPNETCORE_ENVIRONMENT=Development`, and two things hang off that: the dev
-certificate is trusted on the BFF→API hop, and the session cookie keeps its plain name. Outside
+⚠️ **The launch profile is not optional.** It is the only thing setting
+`ASPNETCORE_ENVIRONMENT=Development`, and two things hang off that: the dev certificate is
+trusted on the BFF→API hop, and the session cookie keeps its plain name. Outside
 Development `Program.cs` prefixes it `__Host-`, and the cookie is written `Secure`
 (`BuildSessionCookieOptions` in the BFF's `BffAuthController.cs`). A run without the profile
-fails on TLS, on that BFF→API hop, and the failure does not name the profile. _(Until
-2026-10-05 this said a `__Host-` cookie "cannot be set over `http://localhost:5000` at all",
-and that such a run therefore fails on login as well. Measured that day, on the Production
-images of `compose.yaml` with `compose.demo.yaml`, in headless Chromium 151.0.7922.34: the
-browser kept `__Host-AzureBank.Session` (`Secure`, `HttpOnly`, `SameSite=Strict`, host
-`localhost`) from a claim made on `http://localhost:5000` and sent it back, and Playwright's
-own request context sent it to `localhost` too. So the cookie's name is not what stops a
-browser there. What the two suites that run in node, which carry the cookie themselves, meet
-at sign-in outside Development was not measured.)_ No cluster override is needed locally:
-`appsettings.json` already points cluster
+fails on TLS, on that BFF→API hop, and the failure does not name the profile. The cookie's name
+is not what stops a browser there. Measured on 2026-10-05, on the Production images of
+`compose.yaml` with `compose.demo.yaml`, in headless Chromium 151.0.7922.34: the browser kept
+`__Host-AzureBank.Session` (`Secure`, `HttpOnly`, `SameSite=Strict`, host `localhost`) from a
+claim made on `http://localhost:5000` and sent it back, and Playwright's own request context
+sent it to `localhost` too. What the two suites that run in node, which carry the cookie
+themselves, meet at sign-in outside Development was not measured. No cluster override is needed
+locally: `appsettings.json` already points cluster
 `backend-api` at `https://localhost:7215`. The `--ReverseProxy:Clusters:backend-api:…` arguments you
 will see in `ci.yml` are CI-only, because CI moves the API to `:5068`; they are passed as
 command-line config rather than environment variables because the cluster id `backend-api` contains
@@ -289,8 +284,7 @@ a hyphen and `ReverseProxy__Clusters__backend-api__…` is not a portable shell 
 ⚠️ **`:5068` is a real port and still the wrong one to use.** The API's `http` launch profile listens
 there, and the `https` profile listens on **both** `https://localhost:7215` and
 `http://localhost:5068` — so `:5068` answers, which is what makes the mistake survive. Everything
-that names the API means 7215: `vitest.contract.real.config.ts`, `.claude/launch.json`, and the
-READMEs. This note said `:5068` for a month before anyone ran it.
+that names the API means 7215: `vitest.contract.real.config.ts` and the READMEs.
 Authentication is rate-limited to 10 attempts per 60 seconds per IP, so leave ~70 seconds between
 suites or the second one fails on a limiter rather than on anything real.
 
