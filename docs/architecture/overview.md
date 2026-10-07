@@ -239,16 +239,14 @@ ends with Playwright against the built SPA under its CSP (ADR-0029, ADR-0032, AD
   skip instead of proving anything.
 - **The frontend suite**, against MSW mocks that are themselves validated against the real
   contract, so a mock that drifts fails the suite instead of passing quietly.
-- *No counts here, on purpose: this listed 618 and 188, which were long out of date, and any number
-  written into prose goes stale within days. CI's jobs are the source.*
+- *No counts here, on purpose: a number written into prose goes stale within days. CI's jobs are
+  the source.*
 - **Architecture tests** that fail the build on a layer-dependency violation.
 - **Schemathesis** on every pull request, driving the running API from the committed document and
   failing on a response the document does not declare (ADR-0053 D6).
 - Every pull request into `main` runs the full suite and CodeQL on three languages, and `main`
-  takes a merge only when they pass; an AI review is asked for on pull requests, and a human
-  merges. *(Until 2026-09-25 this said every pull request gets an AI review: the review is asked
-  for by hand, so nothing guarantees one on every pull request. It also left out that the checks
-  run on pull requests into `main` only.)*
+  takes a merge only when they pass. An AI review is asked for by hand on pull requests, and each
+  pull request is merged by hand.
 
 ## Where to go next
 

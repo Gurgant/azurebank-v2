@@ -41,16 +41,14 @@ the design is the mainstream answer to this problem, not an invention that needs
 guarantees that any tampering will be detected when the ledger data is verified". ADR-0044 reaches
 the same place in its own words — "the honest claim is narrow: this chain detects tampering by
 someone who holds the database but not the key" — and the verifier prints that limit above the green
-line rather than leaving it to be inferred. *(Updated 2026-08-30: after the key ring, both ADR-0044
-and the verifier state it as **not the key whose epoch that row falls in** — a retired key still
-recomputes its own epoch, and only its own. This note first said "not any key in the ring", which
-was the shape of the claim for the hour before the epoch gained a lower end. The claim got narrower
-twice, and what the verifier prints got narrower with it both times.)*
+line rather than leaving it to be inferred. Since the key ring, both ADR-0044 and the verifier
+state it as **not the key whose epoch that row falls in** — a retired key still recomputes its own
+epoch, and only its own.
 
 **Almost every divergence below is one premise expressed many times:** nothing here runs unattended
 (since ADR-0048 one loop does, inside the API and only while it is up — the notice relay), and one
 principal owns everything. Both are true of this deployment and both are labelled where they
-occur rather than only in a plan.
+occur.
 
 **Two things a reader of a banking piece will look for and not find.** Absence carries no
 information here — a missing anchor is indistinguishable from a quiet fortnight, and the two real
@@ -97,12 +95,10 @@ distinction properly.
 
 ⚠️ **But they are two operations, and that is worth stating rather than blurring.** Truncating
 `AuditEvents` is a statement against the database; removing the export is a second act against the
-filesystem. An earlier version of this paragraph said the truncation deleted the file "in the same
-breath", which reads as one move and is not. The distinction is the same one the uncovered window
-rests on: **the careless version of the attack leaves the copy sitting there**, and somebody who did
-not think about a file on disk has left the thing that disagrees with them. It buys no guarantee —
-one extra command removes it — but "no guarantee" and "no obstacle" are different claims, and this
-page had been making the wrong one.
+filesystem. The distinction is the same one the uncovered window rests on: **the careless version
+of the attack leaves the copy sitting there**, and somebody who did not think about a file on disk
+has left the thing that disagrees with them. It buys no guarantee — one extra command removes it —
+but "no guarantee" and "no obstacle" are different claims.
 
 ### 2 — The gap is a number, and a number is not a schedule
 
@@ -128,8 +124,8 @@ The obvious cheap demonstration is a grant: show that the application's principa
 `AuditEvents` but is refused `UPDATE` and `DELETE`. Measured on this deployment, that demonstration
 cannot be written as stated.
 
-The API connects with `Trusted_Connection=True`, which resolves to the developer's own Windows
-account, mapped to `dbo`, in both `db_owner` and `sysadmin`:
+The API connects with `Trusted_Connection=True`, which resolves to the Windows account the API
+runs under, mapped to `dbo`, in both `db_owner` and `sysadmin`:
 
 ```
 principal = <operator-account> | db user = dbo | db_owner = 1 | sysadmin = 1
@@ -176,9 +172,7 @@ right family and is adequate. What a supervisor or an external auditor would loo
 is items 1–5 and 8 — an external copy, a cadence, third-party time, storage immutability, alerting,
 and a retention policy. The honest scope of the control is the one the verifier prints: tampering by
 somebody holding the database but not **the key whose epoch that row falls in**, up to the last
-number a human wrote down. *(The verifier said "not Audit:ChainKey" when this was written; the key
-ring made that too strong, and "any key in the ring" too weak — a retired key recomputes its own
-epoch and no other.)*
+number a human wrote down.
 
 **For a portfolio: right, and at the edge of over-built.** NIST SP 800-53 AU-9(3) — "Implement
 cryptographic mechanisms to protect the integrity of audit information and audit tools" — is

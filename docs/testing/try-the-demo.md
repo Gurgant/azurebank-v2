@@ -1,13 +1,11 @@
 # Try the demo
 
-For a person who wants to try everything. You need no knowledge of the code. If you drive a
-browser from a script, read [the guide for an automated tester](test-the-demo-as-an-agent.md).
+For a person who wants to try everything. You need no knowledge of the code.
 
 Everything below was done on 2026-10-06, on the demo as this repository's two compose files
-run it on one machine, in a Chromium browser: by the walk that wrote this page, and then by a
-second walk that followed the page step by step on two more copies. Where a line says **not
-seen**, the words come from the code and neither walk reached them. Where the second walk
-found a line wrong, the line is corrected and says what it said before.
+run it on one machine, in a Chromium browser, in two walks: the first on one copy, the second,
+which followed this page, on two more. Where a line says **not seen**, the words come from the
+code and neither walk reached them.
 [The last section](#where-these-facts-come-from) names the files.
 
 ## What the demo is, and is not
