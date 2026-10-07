@@ -193,9 +193,10 @@ them in a minute.
   None of it is a real person's, a token or a session identifier: a copy is a throwaway account
   of invented money that nobody registered for, and it is closed when its time is over and
   deleted by a later run of the pool's job _(until 2026-10-07 this said "it is closed and deleted
-  when its time is over"; the job leaves a copy five minutes past its end, and one somebody is
-  still signed in to for 48 hours at most)_. With the demo off the key is never read, and no
-  screen sends the claim that writes it.
+  when its time is over"; a run of that job leaves a copy alone until five minutes past its end,
+  and one somebody is still signed in to until 48 hours past it, from when a run deletes it
+  whoever is signed in: the deletion comes at a run, not at a set time)_. With the demo off the
+  key is never read, and no screen sends the claim that writes it.
   [ADR-0063](docs/adr/0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md#what-the-browser-keeps-in-demo-mode-added-2026-10-05)
   has the key's shape, when it is removed, and what a script that read it would gain. _(Until
   2026-10-05 this called the cookie "the deliberate exception and the only one".)_

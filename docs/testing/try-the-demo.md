@@ -14,9 +14,10 @@ found a line wrong, the line is corrected and says what it said before.
 
 - **It is a pretend bank.** The money is invented. Nothing you do reaches a real account.
 - **You get a private copy.** One click gives you a bank account that no other visitor can see.
-- **The copy works for 24 hours.** Then it is closed, and a job that runs every four hours on
-  the public demo deletes it: not sooner than five minutes after its end, and 48 hours after it
-  at the latest. *(Until 2026-10-07 this said "Then it is closed and deleted.")*
+- **The copy works for 24 hours.** Then it is closed. It is deleted later, at a run of a job that
+  runs every four hours on the public demo: a run leaves a copy alone until five minutes after
+  its end, and from 48 hours after its end a run deletes it even if somebody is still signed in
+  to it. *(Until 2026-10-07 this said "Then it is closed and deleted.")*
 - **Do not enter real personal data.** A description, an account name and a handle are yours to
   invent. The demo asks for no name, no address and no card of yours.
 - **It is not a product.** The sign-in page says so itself: "Demo project — not a real bank."
