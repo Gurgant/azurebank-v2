@@ -96,15 +96,15 @@ money rules. [How AzureBank works](docs/architecture/overview.md) follows one re
 ## Try it
 
 - **The live demo**, on Azure — a browser only:
-  <https://azurebank.lemonmoss-e3015c47.italynorth.azurecontainerapps.io/>. One press of
-  **Try the demo** gives you a private copy of a bank account with invented money: two accounts
-  (Main Savings €12,450.00 and Checking €2,300.00), two months of history and two contacts you can
-  pay. The PIN is `123456`, and the page shows it. The copy works for 24 hours and is then closed.
-  It is deleted later, by a job that runs every four hours: a run leaves a copy alone until five
-  minutes after its end, and longer while somebody is still signed in to it; from 48 hours after
-  its end a run deletes it whoever is signed in. So the deletion comes at a run of the job, not
-  at a set time. **Start over** gives you a fresh one. Don't enter real personal data. The first
-  page can take about half a minute. The journeys to try and the limits you can meet are in
+  <https://azurebank.lemonmoss-e3015c47.italynorth.azurecontainerapps.io/>. One press of **Try the
+  demo** gives you a private copy of a bank account with invented money: two accounts (Main Savings
+  €12,450.00 and Checking €2,300.00), two months of history and two contacts you can pay. The PIN is
+  `123456`, and the page shows it. The copy works for 24 hours: after that no new sign-in to it is
+  accepted. It is deleted later, by a job that runs every four hours: a run leaves a copy alone
+  until five minutes after its end, and longer while somebody is still signed in to it; from 48
+  hours after its end a run deletes it whoever is signed in. So the deletion comes at a run of the
+  job, not at a set time. **Start over** gives you a fresh one. Don't enter real personal data. The
+  first page can take about half a minute. The journeys to try and the limits you can meet are in
   [Try the demo](docs/testing/try-the-demo.md).
 - **The UI alone**, against a mock that runs in the browser — Node only:
   `cd frontend && npm ci && npm run dev:mock`, then sign in as `demo@azurebank.dev` / `Password1!`,
