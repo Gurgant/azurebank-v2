@@ -98,6 +98,32 @@ describe('money dialogs and the keyboard', () => {
     expect(within(dialog).getByText(title)).toBeInTheDocument();
   });
 
+  it('a dialog that closed gives focus back to the control that opened it', async () => {
+    // Opened by a state its page holds, a dialog has no trigger for Fluent to go back to: closed,
+    // it left focus on the page, and the next Tab started again from the top.
+    const { trigger } = await openDeposit();
+
+    await userEvent.keyboard('{Escape}');
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(trigger).toHaveFocus();
+  });
+
+  it('a dialog chosen from a menu gives focus back to the button of that menu', async () => {
+    // The item that opened it is gone with its menu by the time the dialog closes.
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Main Account');
+    const menuButton = screen.getByRole('button', { name: 'Account actions for Main Account' });
+    await userEvent.click(menuButton);
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
+    await screen.findByRole('dialog', { name: 'Rename Account' });
+
+    await userEvent.keyboard('{Escape}');
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(menuButton).toHaveFocus();
+  });
+
   it('Escape does NOT close a deposit while the request is in flight', async () => {
     /*
       The one that matters, and the one a review disputed. `MoneyDialogShell` hands Escape and the

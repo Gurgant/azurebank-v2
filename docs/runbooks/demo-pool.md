@@ -177,7 +177,8 @@ ORDER BY Claims DESC;
 - **A few keys hold most of the claims:** a drain. A key is one client as the BFF counts
   clients: an IPv4 address in full, an IPv6 address by its /64 prefix, and one key for every
   connection that shows no address. So an office behind one address counts as one client. And
-  behind a proxy the BFF is not told to trust (`ForwardedHeaders:KnownProxies`), every visitor
+  behind a proxy the BFF is not told to trust (`ForwardedHeaders:KnownProxies`, or the proxy's
+  network in `ForwardedHeaders:KnownIPNetworks`), every visitor
   has the proxy's address: one key for everybody. Under `compose.demo.yaml` on one machine it
   was so when measured (Docker Desktop on Windows, 2026-10-04): the BFF saw the compose network's
   gateway address for every request, and every claim carried one key.

@@ -10,7 +10,8 @@
       deployApp=false). That file holds no secret; it stays in the folder because the
       administrator's sign-in name is shaped like an e-mail address.
     * With -DeployApp: also the image tag, the address the alerts write to, the account of the
-      Azure mobile app they also notify if one is named, and the eight application secrets.
+      Azure mobile app they also notify if one is named, the networks of proxies the app
+      believes if any are named, and the eight application secrets.
       Each secret comes from the first place that has it: the deployed app, then a file left by
       a run that stopped, then the system's random generator.
     * No database password is written, because none exists: the app and the migrate job sign in
@@ -25,6 +26,19 @@
       error. The signed-in account is never taken for it: whether its sign-in name is the
       account the app on the phone was set up with is not known here. Without -DeployApp the
       argument is refused, since the group that would carry it is built with the app.
+    * The app believes the X-Forwarded-For header of a connection that comes from inside one of
+      the networks -ProxyNetworks names (CIDR form, separated by commas: the range the
+      platform's ingress reaches the app from, as the operator measured it); without it, of the
+      ones AZUREBANK_PROXY_NETWORKS names; without that, of the ones the bff container of the
+      deployed app already holds, which is why a later run does not forget them. With none of
+      the three nothing is written and the app believes no header: that is not an error. The
+      word none, in the argument or in the variable, writes an empty list whatever is deployed:
+      it is the way back. An entry the app would not take for a network stops the script, from
+      any of the three, and is not repeated: the app's own rules are in
+      backend/src/AzureBank.Bff/Options/ProxyOptionsValidator.cs, which refuses at startup.
+      A bff container that carries a forwarded-headers setting this template never writes
+      stops it too, when the deployed app is what is read. Without -DeployApp the argument is
+      refused.
     * keepLogs is what the deployed environment does now: true if it sends its logs to Azure
       Monitor, false if it sends them nowhere. -LogsOff writes false whatever is deployed. With no
       environment yet and no -LogsOff the template's own default applies.
@@ -59,6 +73,7 @@ param(
     [string]$ImageTag = '',
     [string]$AlertEmail = '',
     [string]$AlertPushAccount = '',
+    [string]$ProxyNetworks = '',
     [switch]$LogsOff,
     [string]$Directory = ''
 )
@@ -69,6 +84,13 @@ $ErrorActionPreference = 'Stop'
 $AppName = 'azurebank'
 # The setting both containers of the app read to know whether they are the public demo.
 $DemoFlag = 'Demo__Enabled'
+# What the bff container's settings for the networks of proxies start with: main.bicep writes one
+# a network, numbered from 0, and nothing else under ForwardedHeaders__.
+$NetworksSetting = 'ForwardedHeaders__KnownIPNetworks__'
+# The framework's own switch for forwarded headers, under each of the three names a host reads
+# it by, whatever their case. No template of this folder writes it: with it on, the BFF
+# believed whatever a caller wrote (infra/README.md, "What this creates").
+$ForwardedSwitch = '^(ASPNETCORE_|DOTNET_)?FORWARDEDHEADERS_ENABLED$'
 $EnvironmentName = 'azurebank-env'
 $AlertGroupName = 'azurebank-owner'
 $Api = '2025-01-01'
@@ -103,6 +125,43 @@ function Protect-Directory([string]$Path) {
         & chmod 700 $Path
         if ($LASTEXITCODE -ne 0) { throw 'Could not restrict the folder.' }
     }
+}
+
+function Test-ProxyNetwork([string]$Text) {
+    # Whether a text is a network of proxies the app takes. The app is the authority
+    # (backend/src/AzureBank.Bff/Options/ProxyOptionsValidator.cs refuses at startup); this is the
+    # same rule, held to it by a test, so that a slip stops here and not in a revision that never
+    # gets ready. address/prefix-length; the prefix a plain number, 8 or more, within the
+    # address's family; no IPv4-mapped IPv6 address; the address written as .NET prints it (a
+    # leading zero makes an octet octal, a short form is filled in); and no bit set after the
+    # prefix.
+    $parts = $Text -split '/'
+    if ($parts.Count -ne 2) { return $false }
+    $address = $null
+    if (-not [System.Net.IPAddress]::TryParse($parts[0], [ref]$address)) { return $false }
+    if ($parts[1] -cnotmatch '^[1-9][0-9]{0,2}$') { return $false }
+    $prefix = [int]$parts[1]
+    $bytes = $address.GetAddressBytes()
+    if ($prefix -lt 8 -or $prefix -gt 8 * $bytes.Count) { return $false }
+    if ($address.IsIPv4MappedToIPv6) { return $false }
+    if ($address.ToString() -ine $parts[0]) { return $false }
+    for ($bit = $prefix; $bit -lt 8 * $bytes.Count; $bit++) {
+        if ($bytes[[Math]::Floor($bit / 8)] -band (0x80 -shr ($bit % 8))) { return $false }
+    }
+    $true
+}
+
+function Read-ProxyNetworks([string]$Text, [string]$From) {
+    # A list as the argument or the variable gives it: networks separated by commas, the blanks
+    # around each dropped. Returns the list; an entry that is not a network stops the script,
+    # named by its place and never by what it holds.
+    $entries = @($Text -split ',' | ForEach-Object { $_.Trim() })
+    for ($i = 0; $i -lt $entries.Count; $i++) {
+        if (-not (Test-ProxyNetwork $entries[$i])) {
+            throw "${From}: entry $($i + 1) of $($entries.Count) is not a network the app takes (address/prefix-length, written as it is printed, no wider than /8). Nothing was written."
+        }
+    }
+    , $entries
 }
 
 if (-not $Directory) {
@@ -141,6 +200,10 @@ if ($DemoOn -and -not $DeployApp) { throw '-DemoOn needs -DeployApp. Nothing was
 # Nor for the phone's account: the action group is built with the app. Refused, not dropped: an
 # argument left out in silence would be taken for one that was carried.
 if ($AlertPushAccount -and -not $DeployApp) { throw '-AlertPushAccount needs -DeployApp. Nothing was written.' }
+# Nor for the networks of proxies: they are a setting of the app's bff container. And an argument
+# that is not a list of networks is refused here, before Azure is asked anything.
+if ($ProxyNetworks -and -not $DeployApp) { throw '-ProxyNetworks needs -DeployApp. Nothing was written.' }
+if ($ProxyNetworks -and $ProxyNetworks -cne 'none') { $null = Read-ProxyNetworks $ProxyNetworks '-ProxyNetworks' }
 
 Protect-Directory $Directory
 
@@ -164,6 +227,38 @@ function Get-DemoFlag($App, [string]$Container) {
     if ($settings.Count -eq 0) { return 'false' }
     if ($settings.Count -eq 1 -and $settings[0]['value'] -cin 'true', 'false') { return $settings[0]['value'] }
     throw "The $Container container of the deployed app carries $DemoFlag with something this template never writes. Nothing was written."
+}
+
+function Get-ProxyNetworks($App) {
+    # The networks the bff container of the deployed app is told, in the order of their numbers.
+    # The template writes one setting a network, each once, as a plain value, numbered from 0
+    # with no gap, and nothing else whose name starts with ForwardedHeaders__, nor the framework's
+    # own switch under any of its names. Anything else was set by hand: it is not taken for a
+    # list, and what it holds is not repeated. A name is matched whatever its case, as .NET
+    # reads it. (Until 2026-10-07 the switch was not looked for here: a run that named no
+    # networks went on beside it, and the run of the template then took it out in silence.)
+    $found = @($App['properties']['template']['containers'] | Where-Object { $_['name'] -eq 'bff' })
+    $settings = @($found[0]['env'] | Where-Object {
+        $_ -and ($_['name'] -like 'ForwardedHeaders__*' -or $_['name'] -match $ForwardedSwitch) })
+    $byHand = "The bff container of the deployed app carries a forwarded-headers setting this template never writes. Pass -ProxyNetworks. Nothing was written."
+    $values = @{}
+    foreach ($setting in $settings) {
+        $name = [string]$setting['name']
+        $number = $name.Substring([Math]::Min($NetworksSetting.Length, $name.Length))
+        $plain = $setting['value'] -is [string] -and -not $setting.ContainsKey('secretRef')
+        if ($name -notlike "$NetworksSetting*" -or $number -cnotmatch '^(0|[1-9][0-9]*)$' -or -not $plain -or $values.ContainsKey($number)) { throw $byHand }
+        $values[$number] = $setting['value']
+    }
+    $networks = @(for ($i = 0; $i -lt $values.Count; $i++) {
+        if (-not $values.ContainsKey("$i")) { throw $byHand }
+        $values["$i"]
+    })
+    for ($i = 0; $i -lt $networks.Count; $i++) {
+        if (-not (Test-ProxyNetwork $networks[$i])) {
+            throw "The bff container of the deployed app: entry $($i + 1) of $($networks.Count) is not a network the app takes. Pass -ProxyNetworks. Nothing was written."
+        }
+    }
+    , $networks
 }
 
 $report = [System.Collections.Generic.List[string]]::new()
@@ -310,6 +405,39 @@ if ($DeployApp) {
     } else {
         # Not an error: the file says nothing, and the template's default, no such receiver, applies.
         $report.Add("alertPushAccount: not written, the template's default applies")
+    }
+
+    # The networks of proxies the app believes. Found as the phone's account is: the argument,
+    # then the variable, then what the deployed app's bff container holds; with none of the
+    # three the file says nothing and the template's default, no network, applies. The word none
+    # is an answer of its own: an empty list, written, whatever is deployed. Each line of the
+    # report about them is written whole, once, because the runbook quotes it; none says how
+    # many networks there are, or what they are.
+    $networks = $null
+    if ($ProxyNetworks -ceq 'none') {
+        $networks = @()
+        $report.Add('proxyNetworks: none, asked for with -ProxyNetworks')
+    } elseif ($ProxyNetworks) {
+        $networks = Read-ProxyNetworks $ProxyNetworks '-ProxyNetworks'
+        $report.Add('proxyNetworks: from -ProxyNetworks')
+    } elseif ($env:AZUREBANK_PROXY_NETWORKS -ceq 'none') {
+        $networks = @()
+        $report.Add('proxyNetworks: none, asked for with AZUREBANK_PROXY_NETWORKS')
+    } elseif ($env:AZUREBANK_PROXY_NETWORKS) {
+        $networks = Read-ProxyNetworks $env:AZUREBANK_PROXY_NETWORKS 'AZUREBANK_PROXY_NETWORKS'
+        $report.Add('proxyNetworks: from AZUREBANK_PROXY_NETWORKS')
+    } elseif ($appExists) {
+        $deployed = Get-ProxyNetworks $app
+        if ($deployed.Count) {
+            $networks = $deployed
+            $report.Add('proxyNetworks: kept from the deployed resource')
+        }
+    }
+    if ($null -ne $networks) {
+        $parameters['proxyNetworks'] = @{ value = @($networks) }
+    } else {
+        # Not an error: the file says nothing, and the template's default, no network, applies.
+        $report.Add("proxyNetworks: not written, the template's default applies")
     }
 
     foreach ($name in $plan.Keys) {

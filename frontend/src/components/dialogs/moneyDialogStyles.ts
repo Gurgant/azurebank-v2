@@ -92,6 +92,9 @@ export const useMoneyDialogStyles = makeStyles({
     overflowY: 'auto',
   },
   sectionLabel: {
+    // A block, or the margin below does nothing: Fluent's `Text` is inline, and a vertical
+    // margin does not apply to inline text. The label sat 1 px above the first account card.
+    display: 'block',
     fontSize: '14px',
     fontWeight: 500,
     color: colors.neutral[500],
@@ -139,14 +142,23 @@ export const useMoneyDialogStyles = makeStyles({
     fontWeight: 700,
     color: colors.neutral[800],
     border: 'none',
+    // `outline: 'none'` alone left this field with no sign of focus but the caret (WCAG 2.4.7).
+    // The ring is the one `transferWizardStyles` draws around the same field on the transfer
+    // pages, for the same reason and at the same offset.
     outline: 'none',
+    ':focus-visible': {
+      outline: `2px solid ${colors.brand[60]}`,
+      outlineOffset: '4px',
+    },
     background: 'transparent',
     textAlign: 'center',
     width: '180px',
     '::placeholder': { color: colors.neutral[300] },
   },
   newBalance: { fontSize: '13px', color: colors.neutral[500] },
-  amountHint: { fontSize: '13px', fontWeight: 500, color: colors.semantic.error.main },
+  // `error.dark`, the red for words, as in `transferWizardStyles`: `error.main` measured 3.75 to
+  // 1 here in the light theme, at 13 px. The figure above keeps it: at 48 px it needs 3 to 1.
+  amountHint: { fontSize: '13px', fontWeight: 500, color: colors.semantic.error.dark },
   // Composed ON TOP of amountCurrency/amountInput, so it only needs to restate the colour.
   amountInvalid: { color: colors.semantic.error.main },
   availableRow: { display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: '8px' },
@@ -195,6 +207,11 @@ export const useMoneyDialogStyles = makeStyles({
     fontSize: '14px',
     fontFamily: 'inherit',
     color: colors.neutral[800],
+    // Declared, or the browser paints a plain <input> its own white and its placeholder its own
+    // grey in either theme, under a text colour that follows the theme: near-white on white in
+    // the dark one. The tokens are the ones Fluent's own fields take.
+    backgroundColor: tokens.colorNeutralBackground1,
+    '::placeholder': { color: tokens.colorNeutralForeground4 },
     outline: 'none',
     ':focus': { border: `1px solid ${colors.brand[60]}` },
   },
@@ -228,7 +245,10 @@ export const useMoneyDialogStyles = makeStyles({
     justifyContent: 'center',
     color: colors.semantic.warning.dark,
   },
-  successTitle: { fontSize: '24px', fontWeight: 700, color: colors.semantic.success.main },
+  // The green for words (`success.dark`), so that this title stays the one of the transfer
+  // pages, where the icon's green (`success.main`) was under 3 to 1 on the canvas. On the
+  // dialog's white it measured 3.06, which 24 px bold text passes by 0.06.
+  successTitle: { fontSize: '24px', fontWeight: 700, color: colors.semantic.success.dark },
   stateTitle: { fontSize: '20px', fontWeight: 700, color: colors.neutral[800] },
   successAmount: { fontSize: '32px', fontWeight: 700, color: colors.neutral[800] },
   stateBody: { fontSize: '15px', color: colors.neutral[500], lineHeight: '1.5' },

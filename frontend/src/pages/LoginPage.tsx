@@ -197,6 +197,9 @@ export function LoginPage() {
     refusal the demo's block stays as it was pressed, waiting, and so does the form's button.
   */
   const [claimSent, setClaimSent] = useState(false);
+  // The copy the page offers: the one the browser keeps, and none from that press until a refusal.
+  // The demo's block and the page's title both go by it, so they cannot say two things.
+  const offeredCopy = claimSent ? null : copy;
   // The dialog that asks before a new copy takes the kept one's place.
   const [startingOver, setStartingOver] = useState(false);
   // A press that found nothing to send draws the page again, and nothing else: see below.
@@ -357,7 +360,10 @@ export function LoginPage() {
     <AuthLayout
       headline="Banking Made Simple, Secure, and Smart"
       intro="Manage your finances with confidence. Experience modern banking with powerful tools designed for your success."
-      title="Welcome back"
+      // "Back" is for somebody who has been here. On the demo that is a browser the page offers
+      // a copy to; one it offers "Try the demo" has not been, and until 2026-10-06 was greeted
+      // "Welcome back" all the same. Off the demo the page is the sign-in page it was.
+      title={demo && offeredCopy === null ? 'Welcome' : 'Welcome back'}
       subtitle={demo ? DEMO_SUBTITLE : 'Sign in to your account to continue'}
       footer={
         <>
@@ -452,7 +458,7 @@ export function LoginPage() {
       {demo && (
         <>
           <DemoEntry
-            copy={claimSent ? null : copy}
+            copy={offeredCopy}
             pending={claimSent || claiming ? 'claim' : continuing ? 'continue' : null}
             disabled={busy || rateLimited || claimSent}
             continueLocked={continueLocked}

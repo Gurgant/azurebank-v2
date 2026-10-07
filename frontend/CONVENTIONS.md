@@ -131,6 +131,22 @@ sentence; after a click it draws none. Three limits, known:
   dialog's name: on the two transfer pages, where it is the page's heading, it was not spoken.
   ADR-0059's Validation has the rest of what was heard, and what was not.
 
+**A dialog gives focus back to the control that opened it.** The Fluent dialogs here are opened
+by a state, a page's or the PIN controller's, so Fluent has no trigger to go back to, and a dialog
+that closed left focus on `body`. A component that is mounted for as long as its dialog is open
+calls `useReturnFocus()` (`src/hooks/useReturnFocus.ts`). It reads what has focus as the dialog is
+first drawn, which for a dialog chosen from a menu is the button that opened the menu, and gives
+focus back to it once the dialog is gone, if focus is on `body` and the control is still on the
+page. `MoneyDialogShell` calls it for the three dialogs it frames; the PIN dialog's form calls it,
+and the reveal button stays on the page through its wait so that there is a control to go back
+to. The session warning does not call it: the clock opens it, and no control.
+**Not Fluent's `useRestoreFocusTarget` on the openers:** that one acts whenever focus is lost
+inside the dialog, and a money send loses it on purpose. Measured in Chromium on 2026-10-06, by
+keys, with that mark on the dashboard's Deposit tile: while the send waited, focus was on the tile
+behind the open dialog, and the page behind was no longer hidden from assistive technology. The
+hand-rolled `ConfirmDialog` returns focus by itself. Only Chromium was driven: a browser whose
+buttons take no focus from a mouse press leaves the hook nothing to go back to after a click.
+
 ## Money and formatting
 
 **Amounts are always positive; direction lives in `type`.** A negative amount in the UI layer means

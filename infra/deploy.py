@@ -52,6 +52,13 @@ so that what answers is that revision; it reads from the app whether the demo is
 the app's shape; with the demo on it reads the pool job and checks its shape; then it runs the
 same smoke test, and a wrong answer puts nothing back.
 
+--check also says how many networks of proxies the app's bff container names: the settings
+ForwardedHeaders__KnownIPNetworks__0 and on, which a run of the template writes when it is given
+networks and which tell the BFF whose X-Forwarded-For header to believe. The count, and never a
+network: none is the template's default. A setting about forwarded headers that the template
+never writes, on any container, ends the check as a shape that drifted. A deployment does not
+read these settings.
+
 With the demo on --check also lists the secrets of the app and of the pool job, as whoever is
 signed in, and compares the job's PIN pepper and connection string with the app's. It says that
 they are the app's, or which one differs, and never shows a value, a part of one or its length.
@@ -140,6 +147,18 @@ POOL_TIMEOUTS = (60, 840)
 # The setting both containers of the app read to know whether they are the public demo
 # (infra/main.bicep writes it on both from one switch, `demo`).
 DEMO_FLAG = 'Demo__Enabled'
+# The proxies the BFF believes. infra/main.bicep writes one setting for each network a run names,
+# on the bff container alone: this prefix and a number, from 0. infra/secrets.ps1 reads them by
+# the same prefix, and a test holds the three equal (infra/test_scripts.py). ABOUT_FORWARDED is
+# every setting that could tell a host whose forwarded headers to believe, whatever its case, as
+# .NET reads a name: the template writes none but those. The framework's own switch is one, and a
+# host reads it under three names: ASPNETCORE_FORWARDEDHEADERS_ENABLED, DOTNET_FORWARDEDHEADERS_ENABLED
+# and ForwardedHeaders_Enabled with no prefix. Measured on 2026-10-06 on the BFF, on a loopback
+# socket with nothing listed: under each of the three it took the address a caller wrote in
+# X-Forwarded-For for the caller's. Until later that day only the first name was matched here.
+NETWORKS_SETTING = 'ForwardedHeaders__KnownIPNetworks__'
+NETWORKS_CONTAINER = 'bff'
+ABOUT_FORWARDED = re.compile(r'ForwardedHeaders__|(?:ASPNETCORE_|DOTNET_)?FORWARDEDHEADERS_ENABLED$', re.IGNORECASE)
 # What the public demo shows of itself without spending a copy, both under
 # backend/src/AzureBank.Bff: the tag the BFF puts in the page's head
 # (Extensions/SpaHostingExtensions.cs, DemoTag), and its own door for a registration, which the
@@ -472,6 +491,41 @@ def demo_of(app, when='nothing was changed'):
     on, off = (sorted(name for name, said in zip(names, says) if said == side) for side in ('true', 'false'))
     assert_shape('The app', [f'{DEMO_FLAG} is true in {on} and not in {off}'] if on and off else [], when)
     return bool(on)
+
+
+def proxy_networks(app, when='nothing was moved'):
+    """How many networks of proxies the app's bff container names: its settings
+    ForwardedHeaders__KnownIPNetworks__0 and on, one a network. 0 is the template's default: the
+    BFF then takes each connection's address for the caller's, and reads no forwarded header.
+
+    The count only. A network is never returned, printed or put in an error: it is an address
+    range of the platform's, typed by the operator who measured it. The template writes each
+    setting once, as a plain value, numbered from 0 with no gap, on that container and on no
+    other, and no other setting about forwarded headers anywhere. Anything else was set by hand,
+    and the BFF may then believe another header than a count would say: it is refused as a shape
+    that drifted, by the container's name and never by what was found."""
+    drift, count = [], 0
+    for container in listed((app.get('properties') or {}).get('template'), 'containers'):
+        name = str(container.get('name')) if isinstance(container, dict) else '?'
+        about = [entry for entry in listed(container, 'env')
+                 if isinstance(entry, dict) and ABOUT_FORWARDED.match(str(entry.get('name')))]
+        if not about:
+            continue
+        if name != NETWORKS_CONTAINER:
+            drift.append(f'the container {name!r} carries a setting about forwarded headers, which '
+                         f'the template writes on {NETWORKS_CONTAINER!r} alone')
+            continue
+        numbers = [str(entry['name'])[len(NETWORKS_SETTING):] for entry in about
+                   if str(entry['name']).lower().startswith(NETWORKS_SETTING.lower())
+                   and isinstance(entry.get('value'), str) and entry['value'] and 'secretRef' not in entry]
+        if len(numbers) == len(about) and sorted(numbers) == sorted(str(n) for n in range(len(about))):
+            count = len(about)
+        else:
+            drift.append(f'the settings about forwarded headers in the container {name!r} are not what '
+                         f'the template writes ({NETWORKS_SETTING}0 and on with no gap, each once, as a '
+                         'plain value, and no other)')
+    assert_shape('The app', drift, when)
+    return count
 
 
 # --- Azure ---
@@ -1328,11 +1382,12 @@ def check(subscription, resource_group, in_actions=False):
     back.
 
     In order: the app, read until its last update has succeeded with its latest revision as its
-    latest ready one; from that read its address, whether it is the public demo, and its shape,
-    and an app in shape that reports no address ends the check there; its revisions, until no
-    other one is active; with the demo on the pool job and its shape, then the job's two secrets
-    against the app's; then the smoke test, with the demo as the app says it. With the demo off
-    the pool job is not read and no secret is listed."""
+    latest ready one; from that read its address, whether it is the public demo, its shape, and
+    how many networks of proxies its bff container names, and an app in shape that reports no
+    address ends the check there; its revisions, until no other one is active, and then the
+    line about the networks, by count; with the demo on the pool job and its shape, then the
+    job's two secrets against the app's; then the smoke test, with the demo as the app says it.
+    With the demo off the pool job is not read and no secret is listed."""
     if in_actions:
         raise ValueError("--check is refused inside GitHub Actions: it is the owner's read of the "
                          'running app, from a terminal. A workflow run checks the app at the end of '
@@ -1343,12 +1398,20 @@ def check(subscription, resource_group, in_actions=False):
     fqdn = address_of(app)
     demo = demo_of(app, when='nothing was moved')
     assert_shape('The app', app_drift(app), 'nothing was moved')
+    networks = proxy_networks(app)
     if not fqdn:
         # The shape check does not read the host name: an ingress in shape may still hold none.
         raise RuntimeError('The app is in shape and reports no address (its ingress holds no host '
                            'name), so there is nothing to ask: nothing was proved, nothing was moved.')
     latest = app['properties']['latestRevisionName']
     wait_alone(app_id, latest)
+    if networks:
+        say(f"The bff container names {networks} network{'' if networks == 1 else 's'} of proxies: it "
+            'believes the X-Forwarded-For header of a connection that comes from inside one. No '
+            'network was shown.')
+    else:
+        say("The bff container names no network of proxies: it takes each connection's address for "
+            "the caller's and reads no forwarded header.")
     if demo:
         pool_id = f'{prefix}/jobs/{POOL_JOB}'
         assert_shape(f'The job {POOL_JOB}', pool_drift(read_pool_job(pool_id)), 'nothing was moved')

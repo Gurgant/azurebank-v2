@@ -16,6 +16,7 @@ import type { ApiProblem } from '../api/problemBaseQuery';
 import { PageHeader } from '../components/layout/PageHeader';
 import { SegmentedFilter } from '../components/shared/SegmentedFilter';
 import {
+  TransactionBody,
   TransactionDayRow,
   TransactionHead,
   TransactionRow,
@@ -402,7 +403,7 @@ export function HistoryPage() {
               <div className={styles.transactionList}>
                 <TransactionTable>
                   <TransactionHead />
-                  <tbody>
+                  <TransactionBody>
                     {groupedTransactions.map((group) => (
                       <Fragment key={group.date}>
                         <TransactionDayRow label={group.date} columns={4} />
@@ -415,7 +416,7 @@ export function HistoryPage() {
                         ))}
                       </Fragment>
                     ))}
-                  </tbody>
+                  </TransactionBody>
                 </TransactionTable>
 
                 {/* Expanding used to be one-way: every press added a page and nothing took one

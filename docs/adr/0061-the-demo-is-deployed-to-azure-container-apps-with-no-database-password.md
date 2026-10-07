@@ -743,7 +743,10 @@ is left out by default, and the owner decided against a log search rule for now.
   more are the pool job and its role assignment, built only with the switch `demo` on: off, a
   run still predicts 14 without the app and 8 more with it. Since 2026-10-06, 24 parameters: the
   one more is the account for the owner's phone, empty by default, and with it empty a run
-  predicts the same resources with the same properties.)* `bicep build` and `bicep lint` exit 0
+  predicts the same resources with the same properties.)* *(Later on 2026-10-06, ADR-0013's note
+  of that day: 25 parameters. The one more is the list of networks of proxies the `bff`
+  container is told to believe, empty by default, and with it empty a run predicts the same
+  resources with the same properties.)* `bicep build` and `bicep lint` exit 0
   with nothing on standard error for the three templates; an unused parameter puts a warning
   there. One warning is silenced, on one line: BCP081, because Bicep 0.47.16 has no types for the
   environment's API version. Without that line the warning is back. `app-inputs.bicep` silences

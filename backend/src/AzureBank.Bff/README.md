@@ -149,7 +149,7 @@ AzureBank.Bff/
 │   ├── SessionOptions.cs               # BffSessionOptions (+ BffSessionOptionsValidator.cs)
 │   ├── SecurityOptions.cs              # PinValidityMinutes
 │   ├── RateLimitingOptions.cs          # (+ RateLimitingOptionsValidator.cs)
-│   └── ProxyOptions.cs                 # KnownProxies / ForwardLimit (+ ProxyOptionsValidator.cs)
+│   └── ProxyOptions.cs                 # KnownProxies / KnownIPNetworks / ForwardLimit (+ ProxyOptionsValidator.cs)
 │
 ├── 📁 Models/
 │   └── UserSession.cs                  # Session data model
@@ -168,6 +168,7 @@ AzureBank.Bff/
 │
 ├── 📄 RateLimitPolicies.cs             # "auth" / "lookup" policy names
 ├── 📄 ClientAddress.cs                 # The client a request comes from: the limiters' key, and what the demo claim tells the API
+├── 📄 StrictForwardedFor.cs            # X-Forwarded-For as a list of addresses and nothing else, before the framework reads it
 ├── 📄 Program.cs                       # Application setup
 ├── 📄 appsettings.json                 # Configuration
 └── 📄 appsettings.Development.json     # Dev overrides (session 10/20, PIN 10)
@@ -530,6 +531,78 @@ deployment with the demo off, which is answered 404 and, past the limit, 429
 address the claim tells the API, so the ten claims a client may make in a day
 (`Demo:Claim:MaxPerClientPerDay`, counted by the API) are counted for the same client.
 
+### Behind a proxy
+
+That key is the connection's address. Behind a proxy it is the proxy's, for every caller: the
+two limits that count by address, and the demo's cap of copies a day, are then one budget for
+everybody, unless the BFF is told which proxy to believe (ADR-0013). Three settings under
+`ForwardedHeaders`; both lists are empty as shipped, and nothing in this repository gives either
+an entry.
+
+| Setting | Holds | From the environment |
+|---------|-------|----------------------|
+| `ForwardedHeaders:KnownProxies` | The exact addresses of the proxies to believe | `ForwardedHeaders__KnownProxies__0`, `__1`, ... |
+| `ForwardedHeaders:KnownIPNetworks` | Their networks, in CIDR form: `192.0.2.0/24`, `2001:db8:7::/48`. For a platform that may move its proxy inside a range it owns: an exact address stops matching the day it moves, in silence. Since 2026-10-06 | `ForwardedHeaders__KnownIPNetworks__0`, `__1`, ... |
+| `ForwardedHeaders:ForwardLimit` | How many proxies in a row are believed: 1. **Never more than the proxies there really are:** with 2 and one proxy, a caller whose own address is inside a listed network is taken for the second proxy, and the entry it wrote is believed (`TrustedProxyNetworkTests`) | `ForwardedHeaders__ForwardLimit` |
+
+- **With both lists empty** `X-Forwarded-For` is not read, and the framework's forwarded-headers
+  middleware is not in the pipeline.
+- **With an entry in either** the header is read on a connection that comes from a listed address
+  or from inside a listed network, and on no other. Not from this machine itself: the
+  framework's own defaults, loopback, are cleared. And not on a connection that has no address
+  (a Unix socket, a named pipe), which the framework's middleware would believe: the caller of
+  such a connection stays the one key `unknown`.
+- **The caller is then the last entry of the header,** the one the proxy appended. An entry the
+  caller wrote before it is not believed, and a last entry that is no address (`unknown`, a host
+  name, anything that does not parse) leaves the proxy's address in place. A port is dropped; an
+  IPv4-mapped entry is the IPv4 address; an IPv6 entry is keyed by its /64.
+- **The header is first made a list of addresses and nothing else** (`StrictForwardedFor`, since
+  2026-10-06, later the same day). Its lines are split at every comma, a quotation mark being a
+  character like another, and an entry that holds anything but what an address is written with
+  (`0-9 a-f A-F . : [ ]`) becomes the word `unknown`. Read as the framework alone reads it, the
+  sentence above was false: a caller that wrote `::ffff:198.51.100.200%"` before the proxy's
+  entry was taken for `198.51.100.200`, an address of its choosing and a new budget with every
+  request, because the quotation mark hid the comma after it and the parser dropped everything
+  after the `%` as an IPv6 zone; and a quotation mark alone made the caller the proxy itself
+  (measured on this host's pipeline and on a loopback socket, .NET 10). So a last entry with a
+  zone, in quotation marks or in hexadecimal is no address here, where the framework read one.
+- **At startup** `ProxyOptionsValidator` refuses, in a sentence that names the entry, a network
+  that is not `address/prefix-length`; whose prefix length is outside its family's range; that
+  is `/0`, or wider than a `/8`; that is an IPv4-mapped IPv6 network; or that .NET reads as
+  another network than it shows: `10.0.0.1/8` is read as `10.0.0.0/8`, and `010.0.0.0/8`, in
+  octal, as `8.0.0.0/8` (measured on .NET 10, 2026-10-06). One address is written with `/32` or
+  `/128`, or goes in `KnownProxies`. A public range is not refused: whether a range is the
+  proxy's is measured on the deployment, not read from the range.
+- **Every address inside a listed network can name a caller's address.** A network holds what
+  the proxy can connect from, and nothing a caller can connect from.
+- **The framework's own switch is not one of the three, and must stay unset.** With
+  `ASPNETCORE_FORWARDEDHEADERS_ENABLED=true` in its environment this host believed whatever a
+  caller wrote: twelve sign-ins over one connection, each naming another address in
+  `X-Forwarded-For`, were all answered, where without it the eleventh and the twelfth were
+  refused (measured on a local process, 2026-10-06). Nothing in this repository sets it. The
+  host reads the switch under two more names, `DOTNET_FORWARDEDHEADERS_ENABLED` and
+  `ForwardedHeaders_Enabled` with no prefix, and under each of the three, with nothing listed, a
+  claim was made for the address its caller wrote (measured later that day on a loopback socket,
+  the address read where the scripted API received it). With a network listed and the switch
+  on, a caller behind the proxy that wrote a zone and a quotation mark was believed again: the
+  framework's own middleware then reads the header before `StrictForwardedFor` rewrites it. With
+  a network listed that did not hold the connection's address, the header was not read, switch
+  or no switch. This host starts with the switch on: nothing here refuses it but the deployment's
+  `--check`, which ends on any of the three names (`infra/deploy.py`).
+
+On the proxied road to the API nothing reads a forwarded header. The proxy writes
+`X-Forwarded-For`, `X-Forwarded-Host` and `X-Forwarded-Proto` itself. The first holds the
+address the BFF has for the caller by then, in place of whatever a browser sent under that name;
+a browser's own `X-Real-IP` goes on as it was sent; and with a proxy listed the framework adds
+`X-Original-For`, the proxy's own address, which goes on too. Those three were measured in
+`TrustedProxyNetworkTests`, which holds everything above on the real pipeline;
+`ForwardedForOnARealConnectionTests` holds the reading of the header on a loopback socket, where
+the connection's address is the socket's own and the server refuses a line break, a NUL or a
+byte that is not ASCII in the header with 400 before the app sees it. What the proxy does with a
+browser's own `X-Forwarded-Host` or `X-Forwarded-Proto` was not measured. The API learns a
+visitor's address from one place only: the body of the demo's claim, which the BFF's own client
+writes from the same key.
+
 ---
 
 ## Configuration
@@ -554,6 +627,11 @@ address the claim tells the API, so the ten claims a client may make in a day
     "AuthSegmentsPerWindow": 6,
     "LookupPermitLimit": 20,
     "LookupWindowSeconds": 60
+  },
+  "ForwardedHeaders": {
+    "KnownProxies": [],
+    "KnownIPNetworks": [],
+    "ForwardLimit": 1
   },
   "BackendApi": {
     "BaseUrl": "https://localhost:7215",

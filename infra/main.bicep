@@ -22,6 +22,8 @@ param poolTimeout int = 600
 param alertEmail string = ''
 @description('The e-mail address the Azure mobile app on the owner\'s phone was set up with. Given, the action group gains one receiver of that app, so that an alert is expected to reach the phone as a notification too. Empty, the default, adds none: the group is what it was. infra/secrets.ps1 writes it; never committed.')
 param alertPushAccount string = ''
+@description('The networks, in CIDR form, that the platform\'s ingress reaches the app from. Given, the bff container is told to believe the X-Forwarded-For header of a connection that comes from inside one, so that it counts a visitor by the visitor\'s own address: one setting a network, ForwardedHeaders__KnownIPNetworks__0 and on. Empty, the default, sets nothing: the bff takes each connection\'s address for the caller\'s, as it did before this parameter existed. infra/secrets.ps1 writes it, from what the operator measured; no value is committed.')
+param proxyNetworks array = []
 @description('False leaves the Deny policy out: the fallback if this subscription refuses a custom policy definition.')
 param denyPolicy bool = true
 @description('Trigger types the Deny policy lets every job have. A job that runs on a schedule is not added here: it is named in scheduledJobs.')
@@ -241,6 +243,42 @@ module appInputs 'app-inputs.bicep' = if (deployApp) {
 // has been measured, the default of 10 could be ten copies a day for everybody (ADR-0063, decision 14).
 var demoClaimsPerClient = '1000'
 
+// What the bff container is told on every run, in this order. A variable since 2026-10-06: the
+// container's settings are this list and, after it, one setting for each network below. Until
+// that day the list stood in the container itself.
+var bffSettings = [
+  { name: 'ASPNETCORE_ENVIRONMENT', value: 'Production' }
+  { name: 'BackendApi__BaseUrl', value: 'http://localhost:5068' }
+  { name: 'ReverseProxy__Clusters__backend-api__Destinations__primary__Address', value: 'http://localhost:5068' }
+  { name: 'ServiceCredential__BffKey', secretRef: 'service-key' }
+  // Serilog's one line per request, written at Information for every page, file and call,
+  // is not kept: it is most of what a day writes and the cheapest way to fill the log's
+  // daily cap. Every warning stays, and so does the request line of a 5xx (an Error).
+  { name: 'Serilog__MinimumLevel__Override__Serilog', value: 'Warning' }
+  // The demo's switch, the same text on both containers. With it on, this one closes
+  // registration and marks the page, and the api hands out the copies (ADR-0063).
+  { name: 'Demo__Enabled', value: demo ? 'true' : 'false' }
+]
+
+// The proxies the bff believes: one setting for each network of proxyNetworks, numbered from 0,
+// which is how .NET reads a list from the environment (ADR-0013). With no network this list is
+// empty and the bff's settings are the six above and nothing else: worked out, the bff is told
+// what it was told before the parameter existed, which a test holds, and the whole run was the
+// same as from the templates of before (README.md, "Checking these files"). The bff refuses to
+// start on an entry it does not take for a network, or that trusts too much
+// (backend/src/AzureBank.Bff/Options/ProxyOptionsValidator.cs); nothing in this file checks one.
+// On the bff alone: the api reads no forwarded header, and neither job answers a request.
+// Nothing of it has been sent to Azure.
+//
+// The two lists are joined by spread in the container, not by concat(): joined by concat() the
+// compiler stopped reading the fields of a setting (a name misspelt in the six built and linted
+// with nothing on standard error), and joined by spread it reports them as it did while the six
+// stood in the container. Seen on copies, 2026-10-06 (README.md, "Checking these files").
+var proxyNetworkSettings = [for (network, index) in proxyNetworks: {
+  name: 'ForwardedHeaders__KnownIPNetworks__${index}'
+  value: network
+}]
+
 resource app 'Microsoft.App/containerApps@2025-01-01' = if (deployApp) {
   name: 'azurebank'
   location: location
@@ -282,19 +320,7 @@ resource app 'Microsoft.App/containerApps@2025-01-01' = if (deployApp) {
             cpu: json('0.25')
             memory: '0.5Gi'
           }
-          env: [
-            { name: 'ASPNETCORE_ENVIRONMENT', value: 'Production' }
-            { name: 'BackendApi__BaseUrl', value: 'http://localhost:5068' }
-            { name: 'ReverseProxy__Clusters__backend-api__Destinations__primary__Address', value: 'http://localhost:5068' }
-            { name: 'ServiceCredential__BffKey', secretRef: 'service-key' }
-            // Serilog's one line per request, written at Information for every page, file and call,
-            // is not kept: it is most of what a day writes and the cheapest way to fill the log's
-            // daily cap. Every warning stays, and so does the request line of a 5xx (an Error).
-            { name: 'Serilog__MinimumLevel__Override__Serilog', value: 'Warning' }
-            // The demo's switch, the same text on both containers. With it on, this one closes
-            // registration and marks the page, and the api hands out the copies (ADR-0063).
-            { name: 'Demo__Enabled', value: demo ? 'true' : 'false' }
-          ]
+          env: [...bffSettings, ...proxyNetworkSettings]
           probes: [for probe in [
             { type: 'Startup', path: '/health/live', timeout: 1 }
             { type: 'Liveness', path: '/health/live', timeout: 1 }

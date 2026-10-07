@@ -17,6 +17,7 @@ import { colors } from '../../theme/tokens';
 import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
 import { CONNECTION_FAILED, SAVE_OUTCOME_UNKNOWN } from '../../api/problemMessages';
 import { useSetPinMutation } from '../../features/api/apiSlice';
+import { useReturnFocus } from '../../hooks/useReturnFocus';
 import { RetryCountdown, WaitHint, retryDeadline } from '../feedback';
 import { PinInput } from '../PinInput';
 
@@ -66,6 +67,7 @@ export interface ChangePinDialogProps {
  */
 export function ChangePinDialog({ onClose }: ChangePinDialogProps) {
   const styles = useStyles();
+  useReturnFocus();
   const errorId = useId();
   const [setPin, { isLoading }] = useSetPinMutation();
 
