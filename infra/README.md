@@ -28,8 +28,10 @@ of step 20 was refused as written, and once it ran it showed that the alert on t
 not count lines. That alert was deleted, and the template now leaves it out unless it is asked
 for.
 
-**On 2026-10-05 this folder gained what turns the public demo on, and none of it has run on
-Azure.** The template has a switch, `demo`, off unless it is asked for. With it on, both
+**On 2026-10-05 this folder gained what turns the public demo on.** Until 2026-10-07 this line
+went on "and none of it has run on Azure". On that day the deployed app had the demo on: it
+gave a visitor a copy (step 30's note). Of the steps that turned it on, this page records no
+run. The template has a switch, `demo`, off unless it is asked for. With it on, both
 containers of the app are told they are the demo, and a second job, `azurebank-pool`, runs
 `recycle` every four hours as the app's database identity; the Deny policy lets a job of that
 name, and no other, run on a schedule. `deploy.py` reads from the app whether the demo is on,
@@ -37,8 +39,10 @@ moves the pool job with the commit when it is, and has three more commands for t
 terminal. Why, and what was weighed:
 [ADR-0064](../docs/adr/0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md).
 The third session, [Turn the demo on](#third-session-turn-the-demo-on), is steps 22 to 33 below.
-It has not been run: every value in it is what the code and the records lead to expect, and it
-says so. The steps of the first two sessions, and what they read back, are left as they were
+Of its steps this page records one as run, step 30 (the paragraph of 2026-10-07, below): every
+other value in it is what the code and the records lead to expect, and it
+says so. Until 2026-10-07 this said of the whole session "It has not been run". The steps of
+the first two sessions, and what they read back, are left as they were
 measured, with the demo off.
 
 **On 2026-10-06 it gained one thing more, and that has not run on Azure either: the alerts can
@@ -46,6 +50,17 @@ also reach the owner's phone.** The action group takes one receiver of the Azure
 a run names the account that app was set up with, and holds the mailbox alone when none does.
 Step 25 is where the account is carried, the road tried once and what arrives read; what is not
 known of it is under [Not measured yet](#not-measured-yet).
+
+**On 2026-10-07 the template stopped writing the cap of claims for one client, and the run that
+applies it has not been made on Azure.** The cap was 1,000 a day, on the `api` container and on
+the pool job, for as long as the app behind the ingress could not tell one visitor from
+another. Step 30 measured that, on 2026-10-06 and on 2026-10-07: since one run named the
+ingress's network, the app counts a visitor by the visitor's own address, and the step's note
+says what was read. So the template writes no number of the demo any more, and the
+application's default applies: 10 copies a day for one address. On Azure that takes one run of
+the template, which is written as part 5 of step 30 and has not been made: until then the
+deployed app and the deployed job are expected to hold the 1,000 they were given. What the
+session's other steps read is not on this page.
 
 What ran on Azure before, on 2026-10-02, is a throwaway trial: a resource group in the same
 subscription and region, created and deleted that day, in which requests of the shapes this
@@ -135,7 +150,7 @@ to one identity, by its client ID, and with no password. `azurebank_app` reads a
 
 | Resource | What it is |
 | --- | --- |
-| `azurebank` | The app: the BFF (0.25 vCPU, 0.5 GiB) and the API (0.5 vCPU, 1 GiB) in one replica, zero to one replica, single revision, with the identity `azurebank-app` attached. HTTPS ingress to the BFF's port 8080. The API listens on `127.0.0.1:5068` only: nothing outside the replica can reach it. Three probes, on the BFF. Nine secrets, each reaching a container by reference: eight application keys and the connection string, which holds a server name and a client ID and no password. The eighth key is the demo's, `demo-client-key`: only the `api` container is handed it, and nothing uses it while the demo is off. Both containers carry `Demo__Enabled`, written as `false` unless `demo` is true, and the `api` container `Demo__Claim__MaxPerClientPerDay=1000` (below). The BFF does not keep its one line per request (`Serilog__MinimumLevel__Override__Serilog=Warning`); its warnings and its 5xx lines stay. Until 2026-10-05 this row counted eight secrets, seven of them keys, and no setting of the demo: that is the app the first deployment created, and it stays so until the next run of the template ([Changing the infrastructure later](#changing-the-infrastructure-later)) |
+| `azurebank` | The app: the BFF (0.25 vCPU, 0.5 GiB) and the API (0.5 vCPU, 1 GiB) in one replica, zero to one replica, single revision, with the identity `azurebank-app` attached. HTTPS ingress to the BFF's port 8080. The API listens on `127.0.0.1:5068` only: nothing outside the replica can reach it. Three probes, on the BFF. Nine secrets, each reaching a container by reference: eight application keys and the connection string, which holds a server name and a client ID and no password. The eighth key is the demo's, `demo-client-key`: only the `api` container is handed it, and nothing uses it while the demo is off. Both containers carry `Demo__Enabled`, written as `false` unless `demo` is true. Neither carries a number of the demo: until 2026-10-07 this row went on "and the `api` container `Demo__Claim__MaxPerClientPerDay=1000` (below)", and an `api` container deployed before that day is expected to carry that setting until a run of the template takes it out (below, and step 30). The BFF does not keep its one line per request (`Serilog__MinimumLevel__Override__Serilog=Warning`); its warnings and its 5xx lines stay. Until 2026-10-05 this row counted eight secrets, seven of them keys, and no setting of the demo: that is the app the first deployment created, and it stays so until the next run of the template ([Changing the infrastructure later](#changing-the-infrastructure-later)) |
 | `azurebank-migrate` | A manual job: the tools image with the argument `migrate`, no retry, 600 s, the identity `azurebank-migrate` attached, one secret (its own connection string, no password) |
 | two role assignments | The custom role, to the deployment identity, on the app and on the job and nowhere else. From here the workflow can change the app |
 | `azurebank-owner` | An action group with one e-mail receiver, given as a parameter. Since 2026-10-06 a second parameter, `alertPushAccount`, adds one receiver of the Azure mobile app beside it, named `owner-phone`, for the e-mail address that app was set up with on the owner's phone. The parameter is empty by default, and the group is then the one it was, the mailbox and no other receiver. No run has sent that receiver to Azure: the group the first deployment created holds the mailbox alone (step 25) |
@@ -143,12 +158,14 @@ to one identity, by its client ID, and with no password. `azurebank_app` reads a
 
 **With `demo=true` as well: two more, and the app is told it is the demo.** The switch is a
 parameter of the template, `false` by default. `secrets.ps1` writes it: what the deployed app
-does now, or `true` with `-DemoOn` (step 25). Added on 2026-10-05; none of it has been sent to
-Azure.
+does now, or `true` with `-DemoOn` (step 25). Added on 2026-10-05. Until 2026-10-07 this line
+ended "none of it has been sent to Azure": on that day the deployed app answered as the demo
+and the deployment's check read the job there, in shape (step 30's note). What was read of the
+third role assignment is not on this page.
 
 | Resource | What it is |
 | --- | --- |
-| `azurebank-pool` | A scheduled job: the tools image with the argument `recycle`, which deletes the demo copies whose time is over and tops the pool up ([`docs/runbooks/demo-pool.md`](../docs/runbooks/demo-pool.md)). The schedule is `0 */4 * * *`, a variable of the template and not a parameter; Azure is expected to read it in UTC. One run at a time, no retry, 600 s (the parameter `poolTimeout`, 60 to 840), 0.25 vCPU and 0.5 GiB. It carries the identity `azurebank-app`, so it signs in to the database as the app does, never as the migration. Two secrets of its own, which the template writes from the two expressions it writes the app's from: the app's connection string and the app's PIN pepper. Four settings: those two by reference, `Demo__Enabled=true` as a plain word, and `Demo__Claim__MaxPerClientPerDay=1000` |
+| `azurebank-pool` | A scheduled job: the tools image with the argument `recycle`, which deletes the demo copies whose time is over and tops the pool up ([`docs/runbooks/demo-pool.md`](../docs/runbooks/demo-pool.md)). The schedule is `0 */4 * * *`, a variable of the template and not a parameter; Azure is expected to read it in UTC. One run at a time, no retry, 600 s (the parameter `poolTimeout`, 60 to 840), 0.25 vCPU and 0.5 GiB. It carries the identity `azurebank-app`, so it signs in to the database as the app does, never as the migration. Two secrets of its own, which the template writes from the two expressions it writes the app's from: the app's connection string and the app's PIN pepper. Three settings: those two by reference, and `Demo__Enabled=true` as a plain word. Until 2026-10-07 this row said "Four settings" and ended "and `Demo__Claim__MaxPerClientPerDay=1000`": the template no longer writes it, and a job deployed before that day is expected to carry it until a run of the template takes it out (below, and step 30) |
 | a third role assignment | The custom role, to the deployment identity, on the pool job: without it the workflow could neither read that job nor move its image |
 
 With `demo=true` both containers of the app carry `Demo__Enabled=true`: the page carries the
@@ -158,16 +175,36 @@ not provoked: when the app's own update fails, a job that waits for it is not cr
 not cover a new revision that never gets ready, which for Azure is an update that succeeded:
 step 25 says what is done then, before the job's next run.
 
-**Why 1,000 claims a day for one client.** `Demo__Claim__MaxPerClientPerDay` is 10 by default and
-1,000 is its range's maximum. The BFF counts a client by the address it sees, and no run of this
-folder has told it to trust a proxy's forwarded header, so behind the ingress it may see one
-address for every visitor: ten copies a day for everybody. What it sees there has not been
-measured (step 30), and until it has, the template writes 1,000 on the `api` container and on
-the job, from one variable (ADR-0063, decision 14). Every other number of the demo stays at its
-default on all three. Until 2026-10-06 this paragraph said "no file in this folder tells it to
-trust a proxy's forwarded header": since that day the template can, when a run names the
-networks of the ingress (the parameter `proxyNetworks`, empty by default; step 30 says when and
-how). No run has named any, and the 1,000 stays until one has and step 30's proof has passed.
+**The cap of claims for one client is the application's default: 10 a day.** The template
+writes no number of the demo. `Demo__Claim__MaxPerClientPerDay` is on no container and not on
+the job, so the `api` container and the job read its default, 10
+(`backend/src/AzureBank.Shared/Options/DemoOptions.cs`), as all three read every other number
+of the demo, and no two can differ. A test holds that no container of the template carries a
+setting under `Demo__Claim__`. Until 2026-10-07 this paragraph was headed "Why 1,000 claims a
+day for one client", and the template wrote 1,000, the range's maximum, on the `api` container
+and on the job, from one variable (ADR-0063, decision 14). The reason was the address. The BFF
+counts a client by the address it sees, and behind the ingress, with no proxy named to it, that
+is not the visitor's: 10 would have been a cap that every visitor shared. Step 30 measured it.
+On 2026-10-06 the limiter's warnings named two internal addresses, neither of them the
+caller's. On 2026-10-07 a run named the ingress's network (the parameter `proxyNetworks`, added
+on 2026-10-06 and empty by default), the step's proof was run, and every warning named the
+caller's own address. The proof's own line, a second network answered while the first is
+held to its ten, was read in that day's last run (the step's note). Until 2026-10-06 this
+paragraph
+said "no file in this folder tells it to
+trust a proxy's forwarded header", and from that day to 2026-10-07 it ended "No run has named
+any, and the 1,000 stays until one has and step 30's proof has passed".
+
+**Two things follow from taking the 1,000 out.** On this deployment it is still to be taken out:
+the deployed `api` container read back 13 settings on 2026-10-07, the count the template wrote
+with the cap, and it and the job are expected to carry the 1,000 until the one run of the
+template that step 30 has as its part 5, which has not been made. And a deployment made anew
+starts with the cap at 10 and no network named: `secrets.ps1` reads the networks from a
+deployed app, and with no app deployed nothing remembers them. Until a run has named them
+(`-ProxyNetworks`, step 30) such an app is expected to take the ingress for every visitor, and
+10 is then a cap that every visitor shares, the gap the 1,000 used to cover. So on a deployment
+made anew the networks are named, and step 30's proof read, before the link is published; and
+step 30's way back, which takes the networks out, opens the same gap.
 
 **A ninth, only when it is asked for: an alert rule on the workspace.** Until 2026-10-03 the
 template built it with the others (nine more, four alert rules), and the first deployment created
@@ -197,7 +234,9 @@ the plain `azurebank`, and the same what-if, run again that day, named both.
 
 The environment variables of the two containers are the ones `compose.yaml` sets, plus the one
 Serilog setting on the BFF and, since 2026-10-05, the demo's: `Demo__Enabled` on both, and on the
-`api` container `Demo__ClientKeySecret` and `Demo__Claim__MaxPerClientPerDay`. No container of
+`api` container `Demo__ClientKeySecret`. Until 2026-10-07 this sentence went on "and
+`Demo__Claim__MaxPerClientPerDay`": no container carries a number of the demo any more (above).
+No container of
 the template carries a key id of the pepper or a previous pepper. A forwarded-headers setting is
 carried by one container, the `bff`, and only in a run that names networks of proxies: one
 setting a network, `ForwardedHeaders__KnownIPNetworks__0` and on, after its six. With none named,
@@ -315,10 +354,17 @@ So does a pool run: its exit code is read from Azure all the same, and its one s
 not there to read.
 
 **What a stranger can make the demo hold, once it is on.** None of it costs money; each is a way
-the demo stops being usable. All of it is read from the code and its defaults, not seen on Azure.
+the demo stops being usable. All of it is read from the code and its defaults. Until 2026-10-07
+this line ended "not seen on Azure" of all of it: since then step 30 has read how the deployed
+app counts a caller, and the two lines below say where that is so.
 
-- **The pool is the only bound on claims.** While the cap for one client is 1,000 a day (above),
-  it stops nobody. What is left are the pool's own numbers, at their defaults: 50 free copies, a
+- **One address is bound by the cap of claims, and many addresses by the pool alone.** With the
+  cap at its default, an address is refused its eleventh copy of a rolling 24 hours with 429
+  `DEMO_DAILY_LIMIT` (ADR-0063; read from the code and its tests, and not seen on Azure, where
+  the run of the template that takes the 1,000 out has not been made). Until 2026-10-07 this
+  line was headed "The pool is the only bound on claims" and began "While the cap for one client
+  is 1,000 a day (above), it stops nobody". For callers who come from many addresses what is
+  left are the pool's own numbers, at their defaults: 50 free copies, a
   top-up that builds nothing once the claims of the last 24 hours reach 150, 200 changing
   requests in a copy, 24 hours for a copy
   ([`docs/runbooks/demo-pool.md`](../docs/runbooks/demo-pool.md), sections 1 and 9). 50 claims
@@ -336,9 +382,13 @@ the demo stops being usable. All of it is read from the code and its defaults, n
   five requests a second, or a handful of visitors at once, answers 429 to every call of every
   signed-in visitor. The page itself would still load, since its files are served before the
   limiter: the demo would look up while nothing in it works. Whether the app sees one address is
-  what step 30 measures; until then this is the case to expect. If it does, the same step tells
+  what step 30 measures, and where it does, the same step tells
   the app the networks of the ingress, so that it counts each visitor by the visitor's own
-  address (added on 2026-10-06, and not run).
+  address. On this deployment it has: on 2026-10-06 the limiter named two internal addresses and
+  never the caller's, and since the run of 2026-10-07 that named the ingress's network it names
+  the caller's own (step 30's note). Until 2026-10-07 this line said "until then this is the
+  case to expect" of the shared limits, and ended "(added on 2026-10-06, and not run)". It is
+  the case to expect again of a deployment made anew, and after step 30's way back.
 - **The database grows and nothing warns.** A run deletes a copy's users and everything of
   theirs, and never an audit row (`docs/runbooks/demo-pool.md`, section 7). The database is Basic,
   2 GB, and no alert watches its size.
@@ -395,7 +445,8 @@ Rules for every command in this file:
 Two sessions. The first needs no image and can run before the workflow is on `main`. The second
 needs the workflow on `main`, and the GitHub environment in place before that. A third,
 [Turn the demo on](#third-session-turn-the-demo-on), needs the app deployed; it was written on
-2026-10-05 and has not been run.
+2026-10-05, and of its steps this page records one as run, step 30. Until 2026-10-07 this said
+"and has not been run".
 
 Every step that writes is marked **writes**. Run from the repository root.
 
@@ -1297,7 +1348,10 @@ exit code 28). The last reads of that day, before `az logout`, are under
 
 ### Third session: turn the demo on
 
-Written on 2026-10-05. **No step of this session has been run.** Every "expected" below is what
+Written on 2026-10-05. **One step of this session is recorded as run: step 30**, on 2026-10-06
+and on 2026-10-07, and its note says what was read. Until 2026-10-07 this line said "No step of
+this session has been run"; of the other steps this page still records no run.
+Every "expected" below is what
 the code, the offline tests and the records of the first two sessions lead to expect; where it
 is something of Azure's that nobody has seen, the step says so. A read that differs from what
 is expected is a stop, unless the step names what is done instead.
@@ -1567,7 +1621,7 @@ mobile app.
 | The what-if, before "yes" | `Modify` on the app: its secrets, and the settings of both containers. `Modify` on the action group, for one receiver of the Azure mobile app (expected as `properties.azureAppPushReceivers`). `Create` for the job `azurebank-pool` and for one role assignment. The `Modify` lines of the earlier runs. Nothing to delete. No what-if of this folder has been run on a group that already holds its action group, so what else it prints for that group is not known: a difference there that is not about a receiver is read before "yes", and a group to create or to delete is a "no" |
 | The deployment's answer | `Succeeded` |
 | `az containerapp secret list --name azurebank --resource-group $group --query '[].name' --output tsv` | Nine names |
-| The settings of each container, by name: the block below | `bff`: 6 settings, `Demo__Enabled` `true`. `api`: 13 settings, `Demo__Enabled` `true` |
+| The settings of each container, by name: the block below | `bff`: 6 settings, `Demo__Enabled` `true`. `api`: 12 settings, `Demo__Enabled` `true`. Until 2026-10-07 this row said 13 for the `api`: the template then wrote the cap of claims on it too |
 | `az containerapp job show --name azurebank-pool --resource-group $group --query properties.configuration`; the same with `--query 'properties.template.containers[0].args'` | `Schedule`, the expression `0 */4 * * *`, parallelism 1, retry limit 0, timeout 600, two secret names; `recycle` |
 | `az containerapp job list --resource-group $group --query '[].name' --output tsv`; `Show-Identities`; `az identity list-resources --resource-group $group --name azurebank-app` | Two jobs; a third line, `azurebank-pool: azurebank-app`; the app and the pool job |
 | The role assignments, as step 22 reads them | Three rows, the custom role on `containerApps/azurebank`, `jobs/azurebank-migrate` and `jobs/azurebank-pool` |
@@ -1893,8 +1947,9 @@ alone: its one read before a deployment or a `--pool-run`, and its shape check.
 
 Network A is this machine's own connection. Network B is this machine through a phone's mobile
 data. The request is the smoke test's own sign-in, for an address nobody has, so nothing is
-written. Its body is taken from the script itself, into a file. No request of the block has
-been sent.
+written. Its body is taken from the script itself, into a file. Such sign-ins were first sent
+on 2026-10-06, and what they read is under the tables below; until 2026-10-07 this paragraph
+ended "No request of the block has been sent".
 
 ```powershell
 $site = az containerapp show --name azurebank --resource-group $group --query properties.configuration.ingress.fqdn --output tsv
@@ -1919,20 +1974,41 @@ address: one function of it feeds the ten a minute and the 300 a minute alike
 
 What follows from each answer:
 
-| What is read | The cap of 1,000 claims a day for one client | Reading the client's address through the ingress | The public link |
+| What is read | The cap of claims a day for one client | Reading the client's address through the ingress | The public link |
 | --- | --- | --- | --- |
-| B is answered 429, and the warning names one client that is not A's own address | Stays | Needed: the networks of the ingress, below, and this is their measurement. Until 2026-10-06 this cell said "A change of the BFF's code is needed": the BFF could be told a proxy by its exact address only | Not published before the networks are set and their proof, below, has answered 401 for B |
-| A needs more than eleven requests to meet a 429, or B's answer changes between repeats | Stays | Needed; a network that holds every address read, not one address | The same |
-| B is answered 401 every time, and the warning names A's own public address | Goes back to its default of 10: a change takes the setting out of the `api` container and of the job, and one run of the template applies it | Not needed for the link | Its other preconditions only |
+| B is answered 429, and the warning names one client that is not A's own address | The default, 10, is ten copies a day for everybody until the networks are set | Needed: the networks of the ingress, below, and this is their measurement. Until 2026-10-06 this cell said "A change of the BFF's code is needed": the BFF could be told a proxy by its exact address only | Not published before the networks are set and their proof, below, has answered 401 for B |
+| A needs more than eleven requests to meet a 429, or B's answer changes between repeats | As the first row: 10 for each address the app sees, and each of those is everybody's | Needed; a network that holds every address read, not one address | The same |
+| B is answered 401 every time, and the warning names A's own public address | The default, 10, is each visitor's own: nothing to change | Not needed for the link | Its other preconditions only |
 | The third measurement names another client than the second | As the first row | Needed; a network that holds both, so that it survives a new replica and a new revision | The same |
+
+Until 2026-10-07 the second column was headed "The cap of 1,000 claims a day for one client". It
+read "Stays" in the first two rows and, in the third, "Goes back to its default of 10: a change
+takes the setting out of the `api` container and of the job, and one run of the template
+applies it". That change is made: the template writes no cap, so the default holds in every
+row, and in every row but the third it is a cap that visitors share. That is one more reason
+why the link waits for the networks. On this deployment, which was given the 1,000, the run
+that applies the change is part 5 of this step.
 
 Whatever is read replaces "not provoked" in the row of [Not measured yet](#not-measured-yet)
 about the shared sign-in limit: in words, never the address.
 
+**What was read on 2026-10-06, before any network was named.** From one connection, twelve
+sign-ins in under eight seconds were all answered, where the limit is ten a minute for one
+caller. Of 44 more, sent in the two and a half minutes after them, nine were refused. The
+limiter's warnings for those nine named two internal addresses, neither of them the caller's.
+That is the table's second row: A needed more than eleven requests to meet a 429, and what the
+app needed was a network that holds every address read. The second part of this step, below,
+was run for it the next day. No answer to network B on that day and no third measurement are
+written here.
+
 **The networks of the ingress: telling the app which proxy to believe.** Operator; **writes**:
-one run of the template, which makes a new revision. Added on 2026-10-06. **None of it has been
-run on Azure:** every "expected" below is what the code and its offline tests lead to expect, and
-no request of its blocks has been sent. It is run only when the table above sent its reader
+one run of the template, which makes a new revision. Added on 2026-10-06. **Run on Azure: its
+part 1 with the read of 2026-10-06, its parts 2 to 4 on 2026-10-07, and not the way back.** The
+note under the proof's tables says
+what was read, and where the run differed from the blocks. Every "expected" below is left as
+it was written before that run, from the code and its offline tests, for whoever runs it
+again. Until 2026-10-07 this paragraph said "None of it has been run on Azure" and "no request
+of its blocks has been sent". It is run only when the table above sent its reader
 here: the app counts every visitor as one client that is not A.
 
 Since that day the BFF can be told a proxy by the network it connects from
@@ -1954,8 +2030,10 @@ into the private notes and nowhere else.
 **2. Choose the networks.** Every address inside a listed network can name a caller's address,
 so a network must hold what the ingress can connect from and nothing that a visitor, or somebody
 else's workload, can connect from. Which range that is, this page cannot say: nothing in this
-repository knows the platform's addresses, and no page of Microsoft's on the networking of a
-Container Apps environment has been read for it. So, in this order:
+repository knows the platform's addresses. Until 2026-10-07 this sentence went on "and no page
+of Microsoft's on the networking of a Container Apps environment has been read for it": that
+page was read that day, for case 1, and the range it gave is in the session's private notes
+and in no file. So, in this order:
 
 1. Microsoft's page on the environment's networking is read in that session. If it names the
    range the environment's own infrastructure connects from, and every address read in step 1 is
@@ -1967,6 +2045,8 @@ Container Apps environment has been read for it. So, in this order:
    narrow fails closed and in silence: the day the ingress moves outside it the header is read
    no more, and every visitor is one client again, as before this step. Too wide lets more of
    the platform's own addresses name a caller. That is this page's judgement, not a measurement.
+   Since 2026-10-07 that day costs more than it did: the template writes no cap of 1,000 any
+   more, so visitors who are one client again share the default, ten copies a day.
 3. If an address read is a public one: stop. Nothing is listed until Microsoft's own published
    range for it has been read.
 
@@ -2005,10 +2085,10 @@ keeps them, as it keeps the demo's switch
 | Read back | Expected |
 | --- | --- |
 | The script's report | `proxyNetworks: from -ProxyNetworks`, beside the lines of step 25's later runs: eight secrets and the demo "kept from the deployed resource". No network is shown. With `$networks` left empty the line is `proxyNetworks: not written, the template's default applies`, and the run changes nothing of this step: stop, and type them |
-| The what-if, before "yes" | `Modify` on the app, for the settings of its `bff` container, and the `Modify` lines the earlier runs of this session showed. Nothing to create and nothing to delete: either is a "no". Expected, and no what-if of this change has been run |
+| The what-if, before "yes" | `Modify` on the app, for the settings of its `bff` container, and the `Modify` lines the earlier runs of this session showed. Nothing to create and nothing to delete: either is a "no". Until 2026-10-07 this cell ended "Expected, and no what-if of this change has been run": the run of that day showed it so (the note under the proof's tables). On an app that was given the cap of claims, the first run of the template after that day is also expected to show one setting fewer on the `api` container and a `Modify` on the pool job (part 5) |
 | The deployment's answer | `Succeeded` |
 | `--check` | It waits until the revision that answered before is inactive. Then one line more than at step 25, after the line about the revision: "The bff container names 1 network of proxies" (or the number typed), ending "No network was shown."; the lines of step 25; and at the end "nothing was moved". Until this run that line read "The bff container names no network of proxies" |
-| The settings of each container, by count | `bff`: 7 settings with one network, one more for each further network, and as many "of them a network of proxies" as were typed. `api`: 13 settings, 0 of them a network. The block prints counts, never a value |
+| The settings of each container, by count | `bff`: 7 settings with one network, one more for each further network, and as many "of them a network of proxies" as were typed. `api`: 12 settings, 0 of them a network. The block prints counts, never a value. Until 2026-10-07 this row said 13 for the `api`, and 13 is what the run of that day read back: the template then wrote the cap of claims on that container too |
 
 **If `--check` does not pass because the latest revision is not the latest ready one.** The app
 refuses to start on a network it does not take, and a slip of the script's own rule would show
@@ -2019,7 +2099,9 @@ Then this step again with the networks put right, or the way back, below.
 
 **4. The proof, from the two networks of the first measurement** (reads; it spends A's own
 sign-in limit, three times). Not sooner than two minutes after `--check` passed, so that no
-earlier sign-in is still counted. No request of the block has been sent to Azure. Its fourth run
+earlier sign-in is still counted. Its requests were first sent to Azure on 2026-10-07, not
+quite as the block has them: the note under the tables says what was sent and what was read.
+Until that day this paragraph said "No request of the block has been sent to Azure". Its fourth run
 was added later on 2026-10-06, with the strict reading of the header (ADR-0013's note of that
 day): until then the block ended at the third run, and this paragraph said "twice".
 
@@ -2052,7 +2134,7 @@ the body): the mark arrives as it is written.
 | Measurement | What is read | Expected |
 | --- | --- | --- |
 | Twelve sign-ins from A, inside a minute | The twelve statuses | Ten times 401, then 429 at the eleventh and at the twelfth: the ten a minute are A's own |
-| One from B, at once | Its status | 401. **This is the proof.** Before the networks were set, B was answered 429 with A: one limit for everybody |
+| One from B, at once | Its status | 401. **This is the proof.** Before the networks were set, B was answered 429 with A: one limit for everybody. That sentence is the first measurement's first row. On this deployment the first measurement read its second row, twelve from A all answered, and on 2026-10-07 B sent no sign-in: it claimed a copy by the one press, which the same limit counts. The note below says what it was answered, twice, and where its second answer stands among A's |
 | Twelve more from A, each with an `X-Forwarded-For` header of its own that names another address | The twelve statuses | Ten times 401, then 429 twice, as the first twelve. The ingress is expected to append A's own address after whatever A wrote, and the app believes the last entry only. **Twelve times 401 is a stop:** the app believes what a caller writes, each lie is a client of its own, and the limit stops nobody. The way back, at once |
 | Twelve more from A, each with the header `X-Forwarded-For: ::ffff:198.51.100.N%"`, N from 1 to 12: an address, a percent sign and a quotation mark | The twelve statuses | Ten times 401, then 429 twice. It is the header with which a caller chose its own address while the app read it as the framework alone does (`backend/src/AzureBank.Bff/StrictForwardedFor.cs` says how). An address written plainly before the proxy's entry was not believed by such an app either: the third run passes on it too, and this one does not. **Twelve times 401 is a stop,** as at the third run. Another status, the same twelve times, is the ingress's own answer to such a header: it is written down, and nothing else is read from this run |
 | `python infra/deploy.py --app-log 20`, not sooner than eight minutes after the last sign-in (twenty minutes and not the first measurement's fifteen: with the two waits and the change of network, the first run's warnings are older than eleven minutes by then) | The partition of the limiter's warnings, compared with A's own public address | "A's own address" (for an IPv6 address, its /64) on every warning of A's three runs, and never one of the addresses the third or the fourth run named. What is written down is that sentence and the count of warnings: never the value |
@@ -2066,6 +2148,46 @@ What each other answer means:
 | The third run is answered 401 twelve times | The app believes an entry a caller wrote | The way back, at once, and before the link is published |
 | The fourth run is answered 401 twelve times, the third as expected | The app that answers reads the header as the framework alone does: its `bff` image is older than the strict reading, or the ingress passes on a header no test here sent | The way back, at once, and before the link is published. Then the images are read, as step 22 reads them: no image built before this change holds the strict reading |
 
+**What was read on 2026-10-07** (times in UTC). Microsoft's page on the networking of a
+Container Apps environment names the ranges an environment reserves for its own
+infrastructure. The two addresses read on 2026-10-06 were both inside one of them, and one run
+of the template named that one range on the deployed app. A is one machine on one connection,
+and each status was printed.
+
+| What | What was read |
+| --- | --- |
+| The script's report | `proxyNetworks: from -ProxyNetworks`, and every other value "kept from the deployed resource" |
+| The what-if, before "yes" | `Modify` on the app, whose detail was one new setting on the `bff` container, beside the `Modify` lines the earlier runs of the session had shown. Nothing to create and nothing to delete |
+| The deployment, named `proxy-networks`, at 00:45Z | `Succeeded` |
+| `python infra/deploy.py --check`, at 00:46:25Z | It passed. Among its lines: "The bff container names 1 network of proxies: it believes the X-Forwarded-For header of a connection that comes from inside one. No network was shown."; "The pool job's PIN pepper and connection string are the app's: each was listed on both and compared here, and no value was shown."; and its last line ended "the demo is on and the job azurebank-pool is in shape; the smoke test passed; nothing was moved." |
+| The settings of each container, by count | `bff`: 7 settings, 1 of them a network of proxies. `api`: 13 settings, 0 of them a network of proxies. Both containers ran the image built from `main`'s commit `597278fd`, which holds the strict reading of the header |
+| The last two revisions, read after `--check` | The one the last deployment of a commit had made: inactive, no replica. A new one, `azurebank--0000002`: active, one replica |
+| From A, from 00:51:02Z: twelve sign-ins in 3.8 s | 401 ten times, then 429 at the eleventh and at the twelfth |
+| From A, 90 s later: twelve in 3.1 s, each with a header `X-Forwarded-For: 203.0.113.N` of its own | 401 ten times, then 429 twice |
+| From A, 90 s later: twelve in 2.8 s, each with the header `X-Forwarded-For: ::ffff:198.51.100.N%"` | 401 ten times, then 429 twice |
+| From A, from 00:55:33Z: twelve more with no such header, in 2.6 s; then one sign-in every three seconds for four minutes | 401 ten times, then 429 twice; then, of 76 requests, 32 answered 401 and 44 refused with 429 |
+| From B, a phone on a mobile network, another network than A: a copy asked for with the one press on the demo's sign-in page | It was given the copy at 00:59:43Z: in the app's log the API's claim route answered 200, and the line "Demo copy ... claimed" followed |
+| `python infra/deploy.py --app-log 20`, at 01:07:49Z, eight minutes after A's last sign-in | 52 warnings of the rate limiter, as many as A's refusals (2 + 2 + 2 + 2 + 44). All 52 named one client: A's own public address, not in its IPv4-mapped form. None named an address of the ingress, as every warning had on 2026-10-06, and none named an address that a header of the second or of the third twelve had written |
+| From A, from 01:09:25Z: twelve sign-ins in 10.4 s, the first after a request that had waited 24.6 s for its answer; then one sign-in a second for three minutes | 401 ten times, then 429 twice; then, of 152 requests, 27 answered 401 and 125 refused with 429 |
+| From B, the same phone, during those three minutes: a second copy by the one press | It was given the copy: the BFF's line "User ... claimed a demo copy via BFF" is at 01:11:34.4Z, after the API's claim route had answered 200 in 1.4 s. A's requests around it, by A's own clock: refused at 01:11:25.9Z; answered 401 ten times, from 01:11:27.1Z to 01:11:39.8Z; refused at 01:11:41.0Z and at the 40 requests after it. In the app's log the limiter's nearest warnings stand 8.4 s before the BFF's line and 6.7 s after it |
+| `python infra/deploy.py --app-log 14`, at 01:20:50Z, eight minutes after A's last sign-in | 127 warnings of the rate limiter, as many as A's refusals in that run (2 + 125), each for the route `/bff/auth/login`. All 127 named one client: A's own public address |
+
+**What it shows, and what it does not.** The ten a minute were A's own, with a header that names
+another address as without one, and with the header the strict reading is for. The proof's
+second line was not read as it is written: B sent no sign-in. It claimed a copy by the one
+press, which the same limit counts, by the same address (the `auth` policy). Its first claim
+shows little: A's last two requests, eight and five seconds before it, had been answered
+too. Its second shows the line. Inside 13 seconds the limiter let eleven requests through
+where one client has ten a minute: A's ten sign-ins and, in the middle of them, B's claim;
+A's next request, 1.3 s after its tenth, was refused. Had B been counted with A, one of A's
+ten would have been refused. And every refusal of the day, 179 of them, was counted against
+A's own address, none against an address of the ingress. The last 127 came after a request
+that waited 24.6 s for its answer, the wait of a replica that starts: no replica's name was
+read, so this is not written as the third measurement's answer for a new replica. Not read
+on Azure: a sign-in from B; what the ingress does with two proxies in a row; a visitor
+refused the eleventh copy of one day, which part 5 is about; and the same read after a new
+revision.
+
 **The same pattern, seen on a local process and not on Azure** (2026-10-06; the BFF with this
 change in it, started by hand on this machine with no API behind it, so a sign-in that is let
 through is answered 503 there and not 401). With the network that holds the connection's own address
@@ -2076,9 +2198,71 @@ does not hold the connection's address: the same twelve, ten answered and two re
 thirteenth refused with them, and the three warnings named the connection's own address. That
 is the code on a real socket. It says nothing of what the ingress writes into the header.
 
+**5. The cap of claims goes back to its default** (**writes**; on the owner's word). Added on
+2026-10-07, and **not run**: every "expected" below is what the template, worked out offline,
+and the code lead to expect. Only after the proof: the networks are set, and every warning of
+the limiter named A's own address. Since 2026-10-07 the template writes no
+`Demo__Claim__MaxPerClientPerDay`, so one run of the template with the app takes the setting
+out of the `api` container and out of the pool job, and both read the default, 10. The run
+names nothing: the script keeps the secrets, the demo's switch and the networks of the deployed
+app. It is expected to make a new revision, which ends every session held in the replica's
+memory. It also changes the pool job, and what a run in progress does when its job is changed
+has not been measured: so it is not started while an execution of that job is running, nor in
+the minutes around minute 0 of the hours 0, 4, 8, 12, 16 and 20, UTC, when the schedule is
+expected to start one.
+
+```powershell
+Show-Executions azurebank-pool                                 # its executions: none may be running
+# First: no deployment may be queued, waiting or running (Deploy a commit, "One deployment at a time").
+gh run list --workflow deploy.yml --limit 5 --json status,displayTitle,createdAt --repo Gurgant/azurebank-v2
+try {
+    ./infra/secrets.ps1 -Action New -DeployApp
+    Invoke-Template 'claims-cap-default'
+} finally {
+    ./infra/secrets.ps1 -Action Remove
+}
+Test-Path $folder                                              # False
+python infra/deploy.py --check
+$app = az containerapp show --name azurebank --resource-group $group --output json | ConvertFrom-Json
+$job = az containerapp job show --name azurebank-pool --resource-group $group --output json | ConvertFrom-Json
+@($app.properties.template.containers) + @($job.properties.template.containers) | ForEach-Object {
+    '{0}: {1} settings, {2} of them a network of proxies, {3} of them about a claim' -f $_.name, @($_.env).Count,
+        @($_.env | Where-Object name -like 'ForwardedHeaders__KnownIPNetworks__*').Count,
+        @($_.env | Where-Object name -like 'Demo__Claim__*').Count }
+```
+
+| Read back | Expected |
+| --- | --- |
+| The script's report | Eight secrets and the demo "kept from the deployed resource", and `proxyNetworks: kept from the deployed resource`. No value and no network is shown. If that line reads `proxyNetworks: not written, the template's default applies`, stop before "yes": the run would take the networks out with the cap |
+| The what-if, before "yes" | `Modify` on the app, for one setting fewer on its `api` container, and `Modify` on the job `azurebank-pool`, for one setting fewer on its container; beside them the `Modify` lines the earlier runs of this session showed. Nothing to create and nothing to delete: either is a "no". Expected, and no what-if of this change has been run: how Azure words a setting that is taken out has not been seen |
+| The deployment's answer | `Succeeded` |
+| `--check` | It waits until the revision that answered before is inactive. Then the lines it printed once the networks were set, "The bff container names 1 network of proxies" among them, ending "No network was shown.", and at the end "nothing was moved" |
+| The settings, by count | `bff`: 7 settings, 1 of them a network of proxies, 0 of them about a claim: as before the run. `api`: 12 settings, one fewer than the 13 read on 2026-10-07, 0 of them a network and 0 about a claim. `pool`: 3 settings, 0 of them about a claim; the job's settings were not counted before this run, and the template wrote four. The block prints counts, never a value |
+
+Worked out offline by `bicep snapshot`, from `main`'s template at `597278fd` and from this one,
+with the demo on and one network named: the same 24 resources, and two of them differ, the app
+by that one setting of its `api` container and the job by that one setting of its own
+([Checking these files](#checking-these-files)). That is what the what-if is expected from.
+
+**What this run does not show.** That a visitor is refused the eleventh copy of one day: that
+is read from the code and its tests (ADR-0063), and it has not been seen on Azure. It would
+show as 429 `DEMO_DAILY_LIMIT` at the eleventh claim of one address inside 24 hours; and an
+address with ten claims or more, refused or not yet, as `clientsAtCap` above 0 on the pool
+run's line ([`docs/runbooks/demo-pool.md`](../docs/runbooks/demo-pool.md), section 1).
+
+**No parameter puts the 1,000 back.** A cap other than the default is
+`Demo__Claim__MaxPerClientPerDay` on the `api` container, which refuses by it, and on the job,
+which counts by it: a change of the template, and of the test that holds no container to carry
+it. A cap set by hand on the deployed app or job is expected to be taken out by the next run
+of the template, whatever that run is for.
+
 **The way back** (**writes**; on the owner's word). The same run with the word `none`, which
 writes an empty list whatever the app holds: the run takes the settings out, and the app takes
-each connection's address for the caller's again, as before this step.
+each connection's address for the caller's again, as before this step. Since 2026-10-07 it
+costs what it did not: the template writes no cap of 1,000 any more, and this run, like every
+run of the template, is expected to take the cap out where it still is. With the networks out,
+the default of 10 is ten copies a day for every visitor the app takes for one client, until
+the networks are set again.
 
 ```powershell
 try {
@@ -2952,6 +3136,13 @@ to), the steps are these, in this order. They have not been rehearsed.
    of the job), pass `-DemoOn`**, which also brings the pool job back. Where the demo was turned
    on and no such read was kept, pass it too: with it registration stays closed.
 
+   **Nothing remembers the networks of proxies either** (added on 2026-10-07; not run). The
+   script reads them from the `bff` container, which is gone, so the app comes back believing no
+   forwarded header: it is expected to take the ingress for every visitor. Since that day the
+   template writes no cap of 1,000 claims, so those visitors share the default, ten copies a
+   day, as they share the two rate limits. Step 30's parts 3 and 4 come next, with the networks
+   typed again, before the link is given out again.
+
    ```powershell
    # First: no deployment may be queued, waiting or running (Deploy a commit, "One deployment at a time").
    gh run list --workflow deploy.yml --limit 5 --json status,displayTitle,createdAt --repo Gurgant/azurebank-v2
@@ -3172,14 +3363,23 @@ try {
 
 - **The first run of the template after 2026-10-05 changes the app, whatever the run is for, and
   with the demo still off.** Expected in its what-if: `Modify` on the app, for a ninth secret and
-  four settings (`Demo__Enabled`, written as `false`, on both containers; `Demo__ClientKeySecret`
-  and `Demo__Claim__MaxPerClientPerDay` on `api`), and the script's report says
-  `demoClientKeySecret: generated`. A change of the app's template is expected to make a new
+  three settings (`Demo__Enabled`, written as `false`, on both containers; `Demo__ClientKeySecret`
+  on `api`), and the script's report says
+  `demoClientKeySecret: generated`. Until 2026-10-07 this line said four settings, the fourth
+  `Demo__Claim__MaxPerClientPerDay` on `api`.
+  A change of the app's template is expected to make a new
   revision, and a new revision ends every session held in the replica's memory. Also expected,
   in a run without the app too: `Modify` on the role definition, whose description changed, and
   on the policy definition and its assignment. Nothing is created and nothing deleted by it:
   offline, a run with the switch off predicts the 22 resources it predicted before, and 14
   without the app ([Checking these files](#checking-these-files)).
+- **The first run of the template after 2026-10-07 takes the cap of claims out, whatever the run
+  is for** (added that day; not run). On an app and a job that were given
+  `Demo__Claim__MaxPerClientPerDay`, expected in its what-if: `Modify` on the app, for one
+  setting fewer on its `api` container, and `Modify` on the pool job, for one setting fewer.
+  Both then read the default, 10 copies a day for one address. It is a new revision, so it ends
+  every session. Step 30's part 5 is that run made on purpose, with its read-backs; a run made
+  for another reason, the way back of step 30 among them, does it all the same.
 - **The demo's switch is passed once.** `-DemoOn` at step 25; afterwards the script reads
   `Demo__Enabled` on the app's two containers and writes what they say, and its report says
   `demo: kept from the deployed resource`, on or off. Two containers that disagree stop it, and
@@ -3202,8 +3402,9 @@ try {
   terminal. The command is read in Microsoft's reference
   (<https://learn.microsoft.com/en-us/cli/azure/monitor/action-group>, read on 2026-10-06) and
   has not been sent.
-- **The networks of proxies are passed once, too** (added on 2026-10-06; no run has passed
-  any). `-ProxyNetworks` at step 30, if that step's measurement asks for them. Afterwards the
+- **The networks of proxies are passed once, too** (added on 2026-10-06; one run has passed
+  one, at step 30 on 2026-10-07, and until that day this said "no run has passed
+  any"). `-ProxyNetworks` at step 30, if that step's measurement asks for them. Afterwards the
   script reads the `bff` container's settings `ForwardedHeaders__KnownIPNetworks__0` and on and
   writes the same list back, and its report says
   `proxyNetworks: kept from the deployed resource`. With none it says
@@ -3340,7 +3541,8 @@ deployment as it was before the demo. The policy keeps its exception for a job n
 `azurebank-pool`, with its new name and its description: the exception is the template's default
 and is not behind the switch. Only step 23's way back takes it out, and that override has to be
 passed again at every later run of the template. The role definition keeps its new description.
-The app keeps the ninth secret and the demo's four settings, the flag written as `false`. While
+The app keeps the ninth secret and the demo's three settings, the flag written as `false`; until
+2026-10-07 this said four, the cap of claims on the `api` container among them. While
 no pool job exists, the exception serves only whoever may create a job in the resource group,
 which the deployment identity may not: its role is assigned on resources that exist.
 
@@ -3432,8 +3634,9 @@ users go with the group. On this machine, if it is no longer wanted:
   2026-10-05 this line also said "No scheduled job" and "The app's registration endpoint is not
   closed by anything in this folder". Of the folder that is no longer so: it holds a scheduled
   job, behind the switch `demo`, and that switch closes registration on both containers. Of
-  Azure nothing changed with it: none of it has run there, and the deployed app's registration
-  stays open until step 25 has run.
+  Azure this line said until 2026-10-07 "nothing changed with it: none of it has run there, and
+  the deployed app's registration stays open until step 25 has run". On that day the deployed
+  app had the demo on (step 30's note), and this page records no run of step 25.
 - No switch that turns the demo off ([Turning the demo back](#turning-the-demo-back)), and
   nothing that removes a user from the database.
 - No alert on a failed run of the pool job, and none on the database's size. The one rule this
@@ -3445,16 +3648,24 @@ users go with the group. On this machine, if it is no longer wanted:
 - No claim of a copy by a deployment, and no command that claims one: a claim spends a copy,
   leaves audit rows, and its answer holds a copy's password. A browser proves the claim and the
   PIN (step 27); `--check` compares the two secrets that decide the PIN, and spends nothing.
-- The visitor's own address behind the ingress, on Azure. What the BFF sees there is not
-  measured (step 30), no run has told it which proxy to believe, and no network of this
-  deployment is written in any file. Until that step has run and its proof has passed, the cap
-  of claims for one client is 1,000 a day, which stops nobody. Until 2026-10-06 this line said
+- The networks of this deployment's ingress. None is written in any file: a run names them
+  (`proxyNetworks`), the `bff` container holds them from then on, and with no app deployed
+  nothing remembers them. Until 2026-10-07 this line was about the visitor's own address behind
+  the ingress, on Azure. It said "What the BFF sees there is not measured (step 30), no run has
+  told it which proxy to believe", and "Until that step has run and its proof has passed, the
+  cap of claims for one client is 1,000 a day, which stops nobody". The step has run, a run has
+  named the ingress's network, and the template writes no cap any more. Until 2026-10-06 this
+  line said
   "No file here tells the BFF to trust a forwarded header (`ForwardedHeaders:KnownProxies`)":
   the template can now tell it the networks of the ingress, when a run names them
   (`proxyNetworks`).
-- A cap of claims that goes back to 10 by itself, and a second hop. Once the BFF counts a
-  visitor by the visitor's own address, taking `Demo__Claim__MaxPerClientPerDay` back to its
-  default is a change of the template that is not made here. And the BFF believes one hop: if
+- A cap of claims that follows what the app sees, and a second hop. The template writes no cap,
+  so it is the default of 10 whether the app counts a visitor by the visitor's own address or
+  takes every visitor for one client: nothing raises it where the networks are not set, and
+  nothing warns that visitors share it. Until 2026-10-07 this line began "A cap of claims that
+  goes back to 10 by itself", and said that taking `Demo__Claim__MaxPerClientPerDay` back to
+  its default "is a change of the template that is not made here": it is made, and the run
+  that applies it on Azure is step 30's part 5. And the BFF believes one hop: if
   the platform has two proxies in a row, `ForwardedHeaders:ForwardLimit` has no parameter.
 - No rotation of the PIN pepper for the pool job: the template carries no key id and no previous
   pepper, on the app or on the job.
@@ -3468,7 +3679,9 @@ users go with the group. On this machine, if it is no longer wanted:
 
 Two parts: a trial on 2026-10-02, and, at the end of this section, the first deployment, on
 2026-10-03 with this folder's own files: its first session, its second session, a later
-deployment the same day, and the last reads of that day.
+deployment the same day, and the last reads of that day. What step 30 read on 2026-10-06 and on
+2026-10-07, the address the app sees behind the ingress, is written under that step and not
+here.
 
 On 2026-10-02, in a throwaway resource group in the same subscription and region (Italy North),
 created and deleted that day. Requests of the shapes this folder makes were sent by hand, with
@@ -4037,7 +4250,16 @@ requests each time, 13 with no `X-Forwarded-For` line, 12 naming 203.0.113.1 to 
 12 with the one line `X-Forwarded-For: ::ffff:198.51.100.N%"`, the quotation mark as it is
 written; no empty argument, and both files removed. The 68 blocks still parse, and a block with
 an error planted in it is still reported. That is what the block sends. What the ingress and the
-app make of it is step 30's to show. On 2026-10-03 the tests also
+app make of it is step 30's to show. On 2026-10-07 the same was done for step 30's part 5, the
+run that takes the cap of claims out. The 69 PowerShell blocks of this page parse, one more
+than before, and the new one with an error planted in it is reported. It ran against functions
+standing in for `Show-Executions`, `gh`, `Invoke-Template`, `python` and `az`, and a stand-in
+script where `secrets.ps1` is: it handed the script `-Action New -DeployApp` and no other
+argument, named the deployment `claims-cap-default`, and printed for an invented app and job
+each container's count of settings, of networks and of settings about a claim, and no value.
+For a pair as the template now writes them: 7, 12 and 3 settings, none about a claim. For a
+pair that still carried the cap, the job's written in capitals: 13 and 4, one each about a
+claim. No Azure answered it. On 2026-10-03 the tests also
 ran on Linux, in WSL
 (Ubuntu 24.04, Python 3.12, PowerShell 7.6.6 and Bicep 0.47.16), from an archive of the branch:
 all passed, among them the Linux half of two (the folder's and the file's modes, and the
@@ -4084,10 +4306,11 @@ fourth alert does not count lines (step 20).
 | Why the metric `Ingestion Volume` had no time series on 2026-10-03, and whether it has one on another day or on a workspace that takes more | step 20, by whoever turns that alert back on |
 | What the `Replicas` metric reports while the app is scaled to zero: 0, or nothing. If nothing, a day's average is 1 on any day the app ran at all, the alert on replica time fires on any use, and that rule has to count another way | the first days after step 16 |
 | What the registry answers for a package that exists and is private, anonymously or to the workflow's token: none of the three packages has been private. Why they were public as soon as they were published | not provoked; not looked into |
-| Whether every visitor shares one sign-in limit behind the Azure ingress, and with it the limit of 300 a minute on every other request, which counts by the same address | not provoked; step 30, which has not been run, measures it |
-| The networks of the ingress, all of it (added on 2026-10-06): the address the app's warnings name behind the ingress, and whether it is the same after a new replica; what a run of the template with `proxyNetworks` shows in its what-if, and that it makes a revision; that the ingress appends the visitor's own address after whatever the visitor wrote, in one hop; the proof (A refused at the eleventh sign-in while B is answered, and a header A writes not believed); the way back with `none`; what Azure does with a revision whose `bff` refuses to start on a network | not run; step 30's second part, in the session that measures the address |
+| Whether every visitor shares one sign-in limit behind the Azure ingress, and with it the limit of 300 a minute on every other request, which counts by the same address | Read at step 30, for the sign-in limit. On 2026-10-06, with no network named: the limiter counted by two internal addresses and never by the caller's, and one caller was answered twelve sign-ins in under eight seconds. Since the run of 2026-10-07 that named the ingress's network: the ten a minute were one caller's own, refused at the eleventh five times over; all 179 warnings named that caller's own address; and a caller on another network was let through in the middle of the first one's ten. The limit of 300 a minute was not provoked: it counts by the same function. Until 2026-10-07 this cell said "not provoked; step 30, which has not been run, measures it" |
+| The networks of the ingress, what is left of it (added on 2026-10-06; until 2026-10-07 this row began "all of it" and its second cell said "not run"): whether the address the app's warnings name is the same after a new revision, or after a replica that is known to be new; B answered a sign-in, and not a claim, while A is held to its ten; what the ingress does with two proxies in a row; the way back with `none`; what Azure does with a revision whose `bff` refuses to start on a network. Read on 2026-10-06 and on 2026-10-07 and written under step 30: what the app's warnings name behind the ingress, before a network was named and after; the what-if of that run, its `Succeeded` and the revision it made; A refused at the eleventh sign-in, with a header that names another address as without one; a claim from another network let through in the middle of A's ten; and so that the entry the app believed, the last one, was A's own address | step 30, at a later run; the way back and the last one are not provoked |
+| The cap of claims at its default on Azure (added on 2026-10-07): what the run of the template that takes the setting out shows in its what-if, for the `api` container and for the pool job, and how Azure words a setting taken out; the settings of the `api` container and of the job after it, by count; what a pool run in progress does when its job is changed; a visitor refused the eleventh copy of one day, and `clientsAtCap` counted by 10 | not run; step 30's part 5. The last two are not provoked |
 | A replica's container states, which `deploy.py` reads only when a new revision does not get ready | a real failure; not provoked |
-| `--app-log` against the workspace: the table has the two columns it reads (`ContainerAppName`, `ContainerName`), and the command has not been run. `--job-log` with its filter on `ContainerGroupName`: tested offline, and the column was read at step 16, but the query has not been sent | the next read of either |
+| `--app-log` against the workspace: the table has the two columns it reads (`ContainerAppName`, `ContainerName`). Until 2026-10-07 this row went on "and the command has not been run": that day `--app-log 20` and `--app-log 14` printed 52 and 127 warnings of the BFF's rate limiter and the lines of two claims (step 30), and nothing else of what they printed is written here. `--job-log` with its filter on `ContainerGroupName`: tested offline, and the column was read at step 16, but the query has not been sent | the next read of either |
 | The automatic put-back on a real failure. Its trigger is proved by unit tests only; its request and its wait are the ones `--app-only` uses, which ran at step 18 | a real failure; not provoked |
 | What the app reads just after the put-back request. If its state still says `Failed`, left by the deployment that failed, `deploy.py` reports a put-back that did not succeed although it may have | a real put-back; not provoked |
 | A request to Azure that fails once in the middle of a run. Nothing is asked twice: the run stops, and nothing is put back | not provoked |
@@ -4099,9 +4322,13 @@ fourth alert does not count lines (step 20).
 | That the identity is refused a scale change, a delete or a stop. One refusal is provoked on every deployment (the secrets listing); the policy's refusal is provoked as the owner | not provoked |
 | Every command under [Switching the logs off](#switching-the-logs-off) but one, the deletion of the alert on the workspace, which ran as step 20's; every command under [Stop the app by hand](#stop-the-app-by-hand), which step 32 would run once, under [If something was stolen](#if-something-was-stolen) and under [Removing everything](#removing-everything). The trial made its own deletions with other commands | the day they are needed |
 
-**Not measured, of what turns the demo on.** Added on 2026-10-05. Nothing of it has run on Azure:
-the switch, the pool job, the policy's exception and the three commands are tested offline,
+**Not measured, of what turns the demo on.** Added on 2026-10-05. The switch, the pool job,
+the policy's exception and the three commands are tested offline,
 against stand-ins and invented answers, and steps 22 to 33 are where each line would show.
+Until 2026-10-07 this paragraph said of them "Nothing of it has run on Azure". On that day step
+30 was run on the deployed app, which had the demo on: `--check` passed there and a visitor was
+given a copy (the step's note). What the steps before it read is not written on this page, so
+the rows below stand as they were written, but for the two that name that day.
 
 | What | Where it shows |
 | --- | --- |
@@ -4110,7 +4337,7 @@ against stand-ins and invented answers, and steps 22 to 33 are where each line w
 | How soon a changed policy definition or assignment is enforced | the time between steps 23 and 25 |
 | Where a run of the template meets a refusal of the policy: at the what-if, at validation, or at the job after the app was changed | step 25, only if a refusal happens |
 | That a run with `deployApp=false` leaves the deployed app, its job, the action group and the alerts alone, and how its what-if names them | the what-if of step 23, before anything is sent |
-| What the first run of the template after 2026-10-05 shows for the app (a ninth secret, four settings) and for the role definition (its description); that the role's assignments are untouched by it | steps 23 and 25 |
+| What the first run of the template after 2026-10-05 shows for the app (a ninth secret, three settings; until 2026-10-07 this row said four, the cap of claims among them) and for the role definition (its description); that the role's assignments are untouched by it | steps 23 and 25 |
 | Azure refusing a client key under 32 characters, through `app-inputs.bicep`: no engine has refused one | not provoked |
 | That a value given after the parameter file wins over the file's (`demo=false`, `scheduledJobs=[]`) | the what-if of a way back, before it is sent; only if one is taken |
 | That a job on a schedule is accepted, with `scheduleTriggerConfig` as the template writes it; that Azure reads the expression in UTC; that it starts with nobody typing, what such a run exits with, and whether the activity log holds a start event for it | steps 25 and 33 |
@@ -4124,9 +4351,9 @@ against stand-ins and invented answers, and steps 22 to 33 are where each line w
 | The seconds of a first fill on Basic; the first open as the app's identity from the tools image; the first write this folder asks of `azurebank_app` on Azure SQL | step 26 |
 | What a right that `azurebank_app` lacks looks like on a first fill: exit 1 with SQL Server's 229, by the code | not provoked |
 | `--pool-log` against the workspace: the pool job's lines under its `JobName`, and the query by execution, which has not been sent for either job | step 26 |
-| `--check` on Azure: that the owner may list the secrets of the app and of a job, that a job answers that listing in the shape the app does, and that an app at rest after a run of the template reads `Succeeded` with its latest revision ready | step 25 |
+| `--check` on Azure: that the owner may list the secrets of the app and of a job, that a job answers that listing in the shape the app does, and that an app at rest after a run of the template reads `Succeeded` with its latest revision ready | step 25. On 2026-10-07 `--check` passed on Azure once, at step 30, after that day's run of the template (the step's note); what it read of each of these is not written there |
 | The demo's two answers through the ingress: the tag in the page, and 403 `REGISTRATION_CLOSED` for a registration with the body `{}`. Both were measured on the compose stack with the demo on, on 2026-10-04 (ADR-0063, Validation), and not by `deploy.py`, whose two checks have met invented answers only; the 400 for that body with the demo off was seen on a local stack on 2026-10-05, above. That a closed registration spends a permit of the ten sign-ins share | step 25's `--check`; the permit is not provoked |
-| The claim, the session and a PIN on the deployed demo, from a browser | step 27 |
+| The claim, the session and a PIN on the deployed demo, from a browser | step 27. On 2026-10-07 two claims were read there, from a phone, by the one press on the sign-in page (step 30's note); of the session and of a PIN nothing is written |
 | A job of another name refused a schedule, and the pool job refused two runs at once. That anything refuses a changed expression: nothing does, and `deploy.py`'s shape check is its only read | step 29 |
 | What a stopped app answers, which property says it is stopped, and that the two calls are the ones written here; what a deployment, a `--check` or a run of the template does with a stopped app | step 32; the last three are not provoked |
 | The metrics of the pool job and of the database: their names, their dimensions, and whether either has a time series | step 31 |
@@ -4239,6 +4466,30 @@ and a number for a value each built and linted with exit 0 and nothing on standa
 Joined by spread, the three are reported again, with the same codes, and so are a name and a
 value misspelt in a network's setting (BCP037). So here "nothing on standard error" still says
 what it said of those fields, unlike the action group's.
+
+**With the cap of claims taken out, on 2026-10-07** (the same Bicep, offline). The compiled
+template holds the 23 resources and the 25 parameters it held, and six variables, one fewer:
+`demoClaimsPerClient` is gone. Worked out by `bicep snapshot` from `main`'s templates, at
+`597278fd`, and from these, six runs. With the app and the demo off: 22 resources each way, and
+one of them differs, the app, by one setting of its `api` container, which is told 12 where it
+was told 13. The same with the alert on the workspace, 23, and with an account for the phone,
+22. With the demo on: 24, and two differ, the app in that way and the pool job, whose container
+is told 3 where it was told 4. The same with the demo on and one network named, the `bff` told
+its 7 each way. Without the app: 14, and none differs. In each the setting taken out is
+`Demo__Claim__MaxPerClientPerDay`, nothing is added, the settings left keep their order, and
+nothing else of the app or of the job differs. So with the switch off the template now writes
+a ninth secret and three settings on the app, where the paragraph of 2026-10-05 above counts
+four. A test holds that no container of the template carries a setting under `Demo__Claim__`
+and that the compiled text does not hold the name at all. It was seen failing five ways and
+passing again on the files put back byte for byte: with the template as it stood on `main`;
+with the setting back on the `api` container alone; with it back on the pool job alone; with
+the cap handed to the job as an argument, which only the search of the text sees; and, for the
+test that walks the demo's names through the backend's classes, with the client key's name
+changed. `bicep build` and `bicep lint` of the three templates: nothing on standard error. The
+tests of this folder, run as the CI job runs them: 467, one more than `main`'s 466, with no
+failure and no error; 2 skipped, the two that hold only off Windows. That is what step 30's
+part 5 expects its what-if from. What Azure does with a setting that is taken out is in none
+of it.
 
 `test_deploy.py` tests the deployment script's decisions against invented answers: time is a
 counter and no process is started. One thing is read from the real clock: how old an execution

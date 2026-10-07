@@ -220,8 +220,10 @@ POOL_COUNTS = {10: 'was', 11: 'was', 12: 'free', 13: 'foreignUsers', 14: 'failed
 SMOKE_PATH = '/bff/auth/login'
 SMOKE_LOGIN = {'email': 'deploy-smoke@azurebank.invalid', 'password': 'Not-a-real-account-0'}
 SIGN_IN_TRIES = 4
-# Sign-ins share one bucket of 10 a minute with every visitor (Bff/appsettings.json,
-# AuthPermitLimit): after a 429 only a full window can free a permit.
+# Sign-ins share one bucket of 10 a minute with every caller the BFF counts as the same client
+# (Bff/appsettings.json, AuthPermitLimit): after a 429 only a full window can free a permit.
+# Until 2026-10-07 this said "with every visitor": on the deployed app the bucket has been one
+# caller's own since a run named the ingress's network that day (README.md, step 30).
 WAIT_AFTER_429 = 65
 WAIT_BETWEEN_TRIES = 20
 # What "no answer" is, for the smoke test: a connection refused, reset, closed before the answer

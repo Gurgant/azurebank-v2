@@ -448,6 +448,33 @@ not know.
   `infra/` sets a forwarded-headers value, and a test holds that no container carries one. What
   the BFF sees as a visitor's address is still not measured: the runbook's third session has
   the step, and what follows from each answer.)*
+  *(2026-10-07: the address is measured, and the template no longer sets the cap. On 2026-10-06,
+  before any network was named, twelve sign-ins sent from one connection in under eight seconds
+  were all answered, where the limit is ten a minute for one caller; of 44 sent in the two and
+  a half minutes after them nine were refused, and the limiter's warnings for those named two
+  internal addresses, neither of them the caller's. On 2026-10-07 one run of the template named
+  the ingress's network on the `bff` container (`ForwardedHeaders:KnownIPNetworks`, ADR-0013's
+  note of 2026-10-06), and the runbook's proof was run: from one connection, twelve sign-ins in
+  under four seconds were answered ten times and refused at the eleventh and at the twelfth,
+  four times over, two of the four with an `X-Forwarded-For` header that named another address
+  in each request; and the limiter's 52 warnings, as many as that caller's refusals up to
+  then, all named that caller's own public address, none an address of the ingress and
+  none an address a header had named. The proof's own line, a caller on a second network
+  answered while the first is held to its ten, was read in a fifth run: with one sign-in a
+  second from that connection, the limiter let eleven requests through inside 13 seconds, the
+  connection's ten and, in the middle of them, a copy claimed from a phone on a mobile
+  network; the connection's next request was refused, and that run's 127 warnings named the
+  connection's own address as the 52 had. So `infra/main.bicep`
+  sets no `Demo__Claim__MaxPerClientPerDay` any more: the variable is gone, the default of 10
+  applies on `api` and on the job, and a test holds that no container of the template carries
+  a setting under `Demo__Claim__`. Until that day the template set what the note above says,
+  "the cap of 1,000 on `api` and on the job from one variable". On Azure the run of the
+  template that takes the 1,000 out has not been made: on 2026-10-07 the deployed `api`
+  container read back 13 settings, the template's count with the cap, and no visitor has been
+  seen refused an eleventh copy there (`infra/README.md`, step 30). "On Azure the demo is still
+  off", at the head of this decision, is no longer so either: on 2026-10-07 the deployed app
+  gave a visitor a copy, and this record holds no read of the session that turned the demo
+  on.)*
 
 **15. What is logged and counted.** Plain log lines, no `SecurityEvent` line and no audit row, so
 ADR-0044's inventory and its pinned counts do not move:
@@ -866,8 +893,10 @@ printed): with the nine variables, `api` gets `Demo__Enabled` and `Demo__ClientK
 each exit 1 with one line naming `DEMO_CLIENT_KEY_SECRET`. The secret's rule on the API's test
 host: 31 characters do not start it, 32 do.
 
-**Not measured here:** anything on Azure, what the BFF sees as a visitor's address behind the
-ingress among it; another client address than the one a published port gives; two claims at
+**Not measured here:** anything on Azure, ~~what the BFF sees as a visitor's address behind the
+ingress among it~~ *(struck 2026-10-07: that one has been measured since, on 2026-10-06 and on
+2026-10-07, decision 14's note of that date)*; another client address than the one a published
+port gives; two claims at
 once on the compose stack; ~~a claim from a browser, since no screen calls it yet;~~ *(struck
 2026-10-05: measured that day, from the sign-in page's "Try the demo" and from the dashboard's
 "Start over", under "What the browser keeps in demo mode")* the gate's
@@ -889,7 +918,9 @@ a parallel load on an index that holds `ClaimedAt`.
   14 goes back to the default. *(2026-10-06, ADR-0013's note of that day: the setting the
   deployment's template can now write is `ForwardedHeaders:KnownIPNetworks`, the networks of the
   ingress, from a parameter that is empty by default. No run has named any, the address is still
-  not measured, and the 1,000 stays.)*
+  not measured, and the 1,000 stays.)* *(2026-10-07: a run has named one, the address is
+  measured, and the 1,000 goes back to the default in the template: decision 14's note of that
+  date.)*
 - **Visitors turned away by the daily cap behind one shared address:** a higher
   `Demo:Claim:MaxPerClientPerDay`, on every service that reads it.
 - **A need to hide that a build has the claim:** the three answers of "What a visitor can still

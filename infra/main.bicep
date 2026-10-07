@@ -238,11 +238,6 @@ module appInputs 'app-inputs.bicep' = if (deployApp) {
   }
 }
 
-// How many copies of the demo one address may claim in a day, as text for a container's setting.
-// 1,000 is the range's maximum: until what the BFF sees as a visitor's address behind the ingress
-// has been measured, the default of 10 could be ten copies a day for everybody (ADR-0063, decision 14).
-var demoClaimsPerClient = '1000'
-
 // What the bff container is told on every run, in this order. A variable since 2026-10-06: the
 // container's settings are this list and, after it, one setting for each network below. Until
 // that day the list stood in the container itself.
@@ -268,7 +263,9 @@ var bffSettings = [
 // start on an entry it does not take for a network, or that trusts too much
 // (backend/src/AzureBank.Bff/Options/ProxyOptionsValidator.cs); nothing in this file checks one.
 // On the bff alone: the api reads no forwarded header, and neither job answers a request.
-// Nothing of it has been sent to Azure.
+// Until 2026-10-07 this comment ended "Nothing of it has been sent to Azure": on that day one
+// run named one network on the deployed app, and the bff there then counted a caller by the
+// caller's own address (README.md, step 30).
 //
 // The two lists are joined by spread in the container, not by concat(): joined by concat() the
 // compiler stopped reading the fields of a setting (a name misspelt in the six built and linted
@@ -359,10 +356,16 @@ resource app 'Microsoft.App/containerApps@2025-01-01' = if (deployApp) {
             { name: 'Security__PinPepper', secretRef: 'pin-pepper' }
             { name: 'Demo__Enabled', value: demo ? 'true' : 'false' }
             // The key a visitor's address is hashed with before a claimed copy's row stores it.
-            // With the demo off the api uses neither it nor the cap below; the cap's range is
-            // checked when the api starts, on or off.
+            // With the demo off the api does not use it.
             { name: 'Demo__ClientKeySecret', secretRef: 'demo-client-key' }
-            { name: 'Demo__Claim__MaxPerClientPerDay', value: demoClaimsPerClient }
+            // No number of the demo is written here or on the pool job below: each is the
+            // application's default on both, so no two can differ. For the copies one address
+            // may claim in a day that is 10 (backend/src/AzureBank.Shared/Options/DemoOptions.cs).
+            // Until 2026-10-07 a variable wrote 1,000 for it on both: behind the ingress the BFF
+            // saw the platform's addresses and never a visitor's, and 10 would have been a cap
+            // that every visitor shared (ADR-0063, decision 14). It went once the BFF there was
+            // seen to count a visitor by the visitor's own address (README.md, step 30). An app
+            // or a job deployed before that day keeps the setting until this template is run.
           ]
         }
       ]
@@ -487,7 +490,7 @@ resource pool 'Microsoft.App/jobs@2025-01-01' = if (deployApp && demo) {
             // and is not expected to delete this one: it would keep this word, and its schedule,
             // beside an app whose two flags are off, the state named over the job.
             { name: 'Demo__Enabled', value: 'true' }
-            { name: 'Demo__Claim__MaxPerClientPerDay', value: demoClaimsPerClient }
+            // And no number of the demo: the api container's comment says why.
           ]
         }
       ]
