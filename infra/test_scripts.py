@@ -2856,8 +2856,8 @@ class TemplateTests(unittest.TestCase):
     def test_no_container_is_told_how_many_copies_one_address_may_claim(self):
         # Until 2026-10-07 the template wrote the cap on one address's claims on the api container
         # and on the pool job, 1,000 from one variable: behind the ingress the BFF saw the
-        # platform's addresses and never a visitor's, and the default of 10 would have been ten
-        # copies a day for everybody (ADR-0063, decision 14). Since the BFF there counts a
+        # platform's addresses and never a visitor's, and the default of 10 would have been a
+        # cap that every visitor shared (ADR-0063, decision 14). Since the BFF there counts a
         # visitor by the visitor's own address (README.md, step 30), nothing writes it, and the
         # application's default applies on both. A cap that came back would be an error
         # nowhere: the api starts on any value in its range, and 1,000 stops nobody. So no
