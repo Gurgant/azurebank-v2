@@ -149,22 +149,10 @@ CodeQL analyses the C#, the TypeScript and the workflows on every pull request a
   is the price. Measured once, on 2026-10-06, after it had gone to sleep: 27 seconds until the
   first page arrived, then 6 seconds for the first request to the API; awake, the same two took
   0.2 and 0.6 seconds.
-- Since 2026-10-07 the demo counts each visitor by their own network address, so [the
-  limits](docs/testing/try-the-demo.md#the-limits) that are for one network are that network's own.
-  Until that day it saw the platform's ingress for everybody (measured on 2026-10-06: of twelve
-  sign-ins sent in under eight seconds from one connection none was refused, where the limit is ten
-  a minute for one caller; of the 44 sent in the two and a half minutes after them nine were, and
-  the limiter's warnings for those named two internal addresses, neither of them the caller's).
-  Measured on 2026-10-07, after the app had been told the ingress's network: of twelve sign-ins sent
-  in under four seconds from one connection ten were answered and the last two refused, and so again
-  when each of the twelve named another address in a forwarded header; in one minute of the limit
-  that connection's ten were answered and its eleventh refused, and a phone on another network that
-  asked for a copy in the middle of them got it; and each of the limiter's 179 warnings named the
-  caller's own address. Until that day the deployment also gave one network up to 1,000 copies in
-  any 24 hours, because it could not tell visitors apart. Since then it writes no cap of its own,
-  and the application's 10 in any 24 hours apply, as in [the
-  guide](docs/testing/try-the-demo.md#the-limits): the deployed settings read back that way on
-  2026-10-07. No visitor has been seen refused an eleventh copy there.
+- The demo counts each visitor by their own network address, so
+  [the limits](docs/testing/try-the-demo.md#the-limits) that are for one network are that network's
+  own: measured on the deployed demo on 2026-10-07. An eleventh copy within 24 hours has not been
+  seen refused there.
 - axe runs in CI over nine pages and two dialogs and fails on any serious or critical finding
   except colour contrast, which is left to the UI/UX phase; the details are in
   [frontend/README.md](frontend/README.md).
