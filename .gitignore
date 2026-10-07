@@ -30,6 +30,7 @@ __pycache__/
 .idea/
 *.log
 cookies*.txt
+graphify-out/
 
 # Playwright (ADR-0031). The auth state holds a LIVE session cookie and must never be committed;
 # reports and traces are per-run debugging artefacts.
@@ -64,7 +65,8 @@ AzuriteConfig
 # Schemathesis keeps its example database here when the CLI runs from the repo root (the CI job does).
 .schemathesis/
 
-# Schemathesis writes its reports next to the working directory; CI writes its own to
-# RUNNER_TEMP and never here.
+# Schemathesis writes its reports next to the working directory. Committed once by
+# accident on 2026-09-21 while verifying which flags 4.27.1 accepts; CI writes its own
+# to RUNNER_TEMP and never here.
 schemathesis-report/
 test-results.xml

@@ -115,7 +115,8 @@ export type MoneyFailure =
   /**
    * The send's outcome is not confirmed ({@link isUnconfirmedSend}). The hook has latched
    * `verifyRequired`, and says `wentThrough` beside it when the payment is proven; the flow shows
-   * the view for what the hook says and sets NO error.
+   * the view for what the hook says and sets NO error. (Until 2026-10-01 this said RESULT_UNKNOWN
+   * only.)
    */
   | { kind: 'verify' }
   /** The user dismissed the PIN modal. Benign — stay put, say nothing, let them press Send again. */

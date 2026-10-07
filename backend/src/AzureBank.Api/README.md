@@ -170,7 +170,7 @@ AzureBank.Api/
 The six token endpoints (login, register, refresh, revoke, logout and the demo's claim) and the
 stamp feed, session-stamps, answer only the BFF's own client: a request from loopback carrying
 exactly one `X-AzureBank-Token-Road` header, besides the service key. Anything else gets 404, as an
-unknown path would.
+unknown path would. *(It said five until 2026-10-04, before the claim: ADR-0063.)*
 
 On the public demo two more things hold, both in the API (ADR-0063): sign-in lets in only the
 owner of a claimed demo copy whose time is not over, and answers everybody else as an email nobody
@@ -236,7 +236,8 @@ Handles user authentication, registration, and PIN management.
 
 Manages bank account CRUD operations.
 
-**Key Methods** (the `IAccountService` names):
+**Key Methods** (the `IAccountService` names as of 2026-09-06; the list used to be one to two
+parameters stale per method):
 - `GetUserAccountsAsync(userId)` - List user's accounts
 - `GetAccountByIdAsync(accountId, userId)` - One account, ownership-checked
 - `CreateAccountAsync(userId, request)` - Create new account
@@ -357,6 +358,9 @@ public class LoginRequestValidator : AbstractValidator<LoginRequest>
 The console is not configured here: the code writes it, one JSON object per line in Production and
 text everywhere else (`ConsoleLogFormat`), and a `WriteTo` in configuration takes its place: in
 Production such a console should use `RenderedCompactJsonFormatter`, to match the bootstrap lines.
+*(Until 2026-09-25 this sample named the console under `WriteTo`, as `appsettings.json` did, and
+the `WithMachineName` enricher, which no package here provides: measured, a Production line
+carried no `MachineName`.)*
 
 ### Database limits and the request deadline
 
@@ -395,6 +399,9 @@ deadline, and none starts after it has fired.
 In development every value above but `ASPNETCORE_ENVIRONMENT` comes from `dotnet user-secrets`
 (`:` instead of `__`) — see the [local setup](../../../docs/engineering-practices.md#local-setup),
 the one copy of the recipe.
+*(Until 2026-09-25 this said six values, and it and the table pointed at the root README's recipe,
+which moved there; the service credential joined the secrets on 2026-09-19. Until 2026-09-25 the
+JWT row also said nothing validated its length at startup, and nothing did.)*
 
 ---
 

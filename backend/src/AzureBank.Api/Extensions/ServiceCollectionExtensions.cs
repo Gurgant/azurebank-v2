@@ -793,6 +793,7 @@ public static class ServiceCollectionExtensions
 
             // Document transformer: Add x-business-rules extension to document
             // cross-field constraints that cannot be expressed in JSON Schema
+            // Reference: project-docs/30-business-rule-validation-implementation-plan.md
             options.AddDocumentTransformer<BusinessRulesDocumentTransformer>();
 
             // Operation transformer: Document the required Idempotency-Key

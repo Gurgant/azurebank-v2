@@ -9,19 +9,23 @@ namespace AzureBank.Tests.Architecture;
 /// </summary>
 /// <remarks>
 /// <para>
-/// A control character in a source file is legal and invisible. On PR #118 a line in
-/// <c>MoneyFormattingTests</c> carried a literal <c>U+0008</c> BACKSPACE where a backslash-b was
-/// meant. C# verbatim strings do not process escapes, so the byte went into a regex as a character
-/// to match, and the guard built on that regex could never match anything.
+/// This exists because of a real, measured incident on PR #118, not as hygiene theatre. A line in
+/// <c>MoneyFormattingTests</c> reached disk carrying a literal <c>U+0008</c> BACKSPACE where a
+/// backslash-b was meant — written by a tool that expanded the escape on its way to the file. C#
+/// verbatim strings do not process escapes, so the byte went into a regex as a character to match.
+/// The result was a guard that could never match anything, and it reported clean for a whole session
+/// while the defect it was written to catch sat three lines inside a mapper.
 /// </para>
 /// <para>
-/// The compiler accepts it: a backspace in a regex is legal and means "match a backspace".
-/// <c>grep</c> renders it as nothing, and the file reads as the intended text. <c>od -c</c> shows
-/// it, because there the byte prints as ONE token where real backslashes print as two.
+/// Every normal instrument was blind to it. The compiler accepted it — a backspace in a regex is
+/// legal and simply means "match a backspace". <c>grep</c> rendered it as nothing. Reading the file
+/// showed the intended text. Only <c>od -c</c> revealed it, because there the byte prints as ONE
+/// token where real backslashes print as two.
 /// </para>
 /// <para>
-/// So this test reads every hand-written source file and fails on any control character other
-/// than tab, carriage return and line feed.
+/// So the rule is about the editing tool rather than about the product, which is unusual for this
+/// suite and is the reason it is one test rather than a family. It is cheap, it is absolute, and it
+/// would have caught that byte on the first run instead of the third day.
 /// </para>
 /// </remarks>
 public class SourceHygieneTests
@@ -59,10 +63,12 @@ public class SourceHygieneTests
     /// other Unicode control character is one no editor puts there on purpose.
     /// </summary>
     /// <remarks>
-    /// <c>char.IsControl</c> rather than a comparison against U+0020: that comparison stops at
-    /// U+001F and accepts U+007F DELETE and the whole U+0080-U+009F C1 block. Raised by CodeRabbit
-    /// on PR #119. Measured before widening: the repository holds no character in U+007F-U+009F,
-    /// so nothing legitimate is caught.
+    /// <c>char.IsControl</c> rather than a comparison against U+0020, which is what this said
+    /// first and which silently stopped at U+001F: it accepted U+007F DELETE and the whole
+    /// U+0080-U+009F C1 block, while the trap doc claimed the rule covered any control
+    /// character. Raised by CodeRabbit on PR #119, and it is the same defect this PR exists to
+    /// make impossible - a stated rule wider than the one enforced. Measured before widening:
+    /// the repo contains no character in U+007F-U+009F today, so nothing legitimate is caught.
     /// </remarks>
     private static bool IsForbiddenControlCharacter(char c) =>
         char.IsControl(c) && c != (char)0x09 && c != (char)0x0D && c != (char)0x0A;

@@ -118,21 +118,22 @@ type Step = 'form' | 'pin';
 // ============================================
 
 /**
- * PR-10 — the withdraw twin of the deposit flow, on RHF+Zod: the FORM step
- * (account/amount/description) lives in react-hook-form with the balance-capped
- * `withdrawFormSchema` as resolver, while the PIN step machine stays outside it (a
- * money-critical path, minimal churn).
+ * PR-10 — the withdraw twin of the deposit flow, plus the PIN-in-body gate (D1), now on
+ * RHF+Zod (the money-forms rewrite): the FORM step (account/amount/description) lives in
+ * react-hook-form with the balance-capped `withdrawFormSchema` as resolver, while the PIN
+ * step machine is deliberately untouched (plan D5 — money-critical path, minimal churn).
  * Same idempotency spine (useIdempotentMutation: KEEP on IN_FLIGHT/network/5xx, rotate on a
  * body edit while NO key is held — while one is RETAINED the edit latches verify-first
- * instead, see `onBodyEdit`).
+ * instead, see `onBodyEdit`). ~~The PIN is part of the body, so editing it re-keys too. The PIN is NOT
+ * step-up: it travels in the withdraw request and is verified server-side.~~
  *
- * The PIN is STEP-UP and it is not in the body (ADR-0056). Pressing
+ * Struck 2026-09-22, ADR-0056: the PIN is STEP-UP now and it is not in the body. Pressing
  * WITHDRAW mints at POST /api/transactions/withdraw/authorizations and sends the reference in
  * Step-Up-Authorization, exactly as the two transfers and the closure do. The sixth digit only
  * ENABLES that button — which is the same fact the note on `lastAuthorization` leans on, since a
  * submit that starts from a button click reads settled state and needs no ref for the PIN.
  * A wrong PIN is still a 401 INVALID_PIN that stays in this dialog (sessionMiddleware
- * exempts it from the global logout), but it is the MINT that answers it, and the
+ * exempts it from the global logout), but it is now the MINT that answers it, and the
  * withdrawal is never sent. A user with no PIN is sent to /pin-setup first. The dialog cannot be
  * dismissed while an idempotency key is still live — the Fluent shell's Esc/backdrop
  * dismissal funnels through the SAME keyLive guard as the X button.
@@ -200,9 +201,11 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
     balance; this re-reads it from the server at the moment the user commits, so the form refuses an
     amount the account can no longer cover instead of sending it and showing a server error.
 
-    The withdrawal endpoint checks no PIN, and ADR-0056 D4 puts the funds check ABOVE the
-    authorisation, so an unaffordable withdrawal is 422 INSUFFICIENT_FUNDS and costs nothing: the
-    check is for usability, not attempt protection.
+    ~~The client half of "the PIN is never asked for an operation that cannot succeed" — measured, a
+    doomed request still spends a PIN attempt, and three of those lock the PIN for fifteen minutes.~~
+    (Struck 2026-09-21, ADR-0056: the withdrawal endpoint no longer checks a PIN at all, and D4 puts
+    the funds check ABOVE the authorisation, so an unaffordable withdrawal is 422
+    INSUFFICIENT_FUNDS and costs nothing. What survives is usability, not attempt protection.)
   */
   const confirmFunds = useFundsGate();
   const [checkingFunds, setCheckingFunds] = useState(false);
@@ -308,9 +311,16 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   /**
    * Continue → PIN, but only once the SERVER has confirmed the amount still fits.
    *
-   * ADR-0056 D4 puts the funds check ABOVE the authorisation and takes the PIN off the endpoint,
-   * so an over-balance withdrawal answers 422 INSUFFICIENT_FUNDS. The gate saves a round trip and
-   * keeps the field's own hint honest; no PIN attempt is at stake.
+   * ~~This is the whole point of the change: a strong-authentication ceremony must never be spent
+   * on a request that is already known to fail. Measured on the running API, an over-balance
+   * withdrawal with a mistyped PIN answers 401 INVALID_PIN — the funds check comes AFTER the PIN —
+   * so reaching this step with a stale balance costs the user a PIN attempt, and three of those
+   * lock them out for fifteen minutes over an operation that could never have succeeded.~~
+   *
+   * (Struck 2026-09-21: that measurement was true, and this PR is what made it false. ADR-0056 D4
+   * moved the funds check ABOVE the authorisation and took the PIN off the endpoint entirely, so
+   * the same request now answers 422 INSUFFICIENT_FUNDS. The gate stays because it saves a round
+   * trip and keeps the field's own hint honest — not because an attempt is at stake.)
    *
    * On refusal we stay on the form. The banner explains the action; the field's own hint turns red
    * on its own, because the refetch updated the cache the Zod bound is built from.
@@ -488,14 +498,19 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
         Wrong PIN — clear the boxes and remount (refocus box 1) so the retry is usable. Safe: 401
         is exempt from the global logout.
 
-        Only the MINT answers INVALID_PIN (ADR-0056), and the mint is a plain mutation that
+        ~~The hook already dropped the key, so the corrected-PIN retry mints a fresh one.~~ Struck
+        2026-09-23, raised in review: true while the PIN was in the BODY, because the refusal then
+        came from the withdrawal through `submit`, and `INVALID_PIN` is not in `shouldKeepKey`'s
+        keep set. Since ADR-0056 only the MINT answers it, and the mint is a plain mutation that
         never passes through `submit` — so `useIdempotentMutation` does not see this refusal at all
         and the key state is untouched: none if none was held, and a RETAINED one stays retained.
 
-        ⚠️ No `resetIntent()` here: after an AUTHORIZATION_EXPIRED — key retained,
-        `lastAuthorization` already cleared — that would be a NEW intent over an unresolved one,
-        which is a double-spend. The key stays, the corrected PIN mints a new authorisation, and
-        it is presented on the same key. Which is the documented recovery.
+        ⚠️ That is the correct outcome and the comment mattered because it said the opposite. A
+        reader matching the code to it would add `resetIntent()` here, and after an
+        AUTHORIZATION_EXPIRED — key retained, `lastAuthorization` already cleared — that is a NEW
+        intent over an unresolved one. The double-spend closed one round ago, walking back in
+        through a stale sentence. What actually happens: the key stays, the corrected PIN mints a
+        new authorisation, and it is presented on the same key. Which is the documented recovery.
       */
       setPin('');
       setPinError(true);
@@ -554,13 +569,14 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   // (IN_FLIGHT, network, parse, 5xx), not just IN_FLIGHT. The dialog is mount-on-open, so
   // unmounting with a retained key loses it; reopening mints a fresh one and the same amount
   // becomes a NEW intent = a double-spend. A terminal outcome releases the key and re-enables
-  // dismissal. While a key is RETAINED, `onBodyEdit` latches verify-first (`requireVerify`)
-  // rather than rotating — which also drops the key, so dismissal does come back, but by way of
-  // a view that says the request may or may not have gone through. The only explicit release
-  // left is the verify branch's "It didn't go through — try again". That branch is not drawn
-  // when the answer said `applied: true`: the went-through view takes its place, with the key
-  // dropped and dismissal back all the same, and it offers no release at all — `resetIntent`
-  // does nothing there.
+  // dismissal. ~~Editing the body (onBodyEdit → resetIntent) does too.~~ Struck 2026-09-23: it
+  // stopped being true in this PR. While a key is RETAINED, `onBodyEdit` latches verify-first
+  // (`requireVerify`) rather than rotating — which also drops the key, so dismissal does come
+  // back, but by way of a view that says the request may or may not have gone through. The only
+  // explicit release left is the verify branch's "It didn't go through — try again". (Since
+  // 2026-10-01 that branch is not drawn when the answer said `applied: true`: the went-through
+  // view takes its place, with the key dropped and dismissal back all the same, and it offers no
+  // release at all — `resetIntent` does nothing there.)
   /*
     Every exit, held for BOTH phases of the submit.
 

@@ -88,6 +88,7 @@ public static class ServiceCollectionExtensions
             // Suppress false-positive warning for query filter on required navigation
             // Transaction.Account is required, but Account has a query filter for soft-delete.
             // Transactions are immutable and never access soft-deleted Accounts via navigation.
+            // See: project-docs/21-ef-core-warnings-resolution.md
             //
             // And a retry is logged at Warning (ADR-0058). EF raises ExecutionStrategyRetrying at
             // Information, while the hosts hold Microsoft.EntityFrameworkCore at Warning, so every

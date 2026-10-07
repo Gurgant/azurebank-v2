@@ -2,7 +2,9 @@
 
 The single-page app: React 19, TypeScript, Vite, Fluent UI v9, and Redux Toolkit with RTK Query. It
 never calls the API itself. Every request goes to the BFF, which holds the session server-side, so
-the cookie stays first-party and the JWT never reaches the browser (ADR-0038).
+the cookie stays first-party and the JWT never reaches the browser (ADR-0038). _(Until 2026-09-25
+this said "no token"; the browser does hold a one-shot PIN authorisation's id between the PIN
+and the operation it authorises.)_
 
 ## Run it
 
@@ -13,9 +15,9 @@ npm run dev:mock   # the same app against MSW in the browser — no BFF, API or 
 ```
 
 `npm run dev` needs the BFF and the API running; the
-[local setup](../docs/engineering-practices.md#local-setup) has the commands. Under `dev:mock`, sign
-in as `demo@azurebank.dev` / `Password1!`, PIN `123456`. The mock's state resets on every page
-reload.
+[local setup](../docs/engineering-practices.md#local-setup) has the commands _(until 2026-09-25 this
+said the root README had them)_. Under `dev:mock`, sign in as `demo@azurebank.dev` / `Password1!`,
+PIN `123456`. The mock's state resets on every page reload.
 
 Either loop shows the public demo's screens when it is started with `AZUREBANK_DEMO=true` in its
 environment: the dev server then puts the demo's tag on the page, and under `dev:mock` the mock
@@ -55,17 +57,20 @@ one transfer inside a copy it claimed, and restarts the BFF's and the API's cont
 [`playwright.demo.config.ts`](playwright.demo.config.ts) says how to run it, why it keeps no
 trace, and what it leaves on disk to be deleted.
 
-One test in `test:contract:real` sends an oversized body, refused at 32 KB. The API reads the body
-before it answers 413: answered without reading it, the connection was aborted, the BFF passed
-that on, and the test sometimes failed on Windows with `ECONNRESET`.
+Until 2026-09-24 one test in `test:contract:real` — an oversized body refused at 32 KB — sometimes
+failed on Windows with `ECONNRESET`. It was not the test: the API answered the 413 without reading
+the body and then aborted the connection, which the BFF passed on. The API now reads the body first;
 [`docs/engineering-traps.md`](../docs/engineering-traps.md) has the measurements.
 
 ## Accessibility
 
 axe-core (WCAG 2.0 A/AA, 2.1 AA and 2.2 AA) runs in the e2e step of CI's `real-stack` job over nine
 pages, the deposit dialog, the Change PIN dialog, the accounts page while its read is slow (light,
-dark and 375 px wide) and the open leave prompt of a transfer: fifteen scans. It fails that job on
-any serious or critical finding except colour contrast, which it only reports: on 2026-09-17 that
+dark and 375 px wide) and the open leave prompt of a transfer: fifteen scans. _(Until 2026-10-05
+this named the nine pages and the two dialogs only. The three scans of the slow read were in the
+run already; the leave prompt's is new that day, in `e2e/confirmDialog.spec.ts`.)_ It fails that
+job on any serious or critical
+finding except colour contrast, which it reports and leaves to the UI/UX phase: on 2026-09-17 that
 was 25 nodes on theme tokens (muted secondary text, the sidebar avatar, a button group and the
 danger-zone button) on seven pages and the deposit dialog, a count that moves with the data a page
 shows. Fluent's own
@@ -79,30 +84,36 @@ both themes; each amount field shows where focus is; seven dialogs give focus ba
 that opened them; at 375 px the two money tiles share a row and two buttons of Settings keep their
 label on one line; and seven texts that measured under 4.5 to 1 stay at or above it in both
 themes. Two more need an entry in the ledger, which the suite's user is not seeded with, so
-`e2e/deposit.spec.ts` holds them after its deposit: at 375 px a status pill stays in its cell,
-and the "Completed" badge of a transaction's page can be read in both themes. That is 37 rows, 33
-and 4. On 2026-10-06, 24 of them failed before the fix they hold and all 37 passed after it,
-against `npm run dev:mock`. None was run that day in this suite's own configuration, which needs
+`e2e/deposit.spec.ts` holds them after its deposit: at 375 px a status pill stays in its cell
+_(its column, until later on 2026-10-06: since then a row has no columns at that width, as the
+next paragraph says)_, and the "Completed" badge of a transaction's page can be read in both
+themes. That is 37 rows, 33
+and 4, added on 2026-10-06. That day 24 of them failed before the fix they hold, and all 37 passed
+after it, against `npm run dev:mock` with the mock's user signed in at each page load by a seed
+kept outside the repository. None was run that day in this suite's own configuration, which needs
 the real stack.
 
-A transaction's row is two lines wherever its table is under 480 px wide, which is a phone held
-upright: its four columns do not fit on one, and with them an amount ran under the status
+Later that day a transaction's row became two lines wherever its table is under 480 px wide,
+which is a phone held upright: four columns did not fit one, and an amount ran under the status
 beside it. Two more rows of `e2e/deposit.spec.ts` hold that at 375 px, one on the home page and
 one on History, which makes 39. For every row of the page: the entry and the amount are on one
 line, with when and the status on the line under it; the amount is on one line, ends inside the
 row and is over no other cell; the pill is inside the row; and down the row's middle a press
 meets the entry's button over 44 px or more. Each reads the rows as they are drawn and again with
-the longest amount a row can show, "+€100,000.00", written into them: the API takes one amount
-of up to 100,000.00. Both failed on the four columns and passed on the two lines, against the
-same mock; neither was run in this suite's own configuration.
+the longest amount a row can show, "+€100,000.00", written into them _(until 2026-10-07 the
+amount written was "+€12,450.00", named here as the longest; it is not, since the API takes one
+amount of up to 100,000.00)_. Both failed on the four
+columns and passed on the two lines, against the same mock and the same kind of seed; neither was
+run in this suite's own configuration.
 
-Two more rows of the same file, which makes 41, hold a long word of an entry where the table has
-its columns. A description is free text and may be one word with no space in it, so an entry
-wraps inside a word at every width; with nothing to break it, such a word runs over the amount
+On 2026-10-07 two more rows of the same file, which makes 41, hold a long word of an entry where
+the table has its columns. A description is free text and may be one word with no space in it;
+on two lines such a word wrapped, and in the columns nothing broke it, so it ran over the amount
 and the status. At 800 px of screen, where both tables have columns, sixty letters written as the
 entry of every row end inside the Entry column and are over no other cell, and the amount stays
-on one line. On 2026-10-07 both failed before the entry was let wrap inside a word and passed
-after it, against the same mock; neither was run in this suite's own configuration.
+on one line. Both failed before the entry was let wrap inside a word at every width and passed
+after it, against the same mock and the same kind of seed; neither was run in this suite's own
+configuration.
 
 The public demo's screens are scanned by the same gate only in `npm run test:e2e:demo`, which is
 run by hand: the sign-in page as the demo shows it to a browser that keeps no copy, the

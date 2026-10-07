@@ -10,14 +10,15 @@ import { pageTitle, ROUTE_ANNOUNCE_DELAY_MS, TitleOverride } from './pageTitle';
  * keyboard focus stays on the link that was pressed, or falls to `<body>` when that link unmounts.
  * This sits at the top of the route tree and, for every route that names a title in its `handle`:
  * - sets `document.title` (WCAG 2.4.2), on a load as well as on a change;
- * - on a CHANGE only, writes "<title> page loaded" into a polite status region. The region is
- *   emptied at the change and written `ROUTE_ANNOUNCE_DELAY_MS` later: / and /dashboard are both
- *   "Home", and text the region already holds is no change for a screen reader to announce. A
- *   change that is left again inside that delay is never announced;
+ * - on a CHANGE only, writes "<title> page loaded" into a polite status region, the announcement
+ *   `docs/design/frontend-design/04a-ux-user-flows.md` specifies. The region is emptied at the
+ *   change and written `ROUTE_ANNOUNCE_DELAY_MS` later: / and /dashboard are both "Home", and text
+ *   the region already holds is no change for a screen reader to announce. A change that is left
+ *   again inside that delay is never announced;
  * - on a change only, moves focus to the page's `<main>`, or to its `<h1>` where there is no main
  *   (the full-screen wizards), unless focus is already somewhere the new page put it.
  *
- * Focus goes to `<main>` rather than to the page's heading, because the dashboard's
+ * Focus goes to `<main>` rather than to the heading the UX doc asks for, because the dashboard's
  * `<h1>` is the balance figure. A container that is not focusable gets `tabindex="-1"` for the one
  * focus and loses it on blur, and `index.css` gives it a focus ring under `:focus-visible`, so a
  * keyboard user who just left a ringed nav link can see where focus went; after a mouse click the

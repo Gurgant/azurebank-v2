@@ -819,7 +819,8 @@ const AZURE_TAG_RE = /^[a-z][a-z0-9_]{2,19}$/;
   "Cannot delete account with non-zero balance. Current balance: $50,042.00" — and this file quoted
   both, then kept quoting them after 3769dc9 (2026-08-18) had removed the figures:
   `InsufficientFundsException` says "Insufficient funds." and carries `available`/`requested` as
-  NUMERIC extensions (the client formats them, in a fixed en-IE), and
+  NUMERIC extensions (the client formats them, in a fixed en-IE; until 2026-09-11 this said "in the
+  user's locale", which the client never reads), and
   `AccountService.DeleteAccountAsync` says "Cannot delete an account with a non-zero balance." —
   reworded, not merely shortened. `MoneyFormattingTests` forbids `:C` and currency symbols in Api,
   Shared, Infrastructure and the audit tool, so a symbol cannot return without a red backend
@@ -2669,10 +2670,14 @@ function spendAuthorization(held: StoredStepUpAuthorization | null): void {
  *   amount 10.00001 -> 400 "Validation Failed" {"amount":["Amount cannot have more than 2 decimal
  *                     places."]}                                                     (validator)
  *
- * Both are modelled: `rejectBadAmountScale` is wired into all seven money endpoints — deposit,
- * withdraw, both transfers, all three mints — so no mint is stricter than the movement it
- * authorises. Both envelopes were measured on the real pipeline; the transcript is on that
- * helper.
+ * ~~Only the first is modelled here, and deliberately: neither transfer handler models the SCALE
+ * rule either, so adding it to the mint alone would make the mock's mint stricter than its own
+ * transfer — the opposite of the property ADR-0042 needs.~~ *(Closed 2026-09-22 on #198, where the
+ * review raised it again on the new withdrawal mint. The objection above was to closing it on ONE
+ * endpoint and it still stands, so `rejectBadAmountScale` is wired into all seven money endpoints
+ * at once — deposit, withdraw, both transfers, all three mints — and no mint is stricter than the
+ * movement it authorises. Both envelopes were re-measured on the real pipeline first; the
+ * transcript is on that helper.)*
  */
 function mintBindingErrors(
   body: { amount?: number; pin?: unknown; fromAccountId?: string; toAccountId?: string },

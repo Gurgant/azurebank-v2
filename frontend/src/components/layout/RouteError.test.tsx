@@ -48,7 +48,8 @@ function Boom(): never {
 }
 
 function mountWithErrorElement() {
-  // App.tsx's shape without the announcer: a pathless parent that owns `errorElement`.
+  // App.tsx's shape without the announcer: a pathless parent that owns `errorElement`. (Until
+  // 2026-09-17 App's parent had no element either, and this said it was the same shape.)
   const router = createMemoryRouter(
     createRoutesFromElements(
       <Route errorElement={<RouteError />}>

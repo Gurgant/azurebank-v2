@@ -55,7 +55,11 @@ namespace AzureBank.Tests.Integration;
 /// <list type="bullet">
 /// <item><description>
 /// The FILE's line endings. Git stores it as LF (<c>git ls-files --eol</c> reads <c>i/lf w/crlf</c>)
-/// and a Windows checkout rewrites every one of them to CRLF.
+/// and a Windows checkout rewrites every one of them to CRLF. (Until 2026-10-01 this line gave
+/// their number as if it held: 4,595, measured 2026-09-21, and 4,307 before the document grew on
+/// 2026-09-16. Every regeneration that adds a line moves it, and it was stale again: 5,303 on
+/// main that day, and 5,331 once the idempotency 409 declared <c>applied</c>. Nothing here
+/// depends on the number, so it is no longer written as a present fact.)
 /// </description></item>
 /// <item><description>
 /// Newlines INSIDE string values. Twenty-five strings in the document — eight operation

@@ -11,8 +11,8 @@ They make a LOCAL run test the operations instead of the front door:
   sends. The six token endpoints -- login, register, refresh, revoke, logout and the public demo's
   claim -- and the session-stamp feed answer 404 without it, and to any caller that is not on the
   API's loopback interface: so a run reaches them only from the machine the API listens on, as
-  CI's does. (With the demo off, as CI runs the API, the claim answers its declared 404 to every
-  request, marker or not.)
+  CI's does. (Five until 2026-10-04, before the claim. With the demo off, as CI runs the API, the
+  claim answers its declared 404 to every request, marker or not.)
 - Every operation the contract does not declare anonymous -- `security: [{}]`, which today is
   register, login, the demo's claim, refresh, revoke and session-stamps -- carries a bearer
   token: a throwaway user's, registered here, or the one AZUREBANK_CONTRACT_TOKEN hands over.

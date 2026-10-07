@@ -9,9 +9,7 @@
 
 ## Overview
 
-`AzureBank.Bff` is the Backend-For-Frontend gateway that sits between the browser and the API. It
-provides session management, rate limiting, security headers, and reverse proxy functionality
-using YARP.
+`AzureBank.Bff` is the Backend-For-Frontend gateway that sits between the client (browser/mobile) and the API. It provides session management, rate limiting, security headers, and reverse proxy functionality using YARP.
 
 **Parent Solution**: [AzureBank Backend](../../README.md)
 
@@ -226,6 +224,10 @@ money movement. `/full-number` is the only route behind the level-2 gate. The no
 not transfer-specific either: since `d74603c` (2026-08-20) every `/api/*` request that is not one of
 the seven 404'd auth paths above, and since 2026-10-05 the bare `/api` path too, any method, is
 refused at the BFF with the API's own 401 shape unless a live session resolves.
+*(Until 2026-10-05 this paragraph said a withdrawal was the one money move that still sends its PIN
+in the body; that had been false since ADR-0056, `267d33e` (2026-09-22). Until the same day it did
+not name the bare `/api` path, which the proxy's catch-all route takes too: with no session a
+request for that path was forwarded.)*
 
 ---
 
@@ -255,6 +257,8 @@ name, so an unknown API route stays a 404 and a POST-only route stays a 405. An 
 not a separator: `/%2Fapi/accounts` still gets the shell. Unset, the BFF serves no pages and vite
 does, as in the dev loop; set to a directory with no `index.html`, the host refuses to start.
 ADR-0054.
+*(Until 2026-10-05 this said only "Never under `/api`, `/bff` or `/health`", and a server path
+behind a leading backslash was answered with the shell.)*
 
 On the public demo (`Demo:Enabled`) the page carries one tag,
 `<meta name="azurebank-demo" content="true">`, put right before its `</head>` when the host
@@ -299,6 +303,7 @@ private static readonly HashSet<string> BlockedProxiedAuthPaths =
 
 // EVERY proxied request — any method — needs a live session, decided HERE rather than delegated to
 // the API. There is no exception list: the set that used to hold one is deleted, not emptied.
+// (Until 2026-10-05 this tested only the "/api/" prefix, missing the bare "/api" path.)
 private static bool RequiresSession(string path) =>
     path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase)
     || path.Equals("/api", StringComparison.OrdinalIgnoreCase);
@@ -307,6 +312,8 @@ private static bool RequiresSession(string path) =>
 // at the API (since ADR-0042 by a one-shot authorisation the API binds and spends) and is not
 // gated here — and is kept only as the place a future exact-path route would go. The prefix x
 // suffix pair, checked for ANY method, is the only level-2 enforcement left.
+// (Until 2026-10-05 this comment said transfers carry their PIN in-band and the API verifies it;
+// since ADR-0042 a transfer carries no PIN.)
 private static readonly HashSet<string> PinRequiredPaths = new(StringComparer.OrdinalIgnoreCase);
 private static readonly string[] PinRequiredPrefixes = { "/api/accounts/" };
 private static readonly string[] PinRequiredSuffixes = { "/full-number" };
@@ -315,6 +322,9 @@ private static readonly string[] PinRequiredSuffixes = { "/full-number" };
 What a caller observes, measured through the BFF (:5000 → API :7215, Development) — rows 3–5 on
 2026-09-03 (`070803f`) for GET and POST, row 1's login, register and refresh on 2026-08-19
 (ADR-0041 amendment), and the PATCH and DELETE verbs of row 3 on 2026-08-20 (`d74603c`):
+*(Until 2026-10-05 this sentence said rows 2–4 and row 2, the table's numbers until `e5107f0`
+(2026-10-04) put the demo claim's row second; and it dated all of row 1 2026-08-19, whose last
+three paths joined it with `bd4fa39` (2026-09-29).)*
 
 | Request | Session cookie | Answer |
 |---|---|---|
@@ -328,6 +338,7 @@ The 401 carries the API's own members, with a `traceId` of its own, on purpose: 
 for the step-up gate learns nothing from the answer, and the SPA already knows the shape. 401 and
 403 are different states — no session routes to login, level 1 opens the PIN modal — so a cookie
 the store cannot resolve is a 401, never a level-0 step-up (ADR-0038).
+*(Until 2026-10-05 this said "(apart from `traceId`)", which read as if the 401 had none.)*
 
 ---
 
@@ -422,6 +433,11 @@ session's JWT (renewed through `ITokenRefresher` when it runs short). It also ta
 `Cookie` header off the request it forwards, whole and whether or not a session resolves: the API
 reads no cookie, and the session id is the BFF's own secret. The browser's own request keeps the
 header, so the BFF goes on reading the session from it.
+*(Until 2026-10-06 this section did not say what became of the cookie, and it was not taken off:
+the forwarded request held the browser's whole `Cookie` header, the session id in it and any other
+cookie beside it. Measured that day on the test host, with a recorder in the API's place, before
+the change: on a read of both routes that proxy a signed-in request, and with other cookies beside
+the session's on a read and on a write of the catch-all route.)*
 A renewal that cannot be had while
 the token has 5 s or less left is answered here with a 503 and `Retry-After`, never forwarded; the
 source also strips the token-road marker and turns the API's refusal of the service key into a 503
@@ -540,16 +556,16 @@ an entry.
   caller wrote before it is not believed, and a last entry that is no address (`unknown`, a host
   name, anything that does not parse) leaves the proxy's address in place. A port is dropped; an
   IPv4-mapped entry is the IPv4 address; an IPv6 entry is keyed by its /64.
-- **The header is first made a list of addresses and nothing else** (`StrictForwardedFor`). Its
-  lines are split at every comma, a quotation mark being a character like another, and an entry
-  that holds anything but what an address is written with (`0-9 a-f A-F . : [ ]`) becomes the
-  word `unknown`. Read as the framework alone reads it, a caller that writes
-  `::ffff:198.51.100.200%"` before the proxy's entry is taken for `198.51.100.200`, an address
-  of its choosing and a new budget with every request, because the quotation mark hides the
-  comma after it and the parser drops everything after the `%` as an IPv6 zone; and a quotation
-  mark alone makes the caller the proxy itself (measured on this host's pipeline and on a
-  loopback socket, .NET 10). So a last entry with a zone, in quotation marks or in hexadecimal
-  is no address here, where the framework reads one.
+- **The header is first made a list of addresses and nothing else** (`StrictForwardedFor`, since
+  2026-10-06, later the same day). Its lines are split at every comma, a quotation mark being a
+  character like another, and an entry that holds anything but what an address is written with
+  (`0-9 a-f A-F . : [ ]`) becomes the word `unknown`. Read as the framework alone reads it, the
+  sentence above was false: a caller that wrote `::ffff:198.51.100.200%"` before the proxy's
+  entry was taken for `198.51.100.200`, an address of its choosing and a new budget with every
+  request, because the quotation mark hid the comma after it and the parser dropped everything
+  after the `%` as an IPv6 zone; and a quotation mark alone made the caller the proxy itself
+  (measured on this host's pipeline and on a loopback socket, .NET 10). So a last entry with a
+  zone, in quotation marks or in hexadecimal is no address here, where the framework read one.
 - **At startup** `ProxyOptionsValidator` refuses, in a sentence that names the entry, a network
   that is not `address/prefix-length`; whose prefix length is outside its family's range; that
   is `/0`, or wider than a `/8`; that is an IPv4-mapped IPv6 network; or that .NET reads as
@@ -659,6 +675,8 @@ writes from the same key.
 timeout unless the cluster sets its own. 55 s, above the API's 40 s request deadline plus what the
 API may still need after it, so any answer the API gives before a commit arrives first (ADR-0058,
 `TimeoutChainTests`).
+*(Until 2026-09-30 this sample said 100, `HttpClient`'s default, and the proxy waited YARP's own
+100 s whatever it said.)*
 
 ### Configuration Classes
 

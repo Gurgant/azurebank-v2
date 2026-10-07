@@ -187,6 +187,8 @@ public class RefreshTokenService : IRefreshTokenService
                   ADR-0058); when the database refused the write, with the 500. The BFF keeps the
                   session on either (ADR-0057 §4.5). Nothing is revoked or issued either way, and
                   the grant is already revoked, so a retry can only try the audit write again.
+                  (Until 2026-10-01 this said every failed write answers 500; ADR-0058 had already
+                  made one that cannot reach the database a 503.)
                 */
                 await _audit.RecordRefusalAsync(
                     SecurityEvents.RefreshTokenReuse, AuditOutcome.Refused,

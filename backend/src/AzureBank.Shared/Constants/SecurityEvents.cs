@@ -333,7 +333,8 @@ public static class SecurityEvents
       actor id is financial data about an identifiable person. The audit row answers WHO DID WHAT TO
       WHICH transaction; the ledger row answers what moved. Deposit and withdrawal keep a null
       Detail; the two transfers carry only the id of the authorisation they consumed (AuditDetails),
-      which is on no ledger row.
+      which is on no ledger row. (This said "stays null on all four" until 2026-09-14, when the
+      transfers began naming it.)
 
       A transfer writes ONE row, not two. Two ledger rows are the bookkeeping of a single act, and
       the subject is the OUTGOING one — the row whose owner is the actor, and the one the step-up

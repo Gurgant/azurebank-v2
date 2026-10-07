@@ -39,7 +39,8 @@
  *
  * The second cause kept `settings.test.tsx` failing under load after this module landed: tabster
  * moved focus out of an open dialog whose contents it could see, because keyborg could not tell a
- * programmatic focus from a user's. `test/keyborg.ts` has that chain.
+ * programmatic focus from a user's. `test/keyborg.ts` has that chain. (Until 2026-09-17 the
+ * paragraph above opened "That is the whole flake.")
  *
  * ─── WHY THIS RATHER THAN A LOOSER QUERY ───────────────────────────────────────────────────────
  *
@@ -52,7 +53,8 @@
  * The check is falsifiable rather than assumed: with this module, focus lands on the PIN input
  * (`aria-label="Digit 1 of 6"`) exactly as a real browser puts it, and the surface's `aria-hidden`
  * stays absent. Without it, focus lands on the surface and `aria-hidden="true"` appears.
- * `layout.test.tsx` pins both halves.
+ * `layout.test.tsx` pins both halves. (Until 2026-09-17 this named `tabster-modalizer.test.tsx`,
+ * a file that has never existed.)
  *
  * ─── SCOPE, deliberately the minimum that works ────────────────────────────────────────────────
  *

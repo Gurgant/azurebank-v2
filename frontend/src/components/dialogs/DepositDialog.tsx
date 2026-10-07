@@ -82,7 +82,7 @@ const QUICK_AMOUNTS = [50, 100, 200, 500];
  * the edit latches verify-first instead, as WithdrawDialog's does. A replayed 2xx surfaces
  * a polite note (D4); RESULT_UNKNOWN latches a verify-first flow (§2.3), or, when the answer
  * says `applied: true`, the went-through view, which offers the history and nothing that sends
- * (ADR-0009). No step-up —
+ * (ADR-0009; until 2026-10-01 this named the verify-first flow only). No step-up —
  * deposit is auth level 1. The shell is a Fluent Dialog now: focus trap, Escape and
  * aria-modal come from the platform, and BOTH dismissal paths (Esc/backdrop and the X)
  * funnel through the keyLive guard.

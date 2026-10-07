@@ -2,10 +2,11 @@
 # main, and still by hand (since 2026-09-24). It was manual-only until then, and the cost showed:
 # the collection's withdrawal answered 401 on main from #198 until #200, and nothing noticed,
 # because nothing ran it. About two minutes, beside CI's jobs rather than after them.
-# The API needs the Seeder to create and seed the database (no auto-migration at startup) and
-# its seven secrets via environment (appsettings.Development.json is not committed). The
-# "Start API" step below spells the local setup's recipe (docs/engineering-practices.md) with
-# `__`, taking the throwaway values from this workflow's `env:` block.
+# Adapted from the January 2026 workflow; the API now needs the
+# Seeder to create/seed the database (no auto-migration at startup) and its six
+# secrets via environment (appsettings.Development.json is not committed). The
+# "Start API" step below spells README.md's recipe with `__`, taking the throwaway
+# values from this workflow's `env:` block.
 #
 # Schemathesis left this file on 2026-09-15: it is the `conformance` job in ci.yml now, per PR
 # and gating, after two months in which the job here ran zero times (its `--junit-xml` option

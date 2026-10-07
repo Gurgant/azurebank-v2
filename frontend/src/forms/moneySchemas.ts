@@ -5,7 +5,7 @@ import { CURRENCY, formatCurrency, LOCALE } from '../utils/format';
 /**
  * RHF+Zod backbone for the money forms (deposit / withdraw / transfer / internal transfer).
  *
- * Design:
+ * Design (locked in the plan):
  * - Amount lives in form state as a SANITIZED STRING (what the user sees) and is coerced to a
  *   number by the schema — `z.string().transform(parse).pipe(makeAmountSchema(...))` — so the
  *   runtime bounds are the SAME #33 schema the imperative checks used, while each form keeps
@@ -14,7 +14,7 @@ import { CURRENCY, formatCurrency, LOCALE } from '../utils/format';
  *   zodResolver — the resolver identity changes only when the balance does.
  * - The recipient handle is NOT format-validated here (behavior-preserving: the exact-match
  *   lookup IS the validator, ADR-0014); the schema only requires a non-empty normalized tag.
- * - The PIN never enters RHF: the withdraw PIN step machine is untouched.
+ * - The PIN never enters RHF (plan D5): the withdraw PIN step machine is untouched.
  */
 
 /**
@@ -193,7 +193,7 @@ export function internalTransferFormSchema(availableBalance: number) {
       }),
     })
     .superRefine((value, ctx) => {
-      // The one genuinely local cross-field rule: source ≠ destination.
+      // The one genuinely local cross-field rule (plan P5.1): source ≠ destination.
       if (value.fromAccountId && value.toAccountId && value.fromAccountId === value.toAccountId) {
         ctx.addIssue({
           code: 'custom',

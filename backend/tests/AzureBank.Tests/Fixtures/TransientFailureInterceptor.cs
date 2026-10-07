@@ -16,7 +16,8 @@ namespace AzureBank.Tests.Fixtures;
 /// <para>
 /// A test about one error of SQL Server's gives that error as the fault. <c>SqlException</c> has no
 /// public constructor, and one can be built all the same, as SqlClient builds its own:
-/// <see cref="SqlErrors"/> does, for the number and the class the test names.
+/// <see cref="SqlErrors"/> does, for the number and the class the test names. (Until 2026-10-04
+/// this said that could not be done from test code; two unit test classes already did it.)
 /// </para>
 /// <para>
 /// One-shot by design. It disarms after firing so the retry proceeds normally; permanently armed, it

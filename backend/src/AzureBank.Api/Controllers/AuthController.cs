@@ -113,6 +113,9 @@ public class AuthController : ControllerBase
             ApiResponse<RegisterResponse>.Success(result, "Registration successful"));
     }
 
+    // (Until 2026-10-06 the remarks below said "The copy's password exists in this answer only".
+    // That is so on the server; the browser that made the claim keeps it too: ADR-0063, "What the
+    // browser keeps in demo mode". Said here and not in the remarks, which are published.)
     /// <summary>
     /// Claim a demo copy
     /// </summary>

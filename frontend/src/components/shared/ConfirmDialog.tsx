@@ -317,7 +317,10 @@ export function ConfirmDialog({
     the page is unreachable — and the effect above only ever moved focus in ONCE. Nothing watched
     Tab, so focus walked straight out into the page behind, which for this dialog is a transfer
     page with a send's key live, or the demo's sign-in page or dashboard: live controls each
-    time, and on a transfer page a money surface.
+    time, and on a transfer page a money surface. (Until 2026-10-05 this said the delete
+    confirmation or one of the two transfer confirmations. Closing an account has a dialog of
+    its own, src/components/dialogs/DeleteAccountDialog.tsx, and what the two transfer pages
+    open is their leave prompt.)
 
     Every other dialog in the app is a Fluent `Dialog` and gets this from tabster. This one is
     hand-rolled — deliberately, for the scrim and safe-area behaviour documented in the styles — so
@@ -330,6 +333,8 @@ export function ConfirmDialog({
         subtree backwards;
       - with NO focusable children at all — `isLoading` disables all three buttons at once — there
         is nothing to cycle to, so refuse the keystroke and give focus back to the container.
+        (Until 2026-10-05 this said: simply refuse the keystroke and leave focus on the container.
+        Focus was not always there to leave: the branch below says where it had gone.)
   */
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'Tab' || !dialogRef.current) return;

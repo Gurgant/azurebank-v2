@@ -61,9 +61,13 @@ public class StepUpAuthorizationService : IStepUpAuthorizationService
           the checks. Since ADR-0049 an account closure's PIN is proved here too, through the same
           three checks.
 
-          A withdrawal's PIN is proved here too (ADR-0056), through
-          TransactionService.AuthoriseWithdrawalAsync -> MintAsync. No copy survives anywhere:
-          this is the only path on which any operation's PIN is proved.
+          ~~TransactionService.WithdrawAsync still carries its own copy, and withdraw is the task
+          that should converge here next.~~ (Struck 2026-09-22, ADR-0056: withdraw CONVERGED. The
+          PIN left WithdrawRequest together with WithdrawAsync's IPinVerifier, and a withdrawal's
+          PIN is proved here now, through TransactionService.AuthoriseWithdrawalAsync -> MintAsync.
+          No copy survives anywhere: this is the only path on which any operation's PIN is proved.
+          Found in review on #198 -- the PR that did the converging left the sentence asking for
+          it, which is what a comment naming future work does when the future arrives.)
         */
         var user = await _context.Users.FindAsync([userId], cancellationToken);
         if (user == null)

@@ -325,7 +325,8 @@ export function TransferPage() {
   const canResend = keyLive && authorizationHeld && !isSubmitting && !isMinting;
 
   // `pinNonce` remounts PinInput so a cleared retry refocuses box 1 — the same device WithdrawDialog
-  // uses, for the same reason.
+  // uses, for the same reason. (Until 2026-09-17 the boxes here had no autoFocus, so the remount
+  // refocused nothing and this comment described WithdrawDialog only.)
   const [pin, setPin] = useState('');
   const pinHintId = useId();
   const pinErrorId = useId();

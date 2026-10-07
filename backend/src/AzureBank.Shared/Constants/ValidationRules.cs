@@ -93,9 +93,10 @@ public static class ValidationRules
       This constant is the answer to "which currency", not a licence to render one. The server
       states amounts as bare numbers and lets the client format them, in the fixed en-IE locale of
       frontend/src/utils/format.ts, whose CURRENCY a real-stack test ties to this constant through
-      the balance's `currency`. Where a message genuinely has to name a figure — a validation
-      bound the user must be told, or the evidence pack's movement line — state it through
-      DescribeAmount (InvariantCulture and this code), never a symbol and never CurrentCulture.
+      the balance's `currency` (until 2026-09-11 this said "the USER's locale", which the client
+      never reads). Where a message genuinely has to name a figure — a validation bound the user
+      must be told, or the evidence pack's movement line — state it through DescribeAmount
+      (InvariantCulture and this code), never a symbol and never CurrentCulture.
 
       A currency COLUMN on Account is a different and bigger decision, and is deliberately not made
       here: this records what the product is denominated in today, nothing more.

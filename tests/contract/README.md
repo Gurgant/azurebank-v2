@@ -22,9 +22,9 @@ register, refresh, revoke, logout and the public demo's claim — and the sessio
 `X-AzureBank-Token-Road` (`TokenRoadMiddleware`). The document declares no 404 on six of the
 seven, so such a run fails rather than skipping them. The seventh, the demo's claim, declares
 one: it answers 404 to every request that carries the service key while `Demo:Enabled` is false,
-which is how this page and CI run the API (ADR-0063; measured below). Measured on 2026-09-28
-from loopback with the hooks as they were before the marker, which the API refuses with the
-same 404: run on the four anonymous operations, login,
+which is how this page and CI run the API (ADR-0063; measured below). *(Until 2026-10-04 this said five token endpoints, and
+that none of the six operations declared a 404.)* Measured on 2026-09-28 from loopback with the hooks as they were before the
+marker, which the API refuses with the same 404: run on the four anonymous operations, login,
 register, refresh and revoke each failed `Undocumented HTTP status code` (`4 failures`); run on an
 operation that needs a token, with none handed over, it stopped at the throwaway user's registration
 (*Troubleshooting*, below). From a container, whether the API sees loopback depends on how the
@@ -44,8 +44,9 @@ dotnet run
 ```bash
 # From the repository ROOT: the configuration names its hooks module from there.
 # AZUREBANK_SERVICE_KEY holds the value of the API's ServiceCredential:BffKey -- $SERVICE_KEY,
-# if you followed the local setup's recipe in docs/engineering-practices.md. The hooks read it
-# from the environment, so it is never on a command line.
+# if you followed the local setup's recipe in docs/engineering-practices.md (until 2026-09-25
+# this said the root README's). The hooks read it from the environment, so it is
+# never on a command line.
 export AZUREBANK_SERVICE_KEY="$SERVICE_KEY"
 schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapiv1.json
 ```
@@ -63,7 +64,8 @@ What the two files add to that line:
   the token of a user who already exists. CI hands over the seeded demo user's.
 - **`schemathesis.toml`** sets the base URL and the shape of the run (one worker, 100 examples
   per operation, positive and negative inputs, all four phases, seed 42), loads `hooks.py`, and
-  runs every check. CI's conformance job runs this same file.
+  runs every check. CI's conformance job runs this same file (since 2026-09-24); until then the file
+  ran CI's four response checks and no others, and CI loaded neither file.
 
 **Measured on 2026-09-24**, against a local API on a LocalDB database just reset and seeded by
 `AzureBank.Seeder`, as CI's is, with the two lines above:
@@ -128,20 +130,24 @@ accounts and 137 audit events. Point it at a database you can throw away. Run as
 user, it also locks that user out: after one run on 2026-09-24, its next login answered 429
 `ACCOUNT_LOCKED`. Reset and seed the database before running as it again.
 
-Without the service key a run tests the API's front door and nothing behind it (ADR-0055).
-Measured on 2026-09-23: `schemathesis run docs/api/openapiv1.json --url http://localhost:5068`
-exited 1 after 33 failures, and every one of the 28 operations answered only 401
-`SERVICE_CREDENTIAL_REQUIRED` — in Schemathesis's words, "Missing authentication: 28 operations
-returned only 401/403 responses".
+Until 2026-09-23 this Quick Start was
+`schemathesis run docs/api/openapiv1.json --url http://localhost:5068`, with no service key.
+Measured that day, it exited 1 after 33 failures, and every one of the 28 operations had
+answered only 401 `SERVICE_CREDENTIAL_REQUIRED` — in Schemathesis's words, "Missing
+authentication: 28 operations returned only 401/403 responses". Since ADR-0055 it had tested
+the API's front door, and nothing behind it.
 
 ## Test Options
 
-Every command below was run on 2026-09-24.
+Every command below was run again on 2026-09-24, after the configuration started running every
+check.
 
 ### What every check found
 
-The Quick Start runs every check, and CI runs the same file. Beyond the four response checks,
-the input-side checks found eight failures when they were first run, and each is settled:
+The Quick Start runs every check since 2026-09-24, and CI runs the same file. Until then it ran
+CI's four response checks, and `--checks all` on top of it exited 1: five failures from the
+input-side checks CI left out on purpose, and three more that showed only once the first were
+gone:
 
 - `API accepted schema-violating request`, five times: an EMPTY `at` on
   `GET /api/accounts/{id}/balance`, an empty `ToDate` on `GET /api/transactions` and on
@@ -160,6 +166,9 @@ the input-side checks found eight failures when they were first run, and each is
   as ASP.NET Core does. The contract does not say the query is closed, so `schemathesis.toml`
   stops sending the list one, rather than the API starting to refuse them.
 
+This section was "Verbose Output" until 2026-09-23, which `--checks all` never had anything to do
+with, and "Every check, not only CI's four" until 2026-09-24.
+
 ### Specific Endpoint
 
 ```bash
@@ -167,8 +176,8 @@ schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapi
   --include-path-regex "/api/auth/.*"
 ```
 
-7 operations tested, exit 0. Not run again since: the document now holds 10 operations under
-`/api/auth/`.
+7 operations tested, exit 0. Not run again since revoke and session-stamps joined the contract,
+which puts 9 operations under `/api/auth/` in the document.
 
 ### Generate Report
 
@@ -228,12 +237,31 @@ Schemathesis automatically:
 | `hooks.py` | The service key and the token-road marker on every request, and a bearer token on every operation that is not anonymous: a throwaway user's, or the one `AZUREBANK_CONTRACT_TOKEN` hands over | ✅ imports — the runs above |
 | `README.md` | This documentation | — |
 
-CI runs both: its conformance job loads the configuration, and with it the hooks, after logging
-the seeded demo user in and handing its token over in `AZUREBANK_CONTRACT_TOKEN`.
+Both were v3-era until 2026-09-23, and 4.27.1 refused them. Measured
+again that day, before the repair, the configuration stopped at
+`Missing required properties: - 'title'` and `hooks.py` at
+`Hook 'before_call' takes 3 arguments but 2 is defined`.
+
+Two files were removed instead of repaired, each measured the same day first:
+
+- **`tests/contract/schemathesis.yaml`**, a v3 configuration. 4.27.1 reads TOML only — handed
+  this file it answers `The configuration file content is not valid TOML` — and the `--config`
+  flag in its own header is rejected: `No such option '--config'`.
+- **`run-contract-tests.ps1`**, at the repository root, which nothing referenced. Its login sent
+  no service key and fell back to "testing unauthenticated", it pointed `SCHEMATHESIS_HOOKS` at
+  the library's own `schemathesis.hooks`, and its run died on
+  `No such option '--hypothesis-seed'`, so it printed `CONTRACT TESTS FAILED (exit code: 2)`.
+  The Quick Start is what it was trying to be.
+
+CI runs both since 2026-09-24: its conformance job loads the configuration, and with it the
+hooks, after logging the seeded demo user in and handing its token over in
+`AZUREBANK_CONTRACT_TOKEN`. Until then it passed the token, the key and the checks as flags, and
+depended on neither file.
 
 ## Expected Output
 
-From the `Runtime conformance` job on `main`, run 35581244192, 2026-09-21, the tail of the run:
+From the `Runtime conformance` job on `main`, run 35581244192, 2026-09-21 — the tail of a real
+run rather than an illustration:
 
 ```
 =================================== SUMMARY ====================================
@@ -242,9 +270,21 @@ From the `Runtime conformance` job on `main`, run 35581244192, 2026-09-21, the t
 ```
 
 The operation count comes from the committed document, so it moves when the contract does; the
-step after the run fails the job if it drops below the floor. The document declares 31
-operations today, and the floor is 31: the 27 above is what that run tested. A full run at 31
-was measured by hand on 2026-10-04 (Quick Start, above).
+step after the run fails the job if it drops below the floor. **It has moved since that run**: the
+withdrawal mint took the document to 28 operations on 2026-09-21 (ADR-0056), revoke took it
+to 29 on 2026-09-28, `POST /api/auth/session-stamps` to 30 the same day (ADR-0057 §5.3), and the
+public demo's claim to 31 on 2026-10-03 (ADR-0063); the
+floor was raised with each, so the 27 above is what THAT run tested and not what a run tests today.
+A full run at 31 was measured by hand on 2026-10-04 (Quick Start, above); CI's own job had not
+run at 31 when this was written. *(Until 2026-10-04 this said no full run had been measured since
+session-stamps joined.)* The transcript is left as it was
+recorded rather than edited to match, because a quoted run that is quietly updated stops being
+evidence.
+
+*(What stood here until 2026-09-21 was an invented transcript: it announced `Collected API
+operations: 20` against a document that declares 27, listed `GET /api/users/search` — a route
+ADR-0014 deleted on 2026-07-17 — and ended `847 passed in 45.23s`, a figure no run produced. It
+was also the reason the Bruno collection called that same dead endpoint, found in #196.)*
 
 ## Troubleshooting
 
@@ -319,7 +359,8 @@ whoever answers. The Quick Start's `http://localhost:5068` involves no TLS at al
 
 `schemathesis.toml` already sets `workers = 1` and `request-timeout = 60`. On the command line,
 without the file or over it, they are `--workers=1` and `--request-timeout=60` — appended to the
-Quick Start line (measured with 30, exit 0). The timeout is in SECONDS. It is 60 because
-ADR-0058 gives every request except refresh, revoke and logout a 40 s deadline: a request
-stalled before its commit answers its documented 503 within 53 s, and the client has to outwait
+Quick Start line (measured with 30, exit 0). The timeout is in SECONDS: this page said 30000 until
+2026-09-21, which is eight hours and twenty minutes per request, not a generous timeout. It was 30
+until ADR-0058 gave every request except refresh, revoke and logout a 40 s deadline: a request
+stalled before its commit now answers its documented 503 within 53 s, and the client has to outwait
 it to see that answer.

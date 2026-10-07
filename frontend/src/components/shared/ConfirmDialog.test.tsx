@@ -18,7 +18,8 @@ import { ConfirmDialog } from './ConfirmDialog';
  *
  * It is opened by the two transfer pages, as their leave prompt, and by the demo's "Start over"
  * (src/features/demo/StartOverDialog.tsx), so the page behind has live controls on it, and on a
- * transfer page it is a money surface.
+ * transfer page it is a money surface. (Until 2026-10-05 this said it is reached from the
+ * delete-account confirmation and from both transfer confirmations.)
  */
 
 /** Renders the dialog with a focusable sibling, which is what focus escapes TO when it escapes. */

@@ -47,11 +47,12 @@ const useStyles = makeStyles({
   },
 
   /**
-   * A capped, centred measure, not two columns.
+   * A capped, centred measure — not the two columns the plan called for.
    *
-   * The page is a hero and one card, and two columns for one card is a column with nothing beside
-   * it. With no cap, on a 1440px screen a receipt with eight key-value rows stretches the full
-   * width and its labels end a screen away from their values.
+   * That line was written when this page carried several sections; H5 pruned it to a hero and one
+   * card, and two columns for one card is a column with nothing beside it. What was actually broken
+   * is that the page had NO media query at all, so on a 1440px screen a receipt with eight
+   * key-value rows stretched the full width and its labels ended a screen away from their values.
    */
   content: {
     flex: 1,

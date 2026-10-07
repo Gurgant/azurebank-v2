@@ -62,8 +62,10 @@ const useStyles = makeStyles({
  * route that 403s this way is the account-number reveal — a transfer's PIN goes to the
  * authorisation mint instead (ADR-0042) and never through here. The subtitle below says what
  * that one route asks the PIN for, so a second route that came to open this modal would need
- * words of its own. The user's PIN elevates the SESSION via /bff/auth/verify-pin; on success it
- * settles 'elevated' and the wrapper replays the original request. Because a
+ * words of its own. (Until 2026-10-06 the subtitle said "authorize this transfer", and this
+ * comment called it stale and left it to the UI/UX train.) The user's PIN elevates the
+ * SESSION via /bff/auth/verify-pin; on success it settles 'elevated' and the wrapper replays
+ * the original request. Because a
  * wrong PIN is HTTP 200 { verified:false } (never a 4xx), success is read from data.verified,
  * not the error channel. Closing the surface unmounts the form, so state resets per open.
  */
@@ -135,7 +137,8 @@ function StepUpForm() {
         setPin('');
       } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
         // A transport blip must NOT silently abandon what the PIN was asked for — keep the modal
-        // open so the user can retry the PIN without re-driving the whole flow.
+        // open so the user can retry the PIN without re-driving the whole flow. (Until 2026-10-06
+        // this said "abandon the transfer", which no longer comes through here.)
         setError("Couldn't verify right now — check your connection and try again.");
         setPin('');
       } else if (problem.status === 401) {

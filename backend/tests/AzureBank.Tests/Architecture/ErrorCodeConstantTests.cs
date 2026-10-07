@@ -99,9 +99,9 @@ public class ErrorCodeConstantTests
 
         // LIVENESS, and it is not ceremony. A scan that reads nothing reports clean forever, and
         // there is no way to tell that from a scan that read everything and found nothing. On PR #118
-        // a sibling guard in this folder reported clean while an offender sat in the tree, because
-        // one character had disabled its pattern; a scan whose input silently empties produces the
-        // identical green. Assert the input, not only the verdict.
+        // a sibling guard in this folder spent a whole session reporting clean while an offender sat
+        // in the tree, because one character had disabled its pattern; a scan whose input silently
+        // empties produces the identical green. Assert the input, not only the verdict.
         scanned.Should().BeGreaterThan(10,
             "the rule is only meaningful if it actually read the sources it claims to scan");
 
