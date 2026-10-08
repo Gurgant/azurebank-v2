@@ -23,7 +23,13 @@ $folder = if ($IsWindows) { Join-Path $env:LOCALAPPDATA 'AzureBank\deploy' }
 # What a what-if would change: the change and the type of each resource, and for a resource it
 # would modify, the properties that differ. Never a name, a value or the subscription.
 function Show-WhatIf([string]$File) {
-    (Get-Content -LiteralPath $File -Raw | ConvertFrom-Json).changes | ForEach-Object {
+    # A file that cannot be read, or an answer with no list of changes, stops the run: nothing is
+    # deployed on a what-if that was not shown. An empty list is an answer, and prints nothing.
+    $answer = Get-Content -LiteralPath $File -Raw -ErrorAction Stop | ConvertFrom-Json
+    if ($null -eq $answer -or $answer.PSObject.Properties.Name -notcontains 'changes') {
+        throw 'The what-if holds no list of changes.'
+    }
+    $answer.changes | ForEach-Object {
         $parts = ($_.resourceId -split '/providers/')[-1] -split '/'
         $type = @($parts[0]) + @(for ($i = 1; $i -lt $parts.Count; $i += 2) { $parts[$i] })
         $paths = if ($_.changeType -eq 'Modify') { ': ' + (@($_.delta.path) -join ', ') } else { '' }
@@ -38,6 +44,9 @@ function Invoke-Template([string]$Name, [string[]]$Override = @()) {
     $template = Join-Path $folder 'main.json'
     $parameters = Join-Path $folder 'parameters.json'
     $whatIf = Join-Path $folder 'what-if.json'
+    if (-not (Test-Path -LiteralPath $parameters -PathType Leaf)) {
+        throw "No parameter file in ${folder}: run ./infra/secrets.ps1 -Action New first."
+    }
     try {
         bicep build infra/main.bicep --outfile $template
         if ($LASTEXITCODE -ne 0) { throw 'The template did not compile.' }
