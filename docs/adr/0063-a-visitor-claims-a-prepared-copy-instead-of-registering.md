@@ -429,7 +429,7 @@ not know.
   the claim 404, its registration is open and its page is the built file. The change that adds
   the pool's job (ADR-0062, decision 13) is the one that turns the demo on, and it has to set:
   `Demo__Enabled=true` on the `api` and the `bff` containers as on the job; `Demo__ClientKeySecret`
-  on `api`, an eighth application secret where ADR-0061's decision 9 counts seven; and, until what
+  on `api`, the eighth application secret of the app (ADR-0061, decision 9); and, until what
   the BFF sees as a visitor's address behind the ingress has been measured,
   `Demo__Claim__MaxPerClientPerDay=1000` on `api` and on the job. No file under `infra/` sets
   `ForwardedHeaders:KnownProxies` ~~(`git grep -n "KnownProxies" -- infra` prints nothing)~~

@@ -291,8 +291,7 @@ that looks behind it, is in [`docs/runbooks/demo-pool.md`](../runbooks/demo-pool
   not through that parameter, which holds for every job and would let the migrate job be
   scheduled too. The policy has a second one, `scheduledJobs`, and a job whose name is in it
   may run on a schedule: `main.bicep` names `azurebank-pool`.)* The PIN pepper becomes a secret
-  of the job too, where ADR-0061's
-  decision 9 keeps it in the app. The job carries the identity `azurebank-app` and a connection
+  of the job too; until then only the app held it. The job carries the identity `azurebank-app` and a connection
   string like the one only the `api` container references today, where the deployment's
   read-back expected each database identity on exactly one resource. And the deployment identity
   holds its role on the app and the migration job and nowhere else (ADR-0061's decision 8). The

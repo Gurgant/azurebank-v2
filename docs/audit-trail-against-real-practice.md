@@ -41,7 +41,7 @@ the design is the mainstream answer to this problem, not an invention that needs
 guarantees that any tampering will be detected when the ledger data is verified". ADR-0044 reaches
 the same place in its own words — "the honest claim is narrow: this chain detects tampering by
 someone who holds the database but not the key" — and the verifier prints that limit above the green
-line rather than leaving it to be inferred. Since the key ring, both ADR-0044 and the verifier
+line rather than leaving it to be inferred. With the key ring, both ADR-0044 and the verifier
 state it as **not the key whose epoch that row falls in** — a retired key still recomputes its own
 epoch, and only its own.
 
