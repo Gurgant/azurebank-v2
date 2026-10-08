@@ -2,18 +2,18 @@
 
 **Human-led, multi-agent-assisted software development.**
 
-I build AzureBank alone, with four AI coding agents working under my direction. This page is the
-playbook: what I decide, the path a change takes from a plan to production, and what stands
-between an agent and `main`.
+I build AzureBank alone, with four AI coding agents working under my direction. Agents propose and
+build, mechanisms hold the line, and I decide. This page is the playbook: what I decide, the path
+a change takes from a plan to the live demo, and what stands between an agent and `main`.
 
 ## My role
 
 > I read the code I merge, and I do not merge what I cannot explain.
 
-- I designed the system, and part of the code I wrote by hand.
+- I designed the system and wrote part of the code by hand.
 - I decide what is built and in which order, and I set the rules the agents work under.
 - I approve each plan before work starts, and I examine and direct the work at every step.
-- I merge every pull request myself, and nothing is deployed without my approval.
+- I merge every pull request myself, and nothing reaches Azure without my approval.
 - Every commit on `main` carries my name: I answer for all of it.
 
 ## In numbers
@@ -37,34 +37,37 @@ Counted on 8 October 2026.
    break. Nothing is touched until I approve it.
 2. **Brief.** I decide what is handed to an agent. Each task becomes a brief that stands on its
    own: the result wanted, what was measured beforehand, the files the agent may touch, the
-   proofs it must run and what it hands back.
+   checks it must run and what it hands back.
 3. **Development.** Each agent works in its own git worktree, on its own branch, so two agents
-   never write in the same checkout. It commits locally and stops.
-4. **Checks.** Before a pull request exists, the gate runs: format, lint, build, the full test
-   suites, the generated contract. Agents report what they measured, never what they expected,
-   and a check counts only once it has been seen to fail.
-5. **Pull request.** One topic, fewer than 100 files, and a title that says the outcome.
-6. **Review.** Every pull request passes CI, a security scan and an AI review before I merge it.
-   Each finding is checked against the code, then fixed or declined with the reason written in
-   its thread.
-7. **Merge and deploy.** I merge. A merge deploys nothing: a deployment is started by hand and
-   waits for my approval.
+   never write in the same checkout at the same time. It commits locally and stops.
+4. **Checks.** Before a pull request exists, the gate runs on what the change touches: format,
+   lint, build, the test suites that need no running stack, and the generated contract. The rule
+   for every agent: report what was measured, never what was expected, and count a check only
+   after it has been seen to fail.
+5. **Pull request.** One topic, fewer than 100 files, and a title that says the outcome. CI then
+   runs everything, including the suites that need a real SQL Server, the running stack and a
+   browser.
+6. **Review.** Every pull request goes through CI, a security scan and an AI review before I
+   merge it. Each finding is checked against the code, then fixed or declined with the reason
+   written in its thread.
+7. **Merge and deploy.** I merge. A merge does not deploy the application: a deployment to Azure
+   is a run started by hand that waits for my approval.
 
 ## Who does what
 
 | Who | What |
 |---|---|
 | **Claude Code** | The orchestrator. It drafts the plan I approve, writes the briefs, runs the gate, opens the pull request and works through each review round. Then it stops: the merge is mine. |
-| **Codex, Cursor, Antigravity** | Three agents working in parallel, each in its own folder, from its own brief. I start each one myself. A branch of theirs is reviewed before it leaves the machine. |
-| **A second reader** | Where a mistake is expensive (money, access, a database migration) another agent reads the change with one task: to find what is wrong. |
-| **CodeRabbit** | AI review of every pull request. |
+| **Codex, Cursor, Antigravity** | Three agents working in parallel, each in its own folder, from its own brief. I start each one myself. The orchestrator reviews each of their branches before it leaves the machine. |
+| **A second reader** | Where a mistake is expensive (money, access, a database migration), another agent reads the change with one task: to find what is wrong. |
+| **CodeRabbit** | AI review, asked for on every pull request. |
 | **CodeQL** | Security scan of the C#, the TypeScript and the workflows. |
 
 Models are chosen per task: the most capable one orchestrates and verifies, a cheaper one does the
 mechanical work. One [`AGENTS.md`](../AGENTS.md) gives every agent the same commands, checks and
-rules. Two project skills hold the repeatable procedures: the pre-PR gate and the review round.
-Where a task needs a real browser, an agent drives Chrome through an MCP server and reports what
-it read.
+rules. Two agent skills hold the repeatable procedures: the gate before a pull request and the
+review round. Where a check needs a real browser outside the test suite, an agent drives Chrome
+through an MCP server and reports what it read.
 
 ## What stands between an agent and `main`
 
@@ -72,16 +75,19 @@ it read.
   nine required checks and a CodeQL scan. The rule set has no bypass list, so it binds my own
   account too.
 - **No agent merges: I do.** The orchestrator is stopped by a permission rule and a hook that
-  refuse the merge command before it runs. The other three work in folders that refuse a push.
-- **No deployment without me.** The live environment has a required reviewer and no admin bypass.
+  refuse the merge command before it runs. The other three are held one step earlier: their
+  folders refuse a push, and their brief ends at the local commit.
+- **Nothing reaches Azure without me.** A deployment is a run started by hand, and the live
+  environment has a required reviewer and no admin bypass.
 
 ## The contract between backend and frontend
 
-The API contract is generated by the backend, never written by hand, and a test fails as soon as
-the API and the committed contract differ. The frontend's types and runtime validators are
-generated from that contract, and CI fails if they drift. The client is tested against the real
-API, not only against a mock: one suite of contract assertions runs on both. A contract change
-ships first; the screen that uses it follows in a second pull request.
+The API contract is generated by the backend, never written by hand, and a test fails whenever
+the committed contract is not exactly what the API generates. The frontend's types and its
+runtime validators for the API are generated from that contract, and CI fails if they drift from
+it. The mock is held to the real API: one suite of contract assertions runs against both, and
+the client's data layer and the browser suite run against the real stack. A contract change ships
+first; the screen that uses it follows in a second pull request.
 
 ## Where to check
 

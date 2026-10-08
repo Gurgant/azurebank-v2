@@ -1,8 +1,10 @@
 # AGENTS.md
 
-For a coding agent that starts a task in this repository. It is the short form of
-[Engineering practices](docs/engineering-practices.md): where the two differ, that page is right.
-How the work is led, and by whom, is in the [Engineering Playbook](docs/engineering-playbook.md).
+What a coding agent needs at the start of a task in this repository. The reasons and the local
+setup are in [Engineering practices](docs/engineering-practices.md): where the two differ, that
+page is right. How the work is led, and by whom, is in the
+[Engineering Playbook](docs/engineering-playbook.md). Where this page says "I", it is me,
+Vladislav Aleshaev, the author of the repository.
 
 ## What this is
 
@@ -27,8 +29,8 @@ one document to read first.
 Backend, from `backend/`:
 
 ```bash
-dotnet build AzureBank.slnx
-dotnet test AzureBank.slnx
+dotnet build AzureBank.slnx --configuration Release
+dotnet test AzureBank.slnx --configuration Release --no-build
 dotnet format AzureBank.slnx --verify-no-changes
 ```
 
@@ -44,9 +46,14 @@ Deployment scripts and templates, from the root:
 python -m unittest discover -s infra -p 'test_*.py'
 ```
 
-Name the solution: a bare or a filtered `dotnet test` under-reports. The type gate is
-`npm run build`, not `tsc --noEmit`. The tests that need a SQL Server skip themselves unless
-`AZUREBANK_TEST_SQLSERVER` holds a connection string; CI runs them on a real one.
+Build in Release: warnings are errors there, as in CI. Name the solution and do not filter: a
+filtered run drops the BFF's suite and still reports success. The type gate is `npm run build`,
+not `tsc --noEmit`.
+
+These run without a stack. The tests that need a SQL Server skip themselves unless
+`AZUREBANK_TEST_SQLSERVER` holds a connection string, and three frontend suites need the real
+stack up: `npm run test:contract:real`, `npm run test:integration` and `npm run test:e2e`
+(`frontend/CONVENTIONS.md` says how to start it). CI runs all of them on every pull request.
 
 ## Before a change is called done
 
@@ -59,7 +66,7 @@ Name the solution: a bare or a filtered `dotnet test` under-reports. The type ga
   change the API and regenerate; the steps are under
   [Merging](docs/engineering-practices.md#merging).
 - A test that a decision record names is holding that decision. If it is in your way, the
-  decision is what to question, in words, before any edit.
+  decision is what to question, in writing, before any edit.
 - A change that moves money gets a test against a real host: a unit test cannot see a
   transaction boundary.
 
@@ -69,12 +76,13 @@ Name the solution: a bare or a filtered `dotnet test` under-reports. The type ga
   pull request.
 - A contract change is two pull requests: the endpoint with the regenerated contract and types
   first, the screen that uses them second.
-- The commands above are green before a review is asked for. A second, adversarial reader is
+- The commands above are green before a pull request is opened. A second, adversarial reader is
   added only where a mistake is expensive: money, access, a database migration.
 - Each finding of a review round is checked against the code, then fixed or declined with the
   reason. One commit answers the round, and every thread gets its reply.
-- A merge is proposed after a round with no finding, or after two rounds whose findings were all
-  minor and are fixed.
+- A merge is proposed when every required check is green on the last head, and either the last
+  round has no finding or two rounds in a row had only findings the reviewer marked minor, all
+  fixed.
 
 ## Writing
 
@@ -85,16 +93,19 @@ Name the solution: a bare or a filtered `dotnet test` under-reports. The type ga
   no note about what it used to say.
 - A comment explains a constraint the code cannot show. It does not restate the next line and it
   does not argue that the change is right.
-- No at-sign in front of a name in any text bound for GitHub: it notifies a real account.
-- A commit message ends with its last sentence, with no trailer of any kind.
-- No secret, account identifier, server name or address in a file, a message or a command line.
-  Secrets come from user-secrets or from the environment.
+- No at-sign in front of a name in any text bound for GitHub: it notifies a real account. The one
+  exception is the review bot's own handle in a request for review.
+- A commit message ends with its last sentence, with no trailer of any kind: one author answers
+  for `main`, and the tools are named in the Engineering Playbook.
+- No real secret, subscription or tenant identifier, database server name, mailbox or public IP
+  address in a file, a message or a command line. Secrets come from user-secrets or from the
+  environment.
 
 ## What an agent never does
 
-- **Merge.** I merge every pull request myself, and I approve every deployment.
-- **Push, or open a pull request, unless the task says so in words.** Otherwise stop at the local
-  commit and hand back what the task asks for.
+- **Merge.** I merge every pull request myself, and I approve every deployment of the application.
+- **Push, or open a pull request, unless the task says so explicitly.** Otherwise stop at the
+  local commit and hand back what the task asks for.
 - Write outside the folder it was started in, or switch that folder to another branch.
 - Rewrite history that has left the machine: no force-push, no rebase of a pushed branch. A
   branch that is behind takes a merge of `main`.
