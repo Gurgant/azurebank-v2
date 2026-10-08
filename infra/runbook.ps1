@@ -16,7 +16,9 @@
 #>
 $env:AZURE_EXTENSION_USE_DYNAMIC_INSTALL = 'no'
 $group  = 'azurebank-demo'
-$folder = Join-Path $env:LOCALAPPDATA 'AzureBank\deploy'   # where secrets.ps1 writes
+# Where secrets.ps1 writes the parameter file: the same folder, chosen by the same rule.
+$folder = if ($IsWindows) { Join-Path $env:LOCALAPPDATA 'AzureBank\deploy' }
+          else { Join-Path $HOME '.azurebank-deploy' }
 
 # What a what-if would change: the change and the type of each resource, and for a resource it
 # would modify, the properties that differ. Never a name, a value or the subscription.
@@ -33,17 +35,19 @@ function Show-WhatIf([string]$File) {
 # its changes, then the deployment. The answer of the deployment is one word; without --query az
 # prints the parameters back. $Override takes parameters such as 'denyPolicy=false'.
 function Invoke-Template([string]$Name, [string[]]$Override = @()) {
-    $template = "$folder\main.json"
+    $template = Join-Path $folder 'main.json'
+    $parameters = Join-Path $folder 'parameters.json'
+    $whatIf = Join-Path $folder 'what-if.json'
     try {
         bicep build infra/main.bicep --outfile $template
         if ($LASTEXITCODE -ne 0) { throw 'The template did not compile.' }
         az deployment group what-if --resource-group $group --template-file $template `
-            --parameters "@$folder\parameters.json" @Override --no-pretty-print --only-show-errors > "$folder\what-if.json"
+            --parameters "@$parameters" @Override --no-pretty-print --only-show-errors > $whatIf
         if ($LASTEXITCODE -ne 0) { throw 'The what-if failed.' }
-        Show-WhatIf "$folder\what-if.json"
+        Show-WhatIf $whatIf
         if ((Read-Host 'Deploy this? (yes/no)') -ne 'yes') { return }
         az deployment group create --name $Name --resource-group $group --template-file $template `
-            --parameters "@$folder\parameters.json" @Override --query properties.provisioningState --output tsv
+            --parameters "@$parameters" @Override --query properties.provisioningState --output tsv
         if ($LASTEXITCODE -ne 0) { throw 'The deployment did not succeed.' }
     } finally {
         Remove-Item -LiteralPath $template -ErrorAction Ignore
