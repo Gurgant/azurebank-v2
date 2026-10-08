@@ -230,8 +230,8 @@ tests {
 
 ### GitHub Actions
 
-The repository runs `.github/workflows/contract-tests.yml` on every pull request, on every push
-to `main`, and by hand. Its shape, and the reason for each part:
+The repository runs `.github/workflows/contract-tests.yml` on every pull request that targets
+`main`, on every push to `main`, and by hand. Its shape, and the reason for each part:
 
 ```yaml
 on:
