@@ -14,10 +14,11 @@ found a line wrong, the line is corrected and says what it said before.
 
 - **It is a pretend bank.** The money is invented. Nothing you do reaches a real account.
 - **You get a private copy.** One click gives you a bank account that no other visitor can see.
-- **The copy works for 24 hours.** After that no new sign-in to it is accepted. It is deleted later,
-  at a run of a job that runs every four hours on the public demo: a run leaves a copy alone until
-  five minutes after its end, and longer while somebody is still signed in to it; from 48 hours
-  after its end a run deletes it whoever is signed in.
+- **The copy takes sign-ins for 24 hours.** A session open at that moment goes on until it ends, at
+  most 60 minutes after its sign-in by default. It is deleted later, at a run of a job that runs
+  every four hours on the public demo: a run leaves a copy alone until five minutes after its end,
+  and longer while somebody is still signed in to it; from 48 hours after its end a run deletes it
+  whoever is signed in.
 - **Do not enter real personal data.** A description, an account name and a handle are yours to
   invent. The demo asks for no name, no address and no card of yours.
 - **It is not a product.** The sign-in page says so itself: "Demo project — not a real bank."
@@ -86,8 +87,9 @@ handles end in four characters of their own.
 The panel says it in three lines:
 
 - "Other visitors can't see this copy. It works until October 7, 2026 · 4:52 PM, then it is closed
-  and deleted." The date and the time are your copy's end, in your own time zone. "Deleted" is the
-  panel's short word: the deletion comes at a later run, as the first section says.
+  and deleted." The date and the time are your copy's end, in your own time zone. The panel's words
+  are short for what the first section says: from that moment no new sign-in is accepted, and the
+  deletion comes at a later run.
 - "PIN: 123456, unless you changed it"
 - `Contacts you can pay: @jane_02ga and @mike_02ga`
 
