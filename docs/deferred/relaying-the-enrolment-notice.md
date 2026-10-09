@@ -36,8 +36,8 @@ how to produce one, are in [`docs/notices/`](../notices/README.md).
 Detection. Whoever holds a stolen session and the account password can enrol a PIN, and whoever
 holds a session and the current PIN can change it (ADR-0047). The notice is the only thing that
 reaches the account's owner, and today it reaches a file that a person has to pass on. A sending
-relay turns that into seconds after the event, which is the property NIST SP 800-63B-4 §4.6 is
-written to provide.
+relay turns that into seconds after the event. NIST SP 800-63B-4 §4.6 requires the notice so that
+the account holder can detect fraud; it sets no delivery time.
 
 ## Why not here
 

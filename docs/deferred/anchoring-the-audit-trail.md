@@ -22,10 +22,10 @@ rejected (ADR-0044 D2). This page is about the second.
 
 ## What would close it
 
-**The ledger is not the whole answer.** SQL Server's ledger refuses an `UPDATE` or a `DELETE` of a
-committed row in the engine, which constrains somebody who holds a connection. It does not constrain
-whoever administers the server, who may drop the whole database. Only time issued by somebody else
-does.
+**The ledger is not the whole answer.** A SQL Server ledger table created with `APPEND_ONLY = ON`
+refuses an `UPDATE` or a `DELETE` of a committed row in the engine, which constrains somebody who
+holds a connection. It does not constrain whoever administers the server, who may drop the whole
+database. Only time issued by somebody else does.
 
 **The anchor** is a digest of the chain's tail, fixed at a point in time by a third party. An RFC
 3161 timestamp token does that: a Time-Stamping Authority (TSA) is handed a hash and returns a
@@ -54,8 +54,8 @@ an anchor that exists was not tampered with. Only a promise about when anchors a
 absent one should have been there.
 
 Two published systems make the cadence the mechanism, and both sign something over an interval in
-which nothing happened. AWS CloudTrail delivers a signed, chained digest file for every hour, also
-for an hour with no activity
+which nothing happened. With log file integrity validation enabled, AWS CloudTrail delivers a
+signed, chained digest file for every hour, also for an hour with no activity
 ([digest file structure](https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-log-file-validation-digest-file-structure.html)).
 A log under RFC 6962 that received no submission during its Maximum Merge Delay signs the same tree
 hash again with a fresh timestamp ([§3.5](https://www.rfc-editor.org/rfc/rfc6962)).

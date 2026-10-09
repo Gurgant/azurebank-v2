@@ -9,8 +9,8 @@ one against a real API and SQL Server on every pull request that targets `main`,
 ## Running Tests
 
 ```bash
-# The CLI. The workflow pins 4.1.0.
-npm install -g @usebruno/cli
+# The CLI, at the version the workflow pins.
+npm install -g @usebruno/cli@4.1.0
 
 # Everything below runs from the collection root, which is where bru insists on being.
 cd tests/api-collection

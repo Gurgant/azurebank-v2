@@ -46,8 +46,9 @@ runner rendered the notice and marked the row. A null `DeliveredAt` usually mean
 rendered it, and that a subscriber quoting this reference got it from somewhere else: a finding
 of its own. But a runner can render the file and stop before the mark (ADR-0048 D3). Look in the
 pickup directory for `<reference>.eml` first: if it is there the subscriber may be holding it,
-and the row is what to fix, by marking it by hand or by moving the file out for the next sweep
-to render again.
+and the row is what to fix: mark it by hand, setting `DeliveredAt` and `DeliveryReceipt` (the
+file name) in one statement, because the database refuses one without the other; or move the
+file out for the next sweep to render again.
 
 **`AuditEventId` is not null.** That is the audit row, and it must also be this notice's:
 

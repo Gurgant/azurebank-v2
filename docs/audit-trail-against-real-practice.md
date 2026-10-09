@@ -30,7 +30,7 @@ a schedule, and one principal administers everything.
 
 **Two things a reader of a banking piece looks for and does not find.** Absence carries no
 information: a missing anchor looks the same as a quiet fortnight, and CloudTrail and RFC 6962 both
-solve that with a cadence, not with linkage. And nothing outside the chain constrains writes to the
+solve that with a cadence on top of linkage. And nothing outside the chain constrains writes to the
 table: no engine `APPEND_ONLY`, no `DENY UPDATE` or `DENY DELETE`, no WORM storage, so **detection
 is the only layer there is**.
 
