@@ -33,7 +33,7 @@ docker compose run --rm migrate migrate --wait-seconds 120
   container's arguments are the command**: `["migrate"]`, `["seed"]`, `["recycle"]`,
   `["seed-pool", "5"]`. `compose.demo.yaml` at the root runs the demo's two commands (its header
   says how).
-- **Configuration comes from the environment only.** An argument is never read as a setting, and
+- **Configuration never comes from the arguments.** An argument is never read as a setting, and
   the parser prints back an argument it does not know, so no secret goes in the arguments. With no
   `DOTNET_ENVIRONMENT` the tool runs as Production. In Development the two required values come
   from the project's user-secrets instead (`docs/engineering-practices.md`, "Local setup"). The

@@ -128,7 +128,9 @@ sign-in details and nothing else. It is written in one place, where a claim's an
 (`src/features/auth/sessionMiddleware.ts`), and read through
 `src/features/demo/demoCopyStorage.ts` alone. Read the key at each ask and never copy it into a
 state or a module variable: that is how a second tab would go on holding a password the first
-was told to forget. Every kept value is rendered as text, the kept `pin` is never rendered, and
+was told to forget. The storage module holds one copy that way itself, the one a browser refused
+to store: while it does, that tab does not read the key, and what another tab forgot or replaced
+does not reach it. Every kept value is rendered as text, the kept `pin` is never rendered, and
 off the demo the key is never read. `SECURITY.md` names this key as the one exception, in demo
 mode, to its rule on web storage, and ADR-0063, "What the browser keeps in demo mode", has its
 shape and when it is removed.

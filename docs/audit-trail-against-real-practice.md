@@ -60,9 +60,10 @@ and the uncovered window buy, and why neither is the control. Row 9 is in
 The cheap demonstration would be a grant: the application's principal may `INSERT` into
 `AuditEvents` and is refused `UPDATE` and `DELETE`.
 
-**On a development machine** the API connects with `Trusted_Connection=True`, as a Windows account
-mapped to `dbo`, in `db_owner` and `sysadmin`. Measured against a scratch table: the engine refuses
-to record a `DENY` for that principal, and the delete goes through.
+**On a development machine** the API connects with `Trusted_Connection=True`, as the Windows account
+it runs under. The connection string selects that account and grants it no role. Measured on one
+such machine: the account is mapped to `dbo` and is in `db_owner` and `sysadmin`; against a scratch
+table the engine refuses to record a `DENY` for that principal, and the delete goes through.
 
 ```
 Cannot grant, deny, or revoke permissions to sa, dbo, entity owner,
