@@ -18,7 +18,7 @@ env:
   DOTNET_NOLOGO: true
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
 
-# Every job in the three workflows names its image, ubuntu-24.04. `ubuntu-latest` was that
+# Every job in the four workflows names its image, ubuntu-24.04. `ubuntu-latest` was that
 # image too (20260927.320.1, read in the jobs' logs on 2026-10-03), and GitHub moves the label
 # to Ubuntu 26.04 run by run from 2026-10-19 (actions/runner-images#14748), with no commit
 # here. Jobs take tools from the image and install none of them: python3, PowerShell 7 and
