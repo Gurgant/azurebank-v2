@@ -22,7 +22,7 @@ one document to read first.
 | `infra` | the Azure deployment: templates, scripts and their tests |
 | `docs/api/openapiv1.json` | the API contract. It is generated: never edit it by hand |
 | `docs/adr` | the decision records. Read the one a file cites before changing what it holds |
-| `docs/engineering-traps.md` | what fails silently here, and how each was caught |
+| `docs/engineering-traps.md` | what fails silently here, why nothing reports it, and what to do |
 
 ## Commands
 
@@ -59,8 +59,10 @@ stack up: `npm run test:contract:real`, `npm run test:integration` and `npm run 
 
 - Run the commands above for every part you touched and report the numbers you read: passed,
   failed, skipped. "Should pass" is not a result.
-- A check that prints nothing proves nothing until you have seen it fail. Break the thing once on
+- A new or changed check proves nothing until you have seen it fail. Break the thing once on
   purpose and watch the check go red.
+- A change to a page under `docs/` also runs the backend commands: architecture tests read the
+  pages.
 - The running API is the oracle for what the server does, never the mock. Where the two disagree,
   read the contract and the decision record first: if the API is right the mock changes, and if
   the API is wrong that is a defect to report, not a mock to bend.
@@ -85,6 +87,8 @@ stack up: `npm run test:contract:real`, `npm run test:integration` and `npm run 
 - A merge is proposed when every required check is green on the last head, and either the last
   round has no finding or two rounds in a row had only findings the reviewer marked minor, all
   fixed.
+- When several pull requests are proposed together, their combination is checked first: merged
+  in the proposed order on a scratch tree, then built and tested.
 
 ## Writing
 
@@ -111,7 +115,8 @@ stack up: `npm run test:contract:real`, `npm run test:integration` and `npm run 
 - Write outside the folder it was started in, or switch that folder to another branch.
 - Rewrite history that has left the machine: no force-push, no rebase of a pushed branch. A
   branch that is behind takes a merge of `main`.
-- Delete a branch: decision records cite merged branches as evidence.
+- Delete a branch: a squash leaves one commit on `main`, and the branch is where the commits
+  behind it stay.
 - Dismiss a finding without a reason that will still convince in six months, skip a test, or
   weaken a check to reach green.
 - Install a tool, add a dependency or move a pinned version without asking first, naming the
