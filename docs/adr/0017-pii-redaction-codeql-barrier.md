@@ -60,7 +60,8 @@ it at one site while the others log it in clear would make that line the only on
 read against the rest. So every placeholder in a log template has exactly one class:
 
 1. **Surrogate keys** (user, account, transaction, authorisation, token-row and notice ids) are
-   logged in clear: not credentials, not personal data, useless without the database.
+   logged in clear: not credentials, and they name nobody without the database. An id that
+   leads to a person is still pseudonymous personal data, and D4 applies to it.
 2. **Secrets** appear only as their first eight characters, through one helper, `SecretPrefix.Of`;
    the BFF's session id is the one secret any line names.
 3. **Direct identifiers** (a handle, a name, anything a person chose to be known by) never appear.

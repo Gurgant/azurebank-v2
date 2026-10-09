@@ -41,8 +41,9 @@ moved it. "Only reachable from the BFF" is a documented anti-pattern (OWASP, NIS
    data only for payment-initiation and account-information providers, Art. 97(1)(c) is a
    catch-all, and no legal review has been done. A closure has a subject, the account, so it
    does not share the exemption: it is authorised at the API on ADR-0042's rail (ADR-0049).
-7. **The SPA collects the PIN on the wizard's third step (`form → review → pin`), where Send is**:
-   a wrong PIN clears the boxes, a lock shows the server's `Retry-After`, no PIN set: `/pin-setup`.
+7. **The SPA collects the PIN on the wizard's third step (`form → review → pin`) and the sixth
+   digit sends**: a wrong PIN clears the boxes, a lock shows the server's `Retry-After`, and a
+   user with no PIN goes to `/pin-setup`.
 
 ## Rejected
 

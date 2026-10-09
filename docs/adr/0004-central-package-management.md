@@ -32,7 +32,9 @@ what the solution depends on means reading every project.
 
 ## Consequences
 
-- All projects use identical package versions: there is no version mismatch between projects.
+- Every package a project names resolves to the one version in the central file. A package that
+  arrives only as a dependency of another package can still differ between projects: transitive
+  pinning (`CentralPackageTransitivePinningEnabled`) is not turned on.
 - An upgrade edits one file; every dependency and its version can be reviewed there.
 - Project files are simpler: they carry no version attributes. `Directory.Packages.props` is
   committed with the solution.

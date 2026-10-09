@@ -19,7 +19,8 @@ two PIN models, a five-state idempotency protocol that fingerprints raw body byt
    (`VALIDATION_ERROR` synthesized for a 400 with `errors`, the step-up 403 recognized from
    `X-Auth-Level-Required` before the body, `retryAfterSeconds` from the body first). Retry is
    structural: queries only, transport and gateway failures only, never mutations.
-2. **No token ever reaches the browser.** Transport auth is the `__Host-` session cookie (ADR-0018).
+2. **No API token ever reaches the browser.** The access and refresh tokens stay in the BFF's
+   session; transport auth is the `__Host-` session cookie (ADR-0018), an opaque session id.
    Client auth state is `unknown | anonymous | authenticated | expired`, resolved by the one
    bootstrap probe (`GET /bff/auth/me`) and kept by string matchers on the RTK Query action shape,
    because the wire shape is the stable contract.

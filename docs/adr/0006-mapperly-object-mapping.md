@@ -36,8 +36,8 @@ compile time, must be open to a debugger, and must need little configuration.
 
 ## Consequences
 
-- A mapping has no runtime cost and is validated when the solution builds. The generated code is
-  readable in the IDE, under the `obj` folder.
+- A mapping runs as plain generated C#, with no reflection at runtime, and is validated when the
+  solution builds. The generated code is readable in the IDE, under the `obj` folder.
 - It costs a rebuild to see a mapping change, and it is less dynamic than AutoMapper: everything is
   decided at compile time.
 - Mapperly needs C# 9 and .NET 5 or later, which .NET 10 meets.
