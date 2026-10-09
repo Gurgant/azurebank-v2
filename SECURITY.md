@@ -1,10 +1,12 @@
 # Security Policy
 
-This is a solo portfolio project, not a service with users: it is not deployed, holds no real data,
-and has no supported version or response-time promise. To report a vulnerability, use GitHub's
-**private vulnerability reporting** on this repository (Security → Report a vulnerability), not a
-public issue. The most useful findings are about the cryptography, the authorisation rails and the
-audit trail, because those are where the project makes its claims.
+This is a solo portfolio project, not a production service with customer accounts: it is deployed
+only as a public demo, with invented data and registration closed, and has no supported version or
+response-time promise. What the demo is, and what it keeps of a visitor, is under [What the demo is,
+and is not](docs/testing/try-the-demo.md#what-the-demo-is-and-is-not). To report a vulnerability,
+use GitHub's **private vulnerability reporting** on this repository (Security → Report a
+vulnerability), not a public issue. The most useful findings are about the cryptography, the
+authorisation rails and the audit trail, because those are where the project makes its claims.
 
 _(This section used to promise a 48-hour acknowledgement and give `security@azurebank.example.com`
 as the address. `.example.com` is a domain reserved by RFC 2606, so mail to it reaches nobody.)_
@@ -75,8 +77,18 @@ as the address. `.example.com` is a domain reserved by RFC 2606, so mail to it r
   answered 500.)_
 - **The PIN pepper lives outside the database** (ADR-0011), and the audit trail's chain and anchor
   keys are separate secrets from each other and from everything else (ADR-0044).
-- **Nothing here configures a TLS version or encryption at rest.** The project is not deployed, so
-  neither is claimed. _(This section used to list "TLS 1.3 for all connections" and "Sensitive
+- **The public demo is served over HTTPS; no TLS version is claimed for it, and encryption at rest
+  is not verified.** The template turns plain HTTP off at the app's ingress (`allowInsecure: false`,
+  `infra/main.bicep`), and on 2026-10-03 a request over `http://` was answered 301 to `https://` of
+  the same name ([infra/README.md](infra/README.md#measured-on-azure), "Measured on Azure", step
+  21); so it was again on 2026-10-06, with the demo on. Which TLS versions that ingress accepts, and
+  its certificate, are the platform's own: this project did not set them and did not read them.
+  Towards the database the template sets a minimum of TLS 1.2 on the server (`minimalTlsVersion`;
+  read back as 1.2 on 2026-10-03, the same section, step 4), and the app's connection string asks
+  for encryption and for the server's certificate to be checked
+  (`Encrypt=True;TrustServerCertificate=False`). Encryption at rest is left to the database
+  service's own default: this project did not set it and did not read it, so none is claimed.
+  _(This section used to list "TLS 1.3 for all connections" and "Sensitive
   data encrypted at rest"; no code or configuration in the repository does either.)_
 
 ### Session Security
@@ -165,15 +177,18 @@ them in a minute.
 
 - **No tokens, session identifiers, PINs or personal data in web storage** — not in
   `localStorage`, not in `sessionStorage`, not in IndexedDB, and not in a persisted Redux store.
-  The `__Host-` session cookie described above is the deliberate exception for session state: it
-  is `HttpOnly`, so the page cannot read it, which is exactly why it is the right place for that
-  state. **In demo mode there is a second exception, and it is one key.** Where a deployment runs
-  with `Demo:Enabled` set, `localStorage["azurebank.demoCopy"]` keeps what signs in to the demo
-  copy a visitor claimed, so that the visitor can come back to it: the copy's address, its
-  generated password, the demo PIN, the handles of its two contacts and the instant it ends.
-  None of it is a real person's, a token or a session identifier: a copy is a throwaway account
-  of invented money that nobody registered for, and it is closed and deleted when its time is
-  over. With the demo off the key is never read, and no screen sends the claim that writes it.
+  The `__Host-` session cookie described above is the deliberate exception for session state: it is
+  `HttpOnly`, so the page cannot read it, which is exactly why it is the right place for that state.
+  **In demo mode there is a second exception, and it is one key.** Where a deployment runs with
+  `Demo:Enabled` set, `localStorage["azurebank.demoCopy"]` keeps what signs in to the demo copy a
+  visitor claimed, so that the visitor can come back to it: the copy's address, its generated
+  password, the demo PIN, the handles of its two contacts and the instant it ends. None of it is a
+  real person's, a token or a session identifier: a copy is a throwaway account of invented money
+  that nobody registered for, new sign-ins to it are refused when its time is over, and it is
+  deleted by a later run of the pool's job: a run leaves a copy alone until five minutes past its
+  end, and one that somebody is still signed in to until 48 hours past it, from when a run deletes
+  it whoever is signed in. With the demo off the key is never read, and no screen sends the claim
+  that writes it.
   [ADR-0063](docs/adr/0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md#what-the-browser-keeps-in-demo-mode-added-2026-10-05)
   has the key's shape, when it is removed, and what a script that read it would gain. _(Until
   2026-10-05 this called the cookie "the deliberate exception and the only one".)_

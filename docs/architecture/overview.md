@@ -195,10 +195,12 @@ Enrolling or changing the transfer PIN writes a `SubscriberNotice` in the same s
 row, which it names by id, so an enrolment whose notice cannot be recorded does not happen
 (ADR-0045, ADR-0047, ADR-0052). Delivery is a separate act: a runner claims owed rows under a lease
 and writes each as an RFC 5322 message into a pickup directory, at-least-once (ADR-0048).
-`Notices:Runner` says which runner is live — the API's own hosted loop, or the same sweep as an
-Azure Function on a timer, rehearsed locally against Azurite (ADR-0051) — and defaults to `None`: as
-shipped nothing delivers, and an owed notice waits for the operator's `notify` verb. Nothing is
-deployed and nothing sends: it stops at a file nobody has seen.
+`Notices:Runner` says which runner is configured — the API's own hosted loop, or the same sweep as
+an Azure Function on a timer, rehearsed locally against Azurite (ADR-0051) — and defaults to `None`,
+so notices are not sent automatically. To deliver a pending notice, run the `notify` command of the
+audit tool (`backend/tools/AzureBank.AuditVerifier`): it saves the notice as an `.eml` file in a
+folder you choose and marks it as delivered. Nothing in this repository sends e-mail, and the
+template that deploys the demo sets no runner.
 
 ## Keeping the two halves honest
 

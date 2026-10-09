@@ -6,6 +6,10 @@ React 19 SPA, SQL Server.
 [How it works](docs/architecture/overview.md) · [Decisions](docs/adr/README.md) ·
 [Security](SECURITY.md) · [Engineering practices](docs/engineering-practices.md)
 
+**[Try the live demo](https://azurebank.lemonmoss-e3015c47.italynorth.azurecontainerapps.io/)**:
+one press gives you a private copy of a bank account with invented money, with no sign-up. The
+first page can take about half a minute: the app sleeps when nobody is using it.
+
 [![CI](https://github.com/Gurgant/azurebank-v2/actions/workflows/ci.yml/badge.svg)](https://github.com/Gurgant/azurebank-v2/actions/workflows/ci.yml)
 [![Contract tests](https://github.com/Gurgant/azurebank-v2/actions/workflows/contract-tests.yml/badge.svg)](https://github.com/Gurgant/azurebank-v2/actions/workflows/contract-tests.yml)
 [![CodeQL](https://github.com/Gurgant/azurebank-v2/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/Gurgant/azurebank-v2/actions/workflows/github-code-scanning/codeql)
@@ -91,6 +95,17 @@ money rules. [How AzureBank works](docs/architecture/overview.md) follows one re
 
 ## Try it
 
+- **The live demo**, on Azure — a browser only:
+  <https://azurebank.lemonmoss-e3015c47.italynorth.azurecontainerapps.io/>. One press of **Try the
+  demo** gives you a private copy of a bank account with invented money: two accounts (Main Savings
+  €12,450.00 and Checking €2,300.00), two months of history and two contacts you can pay. The PIN is
+  `123456`, and the page shows it. The copy takes sign-ins for 24 hours; a session open at that
+  moment goes on until it ends. It is deleted later, by a job that runs every four hours: a run
+  leaves a copy alone until five minutes after its end, and longer while somebody is still signed in
+  to it; from 48 hours after its end a run deletes it whoever is signed in. So the deletion comes at
+  a run of the job, not at a set time. **Start over** gives you a fresh one. Don't enter real
+  personal data. The first page can take about half a minute. The journeys to try and the limits you
+  can meet are in [Try the demo](docs/testing/try-the-demo.md).
 - **The UI alone**, against a mock that runs in the browser — Node only:
   `cd frontend && npm ci && npm run dev:mock`, then sign in as `demo@azurebank.dev` / `Password1!`,
   PIN `123456`.
@@ -127,7 +142,17 @@ CodeQL analyses the C#, the TypeScript and the workflows on every pull request a
 
 ## Status and known limits
 
-- It runs locally and in CI; it is not deployed yet.
+- It runs locally and in CI, and since 2026-10-06 it is deployed as a public demo: one small
+  replica on Azure Container Apps that sleeps when idle, with Azure SQL Database and no database
+  password ([infra/README.md](infra/README.md)).
+- The first visit after a quiet spell is slow: the app sleeps when nobody uses it, and waking it
+  is the price. Measured once, on 2026-10-06, after it had gone to sleep: 27 seconds until the
+  first page arrived, then 6 seconds for the first request to the API; awake, the same two took
+  0.2 and 0.6 seconds.
+- The demo counts each visitor by their own network address, so
+  [the limits](docs/testing/try-the-demo.md#the-limits) that are for one network are that network's
+  own: measured on the deployed demo on 2026-10-07. An eleventh copy within 24 hours has not been
+  seen refused there.
 - axe runs in CI over nine pages and two dialogs and fails on any serious or critical finding
   except colour contrast, which is left to the UI/UX phase; the details are in
   [frontend/README.md](frontend/README.md).
