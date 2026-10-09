@@ -112,7 +112,8 @@ jobs:
             tests/AzureBank.Tests/TestResults/test-results.trx \
             tests/AzureBank.Bff.Tests/TestResults/bff-test-results.trx; do
             if [ ! -f "$trx" ]; then echo "::error::no result file at $trx"; exit 1; fi
-            passed=$(grep -o ' passed="[0-9]*"' "$trx" | head -1 | grep -o '[0-9]*')
+            passed=$(grep -o '<Counters [^>]*' "$trx" | head -1 \
+              | grep -o ' passed="[0-9]*"' | grep -o '[0-9]*')
             if [ "${passed:-0}" -eq 0 ]; then echo "::error::no passed count in $trx"; exit 1; fi
             total=$((total + passed))
             parts="${parts:+$parts + }$passed"
