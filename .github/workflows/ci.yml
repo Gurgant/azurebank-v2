@@ -99,6 +99,27 @@ jobs:
           --no-build --configuration Release
           --logger "trx;LogFileName=bff-test-results.trx"
 
+      # The totals as a notice on the run's own page. The logs are shown to a signed-in visitor
+      # only; a notice is shown to everyone, so the number a page quotes can be read here by anyone.
+      # A result file that is missing or counts nothing fails the step: a step that printed nothing
+      # would look the same as a notice nobody asked for.
+      - name: Test totals
+        working-directory: backend
+        run: |
+          total=0
+          parts=""
+          for trx in \
+            tests/AzureBank.Tests/TestResults/test-results.trx \
+            tests/AzureBank.Bff.Tests/TestResults/bff-test-results.trx; do
+            if [ ! -f "$trx" ]; then echo "::error::no result file at $trx"; exit 1; fi
+            passed=$(grep -o '<Counters [^>]*' "$trx" | head -1 \
+              | grep -o ' passed="[0-9]*"' | grep -o '[0-9]*')
+            if [ "${passed:-0}" -eq 0 ]; then echo "::error::no passed count in $trx"; exit 1; fi
+            total=$((total + passed))
+            parts="${parts:+$parts + }$passed"
+          done
+          echo "::notice title=Backend tests::$total passed ($parts)"
+
       - name: Upload test results
         uses: actions/upload-artifact@v7
         if: always()
@@ -242,9 +263,31 @@ jobs:
           npm run generate:zod
           git diff --exit-code src/api/generated/apiSchemas.ts
 
+      # The JSON report is for the step below. Naming reporters replaces the defaults, so the two
+      # this job had by default are named too: the console output and the annotations of a failure.
       - name: Test
         working-directory: frontend
-        run: npm test
+        run: >
+          npm test --
+          --reporter=default --reporter=github-actions
+          --reporter=json --outputFile.json="$RUNNER_TEMP/frontend-test-totals.json"
+
+      # The total as a notice on the run's own page, as the backend job does and for the same
+      # reason. A report that is missing, failed or counts nothing fails the step.
+      - name: Test totals
+        run: |
+          node -e '
+            const fs = require("fs");
+            const file = process.env.RUNNER_TEMP + "/frontend-test-totals.json";
+            if (!fs.existsSync(file)) {
+              console.log("::error::no report at " + file); process.exit(1);
+            }
+            const report = JSON.parse(fs.readFileSync(file, "utf8"));
+            if (!report.success || !(report.numPassedTests > 0)) {
+              console.log("::error::the report counts no passed test"); process.exit(1);
+            }
+            console.log("::notice title=Frontend tests::" + report.numPassedTests + " passed");
+          '
 
       # The MOCK half of the two-target contract suite (ADR-0029). It ran in no job at all until
       # now: `npm test` above excludes `src/contract/**` so a unit run never needs a stack, and the
