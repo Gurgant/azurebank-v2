@@ -138,7 +138,7 @@ CodeQL analyses the C#, the TypeScript and the workflows on every pull request a
 |---|---|
 | [How AzureBank works](docs/architecture/overview.md) | One document, complete on its own: how the money guarantee works and why the JWT never reaches the browser |
 | [ADR-0009](docs/adr/0009-idempotency-monetary-operations.md) and [ADR-0022](docs/adr/0022-client-money-mutation-protocol.md) | The money protocol, server and client halves: when the client keeps the key and when it spends it |
-| [Decisions](docs/adr/README.md) | Every decision with its alternatives and what it leaves open; the index names four to start with |
+| [Decisions](docs/adr/README.md) | The decisions, with the alternatives they rejected and what they leave open; the index names four to start with |
 | [Engineering traps](docs/engineering-traps.md) | The things that fail silently; each one cost real time to find |
 | [SECURITY.md](SECURITY.md) | The security posture in one place, including what is not done |
 
@@ -148,9 +148,9 @@ CodeQL analyses the C#, the TypeScript and the workflows on every pull request a
   replica on Azure Container Apps that sleeps when idle, with Azure SQL Database and no database
   password ([infra/README.md](infra/README.md)).
 - The first visit after a quiet spell is slow: the app sleeps when nobody uses it, and the entry
-  page starts it and shows the wait. Measured once, on 2026-10-06, after it had gone to sleep: 27
+  page starts it and shows the wait. Measured on 2026-10-06, after it had gone to sleep: 27
   seconds until the first page arrived, then 6 seconds for the first request to the API; awake,
-  the same two took 0.2 and 0.6 seconds.
+  the same two took 0.2 and 0.6 seconds. A second cold start, on another day, took 24.6 seconds.
 - The demo counts each visitor by their own network address, so
   [the limits](docs/testing/try-the-demo.md#the-limits) that are for one network are that network's
   own: measured on the deployed demo on 2026-10-07

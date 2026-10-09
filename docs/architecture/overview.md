@@ -233,8 +233,8 @@ ends with Playwright against the built SPA under its CSP (ADR-0029, ADR-0032, AD
 - **Schemathesis** on every pull request, driving the running API from the committed document and
   failing on a response the document does not declare (ADR-0053 D6).
 - Every pull request into `main` runs the full suite and CodeQL on three languages, and `main`
-  takes a merge only when they pass. An AI review is asked for by hand on pull requests, and each
-  pull request is merged by hand.
+  takes a merge only when they pass. An AI review does not start by itself: it is asked for on
+  each pull request. Each pull request is merged by hand.
 
 ## Where to go next
 
