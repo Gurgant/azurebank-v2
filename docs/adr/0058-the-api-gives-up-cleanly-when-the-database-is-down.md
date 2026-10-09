@@ -1,533 +1,120 @@
 # ADR-0058: The API gives up cleanly when the database is down
 
-**Status:** Accepted · **Date:** 2026-09-29 · **Decision Makers:** Vladislav Aleshaev ·
-**Amends** [ADR-0009](0009-idempotency-monetary-operations.md) (the claim's release and the stored
-answer get 3 s each, an empty success is never stored, a money 503 may say `applied: false`, and
-`ProcessingStaleAfter` is 2 minutes), [ADR-0044](0044-the-audit-trail-is-append-only-and-chained.md)
-(the tail bound's refusal is a 503, and an audited save asks whether its commit landed before it
-retries), [ADR-0057](0057-the-bffs-refresh-token-is-one-reusable-grant-per-session.md) §4.3 and §8
-(a tripwire row that cannot reach the database is a 503; the BFF waits 55 s on both of its roads),
-the retry budget quoted in [ADR-0021](0021-refresh-token-rotation-bff-remint.md),
-[ADR-0034](0034-failed-family-revoke-recovery.md) and
-[ADR-0036](0036-account-number-collision-recovery.md), and the BFF client's wait quoted in
-[ADR-0039](0039-bff-session-cache-is-a-fallback.md)
-
-## Preconditions
-
-Two things this decision rests on that no code in the repository enforces. Break either one and
-the sums under "The numbers" stop adding up. *(2026-10-01, ADR-0060: the second is met, and is
-struck below; the first remains.)*
-
-1. **One replica of the app, plus a second only while a revision replaces it.** The API's pool of
-   12 is sized so that two API processes and one job at 5 open at most 2 × 12 + 5 = 29 connections,
-   within the 30 concurrent logins and 30 workers of Azure SQL's Basic tier
-   (<https://learn.microsoft.com/en-us/azure/azure-sql/database/resource-limits-dtu-single-databases>).
-   A second steady replica makes it 41. The BFF keeps its sessions in memory, so it runs as one
-   replica anyway (ADR-0057); scaling out is a shared session store first, and this pool with it.
-   Any other process that opens the database through `AddInfrastructure` (the notice-relay
-   Function of ADR-0051, not deployed, and `backend/tools/AzureBank.AuditVerifier`) gets a pool of
-   up to 12 unless its settings say otherwise; one that runs beside the app sets
-   `Database:MaxPoolSize` so the sum stays within 30. *(2026-10-01, ADR-0060: the Seeder's
-   `migrate` is such a job, at 5. A deployment runs it to its end before it moves the app, so it
-   runs beside one API process, not two: 12 + 5, or 12 + 5 + 5 with a second job at 5 beside it.
-   Two jobs at 5 beside two API processes would be 34.)* *(2026-10-05,
-   [ADR-0064](0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md): the second
-   job is written. It is the pool job of the Azure deployment, which runs `recycle` every four
-   hours with the tools image's pool of 5: by itself beside the app, 12 + 5. A deployment does
-   not start while a run of it is in progress, by one read before any change. A run the
-   schedule starts after that read is not seen: beside the migration that is the 12 + 5 + 5
-   above, and beside two API processes while a revision is replaced it is 2 × 12 + 5 = 29,
-   because the migration has ended by then. The 34 would need both jobs beside two API
-   processes, which the order of a deployment does not produce. Arithmetic on the three pool
-   sizes: nothing of it has run on Azure.)*
-2. ~~**A migration run gets the same connection limits in its own change.** `dotnet ef` builds its
-   context from `DesignTimeDbContextFactory`, which sets its own options and applies no
-   `SqlConnectionDefaults`, so a migration run that way still opens with SqlClient's defaults
-   (15 s to connect, one connect retry, a pool of 100, pool blocking `Auto`). The seeder's
-   `reset`, which migrates through `AddInfrastructure`, has them. A deployment that migrates
-   through `dotnet ef`, or a bundle built from it, applies `SqlConnectionDefaults` in that factory
-   first.~~ *(2026-10-01, ADR-0060: met. A deployment migrates through the Seeder's `migrate`
-   command, which opens through `AddInfrastructure` and so has the limits and the retry budget.
-   `DesignTimeDbContextFactory` now applies `SqlConnectionDefaults` and the retry budget to the
-   string it reads from the API's settings. What remains: `dotnet ef … --connection` sets its
-   string after the factory has run, so that run retries with the budget and still opens with its
-   own string's values, which are SqlClient's defaults unless the string sets them.)*
+**Status:** Accepted · **Date:** 2026-09-29 · **Amended:** 2026-10-01 (ADR-0059, ADR-0060),
+2026-10-05 (ADR-0064) · **Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
-Measured on 2026-09-29 on the local compose stack, before this decision, with outage scripts
-that stop the SQL Server container ("refused": its name stops resolving,
-SQL error 11001), pause it (a hang) or pause the API. One run per row unless the row says
-otherwise.
+Before this decision a database outage answered a 500 with no `errorCode` and no `Retry-After`,
+after 15 to 37 s, and a paused API left the BFF waiting 100 s for an empty 504. EF's retries were
+logged nowhere, and locally SqlClient's pool kept handing out a cached error after the database was
+back. A token cannot interrupt a commit, so a late cancel can lose the answer to money that moved.
 
-| Outage | What the visitor got |
-|---|---|
-| Database refused, 60 s and 120 s, sign-in, signed-in read, transfer (6 runs) | **500** after 15.0 to 36.9 s, the generic body with no `errorCode` and no `Retry-After` |
-| Database hung, 60 s, sign-in and read | **500** at 35.0 s: the command's own timeout, SQL error −2 |
-| API paused 120 s, a proxied read | an **empty 504** at 100.0 s, YARP's own timeout, no `Content-Type` |
-| API paused 120 s, a sign-in | an **empty 500** at 100.0 s; the queued sign-in then ran when the API resumed and wrote a 60-minute grant 19.3 s after the visitor's 500 |
+## Preconditions
 
-Four things in those runs decided the shape of this record:
-
-- **Every outage was a 500,** which reads as a bug, and nothing told a client that trying again
-  was the right answer. One transfer failed on a pool-wait timeout while reading its idempotency
-  key: an `InvalidOperationException` that nothing classified.
-- **EF's retries were invisible.** EF raises its "retrying" event at Information and the hosts log
-  EF at Warning, so a request could spend its whole budget retrying and leave no line saying so.
-- **The API went on failing after the database was back:** the last 500 came 4.1 to 18.6 s after
-  the database answered again, and a request still retrying failed for longer. In the sign-in run
-  refused for 120 s the database answered again at 16:32:04.3 UTC, every open still failed within
-  about a millisecond with error 11001 until 16:32:27.0, and the first 200 came at 16:32:30.4,
-  26.1 s after. That matches SqlClient's pool blocking period as documented: after a failed open
-  the pool hands the cached error to every caller for 5 s, doubling up to a minute, without trying
-  the server. `Auto` turns it off for Azure SQL and on for everything else
-  (<https://learn.microsoft.com/en-us/dotnet/api/microsoft.data.sqlclient.poolblockingperiod>,
-  <https://learn.microsoft.com/en-us/sql/connect/ado-net/sql-server-connection-pooling>). If that
-  is the cause, locally EF's retries were replays that never reached the server, and no local run
-  said anything about Azure. It was: with only NeverBlock added to the commit before this decision,
-  the same two sign-in outages logged no error once the database answered again (Validation).
-- **The BFF waited 100 s** on both roads: its own client had `HttpClient`'s default, and the proxy
-  YARP's. The API had no bound of its own, and a frozen API cannot enforce one anyway.
-
-The tests this decision adds were run first on the commit before it, and three of them measured
-defects that were already there: a deposit whose commit failed transiently answered **201 with no
-ledger row**, a balance of 0 and its idempotency record still `Processing`
-(`DepositCommitFaultSqlServerTests`); a client that hung up after a deposit committed left an
-**empty body stored for replay**, and its retry was answered an empty 201
-(`RequestDeadlineSqlServerTests`); and a proxied call the API could not reach came back as YARP's
-**empty 502** (`BackendTimeoutTests`).
+1. **One replica of the app, plus a second only while a revision replaces it.** Held on Azure by a
+   Deny policy (ADR-0061), not by the app's code. The migration (ADR-0060) and a pool run (ADR-0064)
+   are jobs at 5: 12 + 5 + 5 beside one API process, never both beside two (arithmetic only).
+2. **A migration run has the same limits: met (ADR-0060).** Not covered: `dotnet ef … --connection`.
 
 ## Decision
 
-**D1 — The connection limits are code defaults, applied only where the connection string leaves
-them unset.** `SqlConnectionDefaults.Apply` writes `Connect Timeout=10`, `ConnectRetryCount=0`,
-`Max Pool Size=12` (the seeder: 5, in its own `appsettings.json`) and `Pool Blocking
-Period=NeverBlock` into the string every host opens through `AddInfrastructure`. A value the string
-sets wins, under any of its names (`Connection Timeout` is `Connect Timeout`). The three numbers are
-`Database:ConnectTimeoutSeconds`, `Database:ConnectRetryCount` and `Database:MaxPoolSize`,
-validated at the API's start. NeverBlock is what `Auto` already gives Azure, so Azure behaves as
-before and a local or CI outage now behaves like one on Azure. The API logs the limits it opened
-with once it has started, read back from the context it builds.
+- **D1: The connection limits are code defaults, and a value the connection string sets wins.**
+  `SqlConnectionDefaults` adds NeverBlock pool blocking, which `Auto` already gives Azure SQL,
+  because with it an outage ends when the database is back (validation on the compose stack).
+- **D2: EF is the only retry layer: 4 retries, a back-off capped at 10 s, each logged at Warning**,
+  because SqlClient's connect retry, set to 0, ran under each of EF's. −2 is not retried (ADR-0034).
+- **D3: Every request but three has a deadline, 40 s**: `RequestDeadlineMiddleware` gives it one
+  token that the deadline or a hang-up cancels. `RequestDeadlineUserManager` hands it to Identity,
+  because without it a sign-in ran to 64.06 and 82.74 s, past the BFF's 503 at 55.05 and 55.02 s.
+- **D4: Nothing cancels a commit that has started, and nothing lets one start after the deadline**,
+  because a commit checks its token only before it starts. `CommitGateInterceptor` refuses it after
+  the deadline or turns the deadline off; a failed commit turns it back on at its original instant.
+- **D5: A result that exists is sent**: `DeadlineResultFilter` turns the deadline off before a
+  result is written, because MVC's JSON formatter turns a cancelled write into an empty success.
+  Once a commit has started nothing cancels the write, so the answer stored for replay is whole.
+- **D6: An outage is one 503, and a client that hung up gets nothing**: `SERVICE_UNAVAILABLE` with
+  `Retry-After` and `no-store` (measured: `no-cache,no-store`, `Pragma: no-cache`, `Expires: -1`)
+  for a fired deadline, EF's spent retries, a pool-wait or bare timeout, and a `SqlException` EF
+  calls transient, or numbered −2, 35, 11001, 18401, 17197 or 17142, or of class 20 or more.
+  Anything else stays a 500; a gone client is answered 499 with no body. A deadline that cuts EF
+  short leaves the SQL numbers in EF's retry Warnings for the same request.
+- **D7: `applied: false` only when the answer knows it**: on a money 503, for a request that owns
+  the idempotency claim it made, has let no commit start and is younger than `ProcessingStaleAfter`
+  less 10 s, because money moves only in a gated commit. **A client never drops the key on
+  `applied: false`**, because one told so wrongly would pay again under a new key.
+- **D8: The idempotency bookkeeping has budgets of its own**: 3 s each to store an answer and to
+  release a claim, because each writes one row. An empty 2xx is never stored: it is a lost answer.
+- **D9: A stuck claim is stale after 2 minutes, not 10** (ADR-0009), because a claim whose release
+  failed holds its key at 409 `IDEMPOTENCY_IN_FLIGHT` until then, and no request runs that long.
+- **D10: An audited save asks whether its commit landed before it retries**, by looking for its own
+  audit row, because a transient fault at the commit ended in a deposit's 201 with no ledger row. It
+  asks once more under 3 s of its own when its token was cancelled after the commit was attempted.
+- **D11: The BFF waits 55 s on both roads, and answers the same 503 when it gives up**, without
+  `applied`: only the API knows. **The BFF never retries a visitor's request**; the SPA decides.
+- **D12: What is exempt**: refresh, revoke and logout carry `[NoRequestDeadline]` (ADR-0057 §4.3),
+  because a refused refresh's audit row must not be taken back by a hang-up and the other two are
+  short and idempotent. A fresh scope has no deadline either: a refusal's audit row (ADR-0044 D1).
 
-**D2 — EF is the only retry layer: 4 retries, the back-off capped at 10 s, each retry logged at
-Warning.** SqlClient's own connect retry is off (D1): it retried under each of EF's attempts, and
-one open of an unroutable address took 36.8 s (`AddObservability` records the measurement). A
-command timeout, −2, is still not retried, for ADR-0034's reasons.
-
-**D3 — Every request but three has a deadline, 40 s.** `RequestDeadlineMiddleware` runs inside
-`UseExceptionHandler`, before the service credential, authentication and the idempotency claim. It
-replaces `RequestAborted` with one token that either the deadline or the client hanging up cancels,
-and every action, service method and EF call takes it: `CancellationFlowTests` holds the actions,
-the service interfaces and every EF call in the API and Infrastructure to it, and CA2016, "forward
-the token", is an error in both projects. Identity's calls take it too. `AddIdentity` registers the
-base `UserManager`, whose token is always `None`, so a sign-in's lookup, its password check and
-every create or update through Identity ran with none. On the compose stack, with the database
-refused for 60 and 120 s, a sign-in went on through EF's whole retry budget and ended at 64.06 and
-82.74 s, after the BFF had answered its own 503 at 55.05 and 55.02 s. The API registers
-`RequestDeadlineUserManager`, which reads the deadline from the request's scope at each call, where
-a fresh scope and the three exempt endpoints find none, and `CancellationFlowTests` holds that
-registration. `RequestDeadline:Seconds`, 1 to 600, validated at start.
-
-**D4 — Nothing cancels a commit that has started, and nothing lets one start after the deadline.**
-A token can stop a commit from starting and can never interrupt one: SqlClient has no asynchronous
-commit, and `DbTransaction.CommitAsync` checks its token only before it starts
-(<https://github.com/dotnet/runtime/blob/release/10.0/src/libraries/System.Data.Common/src/System/Data/Common/DbTransaction.cs>).
-Cancelling a commit in flight can only lose its answer: the money moved, and the visitor is told to
-try again. So `CommitGateInterceptor`, at each commit of the request's own context, either refuses
-to let the commit start, because the deadline has already fired, or turns the deadline off; one
-lock decides which of the two comes first. A commit that fails turns the deadline back on at its
-original instant, and the request stays marked as one that started a commit. One hook covers the
-explicit commits (transfers, the withdrawal, set-primary, account closure), the audited saves and
-registration's, and the transaction EF opens around a save by itself, which raises the same events
-(no test here exercises that last one). Not gated: a context from a fresh scope (a refusal's audit
-row, the release of a claim, the PIN counters), the three exempt endpoints, and single statements
-outside a transaction. A money request moves money in exactly one gated commit, which
-`RequestDeadlineSqlServerTests` counts on the metric `azurebank.commit_gate.entered`: one per
-success, on each of the four endpoints.
-
-**D5 — A result that exists is sent.** `DeadlineResultFilter` turns the deadline off before any
-MVC result is written, because MVC's JSON formatter swallows a cancellation of `RequestAborted` and
-writes nothing under a status that already says success
-(<https://github.com/dotnet/aspnetcore/blob/release/10.0/src/Mvc/Mvc.Core/src/Formatters/SystemTextJsonOutputFormatter.cs>).
-`RequestAborted` becomes the client's token again for the write, except once a commit has started:
-then it stays the request's, which nothing can cancel any more, so the answer to a commit that
-landed is captured whole even for a client that has gone, and its retry is replayed the whole
-answer. A commit that failed turns the deadline back on (D4), and when the save then finds that
-commit landed after all (D10), the deadline may already have fired: that answer is written under
-no token. A commit whose landing the request cannot confirm has no answer to capture (residual
-risk 7).
-
-**D6 — An outage is one 503, and a client that hung up gets nothing.**
-`ServiceUnavailableExceptionHandler` answers **503** `SERVICE_UNAVAILABLE` with
-`retryAfterSeconds: 10`, `Retry-After: 10` and a `Cache-Control` that includes `no-store`, and logs
-a Warning with the route pattern (never the path, ADR-0017), the elapsed time, every SQL error
-number in the exception chain and the chain's types. The handler sets `no-store`; the header on the
-wire reads `no-cache,no-store`, with `Pragma: no-cache` and `Expires: -1`, which ASP.NET Core's
-exception-handler middleware sets as the response starts (measured on the compose stack). It walks
-the whole inner-exception chain, since EF wraps what failed. When the deadline cuts a request short
-while EF is still trying, the chain holds only the cancellation and the Warning reads
-`SQL errors []`: the numbers are in EF's retry Warnings for the same request, which carry its
-`RequestId` (measured in four such 503s, each cut during an open, with 11001 twice in those
-Warnings). A 503 for:
-
-| What failed | Why it is an outage |
-|---|---|
-| The request's deadline fired, whatever it threw | a cancelled command surfaces as whatever SqlClient and EF make of it |
-| EF's retries were spent (`RetryLimitExceededException`) | the database failed longer than the budget |
-| A `SqlException` EF's own detector calls transient, or numbered −2, 35, 11001, 18401, 17197 or 17142, or of class 20 or more | the database could not be reached or did not answer in time; EF's detector is asked directly, so the list cannot drift from what EF retries |
-| SqlClient's pool-wait timeout, matched by its English message: SqlClient ships translations, so the API sets its UI culture to the invariant one as it starts | its type, `InvalidOperationException`, is otherwise a bug |
-| A bare `TimeoutException` | |
-
-Everything else stays the 500 it was: a unique violation, a concurrency conflict, the application
-lock's own `THROW 50000`. That makes the audit tail's bounded read, a −2, a 503 (ADR-0044's note).
-`ClientAbortedExceptionHandler` runs first: if the client's own token is cancelled it sets 499 and
-writes nothing, because with the token reaching every database call a hang-up also surfaces as a
-`SqlException`, a `DbUpdateException` or a retry limit, and those were answered 500 at Error to a
-client that was gone. It logs at Debug only when the hang-up caused the failure (the deadline
-records the client as what cancelled the request before any commit started, or the chain holds the
-cancellation); anything else, such as an exempt endpoint's failure, whose calls never see that
-token, or a commit that failed after the client left, is a Warning with the SQL error numbers and
-the chain the 503 would have named. A refusal (a validation failure, or a domain exception below
-500) is not a failure: it is logged at Debug by its type, never its message.
-
-**D7 — `applied: false` only when the answer knows it.** On the four money endpoints, and only for
-a request that owns the idempotency claim it made (`OwnedIdempotencyClaim`, set after a claim that
-was not a replay) and has let no commit start, the 503 adds `applied: false` and says "nothing was
-changed". A money request moves money only inside a gated commit (D4), so no commit started means
-no money moved. The claim must also still be its own: another request with the same key takes a
-claim over once it is `ProcessingStaleAfter` old (D9) and may commit under it, and a process frozen
-that long cannot enforce its deadline. So the request, timed from when it arrived, must be younger
-than that age less 10 s (room for two processes' clocks while a revision replaces another); an
-older one, or one with no arrival stamp, leaves `applied` out. Anywhere else the key is left out, never set to a guess: a commit that started may
-have landed even if it failed, and a request that failed reading its key, claiming it or writing a
-replay cannot know what an earlier request with the same key did. *(2026-10-01: `applied: true`
-exists since this date, on the 409 `IDEMPOTENCY_RESULT_UNKNOWN` only, under the mirror of this
-rule: it is said only from a database read of the key's record made by the request that answers,
-which finds it committed (`Executed`, or `Completed` when a retried attempt reloads it) and
-holding the hash of this request's bytes: a record claimed with another body never says it for
-this one (ADR-0009's note of the same date). A 503 still never says `true`.)*
-**A client never drops the key on
-`applied: false`**: the flag changes what the visitor is told, never which key the retry uses. A
-client that keeps its key on every 503 is safe either way; one told "nothing was applied" when
-something was would pay again under a new key. The document declares `applied` on the four money
-503s ~~only~~, through the `MoneyServiceUnavailable` component, and the 503 on every operation
-(`ServiceUnavailableResponseTransformer`, `PublishedErrorContractTests`). *(2026-10-01: and on
-the four money 409s, inline in each 409's schema and with `true` as its only value
-(`IdempotencyOperationTransformer`); a 503's is still `false` only, and no other response
-declares the member.)*
-
-**D8 — The idempotency bookkeeping has budgets of its own.** Storing an answer for replay and
-releasing a claim on the error path get 3 s each, not the request's token: each writes one row, and
-when that takes longer the database is failing. An answer not stored leaves the record `Executed`
-and the 2xx is still sent; a claim not released stays `Processing`. An empty 2xx is never stored:
-no monetary success is empty, so an empty one is an answer lost while it was written, and a retry
-of its key gets `IN_FLIGHT`, then `RESULT_UNKNOWN`, never an empty replay. A replay, and an answer
-once stored, are sent under the client's own token; storing has its own 3 s (ADR-0009's notes).
-
-**D9 — A stuck claim is stale after 2 minutes, not 10.** A claim whose release failed while the
-database was down holds its key at 409 `IDEMPOTENCY_IN_FLIGHT` until `ProcessingStaleAfter`. A
-request now gives up at its deadline, lets no commit start after it and gives its release 3 s, so a
-claim two minutes old belongs to no request still running; a paused process is covered by the
-fence, since its commit carries the old `ClaimId` and aborts. The API refuses to start with a value
-less than a minute longer than `RequestDeadline:Seconds` (ADR-0009's note).
-
-**D10 — An audited save asks whether its commit landed before it retries.** It used to accept its
-changes before the commit, so a transient fault as the commit started rolled the work back and the
-execution strategy's re-run found nothing to save, committed an empty transaction and returned
-success: the deposit's 201 with no ledger row above. The save now keeps its changes pending until
-the strategy returns and runs through `ExecuteInTransaction`, which asks the database whether the
-save's own audit row, a client-side id, is there before it decides (ADR-0044's note). The strategy
-asks under the save's token, which the deadline cancels: a commit that fails turns the deadline
-back on (D4), and past its instant the deadline fires at once, so the question is refused or cut
-short. So when that token is cancelled after a commit was attempted, the save asks once more under
-3 s of its own, as the bookkeeping does (D8), and a row found is a success. Measured with a PIN
-change's acknowledgement lost after a 3 s deadline: 503 before, with the new PIN in place, and 200
-now (`DepositCommitFaultSqlServerTests`).
-
-**D11 — The BFF waits 55 s, on both roads, and answers the same 503 when it gives up.**
-`BackendApi:TimeoutSeconds` is its own client's `HttpClient.Timeout` and, through
-`BackendTimeoutConfigFilter`, every proxy cluster's activity timeout unless the cluster sets its
-own. The BFF's own timeout, an API it cannot reach, a connection that breaks while a proxied body
-is sent and a success it cannot read all answer the API's outage 503 (`SERVICE_UNAVAILABLE`,
-`retryAfterSeconds` 10, `Retry-After`, `no-store`), never with `applied`, since only the API can
-know, and the session is kept. Its own calls (sign-in, registration, re-authentication, the two
-PIN calls and rename) forward the API's 503 with its `Retry-After` and `Cache-Control`, which used
-to stop at the BFF. **The BFF never retries a visitor's request**: whether to send again is the
-SPA's decision. No route gets YARP's `Timeout`: YARP 2.3 reports that one as the client cancelling
-(<https://github.com/dotnet/yarp/blob/v2.3.0/src/ReverseProxy/Forwarder/HttpForwarder.cs>), a 400
-or a 502 the response transform cannot tell from a browser that hung up.
-
-**D12 — What is exempt, and why.** `POST /api/auth/refresh`, `/api/auth/revoke` and
-`/api/auth/logout` carry `[NoRequestDeadline]` (ADR-0057 §4.3, §4.4): they run to completion once
-started, and their commits are not gated. Refresh only reads for an active grant, and the audit row
-of a refusal must not be taken back by a caller that hangs up; revoke and logout are short and
-idempotent, and finishing one after the caller has gone only ends a session sooner. A refusal's
-audit row everywhere else is written on its own scope with no token (`RecordRefusalAsync`, ADR-0044
-D1). Health checks keep their own budget (`Audit:TailTimeoutSeconds`), and background services
-have no request. At the BFF, five calls are bounded more tightly than 55 s on purpose and stay as
-they were set: by ADR-0057 the renewal (30 s, detached), `/api/auth/revoke` (5 s, retried) and the
-session-stamp poll (5 s); `/me`'s read-through (5 s, then the cached copy), which came with
-ADR-0039; and the health probe (3 s, `BackendApiHealthCheck`). None writes anything a late answer
-could lose.
-
-## The numbers
-
-The waits nest, innermost first: a command inside the request, the request inside the BFF's wait,
-the BFF inside the ingress in front of it. `TimeoutChainTests` holds the chain against the settings
-each host ships and the code defaults behind them.
-
-EF's wait before retry *k*, for *k* = 0 to 3, is min((2^*k* − 1) × U[1, 1.1] s, cap), so the four
-waits add up to **12.1 s** at most. On Azure's throttling numbers — 40613, "database not currently
-available", the error a failover answers with, is one of them — EF adds 5 s to every wait: **32.1
-s** (<https://github.com/dotnet/efcore/blob/v10.0.1/src/EFCore/Storage/ExecutionStrategy.cs>,
-<https://github.com/dotnet/efcore/blob/v10.0.1/src/EFCore.SqlServer/SqlServerRetryingExecutionStrategy.cs>,
-the version this repository ships).
-The measured waits before this decision, 0, 1,013 and 3,257 ms, fit the formula.
-
-| Layer | Value | Why |
+| The numbers, innermost first | Value | Why |
 |---|---|---|
-| Connect timeout | 10 s | SqlClient bounds each login by it, and each BEGIN, COMMIT and ROLLBACK it sends as well (<https://github.com/dotnet/SqlClient/blob/v6.1.1/src/Microsoft.Data.SqlClient/netcore/src/Microsoft/Data/SqlClient/SqlInternalConnectionTds.cs>). 15 was SqlClient's. It did not bound an open to a name that does not resolve: on the compose stack those took 11.81 to 23.75 s |
-| Connect retries, pool blocking | 0, NeverBlock | One retry layer (D2); and an outage that ends when the database is back, as on Azure (D1) |
-| EF retries, back-off cap | 4, 10 s | 12.1 s of waiting, 32.1 s on the throttling numbers, which covers a failover: "Reconfigurations generally finish within 30 seconds" (<https://learn.microsoft.com/en-us/azure/azure-sql/database/planned-maintenance>). A longer one answers 503 |
-| Command timeout | 30 s, unchanged | Plus up to 5 s for SQL Server to acknowledge the cancel, the attention (`AttentionTimeoutSeconds` in SqlClient's `TdsParserStateObject`): 35 s, which is where the measured −2s landed, at 35.0 s |
-| **Request deadline** | **40 s** | Above 35, so a lone hung command answers with its own −2. Long enough for EF's 32.1 s of throttled waits and the attempts between them, so a failover can still succeed. And **40 + 5 (the attention) + 3 (the claim's release) + 5 (that release's attention) = 53 < 55**: every answer the API gives before a commit, `applied: false` included, reaches the visitor from the API. At 45 the sum is 58, and the BFF would turn a certain "nothing was changed" into "unknown" |
-| Release and store budgets | 3 s each | One row on a key; waiting on a failing database helps no one (D8) |
-| Max pool size | API 12, seeder 5 | 2 × 12 + 5 = 29 of Basic's 30 logins, under the first precondition |
+| Connect timeout | 10 s | SqlClient bounds each login by it, and each BEGIN, COMMIT and ROLLBACK: a COMMIT slower than it fails, its outcome unknown. Not an open to a name that does not resolve: 11.81 to 23.75 s on the compose stack |
+| EF retries, back-off cap | 4, 10 s | 12.1 s of waiting, and 32.1 s on Azure's throttling numbers, 40613 (a failover's error) among them: a reconfiguration [generally finishes within 30 seconds](https://learn.microsoft.com/en-us/azure/azure-sql/database/planned-maintenance). The budget ADR-0021, ADR-0034 and ADR-0036 quote |
+| Request deadline | 40 s | Above the 35 s at which a hung command answers −2 (30 s, plus up to 5 s for SQL Server to acknowledge the cancel). 40 + 5 + 3 (the claim's release) + 5 = 53 < 55: every answer before a commit, `applied: false` included, reaches the visitor from the API. At 45 the sum is 58. `ProcessingStaleAfter` is at least a minute above it, checked at start |
+| Max pool size | API 12, seeder 5 | 2 × 12 + 5 = 29 of the [30 logins of the Basic tier](https://learn.microsoft.com/en-us/azure/azure-sql/database/resource-limits-dtu-single-databases): two API processes while a revision replaces one, and one job at 5 (precondition 1). A second steady replica makes it 41 |
 | `retryAfterSeconds`, `Retry-After` | 10 | EF's cap: a client that comes back after it meets a database EF would have tried again by then. For machines: a visitor is told no time |
-| BFF client and proxy activity timeout | 55 s | Above the 53 |
-| A proxied request, worst case | 5 + 55 = 60 s | The session's renewal can spend 5 s before the request is forwarded; YARP restarts its activity timer after the request transforms. Under Azure Container Apps' ingress, "Request time out is 240 seconds" (<https://learn.microsoft.com/en-us/azure/container-apps/ingress-overview>) |
-
-When the API answers, by mode, reasoned from the numbers above. Measured on the compose stack
-(Validation): the local refusal's first two columns and a hung database's read on a pooled
-connection. Not measured: the Azure row, a hung new login, a hung money write and the after-commit
-column.
-
-| Outage | A read | A money write, before its commit | After its commit started |
-|---|---|---|---|
-| Azure refusal or failover (fails fast) | 503 once EF's retries are spent, 13 to 37 s, or at the 40 s deadline | within 40 s and a fast release | the commit fails fast and the deadline is back on: about 43 s |
-| Local refusal (compose: the database's name stops resolving) | 503 at the 40 s deadline, measured at 40.02 and 40.03 s: an open made alone took 11.81 to 12.09 s or 21.44 to 23.75 s, so two fit in 40 s, and one queued behind another request's open waited longer. A deadline that falls while an open is under way does not wait for it: set to 30 s, the 503 came at 30.05 s, 18.0 s into an open that had not ended | 503 at 40.03 s, measured on a transfer; another, queued behind a session-stamp call's open, at the 10 s pool wait (10.02 s) | not measured |
-| A hung database, new login | −2 in about 10 s (the login's connect timeout) | about 10 s and the release | n/a |
-| A hung database, pooled connection | −2 at about 35 s, or cut at 40 + 5 | **53 s at most** | up to 40 + 10 (the commit, bounded by the connect timeout) + 5 (its attention, not measured) + 3 + 5 (the save's second question, D10, and its attention) + 3 + 5 (the release and its attention) = 71 s: the BFF's own 503 comes first, at 55 s, and says the same thing, "unknown" |
-
-## What the deadline does to writes
-
-The claim is its own committed INSERT; `Executed` is saved in the same commit as the money; a
-started commit cannot be interrupted; and the work after a commit (writing the answer, storing it,
-sending it) observes a token. Three ways to put a deadline on that were weighed:
-
-- **Cancel everything:** rejected. A committed transfer could answer 503, "try again".
-- **Never cancel a write:** rejected. It loses the bound exactly where a hung database holds
-  connections longest.
-- **Chosen:** reads and every wait before a commit are cancelled; the gate decides whether each
-  commit may start; after that nothing is cancelled. ADR-0009's fence and its `Executed` flip are
-  untouched, a refused commit rolls back through the catch it already had, and an unknown commit is
-  ADR-0009's existing case, which the deadline cannot cause.
-
-| What happened | The first answer | The same key, sent again |
-|---|---|---|
-| Failed before any commit, the request owning its claim | 503 `applied: false` | Released: it executes (an expired step-up authorisation, after its 2 minutes, asks for the PIN again first). Not released: 409 `IN_FLIGHT` until the claim is stale, 2 minutes on; then a deposit executes, and a transfer or a withdrawal finds its authorisation expired, since its 2 minutes began before the claim, and asks for the PIN first. Never two debits |
-| Failed before the request owned a claim (reading the key, claiming it, writing a replay) | 503 without `applied` | the replayed 201, 409 `IN_FLIGHT`, or it executes |
-| A commit started and its outcome is unknown | 503 without `applied` | the replayed 201, `IN_FLIGHT` or `RESULT_UNKNOWN` |
-| The BFF stopped waiting | the BFF's 503, without `applied` | as above |
-| The client or the BFF hung up after a commit that landed and was answered | nothing: the client is gone | the whole 201, replayed |
-
-*(2026-10-01: where the third column says `RESULT_UNKNOWN`, the key's record was read `Executed`
-from the database with the hash of the same request bytes, so that answer carries `applied: true`
-(ADR-0009's note of that date); a record read `Completed` there is the replayed 201. The same 409
-is also a first answer, outside this table: a request whose retried attempt reloads its record as
-`Executed` or `Completed`, under the hash it claimed with, answers it with `applied: true`. The
-table's first answers are unchanged.)*
-
-### Residual risks
-
-1. **A key held after a failed release.** The release's 3 s also loses to a 10 s pool wait when
-   the pool is exhausted, and the key then answers 409 `IN_FLIGHT` until its claim is stale: two
-   minutes (D9).
-2. **A single statement outside a transaction can commit while a cancel races it:** a counted PIN
-   or sign-in attempt, which fails closed; a claim, which is released or goes stale; an unused
-   step-up authorisation, which expires in its 2 minutes; a new account, whose request still
-   answers 503, so a visitor who tries again opens a second, empty one (opening an account carries
-   no idempotency key). Money never moves outside a gated commit (D4).
-3. **After a commit, the rest of the request is bounded only by EF's budget and the 3 s store.** If
-   the database dies at that moment, the BFF's "unknown" arrives first (the last row of the table
-   above).
-4. **A frozen API cannot enforce its deadline.** Before this decision a queued sign-in wrote its
-   grant 19.3 s after the visitor had been answered. With it, measured once on the compose stack
-   with the API paused 120 s, before Identity took the deadline's token: the BFF answered its 503
-   at 55.02 s, and when the API resumed the queued sign-in answered 499 in 1.68 ms and wrote no
-   grant (0 new refresh-token rows 5.00 and 21.03 s later). A request frozen after its commit
-   started is not measured.
-5. **NeverBlock means every retry tries the server.** Microsoft's guidance is to keep `Auto` unless
-   a measured retry design says otherwise, because turning the blocking period off can turn an
-   outage into a storm of logins. This is meant to be that design: on Azure, `Auto` already is
-   NeverBlock, and the attempts are bounded by 4 retries on a back-off, a pool of 12 and a 10 s
-   connect timeout. The compose runs measured what a visitor is answered, not the load: no run
-   counted the logins the database received, so the storm is bounded by those numbers and not
-   measured.
-6. **An audited save's check can miss a commit that has not landed yet.** If the connection that
-   sent the commit dropped and the commit is still being applied when the re-run asks for its audit
-   row, the check reads "not there" and the save runs again. For a deposit the claim's fence stops
-   the second commit: with the check forced to answer "not there" after a commit that landed,
-   `DepositCommitFaultSqlServerTests`' lost-acknowledgement case answered 500 with one ledger row,
-   never two (a one-off run with the check modified; the suite does not hold it).
-7. **A commit whose acknowledgement is lost at or after the deadline.** A commit that fails turns
-   the deadline back on at its original instant (D4), so the question whether it landed runs under
-   a token that may already be cancelled. An audited save asks once more under 3 s of its own
-   (D10); only when that question fails too, the database still failing, does a deposit answer 503
-   without `applied`, and its key then answers `IN_FLIGHT`, then `RESULT_UNKNOWN`. Registration
-   asks under the request's token and has no second question: a registration that landed can
-   answer 503, and the same details sent again get the neutral 409 (ADR-0013), though the account
-   exists and its password signs in; or its question answers just before the deadline fires, the
-   grant written after it is cut, and the 201 comes without one. Read in the code, not measured.
+| BFF client and proxy timeout | 55 s | `BackendApi:TimeoutSeconds`, above the 53 (the wait ADR-0039 and ADR-0057 §8 quote). A proxied request takes 5 + 55 = 60 s at worst, since the session's renewal can spend 5 s first, under the [240 s of Azure Container Apps' ingress](https://learn.microsoft.com/en-us/azure/container-apps/ingress-overview) |
+| The BFF's shorter waits | 30, 5 and 3 s | The renewal (30 s), revoke, the session-stamp poll and `/me`'s read-through (5 s each) and the health probe (3 s) stay as ADR-0057 and ADR-0039 set them: none writes anything a late answer could lose |
 
 ## Rejected
 
-- **ASP.NET Core's `RequestTimeouts` middleware.** It answers only when an
-  `OperationCanceledException` reaches it, and a cancelled command surfaces as a `SqlException` or
-  whatever wraps one; it clears its feature on the way out, so the handlers could not tell a
-  deadline from a hang-up; and placed outside `UseExceptionHandler`, the handler's own
-  short-circuit for a cancelled request swallows it
-  (<https://github.com/dotnet/aspnetcore/blob/release/10.0/src/Middleware/Diagnostics/src/ExceptionHandler/ExceptionHandlerMiddlewareImpl.cs>).
-  The gate also needs one atomic "refuse, or turn the deadline off", which a linked token cannot
-  give.
-- **Writing the limits into every connection string** (17 strings in about 14 files). It misses
-  user-secrets and the Azure secret, and a string that carried them would silently override any
-  later code default.
-- **A 45 s deadline with the BFF at 60 s.** Every visitor waits 5 s longer, for more margin on a
-  failover that 40 s already covers.
-- **A BFF at 70 s,** to outlast the tails after a commit. It adds 15 s for everyone, for tails
-  whose honest answer is "unknown" either way.
-- **Answering 503 for a result that exists** because the deadline fired after the action returned.
-  The result is true, and it is sent (D5).
-- **A release budget sized by the time left before the BFF gives up.** It couples the API to the
-  BFF's number, and it cannot beat an exhausted pool anyway.
-- **Required tokens, with no default, on the service interfaces.** CA2016 as an error and
-  `CancellationFlowTests` already make a missing token fail the build or the suite.
-- **Rethrowing cancellations in registration.** After a commit that returned, the token cannot
-  fire; after one whose acknowledgement was lost and whose question then found it, it can
-  (residual risk 7), and a rethrow would turn that created account into a 503 as well, where now it
-  answers 201 without a grant.
-- **Retrying −2.** Unchanged, for ADR-0034's reasons: a timeout means the work was blocked, and
-  retrying it holds a connection for another 30 s.
-- **Aligning the application lock's timeout with the tail's.** The lock's `THROW 50000` stays a
-  500 while the tail's −2 is a 503; making them one answer is a separate decision.
+- Rejected: ASP.NET Core's `RequestTimeouts`, because the gate needs one atomic refuse-or-disarm.
+- Rejected: cancelling everything at the deadline, because a committed transfer could answer 503.
+- Rejected: never cancelling a write, because a hung database then holds its connections longest.
+- Rejected: the limits in every connection string, because it misses user-secrets and the Azure one.
+- Rejected: a 45 s deadline with the BFF at 60 s, because every visitor then waits 5 s longer.
+- Rejected: a BFF at 70 s, because the tails after a commit answer "unknown" either way.
+- Rejected: a 503 for a result that exists, because the result is true (D5).
+- Rejected: a release budget sized by the BFF's remaining wait, because an exhausted pool beats it.
+- Rejected: required tokens on the service interfaces, because CA2016 as an error already holds it.
+- Rejected: rethrowing cancellations in registration, because a created account would answer 503.
+- Rejected: retrying −2, because the work was blocked, and a retry holds a connection 30 s more.
+- Rejected: YARP's own route `Timeout`, because YARP 2.3 reports it as the client cancelling.
+- Rejected: one answer for the lock's 500 and the audit tail's 503, because it is its own decision.
 
 ## Consequences
 
-**Positive**
+- Every operation declares the 503. The audit tail's bounded read and a tripwire's audit row that
+  cannot reach the database answer it too (ADR-0044, ADR-0057 §4.3).
+- Costs: the SPA retries a read's 503 once (ADR-0059), about 45 s each; a pool of 12 is a ceiling.
 
-- An outage answers a JSON 503 a client can act on, inside the BFF's wait, and every 503 is logged
-  with the SQL error numbers that caused it, or, when the deadline cut the request short, after
-  EF's retry Warnings that carry them (D6). A retry is logged at Warning.
-- A money request that did nothing can say so, and a request that cannot know never guesses.
-- A request that is cancelled commits nothing afterwards, and a commit that started is answered.
-- A deposit, a rename, a reveal or a PIN set whose commit fails transiently no longer answers
-  success for work that never landed.
-- A local or CI outage behaves like one on Azure, so a local measurement means something.
+**Residual risks**, each one not covered:
 
-**Negative**
+1. **A key held after a failed release**: it answers 409 `IN_FLIGHT` until its claim is stale (D9).
+2. **A single statement outside a transaction can commit while a cancel races it**: a counted PIN or
+   sign-in attempt, a claim, a step-up authorisation, or a new account, which carries no key.
+3. **After a commit, the rest of the request is bounded only by EF's budget and the 3 s store**: up
+   to 71 s on a hung database, past the BFF's own 503 at 55 s.
+4. **A frozen API cannot enforce its deadline**; frozen after a commit started it is not measured.
+5. **NeverBlock means every retry tries the server**: no run counted the logins the database got.
+6. **An audited save's check can miss a commit that has not landed yet**, and the save runs again:
+   for a deposit the claim's fence stops the second commit, a 500 with one ledger row.
+7. **A commit whose acknowledgement is lost at or after the deadline**: a deposit can answer 503
+   without `applied`; a registration that landed can answer 503, then the neutral 409 (ADR-0013).
 
-- A read during a long outage waits longer before the SPA gives up: the SPA retries a read's 503
-  ~~up to 3 attempts in all (ADR-0057 §8)~~ *(2026-10-01,
-  [ADR-0059](0059-the-spa-tells-the-visitor-when-the-service-is-slow-or-down.md): once, after
-  the answer's `retryAfterSeconds`, 10 s here, and up to a fifth more, and only while that retry
-  still fits the read's two minutes)*, and each can take up to about 45 s (the deadline plus the
-  cancelled command's acknowledgement). ~~The SPA does not read `applied` or `Retry-After`
-  yet.~~ *(2026-10-01, ADR-0059: it reads both. `applied: false` changes the words of a money
-  send, never its key; the wait before a read's retry is the body's `retryAfterSeconds`, or the
-  `Retry-After` header's when the body has none.)*
-- A pool of 12 is a real ceiling. Twelve requests stuck on a hung database take every connection,
-  and the thirteenth waits up to the connect timeout for one; refresh, revoke and logout, which are
-  exempt, hold theirs to the end.
-- A COMMIT slower than the 10 s connect timeout fails where it used to wait 15, and its outcome is
-  unknown: a 503 without `applied`, then the replayed 201, `IN_FLIGHT` or `RESULT_UNKNOWN` on the
-  same key. Commit latency measured on the deployed tier would change the 10.
-- ~~Two preconditions live~~ One precondition lives outside the code, in this record.
-  *(2026-10-01, ADR-0060: the second was met.)*
+## Revisit when
 
-**Neutral**
+- More than one replica of the app, or a larger database tier: the pool of 12 is re-sized.
+- `Database:MaxRetryCount` above 4: at 5 the throttled waits, 47.1 s, no longer fit in 40 s.
+- SqlClient gains an asynchronous commit that honours its token, or a COMMIT on Azure nears 10 s.
+- The API is reached over a network (ADR-0057): the BFF's 55 s is derived again.
 
-- `CustomWebApplicationFactory` applies the same connection defaults and the commit gate to every
-  SQL Server test, so the suite runs on the pool of 12. Its own retry budget, when a test opts in,
-  stays 3 under 5 s.
-- The OpenAPI document and `schema.d.ts` declare the 503 on every operation; `apiSchemas.ts`,
-  which declares schemas and no operations, gains `retryAfterSeconds` and
-  `MoneyServiceUnavailable`. The Schemathesis run waits 60 s per request instead of 30, so a
-  stalled call shows the API's 503 rather than the client's own timeout
-  (`tests/contract/README.md`).
+## Verified by
 
-## Validation
-
-- `ConnectionDefaultsTests` and `RetryBudgetTests` build `AddInfrastructure` itself: the four
-  limits, a value the string sets winning under any of its names, the seeder's pool of 5, 4 retries
-  under 10 s, and a retry logged at Warning.
-- `RequestDeadlineTests` and `CommitGateInterceptorTests` drive the state machine on a fake clock:
-  the deadline and a commit in either order, a failed commit turning the deadline back on, a
-  client's hang-up after the gate cancelling nothing, a timer that fires after the request ended.
-- `DatabaseUnavailableSqlServerTests` and `RequestDeadlineSqlServerTests` run on SQL Server: a
-  missing database, a refused connection, an exhausted pool, a key lookup that fails transiently (a
-  503 without `applied`), a read, a sign-in and a transfer held past the deadline (the transfer's
-  503 says `applied: false`, balances unchanged, then the same key moves the money once), one gate
-  entry per money success, a stuck response store, a client hanging up before and after the
-  commit, and the exempt endpoints committing past the deadline.
-- `ServiceUnavailableExceptionHandlerTests` pins the mapping, including 4060, 40613, 11001 and 1205
-  to 503 and 2627 to 500; `CancellationFlowTests` the token flow; `DepositCommitFaultSqlServerTests`
-  the audited save; `BackendTimeoutTests` the BFF; `TimeoutChainTests` the chain.
-- **On the compose stack**, on 2026-09-30, with the outage scripts of the Context; one run per row
-  unless it says otherwise, times as the client saw them. The runs used this change before its last
-  review corrections, and the sign-in rows were run again after them (below).
-  - NeverBlock alone, added to the commit before this decision, sign-ins with the database refused
-    60 and 120 s: no error once the database answered again, where with blocking on the same
-    outages failed until 11.6 and 18.6 s after it; the first new sign-in got 200 1.74 and 8.56 s
-    after it (the second started as the database answered and took 8.56 s, with no error logged).
-  - Refused 10 s, a signed-in read, three runs: 200 in 14.84, 14.87 and 15.65 s.
-  - Refused 60 and 120 s, a signed-in read: the API's 503 at 40.02 and 40.03 s. A transfer during a
-    refused 60 s: the API's 503 at 40.03 s without `applied`, since the idempotency claim was the
-    call that failed and the request never owned it (D7); the same key once the database was back:
-    201 in 0.39 s, and one debit.
-  - Hung 60 s, a signed-in read: the API's 503 at 35.01 s, SQL error −2. Hung 10 s, a transfer:
-    201 in 9.27 s.
-  - The API paused 120 s, a proxied read: the BFF's JSON 503 at 55.02 s, where the Context has an
-    empty 504 at 100.0 s.
-  - After each database outage the same session's next request got 200 0.02 to 0.23 s after the
-    database answered again (7 runs), and a renewal refused during one, 503 after 10.03 s, kept its
-    session. No run of this change answered 500: the API's whole log over them, 384 lines, holds no
-    500 and no failing error handler, and the 63 requests the BFF abandoned were answered 499.
-  - An open to a name that does not resolve, made alone, took 11.81 to 12.09 s (15 of 20) or 21.44
-    to 23.75 s (5 of 20), not the 10 s connect timeout; opens queued behind others took longer. In
-    the four 503s at the deadline, the deadline cut an open that was under way and did not wait
-    for it.
-  - Sign-ins run again after those corrections, with the database refused 60 and 120 s: the API's
-    own 503 at 40.05 and 40.02 s, with `SERVICE_UNAVAILABLE` and `Retry-After: 10`, where before
-    them the BFF answered its own 503 at 55.05 and 55.02 s and the API went on to 64.06 and 82.74 s.
-    The deadline fired 0.06 s into the fourth open and 3.32 s into the third, and nothing of the
-    sign-in ran after the answer. A transfer run again with the database refused 60 s waited in the
-    pool behind a session-stamp call's open and got the 503 after 10.02 s, without `applied`; the
-    same key then got 201, and the money moved once.
-  - Not measured: the Azure row and the after-commit column of the table under "The numbers", a
-    hung new login, and the logins residual risk 5 is about.
-
-## What would change this
-
-- **More than one replica of the app, or a larger database tier:** the pool of 12 is re-sized with
-  it (the first precondition).
-- **`Database:MaxRetryCount` above 4:** at 5 the unthrottled waits (22.1 s) still fit in 40 s, and
-  the throttled ones (47.1 s) do not. Raise the deadline with it, and the BFF above the new sum.
-- **SqlClient gaining an asynchronous commit that honours its token:** the gate still decides
-  whether a commit starts; what a started commit does with a cancel is then to be measured again.
-- **The API reached over a network** (ADR-0057's first precondition): the BFF's wait then includes
-  a network, and 55 s is re-derived.
+`TimeoutChainTests`, `CancellationFlowTests`, `CommitGateInterceptorTests`, `BackendTimeoutTests`,
+`ServiceUnavailableExceptionHandlerTests`, `DatabaseUnavailableSqlServerTests`,
+`RequestDeadlineSqlServerTests`, `DepositCommitFaultSqlServerTests`, `ConnectionDefaultsTests`.
 
 ## Related
 
-- [ADR-0009](0009-idempotency-monetary-operations.md) — the fence and the `Executed` flip the gate
-  leaves untouched
-- [ADR-0017](0017-pii-redaction-codeql-barrier.md) — why the 503's log line names the route
-  pattern, not the path
-- [ADR-0022](0022-client-money-mutation-protocol.md) — the client keeps its key on every 5xx
-- [ADR-0034](0034-failed-family-revoke-recovery.md) — which SQL errors EF retries, and why −2 is
-  not one of them
-- [ADR-0044](0044-the-audit-trail-is-append-only-and-chained.md) — D1, the refusal rows the
-  deadline never cancels, and the tail bound
-- [ADR-0057](0057-the-bffs-refresh-token-is-one-reusable-grant-per-session.md) — the three exempt
-  token endpoints and three of the BFF's five shorter waits
+ADR-0009, ADR-0013, ADR-0017, ADR-0022, ADR-0034, ADR-0044, ADR-0057, ADR-0059, ADR-0060, ADR-0064.

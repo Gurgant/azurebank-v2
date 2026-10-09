@@ -1,162 +1,52 @@
 # ADR-0004: Central Package Management (CPM)
 
-**Status**: Accepted
-
-**Date**: 2026-01-10
-
-**Decision Makers**: Vladislav Aleshaev
-
----
+**Status:** Accepted · **Date:** 2026-01-10 · **Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
-Managing NuGet package versions across multiple projects in a solution becomes challenging as the solution grows. Without centralization:
-- Different projects may use different versions of the same package
-- Upgrading packages requires changes in multiple `.csproj` files
-- Version conflicts can cause runtime issues
-- Auditing package versions is difficult
-
-## Decision Drivers
-
-- **Consistency**: All projects should use the same package versions
-- **Maintainability**: Package upgrades should be simple
-- **Auditability**: Easy to see all packages and versions in one place
-- **Security**: Easier to track and update vulnerable packages
-
-## Considered Options
-
-1. **Central Package Management (Directory.Packages.props)**: NuGet's built-in CPM
-2. **Individual PackageReference**: Traditional per-project versioning
-3. **Directory.Build.props with variables**: Custom centralized versioning
-4. **Paket**: Alternative package manager
+The backend is one solution of several projects that share NuGet packages. With a version on every
+`PackageReference`, two projects can build against different versions of one package, an upgrade
+means editing several `.csproj` files, a version conflict can surface at run time, and auditing
+what the solution depends on means reading every project.
 
 ## Decision
 
-Use **NuGet Central Package Management** with `Directory.Packages.props` at the solution root.
+1. **Every NuGet package version is declared once, in `backend/Directory.Packages.props`, with
+   `ManagePackageVersionsCentrally` set to `true`**, because NuGet's own
+   [Central Package Management](https://learn.microsoft.com/nuget/consume-packages/central-package-management)
+   needs no extra tool, is supported by Visual Studio and VS Code, is Microsoft's own guidance for
+   .NET solutions, and can pin the version of a transitive dependency.
+2. **A project names a package with no `Version` attribute**, because every project then builds
+   against the same version and an upgrade is one edit in one file.
+3. **The file groups its packages by purpose, in labelled item groups**, because the whole
+   dependency list is then read and reviewed in one place.
 
-```xml
-<!-- Directory.Packages.props -->
-<Project>
-  <PropertyGroup>
-    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
-  </PropertyGroup>
+## Rejected
 
-  <ItemGroup>
-    <!-- ASP.NET Core -->
-    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.0-preview.1.25120.3" />
-    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0-preview.1.25120.3" />
-
-    <!-- Entity Framework Core -->
-    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.0-preview.1.25081.2" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.0-preview.1.25081.2" />
-
-    <!-- And all other packages... -->
-  </ItemGroup>
-</Project>
-```
-
-Projects reference packages without versions:
-
-```xml
-<!-- AzureBank.Api.csproj -->
-<ItemGroup>
-  <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
-  <PackageReference Include="FluentValidation.DependencyInjectionExtensions" />
-</ItemGroup>
-```
-
-## Rationale
-
-### Why Central Package Management?
-
-1. **Native NuGet Support**: Built into NuGet 6.2+ and .NET 6+
-2. **IDE Integration**: Full Visual Studio and VS Code support
-3. **No Additional Tools**: Unlike Paket, no extra tooling required
-4. **Microsoft Recommended**: Official Microsoft guidance for .NET solutions
-
-### Feature Comparison
-
-| Feature | CPM | Individual | Directory.Build.props | Paket |
-|---------|-----|------------|----------------------|-------|
-| Version centralization | ✅ Native | ❌ No | ⚠️ Manual | ✅ Yes |
-| IDE support | ✅ Full | ✅ Full | ⚠️ Partial | ⚠️ Limited |
-| Transitive pinning | ✅ Yes | ❌ No | ❌ No | ✅ Yes |
-| No extra tools | ✅ Yes | ✅ Yes | ✅ Yes | ❌ No |
-| Microsoft support | ✅ Yes | ✅ Yes | ⚠️ Unofficial | ❌ Community |
-
-### Benefits Realized
-
-1. **Single Source of Truth**: All 25+ packages defined in one file
-2. **Easy Upgrades**: Change version once, all projects updated
-3. **Dependency Audit**: Simple to review all dependencies
-4. **Consistent Builds**: No version mismatches between projects
+- Rejected: a version on each `PackageReference`, because nothing keeps the projects on one version
+  and the version of a transitive dependency cannot be pinned.
+- Rejected: version variables in `Directory.Build.props`, because the centralisation is manual, IDE
+  support is partial, the mechanism is not an official one and it pins no transitive version.
+- Rejected: Paket, because it is an extra tool, supported by its community only, with limited IDE
+  support.
 
 ## Consequences
 
-### Positive
+- All projects use identical package versions: there is no version mismatch between projects.
+- An upgrade edits one file; every dependency and its version can be reviewed there.
+- Project files are simpler: they carry no version attributes. `Directory.Packages.props` is
+  committed with the solution.
+- It costs flexibility: a project cannot take a different version of a package without an explicit
+  override. It needs NuGet 6.2+ and .NET 6+, which .NET 10 meets, and a developer who has
+  not met Central Package Management has it to learn.
+- Not covered: GitHub's dependency graph reads no version from this file, so no advisory is
+  matched against the backend's packages (see [`SECURITY.md`](../../SECURITY.md), "Dependencies").
 
-- All projects use identical package versions
-- Package upgrades require editing only one file
-- Easy to audit all dependencies for security vulnerabilities
-- Transitive dependency versions can be pinned
-- Better compatibility with Dependabot/Renovate
+## Verified by
 
-### Negative
-
-- All projects must use the same version (no per-project overrides without explicit configuration)
-- Requires NuGet 6.2+ / .NET 6+ (not an issue for .NET 10)
-- Learning curve for developers unfamiliar with CPM
-
-### Neutral
-
-- Project files are simpler (no version attributes)
-- `Directory.Packages.props` must be committed to source control
-
-## Implementation
-
-### File Location
-
-```
-AzureBank/
-└── backend/
-    ├── Directory.Packages.props    # Central version definitions
-    ├── Directory.Build.props       # Shared project properties
-    ├── AzureBank.sln
-    └── src/
-        └── ...
-```
-
-### Package Categories
-
-Packages are organized by category in `Directory.Packages.props`:
-
-1. **ASP.NET Core** - Web framework packages
-2. **Entity Framework Core** - ORM packages
-3. **Security** - Authentication, hashing
-4. **Validation** - FluentValidation
-5. **Mapping** - Mapperly
-6. **Logging** - Serilog
-7. **Documentation** - Scalar
-8. **Testing** - xUnit, Moq, FluentAssertions
-9. **Infrastructure** - YARP, Testcontainers
-
-## Validation
-
-Success criteria:
-- All projects use versions from `Directory.Packages.props`
-- No explicit versions in `.csproj` files
-- Solution builds successfully
-- Package restore works correctly
+- `dotnet build backend/AzureBank.slnx`: the solution restores and builds from the central file.
+- `grep -rn "PackageReference.*Version=" backend --include=*.csproj` prints nothing.
 
 ## Related
 
-- [ADR-0001: BFF Pattern](./0001-bff-pattern.md)
-- [Microsoft CPM Documentation](https://learn.microsoft.com/nuget/consume-packages/central-package-management)
-
----
-
-## References
-
-- [NuGet Central Package Management](https://learn.microsoft.com/nuget/consume-packages/central-package-management)
-- [.NET SDK CPM Support](https://devblogs.microsoft.com/nuget/introducing-central-package-management/)
-- [Transitive Pinning](https://learn.microsoft.com/nuget/consume-packages/central-package-management#transitive-pinning)
+ADR-0001.

@@ -1,65 +1,45 @@
-# ADR-0000: [Title]
+# ADR-NNNN: Title
 
-**Status**: [Proposed | Accepted | Deprecated | Superseded]
+**Status:** Proposed · **Date:** YYYY-MM-DD · **Decision Makers:** Vladislav Aleshaev
 
-**Date**: YYYY-MM-DD
-
-**Decision Makers**: [List names or roles]
-
----
+> Copy this file to `NNNN-short-title.md` with the next free number, replace each line of guidance
+> and delete this note. The statuses: [ADR Lifecycle](README.md#adr-lifecycle).
+>
+> - **Size.** One page: about 60 lines, 80 at most, in lines of at most 100 columns. A record whose
+>   items many places cite by number may reach 120, so that each cited item keeps a line.
+> - **Wording.** Present tense, the system as subject.
+> - **Corrections.** A record says what is true now. When the decision changes, the text is
+>   rewritten and the Status line gains `**Amended:** YYYY-MM-DD` with the decision or the ADR that
+>   amended it. No dated note and no struck text: the earlier wording is in the git history.
+> - **Numbers.** The file name, the number and the labels of the decisions never change: a
+>   withdrawn item stays under its label as "withdrawn, see ADR-NNNN".
 
 ## Context
 
-[Describe the context and problem statement. What is the issue that is motivating this decision?]
-
-## Decision Drivers
-
-- [Driver 1: e.g., performance requirement]
-- [Driver 2: e.g., security consideration]
-- [Driver 3: e.g., team expertise]
-
-## Considered Options
-
-1. **Option 1**: [Brief description]
-2. **Option 2**: [Brief description]
-3. **Option 3**: [Brief description]
+At most 8 lines: the problem, and the constraint that forces a choice.
 
 ## Decision
 
-[State the decision that was made. Be specific and actionable.]
+1. **What the system does, in one sentence**, because of the reason for it.
+2. **One item for each decision.** A table stays only as the contract itself, in at most 8 rows.
 
-## Rationale
+## Rejected
 
-[Explain why this option was chosen over the alternatives. Reference the decision drivers.]
+- Rejected: an alternative, because of the reason. One line for each alternative.
 
 ## Consequences
 
-### Positive
+- What is now true, and what it costs.
+- Not covered: a limit that is accepted. One line for each limit.
 
-- [List positive outcomes]
-- [Benefits realized]
+## Revisit when
 
-### Negative
+- Optional, at most 4 lines: an observable condition that would reopen the decision.
 
-- [List negative outcomes or trade-offs]
-- [Risks introduced]
+## Verified by
 
-### Neutral
-
-- [List neutral changes or migrations required]
-
-## Validation
-
-[How is this decision known to be successful? What metrics or indicators?]
+- `TestClassName` or `the command`: what it holds. At most 3 lines, of names that exist in the tree.
 
 ## Related
 
-- [Link to related ADRs]
-- [Link to related documentation]
-- [Link to relevant issues or discussions]
-
----
-
-## Notes
-
-[Any additional notes, references, or context not captured above]
+ADR-NNNN, ADR-NNNN: numbers only, on one line.

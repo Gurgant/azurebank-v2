@@ -1,251 +1,80 @@
 # ADR-0053: The committed contract is what the API generates
 
-**Status:** Accepted · **Date:** 2026-09-10 · Closes the half of the gap
-[ADR-0043](0043-the-document-declares-the-error-body.md) recorded in its Context — *"proves
-generated code matches the document and never that the document matches the server"* — that concerns
-the document, and says plainly that it leaves the other half open. One test, no endpoint, no
-production change, no new secret.
+**Status:** Accepted · **Date:** 2026-09-10 · **Amended:** 2026-09-11, 2026-09-14, 2026-09-15 (D6),
+2026-09-21 (ADR-0056), 2026-09-24 (D6), 2026-09-28 (ADR-0057), 2026-10-04 (ADR-0063)
 
 ## Context
 
-`docs/api/openapiv1.json` is generated from the API and committed, and everything on the frontend is
-generated from it: `schema.d.ts`, the Zod runtime validators, the contract tests. Three claims hang
-on that chain, and they are easy to run together:
-
-1. the generated client code matches the committed document;
-2. the committed document is what the code generates **today**;
-3. what the code generates tells the truth about what the server **does**.
-
-CI proved the first. Its two "up to date" steps regenerate the frontend artefacts FROM the committed
-document and fail on a difference. Nothing in CI proved the second: a document that fell behind the
-code regenerates to a matching stale output, and every gate stays green. The step's own comment said
-the opposite — *"spec drift becomes a red build, never a runtime surprise"* — and it was not
-measured.
-
-**Measured 2026-09-10, not argued.** A property was added to `SetPinRequest` and the document left
-alone. The `schema.d.ts` step and the Zod step, run exactly as `ci.yml` runs them, **both exited
-0**.
-
-A check that WOULD have noticed already existed, and nothing ran it:
-`node scripts/openapi-spec.mjs check`, documented in `docs/api/README.md`. It compares the whole
-document and exits 1 on any difference. It needs an API started in Development — which refuses to
-start until every validated secret is configured — and the README that documented it said, in a
-section this change then rewrote: *"It is not wired into CI, so a stale committed spec still passes
-every gate."*
-
-ADR-0043 had already named the gap while deciding something else, and that same README had already
-said what closing it would take — *"running this `check` against a live API in the pipeline … This
-script is what such a job would call;"* (quoted from `git show origin/main:docs/api/README.md`; the
-section exists from `4f5c732` until this change). This record takes a different route, and D1 says
-why.
+`docs/api/openapiv1.json` is generated from the API and committed, and the frontend is generated
+from it: `schema.d.ts`, the Zod runtime validators, the contract tests. Three claims hang on that
+chain: (1) the generated client code matches the committed document; (2) the committed document is
+what the code generates today; (3) what the code generates is what the server does. CI's two "up to
+date" steps prove the first, by regenerating the frontend artefacts from the committed document. A
+document that fell behind the code regenerates to a matching stale output, so those steps stay green
+and nothing proves the second. ADR-0043 names the gap; this record closes its document half.
 
 ## Decision
 
-**D1 — A test in the backend suite, not the script wired into a workflow.**
-`CommittedOpenApiDocumentTests` generates the document and compares it with the committed file.
+- **D1: A test in the backend suite, not the script wired into a workflow.**
+  `CommittedOpenApiDocumentTests` generates the document and compares it with the committed file,
+  because a test runs in the ordinary `dotnet test` gate, locally and in CI, with no API to start.
+- **D2: The document comes from the real composition, through `IOpenApiDocumentProvider`**, because
+  `AddOpenApi` registers it in every environment (public in Microsoft.AspNetCore.OpenApi 10.0.1) and
+  only the route, `MapOpenApi`, is gated to Development: the Testing host generates without HTTP.
+- **D3: Byte-exact, except for two things that belong to the machine and not to the contract**: the
+  file's line endings (Git stores LF, a Windows working tree writes CRLF) and the newlines inside
+  string values (`\r\n` in the committed file, `\n` expected from a Linux runner). The file is read
+  as bytes, so a BOM is a difference; `NoServersDocumentTransformer` keeps regeneration
+  deterministic. A failure names the first JSON paths that differ, committed → generated.
+- **D4: The writer's culture is fixed, and it is the `StringWriter` that holds it**: the test builds
+  it with `InvariantCulture`, because under it-IT, de-DE or fr-FR a plain writer serialises the
+  `multipleOf` constraints as `0,01`, which is invalid JSON. Pinning `CultureInfo.CurrentCulture`
+  alone does not hold; it stays as a second line of defence.
+- **D5: Regeneration is the same test with a flag, and it always fails.**
+  `AZUREBANK_REGENERATE_OPENAPI=1` writes the raw generated text and then fails, because a mode that
+  wrote and passed would make the gate a no-op the moment the variable leaked into CI.
+- **D6: This proves claim 2 and nothing about claim 3, whose guard is Schemathesis**, because a
+  generator that describes an answer the server never sends agrees with its own document. The
+  `conformance` job in `ci.yml` runs every Schemathesis check against the running API on every pull
+  request, through `tests/contract/schemathesis.toml` and its hooks, with its own SQL Server, a
+  bearer token from the real login, the version pinned at 4.27.1 and no `|| true`. A floor of 31
+  operations in its JUnit report fails a run that tested nothing. Bruno runs on each pull request.
 
-The script was declined on WHERE it runs and on what it can SAY — not on what it compares, and an
-earlier draft of this record said the opposite, which was wrong. Its `check` compares the entire
-document, schemas included, and fails on any difference; only its REPORT is limited to prose, so for
-a schema change it says *"the difference is elsewhere"* where this test names the JSON path. Where
-it runs is the larger reason: it needs a running Development API with every secret, so a CI job for
-it would have to start the API first — and the one workflow that already does, `contract-tests.yml`,
-is `workflow_dispatch` only, so wiring the script there would still gate no pull request. A test
-runs in the ordinary `dotnet test` gate, on every developer's machine and in CI's backend job, with
-no API and no secrets. The script is kept: it is still the route for checking a server that is
-actually running, and its prose report is still the better way to read what a regeneration did to
-the words a human wrote.
+## Rejected
 
-**D2 — The document comes from the real composition, through `IOpenApiDocumentProvider`, and the
-route does not matter.** The interface is public in Microsoft.AspNetCore.OpenApi 10.0.1 and is
-registered by `AddOpenApi` in every environment; only `MapOpenApi` — the ROUTE — is gated to
-Development. So the Testing host generates the document from the same `Program.cs` composition,
-without HTTP, without changing its environment, and with the test keys the fixture already supplies.
-
-This was measured before it was relied on, because a gate built on the wrong document would be green
-and false, which is the state it exists to remove. The document the Testing host generates, the one
-the API serves over HTTP in Development, and the committed file were **all 140,432 bytes and
-byte-identical** once the committed file's line endings were normalised. A second fixture forced
-into Development was declined: it changes the environment of a host to test one thing, and the
-provider needs no route.
-
-**D3 — Byte-exact, except for two things that belong to the machine rather than the contract.** The
-committed file is read as bytes, so a BOM — which a text read would strip — is a difference.
-Regeneration is deterministic; `NoServersDocumentTransformer` exists so that it is, because a
-`servers` block would carry whichever host served the request. A semantic comparison would pass a
-hand-edit that only reordered keys, which is still a document nobody generated. The two exceptions:
-
-- **The file's line endings.** Git stores it as LF (`git ls-files --eol` reads `i/lf w/crlf`) and a
-  Windows working tree rewrites all ~~4,307~~ 4,595 of them to CRLF. That is why a local byte count
-  of the checked-out file comes out ~~4,307~~ 4,595 bytes larger than what the API serves: the size
-  difference IS the line endings, and there is no other.
-  *(Corrected 2026-09-21: the document has grown since this was written and the count had not
-  followed. Measured on `c51b266` — the committed blob is 154,859 bytes with 4,595 LF and no
-  CRLF, the checked-out file 159,454 bytes with 4,595 CRLF, a difference of exactly 4,595. A
-  reader following the old number would have measured 4,595, concluded the difference was NOT
-  only line endings, and drawn the one conclusion this sentence exists to prevent.)*
-- **Newlines inside string values.** Twenty-four strings in the document — seven operation summaries
-  and seventeen descriptions, 47 line breaks between them — carry the generating machine's newline,
-  `\r\n` in the committed file, which was generated on Windows. A Linux runner is expected to
-  produce `\n`. **That is predicted, not observed**: converting a controller to LF on Windows did
-  NOT change the output, so the newline comes from the platform rather than from the source file,
-  and only a Linux run can show which. Normalising both sides makes the gate hold either way —
-  which is also why this pull request's CI run cannot settle it: a green backend job on Linux shows
-  the gate HOLDS there, and says nothing about which newline Linux emitted, because the comparison
-  normalises that away. The prediction stays a prediction until something reads the generated
-  document on a Linux runner.
-
-When the two differ, the failure names the first JSON paths that disagree, committed → generated,
-and reports a pure formatting difference as one rather than blaming the file for it.
-
-**D4 — The writer's culture is fixed, and it is the StringWriter that holds it.** Measured
-2026-09-10: written through a `StringWriter` that formats in the current culture, under it-IT, de-DE
-or fr-FR the six `multipleOf` constraints serialise as `0,01` — a bare JSON number with a comma,
-which is invalid JSON. The transformers set a `decimal`; the library formats it through the
-`TextWriter`'s format provider. The test builds its writer with `InvariantCulture`, and swapping
-each in turn showed that this is the line that holds: pinning `CultureInfo.CurrentCulture` alone did
-not. The pin stays as a second line of defence, for any transformer that formats text while the
-document is being generated rather than written. If the generator ever does produce invalid JSON,
-the test says so rather than surfacing a parser exception from line 3,347 of a document nobody is
-looking at.
-
-**D5 — Regeneration is the same test with a flag, and it always fails.**
-`AZUREBANK_REGENERATE_OPENAPI=1` makes the test write the file instead of comparing it, and then
-fail. A mode that wrote and passed would turn the gate into a no-op the moment the variable leaked
-into a CI environment: the build would regenerate the document it was meant to check and report
-agreement with itself. It writes the RAW generated text, under the fixed culture, so that on the
-machine that has always regenerated this file it reproduces it byte for byte and never mixes a
-newline change into a real one. It needs no running API and no secrets. The other route —
-`node scripts/openapi-spec.mjs regen` against a running Development API — is kept and writes the
-same bytes.
-
-**D6 — What this does NOT prove, stated where the gate is defined.** It proves claim 2. It says
-nothing about claim 3. ADR-0043's own defects were of that third kind — a transformer declaring 400s
-on routes the router answers with 404, empty 401/403/404 bodies where the server writes JSON — and
-this gate would have passed on every one of them, because the code generated the same error it
-described. Truth about runtime behaviour is Schemathesis's job and the real-stack suites', and
-~~Schemathesis is doubly not a gate: it ends its step with `|| true  # report, don't gate`, in a
-workflow that only runs when somebody starts it by hand. Neither is changed here.~~
-
-_Moved 2026-09-15, as the bullet under "What would change this" said it would. Schemathesis is a
-gate: the `conformance` job in `ci.yml` runs its four response-conformance checks — status code,
-media type, headers, body schema — against the running API on every PR, with its own SQL Server, a
-bearer token from the real login, the version pinned at 4.27.1, no `|| true`, and a floor of
-~~27~~ ~~28~~ ~~29~~ ~~30~~ 31 operations in the JUnit report so a run that tested nothing cannot pass
-*(raised 2026-09-21 with the withdrawal mint, ADR-0056, twice on 2026-09-28, with
-`POST /api/auth/revoke` and `POST /api/auth/session-stamps`, ADR-0057, and on 2026-10-04 with the
-demo's claim, `POST /api/auth/demo/claim`,
-[ADR-0063](0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md), which the document
-has declared since 2026-10-03. The job starts the API with the demo off, where the claim answers
-its declared 404 to every request: run by hand on 2026-10-04, that was two warnings and no
-failure, 31 operations tested and 32 test cases in the report, ADR-0063's Validation)*.
-Claim 3 has its guard.
-What its first run found, against a document every gate here had passed: `415` on all fifteen
-operations that take a body (the framework's refusal of a non-JSON body, never declared), a second
-`404` on the eight operations of the six GUID-constrained routes (a segment that is not a GUID
-matches no route and comes back as `application/problem+json`, which the
-`NotFoundResponseTransformer` note had described and deliberately left undocumented), and one real
-defect: `PATCH /api/accounts/{id}/set-primary` answered 500 on SQL Server, whose
-one-primary-per-user index refused a single SaveChanges that updated the new row before the old —
-`SetPrimarySqlServerTests` pins it, red before the fix. The manual workflow's Schemathesis job and
-the `schemathesis/` hooks folder are gone; Bruno stays manual there._
-
-_Widened 2026-09-24. The `conformance` job runs every check, not only the
-four, and runs them through `tests/contract/schemathesis.toml` and its hooks — the files a developer
-runs — so a broken configuration is a red job as well. The input-side checks had stayed out because
-the API failed them: it read an empty query value as an absent one and answered 200 (fixed
-first). The configuration declares what the checks must be told: the two decided 404s (ADR-0056
-D4, ADR-0042) and the transaction list's unknown query parameter. The seeded demo user's token
-reaches the hooks, as the bearer reached the flags before. And Bruno, left manual above, runs on
-every pull request too._
+- Rejected: `node scripts/openapi-spec.mjs check` in a workflow, because it needs a running
+  Development API with every secret and names no JSON path. The script is kept for a running server.
+- Rejected: a second test fixture forced into Development, because it changes a host's environment
+  to test one thing, and the provider needs no route.
+- Rejected: a semantic comparison, because it passes a hand-edit that only reorders keys.
 
 ## Consequences
 
-**Falsified before it was trusted, and every case re-run on the final code**, each read for the
-reason it gave rather than its exit code:
+- A stale committed document fails the backend suite on every run, local and CI alike.
+- Guard on the guard: the test asserts at least 20 operations, so an empty document cannot agree
+  with an empty regeneration; 20 is below the real count on purpose, so that a deletion passes.
+- The served document has no culture defect (the one once recorded here is withdrawn): `MapOpenApi`
+  builds its own writer with `InvariantCulture`. D4 is about the test's writer only.
+- Operation titles: each action's `<summary>` is a short title, held by
+  `PublishedOperationTitlesTests` to one line of at most fifty characters, and the prose is in
+  `<remarks>`. The `[EndpointSummary]` attributes never reached the document and are deleted.
+- What D6's `conformance` job catches and this test cannot: its first run found `415` on every
+  body-taking operation and a route-miss `404` as `application/problem+json`, neither declared, and
+  a `500` from `PATCH /api/accounts/{id}/set-primary` on SQL Server. Its configuration declares the
+  two decided 404s (ADR-0056 D4, ADR-0042) and the transaction list's unknown query parameter.
+- Not covered: the newline a Linux runner emits is predicted, not observed: the comparison hides it.
 
-- a property added to a DTO → red, naming
-  `$.components.schemas.SetPinRequest.properties.zzFalsificationSentinel: only in the generated document`,
-  while both frontend gates stayed green on the same tree;
-- the committed title hand-edited → red, naming `$.info.title`, committed → generated;
-- the committed file re-indented, same JSON → red, reported as a formatting difference;
-- a BOM added to the committed file → red;
-- the committed file's 47 in-string `\r\n` rewritten to `\n`, as Linux is expected to produce →
-  green;
-- the writer's culture switched to it-IT → red, with the readable invalid-JSON message;
-- regeneration mode → failed as designed, wrote exactly the committed content (140,432 bytes, empty
-  `git diff`), and the gate then passed without the flag.
+## Revisit when
 
-⚠️ **Two of the first runs used a stale binary, and one of them failed for the wrong reason.** The
-DTO was restored with `mv` from a backup taken before the mutation, which gave the source file the
-backup's older timestamp — older than the DLL built with the mutation in it. MSBuild's incremental
-check saw a source older than its output and did not recompile, so the next two runs still generated
-the sentinel property, and the hand-edit falsification went red because of THAT. It was caught only
-because the failure message was read. Recorded in `docs/engineering-traps.md`.
+- The Testing and Development compositions, measured identical, diverge: the gate goes red on a path
+  the change did not touch. The divergence is fixed, not regenerated into the contract.
+- A second document: `v1` is resolved by name, and a `v2` needs its own file, case and floor.
 
-**A guard on the guard.** The test asserts the generated document carries at least 20 operations
-(~~27~~ 28 today), so a provider resolved for the wrong name, or a host composed without its
-controllers, cannot produce an empty document that agrees with an empty regeneration. The 20 is
-deliberately BELOW the real count and stays there: tracking the count would make every honest
-endpoint deletion red here.
+## Verified by
 
-**Two defects found on the way, recorded and deliberately NOT fixed here**, because each changes the
-product rather than the gate — ⚠️ *and the first of them is withdrawn, see the note under it:*
+- `CommittedOpenApiDocumentTests`, `PublishedOperationTitlesTests`, `SetPrimarySqlServerTests`.
+- The `conformance` job in `.github/workflows/ci.yml`.
 
-- ~~**The API serves invalid JSON on a server with a comma-decimal locale.** D4's bug is not the
-  test's: `/openapi/v1.json` is written through the same library. Production and CI run on Linux
-  with the invariant culture, so nothing is broken today; a developer serving it from an Italian,
-  German or French Windows profile would get `0,01`.~~ *(WITHDRAWN 2026-09-11 — false. It was
-  extrapolated from the TEST's own writer to the API's route, and the route was never measured.
-  Measured now, through the real route: the API hosted in Development so `MapOpenApi` is mapped,
-  with it-IT and then de-DE as the default culture of every thread, `GET /openapi/v1.json` returned
-  200, a 140,392-character body containing `0.01` and never `0,01`, which parsed as JSON — the same
-  as under en-US. The measurement is not vacuous: in the same run a thread-pool thread, which is
-  where the request is served, formatted `0.01m` as `0,01` under both cultures, so the comma was
-  due and the route still did not write one. `MapOpenApi` builds its writer with
-  `InvariantCulture`. **D4 still stands**: it is about the test's writer, and a plain
-  `StringWriter()` under it-IT does write `0,01` — which is exactly why the test pins its own.)*
-- **The target meant to stop the XML-comment generator removes nothing.** `AzureBank.Api.csproj`
-  removes the analyzer at `$(PkgMicrosoft_AspNetCore_OpenApi)/analyzers/…`, and that property is
-  only defined when the package reference sets `GeneratePathProperty="true"`, which it does not — it
-  evaluates empty, and the path matches no analyzer. Measured: `XmlComment` is in the compiled
-  assembly, and not one `[EndpointSummary]` string reaches the document, although the project file
-  says they "control Scalar/OpenAPI titles". ~~It is why D3's newlines are in the contract at all.~~
-  Fixing it would replace the published summaries across the contract, Scalar and the frontend
-  types, which is a decision about content, not about this gate. *(Decided and done 2026-09-14: the
-  target and the 27 attributes are deleted — regenerating with them gone left the document
-  byte-identical, measured — and each action's `<summary>` is now its short title, with the prose
-  moved to `<remarks>`; `PublishedOperationTitlesTests` holds every summary to one line of at most
-  fifty characters, and was red on the old document: 11 of 27. The struck clause was wrong even
-  then: 17 of the 24 strings carrying a newline were schema descriptions, which never came from a
-  summary.)*
+## Related
 
-**`ci.yml`'s comment is corrected** to say what its steps actually prove and to point here.
-**ADR-0043 carries a dated note** separating the half this closes from the half it does not, and the
-documents that called themselves the only guard against an unregenerated constant — ADR-0046, and
-the two architecture tests that read the committed file — now say they are not, and why they still
-matter.
-
-## What would change this
-
-- **A divergence between the Testing and Development compositions.** The gate generates from the
-  Testing host, measured identical to Development's. If the two ever differ it goes red — and
-  regenerating from here would then copy the TEST host's view into the contract and make the failure
-  go quiet while the contract described a host nobody deploys. A red naming a path the change under
-  review did not touch is that case: fix the divergence, do not regenerate. The test's message says
-  so.
-- **A second document.** `v1` is resolved by name. A `v2` would need its own committed file and its
-  own case, and the operations floor would stop meaning what it says.
-- ~~**Gating Schemathesis.** If runtime conformance were ever made a gate, D6's paragraph would move,
-  and claim 3 would stop being the open one.~~ *(done 2026-09-15; the note under D6 records it.)*
-- ~~**Either defect above being fixed.** The XML-generator fix would remove D3's in-string newlines
-  from the contract altogether and make that normalisation dead code; the culture fix in the product
-  would make D4's pin redundant but not wrong.~~ ~~**The XML-generator defect above being fixed.**
-  It would remove D3's in-string newlines from the contract altogether and make that normalisation
-  dead code.~~ *(Corrected 2026-09-11: the struck bullet also named a culture fix in the product,
-  and there is none to make — the product defect it assumed is withdrawn, above — so D4's pin
-  stays, guarding the test's own writer.)* *(Fixed 2026-09-14, and the prediction was wrong: the
-  newlines did not leave the contract, they moved. Measured on the regenerated document: 25 strings
-  carry the machine's newline against 24 before — none of them a summary now, 8 of them operation
-  descriptions that hold the moved prose, 17 of them schema descriptions that never depended on this
-  defect. D3's normalisation stays, and is still exercised.)*
+ADR-0042, ADR-0043, ADR-0046, ADR-0056, ADR-0057, ADR-0063.

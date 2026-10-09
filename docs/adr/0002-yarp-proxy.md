@@ -1,139 +1,51 @@
 # ADR-0002: YARP Reverse Proxy Selection
 
-**Status**: Accepted
-
-**Date**: 2026-01-12
-
-**Decision Makers**: Vladislav Aleshaev
-
----
+**Status:** Accepted · **Date:** 2026-01-12 · **Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
-The BFF gateway needs to proxy requests from clients to the backend API. A reverse proxy solution is needed that:
-- Integrates well with ASP.NET Core
-- Allows custom request/response transformations
-- Supports configuration-based routing
-- Provides good performance
-
-## Decision Drivers
-
-- **.NET Integration**: Must work seamlessly with ASP.NET Core
-- **Customization**: Ability to inject Bearer tokens into requests
-- **Configuration**: Route configuration without code changes
-- **Performance**: Minimal latency overhead
-- **Maintenance**: Active development and Microsoft support
-
-## Considered Options
-
-1. **YARP (Yet Another Reverse Proxy)**: Microsoft's reverse proxy library
-2. **Ocelot**: Popular .NET API gateway
-3. **nginx**: External reverse proxy
-4. **Custom HttpClient**: Manual proxy implementation
+The BFF gateway (ADR-0001) proxies requests from the browser to the backend API. The proxy has to
+sit in the ASP.NET Core pipeline, let the BFF's own code transform a request so that a Bearer
+token can be injected, take its routes from configuration with no code change, add minimal
+latency, and be actively maintained.
 
 ## Decision
 
-Use **YARP (Yet Another Reverse Proxy)** version 2.3.0 for the BFF gateway.
+1. **The BFF proxies with [YARP](https://microsoft.github.io/reverse-proxy/) (Yet Another Reverse
+   Proxy), version 2.3.0**, because it is an official Microsoft project in active development,
+   runs on Kestrel in the same pipeline as the API, and is extended with custom middleware and
+   transforms.
+2. **The Bearer token is injected by a transform provider**, `BearerTokenTransformProvider`, an
+   `ITransformProvider` that looks up the token held for the session and sets the `Authorization`
+   header of the proxied request, because YARP's transform API is a clean place for it.
+3. **Routes and clusters are configuration**: the `ReverseProxy` section of the BFF's
+   `appsettings.json` maps `/api/{**catch-all}` to the cluster `backend-api`, so a route changes
+   with no code change. The BFF's [README](../../backend/src/AzureBank.Bff/README.md) has the rest.
 
-## Rationale
+## Rejected
 
-### Comparison Matrix
-
-| Feature | YARP | Ocelot | nginx | Custom |
-|---------|------|--------|-------|--------|
-| .NET Native | ✅ | ✅ | ❌ | ✅ |
-| Transform API | ✅ Excellent | ⚠️ Limited | ❌ | ✅ Manual |
-| Config-based | ✅ | ✅ | ✅ | ❌ |
-| Performance | ✅ High | ⚠️ Medium | ✅ High | ⚠️ Variable |
-| MS Support | ✅ Official | ❌ Community | ❌ External | ❌ None |
-| Learning Curve | Low | Low | Medium | N/A |
-
-### Why YARP?
-
-1. **Microsoft-backed**: Official Microsoft project with active development
-2. **Transform Providers**: Clean API for injecting authentication headers
-3. **ASP.NET Core Native**: Uses Kestrel, same pipeline as API
-4. **Configuration-based**: Routes defined in appsettings.json
-5. **Extensible**: Easy to add custom middleware and transforms
-
-### Transform Example
-
-```csharp
-public class BearerTokenTransformProvider : ITransformProvider
-{
-    public void Apply(TransformBuilderContext context)
-    {
-        context.AddRequestTransform(async transformContext =>
-        {
-            if (sessionService.TryGetToken(sessionId, out var token))
-            {
-                transformContext.ProxyRequest.Headers.Authorization =
-                    new AuthenticationHeaderValue("Bearer", token);
-            }
-        });
-    }
-}
-```
+- Rejected: Ocelot, because its transform API is limited, its performance is medium and it is
+  maintained by its community, with no Microsoft support.
+- Rejected: nginx, because it is an external proxy and not .NET: it has no transform API the BFF's
+  code can use, and a steeper learning curve.
+- Rejected: a hand-written proxy over `HttpClient`, because its routes are not configuration, its
+  transforms are written by hand, its performance varies and nobody supports it.
 
 ## Consequences
 
-### Positive
+- Route configuration is declarative, and request and response transforms are first-class.
+- Performance is that of Kestrel, on which YARP is built.
+- It costs one more NuGet package (`Yarp.ReverseProxy`), in a library that is younger than nginx,
+  has some advanced features still evolving and a smaller community than Ocelot's.
+- Not covered: the two success criteria no test measures, a latency overhead under 5 ms per
+  request and no memory leak under sustained load.
 
-- Clean, declarative route configuration
-- First-class support for request/response transforms
-- Excellent performance (built on Kestrel)
-- Active Microsoft maintenance and updates
-- Good documentation and community
+## Verified by
 
-### Negative
-
-- Relatively new (less mature than nginx)
-- Some advanced features still evolving
-- Smaller community than Ocelot
-
-### Neutral
-
-- Routes configured in appsettings.json
-- Additional NuGet package dependency
-
-## Validation
-
-Success criteria:
-- All API routes successfully proxied
-- Bearer token injection working for all authenticated requests
-- Latency overhead < 5ms per request
-- No memory leaks under sustained load
+- `BrowserCookieStaysInTheBffTests`: with a live session the API gets the Bearer and no cookie
+  (`WithALiveSession_TheApiGetsTheBearer_AndNoCookieHeader`).
+- `AuthLevelMiddlewareTests`: a client's own Bearer with no session is not proxied.
 
 ## Related
 
-- [ADR-0001: BFF Pattern](./0001-bff-pattern.md)
-- [YARP Documentation](https://microsoft.github.io/reverse-proxy/)
-- [BFF Implementation](../../backend/src/AzureBank.Bff/README.md)
-
----
-
-## Configuration Example
-
-```json
-{
-  "ReverseProxy": {
-    "Routes": {
-      "api-route": {
-        "ClusterId": "backend-api",
-        "Match": {
-          "Path": "/api/{**catch-all}"
-        }
-      }
-    },
-    "Clusters": {
-      "backend-api": {
-        "Destinations": {
-          "api": {
-            "Address": "https://localhost:7215"
-          }
-        }
-      }
-    }
-  }
-}
-```
+ADR-0001.
