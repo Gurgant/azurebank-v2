@@ -1,48 +1,34 @@
 # A subscriber says "this was not me" about a PIN notice
 
-Two kinds of notice are owed to an account holder: one when a transfer PIN is set for the first
-time (ADR-0045) and one when an existing PIN is changed (ADR-0047). Nothing in the system SENDS
-either. Three things can render an owed notice to a file in a pickup directory, and they are not
-chosen the same way. Two are HOSTED and `Notices:Runner` names which — the API's relay (ADR-0048) or
-the Function (ADR-0051); the host the flag does not name renders nothing however live it is, and the
-host it names renders nothing unless it is running. The third is the operator's `notify`, which that
-flag does not gate at all: it renders whenever a person runs it, `Notices:Runner=None` included, and
-what keeps it off a live host's rows is the lease it takes (ADR-0048 D5). Getting the file to the
-holder is an operator's step whichever wrote it. Once a notice has been passed on, it tells the holder to
-contact the address or number the operator put behind `--contact`, quoting a
-reference. This page is what that contact does with the reference. It is short because the remedy
-is short — and it ends with the sentence that says where the remedy stops.
+An account holder is owed a notice when a transfer PIN is set for the first time (ADR-0045) and
+when it is changed (ADR-0047). Nothing sends it: the API's relay, the Function or the `notify`
+verb of the operator tool renders it to a file in a pickup directory (ADR-0048, ADR-0051), and a
+person passes that file on. The notice tells the holder to contact the address or number it
+prints, quoting a reference. This page is what that contact does when the reference arrives,
+and it ends where the remedy stops.
 
-**Read this first, and read the kind first.** The two kinds mean different things and the remedy is
-not equally partial.
+**Read the kind first.** The two kinds mean different things, and the remedy is not equally
+partial.
 
-- **`PinEnrolled`** — whoever set the PIN proved the account PASSWORD (T8). Nulling the PIN removes
-  the credential they minted; it does not remove the credential they used. No password reset exists
-  in this system, so the account is not safe again until one does. Say that to the subscriber rather
-  than implying otherwise.
-- **`PinChanged`** — whoever changed it proved only the PIN THAT WAS ALREADY THERE (ADR-0040). The
-  password was not used. Nulling the PIN forces re-enrolment, which costs the password — so against
-  this attacker the remedy is not partial in the same way, and the subscriber can be told so. If the
-  subscriber also says they never set the first PIN, look for a `PinEnrolled` notice as well and
-  treat that one by the rule above.
+- **`PinEnrolled`**: whoever set the PIN proved the account password (ADR-0040). Removing the PIN
+  takes back the credential they made, not the one they used. No password reset exists, so the
+  account is not safe again until one does: say that to the subscriber.
+- **`PinChanged`**: whoever changed it proved only the PIN that was already there, not the
+  password. Removing the PIN forces a new enrolment, which costs the password, so against this
+  attacker the remedy holds once the open sessions have ended (section 4). If the subscriber
+  also says they never set the first PIN, look for a `PinEnrolled` notice as well.
 
-**Running the SQL.** Every statement here runs against the API's database. With `sqlcmd`, pass
-`-I`: without it the UPDATEs in §2 and §3 fail with Msg 1934 (`QUOTED_IDENTIFIER`), because
-`AspNetUsers` and `RefreshTokens` both carry filtered indexes. Measured 2026-09-28 against LocalDB,
-each UPDATE inside a transaction that was rolled back; reads work without the flag
+**Running the SQL.** Every statement here runs against the API's database. Pass `-I` to `sqlcmd`:
+without it the UPDATEs of sections 2 and 3 fail with Msg 1934 (`QUOTED_IDENTIFIER`), because
+`AspNetUsers` and `RefreshTokens` carry filtered indexes
 ([`engineering-traps.md`](../engineering-traps.md)).
 
 ## 1. Find the notice and the event it belongs to
 
-The reference is the notice id as the notice prints it: 32 hex digits, no hyphens.
-`SubscriberNotices.Id` is a `uniqueidentifier`, and SQL Server does not convert that form — pasted
-bare into a comparison it fails with `Msg 8169, Conversion failed` (measured 2026-09-04). The
-statement below inserts the hyphens itself, so paste the reference exactly as printed. It also
-checks the paste before looking anything up: anything that is not exactly 32 hex digits — a
-filename with `.eml` still attached, a Message-ID with its angle brackets, a digit dropped or
-doubled — stops with the error message below instead of matching. That check is there because a
-`char(32)` variable would silently keep the first 32 characters of a longer paste and look up
-whatever they happened to spell. Run against the API's database:
+The reference is the notice id as the notice prints it: 32 hex digits, no hyphens. Paste it
+exactly as printed. The statement puts in the hyphens a `uniqueidentifier` needs, and stops with
+its error message on anything that is not exactly 32 hex digits (a file name that still ends in
+`.eml`, a Message-ID in its angle brackets, a digit dropped or doubled):
 
 ```sql
 DECLARE @ref varchar(100) = '<reference, exactly as printed>';
@@ -55,22 +41,15 @@ WHERE n.Id = CONVERT(uniqueidentifier,
     STUFF(STUFF(STUFF(STUFF(@ref, 9, 0, '-'), 14, 0, '-'), 19, 0, '-'), 24, 0, '-'));
 ```
 
-`Event` is which of the two kinds this is, and it decides how the paragraphs above and §4 read.
-`OccurredAt` is when the PIN was set or changed (UTC). `DeliveredAt` is when a runner — the relay
-or `notify` — rendered it and marked the row. NULL has two readings. Usually nobody has rendered it,
-and a subscriber quoting this reference got it from somewhere else — its own finding. But a runner
-can render the file and stop before the mark (ADR-0048 D3): then the file sits in the pickup
-directory, a person may already have moved it on, and the row still reads owed. Look in the
-directory for `<reference>.eml` before concluding anything; if it is there, the subscriber may well
-be holding it, and the row is the one to fix — mark it by hand, or move the file out and let the
-next sweep re-render it.
+`Event` is the kind. `OccurredAt` is when the PIN was set or changed (UTC), `DeliveredAt` when a
+runner rendered the notice and marked the row. A null `DeliveredAt` usually means that nobody
+rendered it, and that a subscriber quoting this reference got it from somewhere else: a finding
+of its own. But a runner can render the file and stop before the mark (ADR-0048 D3). Look in the
+pickup directory for `<reference>.eml` first: if it is there the subscriber may be holding it,
+and the row is what to fix, by marking it by hand or by moving the file out for the next sweep
+to render again.
 
-The audit row is NAMED by the notice since ADR-0052. ⚠️ **The pair `(actor, event)` is used in
-BOTH arms and does a different job in each** — it is the LOOKUP KEY when the notice names no row,
-and a CHECK on the row it does name, which is what makes a re-pointed notice findable. It is never
-joined by time, because the two rows are written in one transaction but read two clocks.
-
-**`AuditEventId` is not null.** That is the row, and it must also be this notice's:
+**`AuditEventId` is not null.** That is the audit row, and it must also be this notice's:
 
 ```sql
 SELECT e.Id, e.Sequence, e.OccurredAt, e.Outcome, e.Detail, e.ActorUserId, e.Event
@@ -78,14 +57,17 @@ FROM AuditEvents e
 WHERE e.Id = '<AuditEventId from above>';
 ```
 
-⚠️ **Zero rows and a mismatch are different things, and `notify` prints them as one finding** —
-*"gone, or is not this notice's"* — because it cannot tell you which without this query. Zero rows
-means the audit row is gone: the TRAIL lost it, so run `verify`. A row whose `ActorUserId` or
-`Event` does not match the notice's means the row is fine and the NOTICE was re-pointed: somebody
-wrote the `SubscriberNotices` table, and the trail is not where to look.
+`notify` prints two failures as one finding, `NO AUDIT ROW`: for a change, "the `PinChanged` row
+it names is gone, or is not this notice's". They do not call for the same act:
 
-**`AuditEventId` is null.** The notice predates ADR-0052 and names nothing, so the older question is
-all there is:
+- **Zero rows:** the trail lost the row. Run `verify`: the question has become whether the record
+  is intact, not whether this was the subscriber.
+- **A row whose `ActorUserId` or `Event` is not the notice's:** the trail is fine and the notice
+  was re-pointed, so somebody wrote `SubscriberNotices`. `verify` comes back clean here, and
+  that is no reassurance.
+
+**`AuditEventId` is null.** The notice names no row, so the older, weaker question is all there
+is, and `notify` words its finding "no `PinChanged` row exists for that user at all":
 
 ```sql
 SELECT e.Sequence, e.OccurredAt, e.Outcome, e.Detail
@@ -93,42 +75,22 @@ FROM AuditEvents e
 WHERE e.ActorUserId = '<UserId from above>' AND e.Event = '<Event from above>';
 ```
 
-Use the notice's own `Event` in that WHERE clause. Filtering on `PinEnrolled` for a change reference
-returns zero rows, which reads exactly like the finding below and is not one.
+Keep both terms, and take `Event` from the notice: by the actor alone, an enrolment's row answers
+for a change. Never match a notice to a row by time: the two are written in one transaction but
+read two clocks. `PinEnrolled` has one row per enrolment, more than one only where section 2 was
+run and the subscriber enrolled again. `PinChanged` has one row per change, and several is no
+fault: replacing the PIN repeatedly is what an attacker holding a PIN does. So one surviving row
+answers for every change notice that names none: count the rows against the notices. `Detail`
+says what was proved, `{"passwordProved":true}` or `{"currentPinProved":true}`.
 
-⚠️ **A null `AuditEventId` is not proof the notice is old.** Nulling it is a write to
-`SubscriberNotices`, like a re-point, and the query above then answers for ANY row of the same kind —
-for `PinChanged`, any other change the user made. A notice written after this deployment applied the
-`AddSubscriberNoticeAuditEventId` migration always names its row, so on a notice that recent a null
-is itself the finding: somebody wrote the table (ADR-0052, the dated line under D3's limit).
+A null is not proof that the notice is old. Nulling `AuditEventId` is a write to
+`SubscriberNotices`, like a re-point, and every notice written after the
+`AddSubscriberNoticeAuditEventId` migration names its row: on a notice that recent, a null is
+itself the finding (ADR-0052, D3's limit).
 
-For `PinEnrolled`, one row per enrolment — normally exactly one, and more only where §2 below has
-been run and the subscriber has since re-enrolled; the trail keeps both. For
-`PinChanged` there is one row per change, and several is not a fault — it is the account holder's
-PIN being replaced repeatedly, which is what an attacker holding a PIN does. `Detail` names what was
-proved: `{"passwordProved":true}` for an enrolment, `{"currentPinProved":true}` for a change.
-
-⚠️ **`NO AUDIT ROW` is not "the query came back empty".** A notice that names a row can have that
-row sitting THERE and mismatched, which is what the annotation on the query above is for. The finding
-is one line over both outcomes and they do not call for the same act. These are how you tell:
-
-- **A NAMED row that is gone.** The trail lost it: run `verify`, because the question has become
-  "is the record intact", not "was this the subscriber".
-- **A NAMED row that is THERE and whose `ActorUserId` or `Event` does not match the notice.** The
-  trail is fine and the notice was re-pointed — somebody wrote `SubscriberNotices`. ⚠️ `verify` will
-  come back CLEAN here, and a session that ran it first reads that as reassurance; it is the tell.
-- **No row at all, for a notice that names none.** The older question. Those rows carry no
-  `AuditEventId`, so the pair `(ActorUserId, Event)` is the whole of what can be looked up —
-  ⚠️ **both terms, never the actor alone.** The query above uses both, and dropping `Event` hands
-  an operator an ENROLMENT's row as a change's evidence, which is the one mistake this page's own
-  warning about `PinEnrolled` already tells you not to make.
-
-⚠️ **And one re-point none of the three can show you — but this query can.** If the named row was
-swapped for ANOTHER row of the same user and the same kind, every check above passes and no finding
-appears at all: the pair the verb compares is satisfied by any `PinChanged` row that user has.
-ADR-0052 records why that is pinned rather than closed. **It is not invisible to YOU, though.** The
-swap has to leave the notice pointing somewhere, and the row it now points at already belongs to
-another notice — so two notices name one audit row, and nothing legitimate does that:
+**A re-point onto another row of the same user and the same kind** passes every check above, and
+`notify` prints nothing for it (ADR-0052, D3's limit). It leaves two notices naming one audit
+row, which nothing legitimate does:
 
 ```sql
 SELECT AuditEventId, COUNT(*) AS Notices
@@ -138,45 +100,17 @@ GROUP BY AuditEventId
 HAVING COUNT(*) > 1;
 ```
 
-**Zero rows is the healthy answer**, and it is the answer on a clean database — measured against
-`AzureBankDev` on 2026-09-10, which returned the header and no rows. Run it that way once yourself
-so you know what clean looks like. (The filtered index it scans was checked at the same time:
-`sys.indexes` reports `IX_SubscriberNotices_AuditEventId` with `filter_definition = ([AuditEventId]
-IS NOT NULL)` and `has_filter = 1`.) Any row it returns names an audit event that more than one
-notice claims as its evidence: take the `AuditEventId` back to the query in §1 and read both
-notices. ⚠️ **This is a SWEEP, not a per-notice check** — it is the one question here you ask of the
-whole table rather than of the notice in front of you, so it belongs in a periodic pass as much as
-in an investigation. The filtered index on `AuditEventId` exists for exactly this scan and for
-nothing else; `SubscriberNoticeConfiguration` says so where somebody wondering about the index will
-read it.
-
-⚠️ **What it cannot see**: a re-point onto a row that NO other notice names — an audit row belonging
-to no notice at all. Those exist (an `AuditEvents` row is written for events that owe no notice), so
-a zero here narrows the question, it does not close it. **When a repeated `PinChanged` is what is
-under dispute, still count the rows against the notices by hand** — on the `(ActorUserId, Event)`
-pair, exactly as you would for a notice that names none.
-
-Do NOT reach for `evidence` in any of these, the same-kind re-point included: it reads by a
-transfer's `TXN-…` number and a PIN event has none.
-
-**Since ADR-0052 the finding is exact, and the line tells you which question it asked.** A notice
-written from then on names the audit row it belongs to, so `NO AUDIT ROW` is about THAT row rather
-than about the user's history — the line reads **"the `PinChanged` row it names is gone, or is not
-this notice's"**. ⚠️ It does not say which of the two states above it found: the FIRST TWO bullets
-are how you tell, and they do not call for the same act.
-
-⚠️ **A notice written BEFORE that migration names no row and gets the older, weaker question**, and
-the line says so: **"no `PinChanged` row exists for that user at all"**. A change can happen many
-times, so for those rows one surviving audit row still answers for all of them and a missing one
-still raises nothing. **When you see the weaker wording, count the rows against the notices
-yourself** — the query above is how, and it takes BOTH `ActorUserId` and `Event`. ⚠️ **Counting by
-actor alone is the mistake this page warns about twice already**: it lets a `PinEnrolled` row answer
-for a `PinChanged` notice, which is the one comparison that must never pass.
+Zero rows is the healthy answer. A row names an audit event that more than one notice claims:
+look it up by that id (the second query) and read both notices. This is a sweep of the whole
+table, not a check of one notice, so it belongs in a periodic pass too; the filtered index
+`IX_SubscriberNotices_AuditEventId` exists for it. It cannot see a re-point onto an audit row
+that no notice names, so when a repeated `PinChanged` is disputed, still count the rows against
+the notices. `evidence` helps in none of this: it reads by a movement's `TXN-…` number, and a PIN
+event has none.
 
 ## 2. Remove the PIN the subscriber repudiates
 
-There is no endpoint for this; it is one statement, run by hand, and it is the whole of what an
-operator can do:
+No endpoint does this. It is one statement, run by hand:
 
 ```sql
 UPDATE AspNetUsers
@@ -184,20 +118,16 @@ SET PinHash = NULL, PinAccessFailedCount = 0, PinLockoutEnd = NULL
 WHERE Id = '<UserId>';
 ```
 
-The account is back where it was before the enrolment: no PIN, so no transfer, withdrawal or
-full-number reveal is possible until one is enrolled again — which costs the password (T8). The
-subscriber re-enrols when they choose, and that enrolment writes its own notice.
-
-This UPDATE is not audited. Nothing in the API performed it, so no audit row can claim it; write
-down who ran it and when, beside the reference, somewhere the database cannot revise.
+The account is back where it was before the enrolment: no PIN, so no transfer, withdrawal,
+account closure or full-number reveal until one is enrolled again, which costs the password and
+writes its own notice. The statement is not audited, because nothing in the API performed it:
+write down who ran it and when, beside the reference, somewhere the database cannot revise.
 
 ## 3. Cut the sessions
 
-Each BFF session holds one refresh token, its grant, which lives 60 minutes from sign-in
-(`Jwt:RefreshTokenLifetimeMinutes`), and the user's session stamp as it was at sign-in.
-`RefreshTokenService.RevokeAllForUserAsync` revokes every live grant of a user and raises the user's
-`SessionStamp` in one transaction, and `POST /api/auth/logout` calls it; nothing exposes it to an
-operator, so by hand, both statements in one transaction:
+Each BFF session holds one refresh token, its grant, and the user's session stamp as it was at
+sign-in. `POST /api/auth/logout` revokes every live grant of a user and raises the stamp in one
+transaction. By hand it is the same two statements, in one transaction:
 
 ```sql
 SET XACT_ABORT ON;
@@ -214,64 +144,39 @@ WHERE Id = '<UserId>';
 COMMIT TRANSACTION;
 ```
 
-Write the reason. `SignOutEverywhere` is what the API writes for the same act, and a row revoked
-with no reason reads as a legacy one (ADR-0057 §4.1). The second statement must report 1 row: a 0
+Write the reason: `SignOutEverywhere` is what the API writes for the same act, and a row revoked
+for no reason reads as a legacy one (ADR-0057 §4.1). The second statement must report 1 row: 0
 means the id matched no user. Keep its new `ConcurrencyStamp`: a PIN change that loaded the user
-before the commit writes the whole row back through Identity, which checks only that column, so
-without it the change would put the old stamp back — and the one calling set-pin here may be the
-attacker. With it that write fails, and the stamp stays raised.
+before the commit writes the whole row back through Identity, which checks only that column, and
+would otherwise put the old stamp back.
 
-The BFF reads every signed-in user's stamp every 15 s, so each of the user's BFF sessions is refused
-at its first request after that read, within ~20 s of the commit with up to 1,000 signed-in users
-(one read); each further 1,000 adds a read of up to 5 s (ADR-0057 §5.3). While the BFF cannot read
-the stamp, each session still ends at its next successful renewal, after up to half its access
-token's life (7.5 minutes) of continued use. Access tokens already issued live until they expire —
-15 minutes (`Jwt:ExpirationMinutes`) — but once a session has ended only code inside the API's own
-replica can present its token (ADR-0057 §5.1). The BFF's own session also has its own windows (15
-minutes idle, 60 absolute; 10 and 20 in Development).
-Whether that matters depends on which kind you are treating. For a `PinEnrolled` repudiation it does
-not: that attacker proved the password and can sign in again, so the window is not the point. For a
-`PinChanged` repudiation it IS the point — a session is the only thing that attacker still holds
-after step 2 — and §4 says what it reaches until it expires.
+The BFF reads every signed-in user's stamp every 15 s and refuses each of the user's sessions at
+its first request after that read: within about 20 s of the commit for up to 1,000 signed-in
+users, and 5 s more for each further 1,000 (ADR-0057 §5.3). While the BFF cannot read the stamp,
+a session ends at its next renewal instead, after up to 7.5 minutes of use. An access token
+already issued lives its 15 minutes (`Jwt:ExpirationMinutes`), but once its session has ended
+only code inside the API's own replica can present it (ADR-0057 §5.1).
 
 ## 4. Where this stops
 
-**The password — for a `PinEnrolled` repudiation.** Whoever enrolled the PIN proved the account
-password. Steps 2 and 3 take back the PIN and the sessions; they do not take back the password, and
-there is no reset flow to hand the subscriber. Until one exists, the honest instruction to the
-subscriber is that the account cannot be made safe from here, and the honest note in the record is
-that the remedy was partial.
+**`PinEnrolled`: the password.** Sections 2 and 3 take back the PIN and the sessions, not the
+password the enrolment proved, and that attacker can sign in again. No password reset exists:
+tell the subscriber that the account cannot be made safe from here, and write in the record that
+the remedy was partial.
 
-**For a `PinChanged` repudiation steps 2 and 3 go further, but not immediately.** That attacker
-proved a PIN and not the password, so clearing `PinHash` takes back the credential they used and
-setting a new one costs the password they never had. What it does NOT take back is the access token
-they are already holding. Clearing the PIN revokes no token, and step 3 revokes REFRESH tokens only,
-so until that access token dies the session still reads the account, its transactions and
-`/api/auth/me`, can deposit, and can reveal the full number if the session was elevated before you
-acted. A transfer needs an authorisation that was minted with the OLD PIN, so one already minted and
-unspent can still be presented inside its own two-minute window.
-
-How long that is depends on what the attacker holds. An access token lives its full 15 minutes at
-the API, but only code inside the API's own replica can present one there (ADR-0057 §5.1): the API
-listens on loopback only and refuses any request without the BFF's service key (ADR-0055). So a
-direct caller — who the change path is reachable by, since the client turns away anyone who
-already has a PIN — holds a BFF session, and a BFF session ends sooner: within ~20 s of step 3 (up
-to 1,000 signed-in users; up to 5 s more for each further 1,000) the BFF reads the stamp it raised
-and refuses the session at its next request. If the BFF cannot read the stamp, the session ends
-later: once half its token's life is gone (7.5 of its 15 minutes), the BFF renews it at the next
-request, the API refuses the grant step 3 revoked, and the BFF ends the session there;
-`/bff/auth/me` may still answer from what it cached, but nothing more reaches the API. **Plan the
-clock on the 15 minutes** — the shorter cases are a bonus, not the bound — treat the account as
-contained only after it has passed, and note the time you ran step 2 so the record shows when it
-closed.
-
-After it, the remedy is complete for this attacker unless the subscriber ALSO repudiates the
-original enrolment, or the PIN they lost is one they reuse elsewhere. Say which of the three
-situations the record is in rather than reusing the paragraph above.
+**`PinChanged`: the session still open.** A session is all this attacker holds after section 2,
+and section 2 revokes no token. Until the session ends (section 3) it still reads the account,
+its transactions and `/api/auth/me`, can deposit, and can reveal the full number if it was
+elevated before section 2 was run; a transfer authorisation already minted under the old PIN can
+be spent inside its two-minute window. Plan the clock on the 15 minutes of an access token, the
+shorter cases being a bonus: treat the account as contained only after they have passed, and
+write down when section 2 was run. After that the remedy is complete for this attacker, unless
+the subscriber also repudiates the original enrolment or reuses the lost PIN elsewhere. Say in
+the record which of the three it is.
 
 **The other address.** If the subscriber says the email on the account is not theirs, nothing here
-can change it — no endpoint exists — and every future notice goes to the same address. That is a
-second finding, and it belongs in the same record.
+can change it: no endpoint exists, and every future notice goes to that address. That is a
+second finding for the same record.
 
-Delete the pickup directory after the notices in it have been dealt with. It holds addresses in
+After the notices in it have been dealt with, delete the pickup directory: it holds addresses in
 clear.

@@ -1,25 +1,21 @@
 # Engineering practices
 
-How this project is built and kept correct. It is deliberately **not** called `CONTRIBUTING.md`:
-this is a solo portfolio project with no outside contributors, and a document that opens with "fork
-and clone" is describing an audience that does not exist. It is written for whoever picks the
-project up in six months.
+How this project is set up locally, checked and merged. It is deliberately not a
+`CONTRIBUTING.md`: this is a solo portfolio project with no outside contributors.
 
-Decisions live in [`adr/`](adr/README.md). Sharp edges that fail silently live in
-[`engineering-traps.md`](engineering-traps.md). Frontend rules live in
+Decisions are in [`adr/`](adr/README.md), the sharp edges that fail silently in
+[`engineering-traps.md`](engineering-traps.md), and the frontend's rules in
 [`../frontend/CONVENTIONS.md`](../frontend/CONVENTIONS.md).
 
 ---
 
 ## Local setup
 
-The one copy of these instructions; the root README links here.
+The one copy of these instructions. Commands are bash, from the repository root.
 
-Configuration comes from **user-secrets**, never from a committed settings file. The API fails at
-startup without them, by design — `ValidateOnStart` refuses to run a bank with a missing pepper.
-
-**The API, the BFF and the seeder have separate secret stores** (a `UserSecretsId` each), so a value
-two of them share is set once per project — `--project` is not optional. Three values are shared
+Configuration comes from **user-secrets**, never from a committed settings file, and the API
+refuses to start without them. The API, the BFF and the seeder each have a secret store of their
+own, so `--project` is not optional and a shared value is set in each. Three values are shared
 and must match: the connection string and the PIN pepper, API and seeder, and the service
 credential, API and BFF.
 
@@ -44,56 +40,32 @@ dotnet user-secrets --project $SEEDER set "Security:PinPepper" "$PEPPER"
 dotnet user-secrets --project $SEEDER set "ConnectionStrings:DefaultConnection" "$CONN"
 ```
 
-If the two peppers differ, seeding succeeds and every seeded PIN then fails verification — the
-failure surfaces at login, far from its cause.
+- If the two peppers differ, seeding succeeds and every seeded PIN then fails verification.
+  When rotating the pepper, keep the whole ring in one secret provider (ADR-0011, decision 4).
+- `Demo:ClientKeySecret` is not set above: the public demo is off unless `Demo:Enabled` is true,
+  and only then does the API refuse to start without 32 characters of it (ADR-0063).
+- What each setting is for is in [the API's README](../backend/src/AzureBank.Api/README.md).
 
-`Security:PinPepper` is mixed into the Argon2id PIN hash so a stolen database cannot brute-force
-the six-digit PIN space offline. It supports zero-downtime rotation through a keyring
-(`Security:PreviousPinPeppers`) — when rotating, keep the whole ring in one secret provider.
+**Calling the API by hand.** The API serves one client, the BFF (ADR-0055): it answers 401 to a
+request without the header `X-AzureBank-Service-Key`, whose value is `$SERVICE_KEY`, except on
+`/health/*` and, in Development, on `/openapi` and `/scalar`. So curl, Bruno and the Scalar
+page's "Try it" need that header. The six token endpoints and the session-stamp feed also answer
+404 unless the call comes over loopback with exactly one `X-AzureBank-Token-Road: bff` header
+(ADR-0057 §4.2). The Bruno command line is in
+[`tests/api-collection/README.md`](../tests/api-collection/README.md).
 
-`ServiceCredential:BffKey` is how the API knows a request comes from the BFF: the BFF sends it in
-`X-AzureBank-Service-Key` on every call, and the API refuses anything without it before it looks at
-a token, so the API serves one client (ADR-0055). Neither host starts without it, and the running
-API answers 401 to every request without the header but its health probes and, in Development, its
-own API documentation:
-`/health/*` is exempt in every environment, `/openapi` and `/scalar` in Development, so a browser
-can still open the documentation. Calling an API OPERATION by hand — curl, Bruno, the Scalar page's
-"Try it" — needs that header. Bruno reads it from `serviceKey`, which ships empty in the tracked
-`local.bru` and is passed per run instead: `cd tests/api-collection && bru run . -r --env local
---env-var serviceKey="$SERVICE_KEY" --insecure`. The `-r` is not optional — without it bru sends no
-requests at all and still reports PASS. The six token endpoints — login, register, refresh, revoke,
-logout and the public demo's claim — and the session-stamp feed also answer 404 unless the call
-comes over loopback and carries exactly one `X-AzureBank-Token-Road`, the marker the BFF's own
-client adds; calling one by hand needs that header too, and the Bruno requests that call them send
-it. The claim, `POST /api/auth/demo/claim` (ADR-0063), also answers 404 to every caller that sends
-the key while `Demo:Enabled` is false, which is what this setup leaves it. In production the API
-also has no public address; the key is the second line behind that.
-
-`Demo:ClientKeySecret` is not among the secrets set above, and nothing in this setup needs it: the
-public demo is off unless `Demo:Enabled` is true. Where it is, the API refuses to start without 32
-characters of it. It keys the hash a claimed demo copy keeps in place of its client's address
-(ADR-0063), so it is a secret of its own, apart from every key above.
-
-`Audit:ChainKey` keys the audit trail's hash chain and `Audit:AnchorKey` authenticates the anchor
-records that say what the chain looked like at an instant (ADR-0044). Both are 32+ characters and
-deliberately separate: the anchor constrains whoever holds the database, so it must not be
-forgeable with the key the row chain uses.
-
-**Database — one command, not `dotnet ef`:**
+**Database: one command, not `dotnet ef`.** It drops, migrates and seeds.
 
 ```bash
 DOTNET_ENVIRONMENT=Development dotnet run --project backend/tools/AzureBank.Seeder -- reset --confirm
 ```
 
-That drops, migrates and seeds in one step. The environment variable is required and the `DOTNET_`
-prefix is not interchangeable with `ASPNETCORE_` — the seeder is a console Generic Host and reads
-the other prefix; see the traps document. Seeding also creates the Identity roles, without which
-registration returns a 500. The seeded demo user is `john@example.com` / `Test123!`, PIN `123456`,
-with two months of history on two accounts.
+The variable is required, and `ASPNETCORE_ENVIRONMENT` does not replace it. Seeding also creates
+the Identity roles, without which registration answers 500. The seeded demo user is
+`john@example.com` / `Test123!`, PIN `123456`, with two months of history on two accounts.
 
-**Running it** — the three processes each run in their own terminal and stay running. Start them
-sequentially the first time, or two parallel first builds race on `AzureBank.Shared.dll` and fail
-with a file lock that looks like a corrupted build:
+**Running it.** Three processes, each in a terminal of its own. Start them one after the other
+the first time: two parallel first builds race on `AzureBank.Shared.dll`.
 
 ```bash
 dotnet run --project backend/src/AzureBank.Api --launch-profile https   # https://localhost:7215
@@ -101,39 +73,36 @@ dotnet run --project backend/src/AzureBank.Bff --launch-profile http    # http:/
 cd frontend && npm ci && npm run dev                                     # http://localhost:5173
 ```
 
-The API must run the **https** profile: the BFF's proxy cluster points at 7215, so the http profile
-produces a BFF that starts and then fails every proxied call.
-
-The BFF's proxy reaches the API over https with the SDK's development certificate. The committed
-`appsettings.Development.json.example` tells it to accept any certificate on that hop, in
-Development only; the real file is git-ignored, so copy it once:
+The API must run the **https** profile: the BFF's proxy points at 7215, and with the http profile
+the BFF starts and then fails every proxied call. A settings file tells the BFF to accept any
+certificate on that hop, in Development only. It is git-ignored: copy it once from its example.
 
 ```bash
 cp backend/src/AzureBank.Bff/appsettings.Development.json.example backend/src/AzureBank.Bff/appsettings.Development.json
 ```
 
-**Running the tests** — stop the API and the BFF first: the solution build rewrites their
-executables, which Windows keeps locked while they run, so after an edit the build `dotnet test`
-starts fails with `MSB3027: Could not copy … apphost.exe` (measured 2026-09-25):
+**Running the tests.** Stop the API and the BFF first: Windows keeps their executables locked
+while they run, and the build that `dotnet test` starts fails with
+`MSB3027: Could not copy … apphost.exe`.
 
 ```bash
-dotnet test backend/AzureBank.slnx    # name the solution — see below
+dotnet test backend/AzureBank.slnx    # name the solution
 cd frontend && npm run build && npx vitest run
 ```
 
-Two commands that look like they work and do not: a filtered `dotnet test` silently drops the
-entire BFF suite while reporting success, and `tsc --noEmit` skips project references under this
-solution-style tsconfig. Both are explained in [engineering traps](engineering-traps.md). The
-concurrency proofs need a real SQL Server and skip without one:
+A filtered `dotnet test` drops the BFF's tests and still reports success, and `tsc --noEmit`
+skips this tsconfig's project references
+([engineering traps](engineering-traps.md#frontend-test-infrastructure)). The concurrency proofs
+need a real SQL Server and skip without one:
 
 ```bash
 AZUREBANK_TEST_SQLSERVER="Server=(localdb)\\MSSQLLocalDB;Database=AzureBankProofs;Trusted_Connection=True;TrustServerCertificate=True" \
   dotnet test backend/AzureBank.slnx --filter "Category=SqlServer"
 ```
 
-**Traces, metrics and logs, locally.** Both services emit them over OpenTelemetry, correlated end to
-end: a request through the BFF is **one trace** — BFF span, YARP forwarder, HttpClient, API, SQL —
-and every ProblemDetails carries the bare 32-hex `traceId` that pastes straight into Tempo search.
+**Traces, metrics and logs, locally.** Both services emit them over OpenTelemetry (ADR-0016). A
+request through the BFF is one trace, and every ProblemDetails carries the bare 32-hex `traceId`
+that pastes into Tempo's search. Export is opt-in: without the variable nothing is emitted.
 
 ```bash
 docker compose -f observability/docker-compose.yml up -d   # Grafana LGTM on 127.0.0.1:3000
@@ -145,85 +114,43 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
 export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 ```
 
-In PowerShell: `$env:OTEL_EXPORTER_OTLP_ENDPOINT = "http://127.0.0.1:4318"`. Export is opt-in:
-without the variable, tests and dev runs emit nothing. Telemetry is PII-safe by design — emails are
-masked through the .NET compliance stack, amounts never appear in log lines, and user-controlled
-values pass a central sanitizer whose contract is pinned by tests.
+In PowerShell: `$env:OTEL_EXPORTER_OTLP_ENDPOINT = "http://127.0.0.1:4318"`. Telemetry is PII-safe
+by design: emails are masked and amounts never appear in a log line (ADR-0017).
 
-**Running the images as Production.** `compose.yaml` at the root builds the API and BFF images and
-runs them as Production against SQL Server in a container: the `__Host-` session cookie, the SPA
-served under its CSP, and an API with no address of its own, reached by the BFF over loopback as a
-Container Apps sidecar would be. Its header lists the eight secrets it requires — none has a
-default. The database starts empty, and two one-shot containers of the tools image prepare it
-before the API starts: `migrate` creates it and applies the migrations, then `seed` adds the demo
-users and their history (ADR-0060; `backend/tools/AzureBank.Seeder/README.md` has their variables
-and exit codes). Both run again on every `up` and change nothing the second time.
-`compose.demo.yaml`, an override of that file, turns the public demo on: `seed-pool`
-fills the database with the demo pool's private copies in place of `seed` (ADR-0062),
-and the API and the BFF run with `Demo__Enabled=true`: a visitor claims a copy, registration is
-closed, and only the owner of a claimed copy signs in (ADR-0063). It asks for a ninth variable,
-`DEMO_CLIENT_KEY_SECRET`, 32 characters or more, and every command that loads the file needs it,
-`down` included.
-Its header says how to run it, and that there a later `up` builds a new set of copies once the
-old ones are too old to count. The database is published on 127.0.0.1:14330, not 1433, for tools
-on the host: a SQL Server installed on the host usually holds 1433, publishing over it does not
-fail, and a tool aimed at it then reaches the host's instance instead. Measured on 2026-09-25: the
-e2e suite, 24 of 24, against the two containers. Sign in from a Chromium browser, as that run
-does: the `__Host-` cookie is Secure, Chromium keeps it on `http://localhost`, and Safari keeps no
-Secure cookie over http even there, which is why the development profile's cookie is neither (the
-BFF's `Program.cs`).
+**Running the images as Production.** `compose.yaml` at the root runs the API and BFF images as
+Production against SQL Server in a container, with the API on loopback behind the BFF. Its
+header names the eight variables it requires and says how the database is prepared (ADR-0060).
 
 ```bash
 docker compose up --build -d   # after exporting the eight variables compose.yaml names
 ```
 
-**The public demo on that stack, and in the dev loop.** With `compose.demo.yaml` the page the BFF
-serves has `<meta name="azurebank-demo" content="true">` in its head, and the app is the demo
-(ADR-0063, decision 13): the sign-in page leads with "Try the demo", which claims a copy and
-lands on its dashboard; `/register` leads to the sign-in page; the dashboard says what the
-visitor holds and offers "Start over"; and the browser keeps what signs in to the copy, so that
-"Continue with my copy" opens it again (ADR-0063, "What the browser keeps in demo mode").
-`npm run test:e2e:demo`, from `frontend/`, drives all of that in Chromium on
-`http://localhost:5000`. It is run by hand, on a stack nobody else is using, and by no CI job:
-between its two halves it **restarts the BFF's container and then the API's** with
-`docker restart`, to show that the kept copy still signs in once every session is gone. So it
-needs the `docker` command, and `E2E_DEMO_COMPOSE_PROJECT` when the stack was started with `-p`
-(`frontend/playwright.demo.config.ts` has the rest, and what a run leaves on disk to delete).
-Measured three times on 2026-10-05, each time on three images built from one commit. The
-third time, on commit `8ce36aa0`: 17 tests passed in 25.8 s, and after the two restarts
-the BFF's `/health/ready`, asked three times,
-said `200 Degraded` twice and then `200 Healthy`. The second time, on `340813a5`: 17 tests
-passed in 23.4 s, with the same three answers. The first time, on an earlier commit, 15 tests
-passed in 35.6 s and the first of the three asks met a request that threw. The default suite,
-`npm run test:e2e`, expects the demo off. On the third set of images, started with
-`compose.yaml` alone, it ran whole once: `48 passed`. On the second set it had run whole
-three times: `1 failed`, `47 passed` twice, then `48 passed`. The red test was the same both
-times, `e2e/pinLockExpiry.spec.ts`, and its own expectations had held: the browser's context
-did not close within the test's 30 s. Why is not known, and the green run on the third set
-does not say; the spec is `main`'s, and ADR-0063, "What the browser keeps in demo mode", has
-the four runs. **A repeated demo run
-meets two caps.** The API hands one client `Demo:Claim:MaxPerClientPerDay` copies, 10 unless
-set, in a rolling 24 hours, and through the one published port every browser on the machine is
-one client (ADR-0063, "What a visitor can still do"); a run claims twice, so five runs fit in a
-day on one volume (arithmetic, not run). That count is rows of the database (ADR-0063, decision
-7), so `docker compose … down -v` and a fresh `up` start it again (read, not run as a sequence).
-The BFF also takes ten sign-ins and claims in 60 s from one address, counted in its own memory:
-a run spends four, three before it restarts the BFF, which starts that count again, and one
-after (read from the specs and from the limiter's registration in the BFF's `Program.cs`; no
-run counted them). **In the dev loop no BFF serves the page,** so nothing puts the tag
-there unless the dev server is started with `AZUREBANK_DEMO=true` in its environment:
-`AZUREBANK_DEMO=true npm run dev` in bash, `$env:AZUREBANK_DEMO = 'true'` and then `npm run dev`
-in PowerShell, and `npm run dev:mock` in place of `npm run dev` for the demo's screens with no
-backend at all (measured on 2026-10-05: in bash with both scripts, in PowerShell with
-`npm run dev:mock` and with `npx vite`). The value is exactly `true`; an env file
-does not set it; and a build never carries the tag, whatever its environment held
-(`frontend/vite.config.ts`). The variable sets the page and not the backend: a BFF with the demo
-off answers the claim 404 (measured on the compose stack the same day), so "Try the demo"
-pressed against one is refused (that pair was not run together).
+- The database is published on 127.0.0.1:14330, not 1433: a SQL Server installed on the host
+  usually holds 1433, publishing over it does not fail, and a tool aimed at it then reaches the
+  host's instance.
+- Sign in from a Chromium browser. The session cookie there is `__Host-` and Secure: Chromium
+  keeps it on `http://localhost`, and Safari keeps no Secure cookie over http even there.
+  Measured on 2026-09-25: the e2e suite, 24 of 24, against the two containers.
+- `compose.demo.yaml`, an override of that file, turns the public demo on (ADR-0063). Its header
+  says how to run it. It asks for a ninth variable, `DEMO_CLIENT_KEY_SECRET`, and every command
+  that loads the file needs it, `down` included.
+
+**The public demo on that stack, and in the dev loop.** `npm run test:e2e:demo`, from
+`frontend/`, drives the demo in Chromium on `http://localhost:5000`. Run it by hand, on a stack
+nobody else is using: it **restarts the BFF's container and then the API's**, and no CI job runs
+it. [`frontend/playwright.demo.config.ts`](../frontend/playwright.demo.config.ts) has how to run
+it, the caps a repeated run meets (five runs fit in a day on one volume) and what a run leaves on
+disk to delete. In the dev loop the demo's screens need `AZUREBANK_DEMO=true` in the dev server's
+environment ([`frontend/README.md`](../frontend/README.md#run-it)). That sets the page and not
+the backend: a BFF with the demo off answers the claim 404.
+
+The default suite, `npm run test:e2e`, expects the demo off. On the compose stack one of its
+tests, `e2e/pinLockExpiry.spec.ts`, failed in two of four whole runs on 2026-10-05 with its own
+expectations met: the browser's context did not close within the test's 30 s. Why is not known.
 
 ## Quality gates
 
-Run all of these before opening a pull request.
+Run all of these before opening a pull request, from `backend/`:
 
 ```bash
 dotnet build
@@ -231,84 +158,59 @@ dotnet test AzureBank.slnx
 dotnet format --verify-no-changes
 ```
 
-**Name the solution.** A bare `dotnet test` or a filtered run both under-report: see the traps
-document for the two distinct ways `--filter` silently drops the BFF suite.
-
-Frontend changes additionally need, from `frontend/`:
+Frontend changes also need, from `frontend/`:
 
 ```bash
 npm run format:check && npm run lint && npm run build && npx vitest run
 ```
 
-The type gate is `npm run build` (`tsc -b`), **not** `tsc --noEmit` — the root tsconfig is
-solution-style, so `--noEmit` skips project references and misses errors the build catches.
-
-**A gate is a delta against `main`, never an absolute count.** "This change introduces no new
-alert" survives an untriaged backlog; "zero open alerts" dies at the first one and then gets
-ignored — which is how eight security alerts once accumulated while a note still recorded zero.
-
-**Never dismiss a finding to make a number look good.** A dismissal needs a reason that still
-convinces on re-reading in six months. If you cannot write one, it is not a false positive, and
-weakening the check to pass it defeats the only thing the check was for.
-
-**Never blind-apply an automated fix.** Review-bot suggestions are frequently right and
-occasionally confidently wrong. Verify each against the current code. The same applies in reverse:
-when a bot challenges something you wrote, check the primary source, then concede or push back on
-evidence rather than on conviction.
-
-**No green without runnable proof.** "Should work" is not a test result. If a change is observable
-in a browser, verify it in a browser and keep the evidence.
+- **Name the solution**, and take `npm run build` as the type gate, not `tsc --noEmit`
+  ([traps](engineering-traps.md#frontend-test-infrastructure)).
+- **A gate is a delta against `main`, never an absolute count.** "This change introduces no new
+  alert" survives an untriaged backlog; "zero open alerts" dies at the first one.
+- **Never dismiss a finding to make a number look good.** A dismissal needs a reason that still
+  convinces in six months; without one it is not a false positive.
+- **Never blind-apply an automated fix.** A review bot's suggestion is often right and sometimes
+  confidently wrong: verify each against the current code, and answer a bot's challenge from the
+  primary source.
+- **No green without runnable proof.** "Should work" is not a test result. A change that can be
+  seen in a browser is verified in a browser.
 
 ## Merging
 
-**Every pull request is merged by hand after review.** The repository requires a pull request,
-permits squash only, and has no bypass.
+- **Every pull request is merged by hand after review.** The repository requires a pull request,
+  permits squash only, and has no bypass.
+- **Branches are not deleted after merge.** A squash leaves one commit on `main`, and the branch
+  is where the commits behind it stay.
+- **Contract changes ship as two pull requests.** The endpoint, the regenerated OpenAPI document
+  and the generated types land in the backend change; the UI that consumes them follows.
+- **Integration is verified against the real stack before a release.** A green mock-mode run
+  proves the client's model of the protocol, never that the server agrees with it.
 
-**Branches are not deleted after merge.** Several are cited as evidence in decision records — one
-holds the only pinned reproduction of a library incompatibility — and deleting one turns that
-citation into a dead end.
-
-**Contract changes ship as two pull requests.** The endpoint, the regenerated OpenAPI spec and the
-generated types land together in the backend change; the UI that consumes them follows. One pull
-request spanning both makes the contract diff unreviewable.
-
-**The spec is regenerated by the test that checks it, not by hand.** `CommittedOpenApiDocumentTests`
-fails whenever `docs/api/openapiv1.json` is not byte-for-byte what the API generates — apart from
-the line endings and the newlines inside strings, which belong to the machine rather than the
-contract (ADR-0053 D3) — and names the first JSON paths that differ. To regenerate, from `backend/`:
+**The OpenAPI document is regenerated by the test that checks it, not by hand.**
+`CommittedOpenApiDocumentTests` fails whenever `docs/api/openapiv1.json` is not what the API
+generates (ADR-0053). To regenerate, from `backend/`:
 
     AZUREBANK_REGENERATE_OPENAPI=1 dotnet test --filter "FullyQualifiedName~CommittedOpenApiDocumentTests"
 
-It writes the file and then **fails on purpose**, so the flag can only ever make a build red; re-run
-without it to confirm, review the diff, then regenerate the frontend artefacts with
-`npm run generate:api` and `npm run generate:zod` from `frontend/`. No running API and no real
-secrets are needed — the test host generates the document from the same composition the API uses.
-The other route — `node scripts/openapi-spec.mjs regen` against an API started in Development, as
-`docs/api/README.md` describes — writes the same bytes, but it needs every validated secret
-configured before the API will even start.
-
-**Integration is verified against the real stack before a release.** A green mock-mode run proves
-the client's model of the protocol, never that the server agrees with it.
+It writes the file and then **fails on purpose**, so the flag can only make a build red. It
+needs no running API and no secrets. [`docs/api/README.md`](api/README.md) has what follows it,
+the frontend's artefacts to regenerate, and the other route, against a running API.
 
 ## Commit and pull-request titles
 
-This repository squash-merges, so **only the pull-request title lands on `main`**. Individual
-commits on the branch are discarded — commit however you like while working; the title is the one
-thing that has to be right.
-
-Plain, imperative, at most 72 characters, naming the concrete outcome rather than a category:
+This repository squash-merges, so **only the pull-request title lands on `main`**: the commits on
+the branch are discarded. The title is plain, imperative, at most 72 characters, and names the
+concrete outcome, not a category:
 
 ```text
 Reject negative balances on concurrent withdrawals
 Restrict workflow token permissions and sanitize the logged HTTP method
 ```
 
-**Delete the `(#NN)` that GitHub pre-fills into the squash subject.** The convention here is a bare
-title; the log shows one commit carrying a number and it is an anomaly, not the pattern.
-
-**No `type(scope):` prefix.** Conventional Commits is deliberately not used: its payoff is an
-automated changelog and version bump, this repository runs neither, and a consistent plain log reads
-better than a half-applied taxonomy.
+Delete the `(#NN)` that GitHub pre-fills into the squash subject: the convention is a bare
+title. No `type(scope):` prefix: Conventional Commits pays off through an automated changelog and
+version bump, and this repository runs neither.
 
 ## Correcting a document
 
@@ -318,41 +220,29 @@ it said. A date stays where it is a fact about the system, such as the day somet
 
 ## Code style
 
-Follow the [Microsoft C# conventions](https://learn.microsoft.com/dotnet/csharp/fundamentals/coding-style/coding-conventions).
+Follow the [Microsoft C# conventions][csharp]: PascalCase for classes and methods, `I` +
+PascalCase for interfaces, camelCase for locals and parameters, `_camelCase` for private fields.
 Beyond those:
 
-| Element | Convention | Example |
-|---|---|---|
-| Classes, methods | PascalCase | `AccountService`, `GetAccountsAsync` |
-| Interfaces | `I` + PascalCase | `IAccountService` |
-| Locals, parameters | camelCase | `accountBalance` |
-| Private fields | `_camelCase` | `_repository` |
+- Async methods carry the `Async` suffix, and `async void` appears only in event handlers.
+- Nullable reference types are on: return `null` explicitly, not an empty sentinel.
+- Throw the typed exceptions of `AzureBank.Shared.Exceptions`, with a message that names what was
+  missing, never a bare `Exception`.
+- A comment explains a constraint the code cannot show, never what the next line does or where
+  the code came from.
+- Feature code is organised by role: `Controllers/`, `Services/{Interfaces,Implementations}/`,
+  `Validators/`, `Mappers/`.
 
-Async methods carry the `Async` suffix. `async void` appears only in event handlers. Nullable
-reference types are on; prefer returning `null` explicitly over an empty sentinel, and handle it at
-the call site. Throw the typed exceptions from `AzureBank.Shared.Exceptions` with a message that
-names the thing that was missing — never a bare `Exception`.
-
-Comments explain constraints the code cannot show. A comment that restates the next line, records
-where the code came from, or argues that the change is correct is noise the moment the pull request
-merges.
-
-Feature code is organised by role: `Controllers/`, `Services/{Interfaces,Implementations}/`,
-`Validators/`, `Mappers/`.
+[csharp]: https://learn.microsoft.com/dotnet/csharp/fundamentals/coding-style/coding-conventions
 
 ## Tests
 
-```text
-tests/AzureBank.Tests/
-├── Unit/           # validators, services, utilities
-├── Integration/    # API endpoints against a real host
-└── Architecture/   # layer dependency and naming rules
-```
-
-Arrange–act–assert, one behaviour per test, and a name that states the behaviour rather than the
-method under test. New public API surface gets tests; anything touching money gets integration
+`backend/tests/AzureBank.Tests/` has `Unit/` (validators, services, utilities), `Integration/`
+(the API's endpoints against a real host) and `Architecture/` (layer, naming and source rules).
+Arrange, act, assert; one behaviour per test; a name that states the behaviour, not the method
+under test. New public API surface gets tests, and anything touching money gets integration
 coverage, because the unit level cannot observe a transaction boundary.
 
-**Tests that pin a decision are load-bearing.** Several ADRs name the tests that hold them, and
-deleting one is a reversal of that decision rather than a cleanup. If a pinned test is in your way,
-the decision is what needs revisiting.
+**Tests that pin a decision are load-bearing.** Several decision records name the tests that hold
+them, and deleting one reverses that decision. If a pinned test is in the way, the decision is
+what needs revisiting.

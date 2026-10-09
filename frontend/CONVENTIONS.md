@@ -1,290 +1,204 @@
 # Frontend conventions
 
-Rules that hold across the SPA. They are here rather than in an ADR because none of them is a
-decision with a weighed alternative — they are the shape this codebase already has, written down so
-a change reads as a change.
+Rules that hold across the SPA. None is a decision with a weighed alternative: they are the shape
+the code already has, written down so that a change reads as a change.
 
-Decisions live in [`docs/adr/`](../docs/adr/README.md); in particular ADR-0019 (SPA/BFF
-integration), ADR-0022 (money mutations) and ADR-0023 (runtime validation). Cross-cutting traps
-live in [`docs/engineering-traps.md`](../docs/engineering-traps.md).
+Decisions are in [`docs/adr/`](../docs/adr/README.md): ADR-0019 (SPA and BFF), ADR-0022 (money
+mutations), ADR-0023 (runtime validation), ADR-0059 (waits and outages), ADR-0063 (the demo).
+Traps that cut across the stack are in [`docs/engineering-traps.md`](../docs/engineering-traps.md).
 
 ---
 
 ## Data layer
 
-**Cache tags are the invalidation contract.** Two clauses are not obvious and are worth stating:
-`set-primary` invalidates the blanket `Account` tag, because exactly one account is primary and
-changing which one moves state on two rows; and historical snapshots (`?at=`) stay **tag-less**,
-because a past balance cannot become stale and tagging it would evict it on every mutation.
+**Cache tags are the invalidation contract.** Two clauses are not obvious: `set-primary`
+invalidates the blanket `Account` tag, because changing the primary account moves state on two
+rows; and a historical balance (`?at=`) carries no tag, because a past balance cannot go stale.
 
-**Every endpoint unwraps its envelope through `unwrap`, and typing is not validation.** The seam is
-per-endpoint and typed, so the *declared* shape is checked against the generated contract at compile
-time — but `unwrap(envelope, schema?)` takes the schema **optionally**, and without one it returns
-`envelope.data` as-is. A compile-time type is a claim about what the server sends, not a check.
-Server drift on an unvalidated endpoint reaches the RTK Query cache silently.
+**Every endpoint unwraps its envelope through `unwrap(envelope, schema?)`, and typing is not
+validation.** Without a schema `unwrap` returns `envelope.data` as it came: a compile-time type
+is a claim about what the server sends, not a check. A schema passed bare fails closed, in
+production too: the four money receipts, the four step-up authorisations, the accounts list, the
+transaction summary and all of `/bff/auth/*`, which has no OpenAPI contract behind it. The rest
+of `/api/*` passes `devOnly(schema)` and is checked in development and test only. A 2xx whose
+`data` is null always throws (ADR-0023).
 
-Fail-closed runtime checking happens only where a schema is passed, and the set is deliberate: the
-**four money receipts** (deposit, withdraw, transfer, internal transfer), the **accounts list** and
-the **transaction summary** — plus the whole `/bff/auth/*` surface, which has no OpenAPI contract
-behind it and gates authentication. Everything else on `/api/*` validates in development and test
-only, where a mismatch should be loud, rather than in production where it would take the page down
-over a field nobody renders. (One case is guarded regardless: a 2xx with a null `data` throws
-rather than letting `undefined` into the cache.) ADR-0023 has the rejected alternatives.
+**Route a 422 on `errorCode`, never on the status alone.** Several unrelated rules share 422, and
+the rule that failed decides the message and the field (`src/api/moneyProblem.ts`).
 
-**422 routing is on `errorCode`, four ways** — the business rule that failed decides the message and
-the affected field. Never route on the status alone: several unrelated rules share 422.
+**A 429's countdown is computed in the browser from `retryAfterSeconds`**, in all three places
+that have one: the login lockout, the PIN lockout and the per-user rate limit. Never trust an
+absolute `lockedUntil` from the server: a skewed browser clock unlocks early or hangs for ever.
 
-**429 appears in three places** — login lockout, PIN lockout, and per-user API rate limiting — and
-in all three the countdown is **computed client-side from the response's `retryAfterSeconds`**.
-Never trust an absolute `lockedUntil` timestamp from the server: the browser's clock is not the
-server's, and a skewed clock either unlocks early or hangs forever.
+**In demo mode a claim adds three 429s, and two are worded with no countdown, by decision.**
+`RATE_LIMIT_EXCEEDED` is the BFF's limiter, shared with sign-in: counted down on the sign-in
+page, one fixed sentence in the "Start over" dialog. `DEMO_POOL_EMPTY` and `DEMO_DAILY_LIMIT` are
+worded by their code, in the app's sentences and never the server's, with no countdown. Nothing
+is built for a fourth code, `DEMO_COPY_LIMIT` (ADR-0063, decision 11): each surface shows the
+fallback it has.
 
-**In demo mode a claim adds three 429s, and two of them are worded with no countdown, by
-decision.** `RATE_LIMIT_EXCEEDED` is the BFF's limiter, which the claim shares with sign-in: on the
-sign-in page it is counted down as sign-in's is, and in the "Start over" dialog it is one fixed
-sentence. `DEMO_POOL_EMPTY` and `DEMO_DAILY_LIMIT` are each worded by their code, in the app's
-sentences and never the server's, and neither is counted down, although the day's limit names a
-wait in `retryAfterSeconds`: the countdowns of the sign-in page belong to the lock and to the
-limiter, by their codes (`src/pages/LoginPage.tsx`). A fourth code, `DEMO_COPY_LIMIT`, can answer
-any change made in a copy that is past its budget of changes (ADR-0063, decision 11). Nothing is
-built for it: each surface shows the fallback it has, which where that prints the problem's
-`detail` is the API's own sentence. (The one kept test that answers a request with that code is
-the "Start over" dialog's, `src/features/demo/StartOverDialog.test.tsx`, `any other refusal:
-what the server said, or the fallback`. It shows that the dialog prints a `detail` it has no
-sentence for, with an answer made for the test: the dialog sends the claim, which the budget
-never counts. What the surfaces the code can reach would show is read from the code; no kept
-test and no run on a stack met it.)
+**One place acts for good on an instant the server gave, against the browser's clock:** the
+sign-in page removes a kept demo copy whose `expiresAt` has passed when the page opens. A clock
+ahead by more than the copy has left forgets a living copy (ADR-0063, "What the browser keeps in
+demo mode", item 5).
 
-**One place holds an instant the server gave against the browser's clock and acts on it for
-good: a kept demo copy's end, on the sign-in page.** It is not a countdown. (A wait has one such
-comparison too: a `Retry-After` header that is a date, and not a number of seconds, is turned
-into seconds against the browser's clock in `src/api/problemBaseQuery.ts`. The BFF's own limiter
-sends seconds.) The page reads the clock once, when it opens, and a
-copy whose `expiresAt` is not after that instant is not offered and is removed from the browser.
-So a browser whose clock is ahead of the server's by more than the copy has left forgets a living
-copy for good, with nothing said, and that copy is never sent to the server; one whose clock is
-behind offers a copy that has ended, and there the server's 401 to "Continue with my copy" is
-what says so. ADR-0063's section "What the browser keeps in demo mode" has why it is built that
-way and what it costs.
+**Errors surface through one root `<Toaster>`.** An error toast persists and carries a copyable
+`traceId`, the only bridge between what a user saw and the server's trace (ADR-0016). One toast
+is a success, "You have a new copy." (`src/features/demo/useNewCopyToast.tsx`): it leaves by
+itself and carries no `traceId`.
 
-**Errors surface through one root `<Toaster>`.** Error toasts persist rather than auto-dismissing,
-and they carry a copyable `traceId` — that identifier is the only bridge between what a user saw and
-the server-side trace (ADR-0016, ADR-0017). A toast that drops the traceId breaks the only link.
-**One toast is a success:** "You have a new copy.", said through the same outlet once the
-"Start over" dialog's claim has succeeded and the dialog has closed
-(`src/features/demo/useNewCopyToast.tsx`). It names no timeout, so it leaves by itself, and it
-carries no `traceId`: nothing in it has to be read or reported.
+**Region discipline for async state.** A first load renders a skeleton shaped like the content;
+a background refetch keeps the stale data and shows a small inline indicator; a failed region
+renders an inline retry and does not blank. A mutation shows its pending state on the button
+that started it, never as a page-level overlay.
 
-**Region discipline for async state**: a first load renders a skeleton shaped like the content it
-replaces; a background refetch keeps the stale data and shows a small inline indicator; a failed
-region renders an inline retry rather than blanking. Mutations show pending state on the button that
-started them, never as a page-level overlay.
+**A wait the visitor can see gets a `WaitHint`** (ADR-0059, decisions 4 to 6):
 
-**A wait the visitor can see gets a `WaitHint`, under the control or spinner that started it.** Each
-page or dialog renders its own rather than one for the app, because a Fluent modal hides everything
-outside it from assistive technology; never inside a `role="alert"` or an element an
-`aria-describedby` points at, or its words are read as part of those. It says nothing for 5 s, then
-"Taking longer than usual…", then "Still trying…" — on a money send that holds a key
-(`kind="moneySend"`; a PIN check before it is a `"write"`) "Still trying… Keep this page open.". Only a read can be offered "Stop waiting", from 20 s and only when its
-host passes `onStopWaiting`: a write the server may already be doing is never given up on. A read
-whose content takes the wait's place passes `failed`, and a wait of it that said something says
-"Loaded.", unseen, when it loads. A read's spinner and error bar follow `readWait`, not `isLoading`
-and `error`, so **a read's error bar hides while its read refetches**: a Retry shows the wait again.
-**The bar goes inside the page's `AlertSlot`**, an empty `role="alert"` that is on the page from the
-start, never into an alert of its own that mounts already filled: a failure is then a change of a
-region that was there, which is what a screen reader reads, and a second failure fills it again. One
-slot per page, so two failures at once are one alert; a check whose line sits under its own field,
-as the recipient check's does, keeps a slot of its own there. Stop and Retry arm `useWaitLanding`,
-which puts focus on the control the failed wait comes back with (the bar's Retry) unless the visitor
-has put it somewhere else meanwhile. ADR-0059 has the reasons.
+- Each page or dialog renders its own, under the control or spinner that started the wait: a
+  Fluent modal hides everything outside it from assistive technology. Never inside a
+  `role="alert"` or an element an `aria-describedby` points at.
+- It says nothing for 5 s, then "Taking longer than usual…", then from 20 s "Still trying…". A
+  money send that holds a key is `kind="moneySend"` and adds "Keep this page open."; a PIN check
+  before it is a `"write"`.
+- Only a read is offered "Stop waiting", from 20 s and only when its host passes
+  `onStopWaiting`. A write the server may already be doing is never given up on.
+- A read's spinner and error bar follow `readWait`, not `isLoading` and `error`: the bar hides
+  while the read runs again. A read whose content takes the wait's place passes `failed`.
+- The error bar goes inside the page's `AlertSlot`, an empty `role="alert"` that is on the page
+  from the start, never into an alert that mounts already filled. One slot for each page; a
+  check whose line sits under its own field, as the recipient check's does, keeps its own.
+- Stop and Retry arm `useWaitLanding`, which puts focus on the bar's Retry unless the visitor
+  has moved it meanwhile.
 
-**A view that says how a money send ended lands lost focus on its sentence.** The control that sent
-is disabled during the send and the browser hands its focus to `body`, so the view appears with
-nothing focused, and a view that mounts with its words already in it is not announced. The sentence
-is a `<Text as="p">` with `tabIndex={-1}` and the ref of `useFocusWhenLost(active)`, which focuses
-it when the view appears and focus is on `body` or on a container around the sentence (the dialog
-itself, where a press on a disabled control leaves it): the landing is there so that it is read
-before the actions, and one Tab reaches the first of them. **Not a live region, an alert or a status
-as well, and no `aria-describedby` on a button:** beside the landing those would say the sentence a
-second time, and a description would say it again at the Tab. The went-through view of the four
-money flows is built this way: `WentThroughView` on the two transfer pages, and the same block in
-the deposit and withdrawal dialogs, where the action carries a `key` so that it is a new node, not
-the send button renamed under a focus that never left it. In a dialog the view is shorter than the
-form it replaces, so the second press of a double click on the send button lands on the backdrop:
-the dialog tells its shell (`keepOnOutsidePress`), and a press outside then closes nothing, while
-the X and Escape still do. The check view is kept the same way: it is shorter than the form too,
-and behind it is the tile that opens the dialog for a second payment. The receipt of a send that
-succeeded is not kept. After a key press the browser draws the app's focus ring around the
-sentence; after a click it draws none. Three limits, known:
-
-- when another dialog holds focus as the answer arrives, or the visitor moved focus to a control
-  during the wait, the landing does not run, and nothing brings the sentence to a screen reader;
-- the check view ("We couldn't confirm …") lands no focus, so focus stays where the send left it.
-  Measured: on `body` after one press on the send button, and from there Escape reaches the
-  dialog only after a Tab has brought focus into it; on the dialog itself after the second press
-  of a double click on "Withdraw", and from there Escape closes it at once;
-- a landing does not depend on the screen reader, but what each one says on a focused paragraph
-  does. NVDA said the sentence once in each of the four flows, and the title only where it is a
-  dialog's name: on the two transfer pages, where it is the page's heading, it was not spoken.
-  ADR-0059's Validation has the rest of what was heard, and what was not.
+**The view that says how a money send ended puts lost focus on its sentence.** The control that
+sent is disabled during the send, so the view appears with focus on `body`, and a view that
+mounts with its words in it is not announced. The sentence is a `<Text as="p">` with
+`tabIndex={-1}` and the ref of `useFocusWhenLost(active)`. It is not a live region, an alert or
+a status as well, and no button's `aria-describedby` points at it: each would say the sentence a
+second time. `WentThroughView` does this on the two transfer pages, and the same block in the
+deposit and withdrawal dialogs, where the action carries a `key` so that it is a new node and
+the dialog passes `keepOnOutsidePress`: a press outside closes nothing, the X and Escape do.
+Known limits: the landing does not run when another dialog holds focus or the visitor moved it
+during the wait; the check view ("We couldn't confirm …") lands no focus; and what is spoken on
+a focused paragraph depends on the screen reader (ADR-0059, Validation).
 
 **A dialog gives focus back to the control that opened it.** The Fluent dialogs here are opened
-by a state, a page's or the PIN controller's, so Fluent has no trigger to go back to, and a dialog
-that closed left focus on `body`. A component that is mounted for as long as its dialog is open
-calls `useReturnFocus()` (`src/hooks/useReturnFocus.ts`). It reads what has focus as the dialog is
-first drawn, which for a dialog chosen from a menu is the button that opened the menu, and gives
-focus back to it once the dialog is gone, if focus is on `body` and the control is still on the
-page. `MoneyDialogShell` calls it for the three dialogs it frames; the PIN dialog's form calls it,
-and the reveal button stays on the page through its wait so that there is a control to go back
-to. The session warning does not call it: the clock opens it, and no control.
-**Not Fluent's `useRestoreFocusTarget` on the openers:** that one acts whenever focus is lost
-inside the dialog, and a money send loses it on purpose. Measured in Chromium on 2026-10-06, by
-keys, with that mark on the dashboard's Deposit tile: while the send waited, focus was on the tile
-behind the open dialog, and the page behind was no longer hidden from assistive technology. The
-hand-rolled `ConfirmDialog` returns focus by itself. Only Chromium was driven: a browser whose
-buttons take no focus from a mouse press leaves the hook nothing to go back to after a click.
+by a state, so Fluent has no trigger to go back to. A component that is mounted for as long as
+its dialog is open calls `useReturnFocus()` (`src/hooks/useReturnFocus.ts`); `MoneyDialogShell`
+calls it for the three dialogs it frames. Not Fluent's `useRestoreFocusTarget` on the openers:
+it acts whenever focus is lost inside the dialog, and a money send loses it on purpose. The
+hand-rolled `ConfirmDialog` returns focus by itself. Only Chromium was driven.
 
 ## Money and formatting
 
-**Amounts are always positive; direction lives in `type`.** A negative amount in the UI layer means
-somebody re-derived a sign that the contract already encodes, and the two will eventually disagree.
+**Amounts are always positive; direction lives in `type`.** A negative amount in the UI means
+that somebody derived a sign the contract already encodes.
 
-**One `formatCurrency`.** EUR, one implementation, no local `Intl.NumberFormat` calls. A second
-formatter is how two screens end up disagreeing about what €1.005 rounds to.
+**One `formatCurrency`.** EUR, one implementation, no local `Intl.NumberFormat`: a second
+formatter is how two screens come to disagree about what €1.005 rounds to.
 
 ## UI stack
 
 **Fluent UI v9 with Griffel, and nothing else.** No third-party toast, skeleton, grid or modal
-library — Fluent covers all four, and a second system means two focus models, two theme sources and
-two sets of accessibility behaviour.
+library: a second system means two focus models, two theme sources and two sets of accessibility
+behaviour.
 
-**MSW is a test tool.** `dev:mock` exists for click-throughs and demos; it must never become *the*
-development path, because a frontend developed only against mocks drifts from the real contract and
-nobody finds out until integration.
+**Colour belongs in `src/theme/` and nowhere else.** Lint refuses a hex colour or an `rgb()`,
+`rgba()`, `hsl()` or `hsla()` call in a string anywhere else. Use a Fluent token, or the local
+palette in `src/theme/tokens.ts` for what Fluent has no name for. Lint does not see a named
+colour, `color-mix()` or a 3- or 4-digit hex inside a longer string: those are caught by reading.
+
+**MSW is a test tool.** `dev:mock` is for click-throughs and demos, never the development path:
+a frontend developed only against mocks drifts from the real contract.
 
 ## Demo mode
 
 The public demo is one build with one switch, and the switch is not in the build (ADR-0063).
 
 **The page says whether it is the demo, with one tag, and `isDemoMode()` is its only reader.**
-`<meta name="azurebank-demo" content="true">` in the page's head turns the demo on. A page with no
-such tag is not the demo, and neither is one whose `content` is anything but exactly `true`. The
-BFF puts the tag in where it serves the page with `Demo:Enabled` set (ADR-0063, decision 13). The
-Vite dev server adds the same tag only when it was started with `AZUREBANK_DEMO=true` in its
-environment, and a build never carries it (`vite.config.ts`, whose comment says why the variable
-has no `VITE_` prefix). `isDemoMode()` (`src/features/demo/demoMode.ts`) reads the page each time
-it is asked, never once when a module loads: ask it in the component or the handler that needs
-the answer. The app has no second place to learn the mode from.
+`<meta name="azurebank-demo" content="true">` in the page's head turns the demo on; any other
+`content`, or no tag, does not. The BFF puts the tag in where `Demo:Enabled` is set; the Vite dev
+server adds it only when started with `AZUREBANK_DEMO=true` in its environment; a build never
+carries it (`vite.config.ts`). `isDemoMode()` (`src/features/demo/demoMode.ts`) reads the page
+each time it is asked: ask it in the component or the handler that needs the answer, never once
+when a module loads.
 
-**The demo keeps one key in `localStorage`, `azurebank.demoCopy`, and only a claimed copy's
-sign-in details go under it:** `{ v: 1, email, password, pin, contacts, expiresAt }`. It is
-written in one place, where a claim's answer arrives (`src/features/auth/sessionMiddleware.ts`),
-and read through `src/features/demo/demoCopyStorage.ts` alone. Nothing else of the demo's is
-stored there or beside it: no token, no session identifier, nothing a visitor typed. (The app's
-other key, `azurebank.theme`, holds the theme preference, on the demo or off it:
-`src/theme/themePreference.ts`.) `SECURITY.md`'s storage invariant names this key as its
-exception in demo mode. What comes back from the key is input: it is parsed with the
-definition the claim's answer is checked by, and a string that fails is removed, not repaired.
-The key is read at each ask, so never copy the snapshot into a state or a module variable: a copy
-held that way is how a second tab would go on holding a password the first was told to forget.
-(The storage module holds one copy that way itself: the one a browser refused to store. While
-it does, that tab does not read the key, and what another tab forgot or replaced does not reach
-it.) "Try the demo" asks at the press as well, and sends no claim over a copy another tab left.
-Off the demo the key is never read. Every kept value is rendered as text. ADR-0063's section
-"What the browser keeps in demo mode" has when the key is removed.
+**The demo keeps one key in `localStorage`, `azurebank.demoCopy`**, with a claimed copy's
+sign-in details and nothing else. It is written in one place, where a claim's answer arrives
+(`src/features/auth/sessionMiddleware.ts`), and read through
+`src/features/demo/demoCopyStorage.ts` alone. Read the key at each ask and never copy it into a
+state or a module variable: that is how a second tab would go on holding a password the first
+was told to forget. Every kept value is rendered as text, the kept `pin` is never rendered, and
+off the demo the key is never read. `SECURITY.md` names this key as the one exception, in demo
+mode, to its rule on web storage, and ADR-0063, "What the browser keeps in demo mode", has its
+shape and when it is removed.
 
 **Inside `src/features`, the demo's helpers are imported by file** (`../demo/demoCopyStorage`,
-`../demo/demoMode`). `src/features/demo/index.ts` hands out the four components and nothing else:
+`../demo/demoMode`). The barrel `src/features/demo/index.ts` hands out the four components only:
 the session middleware imports the storage module, and through the barrel it would pull every
 component in behind it.
 
-**A test turns the demo on with `enableDemoMode()`** (`src/test/demoMode.ts`), which puts the tag
-on the test page, and leaves a kept copy with `rememberDemoCopy(...)`, a raw write of the key as
-the product would have left it. `src/test/setup.ts` takes the tag off and empties the key after
-every test, so no test hands the demo to the next. That helper types the tag's name and the key
-out and imports neither from the product: a helper that asked the product for a name would follow
-it to any name. With the tag on the page the mock is the demo too: it hands out three fixed
-copies and signs in the owner of a claimed copy and nobody else, so the mock's own user is
-refused there (`accountForLogin` in `src/mocks/handlers.ts`).
+**A test turns the demo on with `enableDemoMode()`** and leaves a kept copy with
+`rememberDemoCopy(...)` (`src/test/demoMode.ts`). That helper types the tag's name and the key
+out and imports neither from the product, on purpose. `src/test/setup.ts` takes the tag off and
+empties the key after every test. With the tag on the page the mock is the demo too: it signs in
+the owner of a claimed copy and nobody else (`accountForLogin` in `src/mocks/handlers.ts`).
 
-**The demo's own sentences live in `src/features/demo/demoWords.ts`,** a constant each, or a
-function where a sentence has a blank. The digits of the demo PIN are one constant of
-`demoPin.ts` beside it, and the `pin` a kept copy carries is never rendered.
-
-**What the demo spells as the backend does is held against the backend's source** by
-`src/features/demo/demoContract.test.ts`: the tag, the claim's route, the two refusals the app
-words, the sentences a fixture types out for a refusal, and the demo PIN's digits. It finds the
-app's side by walking `src`. A file that is not a test and names one of the demo's codes in a
-string, and any file that types a refusal out with its sentence, has to be written into that
-test's expectations: until it is, the test fails and names the file.
+**The demo's sentences are in `src/features/demo/demoWords.ts`**, and the digits of the demo PIN
+in `demoPin.ts` beside it. What the demo spells as the backend does is held against the
+backend's source by `src/features/demo/demoContract.test.ts`. A file that is not a test and
+names one of the demo's codes in a string, and any file that types a refusal out with its
+sentence, has to be written into that test's expectations: until then it fails and names the
+file.
 
 ## Testing with Fluent and jsdom
 
-These five have each cost a debugging session, and none of them fails in a way that points at the
-cause.
+None of these fails in a way that points at the cause.
 
-**Never put `contentBefore` on an input inside a dialog.** Typing into it closes the modal. The test
-failure reads as "the element disappeared", which sends you looking at your own unmount logic.
+- **Never put `contentBefore` on an input inside a dialog.** Typing into it closes the modal, and
+  the failure reads as "the element disappeared".
+- **`userEvent.type` truncates Fluent inputs.** Use `fireEvent.change` with the complete value.
+  The symptom is an assertion on a string that is missing its first characters.
+- **Never assert on `input.value` under react-hook-form's `register`.** The value in the DOM is
+  not necessarily the value in form state. Assert on submitted values or on rendered output.
+- **The `matchMedia` stub is load-bearing** (`src/test/viewport.ts`, installed by
+  `src/test/setup.ts`). It reports a 1024 px viewport, the desktop tree, and reduced motion as
+  preferred, so Fluent's dialogs enter and leave with no transition. `setViewportWidth` and
+  `setReducedMotion` change either for one test. After any async transition, query with
+  `findBy*` or `waitFor`. jsdom reads no CSS media query, so an element a stylesheet hides behind
+  a breakpoint is found only with `{ hidden: true }`.
+- **A fake clock can stop jsdom's animation frames for the rest of the file.** RTK hands a
+  request's store changes to its subscribers on the next frame, and jsdom's frame interval,
+  started under a fake clock, dies when the clock is restored. The symptom is a test that passes
+  alone and fails after a fake-clock test in the same file. Where requests go through the store
+  while the clock is fake, install it with `installFakeClock()` from `src/test/outage.ts`. A bare
+  `vi.useFakeTimers()` is safe only while nothing asks for a frame.
 
-**`userEvent.type` truncates Fluent inputs.** Use `fireEvent.change` with the complete value. The
-symptom is an assertion failing on a string that is missing its first characters.
-
-**Never assert on `input.value` under react-hook-form's `register`.** RHF owns the DOM node and the
-value you read is not necessarily the value in form state. Assert on submitted values or on rendered
-output instead.
-
-**The `matchMedia` stub in `src/test/setup.ts` is load-bearing.** It reports `prefers-reduced-motion:
-reduce`, which makes Fluent skip dialog animations and gives deterministic ARIA state. Removing it
-reintroduces a whole class of flake. Two consequences follow: after any async transition, query with
-`findBy*` or wrap in `waitFor`, because tabster lifts background `aria-hidden` asynchronously; and
-since jsdom never evaluates media queries, elements hidden behind a mobile-first breakpoint are
-present but hidden, so they need `{ hidden: true }` to be found.
-
-**A fake clock can stop jsdom's animation frames for the rest of the file.** jsdom runs
-`requestAnimationFrame` on an interval it starts at the first frame request; started under a fake
-clock, that interval dies when the clock is restored, and RTK hands a request's store changes to
-its subscribers on the next frame, so every later test in the file stops seeing its own cache. The
-symptom is a test that passes alone and fails after a fake-clock test in the same file. A test whose
-requests go through the store while the clock is fake installs it with `installFakeClock()` from
-`src/test/outage.ts`, which keeps the frames on the real clock. A bare `vi.useFakeTimers()` is safe
-only while nothing asks for a frame, such as a hook's or a component's own timers with no request
-starting or ending.
+The traps of jsdom's missing layout are in
+[`docs/engineering-traps.md`](../docs/engineering-traps.md#jsdom).
 
 ## `vitest run` does not run the whole suite — it excludes `contract/**` and `integration/**`
 
-Five commands, not one. `vitest run` covers the unit and component tests; the `contract/` and
-`integration/` directories are excluded by configuration, so a green `vitest run` is not a green
-suite and has never been one.
+The suite is five commands: `npm test`, `test:contract:mock`, `test:contract:real`,
+`test:integration` and `test:e2e` ([`README.md`](README.md#check-it)). `vitest run`, which is
+`npm test`, covers the unit and component tests only: a green `vitest run` is not a green suite.
+A sixth command, `npm run test:e2e:demo`, is no part of it: it is run by hand, against the
+compose stack with the demo on.
 
-A sixth command, `npm run test:e2e:demo`, is no part of that suite. It is run by hand, against
-the compose stack with the demo on (`playwright.demo.config.ts`), where the suite's own
-`test:e2e` holds that its stack has the demo off.
+The last three need the real stack: a seeded `AzureBankE2E`, the API on
+**`https://localhost:7215`**, and the BFF on `:5000` through
+`dotnet run --project backend/src/AzureBank.Bff --launch-profile http`.
 
-The last three need the real stack up: seed `AzureBankE2E`, the API on **`https://localhost:7215`**,
-and the BFF on `:5000` via `dotnet run --project backend/src/AzureBank.Bff --launch-profile http`.
-
-⚠️ **The launch profile is not optional.** It is the only thing setting
-`ASPNETCORE_ENVIRONMENT=Development`, and two things hang off that: the dev certificate is
-trusted on the BFF→API hop, and the session cookie keeps its plain name. Outside
-Development `Program.cs` prefixes it `__Host-`, and the cookie is written `Secure`
-(`BuildSessionCookieOptions` in the BFF's `BffAuthController.cs`). A run without the profile
-fails on TLS, on that BFF→API hop, and the failure does not name the profile. The cookie's name
-is not what stops a browser there. Measured on 2026-10-05, on the Production images of
-`compose.yaml` with `compose.demo.yaml`, in headless Chromium 151.0.7922.34: the browser kept
-`__Host-AzureBank.Session` (`Secure`, `HttpOnly`, `SameSite=Strict`, host `localhost`) from a
-claim made on `http://localhost:5000` and sent it back, and Playwright's own request context
-sent it to `localhost` too. What the two suites that run in node, which carry the cookie
-themselves, meet at sign-in outside Development was not measured. No cluster override is needed
-locally: `appsettings.json` already points cluster
-`backend-api` at `https://localhost:7215`. The `--ReverseProxy:Clusters:backend-api:…` arguments you
-will see in `ci.yml` are CI-only, because CI moves the API to `:5068`; they are passed as
-command-line config rather than environment variables because the cluster id `backend-api` contains
-a hyphen and `ReverseProxy__Clusters__backend-api__…` is not a portable shell identifier.
-
-⚠️ **`:5068` is a real port and still the wrong one to use.** The API's `http` launch profile listens
-there, and the `https` profile listens on **both** `https://localhost:7215` and
-`http://localhost:5068` — so `:5068` answers, which is what makes the mistake survive. Everything
-that names the API means 7215: `vitest.contract.real.config.ts` and the READMEs.
-Authentication is rate-limited to 10 attempts per 60 seconds per IP, so leave ~70 seconds between
-suites or the second one fails on a limiter rather than on anything real.
-
+- **The launch profile is not optional.** It alone sets `ASPNETCORE_ENVIRONMENT=Development`,
+  without which the development certificate is not trusted on the hop from the BFF to the API:
+  the run fails on TLS there, and the failure does not name the profile. Outside Development the
+  session cookie is also `__Host-` and `Secure`; Chromium still keeps it from
+  `http://localhost:5000` (measured on 2026-10-05), and what the suites that run in node meet at
+  sign-in there was not measured.
+- **`:5068` is a real port and still the wrong one.** The API's `https` profile listens on both
+  `https://localhost:7215` and `http://localhost:5068`, so `:5068` answers, which is what makes
+  the mistake survive. Everything that names the API means 7215. The
+  `--ReverseProxy:Clusters:backend-api:…` arguments in `ci.yml` are CI's alone, because CI moves
+  the API to `:5068`.
+- **Authentication is rate-limited to 10 attempts in 60 seconds for one address.** Leave about
+  70 seconds between suites, or the second one fails on the limiter.
