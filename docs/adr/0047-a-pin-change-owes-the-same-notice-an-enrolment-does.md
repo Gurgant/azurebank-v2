@@ -140,7 +140,7 @@ decision is in the
 `AddSubscriberNotices` migration deliberately did not add, so that a notice whose evidence has gone
 missing is found rather than refused. That is a schema decision and it is not taken here: the limit
 is pinned by a test that fails if anyone closes it without moving this paragraph, named in the
-repudiation runbook so an operator counts the rows themselves, and carried in the backlog.
+repudiation runbook so an operator counts the rows themselves.
 
 _Correction (2026-09-09) — **taken, by ADR-0052.** A notice now carries the id of the audit row it
 belongs to, written in the same save, and the check asks about THAT row. ⚠️ Only for notices that

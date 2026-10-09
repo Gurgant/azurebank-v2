@@ -55,8 +55,8 @@ struck below; the first remains.)*
 
 ## Context
 
-Measured on 2026-09-29 on the local compose stack, before this decision, with outage scripts kept
-outside this repository that stop the SQL Server container ("refused": its name stops resolving,
+Measured on 2026-09-29 on the local compose stack, before this decision, with outage scripts
+that stop the SQL Server container ("refused": its name stops resolving,
 SQL error 11001), pause it (a hang) or pause the API. One run per row unless the row says
 otherwise.
 

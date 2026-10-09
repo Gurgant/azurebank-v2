@@ -115,5 +115,4 @@ job is a process that did not start, and the readiness step alone would only say
   step in this job, since it mints users and accounts the three suites here reason about — and it
   blocks a merge; ADR-0053 D6 carries the record. Bruno stays manual in `contract-tests.yml`.)*
   *(The other half taken 2026-09-24: `contract-tests.yml` runs Bruno on every pull
-  request and every push to `main`, and still by hand.)* *(2026-10-05: the 2026-09-24 note named a
-  row of a private list, which no reader of this repository can open; dropped, not struck.)*
+  request and every push to `main`, and still by hand.)*

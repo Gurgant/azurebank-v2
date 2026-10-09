@@ -11,12 +11,9 @@ no longer holds, struck in place there) and the decision in
 
 **Where the code's citations point.** The code and tests cite this record by section, as in
 "ADR-0057 §4.5", "ADR-0057 F3" and "ADR-0057 §10 O2h". F1 to F15 are the red team's findings,
-listed at the end; O0 to O2 are the oracles in §10. The design was ratified on 2026-09-28 as a plan
-kept outside this repository, and §1 to §11 keep that plan's section numbers; §8 and §9, which
-listed the code and the tests to change, are summaries, and the pull request holds the rest. §5.4,
-which points to the incident runbook, is this record's own. *(Until 2026-09-29 the code cited that
-plan by its own number, 06, which this repository already gives to
-`docs/design/06-api-contracts.md`, and this paragraph pointed those citations here.)*
+listed at the end; O0 to O2 are the oracles in §10. §8 and §9, which
+listed the code and the tests to change, are summaries, and the pull request holds the rest. §5.4
+points to the incident runbook.
 
 ## Preconditions
 
@@ -24,20 +21,21 @@ Two things this decision rests on that no code in the repository can enforce. Br
 breaks the argument in §3.
 
 1. **The API stays on loopback.** In `compose.yaml` the API shares the BFF's network namespace
-   (`network_mode: "service:bff"`) and listens on `http://127.0.0.1:5068`, and the Azure plan runs it
+   (`network_mode: "service:bff"`) and listens on `http://127.0.0.1:5068`, and the Azure deployment
+   runs it
    the same way: one app, the API as a sidecar of the BFF. Since this decision the token endpoints
    also refuse every address that is not loopback (§4.2). **If the API is ever reached over a
-   network** (the plan's old fallback, the API as its own app with internal ingress over https, is
+   network** (the API as its own app with internal ingress over https is
    one way) **stop: this decision's precondition has failed, and DPoP (RFC 9449) or mutual TLS
    (RFC 8705) comes first** (F1).
-2. **PR-1 lands before the first Azure deployment (the plan's step C2).** Its migration revokes
+2. **PR-1 lands before the first Azure deployment.** Its migration revokes
    every active grant with the reason `Deployment` (§4.1). The revision before PR-1 reads a revoked
    token that has no successor as reuse, and revokes every token of its user. Once a deployment holds
    live sessions, a swap between the two revisions would do that to each of them (F14).
 
 ## 1. The problem
 
-**Measured** with the outage harness, scripts kept outside this repository that pause the compose
+**Measured** with the outage harness, scripts that pause the compose
 stack's SQL Server container for N seconds (HANG N) or stop it (REFUSED N): in 8 of 8 runs where a
 renewal met a 10 s database hang, someone was signed out. In 4 of those 8 every session of the user
 was signed out, and a false `RefreshTokenReuse` was written. A larger retry budget changed nothing.
@@ -246,9 +244,9 @@ a profile this system meets.
     session on either (§4.5). And refresh, revoke and logout run without ADR-0058's request
     deadline (`[NoRequestDeadline]`): once started they run to the end, so a caller that hangs up
     cannot take a refusal's row back.)*
-- **Where the event lands.** On Azure the plan sends application logs nowhere, so the event is in
-  the audit trail, which a SQL query or the audit verifier reads. It is not a push notification.
-  Pushing it (an alert on the audit table, or turning logs on) is a later cost decision.
+- **Where the event lands.** In the audit trail, which a SQL query or the audit verifier reads.
+  It is not a push notification.
+  Pushing it (an alert on the audit table or on the logs) is a later cost decision.
 
 ### 4.4 Revoke, and sign out everywhere
 
@@ -360,8 +358,8 @@ a profile this system meets.
       grants" at the API, "Graceful stop: 6 grants revoked, 0 left" at the BFF, and 6 active grants
       down to 0, all `SessionEnded`. That run was before the drain moved to `ApplicationStopping`.
     - **On Azure** both containers of the replica get the stop signal at once, so the drain races
-      the sidecar's own stop. Which one wins is to be measured at the first deployment (the plan's
-      step C2), from the "left" count (§11). A grant the drain misses is the kill's residual above.
+      the sidecar's own stop. Which one wins is to be measured there, from the "left" count
+      (§11). A grant the drain misses is the kill's residual above.
 
 ### 4.7 Key refusals on proxied calls (F4)
 
@@ -410,8 +408,8 @@ The BFF's inactivity timeout is 15 minutes (it was 30). The absolute limit stays
   own documentation says sessions are lost on restart.
 - The cookie is an opaque 256-bit random handle, not a signed token. Once the dictionary is gone, the
   cookie proves nothing.
-- The plan runs at most one replica, in single-revision mode, so no other process holds a copy of the
-  sessions.
+- The deployment runs at most one replica, in single-revision mode, so no other process holds a copy
+  of the sessions.
 - This stops being true the day sessions move to a shared store or to two replicas. "Everyone now"
   would then need a global stamp: the same mechanism as §5.3 with one extra row.
 
@@ -538,7 +536,7 @@ nobody checks. What that runbook rests on is decided here.
     gave up on after 30 s is still counted once the database answers, and the BFF sends another
     after its 15 s cooldown. That costs one log line, and nobody is refused.
 - **Writes:** `RefreshRenewalRateHigh`, a Warning, in the logs only. On Azure it is invisible while
-  logs are off; locally, in CI and in the plan's measurement runs, it is seen. Putting it in the audit
+  logs are off; locally, in CI and in the measurement runs, it is seen. Putting it in the audit
   trail would need a write, and this decision removes writes from renewal.
 
 **3. A renewal past the session limit**
@@ -595,7 +593,7 @@ nobody checks. What that runbook rests on is decided here.
   absolute expiry, `Ended`, `InFlightRenewal` and the lock; `InMemoryTokenStore` ends every session
   through one path; `GrantRevoker` is new; the proxy strips the marker and maps key refusals to 503.
   A named BFF-to-API timeout option, `BackendApi:TimeoutSeconds`, ~~defaults to 100 s,
-  `HttpClient`'s own default, so naming it changed nothing; PR-2 of the plan sets its value~~
+  `HttpClient`'s own default, so naming it changed nothing; PR-2 sets its value~~
   *(2026-09-30, [ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md): it is
   55 s, and through `BackendTimeoutConfigFilter` it is also every proxy cluster's activity timeout,
   where YARP had waited its own 100 s; an answer the BFF stops waiting for is the outage 503. The
@@ -631,9 +629,6 @@ nobody checks. What that runbook rests on is decided here.
 - [ADR-0055](0055-the-api-serves-one-client-the-bff.md): D4 gains the marker and the loopback check,
   D7 describes the loopback sidecar, and "What would change this" gains the API reached over a
   network.
-- In the plan: the outage design's fix 4 is superseded, and the rule that it must land no later than
-  fix 1 disappears, because a late renewal changes nothing. The deployment plan's row "Sidecar not
-  on loopback" becomes "stop" (F1).
 
 ## 10. Verification: the oracles
 
@@ -646,8 +641,7 @@ The rule is the repository's: make the failure happen first, then show it gone.
    **Measured 2026-09-28**: 6 of 6 runs failed as expected. HANG 10 without delay signed out one
    session in 2 of 2; with 15 s it signed out both, logged `RefreshTokenReuse` twice and left 0
    active tokens, in 2 of 2; and REFUSED 10 committed its renewal 21.2 and 20.5 s after the BFF
-   gave up, and signed a session out, in 2 of 2. The plan also named both p7 HANG runs; they were
-   not run again.
+   gave up, and signed a session out, in 2 of 2.
 2. Seven CI tests, **7 of 7 red on main, measured**:
    1. the same grant renewed twice: the second renewal got 401 (`AuthEndpointTests`,
       `Refresh_TheSameGrantTwice_AnswersOkBothTimes`);

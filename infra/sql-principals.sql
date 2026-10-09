@@ -55,7 +55,7 @@ DECLARE @bad nvarchar(2000) = N'';
 BEGIN TRANSACTION;
 
 -- 1. No code may live here. A SELECT fires no trigger, so nothing has run when this stops.
--- Every trigger counts. Of the other modules one kind is left out, since 2026-10-03: an object
+-- Every trigger counts. Of the other modules one kind is left out: an object
 -- that is in the schema sys and is marked is_ms_shipped, the two together. A new Azure SQL
 -- database held one, the view sys.database_firewall_rules, and this check refused it. LocalDB
 -- does not list that view.
@@ -182,7 +182,7 @@ IF (SELECT COUNT(*) FROM sys.database_role_members WHERE member_principal_id > 4
 
 -- Expected: CONNECT for dbo and for the two users, and what the engine grants to public (two
 -- database permissions about encryption key metadata, and its grants on system objects, whose IDs
--- are negative). And one grant more, since 2026-10-03: SELECT, granted to public, neither denied
+-- are negative). And one grant more: SELECT, granted to public, neither denied
 -- nor with the right to grant it on, on an object that is in the schema sys and is marked
 -- is_ms_shipped, the two together, read as 1. reads them. A new Azure SQL database held one such
 -- row, SELECT for public on the view sys.database_firewall_rules, and a read-only query with this

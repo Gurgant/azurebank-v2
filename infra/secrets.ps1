@@ -28,7 +28,7 @@
       argument is refused, since the group that would carry it is built with the app.
     * The app believes the X-Forwarded-For header of a connection that comes from inside one of
       the networks -ProxyNetworks names (CIDR form, separated by commas: the range the
-      platform's ingress reaches the app from, as the operator measured it); without it, of the
+      platform's ingress reaches the app from, as measured on the deployment); without it, of the
       ones AZUREBANK_PROXY_NETWORKS names; without that, of the ones the bff container of the
       deployed app already holds, which is why a later run does not forget them. With none of
       the three nothing is written and the app believes no header: that is not an error. The
@@ -96,7 +96,7 @@ $AlertGroupName = 'azurebank-owner'
 $Api = '2025-01-01'
 # The environment is read with the API version main.bicep creates it with.
 $EnvironmentApi = '2026-07-01'
-# Everything a session may leave in the folder. Remove deletes these and nothing else.
+# Everything a run may leave in the folder. Remove deletes these and nothing else.
 $SessionFiles = 'parameters.json', 'what-if.json', 'budget.json'
 
 function Say([string]$Message) { [Console]::Error.WriteLine($Message) }
@@ -182,7 +182,7 @@ if ($Action -eq 'Remove') {
     }
     $left = @(Get-ChildItem -LiteralPath $Directory -Force)
     if ($left.Count -ne 0) {
-        Say "Removed the session's files. $Directory holds $($left.Count) other item(s) and was left as it is."
+        Say "Removed the run's files. $Directory holds $($left.Count) other item(s) and was left as it is."
         return
     }
     Remove-Item -LiteralPath $Directory -Force
@@ -235,8 +235,7 @@ function Get-ProxyNetworks($App) {
     # with no gap, and nothing else whose name starts with ForwardedHeaders__, nor the framework's
     # own switch under any of its names. Anything else was set by hand: it is not taken for a
     # list, and what it holds is not repeated. A name is matched whatever its case, as .NET
-    # reads it. (Until 2026-10-07 the switch was not looked for here: a run that named no
-    # networks went on beside it, and the run of the template then took it out in silence.)
+    # reads it.
     $found = @($App['properties']['template']['containers'] | Where-Object { $_['name'] -eq 'bff' })
     $settings = @($found[0]['env'] | Where-Object {
         $_ -and ($_['name'] -like 'ForwardedHeaders__*' -or $_['name'] -match $ForwardedSwitch) })
@@ -355,9 +354,9 @@ if ($DeployApp) {
         $source = 'from AZUREBANK_ALERT_EMAIL'
     }
     # The account of the Azure mobile app the alerts also notify: the e-mail address that app was
-    # set up with on the owner's phone. Found as the mailbox is, in the same order, but for the
-    # last place: an account nobody names is no account, and never the signed-in one. Each line
-    # of the report about it is written whole, once, because the runbook quotes it.
+    # set up with on the phone. Found as the mailbox is, in the same order, but for the last
+    # place: an account nobody names is no account, and never the signed-in one. Each line of the
+    # report about it is written whole, once, because the runbook quotes it.
     $account = $AlertPushAccount
     $accountSaid = 'alertPushAccount: from -AlertPushAccount'
     if (-not $account) {
@@ -365,8 +364,7 @@ if ($DeployApp) {
         $accountSaid = 'alertPushAccount: from AZUREBANK_ALERT_PUSH_ACCOUNT'
     }
     # One read of the deployed group serves both, and it is made when either is still not named:
-    # a run that names the mailbox alone must not forget the phone. Until 2026-10-06 the group was
-    # read only when no mailbox was named.
+    # a run that names the mailbox alone must not forget the phone.
     if ((-not $address -or -not $account) -and (Deployed 'Microsoft.Insights/actionGroups' $AlertGroupName)) {
         $group = Invoke-Az rest --method GET --url (Url "Microsoft.Insights/actionGroups/$AlertGroupName" '2023-01-01')
         if (-not $address) {

@@ -17,9 +17,6 @@ it; and the PIN is proved before the money is checked, which is the defect below
 
 ## POST /api/transactions/withdraw BEFORE — 2026-09-21 — API :7215, main `a02a298`
 
-The full transcript, with its provenance, is kept outside this repository
-*(2026-10-05: what was cited here, by path or by name, sits in a private working folder that no
-reader of this repository can open; the citation is replaced by what it stood for, not struck.)*.
 The rows that matter:
 
 ```
@@ -146,10 +143,6 @@ into all seven money endpoints at once so no mint is stricter than the movement 
 this record and the corrections below.
 
 ### Before → After, measured
-
-The full transcript is kept outside this repository
-*(2026-10-05: what was cited here, by path or by name, sits in a private working folder that no
-reader of this repository can open; the citation is replaced by what it stood for, not struck.)*.
 
 | Request | Before | After |
 |---|---|---|

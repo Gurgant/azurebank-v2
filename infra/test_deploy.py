@@ -1,9 +1,10 @@
 """Offline tests of the deployment script's decisions.
 
 Every Azure and HTTP answer below is invented here. The tests prove what the script does with an
-answer; what Azure and the app really answer is read on the first deployment (README.md, "Not
-measured yet"). Time is a counter: a wait of fifteen minutes costs nothing. One thing is read
-from the real clock: how old an execution is, against the start time a test gives it.
+answer; what Azure and the app really answer is read on the deployment (README.md, "Measured on
+Azure" and "Not measured yet"). Time is a counter: a wait of fifteen minutes costs nothing. One
+thing is read from the real clock: how old an execution is, against the start time a test gives
+it.
 """
 
 import ast
@@ -721,8 +722,8 @@ class MigrationTests(Offline):
         # the two share moved into helpers; no word a migration says moved with it, and its start
         # is still looked for during one minute, five seconds apart. Each sentence is held whole.
         stop = ('The deployment identity cannot stop it, and it blocks every later deploy until it ends or '
-                'the owner stops it: az containerapp job stop --name azurebank-migrate --resource-group group '
-                '--job-execution-name ')
+                'is stopped from a terminal: az containerapp job stop --name azurebank-migrate '
+                '--resource-group group --job-execution-name ')
         with patch('deploy.rest') as start, \
                 patch('deploy.executions', return_value=[execution('previous', 'Running')]):
             with self.assertRaises(RuntimeError) as raised:
@@ -932,7 +933,7 @@ class VerdictTests(unittest.TestCase):
 
     def test_each_exit_code_of_a_pool_run_says_what_it_means(self):
         # backend/tools/AzureBank.Seeder/Pool/PoolExitCodes.cs; docs/runbooks/demo-pool.md, "The exit
-        # code". The line is the owner's: no run of the pool job is started or read inside Actions.
+        # code". The line is for a terminal: no run of the pool job is started or read inside Actions.
         meanings = {
             0: 'done',
             1: 'did not finish, and left no summary line; read its last line before it is started again',
@@ -1056,7 +1057,7 @@ class VerdictTests(unittest.TestCase):
                 self.assertEqual(public_verdict(properties), f'Verdict: execution run: Failed, {times}{ending}')
                 self.assertNotIn('backoff limit', public_verdict(properties))
 
-    def test_azures_own_message_is_for_the_owners_terminal_and_never_for_actions(self):
+    def test_azures_own_message_is_for_a_terminal_and_never_for_actions(self):
         properties = finished(reason='Container exited with a non-zero code',
                               message='MESSAGE-MARKER')['properties']
         container = properties['detailedStatus']['replicas'][0]['containers'][0]
@@ -1246,12 +1247,12 @@ class DeploymentTests(DeployCase):
         self.assertEqual(self.azure.writes(), [])
 
     def test_an_interrupt_ends_a_deployment_in_one_sentence_and_puts_nothing_back(self):
-        # Ctrl+C on the owner's terminal. Whether a workflow run that is cancelled reaches the
-        # script as an interrupt is not known: GitHub's page on cancelling a run says the
-        # interrupt is sent to the step's shell and the process tree killed if the step is still
-        # running ten seconds later, and nobody here has tried it. Whenever an interrupt comes,
-        # the script stops where it is. It does not put the app back, and nothing it started is
-        # stopped: here the migration had run and the app had moved.
+        # Ctrl+C on a terminal. Whether a workflow run that is cancelled reaches the script as an
+        # interrupt is not known: GitHub's page on cancelling a run says the interrupt is sent to
+        # the step's shell and the process tree killed if the step is still running ten seconds
+        # later, and that has not been tried. Whenever an interrupt comes, the script stops where
+        # it is. It does not put the app back, and nothing it started is stopped: here the
+        # migration had run and the app had moved.
         self.smoke.side_effect = KeyboardInterrupt
         environment = {'AZURE_SUBSCRIPTION_ID': SUBSCRIPTION, 'AZURE_RESOURCE_GROUP': GROUP, 'IMAGE_TAG': NEW}
         with patch.dict(deploy.os.environ, environment, clear=True):
@@ -1376,7 +1377,7 @@ def beside_a_pool_run(name, state, timeout=600):
     return (f'Execution {name} of the job azurebank-pool is {state}: a pool run may still be in '
             'progress, and a deployment does not start beside one. Nothing was changed. A run is '
             f"expected to end within the job's timeout ({timeout} s): deploy again after that. If it "
-            "is refused again then, the owner reads the job's executions and stops that one "
+            "is refused again then, read the job's executions and stop that one "
             '(infra/README.md, "When something fails").')
 
 
@@ -1515,8 +1516,8 @@ class PoolDeployTests(DeployCase):
         self.assertEqual(str(raised.exception),
                          beside_a_pool_run('stuck', 'in a state this script does not know'))
         self.assertTrue(str(raised.exception).endswith(
-            "deploy again after that. If it is refused again then, the owner reads the job's "
-            'executions and stops that one (infra/README.md, "When something fails").'), str(raised.exception))
+            "deploy again after that. If it is refused again then, read the job's executions "
+            'and stop that one (infra/README.md, "When something fails").'), str(raised.exception))
         self.assertEqual(self.azure.writes(), [])
 
     def test_a_pool_run_that_blocks_is_named_only_in_the_shape_expected(self):
@@ -1631,9 +1632,9 @@ class PoolDeployTests(DeployCase):
         self.assertIn('identity', self.azure.jobs['azurebank-pool'], 'the job that was read did hold one')
 
     def test_a_refusal_that_asks_for_a_right_on_the_identity_stops_the_run_at_the_pool_job_too(self):
-        # The pool job carries the app's database identity. What Azure answers when the deployment
-        # identity changes that job has not been seen; if it asks for a right on the identity, the
-        # run stops there as it does for the migrate job and for the app.
+        # The pool job carries the app's database identity. On Azure the deployment identity changed
+        # that job and was asked for no right (README.md, "Measured on Azure"); if Azure ever asks
+        # for one on the identity, the run stops there as it does for the migrate job and the app.
         self.azure.refusal = LINKED
         self.azure.refuse = lambda method, resource_id, body: method == 'PATCH' and resource_id == POOL_ID
         with self.assertRaises(deploy.IdentityRightAsked) as raised:
@@ -2018,7 +2019,7 @@ class SecretsListingTests(DeployCase):
         self.assertNotIn(SUBSCRIPTION, str(raised.exception) + self.printed())
         self.assertEqual(self.azure.writes(), [])
 
-    def test_the_owner_is_not_asked_to_be_refused(self):
+    def test_a_run_from_a_terminal_is_not_asked_to_be_refused(self):
         self.deploy()
         self.run.assert_not_called()
         self.assertNotIn('listing', self.printed())
@@ -2184,7 +2185,7 @@ class MaskTests(DeployCase):
 
 
 class AppOnlyTests(DeployCase):
-    """The owner's road back: the app alone, from a terminal."""
+    """The road back: the app alone, by hand, from a terminal."""
 
     def test_it_moves_the_app_and_touches_no_job(self):
         self.deploy(app_only=True)
@@ -2218,15 +2219,15 @@ class AppOnlyTests(DeployCase):
         self.assertEqual(self.steps(), ['app d', 'app b'])
 
 
-CHECK_REFUSED = ("--check is refused inside GitHub Actions: it is the owner's read of the running app, "
-                 'from a terminal. A workflow run checks the app at the end of its own deployment.')
+CHECK_REFUSED = ('--check is refused inside GitHub Actions: it reads the running app from a terminal. '
+                 'A workflow run checks the app at the end of its own deployment.')
 ANOTHER_REVISION = ('an answer could still come from another revision: nothing was proved, nothing was '
                     "moved. Look at the app's revisions, then check again.")
 ALONE = 'is the latest ready one and no other revision is active: what answers now is that revision.'
 DEMO_OFF = 'The app says the demo is off: the job azurebank-pool is not read and no secret is listed.'
 # What a check says of the proxies the BFF believes, after the line about the revision: that the
 # bff container names no network, as the template writes none unless a run gives it some, or how
-# many it names. Since 2026-10-06 every check that gets past the revisions prints one of the two.
+# many it names. Every check that gets past the revisions prints one of the two.
 NO_NETWORKS = ("The bff container names no network of proxies: it takes each connection's address for the "
                "caller's and reads no forwarded header.")
 NETWORKS_SETTING = 'ForwardedHeaders__KnownIPNetworks__'
@@ -2292,10 +2293,10 @@ def no_single_value(whose, name):
 
 
 class CheckTests(DeployCase):
-    """`deploy.check`: the owner reads the running app and asks its address what a deployment asks
-    at its end, and nothing is moved. It is the read-back of a run of the template, which is
-    expected to make a revision outside the script: no migration, no smoke test and no put-back
-    follow one."""
+    """`deploy.check` reads the running app, from a terminal, and asks its address what a
+    deployment asks at its end, and nothing is moved. It is the read-back of a run of the
+    template, which is expected to make a revision outside the script: no migration, no smoke
+    test and no put-back follow one."""
 
     def check(self, **options):
         return deploy.check(SUBSCRIPTION, GROUP, **options)
@@ -2316,8 +2317,8 @@ class CheckTests(DeployCase):
         # CONTROL: green as written. Every line the check printed, the smoke test being a stand-in
         # in these tests: nothing of a listing is printed beside them, not how many secrets it
         # held and not how long a value was. Seen red with such a line printed after each listing.
-        # Since 2026-10-06 the second line is the one about the networks of proxies, which the
-        # app of these tests names none of; until then the lines given followed the first.
+        # The second line is the one about the networks of proxies, which the app of these tests
+        # names none of.
         self.assertEqual(self.said(), [f'Revision {BEFORE} {ALONE}', NO_NETWORKS, *lines])
 
     def assert_no_secret_is_shown(self, text, *more):
@@ -2398,9 +2399,9 @@ class CheckTests(DeployCase):
             ('a limit of hops', told(app_resource(), ('ForwardedHeaders__ForwardLimit', 'VALUE-MARKER')), on_the_bff),
             ('the switch that believes every caller',
              told(app_resource(), ('ASPNETCORE_FORWARDEDHEADERS_ENABLED', 'VALUE-MARKER')), on_the_bff),
-            # The same switch under the two other names the host reads it by. Added later on
-            # 2026-10-06, when the BFF on a loopback socket took the address a caller wrote under
-            # each of the three; until then only the name above ended the check.
+            # The same switch under the two other names the host reads it by. Measured on
+            # 2026-10-06: the BFF on a loopback socket took the address a caller wrote under each
+            # of the three.
             ('the same switch, by the name of every .NET host',
              told(app_resource(), ('DOTNET_FORWARDEDHEADERS_ENABLED', 'VALUE-MARKER')), on_the_bff),
             ('the same switch, with no prefix',
@@ -2947,13 +2948,13 @@ class SmokeInTheCheckTests(Offline):
 
 
 POOL_RUN_REFUSED = ('--pool-run is refused inside GitHub Actions: the pool job runs on its schedule, and a run '
-                    'beside the schedule is started by the owner, from a terminal. A deployment moves that '
+                    'beside the schedule is started by hand, from a terminal. A deployment moves that '
                     "job's image and never starts it.")
 LINE_KEPT = 'What it printed is kept in the log workspace (infra/README.md, "Reading the logs").'
 READ_WITH = ("`python infra/deploy.py --pool-log pool-run` reads the run's verdict again and prints the run's "
              'lines, once the log workspace has them: a line takes minutes to arrive.')
-POOL_LOG_REFUSED = ('--pool-log is refused inside GitHub Actions: what the containers printed is read by the '
-                    'owner, from a terminal, and never reaches a public log.')
+POOL_LOG_REFUSED = ('--pool-log is refused inside GitHub Actions: what the containers printed is read from a '
+                    'terminal, and never reaches a public log.')
 START = ('POST', POOL_ID + '/start')
 RUNS = ('GET', POOL_ID + '/executions')
 # The one line a start by hand prints before its one write: an interrupt while the start is on
@@ -2973,7 +2974,7 @@ NOT_THE_TOOLS = ('not a code the tool itself exits with', None)
 
 
 def pool_verdict(status='Succeeded', code=0, words='done', name='pool-run'):
-    """The verdict of a run of the pool job that ended, as the owner's terminal shows it."""
+    """The verdict of a run of the pool job that ended, as a terminal shows it."""
     return (f'Verdict: execution {name}: {status}, started 2026-10-02T18:00:03Z, ended 2026-10-02T18:00:09Z '
             f'(6 s), exit code {code} ({words}), reason Completed.')
 
@@ -3024,7 +3025,7 @@ def beside_another_pool_run(name, state, timeout=600):
     return (f'Execution {name} of the job azurebank-pool is {state}: a pool run may still be in '
             'progress, and a second run is not started beside one. Nothing was started. A run is '
             f"expected to end within the job's timeout ({timeout} s): start it again after that. If it "
-            "is refused again then, the owner reads the job's executions and stops that one "
+            "is refused again then, read the job's executions and stop that one "
             '(infra/README.md, "When something fails").')
 
 
@@ -3050,15 +3051,15 @@ def not_ended(name='pool-run', waited=720):
     reads = 'How it ends is read with `python infra/deploy.py --pool-log pool-run`. ' if name == 'pool-run' else ''
     return (f'Timed out waiting for execution {name} of the job azurebank-pool: it had not ended {waited} s '
             "after it was started here (the job's timeout and two minutes). It was not started again. While "
-            f'it is listed as running, a deployment and a second start are refused. {reads}The owner can stop '
-            'it: az containerapp job stop --name azurebank-pool --resource-group group --job-execution-name '
+            f'it is listed as running, a deployment and a second start are refused. {reads}To stop it: '
+            'az containerapp job stop --name azurebank-pool --resource-group group --job-execution-name '
             + (name if name == 'pool-run' else '<its name>'))
 
 
 class PoolRunTests(DeployCase):
-    """`deploy.pool_run`: the owner starts the pool job once, by hand, and waits for that exact
-    execution: the first fill, or a refill between two runs of the schedule. How the run ended is
-    told by its exit code and never by its status alone."""
+    """`deploy.pool_run` starts the pool job once, by hand, and waits for that exact execution:
+    the first fill, or a refill between two runs of the schedule. How the run ended is told by
+    its exit code and never by its status alone."""
 
     def setUp(self):
         super().setUp()
@@ -3406,7 +3407,7 @@ class PoolRunTests(DeployCase):
         self.azure.pool_outcome = ends_as(pool_finished(status='Failed', code=1, message='Container pool failed'))
         with self.assertRaises(RuntimeError) as raised:
             self.pool_run()
-        # CONTROL: green as written. The verdict is the line of the owner's terminal: what Azure
+        # CONTROL: green as written. The verdict is the line a terminal shows: what Azure
         # says of the run follows it, as it never does inside GitHub Actions. On exit 1 it is the
         # first thing there is to read, before the log workspace has a line. Seen red with the
         # verdict printed as a workflow run prints it.
@@ -3453,8 +3454,8 @@ class PoolRunTests(DeployCase):
         self.assertEqual(self.printed(), '')
 
     def test_a_start_azure_refuses_or_does_not_answer_is_said_in_its_own_words_and_not_sent_again(self):
-        # Whether Azure lets a job that runs on a schedule be started by hand has not been tried
-        # here. The first refusal is invented. After the second, a run may have begun.
+        # Azure lets a job that runs on a schedule be started by hand (README.md, "Measured on
+        # Azure"). The first refusal is invented. After the second, a run may have begun.
         self.azure.refuse = lambda method, resource_id, body: (method, resource_id) == START
         for refusal in ('Bad Request: InvalidRequest.',
                         'The Azure CLI gave no answer in 180 s (POST /jobs/azurebank-pool/start).'):
@@ -3811,7 +3812,7 @@ class MainTests(Offline):
                                     expect_secrets_refused=True)
 
     @patch('deploy.deploy')
-    def test_the_owners_terminal_asks_for_neither(self, run):
+    def test_a_terminal_asks_for_neither(self, run):
         self.run_main(['--app-only'])
         run.assert_called_once_with(SUBSCRIPTION, GROUP, NEW, app_only=True, in_actions=False,
                                     expect_secrets_refused=False)
@@ -3884,7 +3885,7 @@ def table(*rows, columns=('TimeGenerated', 'Log')):
 
 
 class LogTests(Offline):
-    """--job-log and --app-log: the owner reads what the containers printed, from the workspace."""
+    """--job-log and --app-log read what the containers printed, from the workspace."""
 
     def setUp(self):
         super().setUp()
@@ -3993,7 +3994,7 @@ class LogTests(Offline):
             deploy.job_log(SUBSCRIPTION, GROUP)
         self.assertEqual(len(self.queries), 1)
 
-    def test_on_the_owners_terminal_the_verdict_carries_what_azure_said(self):
+    def test_on_a_terminal_the_verdict_carries_what_azure_said(self):
         self.listed = [finished('this-run', status='Failed', code=1, message='MESSAGE-MARKER',
                                 reason='Container failed to start')]
         deploy.job_log(SUBSCRIPTION, GROUP)
@@ -5114,7 +5115,7 @@ class RunbookTests(unittest.TestCase):
         '; the smoke test passed; nothing was moved.',
         'The pool run ended well',
         'Starting the job ',
-        # Since 2026-10-06, the two lines of a check about the networks of proxies: the one
+        # The two lines of a check about the networks of proxies: the one
         # every check prints until a run has named some, and how the other one ends.
         'The bff container names no network of proxies',
         'No network was shown.',

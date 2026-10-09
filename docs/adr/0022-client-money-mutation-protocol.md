@@ -21,10 +21,8 @@ end, does the server possibly hold this key, or is the key spent?** Getting one 
 wrong moves a customer's money twice, and none of these failures is visible at code-review time —
 the code looks fine, the tests that would catch it are the ones you have to know to write.
 
-The table did exist, in a planning document outside the repository. Two comments in shipped code
-point at it: `frontend/src/hooks/useIdempotentMutation.ts:11` cites "KEEP outcomes (DECISIONS
-§2.3)" and `:29` cites "§2.3" again. That document is being archived. This ADR is the client half
-of ADR-0009, written into the repository so the pointers have somewhere real to land.
+This ADR is the client half of ADR-0009: it writes that table into the repository, and the
+comments in `frontend/src/hooks/useIdempotentMutation.ts` cite it.
 
 ## Decision
 
@@ -152,7 +150,7 @@ replay. Two transports is the smaller cost.
   not sticking, which is a BFF bug and must be diagnosed there, not papered over with more retries.
 - **Nothing here protects against two browser tabs.** Each tab mints its own key for its own
   intent, which is correct per-intent behaviour and does not stop a user paying twice on purpose.
-  Server-side velocity limits are the control for that, and they are backlog.
+  Server-side velocity limits are the control for that; they are outside this ADR.
 
 ## Consequences
 

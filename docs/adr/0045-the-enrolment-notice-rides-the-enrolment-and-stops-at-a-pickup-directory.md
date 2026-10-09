@@ -36,9 +36,9 @@ and unreferenced. No PIN reset or revocation flow: forgetting the PIN is unrecov
 `PinEnrolled` audit row is written in the same save as the enrolment (ADR-0044 D1) and a log line
 goes to the operator, and the code's own comment said that line was deliberately NOT the notice.
 
-**What must not close this**, from the backlog entry that carried it: the operator's log or row —
+**What must not close this**: the operator's log or row —
 they reach the operator, not the subscriber; and any in-app notice — it reaches whoever holds the
-session, which in the threat model is the attacker. What DOES close it, the backlog did not say.
+session, which in the threat model is the attacker.
 
 **The threat model, stated once.** An attacker with a stolen session AND the account password (T8's
 attacker) enrols a PIN on an account that has none. The address held on the account was written by

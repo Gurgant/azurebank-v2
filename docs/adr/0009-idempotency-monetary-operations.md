@@ -274,9 +274,7 @@ minute longer than `RequestDeadline:Seconds`.)*
   connection. The middleware now reads and discards a body of up to 1 MiB before
   the 413, never buffering or hashing it, and for five seconds at most; above
   that size, or once the five seconds are up, it answers `Connection: close`.
-  `docs/engineering-traps.md` has the measurements.)* *(2026-10-06: the
-  2026-09-24 note named a row of a private list, which no reader of this
-  repository can open; dropped, not struck.)* *(Amended 2026-10-06:
+  `docs/engineering-traps.md` has the measurements.)* *(Amended 2026-10-06:
   the four authorisation mints, which are not idempotent endpoints, answer a
   body over their limit with 413 `PAYLOAD_TOO_LARGE`, a ProblemDetails, once
   the caller is authenticated; with no token the 401 still comes first. Until
@@ -377,7 +375,7 @@ guesswork into a provable state machine.
 
 ## Post-merge hardening (deep review)
 
-A second adversarial deep review (3 read-only reviewers over the whole PR) found
+A second adversarial deep review of the whole PR found
 **no new double-execution path** — the fencing / three-state machine held under
 tracing. It surfaced a set of bounded issues, resolved as follows.
 

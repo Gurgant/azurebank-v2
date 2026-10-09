@@ -21,26 +21,22 @@ fill, or a refill by hand, is `seed-pool`, or `seed-pool <N>` to top up to N fre
 needs `Demo__Enabled=true`, the connection string, and the API's `Security__PinPepper` and
 `Security__PinPepperKeyId`. Where a deployment gives the app and its migration database users of
 their own, it signs in as the app's, never the migration's (ADR-0060, decision 5's note). On the
-Azure deployment (ADR-0061), which had no pool job when this was written *(2026-10-07: it
-has one, read there that day by the deployment's check, `infra/README.md`, step 30)*, that
-job is to carry the identity
-`azurebank-app` and sign in as `azurebank_app`, never with `azurebank-migrate`; ADR-0062,
-decision 13, says what else adding it changes. `backend/tools/AzureBank.Seeder/README.md` has
-every variable and code; on one machine, `compose.demo.yaml` runs both.
+Azure deployment (ADR-0061) that job carries the identity `azurebank-app` and signs in as
+`azurebank_app`, never with `azurebank-migrate`; ADR-0062, decision 13, says what else adding it
+changes. `backend/tools/AzureBank.Seeder/README.md` has every variable and code; on one machine,
+`compose.demo.yaml` runs both.
 
-**On the Azure deployment, once the demo is on there.** Written on 2026-10-05, before any of
-it had run: Azure has no pool job until the third session of `infra/README.md` has turned the
-demo on
-([ADR-0064](../adr/0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md)).
-*(Until 2026-10-07 this paragraph began "Written on 2026-10-05 and not yet run". On that day
-the demo was on there and the deployment's check read the job, in shape and with the app's
-pepper and connection string (`infra/README.md`, step 30). What the commands below printed
-there is not written on that page, so every "expected" below stands as it was written.)* The
+**On the Azure deployment, once the demo is on there.** Azure has no pool job until the demo
+is turned on there (`infra/README.md`, "Turn the demo on";
+[ADR-0064](../adr/0064-the-azure-deployment-runs-the-demo-from-a-scheduled-pool-job.md)). The
 template then holds one job, `azurebank-pool`: `recycle` every four hours, at minute 0 of the
-hours 0, 4, 8, 12, 16 and 20 if Azure reads the schedule in UTC as expected, one run at a time
+hours 0, 4, 8, 12, 16 and 20 UTC, one run at a time
 and no retry, with the identity `azurebank-app` and the app's pepper with no key id. There is no
 `seed-pool` job: the first fill is `recycle` too, which builds the pool on a database that holds
-no copy and exits 0. From the owner's terminal, with the two variables `infra/README.md` names:
+no copy and exits 0. On 2026-10-07 the demo was on there and the deployment's check read the
+job, in shape and with the app's pepper and connection string (`infra/README.md`, "Measured on
+Azure"). Each "expected" on this page is still an expectation, not a measurement. Run the
+commands from your own terminal, with the two variables `infra/README.md` names:
 
 ```powershell
 python infra/deploy.py --pool-run             # one run beside the schedule: the first fill, or a refill by hand
@@ -66,14 +62,14 @@ Azure services alone, and the two database users belong to managed identities th
 there. The one person who can sign in, the Microsoft Entra administrator, runs nothing in that
 database but `infra/sql-principals.sql` (ADR-0061, decision 5; `infra/README.md` names the
 migration run by hand as its one exception). So these statements need a road there before they
-are used: a throwaway job that carries `azurebank-app`, like the sign-in probe of
-`infra/README.md` step 7, would send them as `azurebank_app`. All but one: section 7's first
-statement reads `sys.dm_db_partition_stats`, which Microsoft's page (read 2026-10-03) says needs
-`VIEW DATABASE STATE` and `VIEW DEFINITION`, or on SQL Server 2022 and later their performance
-and security forms. `azurebank_app` holds neither, and `infra/sql-principals.sql` refuses any
-permission of the two users but `CONNECT`, so on Azure that statement has no road yet. None of
-them has been run as that user, and running them as the administrator would be a new exception
-to that rule, to be written there first.
+are used: a throwaway job that carries `azurebank-app`, like the probe job that
+`infra/README.md` names under "Create it once", would send them as `azurebank_app`. All but one: section
+7's first statement reads `sys.dm_db_partition_stats`, which Microsoft's page (read 2026-10-03)
+says needs `VIEW DATABASE STATE` and `VIEW DEFINITION`, or on SQL Server 2022 and later their
+performance and security forms. `azurebank_app` holds neither, and `infra/sql-principals.sql`
+refuses any permission of the two users but `CONNECT`, so on Azure that statement has no road
+yet. None of them has been run as that user, and running them as the administrator would be a
+new exception to that rule, to be written there first.
 
 ---
 
@@ -111,7 +107,7 @@ copy, so the refusal is "no copy's". The run is expected to exit 1 with `recycle
 SQL Server's 229 in the exception printed with it. That is read in the tool's code
 (`DemoCopyBuilder`, `RecycleCommand`); the 229 that was measured ended a `seed-pool` with 12, on
 a server where the roles were there already (`backend/tools/AzureBank.Seeder/README.md`). So
-after an exit 1 on a first fill, the run's last line is read before anything is started again.
+after an exit 1 on a first fill, read the run's last line before starting anything again.
 
 **A run that exited 2 did nothing.** It refused before it opened anything, and its one Error line,
 `recycle refused: …`, says why: the demo is off where the job runs (`Demo__Enabled`), a demo
@@ -242,14 +238,14 @@ SELECT COUNT(*) AS PoolRows FROM DemoCopies;
 
 **0 pool rows:** the run was pointed at a database that is not the demo's: one `seed` filled, or
 one people registered on. It wrote nothing, not even a sweep. Check the connection string the
-run was given, then the users below. Until 2026-10-05 this line gave a second cause, the demo's
-own database before its first fill, after somebody registered through the app. On a database
-that only `migrate` has touched that cannot happen: the role a new user is given does not exist
-yet, so the registration fails. Measured on a local stack that day: it answered 500 and left no
-user and no role, and the same request answered 201 once the roles were there (`infra/README.md`,
-"Not measured yet", has the run). On Azure the app does go live on such a database with its
-registration not closed; the roles come with the pool's first run, which creates them before its
-first copy. **Pool rows and users outside them:** these users are not the pool's.
+run was given, then the users below. The demo's own database before its first fill is not a
+second cause: on a database that only `migrate` has touched nobody can register through the
+app, because the role a new user is given does not exist yet and the registration fails.
+Measured on a local stack on 2026-10-05: it answered 500 and left no user and no role, and the
+same request answered 201 once the roles were there (`infra/README.md`, "Not measured yet", has
+the run). On Azure the app does go live on such a database with its registration not closed;
+the roles come with the pool's first run, which creates them before its first copy. **Pool rows
+and users outside them:** these users are not the pool's.
 
 **Where such a user comes from.** Where the API and the BFF run with `Demo__Enabled=true`,
 registration answers 403 `REGISTRATION_CLOSED` and sign-in lets in only the owner of a claimed
@@ -259,9 +255,8 @@ it on. A user outside every copy that registered beside the pool says the job ha
 while neither of the app's two containers did: compare `Demo__Enabled` on the three. On the
 Azure deployment neither container has it on, and no job exists beside them, until the demo is
 turned on there: one run of the template then turns on both containers and builds the job, the
-job after the app (`infra/README.md`, step 25, which also says what is done if that run leaves
-the job beside an app not proved to be the demo). `compose.demo.yaml` ran the app with the flag
-on the job alone until 2026-10-04.
+job after the app (`infra/README.md`, "Turn the demo on", which also says what to do if that
+run leaves the job beside an app not proved to be the demo).
 
 ```sql
 SELECT u.Id, u.AzureTag, u.CreatedAt
@@ -422,9 +417,9 @@ a new chain and loses every row. On Azure the database is Basic, 5 DTU and 2 GB,
 `infra/main.bicep` (more is a change to ADR-0061, decision 3); recreating it first needs the lock
 `keep-the-database` removed, and the two database users made again with `infra/sql-principals.ps1`
 before the migration and the app can sign in (`infra/README.md`). With the demo on there, the
-order is the one under "Turning the demo back" in that file, and its first step is the pool job's
-deletion: a run of the job on the new database, before the app's flags are settled, is what that
-order keeps from happening.
+order is the one that file gives for turning the demo back, and its first step is the pool
+job's deletion: a run of the job on the new database, before the app's flags are settled, is
+what that order keeps from happening.
 
 ## 8. An audit row whose actor is neither a user nor a deleted copy
 
@@ -439,7 +434,7 @@ ORDER BY e.Sequence;
 
 A run deletes only a copy's users, and keeps the copy's record, whose `OwnerUserId` is the actor
 of the copy's audit rows. A row listed here names a user that something other than a run deleted.
-**The record is the operator's word, not proof:** anyone who can write to the database can add a
+**The record is a claim, not proof:** anyone who can write to the database can add a
 record that takes a row off this list (ADR-0062, decision 11).
 
 ## 9. A copy at its limit of changes (429 `DEMO_COPY_LIMIT`)
@@ -487,13 +482,13 @@ code, alert or status shows it.
 python infra/deploy.py --check
 ```
 
-It lists the job's two secrets and the app's, as the owner, compares them, and prints "The pool
-job's PIN pepper and connection string are the app's", or which of the two differs. It shows no
-value. It moves nothing, so it is run after anything that could have changed either side: a run
-of the template, a deployment, a start of the job by hand, a stop and a start of the app
-(`infra/README.md`, "Reading the logs"). Until 2026-10-07 this paragraph ended "Not yet run on
-Azure": that day it was run there once and passed, and the line it printed about the two
-secrets is the one above (`infra/README.md`, step 30).
+It lists the job's two secrets and the app's with the sign-in of the terminal it runs in (inside
+GitHub Actions it is refused), compares them, and prints "The pool job's PIN pepper and
+connection string are the app's", or which of the two differs. It shows no value. It moves
+nothing, so run it after anything that could have changed either side: a run of the template, a
+deployment, a start of the job by hand, a stop and a start of the app (`infra/README.md`,
+"Reading the logs"). It was run on Azure once, on 2026-10-07, and passed: the line it printed
+about the two secrets is the one above (`infra/README.md`, "Measured on Azure").
 
 **Then, after any change of the job's secrets, or after a line that says they differ: from a
 browser.** Claim a copy with the demo's button, open the dashboard, and make one transfer to a
@@ -502,8 +497,8 @@ screen says and `data.verified` in the answer's body, never the status. It spend
 leaves its audit rows, which is why it is not the first check.
 
 **If the PIN is not taken,** no copy that job built is usable, and the next visitor meets the
-same. On Azure the app is stopped first, on the owner's word; `infra/README.md`, "When something
-fails", has the row for the line that says the two differ.
+same. On Azure, stop the app first; `infra/README.md`, "When something fails", has the row for
+the line that says the two differ.
 
 ## Afterwards
 
