@@ -8,9 +8,6 @@ use GitHub's **private vulnerability reporting** on this repository (Security �
 vulnerability), not a public issue. The most useful findings are about the cryptography, the
 authorisation rails and the audit trail, because those are where the project makes its claims.
 
-_(This section used to promise a 48-hour acknowledgement and give `security@azurebank.example.com`
-as the address. `.example.com` is a domain reserved by RFC 2606, so mail to it reaches nobody.)_
-
 ## Security Measures
 
 ### Authentication
@@ -19,10 +16,8 @@ as the address. `.example.com` is a domain reserved by RFC 2606, so mail to it r
   store starts `AQAAAAIAAYag`, which decodes to exactly that. **That iteration count is below
   OWASP's current recommendation for this PRF (220,000)**, and PBKDF2 is not memory-hard; raising it
   is tracked as its own change, because the login path's timing defence is calibrated to this
-  hasher (ADR-0012) and has to move with it.
-  _(This line used to say "Argon2id password hashing (ADR-0003)". ADR-0003 decided that, and it
-  was built for PINs, never for passwords — the API registers Identity with no custom password
-  hasher. ADR-0003 now carries the correction.)_
+  hasher (ADR-0012) and has to move with it. ADR-0003 decided Argon2id for passwords, but it was
+  built for PINs only: the API registers Identity with no custom password hasher.
 - **A 15-minute access token, silently re-minted** by the BFF from the session's refresh token, its
   grant. Short-lived so a leaked token is nearly worthless; re-minted server-side so the user never
   sees an expiry. An active session is bounded by inactivity and absolute timeouts (ADR-0021), and
@@ -32,34 +27,25 @@ as the address. `.example.com` is a domain reserved by RFC 2606, so mail to it r
   present.** The API answers its six token endpoints (login, register, refresh, revoke, logout and
   the public demo's claim), and the session-stamp feed the BFF polls, with 404 unless the request
   comes over loopback with exactly one `X-AzureBank-Token-Road` header, besides the service key.
-  _(Until 2026-10-04 this said five: the demo's claim, `POST /api/auth/demo/claim`, is the sixth,
-  ADR-0063. It opens a session from no credential, so it rests on this rule alone; where
-  `Demo:Enabled` is false, which is the default, it answers 404 to every caller that holds the
-  key, and 401 to one that does not, as every operation does.)_
-  A renewal only reads the
-  grant, so a lost answer or a database outage has nothing to break. A grant whose session ended,
-  presented again, is refused and recorded as a `RefreshTokenReuse` security event with an audit
-  row. It revokes nothing: only code inside the API's own replica can present a grant, and
-  revoking one user's tokens would not contain that code; the incident runbook does
+  The demo's claim, `POST /api/auth/demo/claim` (ADR-0063), opens a session from no credential,
+  so it rests on this rule alone; where `Demo:Enabled` is false, which is the default, it answers
+  404 to every caller that holds the key, and 401 to one that does not, as every operation does.
+  A renewal only reads the grant, so a lost answer or a database outage has nothing to break. A
+  grant whose session ended, presented again, is refused and recorded as a `RefreshTokenReuse`
+  security event with an audit row. It revokes nothing: only code inside the API's own replica
+  can present a grant, and revoking one user's tokens would not contain that code; the incident
+  runbook does
   ([`docs/runbooks/refresh-token-reuse-recorded.md`](docs/runbooks/refresh-token-reuse-recorded.md),
   ADR-0057 §5.4).
-  _(Until 2026-09-28 these two bullets said the refresh token lived 7 days, rotated on every use,
-  and that a reuse revoked the whole family. Rotation turned a renewal whose answer was lost, to a
-  database hang for instance, into a sign-out, and the family revoke could then sign out every
-  other session of the user under a false reuse event.)_
-- **A PIN for every move of money and for closing an account, on two rails.** ~~on three rails. A
-  withdrawal carries the PIN in its request body.~~ *(Struck 2026-09-21: ADR-0056 moved the
-  withdrawal onto the mint rail, and the body-PIN rail it was the last user of no longer exists.)*
-  A transfer, an account closure and a withdrawal first mint a one-shot authorisation with the PIN,
+- **A PIN for every move of money out of an account and for closing an account, on two rails.** A
+  transfer, an account closure and a withdrawal first mint a one-shot authorisation with the PIN,
   bound to exactly that operation and spent once (ADR-0042, ADR-0049, ADR-0056). Only the
-  account-number reveal still uses an elevation held in the BFF session (ADR-0008). Through
-  the BFF, none of them is granted by the bearer token alone; presented to the API directly
-  together with the BFF's service key, which since ADR-0055 only the BFF presents in a deployment
-  (the API keeps the same value to check it), a bearer token reads the full number with no PIN —
-  as a bearer token alone did when measured on 2026-09-15, before the key existed; see "Where each
-  guarantee stops without the BFF" below. _(This used to end "None of them is granted by the
-  bearer token alone", which was true of the money rails and not of the reveal; until 2026-09-24
-  it then said the bearer token alone read the number, which ADR-0055 ended on 2026-09-19.)_
+  account-number reveal uses an elevation held in the BFF session (ADR-0008). Through the BFF, none
+  of them is granted by the bearer token alone; presented to the API directly together with the
+  BFF's service key, which since ADR-0055 only the BFF presents in a deployment (the API keeps the
+  same value to check it), a bearer token reads the full number with no PIN — as a bearer token
+  alone did when measured on 2026-09-15, before the key existed; see "Where each guarantee stops
+  without the BFF" below.
 - **PINs are hashed with Argon2id and peppered first** with a server-side secret held outside the
   database: six digits is a space you can exhaust instantly, so a stolen database must not be
   enough (ADR-0011).
@@ -70,26 +56,19 @@ as the address. `.example.com` is a domain reserved by RFC 2606, so mail to it r
 - **No secrets in source code.** Every key comes from user-secrets locally, and the API refuses to
   start when one fails its check (`ValidateOnStart`), the JWT signing key included: at least 32
   bytes as UTF-8. So does the connection string, which must be there, parse and name a server.
-  _(Until 2026-09-25 this said the JWT signing key had no check. Measured on 2026-09-11: with
-  `Jwt:Secret` empty, or 12 characters long, the API started and answered its first registration
-  with a 500 when it came to sign the token; measured again on 2026-09-25, both hosts as Production
-  in containers, a 31-byte key and a missing connection string each started, and the first sign-in
-  answered 500.)_
 - **The PIN pepper lives outside the database** (ADR-0011), and the audit trail's chain and anchor
   keys are separate secrets from each other and from everything else (ADR-0044).
 - **The public demo is served over HTTPS; no TLS version is claimed for it, and encryption at rest
   is not verified.** The template turns plain HTTP off at the app's ingress (`allowInsecure: false`,
   `infra/main.bicep`), and on 2026-10-03 a request over `http://` was answered 301 to `https://` of
-  the same name ([infra/README.md](infra/README.md#measured-on-azure), "Measured on Azure", step
-  21); so it was again on 2026-10-06, with the demo on. Which TLS versions that ingress accepts, and
-  its certificate, are the platform's own: this project did not set them and did not read them.
+  the same name ([infra/README.md](infra/README.md#measured-on-azure), "Measured on Azure"); so it
+  was again on 2026-10-06, with the demo on. Which TLS versions that ingress accepts, and its
+  certificate, are the platform's own: this project did not set them and did not read them.
   Towards the database the template sets a minimum of TLS 1.2 on the server (`minimalTlsVersion`;
-  read back as 1.2 on 2026-10-03, the same section, step 4), and the app's connection string asks
-  for encryption and for the server's certificate to be checked
-  (`Encrypt=True;TrustServerCertificate=False`). Encryption at rest is left to the database
-  service's own default: this project did not set it and did not read it, so none is claimed.
-  _(This section used to list "TLS 1.3 for all connections" and "Sensitive
-  data encrypted at rest"; no code or configuration in the repository does either.)_
+  read back as 1.2 on 2026-10-03), and the app's connection string asks for encryption and for the
+  server's certificate to be checked (`Encrypt=True;TrustServerCertificate=False`). Encryption at
+  rest is left to the database service's own default: this project did not set it and did not read
+  it, so none is claimed.
 
 ### Session Security
 - **`__Host-` prefixed, HttpOnly, Secure, SameSite=Strict session cookie** in production. The
@@ -113,9 +92,8 @@ the requests below sent straight to the API: `401 SERVICE_CREDENTIAL_REQUIRED` f
 register and login included, so no bearer token is issued to begin with. What follows is kept as
 measured on 2026-09-15 because it says what each control would be worth to a caller who ALSO held
 that key, which in a deployment only the BFF presents (the API keeps the same value to check it);
-in production the API has no public address either. _(Until 2026-09-25 this said the key was held
-by "the BFF's host and nobody else".)_ The last row's residual is closed by this and not by a PIN
-check inside the API, which ADR-0055 records as decided against.
+in production the API has no public address either. The last row's residual is closed by this and
+not by a PIN check inside the API, which ADR-0055 records as decided against.
 
 Since 2026-09-28 (ADR-0057 §4.2) the key alone is not enough on the token endpoints. Login,
 register, refresh, revoke, logout, the session-stamp feed and, since 2026-10-04, the public
@@ -128,15 +106,14 @@ holds the key can add it; the table below is what the controls are worth to that
 
 Two origins answer `/api/*`: the BFF on :5000, which the browser uses, and the API on :7215,
 which on 2026-09-15 accepted a bearer token from anyone holding one — its own login answered with
-the JWT. _(Until 2026-09-25 that said "accepts" and "answers": the API now refuses any caller
-without the service key, as above.)_ Several of the controls on this page live in the BFF process,
-and a caller who presents a token to the API directly never meets them. The table says which.
-Measured on 2026-09-15 with both hosts running `main` (f1b3509) and the same requests sent to each
-origin; the values are what came back, not what the code reads as. Four rows are the public
-demo's (ADR-0063) and exist only where `Demo:Enabled` is true: those were measured on 2026-10-04
-on the compose stack with the demo on, both hosts as Production, through the BFF's published
-port, in two runs, and each says what was and was not sent to the API's own address. A value is
-the one both runs gave unless its row names a run.
+the JWT. Several of the controls on this page live in the BFF process, and a caller who presents a
+token to the API directly never meets them. The table says which. Measured on 2026-09-15 with both
+hosts running `main` (f1b3509) and the same requests sent to each origin; the values are what came
+back, not what the code reads as. Four rows are the public demo's (ADR-0063) and exist only where
+`Demo:Enabled` is true: those were measured on 2026-10-04 on the compose stack with the demo on,
+both hosts as Production, through the BFF's published port, in two runs, and each says what was
+and was not sent to the API's own address. A value is the one both runs gave unless its row names
+a run.
 
 | Control | Enforced in | What a bearer caller on the API gets | ADR |
 |---|---|---|---|
@@ -158,16 +135,15 @@ The last row is the one to read twice. A browser has no bearer token to present 
 origin — the JWT never reaches the SPA and the BFF clears any inbound `Authorization` before
 proxying (ADR-0001, ADR-0038, ADR-0041) — so every reveal it can ask for goes through the BFF and
 its level-2 gate. But a bearer token is a credential the API hands to whoever logs in, and on
-2026-09-15 a holder of one, a leaked access token inside its fifteen minutes or an operator with
-`curl`, could call the API directly and read the unmasked number with no PIN. That is the shape
-ADR-0041 closed for transfers by moving the check into the API; the reveal is the route it left on
-the session model on purpose, and it carried this measurement as a residual until 2026-09-19, when
-the service key closed it: without the key the API answers `401 SERVICE_CREDENTIAL_REQUIRED` before
-it looks at a token (ADR-0055). _(Until 2026-09-25 this paragraph said it in the present tense, as
-if the residual were still open.)_ Withdrawals, closures, idempotency and the PIN
-lockout were not sent in this pass: their checks run inside the API's own services (ADR-0042,
-ADR-0049, ADR-0009, ADR-0010), so the origin does not change them, but that is a reading of the
-code, not a row of this table.
+2026-09-15 a holder of one, a leaked access token inside its fifteen minutes or someone who logged
+in with `curl`, could call the API directly and read the unmasked number with no PIN. That is the
+shape ADR-0041 closed for transfers by moving the check into the API; the reveal is the route it
+left on the session model on purpose, and it carried this measurement as a residual, which the
+service key closed on 2026-09-19: without the key the API answers
+`401 SERVICE_CREDENTIAL_REQUIRED` before it looks at a token (ADR-0055). Withdrawals, closures,
+idempotency and the PIN lockout were not sent in this pass: their checks run inside the API's own
+services (ADR-0042, ADR-0049, ADR-0009, ADR-0010), so the origin does not change them, but that is
+a reading of the code, not a row of this table.
 
 ### Browser-side invariants
 
@@ -190,8 +166,7 @@ them in a minute.
   it whoever is signed in. With the demo off the key is never read, and no screen sends the claim
   that writes it.
   [ADR-0063](docs/adr/0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md#what-the-browser-keeps-in-demo-mode-added-2026-10-05)
-  has the key's shape, when it is removed, and what a script that read it would gain. _(Until
-  2026-10-05 this called the cookie "the deliberate exception and the only one".)_
+  has the key's shape, when it is removed, and what a script that read it would gain.
 - **The SPA never constructs an `Authorization` header.** Access tokens live server-side in the BFF
   and are attached by its proxy transform (ADR-0001, ADR-0021). Frontend code that builds a bearer
   header is a defect regardless of where it got the token.
@@ -230,8 +205,7 @@ analyses every pull request. Dependabot alerts are on (since 2026-09-25) and rea
 npm packages and the GitHub Actions the workflows use, but not the backend: GitHub's dependency
 graph reads no version from `backend/Directory.Packages.props` and lists every NuGet package as
 `>= 0`, so no advisory is matched against the backend. Nothing updates a package on its own; a fix
-goes through a pull request like any other change. _(Until 2026-09-24 this said "Security updates
-are applied promptly", which nothing enforced.)_
+goes through a pull request like any other change.
 
 ## See Also
 
