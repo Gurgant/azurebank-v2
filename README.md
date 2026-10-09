@@ -138,7 +138,7 @@ CodeQL analyses the C#, the TypeScript and the workflows on every pull request a
 |---|---|
 | [How AzureBank works](docs/architecture/overview.md) | One document, complete on its own: how the money guarantee works and why the JWT never reaches the browser |
 | [ADR-0009](docs/adr/0009-idempotency-monetary-operations.md) and [ADR-0022](docs/adr/0022-client-money-mutation-protocol.md) | The money protocol, server and client halves: when the client keeps the key and when it spends it |
-| [Decisions](docs/adr/README.md) | The decisions, with the alternatives they rejected and what they leave open; the index names four to start with |
+| [Decisions](docs/adr/README.md) | The decisions and their reasons, with the alternatives rejected and what is left open where a record has them; the index names four to start with |
 | [Engineering traps](docs/engineering-traps.md) | The things that fail silently; each one cost real time to find |
 | [SECURITY.md](SECURITY.md) | The security posture in one place, including what is not done |
 
