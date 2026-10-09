@@ -16,8 +16,9 @@ builds a feature that was researched and rejected.
 1. **ETag/If-Match conditional requests are deliberately not built**, on the API or on the frontend,
    because the problem they solve does not exist here. Idempotency solves duplicate submissions;
    optimistic concurrency solves lost updates. Client-facing `If-Match` would protect a nickname
-   rename on a single-owner resource that nobody edits from two devices at once, at the cost of
-   version tokens on responses, 428 and 412 handling and a frontend cache slice.
+   rename on a resource with one owner, where the only lost update is between that owner's own
+   devices and is accepted, at the cost of version tokens on responses, 428 and 412 handling and a
+   frontend cache slice.
 2. **Idempotency keys are the only client-facing write-safety contract** (ADR-0009, ADR-0022),
    because that is what the payment industry standardizes on: Stripe, Adyen, PayPal, GoCardless,
    Marqeta, Plaid, Wise, Modern Treasury and UK Open Banking. `If-Match` is a cloud and platform

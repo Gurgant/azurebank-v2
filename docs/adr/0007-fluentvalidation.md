@@ -5,7 +5,8 @@
 
 ## Context
 
-Request validation serves security (preventing injection attacks), data integrity (only valid data
+Request validation serves security (malformed input is refused; SQL injection is prevented by
+EF Core's parameterised queries, not by validation), data integrity (only valid data
 reaches the database), user experience (clear error messages) and business rules (domain
 constraints). The rules must be readable when they are complex, testable in isolation, kept apart
 from the DTOs, and able to express conditions and comparisons between two properties of a request.

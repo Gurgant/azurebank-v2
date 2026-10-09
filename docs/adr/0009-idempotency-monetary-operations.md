@@ -46,7 +46,7 @@ before the commit and a commit whose response was lost demand opposite recoverie
 | It is still running, or committed with its answer not yet stored | fresh `Processing` or `Executed` | 409 `IDEMPOTENCY_IN_FLIGHT`; the server does not wait |
 | It crashed before the commit | `Processing` older than `ProcessingStaleAfter`, 2 minutes | a takeover: a fenced delete and a new claim, since nothing was committed |
 | It committed and the answer was lost | `Executed` past the same age | 409 `IDEMPOTENCY_RESULT_UNKNOWN` with `applied: true`: not to be sent again under a new key. At 24 h the row is swept with a Warning, for reconciliation |
-| A retried attempt finds its record gone, or claimed with another body | none, or another hash | 409 `IDEMPOTENCY_RESULT_UNKNOWN` without `applied`; the detail says which |
+| Inside one request, a retried attempt re-reads its record and finds it gone, or replaced by one claimed with another body | none, or another hash | that request gets 409 `IDEMPOTENCY_RESULT_UNKNOWN` without `applied`; the detail says which |
 | The database is unreachable, or the deadline passed | as it was | 503 `SERVICE_UNAVAILABLE`, with `applied: false` only when the request owns its claim and started no commit (ADR-0058) |
 
 ## Rejected

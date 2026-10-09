@@ -61,14 +61,14 @@ flag day. Account passwords are out of scope: ASP.NET Core Identity hashes them,
 
 ## Consequences
 
-- A stolen `PinHash` is useless without the pepper: offline brute force of the 10^6 space fails.
+- A stolen peppered `PinHash` is useless without the pepper: offline brute force of 10^6 PINs fails.
 - No schema change: the key id lives in the hash string, which keeps its six `$`-segments.
 - It costs a required secret: the API and the Seeder refuse to work without `Security:PinPepper`.
 - The job that runs `recycle` holds the API's pepper and key id, and rotates in the same order, on
   the count `docs/runbooks/demo-pool.md` reads.
 - Not covered: rotation drains on use. A dormant account keeps its old `keyid` until its next
   correct PIN, so a retired pepper stays in the ring until its rows reach zero, and a compromised
-  pepper cannot be retired instantly.
+  pepper cannot be retired instantly. A legacy hash has no pepper until its next correct PIN.
 
 ## Verified by
 

@@ -26,10 +26,10 @@ poll included, pushed the inactivity timeout forward.
    Development stays unprefixed and non-Secure, because its loop runs on `http://localhost` and
    Safari refuses a Secure cookie there. Chromium does keep a `__Host-` cookie set over
    `http://localhost` and sends it back, measured on the compose stack's Production images.
-3. **A session cookie, not a persistent one.** It has no `Expires` and no `Max-Age` and is gone when
-   the browser closes, because the server enforces the lifetime, by inactivity and absolute
-   timeouts. The logout's deletion carries the same attributes, because a `__Host-` cookie is
-   evicted only by a Secure `Path=/` expiry.
+3. **A session cookie, not a persistent one.** It has no `Expires` and no `Max-Age`. A browser that
+   restores its session can keep such a cookie across a restart, so the lifetime is the server's:
+   inactivity and absolute timeouts. The logout's deletion carries the same attributes, because a
+   `__Host-` cookie is evicted only by a Secure `Path=/` expiry.
 4. **Fetch-Metadata middleware is the origin-level CSRF backstop behind SameSite=Strict.** A request
    that is not GET or HEAD, whose `Sec-Fetch-Site` is present and neither `same-origin` nor `none`,
    is answered 403 `CROSS_SITE_REQUEST_BLOCKED` before it can refresh session activity, spend

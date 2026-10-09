@@ -45,8 +45,9 @@ first reaches the operator, the second the session, which the attacker holds wit
   never sees, and the console names a failure by exception type, because a message can echo a path
   or a recipient (`AWriteFailure_LeavesTheNoticeOwed_AndNamesTheExceptionTypeNotTheAddress`).
 - **D7 — Delivery is recorded on the row, not in the chain.** `DeliveredAt` is a concurrency token,
-  so two runs cannot both claim a notice (`TwoRunsCannotBothMarkOneNoticeDelivered`). No chained row
-  is written, because a chained NOTIFIED would be true only of a directory: green, and false.
+  so two runs cannot both mark a notice delivered (`TwoRunsCannotBothMarkOneNoticeDelivered`). No
+  chained row is written, because a chained NOTIFIED would be true only of a directory: green, and
+  false.
 - **D8 — What does not owe a notice.** A failed attempt, because it would mail the account's owner
   on every attacker probe and open an enumeration side channel (ADR-0013); the wrong-password path
   already counts toward the login lockout. A PIN change: withdrawn, see ADR-0047.
@@ -61,7 +62,7 @@ What this closes, clause by clause. NIST SP 800-63 binds US federal providers: h
 |---|---|---|
 | §4.1 — record the date and time of authenticator life-cycle events | **Met** | `AuditEvents.OccurredAt` on the `PinEnrolled` row, same transaction as the enrolment |
 | §4.1.2.1 — "notify the subscriber … as described in Sec. 4.6" | **Not met** | Nothing is sent. The message reaches a directory on this machine |
-| the same clause — "via a mechanism independent of the transaction" | **Met** | The row commits with the enrolment on a path the session cannot read and is rendered outside the request; the session cannot change the address or suppress the run |
+| the same clause — "via a mechanism independent of the transaction" | **Not met**: nothing is sent | What is built is the independence: the row commits with the enrolment on a path the session cannot read and is rendered outside the request, and the session cannot change the address or suppress the run |
 | §4.6 — to the notification addresses stored in the account | **Partly**: one address, self-asserted | The one address is used; there is no second |
 | §4.6 — at least two notification addresses, and sent to every non-postal one | **Not met** | The data model holds one, and nothing is sent |
 | §4.6 — at least one validated during identity proofing | **Does not bind** | No identity proofing exists; the clause is scoped to proofed accounts |

@@ -26,7 +26,9 @@ This record is the client half of ADR-0009; `frontend/src/hooks/useIdempotentMut
 3. **DROP the key** on `2xx`, on a business `4xx`, on `401 INVALID_PIN`, on `422
    IDEMPOTENCY_KEY_REUSE` and on `400 KEY_MISSING`/`KEY_INVALID`, because the server has answered
    definitively. Not in the list: a 409 on a money send whose body names no code (`HTTP_409`, read
-   from the status) latches the check as `RESULT_UNKNOWN` does, because it may be an `IN_FLIGHT`.
+   from the status) latches the check as `RESULT_UNKNOWN` does, because it may be an `IN_FLIGHT`;
+   and so does a send that ends with no HTTP status, a `2xx` whose body failed its schema or an
+   abort, because the server may have acted. `PARSE` in point 2 is an answer that could not be read.
 4. **`409 IDEMPOTENCY_RESULT_UNKNOWN` drops the key and latches `verifyRequired`.** Submit refuses
    to mint a new key until the owning flow, never the generic hook, hears the user say it did not go
    through, which calls `resetIntent`, because a new key armed automatically resubmits money the

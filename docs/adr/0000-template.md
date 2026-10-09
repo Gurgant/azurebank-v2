@@ -1,6 +1,6 @@
 # ADR-NNNN: Title
 
-**Status:** Proposed · **Date:** YYYY-MM-DD · **Decision Makers:** Vladislav Aleshaev
+**Status:** Proposed · **Date:** YYYY-MM-DD · **Decision Makers:** Name Surname
 
 > Copy this file to `NNNN-short-title.md` with the next free number, replace each line of guidance
 > and delete this note. The statuses: [ADR Lifecycle](README.md#adr-lifecycle).

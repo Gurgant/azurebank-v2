@@ -34,7 +34,7 @@ latency, and be actively maintained.
 ## Consequences
 
 - Route configuration is declarative, and request and response transforms are first-class.
-- Performance is that of Kestrel, on which YARP is built.
+- YARP runs in the BFF's pipeline, on Kestrel; the overhead it adds to a request is not measured.
 - It costs one more NuGet package (`Yarp.ReverseProxy`), in a library that is younger than nginx,
   has some advanced features still evolving and a smaller community than Ocelot's.
 - Not covered: the two success criteria no test measures, a latency overhead under 5 ms per
