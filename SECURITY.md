@@ -16,8 +16,8 @@ authorisation rails and the audit trail, because those are where the project mak
   store starts `AQAAAAIAAYag`, which decodes to exactly that. **That iteration count is below
   OWASP's current recommendation for this PRF (220,000)**, and PBKDF2 is not memory-hard; raising it
   is tracked as its own change, because the login path's timing defence is calibrated to this
-  hasher (ADR-0012) and has to move with it. ADR-0003 decided Argon2id for passwords, but it was
-  built for PINs only: the API registers Identity with no custom password hasher.
+  hasher (ADR-0012) and has to move with it. Argon2id hashes PINs only (ADR-0003): the API
+  registers Identity with no custom password hasher.
 - **A 15-minute access token, silently re-minted** by the BFF from the session's refresh token, its
   grant. Short-lived so a leaked token is nearly worthless; re-minted server-side so the user never
   sees an expiry. An active session is bounded by inactivity and absolute timeouts (ADR-0021), and
