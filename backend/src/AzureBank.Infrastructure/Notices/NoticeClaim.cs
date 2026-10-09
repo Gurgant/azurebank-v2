@@ -215,8 +215,7 @@ public static class NoticeClaim
     /// row IS held by something, so the tally is right and only the name is unusable. A NULL name is
     /// excluded by BOTH, because a row held until a time by nobody is not held by another runner,
     /// and counting it while refusing to name it made the verb announce a holder it could not
-    /// produce. An earlier version of this paragraph said the count was unaffected FULL STOP, which
-    /// was true when only this query carried the null term and false the moment its sibling did.
+    /// produce.
     /// </para>
     /// </remarks>
     public static async Task<IReadOnlyList<string>> HolderKindsOtherThanAsync(

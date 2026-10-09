@@ -101,9 +101,9 @@ public class UserSession
     /// a usable handle.
     ///
     /// <para>
-    /// This used to say the cache existed "to avoid API calls on /bff/auth/me", which stopped being
-    /// true the moment that endpoint started reading through — and while it was true it let a
-    /// rename made through the proxy go unnoticed for a whole session.
+    /// The cache is a fallback, not a way to avoid API calls: <c>/bff/auth/me</c> reads through.
+    /// Answered from the cache alone, a rename made through the proxy would go unnoticed for a
+    /// whole session.
     /// </para>
     /// </summary>
     public required UserSessionInfo UserInfo { get; init; }

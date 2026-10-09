@@ -15,14 +15,14 @@ namespace AzureBank.AuditVerifier.Commands;
 /// </summary>
 /// <remarks>
 /// <para>
-/// ONE OF TWO RUNNERS since ADR-0048, and the one that needs a person. Until 2026-09-04 this was
-/// "a mode of this tool, not a scheduled job" — the anchor's decision, for a deployment in which
-/// nothing ran between sessions. The API now runs a relay that claims and delivers the same rows
-/// on a period when <c>Notices:Runner</c> names it; this verb is for a store where it does not, and
-/// for the day it is down. Both use <see cref="NoticeClaim"/>: the verb CLAIMS what it delivers,
-/// under its own name and a short lease, so the two cannot both hold a row at the same moment.
+/// THE RUNNER THAT NEEDS A PERSON (ADR-0048). A hosted relay claims and delivers the same rows
+/// when <c>Notices:Runner</c> names one: the API's on a period, or the Azure Function on a
+/// schedule (ADR-0051). This verb is for a store where neither runs, and for the day the one
+/// that does is down. All of them use <see cref="NoticeClaim"/>: the verb CLAIMS what it
+/// delivers, under its own name and a short lease, so no two of them hold a row at the same
+/// moment.
 /// The API writes the row (in the same save as the enrolment, so the obligation is never lost and
-/// never survives a rollback); this verb and the relay are what read it.
+/// never survives a rollback); this verb and the hosted relays are what read it.
 /// </para>
 /// <para>
 /// ⚠️ WHAT THIS DOES NOT DO. It does not send. The transport writes an RFC 5322 message into a

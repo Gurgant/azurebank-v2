@@ -16,7 +16,7 @@ namespace AzureBank.Api.Services.Interfaces;
 /// be atomic with it. That is <see cref="Record"/>: it only calls <c>Add</c>, and the operation's own
 /// <c>SaveChangesAsync</c> writes it inside whatever transaction already exists. If the audit insert
 /// fails, the whole unit rolls back and the action does not happen. That is the decision recorded in
-/// ADR-0044, in the owner's words: better a bank that is blocked than a bank that is emptied.
+/// ADR-0044: better a blocked bank than an emptied one.
 /// </item>
 /// <item>
 /// Something was refused — a duplicate registration, a reused refresh token — then there is usually
@@ -49,8 +49,7 @@ public interface IAuditService
     /// multi-statement transaction EF opens for <c>SaveChanges</c>). The chain fields are
     /// filled later, inside <c>AzureBankDbContext.SaveChanges</c>, because they can only be computed
     /// within that transaction — NOT by an interceptor, which ADR-0044 D3 rejected because the test
-    /// host rebuilds the <c>DbContext</c> registration and would silently drop it. An earlier draft
-    /// of this sentence named <c>AuditChainInterceptor</c>, a type that was never written.
+    /// host rebuilds the <c>DbContext</c> registration and would silently drop it.
     /// </remarks>
     /// <param name="securityEvent">One of the <c>SecurityEvents</c> constants. Never a literal.</param>
     /// <param name="outcome">Must be <see cref="AuditOutcome.Succeeded"/> or <see cref="AuditOutcome.RetryCollision"/>.</param>

@@ -12,10 +12,8 @@ namespace AzureBank.Shared.Enums;
 /// - stale Executed    = committed, and its response will never be stored
 ///                       (409 IDEMPOTENCY_RESULT_UNKNOWN with applied: true)
 ///
-/// Until 2026-10-01 the last line read "committed but the response was lost (409
-/// IDEMPOTENCY_RESULT_UNKNOWN)", and that answer did not tell a committed operation from one
-/// whose outcome is not known. It carries applied: true since then: Executed read from the
-/// database is the proof of the commit.
+/// The answer carries applied: true because Executed read from the database is the proof of the
+/// commit: it is what tells a committed operation from one whose outcome is not known.
 /// </summary>
 public enum IdempotencyStatus
 {

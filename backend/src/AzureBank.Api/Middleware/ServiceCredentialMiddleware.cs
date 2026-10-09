@@ -37,10 +37,8 @@ namespace AzureBank.Api.Middleware;
 /// This is the application-level half. The other is where the API listens: it is the BFF's sidecar
 /// in one replica and binds loopback only (ADR-0057 §3), so nothing outside the replica reaches it
 /// at all, and its token endpoints refuse even the key from any other address
-/// (<see cref="TokenRoadMiddleware"/>). <i>(Until 2026-09-28 this said a private network with
-/// managed identity or mutual TLS between two hosts. That was a plan, not the deployment, and
-/// ADR-0057 made the API reached over a network a stop condition: DPoP or mutual TLS would have to
-/// come first.)</i>
+/// (<see cref="TokenRoadMiddleware"/>). An API reached over a network is a stop condition of
+/// ADR-0057: DPoP or mutual TLS would have to come first.
 /// </para>
 /// <para>
 /// <b>The refusal names itself</b> in <see cref="ServiceCredentialOptions.RefusalHeaderName"/>, so the

@@ -40,7 +40,7 @@ namespace AzureBank.Functions.NoticeRelay;
 /// ADR-0048 D7 already decided that a delivered notice writes no audit row. So this host needs a
 /// connection string and the <c>Notices</c> section, and none of the six validated secrets. A second
 /// deployable that carries no SIGNING key is a smaller thing to reason about than one that does —
-/// the narrower claim ADR-0051 D9 actually makes, and the one this comment used to overstate.
+/// the narrower claim ADR-0051 D9 actually makes.
 /// </para>
 /// <para>
 /// RETRY ON, unlike the verifier. That tool turns it off because a retrying execution strategy makes

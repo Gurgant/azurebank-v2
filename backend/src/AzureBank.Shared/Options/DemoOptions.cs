@@ -82,8 +82,7 @@ public class DemoCopyOptions
     /// The API's <c>DemoWriteBudgetMiddleware</c> counts them (ADR-0063, decision 11): a request
     /// of any method but GET, HEAD, OPTIONS and TRACE, and each reveal of an account number; never
     /// a token endpoint. A request is counted before it is looked at, so one the API then refuses
-    /// has spent one. (Until 2026-10-04 this said "authenticated unsafe requests one copy may
-    /// make": the reveal, a GET, is counted, and signing out everywhere, a POST, is not.)
+    /// has spent one.
     /// </remarks>
     public int MaxWrites { get; set; } = 200;
 }

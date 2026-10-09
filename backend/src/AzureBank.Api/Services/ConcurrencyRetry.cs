@@ -258,12 +258,6 @@ internal static class ConcurrencyRetry
     /// ChangeTracker.Clear would drop it). No transactions other than the
     /// pair(s) created inside the delegate are ever tracked here, so detaching
     /// all of them is safe.
-    ///
-    /// The summary said only "Transaction" until 2026-08-20, because the edit that added the
-    /// AuditEvent behaviour matched an anchor that did not exist and silently changed nothing —
-    /// leaving the new rule in a body comment that IntelliSense does not show. That is the same
-    /// shape of stale contract doc ADR-0044 blames for the overcount going unasked in the first
-    /// place.
     /// </summary>
     public static async Task ResetToStoreAsync(
         AzureBankDbContext context, Account[] accounts, CancellationToken cancellationToken)
@@ -320,9 +314,7 @@ internal static class ConcurrencyRetry
     /// A record reloaded as committed, under the request hash this request claimed with, carries
     /// <c>applied: true</c>; a claim row that vanished under us, or that was replaced by a record
     /// claimed with another body, carries no <c>applied</c>, because nothing is proven there.
-    /// (Until 2026-10-01 this named the committed record and the vanished row as one answer:
-    /// "a prior attempt committed, or the claim row vanished under us".) The detail tells a
-    /// missing row from another request's record under the key.
+    /// The detail tells a missing row from another request's record under the key.
     /// </exception>
     public static async Task PrepareIdempotentAttemptAsync(
         AzureBankDbContext context, Account[] accounts, CancellationToken cancellationToken)
