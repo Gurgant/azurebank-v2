@@ -8,10 +8,9 @@ namespace AzureBank.Shared.Enums;
 /// to write it. A third state would need a sweeper to keep it honest, and a status that lags reality
 /// is worse than one derived from a timestamp — this table is also the evidence B3 assembles.
 ///
-/// Rows are never deleted, except a demo copy's, which leave with the copy (ADR-0062); this said
-/// "never deleted" with no exception until then. A consumed authorisation is the record that a
-/// specific amount was approved for a specific payee, which is what PSD2 Art. 72 asks a PSP to be
-/// able to produce.
+/// Rows are never deleted, except a demo copy's, which leave with the copy (ADR-0062). A consumed
+/// authorisation is the record that a specific amount was approved for a specific payee, which is
+/// what PSD2 Art. 72 asks a PSP to be able to produce.
 /// </summary>
 public enum StepUpAuthorizationStatus
 {

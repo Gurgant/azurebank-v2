@@ -24,10 +24,9 @@ namespace AzureBank.Shared.Entities;
 ///
 /// <para>
 /// Nothing deletes from this table but the Seeder's recycler, which deletes the rows of a demo
-/// copy's users with the copy (ADR-0062); this said "nothing deletes" with no exception until then.
-/// A consumed row is the evidence B3 has to produce, and a mint-then-delete design would need a
-/// second write to record what the first one erased — two writes that can disagree, with the
-/// disagreement invisible until someone asks for the evidence.
+/// copy's users with the copy (ADR-0062). A consumed row is the evidence B3 has to produce, and a
+/// mint-then-delete design would need a second write to record what the first one erased — two
+/// writes that can disagree, with the disagreement invisible until someone asks for the evidence.
 /// </para>
 /// </summary>
 public class StepUpAuthorization
@@ -83,7 +82,7 @@ public class StepUpAuthorization
     /// between proving the PIN and the operation being performed, and with the client sending on the
     /// sixth digit that gap is milliseconds. An expired row is refused and never re-executed, and
     /// nothing deletes it for being expired: a demo copy's rows leave with the copy, whatever their
-    /// expiry (ADR-0062). This said "never deleted" until then.
+    /// expiry (ADR-0062).
     /// </summary>
     public DateTime ExpiresAt { get; set; }
 

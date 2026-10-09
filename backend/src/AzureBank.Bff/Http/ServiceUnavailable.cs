@@ -37,8 +37,7 @@ public static class ServiceUnavailable
     /// <summary>
     /// The <c>Retry-After</c> for a refused key: long enough not to hammer, short enough that a retry
     /// sees the fix. The SPA waits at least this long before its one retry of a read, if that retry
-    /// still fits its budget (<c>problemBaseQuery.ts</c>). <i>(Until 2026-10-01 this said the SPA
-    /// retried a read's 503 on its own schedule whatever this said.)</i>
+    /// still fits its budget (<c>problemBaseQuery.ts</c>).
     /// </summary>
     public const int KeyRefusalRetryAfterSeconds = 5;
 

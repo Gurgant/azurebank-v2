@@ -92,11 +92,9 @@ public enum AuditChainBreakKind
     /// names both. Every other path takes a different action, which is why they are separate.
     /// </para>
     /// <para>
-    /// ⚠️ THIS PARAGRAPH ENUMERATED EIGHT ITEMS UNDER A HEADING THAT SAID NINE, and closed with
-    /// "rather than eight". The ninth path was added in the same commit that changed the heading and
-    /// nowhere else. The count is DERIVED from this file by
+    /// ⚠️ THE COUNT IS DERIVED AND THE ENUMERATION IS NOT. The count is derived from this file by
     /// <c>AuditVerifierReportTests.TheUnknownSchemeBlockEnumeratesEVERYWayToReachIt…</c>, which
-    /// reddens when a path is added; the ENUMERATION is not, and this is what that costs.
+    /// reddens when a path is added; the enumeration above is written by hand.
     /// </para>
     /// <para>
     /// An overwritten column is not a TENTH path: it is how several of those come about, because
@@ -115,30 +113,24 @@ public enum AuditChainBreakKind
     /// valid, never where the damage is.</item>
     /// </list>
     /// <para>
-    /// ⚠️ THIS SAID "each path applies to an INTERVAL — the epoch of the key it concerns", which is
-    /// true of ONE of the three shapes. Raised in review on the runbook's copy of the same sentence;
-    /// the verifier's printed copy had already been narrowed to five of the seven causes and still
-    /// said nothing about the two row-local ones.
+    /// ⚠️ ONLY ONE OF THE THREE SHAPES APPLIES TO AN INTERVAL: the whole-epoch one, whose interval
+    /// is the epoch of the key it concerns. A row-local path concerns one row, and an
+    /// outside-an-epoch path concerns a row the named epoch does not contain.
     /// </para>
     /// <para>
-    /// ⚠️ SO THE POSITIONAL DISCRIMINATOR IS GONE, AND THIS PARAGRAPH SOLD IT TWICE. It said each
-    /// path "fails at the lowest-sequence row it applies to and at every one after it, while a
-    /// single interior row failing among verified siblings is a write" — true when one key answered
-    /// for every <c>v3</c> row, false with a ring: a key missing from <c>Audit:RetiredChainKeys</c>
-    /// fails over its own epoch and nothing above it, so it breaks in the middle with verified rows
-    /// beneath, which is exactly the shape attributed to a write. It then said the below-the-epoch
-    /// paths apply to a PREFIX, "every row from the bottom of the table up to the previous key's
-    /// boundary" — they apply to the rows naming that key, not to everything beneath. What separates
-    /// a configuration miss from a write is a second run after adding the named id to the ring.
+    /// ⚠️ SO POSITION DOES NOT TELL A CONFIGURATION MISS FROM A WRITE. "A single interior row
+    /// failing among verified siblings is a write" holds while one key answers for every <c>v3</c>
+    /// row and not with a ring: a key missing from <c>Audit:RetiredChainKeys</c> fails over its own
+    /// epoch and nothing above it, so it breaks in the middle with verified rows beneath. And the
+    /// below-the-epoch paths apply to the rows that key answers for, not to everything beneath. What
+    /// separates a configuration miss from a write is a second run after adding the named id to
+    /// the ring.
     /// </para>
     /// </para>
     /// <para>
-    /// This paragraph said "three" and led with "a verifier holding a different key", which the
-    /// boundary verdicts make false — the ring HOLDS the key in all four. It then said "six" while
-    /// the walk had eight, because the count was corrected in the verifier's output and in the
-    /// runbook and this copy was missed AGAIN, one commit after the paragraph below it says that is
-    /// the shape of every stale claim on this branch. Counted from the returns now, and the returns
-    /// are listed above so the next person can count them too.
+    /// This kind does not mean the verifier holds a different key: in all four boundary paths the
+    /// ring HOLDS the key. The paths are counted from the walk's returns, and the returns are
+    /// listed above so the next person can count them too.
     /// </para>
     /// </para>
     /// </remarks>
@@ -225,20 +217,18 @@ public readonly record struct AuditChainVerification(
 /// its callers have no explicit transaction at all (<c>AccountService.GetFullAccountNumberAsync</c>,
 /// <c>UserService.RenameAzureTagAsync</c>, the auth and money rows), so a lock taken there would be
 /// released before the insert and two concurrent writers would chain off the same tail.
-/// (<c>AccountService.DeleteAccountAsync</c> was the example named here until 2026-09-06; since
-/// ADR-0049 it opens a transaction of its own and the funnel joins it — the argument is unchanged,
-/// the example moved.) The
-/// SaveChanges funnel is the only place a transaction can be guaranteed for EVERY call site, so
-/// <c>AzureBankDbContext</c> opens one there when a save carries audit rows and the caller has not
-/// opened one already.
+/// (<c>AccountService.DeleteAccountAsync</c> opens a transaction of its own since ADR-0049, and
+/// the funnel joins it.) The SaveChanges funnel is the only place a transaction can be guaranteed
+/// for EVERY call site, so <c>AzureBankDbContext</c> opens one there when a save carries audit
+/// rows and the caller has not opened one already.
 /// </para>
 /// <para>
-/// CORRECTION, kept visible because the wrong version was written down first. This remark used to
-/// claim the funnel was ALREADY inside "the transaction EF is using". It is not — EF opens its
-/// implicit transaction inside <c>SaveChanges</c>, after this class has run, so the tail read
-/// auto-committed and dropped its lock before the insert. Twenty-four concurrent writers on SQL
-/// Server produced "Cannot insert duplicate key row ... IX_AuditEvents_Sequence. The duplicate key
-/// value is (2)". The explicit transaction in the funnel is what actually makes the lock hold, and
+/// EF'S OWN TRANSACTION DOES NOT COVER THE FUNNEL. EF opens its implicit
+/// transaction inside <c>SaveChanges</c>, after this class has run, so without a transaction of
+/// the funnel's own the tail read auto-commits and drops its lock before the insert: twenty-four
+/// concurrent writers on SQL Server produced "Cannot insert duplicate key row ...
+/// IX_AuditEvents_Sequence. The duplicate key value is (2)". The explicit transaction in the
+/// funnel is what actually makes the lock hold, and
 /// <c>AuditChainSqlServerTests.ConcurrentWriters_DoNotForkTheChain</c> is what keeps it honest.
 /// </para>
 /// <para>
@@ -255,8 +245,8 @@ public readonly record struct AuditChainVerification(
 /// inserts on LocalDB, timing only the SQL, gave 0.62 ms per insert unchained against 0.56 ms
 /// chained — zero errors, zero deadlocks, and zero forks across 1,000 rows. The lock is held for
 /// microseconds, so the queue never forms. That is a claim about eight writers on one machine, which
-/// is what this application is; it is not a claim about a loaded server. Re-measured after the
-/// transaction correction above, 24 concurrent writers on LocalDB: 24 rows, sequences 1..24, no
+/// is what this application is; it is not a claim about a loaded server. Re-measured with the
+/// explicit transaction above, 24 concurrent writers on LocalDB: 24 rows, sequences 1..24, no
 /// fork, no deadlock.
 /// </para>
 /// </remarks>
@@ -303,11 +293,6 @@ public sealed class AuditChain : IAuditChain
     /// key is unbounded above, because it answers for whatever it writes next. The bounds stop a row
     /// signed outside a key's epoch from being ACCEPTED — nothing stops it being written, which is a
     /// different sentence and the one that is true.
-    /// <para>
-    /// This said "(material, highest sequence it may answer for)" and "the current key is
-    /// unbounded". The value has been a three-tuple since the epoch gained a lower end, and that
-    /// same change bounded the current key below.
-    /// </para>
     /// </summary>
     private readonly Dictionary<string, (string Key, long FirstSequence, long? LastSequence)> _keyRing;
 

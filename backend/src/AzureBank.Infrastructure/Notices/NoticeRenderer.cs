@@ -16,24 +16,23 @@ namespace AzureBank.Infrastructure.Notices;
 /// </para>
 /// <para>
 /// WHAT THE NOTICE SAYS, and where each sentence comes from. The service name and the date of the
-/// event (NIST SP 800-63A-4 §3.10). What happened to the credential and what it authorises — until
-/// 2026-09-04 this said "what was added", when an enrolment was the only kind — so the reader can judge
-/// urgency. Repudiation instructions with contact information (SP 800-63B-4 §4.6 — mandatory
-/// content, which is why the command refuses to run without a contact). That the message asks for
-/// nothing, carries no link and cannot be replied to (FFIEC 2021 §10; ASVS 2.2.3: nothing sensitive
-/// in a notification). That it was ADDRESSED to the email held on the account — never "sent",
-/// because nothing here sends.
+/// event (NIST SP 800-63A-4 §3.10). What happened to the credential and what it authorises, so the
+/// reader can judge urgency. Repudiation instructions with contact information (SP 800-63B-4 §4.6
+/// — mandatory content, which is why the command refuses to run without a contact). That the
+/// message asks for nothing, carries no link and cannot be replied to (FFIEC 2021 §10; ASVS 2.2.3:
+/// nothing sensitive in a notification). That it was ADDRESSED to the email held on the account —
+/// never "sent", because nothing here sends.
 /// </para>
 /// <para>
 /// WHAT IT DELIBERATELY DOES NOT SAY. The PIN, the password, an account number, the holder's name,
 /// any URL, any "press here to invalidate" — no PIN revocation path exists, so a button would be a
-/// promise. And NOT "sign out to end every session", though the reason differs by kind and until
-/// 2026-09-04 only the first was written down. For an ENROLMENT the actor proved the account
-/// password (T8), so they sign back in and the sentence would be false comfort. For a CHANGE they
-/// proved a session and the current PIN and not the password, so signing them out helps until the
-/// session they hold expires — but the notice still does not say it, because the reader cannot end
-/// another session from here and the remedy that does work is in the change notice already: the PIN
-/// is removed, and setting a new one costs the password.
+/// promise. And NOT "sign out to end every session", though the reason differs by kind. For an
+/// ENROLMENT the actor proved the account password (T8), so they sign back in and the sentence
+/// would be false comfort. For a CHANGE they proved a session and the current PIN and not the
+/// password, so signing them out helps until the session they hold expires — but the notice still
+/// does not say it, because the reader cannot end another session from here and the remedy that
+/// does work is in the change notice already: the PIN is removed, and setting a new one costs the
+/// password.
 /// </para>
 /// </remarks>
 public static class NoticeRenderer

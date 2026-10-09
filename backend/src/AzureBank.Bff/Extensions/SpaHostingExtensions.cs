@@ -211,11 +211,6 @@ public static class SpaHostingExtensions
     /// A server path is one whose first non-empty segment is a server prefix, in any letter case:
     /// <c>/api/accounts</c>, and the same behind any run of leading slashes and backslashes
     /// (<c>//api/accounts</c>, <c>/%5Capi/accounts</c>).
-    /// (Until 2026-10-05 this said "outside the server's prefixes", and the prefixes were tested
-    /// against the path as it was sent: a server path behind extra slashes was answered with the
-    /// shell.)
-    /// (Until 2026-10-05 this said "behind any number of extra slashes", and only leading slashes
-    /// were trimmed: a server path behind a leading backslash was answered with the shell.)
     /// </summary>
     private static bool ServesShell(HttpRequest request) =>
         (HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method))

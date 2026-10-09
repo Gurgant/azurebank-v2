@@ -19,8 +19,7 @@ namespace AzureBank.Shared.Entities;
 /// are 1..n with every link met, and nothing in the walk asks how tall the chain ought to be. That
 /// is the same shape as the row chain's own limit and it is why the anchors alone cannot close
 /// truncation — the attack is a suffix removal in both tables. Measured both ways by
-/// <c>DeletingAnchorsIsLoudONLYINTHEINTERIOR_ANDASUFFIXISSILENT</c>. The unqualified sentence was
-/// repeated in nine places before it was checked.
+/// <c>DeletingAnchorsIsLoudONLYINTHEINTERIOR_ANDASUFFIXISSILENT</c>.
 ///
 /// ⚠️ ON ITS OWN THIS DETECTS NOTHING, and saying so is not modesty. Truncate the audit rows above
 /// some sequence, then delete every anchor covering past it, and BOTH chains verify perfectly —
@@ -40,12 +39,12 @@ namespace AzureBank.Shared.Entities;
 /// "any UPDATE against this table is tampering" a rule with no exceptions left to argue about.
 /// </para>
 /// <para>
-/// ⚠️ THE APPLICATION ENFORCES THAT RULE. THE DATABASE DOES NOT, and this comment used to say it
-/// did. Nothing at the engine refuses an UPDATE against this table: three tests in
-/// <c>AuditAnchorSqlServerTests</c> issue one straight past the change tracker and it SUCCEEDS every
-/// time — which is the whole reason the authentication code is what catches it. Engine enforcement
-/// is what SQL Server's ledger would buy, it is deferred rather than rejected, and ADR-0044 records
-/// why. Until then the rule is a discipline this code keeps, not a property the store provides.
+/// ⚠️ THE APPLICATION ENFORCES THAT RULE. THE DATABASE DOES NOT. Nothing at the engine refuses an
+/// UPDATE against this table: three tests in <c>AuditAnchorSqlServerTests</c> issue one straight
+/// past the change tracker and it SUCCEEDS every time — which is the whole reason the
+/// authentication code is what catches it. Engine enforcement is what SQL Server's ledger would
+/// buy, it is deferred rather than rejected, and ADR-0044 records why. Until then the rule is a
+/// discipline this code keeps, not a property the store provides.
 /// </para>
 /// <para>
 /// The timestamp token that will bind an anchor to an instant attaches from a SEPARATE table rather
@@ -68,9 +67,8 @@ public class AuditAnchor
     /// <c>AuditEvent</c> says "which rendering of the hashed payload wrote this row" and is right to:
     /// its <c>v3</c> added an element to the payload, so the formats genuinely differ. The anchor
     /// versions render IDENTICALLY — same elements, same order, one renderer — and differ only in
-    /// what one of them MEANS. This summary said "which rendering" too, which was vacuous while one
-    /// value existed and became a claim about a difference the moment a second one did. Do not
-    /// harmonise the two entities; the asymmetry is the accurate part.
+    /// what one of them MEANS, so "which rendering" here would claim a difference that is not
+    /// there. Do not harmonise the two entities; the asymmetry is the accurate part.
     /// <para>
     /// A SEPARATE LADDER FROM THE ROW PAYLOAD'S. Each side writes under its own
     /// <c>CurrentPayloadVersion</c> and still reads its own <c>LegacyPayloadVersion</c> — rows from
@@ -79,10 +77,9 @@ public class AuditAnchor
     /// invalidate the other.
     /// </para>
     /// <para>
-    /// ⚠️ THIS NAMED THE LITERALS — "rows read v2/v3; anchors read a1" — and the anchor half went
-    /// false the day a second anchor payload version landed. A version written into prose is a second
-    /// place the version lives, and the copy that is not compiled is the one nobody updates. Naming
-    /// the constants costs a reader one hop and cannot go stale.
+    /// ⚠️ THE CONSTANTS ARE NAMED, NOT THE LITERALS. A version written into prose is a second place
+    /// the version lives, and the copy that is not compiled is the one nobody updates. Naming the
+    /// constants costs a reader one hop and cannot go stale.
     /// </para>
     /// </remarks>
     public string PayloadVersion { get; set; } = string.Empty;
@@ -97,13 +94,11 @@ public class AuditAnchor
     /// that must be free to move apart.
     /// </para>
     /// <para>
-    /// ⚠️ IT NAMES THE KEY; IT DOES NOT MAKE THE KEY ROTATABLE. Until 2026-09-11 this remark went on
-    /// to say that without it "the design would have quietly frozen the anchor key forever", which
-    /// read as if the key were not frozen. It is: nothing holds a retired anchor key, so after a
-    /// rotation every record names a key the run does not hold and <c>anchor</c> refuses to append
-    /// on every run. Measured on a scratch database: exit 6 and "Broke at anchor: 1" twice under
-    /// the new key, and appending again as soon as the old key came back. See
-    /// <see cref="AzureBank.Shared.Options.AuditOptions.AnchorKey"/>.
+    /// ⚠️ IT NAMES THE KEY; IT DOES NOT MAKE THE KEY ROTATABLE. The anchor key is frozen: nothing
+    /// holds a retired anchor key, so after a rotation every record names a key the run does not
+    /// hold and <c>anchor</c> refuses to append on every run. Measured on a scratch database: exit
+    /// 6 and "Broke at anchor: 1" twice under the new key, and appending again as soon as the old
+    /// key came back. See <see cref="AzureBank.Shared.Options.AuditOptions.AnchorKey"/>.
     /// </para>
     /// </remarks>
     public string AnchorKeyId { get; set; } = string.Empty;
@@ -161,25 +156,18 @@ public class AuditAnchor
     /// <c>nchar(16)</c> reads back as sixteen spaces and silently breaks the code.
     /// </para>
     /// <para>
-    /// ONE KEY FOR A WALK THAT MAY HAVE APPLIED SEVERAL, and that is the honest limit rather than a
-    /// residue of the defect below. The interior rows are covered TRANSITIVELY — each is recomputed
-    /// under the key it names, and the tail's hash links back through all of them — so this names
-    /// the key needed to check the one value this record publishes. It does not enumerate the ring.
+    /// ONE KEY FOR A WALK THAT MAY HAVE APPLIED SEVERAL, and that is the honest limit of the field.
+    /// The interior rows are covered TRANSITIVELY — each is recomputed under the key it names, and
+    /// the tail's hash links back through all of them — so this names the key needed to check the
+    /// one value this record publishes. It does not enumerate the ring.
     /// </para>
     /// <para>
-    /// ⚠️ IT USED TO NAME THE KEY THE RUN HELD, UNCONDITIONALLY, AND THAT WAS WRONG IN EXACTLY ONE
-    /// WINDOW. Between a rotation and the first row written under the new key, the walk certifies a
-    /// tail a RETIRED key authenticated while the run holds the new one — so the record named one
-    /// key beside a hash only another key can check. Everywhere else the two strings are identical,
-    /// which is why it read as correct for as long as it did, and why the assertion that looked like
-    /// it pinned this field could not tell the two writers apart. ADR-0044 D7 recorded it as
-    /// deferred rather than forgotten; it is now done, and records written under the old meaning are
-    /// the ones carrying <c>AuditAnchorChain.LegacyPayloadVersion</c>.
-    /// </para>
-    /// <para>
-    /// ⚠️ AN EARLIER VERSION OF THIS BLOCK HELD TWO SENTENCES THAT CONTRADICTED EACH OTHER — one
-    /// implying the field identified the tail's key, the next denying it. Kept as a note because the
-    /// contradiction was invisible for as long as both halves were plausible.
+    /// ⚠️ AN ANCHOR NAMES THE KEY BEHIND THE TAIL, NOT THE KEY THE RUN HOLDS, AND THE TWO DIFFER IN
+    /// EXACTLY ONE WINDOW. Between a rotation and the first row written under the new key, the walk
+    /// certifies a tail a RETIRED key authenticated while the run holds the new one. Everywhere
+    /// else the two strings are identical, so an assertion made outside that window cannot tell the
+    /// two meanings apart. Records that name the key the run held are the ones carrying
+    /// <c>AuditAnchorChain.LegacyPayloadVersion</c> (ADR-0044 D7).
     /// </para>
     /// </remarks>
     public string VerifiedUnderChainKeyId { get; set; } = string.Empty;

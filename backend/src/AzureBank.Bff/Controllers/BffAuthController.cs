@@ -506,10 +506,9 @@ public class BffAuthController : ControllerBase
     /// </para>
     /// <para>
     /// Nothing here writes to the session — see the note at the return. That also means the
-    /// concurrent-rename residual ADR-0015 records is NOT self-healing, a word an earlier draft of
-    /// this paragraph used and had to give up: a cache that lost the race stays lost. What saves it
-    /// is that the losing value is never served while the API answers, because every <c>/me</c>
-    /// asks. The staleness is bypassed, not repaired.
+    /// concurrent-rename residual ADR-0015 records is NOT self-healing: a cache that lost the race
+    /// stays lost. What saves it is that the losing value is never served while the API answers,
+    /// because every <c>/me</c> asks. The staleness is bypassed, not repaired.
     /// </para>
     /// </summary>
     private async Task<UserSessionInfo> FreshUserInfoOrCachedAsync(UserSession session)
@@ -576,20 +575,18 @@ public class BffAuthController : ControllerBase
             }
 
             /*
-              THIS READ DOES NOT WRITE. An earlier version of it did, to keep the fallback fresh,
-              and CodeRabbit was right that it could clobber: a /me that starts before a rename and
-              lands after it would put the pre-rename handle back into the session, so a later API
-              failure would serve a value that was already superseded. A read overwriting a newer
-              write is a defect in any ordering.
+              THIS READ DOES NOT WRITE. A write here, to keep the fallback fresh, could clobber: a
+              /me that starts before a rename and lands after it would put the pre-rename handle
+              back into the session, so a later API failure would serve a value that was already
+              superseded. A read overwriting a newer write is a defect in any ordering.
 
-              The suggested remedy was a compare-and-set against the handle as it stood before the
-              call. That does not survive contact with this code. `cached` is the LIVE session
-              object — InMemoryTokenStore hands back the stored reference — so a comparison against
-              it reads whatever the rename has already written rather than a snapshot; making it a
-              real CAS needs a snapshot plus an atomic swap the ISessionService interface cannot
-              express today. And no test here could tell the two apart when this was written:
-              FakeBackendApiHandler was synchronous, so the interleaving that distinguishes them
-              could not be staged.
+              A compare-and-set against the handle as it stood before the call does not work here
+              either. `cached` is the LIVE session object — InMemoryTokenStore hands back the
+              stored reference — so a comparison against it reads whatever the rename has already
+              written rather than a snapshot; making it a real CAS needs a snapshot plus an atomic
+              swap the ISessionService interface cannot express today. And no test here could tell
+              the two apart when this was written: FakeBackendApiHandler was synchronous, so the
+              interleaving that distinguishes them could not be staged.
 
               Not writing at all is simpler and correct by construction. What it costs is small and
               named: the fallback no longer learns about a rename made OUT of band, so if the API

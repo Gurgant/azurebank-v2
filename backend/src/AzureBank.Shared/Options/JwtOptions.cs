@@ -19,9 +19,8 @@ public class JwtOptions
     /// <summary>
     /// Secret key for signing JWT tokens: at least <see cref="MinimumSecretBytes"/> bytes as UTF-8,
     /// the encoding every site that uses the key applies, so the rule counts bytes, not characters.
-    /// The API refuses to start without it (<c>ValidateOnStart</c>). <i>(Until 2026-09-25 this said
-    /// "must be at least 32 characters", and nothing enforced it: a 31-byte key started, and the
-    /// first sign-in answered 500.)</i>
+    /// The API refuses to start without it (<c>ValidateOnStart</c>). Measured without that check:
+    /// a 31-byte key starts, and the first sign-in answers 500.
     /// </summary>
     public string Secret { get; set; } = string.Empty;
 

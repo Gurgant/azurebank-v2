@@ -193,19 +193,17 @@ public static class SecurityEvents
     /// access can undo it, so treat this as irreversible from the account holder's side.
     /// </para>
     /// <para>
-    /// Why it exists at all: until now this was a plain
-    /// <c>LogInformation("Soft deleted account {AccountId}")</c>, so it never reached the stream an
-    /// operator alerts on — while revealing your own account number, a strictly less consequential
-    /// act, did. Two guards make the money case unreachable (non-zero balance and primary account
+    /// Why it exists at all: a plain <c>LogInformation</c> never reaches the stream an operator
+    /// alerts on — while revealing your own account number, a strictly less consequential act,
+    /// does. Two guards make the money case unreachable (non-zero balance and primary account
     /// both refuse with 422), so this is a detective control over integrity, not over funds.
     /// </para>
     /// <para>
-    /// CORRECTION (2026-09-06, ADR-0049): "a detective control" undersold it from that date on. The
-    /// closure is now also PREVENTIVELY controlled — it needs a step-up authorisation minted from
-    /// the PIN and bound to the account, presented in <c>Step-Up-Authorization</c>, and a closure
-    /// presenting none is refused and recorded as <see cref="AccountDeletionRefused"/>. This row is
-    /// still the evidence that a closure happened; it is no longer the only control over whether it
-    /// could.
+    /// The closure is also PREVENTIVELY controlled (ADR-0049) — it needs a step-up authorisation
+    /// minted from the PIN and bound to the account, presented in <c>Step-Up-Authorization</c>,
+    /// and a closure presenting none is refused and recorded as
+    /// <see cref="AccountDeletionRefused"/>. This row is the evidence that a closure happened; it
+    /// is not the only control over whether it could.
     /// </para>
     /// </remarks>
     public const string AccountDeleted = "AccountDeleted";
