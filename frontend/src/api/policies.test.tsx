@@ -91,18 +91,19 @@ function useDepositIntent() {
 }
 
 /**
- * The caller of the send aborts it while the request is still out. No money flow does this; the
- * hook still treats it as a send whose result is unknown.
+ * The caller of the send aborts it while the request is still out: only once `received` says the
+ * server has it, so the abort cannot come before the request. No money flow does this; the hook
+ * still treats it as a send whose result is unknown.
  */
-function useDepositAbortedByItsCaller() {
+function useDepositAbortedByItsCaller(received: Promise<void>) {
   const [trigger] = useDepositMutation();
   const aborting = useCallback(
     (arg: Parameters<typeof trigger>[0]) => {
       const running = trigger(arg);
-      setTimeout(() => running.abort(), 0);
+      void received.then(() => running.abort());
       return running;
     },
-    [trigger],
+    [trigger, received],
   );
   return useIdempotentMutation(aborting);
 }
@@ -1307,14 +1308,21 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
 
   it('8i — a money send aborted by its caller drops the key and refuses the next submit', async () => {
     const sent = { count: 0 };
+    let requestReceived = () => {};
+    const received = new Promise<void>((resolve) => {
+      requestReceived = () => resolve();
+    });
     server.use(
       http.post('*/api/transactions/deposit', () => {
         sent.count += 1;
+        requestReceived();
         return never();
       }),
     );
     const { Wrapper } = hookWrapper();
-    const { result } = renderHook(() => useDepositAbortedByItsCaller(), { wrapper: Wrapper });
+    const { result } = renderHook(() => useDepositAbortedByItsCaller(received), {
+      wrapper: Wrapper,
+    });
     const body = { accountId: UUID, amount: 50 };
 
     const first = await act(() => settle(result.current.submit(body)));
