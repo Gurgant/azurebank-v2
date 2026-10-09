@@ -81,8 +81,9 @@ This record is the client half of ADR-0009; `frontend/src/hooks/useIdempotentMut
   hook more complex than a bare mutation, which every new money surface must adopt.
 - The flow component, not the hook, owns the `RESULT_UNKNOWN` verify step and the went-through view.
   It tests `wentThrough` before `verifyRequired`, since the first is never set without the second.
-- Not covered: "the server never saw it" and "the server saw it and died" look the same. KEEP is the
-  safe answer for both, so a lost request occupies its key until the TTL: correctness first.
+- Not covered: "the server never saw it" and "the server saw it and died" look the same: no answer
+  (`NETWORK`) or a `5xx`. KEEP (decision 2) is the safe answer for both, so a lost request occupies
+  its key until the TTL: correctness first. An abort by the caller is decision 3, not this.
 - Not covered: no endpoint answers "did key X land?". A record read as committed answers in the 409
   itself (`applied: true`); otherwise the user is asked to check: with the flag absent, a rejection
   with no HTTP status, a 409 naming no code, or an edit with a key held. When the record has

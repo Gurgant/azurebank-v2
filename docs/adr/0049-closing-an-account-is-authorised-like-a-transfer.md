@@ -1,7 +1,7 @@
 # ADR-0049: Closing an account is authorised like a transfer
 
-**Status:** Accepted · **Date:** 2026-09-06 · **Amended:** 2026-09-07 (ADR-0050), 2026-09-11 and
-2026-09-14 (ADR-0044), 2026-09-21 (ADR-0056)
+**Status:** Accepted · **Date:** 2026-09-06 · **Amended:** 2026-09-07 (ADR-0050),
+2026-09-11 (ADR-0044), 2026-09-14 (ADR-0044), 2026-09-21 (ADR-0056)
 
 ## Context
 

@@ -20,7 +20,8 @@ two PIN models, a five-state idempotency protocol that fingerprints raw body byt
    `X-Auth-Level-Required` before the body, `retryAfterSeconds` from the body first). Retry is
    structural: queries only, transport and gateway failures only, never mutations.
 2. **No API token ever reaches the browser.** The access and refresh tokens stay in the BFF's
-   session; transport auth is the `__Host-` session cookie (ADR-0018), an opaque session id.
+   session; transport auth is the session cookie, an opaque session id (ADR-0018): its name is
+   `__Host-AzureBank.Session` outside Development and `.AzureBank.Session` in Development.
    Client auth state is `unknown | anonymous | authenticated | expired`, resolved by the one
    bootstrap probe (`GET /bff/auth/me`) and kept by string matchers on the RTK Query action shape,
    because the wire shape is the stable contract.

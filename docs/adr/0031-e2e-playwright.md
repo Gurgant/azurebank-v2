@@ -61,8 +61,9 @@ which the integration harness stands in for, is never rendered against the real 
   authorisation in-band (ADR-0042). Each run starts at level 1: the setup project signs in fresh.
 - In CI the BFF runs with `--RateLimiting:AuthPermitLimit=1000`, because the auth budget is per IP
   and not per process; the workflow marks it as environmental, not a weakened assertion.
-- Not covered: a transfer or a withdrawal completed through the page: the dev database seeds one
-  account and one user, so there is no counterparty. The demo's own run, `npm run test:e2e:demo`
+- Not covered: a transfer or a withdrawal completed through the page against the real stack:
+  `e2e/wentThrough.spec.ts` drives both to the send with a real PIN, and `page.route` answers the
+  send in the browser, so no money moves. The demo's own run, `npm run test:e2e:demo`
   (ADR-0063), sends one transfer and restarts two containers; it is started by hand, in no CI job.
 - Not covered: Firefox and WebKit (the one browser project is Chromium), and session expiry in
   the UI, which needs a clock the suite controls.

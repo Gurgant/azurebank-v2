@@ -50,8 +50,9 @@ do not have that much", which costs nothing to give.
 
 - Withdraw: 400 `IDEMPOTENCY_KEY_MISSING`; 400 model-state (`Step-Up-Authorization` not a UUID); 404
   `ACCOUNT_NOT_FOUND`; 422 `INSUFFICIENT_FUNDS`, before any authorisation; 401
-  `AUTHORIZATION_REQUIRED` (header absent or empty); 401 `AUTHORIZATION_INVALID` (wrong binding,
-  already spent, or another user's); 401 `AUTHORIZATION_EXPIRED` (past its two-minute window).
+  `AUTHORIZATION_REQUIRED` (header absent or empty); 401 `AUTHORIZATION_INVALID` (unknown, already
+  spent, or another user's); 401 `AUTHORIZATION_EXPIRED` (past its two-minute window); 401
+  `AUTHORIZATION_INVALID` (wrong binding: expiry is checked first).
 - Mint: 404 `ACCOUNT_NOT_FOUND`, which costs no PIN attempt; 422 `PIN_REQUIRED` (no PIN enrolled);
   401 `INVALID_PIN`; 429 `PIN_LOCKED`, with `Retry-After`.
 

@@ -13,8 +13,8 @@ latency, and be actively maintained.
 
 1. **The BFF proxies with [YARP](https://microsoft.github.io/reverse-proxy/) (Yet Another Reverse
    Proxy), version 2.3.0**, because it is an official Microsoft project in active development,
-   runs on Kestrel in the same pipeline as the API, and is extended with custom middleware and
-   transforms.
+   runs on Kestrel inside the BFF's own ASP.NET Core pipeline, and is extended with custom
+   middleware and transforms.
 2. **The Bearer token is injected by a transform provider**, `BearerTokenTransformProvider`, an
    `ITransformProvider` that looks up the token held for the session and sets the `Authorization`
    header of the proxied request, because YARP's transform API is a clean place for it.

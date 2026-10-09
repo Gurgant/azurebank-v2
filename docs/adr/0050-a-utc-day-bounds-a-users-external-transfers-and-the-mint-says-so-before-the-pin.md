@@ -1,6 +1,6 @@
 # ADR-0050: A UTC day bounds a user's external transfers, and the mint says so before the PIN
 
-**Status:** Accepted · **Date:** 2026-09-07 · **Amended:** 2026-09-08 and 2026-09-11 (D7),
+**Status:** Accepted · **Date:** 2026-09-07 · **Amended:** 2026-09-08 (D7), 2026-09-11 (D7),
 2026-09-16 (D5) · Builds on ADR-0042, ADR-0044, ADR-0046 and ADR-0049. Supersedes nothing.
 
 ## Context

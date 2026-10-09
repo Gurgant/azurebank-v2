@@ -1,7 +1,8 @@
 # ADR-0032: Running the real-backend layers in CI, on a stack the job owns
 
 **Status:** Accepted (Phase 4, the last, of ADR-0029's plan) · **Date:** 2026-08-04 · **Amended:**
-2026-09-11 (ADR-0054), 2026-09-15 (ADR-0053), 2026-09-24 · **Decision Makers:** Vladislav Aleshaev
+2026-09-11 (ADR-0054), 2026-09-15 (ADR-0053), 2026-09-24 (Bruno on each pull request) ·
+**Decision Makers:** Vladislav Aleshaev
 
 ## Context
 

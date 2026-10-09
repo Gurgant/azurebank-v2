@@ -1,7 +1,8 @@
 # ADR-0053: The committed contract is what the API generates
 
-**Status:** Accepted · **Date:** 2026-09-10 · **Amended:** 2026-09-11, 2026-09-14, 2026-09-15 (D6),
-2026-09-21 (ADR-0056), 2026-09-24 (D6), 2026-09-28 (ADR-0057), 2026-10-04 (ADR-0063)
+**Status:** Accepted · **Date:** 2026-09-10 · **Amended:** 2026-09-11 (the served document's
+culture), 2026-09-14 (operation titles), 2026-09-15 (D6), 2026-09-21 (ADR-0056), 2026-09-24 (D6),
+2026-09-28 (ADR-0057), 2026-10-04 (ADR-0063)
 
 ## Context
 

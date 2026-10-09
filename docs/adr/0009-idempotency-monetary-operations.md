@@ -1,7 +1,8 @@
 # ADR-0009: Idempotency for Monetary Operations
 
-**Status:** Accepted · **Date:** 2026-07-13 · **Amended:** 2026-09-21 (ADR-0056), 2026-09-24,
-2026-09-30 (ADR-0058), 2026-10-01, 10-03, 10-05 and 10-06 · **Decision Makers:** Vladislav Aleshaev
+**Status:** Accepted · **Date:** 2026-07-13 · **Amended:** 2026-09-21 (ADR-0056), 2026-09-24
+(decision 7), 2026-09-30 (ADR-0058), 2026-10-01 (decision 6), 2026-10-03 (the outcome table),
+2026-10-05 (decision 7), 2026-10-06 (decision 7) · **Decision Makers:** Vladislav Aleshaev
 
 ## Context
 

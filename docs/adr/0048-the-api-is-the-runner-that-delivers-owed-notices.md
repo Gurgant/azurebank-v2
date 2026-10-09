@@ -1,7 +1,7 @@
 # ADR-0048: The API is the runner that delivers owed notices
 
 **Status:** Accepted · **Date:** 2026-09-04 · **Amended:** 2026-09-08 (ADR-0051), 2026-09-09 (D1,
-D5, D6), and by ADR-0052 · **Amends:** ADR-0045 (D3, reversed)
+D5, D6), 2026-09-10 (ADR-0052) · **Amends:** ADR-0045 (D3, reversed)
 
 ## Context
 
