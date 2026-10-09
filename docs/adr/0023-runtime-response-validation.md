@@ -109,7 +109,7 @@ transaction-list field is not.
 
 - **The BFF surface is still outside the OpenAPI spec.** Its Zod schemas are hand-written, so they
   are a *mirror* like the types were — the improvement is that there is now exactly one mirror
-  instead of two that could disagree. Bringing the BFF into the spec remains backlog.
+  instead of two that could disagree. Bringing the BFF into the spec remains open.
 - **Fail-closed means a contract drift on a money surface takes the feature down** rather than
   showing a wrong number. That is the intended trade and it is worth restating: the failure is
   loud on purpose.
@@ -127,10 +127,6 @@ a test that proves nothing; the generated schemas are reproducible from the spec
 **Negative** — adding a money-bearing response now means adding it to the fail-closed set, which is
 a step that is easy to forget; `unwrap` is load-bearing and must not be casually refactored;
 `mocks/handlers.ts` and `mocks/state.ts` are frozen files partly because of item 7.
-
-This ADR also formally retires three surviving instructions in archived planning documents that
-told an implementer to decline a correct review suggestion about adopting runtime validation. Those
-documents are superseded on this point.
 
 ## Verification
 

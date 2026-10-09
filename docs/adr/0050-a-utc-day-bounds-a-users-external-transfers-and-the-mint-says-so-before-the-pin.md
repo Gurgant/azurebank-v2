@@ -1,6 +1,6 @@
 # ADR-0050: A UTC day bounds a user's external transfers, and the mint says so before the PIN
 
-**Status:** Accepted · **Date:** 2026-09-07 · The first slice of the backlog's umbrella entry on
+**Status:** Accepted · **Date:** 2026-09-07 · The first slice of
 transaction limits and tiering: ONE aggregate bound — the sum of a user's completed outgoing
 external transfers in the current UTC calendar day, plus the amount asked for, may not exceed a
 configured figure — checked at the mint before the PIN is consulted, again before the transfer's
@@ -16,9 +16,7 @@ Supersedes nothing; the four records it moves carry a dated note each, named at 
 
 **Nothing aggregates.** Measured on `main` @ `3c30122` before any of this was written — BFF `:5000`
 → API `:7215`, the `AzureBankDev` LocalDB store, two throwaway users registered by the probe. The
-lines below are that run's transcript, which is kept outside this repository
-*(2026-10-05: what was cited here, by path or by name, sits in a private working folder that no
-reader of this repository can open; the citation is replaced by what it stood for, not struck.)*,
+lines below are that run's transcript,
 quoted verbatim; its setup lines are omitted:
 
 ```
@@ -84,11 +82,8 @@ its own placement, not a copy of the balance guard's — see D4.
   `TransferOut` 0. The shared real-stack fixture's external day is empty, so a 5,000 default leaves
   every existing test's day untouched and a zero-money contract row is possible (D6).
 
-**What the regulation says, and does not.** Read on EUR-Lex on 2026-09-07 (the consolidated texts;
-the exact sentences were copied that day into a file kept outside this repository
-*(2026-10-05: what was cited here, by path or by name, sits in a private working folder that no
-reader of this repository can open; the citation is replaced by what it stood for, not struck.)*,
-and nothing regulatory is cited here that is not in that file). PSD2 Art. 68(1)
+**What the regulation says, and does not.** Read on EUR-Lex on 2026-09-07 (the consolidated texts).
+PSD2 Art. 68(1)
 (CELEX 02015L2366-20240408): *"Where a specific payment instrument is used for the purposes of
 giving consent, the payer and the payer's payment service provider may agree on spending limits for
 payment transactions executed through that payment instrument."* — and Art. 4(14) defines the
@@ -105,16 +100,8 @@ reset on SCA, not on a day. The RTS knows no daily aggregate. A UTC-day cap is t
 policy with no wire standard behind it, which is what the document's prose says and why no schema
 field carries it (D6).
 
-**The stale wording this ADR names and does not fix.** `docs/design/06-api-contracts.md:843` and
-`:901` still publish "max 999999999.99" for the deposit and withdrawal amount, against ADR-0046 D1
-and `ValidationRules.TransactionMaxAmount`; `docs/design/frontend-design/04a-ux-user-flows.md:565`'s
-"Daily limit" box on the transfer flow becomes true with this ADR, and
-`04l-external-transfers-design.md:508`'s "Daily/per-transaction limits (future)" becomes half stale.
-The internal mint's bare "Unprocessable Entity" 422 in the published document is an existing
-ADR-0049 row-14 instance, named in D8 and left for its own fix.
-
 _Line anchors in this record are those of the working tree that carries this change — the files as
-the PR ships them, re-read after the last edit made to them in this session, not `main` @
+the PR ships them, not `main` @
 `3c30122`; only the transcript above is from before. Any later edit to `TransferService.cs` moves
 every anchor below it with it, so these are re-checked against the file at commit time._
 
@@ -127,7 +114,7 @@ context's `TimeProvider` (`AzureBankDbContext.cs:288-290`, code says; measured U
 above), and `ApplicationUser` carries no time-zone column, so "the customer's local day" has no data
 to stand on. A rolling 24-hour window was available and declined for this slice: "remaining" would
 then be a continuously moving figure that a client could neither cache nor display with a fixed
-reset instant, and rolling windows belong to the umbrella entry by name (D8). The reset instant is
+reset instant, and rolling windows belong to the later slices by name (D8). The reset instant is
 sent on the refusal as `resetsAt` (D7). The day start is computed from the SAME `TimeProvider` the
 context stamps with — never `DateTime.UtcNow` — so one fake clock can drive both halves of a
 day-boundary test (D6).
@@ -148,11 +135,10 @@ an external one does. Excluded, and each exclusion argued rather than assumed:
   it.
 - **Deposits and `TransferIn`** — inflows never offset an outbound bound.
 
-The name is honest about the scope: a daily TRANSFER limit, matching the backlog's wording and the
-design flow's "Daily limit" box.
+The name is honest about the scope: a daily TRANSFER limit.
 
 **D3 — Per user, completed rows only, and NO `IsDeleted` filter.** The customer is the payer (Art.
-68(1)), and the backlog says per user per day; a user with two accounts would otherwise hold two
+68(1)); a user with two accounts would otherwise hold two
 limits. `Transaction` has no `UserId`, so the sum joins `Accounts.UserId`. `Status == Completed`
 mirrors `GetSummaryAsync` at zero cost — every writer sets `Completed` and the table holds nothing
 else (207 / 207 measured), so the filter decides nothing today and is stated so that whoever first
@@ -229,9 +215,7 @@ set in `AddInfrastructure` (`sqlOptions.CommandTimeout(30)`). Under same-payer c
 transaction and a pooled connection held for half a minute per queued transfer, which is a cost
 this decision never argued for. Measured beside it: a holder took the lock in one transaction and a
 second connection asking with `@LockTimeout = 2000` was refused `-1` after **2,006-2,012 ms across
-three runs** (this round's first measurement; its transcript is kept outside this repository.
-2026-10-05: a file of a private working folder was cited here by path; no reader of this
-repository can open it, so the citation is replaced by what it stood for, not struck). The batch
+three runs**. The batch
 now declares
 `@t int = {1}` and passes it as `@LockTimeout`; the bound is `DailyLimit:LockTimeoutSeconds`,
 default **10**, `[Range(1, 29)]` and `ValidateDataAnnotations().ValidateOnStart()` — above
@@ -257,8 +241,7 @@ a statement snapshot taken after the winner's commit). It was declined because i
 business invariant depend on the lock ADR-0044 lists as an open question — *"Whether the chain
 should be partitioned is a real question this ADR does not answer"* — so partitioning later would
 break the limit with every InMemory test still green. That alternative is kept on record beside
-ADR-0044's paragraph; it is the one Vlad may prefer at the PR, and this paragraph is corrected in
-place if he does.
+ADR-0044's paragraph.
 
 *Why not a row lock on `AspNetUsers` or `Accounts`.* The first design took `SELECT … FROM
 [AspNetUsers] WITH (UPDLOCK, HOLDLOCK)` on the user row and claimed no ordering cycle. The claim is
@@ -355,8 +338,8 @@ becomes app-owned.**
 `DailyLimitOptions` (section `DailyLimit`, `Amount`, default 5,000) in `AzureBank.Shared/Options`
 beside `StepUpOptions`, bound with `ValidateOnStart` — `> 0` and at most two decimals, so no
 sub-cent noise reaches the 422 body — and written explicitly in `appsettings.json` so the figure is
-visible, not only defaulted. An option rather than a `ValidationRules` constant because the umbrella
-needs tiers, because a test factory overrides an option with one setting, and because the aggregate
+visible, not only defaulted. An option rather than a `ValidationRules` constant because later slices
+need tiers, because a test factory overrides an option with one setting, and because the aggregate
 is NOT a schema bound: it has no JSON-schema slot, so `MONEY_MAX` stays one number, ADR-0046's
 `PublishedMoneyBoundsTests` and the forms' tripwire are untouched, and its "second bound" trigger
 fires only in part (its dated note says which part). Why 5,000: below `TransactionMaxAmount`
@@ -366,7 +349,7 @@ magnitude, so the shared fixture's day (empty today, measured) is never exhauste
 not 1,000, which was never a decision. The consequence a reader of ADR-0046 will look for: a single
 external transfer can never reach the published per-request `maximum` on a fresh day. The schema
 bounds one REQUEST and stays honest; the effective field bound for an external transfer is
-min(`MONEY_MAX`, remaining), and showing it is U8's work (D8).
+min(`MONEY_MAX`, remaining), and showing it is left to the UI work (D8).
 
 `AddDailyLimit` calls `services.TryAddSingleton(TimeProvider.System)`, and this record has to be
 exact about what that does. It is NOT the first registration, and the sentence this ADR first wrote
@@ -477,11 +460,11 @@ observed before, answered `"available":100.2500,"requested":500.5` like the othe
 does not type `available`, because nothing reads it: `useFundsGate` re-reads the balance instead.
 The internal mint's bare 422, which D8 names below, went in the same change._
 
-**D8 — Not decided here, named so the umbrella finds them.** Rolling windows; tiers by account type
+**D8 — Not decided here, named so later slices find them.** Rolling windows; tiers by account type
 or verification level; amount-scaled step-up; velocity rules; withdrawals and internal transfers
 under any aggregate; per-account limits; customer-adjustable ceilings (with SCA on a raise); a
 "remaining today" read — `GET /api/transactions/allowance` is named as the seam such a surface would
-read from, assigned to U8 (last, as always) and not built; auditing the refusal as a fraud signal;
+read from, left to the UI work and not built; auditing the refusal as a fraud signal;
 an API-side per-user limiter on the external mint — the bound the extra query before the PIN does
 NOT have (Consequences, "Cost accepted"); ~~the internal mint's bare "Unprocessable Entity" 422 in
 the document (an existing ADR-0049 row-14 instance: `TransferController.cs:103` carries the
@@ -569,10 +552,7 @@ moves 5,000 externally — the contract row moves nothing and the after-probe us
 
 _Measured 2026-09-07 (review round 1), because this paragraph asserted a cost without one.
 `SET STATISTICS IO` on `AzureBankDev`, a **242-row `Transactions` table and a 147-row `Accounts`
-table** — the transcript, the exact `sqlcmd` commands and the plan are kept outside this
-repository, as that round's second measurement (2026-10-05: a file of a private working folder was
-cited here by path; no reader of this repository can open it, so the citation is replaced by what
-it stood for, not struck). The aggregate costs **11 logical reads on
+table**. The aggregate costs **11 logical reads on
 `Transactions`** (scan count 1, 1 physical, 9 read-ahead) **and 32 on `Accounts`**, for the busiest
 payer of the current UTC day — 5 matching rows, 2 accounts — and IDENTICALLY for the user with the
 most of everything (136 transaction rows, 32 accounts). The plan says why, and it is not what a
@@ -597,10 +577,7 @@ transfer's refusal came with `{available, requested}` at the top level of the bo
 
 ### After
 
-**AFTER — observed 2026-09-07T14:17Z on this PR's working tree** (one probe script; it and its
-transcript are kept outside this repository
-*(2026-10-05: what was cited here, by path or by name, sits in a private working folder that no
-reader of this repository can open; the citation is replaced by what it stood for, not struck.)*),
+**AFTER — observed 2026-09-07T14:17Z on this PR's working tree** (one probe script),
 BFF `:5000` → API `:7215`,
 `AzureBankDev` (`is_read_committed_snapshot_on = 1`), the DEFAULT 5,000, three throwaway users
 registered by the probe (never the seeded admin). Expectation beside observation; none disagreed.
@@ -740,7 +717,7 @@ Each is a test, not a sentence; the SQL Server ones run only with `AZUREBANK_TES
   have argued the other way was taken and does not: the aggregate costs 11 logical reads on
   `Transactions` and 32 on `Accounts` on a 242-row table (Consequences, "Cost accepted"), which
   bounds nothing at scale in either direction._
-- **Vlad reversing D5 at the PR** in favour of the re-sum under the audit tail: D5's declined
+- **D5 reversed** in favour of the re-sum under the audit tail: D5's declined
   alternative becomes the mechanism, the comparison becomes `used > limit` after the first save, the
   ADR-0044 note flips from "does not depend on the tail" to a dated dependency, and this record is
   corrected in place.

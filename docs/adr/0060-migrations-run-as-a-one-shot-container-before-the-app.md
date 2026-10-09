@@ -132,7 +132,7 @@ public demo's database is an Azure SQL one, and they are what fills its pool and
   the template now, `azurebank-pool`, built only with a switch that is off by default. There it
   carries `azurebank-app`, runs `["recycle"]` for the first fill as well, since `recycle` fills
   a database that holds no copy, and is given the pepper with no key id, as the `api` container
-  is. On Azure it does not exist until the runbook's third session has run.) *The two roles of
+  is. On Azure it does not exist until the runbook's "Turn the demo on" has run.) *The two roles of
   the login measured below are `azurebank_app`'s.
   Measured 2026-10-03: a login holding
   `db_datareader` and `db_datawriter` alone ran both through a whole cycle, copies built, a

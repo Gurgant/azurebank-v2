@@ -4,8 +4,8 @@
 one record per line, copied out of the database so that a later run has something to disagree with.
 
 This is a **sample**. It was produced by the real command against a throwaway in-memory database, so
-that a reader can see the shape without running anything. It is not this project's audit trail, and
-there is no real audit trail to be one — nothing here is deployed.
+that a reader can see the shape without running anything. It is not the audit trail of any
+deployment.
 
 ## Why the file exists at all
 
@@ -29,10 +29,9 @@ table can delete the export in the same breath, so the write is the beginning of
 the end of it.
 
 **And it is a demonstration rather than a control.** The same document rules that out in advance: a
-control that depends on somebody choosing to run it does not constrain that person, and nothing in
-this deployment runs unattended. `export` is a verb an operator types. That is honest as a
-demonstration and would be dishonest as a guarantee, which is why this paragraph is above the
-interesting one.
+control that depends on somebody choosing to run it does not constrain that person. `export` is a
+verb an operator types, and nothing runs it unattended. That is honest as a demonstration and
+would be dishonest as a guarantee, which is why this paragraph is above the interesting one.
 
 **Nothing here is timestamped by anybody else.** ADR-0044 records what would change that — an
 RFC 3161 token, deferred rather than rejected — and records that it is not built.
@@ -64,12 +63,12 @@ secrets:
   `ExportedSampleTests.The_sample_is_a_chain_a_reader_can_follow_without_any_key` asserts it
   against this very file.
 - **`anchoredValue`** is an unkeyed digest of the state the record claims. It is unkeyed on purpose:
-  it has to survive a key rotation and be checkable by somebody holding no secret of ours.
+  it has to survive a key rotation and be checkable by somebody holding none of those secrets.
 
 **`mac` is not one of those.** It is keyed under `Audit:AnchorKey`, and it is present here only
-because the sample was generated with a key this file prints in full under **The sample's
-provenance**, and a key that is written down is not a secret at all. A real export carries real authentication codes and belongs wherever
-real secrets belong.
+because the sample was made with a key this file prints in full under **The sample's
+provenance**, and a key that is written down is not a secret at all. A real export carries real
+authentication codes and belongs wherever real secrets belong.
 
 ## What publishing one of these reveals
 
@@ -117,8 +116,3 @@ Two tests read this exact file. `ExportedSampleTests` checks its shape, its chai
 properties it must have on its own terms, rather than against a stored copy of itself.
 `ExportedSampleLadderTests` checks the version ladder and, separately, pins the record count: the
 first fails on ANY regeneration, the second only when the number of rounds changes too.
-
-*(This paragraph used to open "to regenerate it, run `export` … and replace the file", and named
-`ExportedSampleTests` as "the guard that keeps it honest". Both were true until the ladder gained a
-second rung. A document that instructs is more dangerous than one that merely describes, because it
-is followed.)*

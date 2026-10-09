@@ -43,8 +43,7 @@
 
 The backend of **AzureBank**: a .NET 10 REST API behind a **Backend-For-Frontend (BFF)** — accounts,
 deposits, withdrawals and transfers, with the security controls split between the two hosts as
-[`SECURITY.md`](../SECURITY.md) sets out. *(Until 2026-09-24 this opened by calling the backend
-"enterprise-grade" with "defense-in-depth security".)*
+[`SECURITY.md`](../SECURITY.md) sets out.
 
 ### What This Project Does
 
@@ -62,7 +61,7 @@ The Backend-For-Frontend pattern provides:
 - **Session Management**: HTTP-only cookies with automatic timeout
 - **Rate Limiting**: Protection against abuse at the gateway level
 - **Security Headers**: OWASP-recommended headers: CSP and five others, and HSTS everywhere but
-  Development. *(Until 2026-09-25 this listed HSTS, which the BFF did not send.)*
+  Development.
 
 ---
 
@@ -77,7 +76,6 @@ The Backend-For-Frontend pattern provides:
 - Session management with configurable timeouts
 - Rate limiting at the BFF: 300 requests a minute overall and 10 a minute on sign-in and
   registration, both per client IP; 20 a minute on user lookups by handle, per signed-in user
-  *(until 2026-09-24 this said 100 a minute per client, which is not what the configuration sets)*
 
 ### Account Management
 
@@ -112,7 +110,7 @@ flowchart TB
         Browser["Browser"]
     end
 
-    subgraph BFF["BFF Gateway (Port 5001)"]
+    subgraph BFF["BFF Gateway (Port 5000)"]
         YARP["YARP Reverse Proxy"]
         Session["Session Management"]
         RateLimit["Rate Limiting"]
@@ -144,8 +142,6 @@ flowchart TB
     class Data dataStyle
 
 ```
-
-*(Until 2026-09-24 the client layer read "Browser / Mobile App"; there is no mobile app.)*
 
 ### Request Flow
 
@@ -423,8 +419,8 @@ CPM centralizes all NuGet package versions in a single file, ensuring:
 #### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/your-org/AzureBank.git
-cd AzureBank/backend
+git clone https://github.com/Gurgant/azurebank-v2.git
+cd azurebank-v2/backend
 ```
 
 #### 2. Restore NuGet Packages
@@ -433,48 +429,17 @@ cd AzureBank/backend
 dotnet restore
 ```
 
-#### 3. Configure the Database
+#### 3. Configure, Create the Database and Run
 
-Create a SQL Server database and update the connection string:
+The [local setup](../docs/engineering-practices.md#local-setup) is the one copy of these steps,
+written from the repository root: the user-secrets each project reads, the one Seeder command
+that drops, migrates and seeds the database, and the `dotnet run` line of each host. The API
+must run its `https` profile: the BFF's proxy points at `https://localhost:7215`.
 
-```bash
-# Copy example settings
-cp src/AzureBank.Api/appsettings.Development.json.example src/AzureBank.Api/appsettings.Development.json
-
-# Edit connection string
-# "ConnectionStrings": {
-#   "DefaultConnection": "Server=localhost;Database=AzureBank;Trusted_Connection=True;TrustServerCertificate=True"
-# }
-```
-
-#### 4. Apply Database Migrations
-
-```bash
-dotnet ef database update \
-  --project src/AzureBank.Infrastructure \
-  --startup-project src/AzureBank.Api
-```
-
-#### 5. Run the Applications
-
-**Terminal 1 - API:**
-
-```bash
-dotnet run --project src/AzureBank.Api
-# Runs on https://localhost:7215
-```
-
-**Terminal 2 - BFF Gateway:**
-
-```bash
-dotnet run --project src/AzureBank.Bff
-# Runs on https://localhost:5001
-```
-
-#### 6. Verify Installation
+#### 4. Verify Installation
 
 - **API Documentation**: https://localhost:7215/scalar/v1
-- **BFF Session Status**: https://localhost:5001/bff/auth/session-status
+- **BFF Session Status**: http://localhost:5000/bff/auth/session-status
 
 ---
 
@@ -539,10 +504,11 @@ dotnet test
 # Run with detailed output
 dotnet test --logger "console;verbosity=detailed"
 
-# Run specific category
-dotnet test --filter "Category=Unit"
-dotnet test --filter "Category=Integration"
-dotnet test --filter "Category=Architecture"
+# The tests that need SQL Server: the only Category trait the suite defines
+dotnet test --filter "Category=SqlServer"
+
+# Everything except them
+dotnet test --filter "Category!=SqlServer"
 
 # Run with code coverage
 dotnet test --collect:"XPlat Code Coverage"
@@ -565,8 +531,7 @@ reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
 - **`AZUREBANK_TEST_SQLSERVER`**: the tests that need a real database connect to the SQL Server it
   names — LocalDB locally, a service container in CI — and skip without it. They also skip when it
   names an Azure SQL server: several of them create and drop databases there. There is no
-  Testcontainers harness: the packages were referenced and never used, and were removed on
-  2026-08-10 (`ac0a2f9`).
+  Testcontainers harness.
 - **CustomWebApplicationFactory**: Creates isolated API instance for each test
 - **Architecture Tests**: Enforces layer dependencies and naming conventions
 
@@ -651,18 +616,12 @@ may still need after it (ADR-0058).
 
 \* `dotnet run` sets Development, from `launchSettings.json`; with nothing set a host runs as
 Production. `DOTNET_ENVIRONMENT`, when set, wins over it (measured 2026-09-25). The console format
-(JSON in Production) and HSTS (outside Development) follow the environment. *(Until 2026-09-25
-this default read Development, which is `dotnet run`'s, not the host's.)*
-
-*(Until 2026-09-25 the JWT row said "unchecked", and nothing checked the key or the connection
-string at startup.)*
+(JSON in Production) and HSTS (outside Development) follow the environment.
 
 The seven secrets are the [local setup](../docs/engineering-practices.md#local-setup)'s recipe
-spelled with `__` instead of `:` (six until 2026-09-19, when the service credential joined them);
-in development they come from `dotnet user-secrets`. The Seeder needs only the connection string
-and the pepper, and the BFF only `ServiceCredential__BffKey`, the same value the API holds.
-*(Until 2026-09-25 this paragraph and the table named the root README's recipe, which moved to the
-local setup.)*
+spelled with `__` instead of `:`; in development they come from `dotnet user-secrets`. The Seeder
+needs only the connection string and the pepper, and the BFF only `ServiceCredential__BffKey`,
+the same value the API holds.
 
 ---
 
@@ -683,7 +642,7 @@ Key architectural decisions are documented as ADRs:
 | ------------------------------------------------------- | ---------------------------- | -------- |
 | [ADR-0001](../docs/adr/0001-bff-pattern.md)                | Backend-For-Frontend Pattern | Accepted |
 | [ADR-0002](../docs/adr/0002-yarp-proxy.md)                 | YARP Reverse Proxy Selection | Accepted |
-| [ADR-0003](../docs/adr/0003-argon2id-password-hashing.md)  | Argon2id hashing — built for PINs; passwords use Identity's PBKDF2 (see its correction) | Accepted |
+| [ADR-0003](../docs/adr/0003-argon2id-password-hashing.md)  | Argon2id hashing — built for PINs; passwords use Identity's PBKDF2 | Accepted |
 | [ADR-0004](../docs/adr/0004-central-package-management.md) | Central Package Management   | Accepted |
 | [ADR-0005](../docs/adr/0005-scalar-api-documentation.md)   | Scalar API Documentation     | Accepted |
 | [ADR-0006](../docs/adr/0006-mapperly-object-mapping.md)    | Mapperly Object Mapping      | Accepted |

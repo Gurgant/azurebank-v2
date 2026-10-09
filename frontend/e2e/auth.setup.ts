@@ -65,7 +65,6 @@ setup('authenticate', async ({ page, request }) => {
     assertion would have passed on a redirect it never meant to accept. Measured: with no `returnTo`
     in history, LoginPage navigates to `navState.from?.pathname ?? '/dashboard'` (`onSubmit` in
     src/pages/LoginPage.tsx), so landing anywhere else here is a real change worth failing on.
-    (Until 2026-10-05 this gave the line by its number, 131, which the demo's block has moved.)
   */
   await expect(page).toHaveURL(/\/dashboard(?:[?#]|$)/, { timeout: 15_000 });
 

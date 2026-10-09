@@ -154,9 +154,8 @@ export async function login(): Promise<Wire> {
  * 429. On the real target the deleting Set-Cookie replaces the jar with an empty value, and the
  * BFF ends this session alone: its grant is revoked in the background through
  * `/api/auth/revoke`, and the fixture user's other sessions are untouched (ADR-0057). Each file
- * signs in afresh anyway. (Until 2026-09-28 this said the BFF's logout reached the API's logout,
- * which revoked every refresh token the fixture user held.) The mock sends no Set-Cookie and its
- * jar stays the hand-seeded one, which it ignores anyway.
+ * signs in afresh anyway. The mock sends no Set-Cookie and its jar stays the hand-seeded one,
+ * which it ignores anyway.
  */
 export async function logout(): Promise<Wire> {
   return call('/bff/auth/logout', { method: 'POST' });

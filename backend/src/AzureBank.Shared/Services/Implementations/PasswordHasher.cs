@@ -41,8 +41,7 @@ public class PasswordHasher : IPasswordHasher
     // OWASP Tier 2: Lower memory is acceptable for PINs because:
     // - 6 digits = only 1,000,000 possible combinations
     // - Memory-hardness provides less benefit for small search spaces
-    // - Faster verification without significant security loss (until 2026-09-17 this said
-    //   "~50ms vs ~300ms", comparing against the 64 MB password profile deleted that day)
+    // - Faster verification without significant security loss
     private const int PinMemorySize = 19456;         // 19 MB (OWASP Tier 2)
     private const int PinIterations = 2;             // Time cost
 
@@ -210,8 +209,7 @@ public class PasswordHasher : IPasswordHasher
             // a trusted store, but a tampered PinHash with an absurd m would otherwise
             // drive a huge allocation/CPU cost — reject rather than act on it. The cap
             // is well above the PIN profile (19 MiB) yet tight enough to bound a
-            // memory-exhaustion attempt if the column is ever tampered. (Until 2026-09-17
-            // this also named a 64 MiB password profile, deleted as uncalled.)
+            // memory-exhaustion attempt if the column is ever tampered.
             if (memory is < 8 or > 262_144           // 8 KiB .. 256 MiB
                 || iterations is < 1 or > 64
                 || parallelism is < 1 or > 64)

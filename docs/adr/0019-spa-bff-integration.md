@@ -56,7 +56,7 @@ and three 429 sources.
 6. **BFF response shapes are hand-written mirrors** (`src/api/bffTypes.ts`) of
    `BffResponses.cs` — the OpenAPI spec covers the API surface only. Request bodies
    reuse the generated API types (the BFF forwards them verbatim). The mirror is the
-   accepted cost until the BFF surface joins the spec (BE-2 backlog).
+   accepted cost until the BFF surface joins the spec.
    *(Superseded: ADR-0023 inverts the direction of truth — `bffSchemas.ts` holds Zod
    schemas validated at runtime, and `bffTypes.ts` is now `z.infer` of them, so the type
    and the validator cannot disagree. Do not "restore" hand-written types here: that

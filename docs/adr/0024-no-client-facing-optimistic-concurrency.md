@@ -19,8 +19,7 @@ schedules ETag/If-Match as a backend item — "adapt, low priority, warrants its
 research pass two days later parked it after a sourced investigation. Anyone working that audit's
 list top to bottom will build a feature that was researched and explicitly rejected. Before this
 ADR there were **zero occurrences of `If-Match` anywhere in `backend/src` or `frontend/src`** and
-no ADR mentioned it, so the parking decision lived only in a planning document headed for the
-archive.
+no ADR mentioned it, so the parking decision was recorded nowhere in the repository.
 
 ## Decision
 
@@ -82,13 +81,11 @@ already cost one re-proposal cycle.
 - **`RowVersion` exists on the entity and is used server-side**, so a future reversal is not a
   migration — it is contract and frontend work. The cost of changing our mind is bounded, which is
   part of why rejecting now is safe.
-- **This ADR closes the originals-audit item T1.3 by name.** Without that, the audit's own list
+- **This ADR closes that originals-audit item.** Without that, the audit's own list
   re-opens the question the next time somebody reads it.
-- The parked design sketch (version-in-body plus `If-Match`, a base64 `version` field on
-  `AccountResponse`, 428 and 412 with `CONCURRENCY_CONFLICT`) survives in the archived research
-  document. It may be consulted as a starting point **if the re-open trigger ever fires**, and it
-  must never be read as approved scope. Its line references are pinned to a repository state many
-  merges old and are already decaying.
+- The parked design sketch is version-in-body plus `If-Match`, a base64 `version` field on
+  `AccountResponse`, 428 and 412 with `CONCURRENCY_CONFLICT`. It is a starting point
+  **if the re-open trigger ever fires**, and it must never be read as approved scope.
 
 ## Consequences
 

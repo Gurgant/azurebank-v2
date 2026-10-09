@@ -183,7 +183,7 @@ public class AuditVerifierReportTests
           TYPE at all. A chain that throws something entirely unrelated, with the token signalled,
           must still be reported as an interruption. So no SqlException is built here. One can be:
           it has no public constructor, and Fixtures/SqlErrors builds one as SqlClient builds its
-          own. (Until 2026-10-04 this said a SqlException cannot be constructed here.)
+          own.
         */
         var services = new ServiceCollection();
         services.AddLogging();

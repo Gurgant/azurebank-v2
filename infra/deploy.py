@@ -1,14 +1,14 @@
 """Deploy one commit to the running AzureBank app, or move the app alone by hand.
 
     python infra/deploy.py                    migrate the database, then move the app, then check it
-    python infra/deploy.py --app-only         move the app only: the owner's road back
+    python infra/deploy.py --app-only         move the app only: the road back, by hand
     python infra/deploy.py --check            read the running app and check it: nothing is moved
     python infra/deploy.py --pool-run         start the pool job once, by hand, and wait for that run
     python infra/deploy.py --pool-log [NAME]  print what one run of the pool job printed
     python infra/deploy.py --job-log [NAME]   print what one migration printed (the latest, or NAME)
     python infra/deploy.py --app-log MINUTES  print what the app printed in the last MINUTES
 
-The last six are for the owner's terminal and are refused inside GitHub Actions.
+The last six are for a terminal and are refused inside GitHub Actions.
 
 It needs the Azure CLI signed in and on PATH, and the environment variables AZURE_SUBSCRIPTION_ID
 and AZURE_RESOURCE_GROUP. A deployment also needs IMAGE_TAG (the full SHA of a commit whose three
@@ -34,8 +34,8 @@ back, nothing that was started is stopped, and the last sentence says so and nam
 that read what was moved or started. A workflow run that is cancelled may not end that way.
 GitHub's page on cancelling a run says the interrupt is sent to the step's shell, and that the
 process tree is killed if the step is still running ten seconds later. Whether this script,
-which that shell starts, is sent the interrupt has been tried by nobody here: such a run may
-end with no sentence at all. Either way the script puts nothing back and stops nothing.
+which that shell starts, is sent the interrupt has not been tried: such a run may end with no
+sentence at all. Either way the script puts nothing back and stops nothing.
 
 The smoke test asks the address for the page, for the readiness answer, and for one sign-in
 with an address nobody can register, which the API must refuse after it asked the database. The
@@ -87,9 +87,9 @@ summary line among it, is not fetched here: --pool-log reads it afterwards.
 A migration leaves one line here, its verdict: the execution's name, status, times, exit code and
 a one-word reason. What it printed is never fetched by a deployment: the log of a public
 repository is public, and that text can name the server, an address, or a value from a database
-error. It is kept in the log workspace, where --job-log reads it as the owner, the lines of one
-execution at a time. --pool-log reads a run of the pool job the same way: its verdict, worded
-with that job's own exit codes, then its lines.
+error. It is kept in the log workspace, where --job-log reads it as whoever is signed in, the
+lines of one execution at a time. --pool-log reads a run of the pool job the same way: its
+verdict, worded with that job's own exit codes, then its lines.
 
 In a deployment every Azure call is `az rest` on the app or on a job. The deployment identity can
 reach nothing else, so it could not follow the status URL of a long-running operation, and this
@@ -155,7 +155,7 @@ DEMO_FLAG = 'Demo__Enabled'
 # host reads it under three names: ASPNETCORE_FORWARDEDHEADERS_ENABLED, DOTNET_FORWARDEDHEADERS_ENABLED
 # and ForwardedHeaders_Enabled with no prefix. Measured on 2026-10-06 on the BFF, on a loopback
 # socket with nothing listed: under each of the three it took the address a caller wrote in
-# X-Forwarded-For for the caller's. Until later that day only the first name was matched here.
+# X-Forwarded-For for the caller's.
 NETWORKS_SETTING = 'ForwardedHeaders__KnownIPNetworks__'
 NETWORKS_CONTAINER = 'bff'
 ABOUT_FORWARDED = re.compile(r'ForwardedHeaders__|(?:ASPNETCORE_|DOTNET_)?FORWARDEDHEADERS_ENABLED$', re.IGNORECASE)
@@ -222,8 +222,8 @@ SMOKE_LOGIN = {'email': 'deploy-smoke@azurebank.invalid', 'password': 'Not-a-rea
 SIGN_IN_TRIES = 4
 # Sign-ins share one bucket of 10 a minute with every caller the BFF counts as the same client
 # (Bff/appsettings.json, AuthPermitLimit): after a 429 only a full window can free a permit.
-# Until 2026-10-07 this said "with every visitor": on the deployed app the bucket has been one
-# caller's own since a run named the ingress's network that day (README.md, step 30).
+# On the deployed app the bucket is one caller's own: a run of the template named the ingress's
+# network (README.md, "Measured on Azure").
 WAIT_AFTER_429 = 65
 WAIT_BETWEEN_TRIES = 20
 # What "no answer" is, for the smoke test: a connection refused, reset, closed before the answer
@@ -326,7 +326,7 @@ def image_patch(resource, desired):
 def patch(resource_id, body, what):
     """PATCH a template. Azure may refuse it for a right on the identity attached to the resource,
     though no body here names an identity. That refusal is not tried again and no role is added
-    for it: the run stops and the refusal goes to the owner as Azure wrote it."""
+    for it: the run stops and shows the refusal as Azure wrote it."""
     try:
         return rest('PATCH', resource_id, body)
     except AzError as error:
@@ -335,7 +335,7 @@ def patch(resource_id, body, what):
             raise IdentityRightAsked(
                 f'Azure asked for a right on a database identity before it would change {what}: '
                 'stop here. This request changed nothing, it was not tried again, and no role is '
-                f'to be added for it; the refusal goes to the owner as Azure wrote it: {error}') from None
+                f'to be added for it. The refusal, as Azure wrote it: {error}') from None
         raise
 
 
@@ -501,7 +501,7 @@ def proxy_networks(app, when='nothing was moved'):
     BFF then takes each connection's address for the caller's, and reads no forwarded header.
 
     The count only. A network is never returned, printed or put in an error: it is an address
-    range of the platform's, typed by the operator who measured it. The template writes each
+    range of the platform's, measured on the deployment it is for. The template writes each
     setting once, as a plain value, numbered from 0 with no gap, on that container and on no
     other, and no other setting about forwarded headers anywhere. Anything else was set by hand,
     and the BFF may then believe another header than a count would say: it is refused as a shape
@@ -649,9 +649,7 @@ def started_within(execution, seconds, now=None):
 
 def named(name):
     """An execution's name when it has the shape of one, else None. Every line of a deployment
-    may be public: a field is printed only in the shape expected of it. Until 2026-10-03 this
-    said that the script had read no answer of Azure's yet; it read them that day (README.md,
-    "Measured on Azure"), and the rule stays."""
+    may be public: a field is printed only in the shape expected of it."""
     return name if isinstance(name, str) and EXECUTION_NAME.fullmatch(name) else None
 
 
@@ -671,8 +669,8 @@ def state_of(execution):
 
 
 def stop_command(job_id, execution):
-    """The command that stops one execution of a job, for whoever may: the owner. The execution
-    is named only in the shape of a name."""
+    """The command that stops one execution of a job, for an account that may. The execution is
+    named only in the shape of a name."""
     match = re.search(r'/resourceGroups/([^/]+)/providers/Microsoft\.App/jobs/([^/]+)$', job_id)
     group, job = match.groups() if match else ('<resource group>', '<job>')
     return (f'az containerapp job stop --name {job} '
@@ -682,7 +680,7 @@ def stop_command(job_id, execution):
 def stop_hint(job_id, execution):
     """The deployment identity may start the job and read its executions; it may not stop one."""
     return ('The deployment identity cannot stop it, and it blocks every later deploy until it '
-            f'ends or the owner stops it: {stop_command(job_id, execution)}')
+            f'ends or is stopped from a terminal: {stop_command(job_id, execution)}')
 
 
 def moment(text):
@@ -727,7 +725,7 @@ def verdict(name, properties, in_actions=False, container=JOBS[MIGRATE_JOB], cod
 
     `container` and `codes` say whose exit code is read and how it is worded: the migrate job's
     unless the caller names another. A run of the pool job is read with that job's container and
-    its own map, and only from the owner's terminal."""
+    its own map, and only from a terminal."""
     parts = [f"{told_name(name)}: {told_status(properties.get('status'))}"]
     began, ended = moment(properties.get('startTime')), moment(properties.get('endTime'))
     parts.append(f'started {stamp(began)}' if began else 'start not reported')
@@ -931,8 +929,8 @@ def is_closed(status, content_type, body):
     """403 with the error code of a registration the public demo keeps closed. The BFF answers it
     by itself, before the request reaches the API and whatever the body holds; with the demo off
     the same request with an empty body is answered 400. Both are read from the BFF's code and
-    from its tests (backend/tests/AzureBank.Bff.Tests/DemoClaimTests.cs), not from an answer this
-    script ever got."""
+    from its tests (backend/tests/AzureBank.Bff.Tests/DemoClaimTests.cs); the refusal was also
+    read on the deployed demo (README.md, "Measured on Azure")."""
     return status == 403 and error_code(body) == REGISTRATION_CLOSED
 
 
@@ -1120,9 +1118,10 @@ def refuse_beside_a_pool_run(job_id, job, starting=False):
     is one read, before anything is changed or started: a run the schedule starts after it is not
     seen, and nothing here holds the schedule back.
 
-    It is also one answer. Whether Azure gives the list of a job's executions in pages, and in
-    which order, is recorded nowhere in this repository: if it does, a link to a next page is not
-    followed, and a run listed only on a later page is not seen either."""
+    It is also one answer. A list of seven executions came with no link to a next page
+    (README.md, "Measured on Azure"); whether Azure gives a longer one in pages is not known. If
+    it does, a link to a next page is not followed, and a run listed only on a later page is not
+    seen either."""
     timeout = job['properties']['configuration']['replicaTimeout']
     left = 'Nothing was started' if starting else 'Nothing was changed'
     try:
@@ -1145,8 +1144,8 @@ def refuse_beside_a_pool_run(job_id, job, starting=False):
                            f'job {POOL_JOB} is {state}: a pool run may still be in progress, and '
                            f'{refused} beside one. {left}. A run is '
                            f"expected to end within the job's timeout ({timeout} s): {again} "
-                           'after that. If it is refused again then, the owner reads the job\'s '
-                           'executions and stops that one (infra/README.md, "When something fails").')
+                           'after that. If it is refused again then, read the job\'s executions '
+                           'and stop that one (infra/README.md, "When something fails").')
     return runs
 
 
@@ -1157,10 +1156,10 @@ def deploy(subscription, resource_group, tag, app_only=False, in_actions=False,
     if not subscription or not resource_group:
         raise ValueError('AZURE_SUBSCRIPTION_ID and AZURE_RESOURCE_GROUP must be set.')
     if app_only and in_actions:
-        # It skips the migration and takes any published tag: a road for the owner's own terminal,
-        # not for whoever can dispatch a workflow.
-        raise ValueError('--app-only is refused inside GitHub Actions: it is the road back the '
-                         'owner takes by hand, from a terminal.')
+        # It skips the migration and takes any published tag: a road for a terminal, not for
+        # whoever can dispatch a workflow.
+        raise ValueError('--app-only is refused inside GitHub Actions: it is the road back, '
+                         'taken by hand from a terminal.')
     prefix = (f'/subscriptions/{urllib.parse.quote(subscription, safe="")}'
               f'/resourceGroups/{urllib.parse.quote(resource_group, safe="")}/providers/Microsoft.App')
     app_id = f'{prefix}/containerApps/{APP}'
@@ -1239,7 +1238,7 @@ def deploy(subscription, resource_group, tag, app_only=False, in_actions=False,
                            ) from failure
 
 
-# --- The check that moves nothing: the owner's terminal only ---
+# --- The check that moves nothing: from a terminal only ---
 # A run of the template is expected to make a revision outside this script: no migration, no
 # smoke test and no put-back follow it. This is its read-back. Every request it sends is a read,
 # but for the two listings of secrets, which ask for no change either.
@@ -1281,9 +1280,10 @@ def wait_alone(app_id, latest, timeout=180):
     list, or the list is not one that could have shown an active revision; every other entry
     must say it is inactive.
 
-    It is one answer. Whether Azure gives the list of an app's revisions in pages is recorded
-    nowhere in this repository: a list that comes with a link to a next page does not show every
-    revision, the link is not followed, and the check stops there."""
+    It is one answer. A list of ten revisions came with no link to a next page (README.md,
+    "Measured on Azure"), and whether Azure gives a longer one in pages is not known: a list that
+    comes with such a link does not show every revision, the link is not followed, and the check
+    stops there."""
     deadline = time.monotonic() + timeout
     while True:
         answer = rest('GET', f'{app_id}/revisions')
@@ -1391,9 +1391,9 @@ def check(subscription, resource_group, in_actions=False):
     job's two secrets against the app's; then the smoke test, with the demo as the app says it.
     With the demo off the pool job is not read and no secret is listed."""
     if in_actions:
-        raise ValueError("--check is refused inside GitHub Actions: it is the owner's read of the "
-                         'running app, from a terminal. A workflow run checks the app at the end of '
-                         'its own deployment.')
+        raise ValueError('--check is refused inside GitHub Actions: it reads the running app from '
+                         'a terminal. A workflow run checks the app at the end of its own '
+                         'deployment.')
     prefix = f'{prefix_of(subscription, resource_group)}/Microsoft.App'
     app_id = f'{prefix}/containerApps/{APP}'
     app = settled_app(app_id)
@@ -1431,7 +1431,7 @@ def check(subscription, resource_group, in_actions=False):
         + '; the smoke test passed; nothing was moved.')
 
 
-# --- A run of the pool job by hand: the owner's terminal only ---
+# --- A run of the pool job by hand: from a terminal only ---
 # The template gives the pool job a schedule, and a deployment never starts it. This starts it
 # once beside the schedule, as whoever is signed in: the first fill, or a refill by hand.
 
@@ -1447,8 +1447,8 @@ def where_it_printed(name):
 
 def end_pool_run(name, code, status=None):
     """Say how a run of the pool job that is over ended, by the exit code of its container and
-    never by the execution's status alone: how Azure words an execution whose container exited
-    with a signal's code has not been seen. 0, 10, 11 and 15 end well, the last three with a
+    never by the execution's status alone: Azure worded an execution whose container exited 10
+    as Failed (README.md, "Measured on Azure"). 0, 10, 11 and 15 end well, the last three with a
     signal (POOL_RUN_ENDS_WELL). Any other code, and a code Azure did not report, is a failure:
     nothing is guessed, and nothing is started again. A signal names the count of the run's
     summary line that it says to read.
@@ -1494,7 +1494,7 @@ def pool_run(subscription, resource_group, in_actions=False):
     seen, as in a deployment."""
     if in_actions:
         raise ValueError('--pool-run is refused inside GitHub Actions: the pool job runs on its '
-                         'schedule, and a run beside the schedule is started by the owner, from a '
+                         'schedule, and a run beside the schedule is started by hand, from a '
                          "terminal. A deployment moves that job's image and never starts it.")
     job_id = f'{prefix_of(subscription, resource_group)}/Microsoft.App/jobs/{POOL_JOB}'
     try:
@@ -1571,11 +1571,11 @@ def pool_run(subscription, resource_group, in_actions=False):
     raise RuntimeError(f'Timed out waiting for {label} of the job {POOL_JOB}: it had not ended '
                        f"{waited} s after it was started here (the job's timeout and two minutes). "
                        'It was not started again. While it is listed as running, a deployment and a '
-                       f'second start are refused.{how_it_ends} The owner can stop it: '
+                       f'second start are refused.{how_it_ends} To stop it: '
                        f'{stop_command(job_id, name)}')
 
 
-# --- Reading the log workspace: the owner's terminal only ---
+# --- Reading the log workspace: from a terminal only ---
 # The deployment identity has no right on the workspace, and a public log must never hold this
 # text. The three commands sign in as whoever ran `az login`.
 
@@ -1593,7 +1593,7 @@ def prefix_of(subscription, resource_group):
 def refuse_in_actions(option, in_actions):
     if in_actions:
         raise ValueError(f'{option} is refused inside GitHub Actions: what the containers printed '
-                         'is read by the owner, from a terminal, and never reaches a public log.')
+                         'is read from a terminal, and never reaches a public log.')
 
 
 def workspace_id(prefix):
@@ -1656,7 +1656,8 @@ def job_log(subscription, resource_group, execution='', in_actions=False, job=MI
     (README.md, "Measured on Azure"). The name goes into the query between quotes, so only the
     shape of an execution's name may: one given on the command line in another shape is refused
     before anything is read, and one Azure lists in another shape is never asked for. The query
-    with this filter is tested offline and has not been sent to the workspace yet.
+    with this filter is tested offline. On Azure it has read runs of the pool job, and not yet a
+    migration.
 
     `job` is the migrate job, or the pool job for --pool-log: the executions read, the name in
     the query, the container whose exit code is on the verdict's line and the map that words it
@@ -1765,7 +1766,7 @@ def main(arguments=None):
     except KeyboardInterrupt:
         # Ctrl+C. A workflow run that is cancelled may never get here: GitHub's page on cancelling
         # a run says the interrupt is sent to the step's shell, and that the process tree is
-        # killed if the step is still running ten seconds later. Nobody here has tried it. The
+        # killed if the step is still running ten seconds later. That has not been tried. The
         # script stops where it is: it does not put the app back, and it stops nothing it started.
         # Which request was on its way is not known here, so the sentence does not say that
         # nothing was changed.

@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- Nothing is loaded from another host and nothing inline runs. The one request that leaves
+         the page is the image that wakes the demo, which is why img-src names the demo's origin.
+         That origin is written twice in this file and nowhere else: here and in the link
+         #open-demo, where entry.js reads it. Change both together. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' https://azurebank.lemonmoss-e3015c47.italynorth.azurecontainerapps.io; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>AzureBank</title>
+    <meta
+      name="description"
+      content="A personal banking app built as a portfolio project. Open the live demo, with no sign-up."
+    />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="entry.css" />
+    <!-- A blocking script in the head, so that the language is chosen before the first paint. -->
+    <script src="entry.js"></script>
+  </head>
+  <body>
+    <div class="page">
+      <header class="top">
+        <div class="bar">
+          <span class="stamp">
+            <span lang="en" data-lang="en">Portfolio · live demo</span>
+            <span lang="it" data-lang="it">Portfolio · demo online</span>
+          </span>
+          <span class="lang" role="group" aria-label="Language / Lingua">
+            <button type="button" id="lang-en" lang="en" aria-pressed="true">EN</button>
+            <button type="button" id="lang-it" lang="it" aria-pressed="false">IT</button>
+          </span>
+        </div>
+        <h1>AzureBank</h1>
+
+        <!-- The start panel. As written here it works without the script: the link is a link.
+             With the script, entry.js wakes the demo and enables the link when it answers. -->
+        <div class="start" id="start">
+          <p class="wake">
+            <span id="wake-status" role="status"></span>
+            <span id="wake-count"></span>
+          </p>
+          <div class="meter" aria-hidden="true"><div class="fill" id="wake-fill"></div></div>
+          <div class="doors">
+            <a
+              class="door primary"
+              id="open-demo"
+              href="https://azurebank.lemonmoss-e3015c47.italynorth.azurecontainerapps.io/"
+            >
+              <span lang="en" data-lang="en">
+                <span class="label-open">Open the demo</span>
+                <span class="label-anyway">Open the demo anyway</span>
+              </span>
+              <span lang="it" data-lang="it">
+                <span class="label-open">Apri la demo</span>
+                <span class="label-anyway">Apri comunque la demo</span>
+              </span>
+              <span aria-hidden="true">→</span>
+            </a>
+            <a
+              class="door plain"
+              href="https://github.com/Gurgant/azurebank-v2"
+              target="_blank"
+              rel="noopener"
+            >
+              <span lang="en" data-lang="en">Code on GitHub</span>
+              <span lang="it" data-lang="it">Codice su GitHub</span>
+            </a>
+          </div>
+          <p class="wait note">
+            <span lang="en" data-lang="en">The server sleeps when nobody is using it and wakes up
+              on the next visit: the first page can take about half a minute.</span>
+            <span lang="it" data-lang="it">Il server si spegne quando nessuno lo usa e si riaccende
+              alla visita successiva: la prima pagina può richiedere circa mezzo minuto.</span>
+          </p>
+        </div>
+
+        <div lang="en" data-lang="en" class="copyblock">
+          <p class="lede">A personal banking app, built as a portfolio project and live on Azure
+            since 6 October 2026: anyone can try it in a browser, with no sign-up.</p>
+          <p class="by">Designed and built solo by Vladislav Aleshaev.</p>
+        </div>
+        <div lang="it" data-lang="it" class="copyblock">
+          <p class="lede">Un'app di home banking, costruita come progetto di portfolio e online su
+            Azure dal 6 ottobre 2026: chiunque può provarla dal browser, senza registrarsi.</p>
+          <p class="by">Progettata e sviluppata in autonomia da Vladislav Aleshaev.</p>
+        </div>
+      </header>
+
+      <main>
+        <!-- ============ ENGLISH ============ -->
+        <div lang="en" data-lang="en" class="page">
+          <section>
+            <h2>In short</h2>
+            <p><strong>What it is.</strong> A personal banking application: accounts, deposits,
+              withdrawals and transfers between users. A React frontend, a .NET backend, a SQL
+              Server database. The money is not real: it is a demonstration, not a bank.</p>
+            <p><strong>Why it exists.</strong> To show how software that moves money is built. The
+              interesting part is not the screens but what has to stay true when something goes
+              wrong: a payment applied only once even when the request is repeated, an access token
+              that never reaches the browser, a PIN entry that authorises one payment only.</p>
+          </section>
+
+          <section>
+            <h2>Try it</h2>
+            <ol class="steps">
+              <li>Open the demo with the button at the top of this page. It opens on the sign-in
+                page.</li>
+              <li>Press <strong>Try the demo</strong>. You get a private copy that no other visitor
+                can see: two accounts (Main Savings <span class="mono">€12,450.00</span> and
+                Checking <span class="mono">€2,300.00</span>), two months of transactions and two
+                contacts you can pay.</li>
+              <li>Send money to one of the contacts: type their handle, press
+                <strong>Verify</strong>, enter an amount and confirm with the PIN
+                <span class="mono">123456</span>, which is shown on the page itself.</li>
+              <li>Try a deposit and a withdrawal, open the transaction history and reveal the full
+                account number, which is shown only after you enter the PIN.</li>
+              <li><strong>Start over</strong> gives you a fresh copy. Each copy lasts 24 hours.
+                Don't enter real personal data.</li>
+            </ol>
+            <p class="wait">The layout also adapts to a phone screen.</p>
+          </section>
+
+          <section>
+            <h2>What it demonstrates</h2>
+            <dl class="proves">
+              <div>
+                <dt>A payment is applied only once.</dt>
+                <dd>Every operation that moves money carries a key the server recognises: retries,
+                  network errors and duplicate requests do not create a second charge. It held
+                  under 24 identical concurrent requests on a real SQL Server.</dd>
+              </div>
+              <div>
+                <dt>The access token never reaches the browser.</dt>
+                <dd>An intermediary service keeps the token in a session on the server and gives
+                  the browser a cookie that the page's scripts cannot read.</dd>
+              </div>
+              <div>
+                <dt>One PIN entry authorises one payment.</dt>
+                <dd>The authorisation is bound to that account, that amount and that payee, is
+                  valid for two minutes and can be used only once. Three wrong PINs lock the PIN
+                  for 15 minutes.</dd>
+              </div>
+              <div>
+                <dt>A security log that can be checked.</dt>
+                <dd>Security events go to an append-only table (rows can only be added), each row
+                  chained to the previous one by a hash, with its own verifier. What it cannot
+                  detect is documented.</dd>
+              </div>
+              <div>
+                <dt>Frontend and backend held to one contract.</dt>
+                <dd>The API's contract is generated by the backend and the frontend is checked
+                  against it automatically, against the real backend and database too.</dd>
+              </div>
+              <div>
+                <dt>On Azure, no database password and a capped size.</dt>
+                <dd>The database has no password: the services authenticate with managed
+                  identities. Every release starts only after manual approval, and a rule rejects
+                  any configuration larger than the planned one. Automatic alerts by e-mail and as
+                  a phone notification report traffic and running time: one fired on 7 October
+                  2026 and arrived on both channels.</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section>
+            <h2>Figures</h2>
+            <div class="facts">
+              <div class="fact"><b>239</b><span>pull requests merged; changes are gated by
+                  automated tests and security analysis (CodeQL), with AI review</span></div>
+              <div class="fact"><b>64</b><span>documented design decisions, with rejected
+                  alternatives and limits</span></div>
+              <div class="fact"><b>2,846</b><span>backend tests</span></div>
+              <div class="fact"><b>1,405</b><span>frontend tests</span></div>
+              <div class="fact"><b>89</b><span>browser tests against the real backend and database,
+                  run automatically</span></div>
+              <div class="fact"><b>€0.63</b><span>cost on Azure from 1 to 7 October 2026, all of
+                  it for the database</span></div>
+            </div>
+            <p class="wait">Figures read on 7 October 2026. Stack: .NET 10, ASP.NET Core, EF Core,
+              SQL Server · React 19, TypeScript, Fluent UI · GitHub Actions, CodeQL · Azure
+              Container Apps, Azure SQL Database, Bicep.</p>
+          </section>
+
+          <section>
+            <h2>Known limitations</h2>
+            <ul class="plain">
+              <li>The first load after a quiet spell is slow: about 25 seconds while the server
+                starts. This page starts it and shows the wait. Once awake, the app answers in
+                under a second.</li>
+              <li>The visual design is not final: the interface redesign is the next step.</li>
+              <li>It has been tested in Chromium (the engine of Chrome and Edge) at desktop and
+                phone widths. A full visual check in Safari and on an iPhone has not been done
+                yet.</li>
+              <li>It is a demo: made-up data, one small instance, no availability guarantee.</li>
+              <li>Limits apply per network address: 10 new copies in 24 hours and 10 sign-ins a
+                minute.</li>
+            </ul>
+          </section>
+
+          <section>
+            <h2>Further reading</h2>
+            <p>Start with the demo. Then the repository's front page and "How AzureBank works".
+              With more time: the design decisions, starting with those on the payment
+              protocol.</p>
+            <div class="links">
+              <div>
+                <a href="https://github.com/Gurgant/azurebank-v2" target="_blank" rel="noopener"
+                >Repository</a>
+                <small>The code and an introduction to the project</small>
+              </div>
+              <div>
+                <a
+                  href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/architecture/overview.md"
+                  target="_blank"
+                  rel="noopener"
+                >How AzureBank works</a>
+                <small>One request followed end to end</small>
+              </div>
+              <div>
+                <a
+                  href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/adr/README.md"
+                  target="_blank"
+                  rel="noopener"
+                >Decisions</a>
+                <small>Every decision, with its alternatives</small>
+              </div>
+              <div>
+                <a
+                  href="https://github.com/Gurgant/azurebank-v2/blob/main/SECURITY.md"
+                  target="_blank"
+                  rel="noopener"
+                >Security</a>
+                <small>Security in one place, including what is not done</small>
+              </div>
+              <div>
+                <a
+                  href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/testing/try-the-demo.md"
+                  target="_blank"
+                  rel="noopener"
+                >Try the demo</a>
+                <small>What to try and the limits you may run into</small>
+              </div>
+              <div>
+                <a
+                  href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/engineering-practices.md"
+                  target="_blank"
+                  rel="noopener"
+                >Engineering practices</a>
+                <small>How work is done in this repository</small>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <!-- ============ ITALIANO ============ -->
+        <div lang="it" data-lang="it" class="page">
+          <section>
+            <h2>In breve</h2>
+            <p><strong>Che cos'è.</strong> Un'applicazione di home banking: conti, depositi,
+              prelievi e bonifici tra utenti. Frontend in React, backend in .NET, database SQL
+              Server. Il denaro è finto: è una dimostrazione, non una banca.</p>
+            <p><strong>Perché esiste.</strong> Per mostrare come si costruisce software che muove
+              denaro. La parte interessante non sono le schermate, ma ciò che deve restare vero
+              quando qualcosa va storto: un pagamento eseguito una sola volta anche se la richiesta
+              viene ripetuta, un token di accesso che non arriva mai al browser, un PIN che a ogni
+              inserimento autorizza un solo pagamento.</p>
+          </section>
+
+          <section>
+            <h2>Provarla</h2>
+            <ol class="steps">
+              <li>Apri la demo con il pulsante in cima a questa pagina. Si apre sulla pagina di
+                accesso.</li>
+              <li>Premi <strong lang="en">Try the demo</strong>. Ricevi una copia privata, che
+                nessun altro visitatore vede: due conti (Main Savings
+                <span class="mono">€12,450.00</span> e Checking
+                <span class="mono">€2,300.00</span>), due mesi di movimenti e due contatti a cui
+                inviare denaro.</li>
+              <li>Fai un bonifico a uno dei contatti: scrivi il suo handle (il suo nome pubblico
+                nell'app), premi <strong lang="en">Verify</strong>, inserisci un importo e conferma
+                con il PIN <span class="mono">123456</span>, indicato nella pagina stessa.</li>
+              <li>Prova un deposito e un prelievo, apri lo storico dei movimenti e fatti mostrare
+                il numero di conto completo, che compare solo dopo aver inserito il PIN.</li>
+              <li><strong lang="en">Start over</strong> ti dà una copia nuova. Ogni copia dura 24
+                ore. Non inserire dati personali veri.</li>
+            </ol>
+            <p class="wait">L'interfaccia è in inglese. Si adatta anche allo schermo di un
+              telefono.</p>
+          </section>
+
+          <section>
+            <h2>Che cosa dimostra</h2>
+            <dl class="proves">
+              <div>
+                <dt>Un pagamento viene eseguito una sola volta.</dt>
+                <dd>Ogni operazione che muove denaro porta con sé una chiave che il server
+                  riconosce: nuovi tentativi, errori di rete e richieste doppie non creano un
+                  secondo addebito. Verificato con 24 richieste identiche simultanee su un vero SQL
+                  Server.</dd>
+              </div>
+              <div>
+                <dt>Il token di accesso non arriva mai al browser.</dt>
+                <dd>Un servizio intermedio tiene il token in una sessione sul server e dà al
+                  browser un cookie che gli script della pagina non possono leggere.</dd>
+              </div>
+              <div>
+                <dt>Un inserimento del PIN autorizza un solo pagamento.</dt>
+                <dd>L'autorizzazione è legata a quel conto, a quell'importo e a quel beneficiario,
+                  vale due minuti e si può usare una sola volta. Tre PIN sbagliati bloccano il PIN
+                  per 15 minuti.</dd>
+              </div>
+              <div>
+                <dt>Un registro di sicurezza che si può verificare.</dt>
+                <dd>Gli eventi di sicurezza finiscono in una tabella append-only (le righe si
+                  possono solo aggiungere), in cui ogni riga è legata alla precedente da un hash,
+                  con un suo programma di verifica. Ciò che non riesce a rilevare è
+                  documentato.</dd>
+              </div>
+              <div>
+                <dt>Frontend e backend legati dallo stesso contratto.</dt>
+                <dd>Il contratto dell'API è generato dal backend e il frontend viene verificato
+                  automaticamente rispetto a quel contratto, anche con backend e database veri.</dd>
+              </div>
+              <div>
+                <dt>Su Azure, nessuna password del database e una dimensione bloccata.</dt>
+                <dd>Il database non ha password: i servizi si autenticano con identità gestite.
+                  Ogni rilascio parte solo dopo un'approvazione manuale, e una regola impedisce
+                  configurazioni più grandi di quella prevista. Avvisi automatici via e-mail e con
+                  notifica sul telefono segnalano traffico e ore di funzionamento: uno è scattato
+                  il 7 ottobre 2026 ed è arrivato su entrambi i canali.</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section>
+            <h2>Numeri</h2>
+            <div class="facts">
+              <div class="fact"><b>239</b><span>pull request unite; le modifiche passano da test
+                  automatici e analisi di sicurezza (CodeQL), con revisione AI</span></div>
+              <div class="fact"><b>64</b><span>decisioni di progettazione documentate, con
+                  alternative scartate e limiti</span></div>
+              <div class="fact"><b>2.846</b><span>test del backend</span></div>
+              <div class="fact"><b>1.405</b><span>test del frontend</span></div>
+              <div class="fact"><b>89</b><span>test nel browser su backend e database veri,
+                  eseguiti in automatico</span></div>
+              <div class="fact"><b>0,63 €</b><span>costo su Azure dal 1° al 7 ottobre 2026, tutto
+                  per il database</span></div>
+            </div>
+            <p class="wait">Numeri letti il 7 ottobre 2026. Tecnologie: .NET 10, ASP.NET Core, EF
+              Core, SQL Server · React 19, TypeScript, Fluent UI · GitHub Actions, CodeQL · Azure
+              Container Apps, Azure SQL Database, Bicep.</p>
+          </section>
+
+          <section>
+            <h2>Limiti noti</h2>
+            <ul class="plain">
+              <li>Il primo caricamento dopo una pausa è lento: circa 25 secondi, il tempo di avvio
+                del server. Questa pagina lo avvia e mostra l'attesa. Una volta attiva, l'app
+                risponde in meno di un secondo.</li>
+              <li>La grafica non è quella definitiva: il ridisegno dell'interfaccia è il prossimo
+                passo.</li>
+              <li>È stata verificata in Chromium (il motore di Chrome ed Edge), su desktop e alla
+                larghezza di un telefono. In Safari e su iPhone manca ancora un controllo visivo
+                completo.</li>
+              <li>È una demo: dati inventati, una sola piccola istanza, nessuna garanzia di
+                disponibilità.</li>
+              <li>I limiti d'uso valgono per indirizzo di rete: 10 copie nuove in 24 ore e 10
+                accessi al minuto.</li>
+            </ul>
+          </section>
+
+          <section>
+            <h2>Per approfondire</h2>
+            <p>Si parte dalla demo. Poi la pagina principale del repository e «How AzureBank
+              works». Con più tempo: le decisioni di progettazione, a partire da quelle sul
+              protocollo dei pagamenti. I documenti sono in inglese.</p>
+            <div class="links">
+              <div>
+                <a href="https://github.com/Gurgant/azurebank-v2" target="_blank" rel="noopener"
+                >Repository</a>
+                <small>Il codice e la presentazione del progetto</small>
+              </div>
+              <div>
+                <a
+                  href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/architecture/overview.md"
+                  target="_blank"
+                  rel="noopener"
+                  lang="en"
+                >How AzureBank works</a>
+                <small>Una richiesta seguita dall'inizio alla fine</small>
+              </div>
+              <div>
+                <a
+                  href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/adr/README.md"
+                  target="_blank"
+                  rel="noopener"
+                  lang="en"
+                >Decisions</a>
+                <small>Ogni decisione, con le alternative</small>
+              </div>
+              <div>
+                <a
+                  href="https://github.com/Gurgant/azurebank-v2/blob/main/SECURITY.md"
+                  target="_blank"
+                  rel="noopener"
+                  lang="en"
+                >Security</a>
+                <small>La sicurezza in un posto solo, compreso ciò che non è stato fatto</small>
+              </div>
+              <div>
+                <a
+                  href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/testing/try-the-demo.md"
+                  target="_blank"
+                  rel="noopener"
+                  lang="en"
+                >Try the demo</a>
+                <small>I percorsi da provare e i limiti che si possono incontrare</small>
+              </div>
+              <div>
+                <a
+                  href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/engineering-practices.md"
+                  target="_blank"
+                  rel="noopener"
+                  lang="en"
+                >Engineering practices</a>
+                <small>Come si lavora in questo repository</small>
+              </div>
+            </div>
+          </section>
+        </div>
+      </main>
+
+      <footer>
+        <span lang="en" data-lang="en">A demo with made-up data, not a banking service.</span>
+        <span lang="it" data-lang="it">Demo con dati inventati: non è un servizio bancario.</span>
+      </footer>
+    </div>
+  </body>
+</html>

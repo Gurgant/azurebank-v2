@@ -20,9 +20,9 @@ param poolTimeout int = 600
 
 @description('Where the notify-only alerts send their e-mail. Needed only when deployApp is true; never committed.')
 param alertEmail string = ''
-@description('The e-mail address the Azure mobile app on the owner\'s phone was set up with. Given, the action group gains one receiver of that app, so that an alert is expected to reach the phone as a notification too. Empty, the default, adds none: the group is what it was. infra/secrets.ps1 writes it; never committed.')
+@description('The e-mail address the Azure mobile app was set up with on the phone that receives the alerts. Given, the action group gains one receiver of that app, so that an alert reaches the phone as a notification too. Empty, the default, adds none: the group is what it was. infra/secrets.ps1 writes it; never committed.')
 param alertPushAccount string = ''
-@description('The networks, in CIDR form, that the platform\'s ingress reaches the app from. Given, the bff container is told to believe the X-Forwarded-For header of a connection that comes from inside one, so that it counts a visitor by the visitor\'s own address: one setting a network, ForwardedHeaders__KnownIPNetworks__0 and on. Empty, the default, sets nothing: the bff takes each connection\'s address for the caller\'s, as it did before this parameter existed. infra/secrets.ps1 writes it, from what the operator measured; no value is committed.')
+@description('The networks, in CIDR form, that the platform\'s ingress reaches the app from. Given, the bff container is told to believe the X-Forwarded-For header of a connection that comes from inside one, so that it counts a visitor by the visitor\'s own address: one setting a network, ForwardedHeaders__KnownIPNetworks__0 and on. Empty, the default, sets nothing: the bff takes each connection\'s address for the caller\'s, as it did before this parameter existed. infra/secrets.ps1 writes it, from the networks measured on the deployed app; no value is committed.')
 param proxyNetworks array = []
 @description('False leaves the Deny policy out: the fallback if this subscription refuses a custom policy definition.')
 param denyPolicy bool = true
@@ -38,7 +38,7 @@ param scheduledJobs array = [
 param keepLogs bool = true
 @description('Daily cap of the log workspace, in GB. Text, because the property is typed as a whole number: a fraction has to pass through json().')
 param logDailyCapGb string = '0.05'
-@description('True adds the alert on the log workspace. Left out since 2026-10-03: at step 20 of the runbook its metric had no time series for an hour in which the workspace ingested 446 rows. True is for whoever measures again.')
+@description('True adds the alert on the log workspace. Left out: on 2026-10-03 its metric had no time series for an hour in which the workspace ingested 446 rows. True is for whoever measures again.')
 param logVolumeAlert bool = false
 
 // The eight values below are needed only when deployApp is true; infra/secrets.ps1 supplies them.
@@ -238,9 +238,8 @@ module appInputs 'app-inputs.bicep' = if (deployApp) {
   }
 }
 
-// What the bff container is told on every run, in this order. A variable since 2026-10-06: the
-// container's settings are this list and, after it, one setting for each network below. Until
-// that day the list stood in the container itself.
+// What the bff container is told on every run, in this order. A variable: the container's
+// settings are this list and, after it, one setting for each network below.
 var bffSettings = [
   { name: 'ASPNETCORE_ENVIRONMENT', value: 'Production' }
   { name: 'BackendApi__BaseUrl', value: 'http://localhost:5068' }
@@ -257,20 +256,17 @@ var bffSettings = [
 
 // The proxies the bff believes: one setting for each network of proxyNetworks, numbered from 0,
 // which is how .NET reads a list from the environment (ADR-0013). With no network this list is
-// empty and the bff's settings are the six above and nothing else: worked out, the bff is told
-// what it was told before the parameter existed, which a test holds, and the whole run was the
-// same as from the templates of before (README.md, "Checking these files"). The bff refuses to
-// start on an entry it does not take for a network, or that trusts too much
+// empty and the bff's settings are the six above and nothing else, which a test holds. The bff
+// refuses to start on an entry it does not take for a network, or that trusts too much
 // (backend/src/AzureBank.Bff/Options/ProxyOptionsValidator.cs); nothing in this file checks one.
 // On the bff alone: the api reads no forwarded header, and neither job answers a request.
-// Until 2026-10-07 this comment ended "Nothing of it has been sent to Azure": on that day one
-// run named one network on the deployed app, and the bff there then counted a caller by the
-// caller's own address (README.md, step 30).
+// Measured on 2026-10-07: with one network named on the deployed app, the bff counted a caller by
+// the caller's own address (README.md, "Measured on Azure").
 //
 // The two lists are joined by spread in the container, not by concat(): joined by concat() the
-// compiler stopped reading the fields of a setting (a name misspelt in the six built and linted
-// with nothing on standard error), and joined by spread it reports them as it did while the six
-// stood in the container. Seen on copies, 2026-10-06 (README.md, "Checking these files").
+// compiler stops reading the fields of a setting (a name misspelt in the six built and linted
+// with nothing on standard error), and joined by spread it reports them. Seen on copies of this
+// file, 2026-10-06.
 var proxyNetworkSettings = [for (network, index) in proxyNetworks: {
   name: 'ForwardedHeaders__KnownIPNetworks__${index}'
   value: network
@@ -361,11 +357,10 @@ resource app 'Microsoft.App/containerApps@2025-01-01' = if (deployApp) {
             // No number of the demo is written here or on the pool job below: each is the
             // application's default on both, so no two can differ. For the copies one address
             // may claim in a day that is 10 (backend/src/AzureBank.Shared/Options/DemoOptions.cs).
-            // Until 2026-10-07 a variable wrote 1,000 for it on both: behind the ingress the BFF
-            // saw the platform's addresses and never a visitor's, and 10 would have been a cap
-            // that every visitor shared (ADR-0063, decision 14). It went once the BFF there was
-            // seen to count a visitor by the visitor's own address (README.md, step 30). An app
-            // or a job deployed before that day keeps the setting until this template is run.
+            // That cap is one visitor's own only where the BFF counts a visitor by the visitor's
+            // own address: behind the ingress it sees the platform's addresses until
+            // proxyNetworks names their network (ADR-0063, decision 14; README.md, "Measured on
+            // Azure").
           ]
         }
       ]
@@ -428,10 +423,10 @@ resource migrate 'Microsoft.App/jobs@2025-01-01' = if (deployApp) {
   ]
 }
 
-// When the pool job is asked to run: every four hours, on the hour. Azure is expected to read the
-// expression in UTC; no run on a schedule has been seen here. A variable and not a parameter: an
-// override could make the interval shorter than the job's timeout, and two runs at once can build
-// up to twice the pool's target (backend/tools/AzureBank.Seeder/README.md).
+// When the pool job is asked to run: every four hours, on the hour. Azure reads the expression in
+// UTC (README.md, "Measured on Azure"). A variable and not a parameter: an override could make
+// the interval shorter than the job's timeout, and two runs at once can build up to twice the
+// pool's target (backend/tools/AzureBank.Seeder/README.md).
 var poolSchedule = '0 */4 * * *'
 
 // The job that keeps the demo's pool of copies: `recycle` tops the pool up and deletes the copies
@@ -618,23 +613,23 @@ resource shapeAssignment 'Microsoft.Authorization/policyAssignments@2025-03-01' 
 
 // Notify only: nothing here stops the app. One e-mail receiver, and beside it, when
 // alertPushAccount is given, one receiver of the Azure mobile app, so that an alert is expected to
-// reach the owner's phone as a notification too; three rules on the app, one per meter that
-// traffic can move (requests, bytes out, replica time). A fourth, on the log workspace, is built
-// only when logVolumeAlert is true: see the comment on it below. Until 2026-10-06 this comment
-// said "One e-mail receiver" and the group could hold no other.
+// reach a phone as a notification too; three rules on the app, one per meter that traffic can
+// move (requests, bytes out, replica time). A fourth, on the log workspace, is built only when
+// logVolumeAlert is true: see the comment on it below.
 //
 // The phone's receiver is merged in, not written as a list that may be empty: with no account
 // the properties worked out are the three they were, and no fourth. Its name is its own, because
 // a receiver's name must be unique in its group, and its emailAddress is, in the reference's
 // words, "The email address registered for the Azure mobile app"
 // (https://learn.microsoft.com/en-us/azure/templates/microsoft.insights/2023-01-01/actiongroups,
-// read on 2026-10-06). Nothing of it has been sent to Azure. Not known: what Azure does with a
-// push for an account that has no app, and what such a notification costs on this offer.
+// read on 2026-10-06). An alert has reached a phone through it (README.md, "Measured on Azure").
+// Not known: what Azure does with a push for an account that has no app, and what such a
+// notification costs on this offer.
 //
 // Merged so, the compiler does not read the receivers' fields: emailAddress misspelt, in either
-// receiver, builds and lints with nothing on standard error, where the plain object this was
-// until 2026-10-06 put two warnings there. The test that compares the group's properties,
-// worked out, whole, is what holds them.
+// receiver, builds and lints with nothing on standard error, where a plain object puts two
+// warnings there. The test that compares the group's properties, worked out, whole, is what
+// holds them.
 resource owner 'Microsoft.Insights/actionGroups@2023-01-01' = if (deployApp) {
   name: 'azurebank-owner'
   location: 'global'
@@ -666,20 +661,18 @@ var alerts = [
   { name: 'azurebank-requests', onLogs: false, metric: 'Requests', aggregation: 'Total', threshold: 66667, window: 'PT1H', every: 'PT15M', text: 'More than 66,667 requests in one hour.' }
   // 3.3 GiB is one day of the free 100 GB a month.
   { name: 'azurebank-bytes-out', onLogs: false, metric: 'TxBytes', aggregation: 'Total', threshold: 3543348019, window: 'P1D', every: 'PT1H', text: 'More than 3.3 GiB sent in one day.' }
-  // 0.093 is 66.7 free replica-hours a month, as a daily average of the replica count. It assumes
-  // the metric reports 0 while the app is scaled to zero, which nobody has seen: if it reports
-  // nothing then, the average is 1 on any day of use and this rule fires every such day.
+  // 0.093 is 66.7 free replica-hours a month, as a daily average of the replica count. It needs
+  // the metric to report 0 while the app is scaled to zero, and it does (README.md, "Measured on
+  // Azure"): if it reported nothing then, the average would be 1 on any day of use.
   { name: 'azurebank-replica-time', onLogs: false, metric: 'Replicas', aggregation: 'Average', threshold: json('0.093'), window: 'P1D', every: 'PT1H', text: 'The replica ran more than 2.2 hours in one day.' }
   // 50,000 records ingested in one hour. Microsoft's page on the workspace's metrics (2026-07-31)
   // calls 'Ingestion Volume' the number of records ingested into a workspace or a table, with Count
-  // as its default aggregation. A record is a row, and in the trial a line printed was one row; but
-  // whether one measurement of the metric is one record is said nowhere. Measured on 2026-10-03,
-  // at the runbook's step 20 (README.md, "Measured on Azure"): for an hour in which the workspace
-  // ingested 446 rows, 395 of them in its middle forty minutes, the metric had no time series at
-  // all, while another metric of the same workspace, 'Query Count', had one. A rule on it cannot
-  // count lines there, so this one is built only when logVolumeAlert is true, which is for
-  // whoever measures again. Until that day this comment said "Not measured yet" and the rule was
-  // built by default; the first deployment created it, and it was deleted after the measurement.
+  // as its default aggregation. A record is a row, and each line printed arrived as one row; but
+  // whether one measurement of the metric is one record is said nowhere. Measured on 2026-10-03
+  // (README.md, "Measured on Azure"): for an hour in which the workspace ingested 446 rows, 395 of
+  // them in its middle forty minutes, the metric had no time series at all, while another metric
+  // of the same workspace, 'Query Count', had one. A rule on it cannot count lines there, so this
+  // one is built only when logVolumeAlert is true, which is for whoever measures again.
   // The threshold is what a rule that counts lines would use: 50,000 lines at the 438 bytes that
   // a line of a job was billed are 22 MB of the 50 MB daily cap; at the 768 computed for one of
   // the app's warnings, 38 MB. Without it nothing warns of the log's volume, and nothing warns

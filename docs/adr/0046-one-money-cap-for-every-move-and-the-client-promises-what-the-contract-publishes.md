@@ -1,7 +1,7 @@
 # ADR-0046: One money cap for every move, and the client promises what the contract publishes
 
 **Status:** Accepted · **Date:** 2026-09-03 · Closes the deposit-cap disagreement the balance-guard
-audit found (T14 in the backlog): the server refused a deposit the form had accepted. Records the
+audit found: the server refused a deposit the form had accepted. Records the
 first decision on money caps this repository has, and the shape that keeps a client bound from
 drifting from the contract again. Supersedes nothing; corrects one code comment.
 
@@ -85,10 +85,7 @@ marked as such rather than guessed at~~ (struck 2026-09-04; correction below).
 >
 > The mint for 1000 on a balance of 16 answered 201: funds are checked at the transfer, not at the
 > mint (ADR-0042). The mock now quotes these, `serverCurrency` is gone, and the contract suite pins
-> the withdrawal and the delete on the real stack from a fresh account. The transcript of the
-> 23:25Z run is kept outside this repository.
-> *(2026-10-05: what was cited here, by path or by name, sits in a private working folder that no
-> reader of this repository can open; the citation is replaced by what it stood for, not struck.)*
+> the withdrawal and the delete on the real stack from a fresh account.
 
 **D5 — The committed document is guarded against a constant changed without a regen.** The regen
 step is manual and deliberately outside CI, so a backend architecture test now reads the committed
@@ -106,7 +103,7 @@ document may cite it as a control.
 > deleted in the 2026-09-04 sweep, after re-running the grep behind D6: one definition,
 > zero readers, across `backend/src`, `backend/tests`, `frontend/`, `docs/api/openapiv1.json` and
 > the generated `schema.d.ts`. No behaviour changed, because nothing ever read it. A daily or
-> aggregate limit remains unbuilt and undecided — D7 and the backlog's transaction-limits feature.
+> aggregate limit remains unbuilt and undecided — D7.
 >
 > *Noted 2026-09-07: the aggregate now exists —
 > [ADR-0050](0050-a-utc-day-bounds-a-users-external-transfers-and-the-mint-says-so-before-the-pin.md)
@@ -114,13 +111,13 @@ document may cite it as a control.
 > default 5,000, validated on start), not a constant, and nothing is restored here: the 1,000 was a
 > dead number, not a decision.*
 
-**D7 — Not in this decision.** Showing the cap proactively or clamping the input (U8 UI/UX, last as
-always); ~~per-day, per-account or tiered limits (the backlog's transaction-limits feature, which
+**D7 — Not in this decision.** Showing the cap proactively or clamping the input (UI/UX work, not
+done here); ~~per-day, per-account or tiered limits (which
 this decision neither starts nor forecloses — the direction seam it would need can be added when
 the second number exists)~~ *(struck 2026-09-07: started by
 [ADR-0050](0050-a-utc-day-bounds-a-users-external-transfers-and-the-mint-says-so-before-the-pin.md)
 for external transfers per user — a per-day aggregate held in an option, not a schema bound, so no
-direction seam was needed for it; per-account and tiered limits remain with the umbrella entry)*;
+direction seam was needed for it; per-account and tiered limits remain undecided)*;
 raising the server's bound for any operation.
 
 ## Alternatives declined
@@ -161,7 +158,7 @@ form's literal edited away from the constant — is the same tripwire, run throu
   AGGREGATE has no schema `maximum`, so `MONEY_MAX` stays one number, D1 stays true and the
   tripwire is unchanged; the map-keyed-by-operation day is still ahead. What that ADR does concede:
   a single external transfer can no longer reach the published per-request `maximum` on a fresh
-  day, and the client's effective bound for one is min(`MONEY_MAX`, remaining) — a U8 surface, not
+  day, and the client's effective bound for one is min(`MONEY_MAX`, remaining) — a UI surface, not
   a schema change.*
 - **A relay for the contract check into CI** (`openapi-spec.mjs check` against a running API) would
   make D5's guard redundant; until then it is the only thing standing between a constant and the

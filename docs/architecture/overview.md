@@ -195,10 +195,12 @@ Enrolling or changing the transfer PIN writes a `SubscriberNotice` in the same s
 row, which it names by id, so an enrolment whose notice cannot be recorded does not happen
 (ADR-0045, ADR-0047, ADR-0052). Delivery is a separate act: a runner claims owed rows under a lease
 and writes each as an RFC 5322 message into a pickup directory, at-least-once (ADR-0048).
-`Notices:Runner` says which runner is live — the API's own hosted loop, or the same sweep as an
-Azure Function on a timer, rehearsed locally against Azurite (ADR-0051) — and defaults to `None`: as
-shipped nothing delivers, and an owed notice waits for the operator's `notify` verb. Nothing is
-deployed and nothing sends: it stops at a file nobody has seen.
+`Notices:Runner` says which runner is configured — the API's own hosted loop, or the same sweep as
+an Azure Function on a timer, rehearsed locally against Azurite (ADR-0051) — and defaults to `None`,
+so notices are not sent automatically. To deliver a pending notice, run the `notify` command of the
+audit tool (`backend/tools/AzureBank.AuditVerifier`): it saves the notice as an `.eml` file in a
+folder you choose and marks it as delivered. Nothing in this repository sends e-mail, and the
+template that deploys the demo sets no runner.
 
 ## Keeping the two halves honest
 
@@ -239,16 +241,14 @@ ends with Playwright against the built SPA under its CSP (ADR-0029, ADR-0032, AD
   skip instead of proving anything.
 - **The frontend suite**, against MSW mocks that are themselves validated against the real
   contract, so a mock that drifts fails the suite instead of passing quietly.
-- *No counts here, on purpose: this listed 618 and 188, which were long out of date, and any number
-  written into prose goes stale within days. CI's jobs are the source.*
+- *No counts here, on purpose: a number written into prose goes stale within days. CI's jobs are
+  the source.*
 - **Architecture tests** that fail the build on a layer-dependency violation.
 - **Schemathesis** on every pull request, driving the running API from the committed document and
   failing on a response the document does not declare (ADR-0053 D6).
 - Every pull request into `main` runs the full suite and CodeQL on three languages, and `main`
-  takes a merge only when they pass; an AI review is asked for on pull requests, and a human
-  merges. *(Until 2026-09-25 this said every pull request gets an AI review: the review is asked
-  for by hand, so nothing guarantees one on every pull request. It also left out that the checks
-  run on pull requests into `main` only.)*
+  takes a merge only when they pass. An AI review is asked for by hand on pull requests, and each
+  pull request is merged by hand.
 
 ## Where to go next
 

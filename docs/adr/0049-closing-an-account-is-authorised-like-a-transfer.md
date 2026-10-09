@@ -27,10 +27,7 @@ ADR-0008's table has said *Delete account → Level 2 → Destructive* since 202
 
 Measured on `main` @ `d93ba10` before any of this was written — BFF `:5000` → API `:7215`, the
 `AzureBankDev` LocalDB store, a fresh user at level 1 with no PIN enrolled. The rows below are
-excerpted verbatim from the measurement transcript, which is kept outside this repository
-*(2026-10-05: what was cited here, by path or by name, sits in a private working folder that no
-reader of this repository can open; the citation is replaced by what it stood for, not struck.)*;
-its setup lines,
+excerpted verbatim from the measurement transcript; its setup lines,
 the first DB probe that hit wrong column names, and its own reading notes are omitted:
 
 ```
@@ -83,9 +80,8 @@ deleted account, and the owner asking for it by id is told it does not exist), a
 history leaves their view with it (`TransactionService` scopes `GET /api/transactions` to
 `!a.IsDeleted`). An empty account is not a historyless one. The alternative — strike the row and
 close the pair as won't-do — was a legitimate one-paragraph outcome; it contradicts the row the
-record has carried since January rather than honouring it. Taken here; Vlad ratifies or reverses
-it at the PR, and this paragraph is corrected in place if he reverses. *(Ratified 2026-09-06 by
-the merge of PR #154, 19742ff; the frontend half is the frontend follow-up.)*
+record has carried since January rather than honouring it. Decided here, and merged on 2026-09-06
+as PR #154, 19742ff; the frontend half is the frontend follow-up.
 
 **D2 — At the API, on the ADR-0042 rail — not a BFF level-2 rule.** ADR-0041 took transfers off the
 session gate for three reasons, and each applies to a closure unchanged:
@@ -122,9 +118,7 @@ payload: a transfer binding already differs from a closure's by its payee and it
 inside the hash, so it is the unit test that does (mutated 2026-09-06 with `operation.ToString()`
 removed from `ComputeBindingHash`: only
 `ComputeBindingHash_ForAccountDeletion_DiffersFromATransferOnTheSameAccount` went red, the wire test
-stayed green; the run's output is kept outside this repository
-*(2026-10-05: what was cited here, by path or by name, sits in a private working folder that no
-reader of this repository can open; the citation is replaced by what it stood for, not struck.)*).
+stayed green).
 
 **D4 — The mint is `POST /api/accounts/{id}/deletion-authorizations`, operation in the segment.**
 Not `/{id}/authorizations`: the transfer mints are `/api/transfers/authorizations` and
@@ -229,10 +223,7 @@ stale write, because a deposit landed between the guard and the save or because 
 presenting the same authorisation committed first — reloads, jitters and goes round, bounded by
 `ConcurrencyRetry.MaxAttempts`. The first version of the method had no such loop, and the eight-way
 proof said so: `500,500,500,500,500,200,500,500` (the test's own `_output.WriteLine`, the
-implementer's ~10:20Z run on 2026-09-06, its output kept outside this repository
-*(2026-10-05: what was cited here, by path or by name, sits in a private working folder that no
-reader of this repository can open; the citation is replaced by what it stood for, not struck.)*
-— a test run, not a running-stack
+~10:20Z run on 2026-09-06 — a test run, not a running-stack
 measurement). Two branches at the top of the delegate then decide whether there is still a closure
 to make. A reload that shows the account already deleted — an earlier attempt of the same request
 whose acknowledgement was lost, or a concurrent winner; the delegate cannot tell them apart and does
@@ -306,10 +297,7 @@ mint; the `mint?.status === 201` branch stays as cleanup shape, not as a fallbac
 handler enforces binding → ownership → guards → presence → validate → spend, and its mint mirrors
 the API's. Every mock status, `errorCode` and `detail` on the mint (M0–M5) and on the DELETE
 (D1–D12, D16) quotes a row of the after-table (re-measured on `main` @ `19742ff`,
-2026-09-06T19:16Z, a second transcript kept beside the original), and the
-expiry pair E1/E2 quotes the original, the 10:44Z run under After
-*(2026-10-05: what was cited here, by path or by name, sits in a private working folder that no
-reader of this repository can open; the citation is replaced by what it stood for, not struck.)*.
+2026-09-06T19:16Z), and the expiry pair E1/E2 quotes the original, the 10:44Z run under After.
 Labelled
 NOT measured on this endpoint, in `handlers.ts`'s own mint doc block: the mint's 429 `PIN_LOCKED`
 and the four 400 body shapes are the transfer mints' 2026-08-16 rows; the funded-and-no-PIN
@@ -328,16 +316,12 @@ wrote a row, and the reveal for the same user at level 1 answered 403 `STEP_UP_R
 ### After
 
 **AFTER — observed 2026-09-06T10:44Z on this PR's working tree, API `:7215`, BFF `:5000`,
-`AzureBankDev`** (rows 0–13 are the transcript of one probe script, kept with the script outside
-this repository
-*(2026-10-05: what was cited here, by path or by name, sits in a private working folder that no
-reader of this repository can open; the citation is replaced by what it stood for, not struck.)*;
-row 11 is
+`AzureBankDev`** (rows 0–13 are the transcript of one probe script; row 11 is
 a second probe script's E1/E2; rows 14–16 are three commands run by hand at ~10:45Z whose output
 is appended to that same transcript), a fresh user, PIN enrolled after the first row, four accounts
 (primary, funded with 16, three spares). Every request went through the BFF at level 1; no row
 carried `WWW-Authenticate` or `X-Auth-Level-*`, and `GET /bff/auth/me` after the first 401 answered
-200 with `authLevel` 1. The sixteen rows are the plan's Step 1.12, in order, expectation beside
+200 with `authLevel` 1. The sixteen rows are in order, expectation beside
 observation; none disagreed.
 
 | # | Probe | Expected | Observed |

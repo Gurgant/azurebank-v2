@@ -30,7 +30,7 @@ either both land or neither does. This is the contract `IdempotencyService.MarkE
 already established in this codebase, so no new transaction machinery was introduced.
 
 The cost is stated plainly: if the audit table is unwritable, audited operations stop. That is the
-intended trade — better a blocked bank than an emptied one. Ratified by Vlad.
+intended trade — better a blocked bank than an emptied one.
 
 Refusals are the exception and need the opposite treatment: the refused operation's own rollback
 would take the record of the refusal with it. `RecordRefusalAsync` therefore writes on its own scope
@@ -95,7 +95,7 @@ decouples delivery, not durability. And fail-closed auditing is deployed, not th
 `FAIL_OPERATION` framed as *"use this option when maintaining a complete audit is more important than
 full access to the Database Engine."*
 
-**Vlad reaffirmed D1 after reading the above, and the reason he gave is not a compliance one.** It is
+**D1 stands after the above, and the reason is not a compliance one.** It is
 accountability: a movement that was never recorded is one the bank cannot afterwards account for to
 the customer whose money moved — least of all a malicious one. No regulator compels that stance; it
 is a claim about what this bank owes the person on the other side of the transaction, and it is made
@@ -313,8 +313,7 @@ and the places that quoted it have been amended with it. This note first said "u
 which was true for the hour between the two commits that gave the epoch its two ends.)*
 
 **⚠️ CORRECTED 2026-08-27. The struck sentence named one control where there are two, and the
-correction sits against it rather than in a section further down, which is the whole of the rule
-~~`docs/adr/README.md`~~ `docs/engineering-practices.md` *(moved there 2026-09-15)* now states.**
+correction sits against it rather than in a section further down.**
 SQL Server's ledger and an RFC 3161 timestamp are COMPLEMENTARY rather than alternatives, because
 they close different layers.
 
@@ -409,7 +408,7 @@ upload is what needs Azure. The ledger is deferred because `APPEND_ONLY` is a on
 schema still moving (measured: `DROP TABLE` leaves undroppable residue, Msg 37427; only nullable
 columns may be added, Msg 37387), not because it cannot be done here. A local emulator is genuinely
 out — Azurite is rejected with error 12136 over both http and https, measured directly rather than
-inferred, after two research agents contradicted each other on the point.
+inferred.
 
 
 ### D3 — the chain is applied in the `SaveChanges` funnel
@@ -1146,7 +1145,7 @@ LOCKOUT it did not anticipate because that branch throws instead of returning.
 WHAT DID NOT CHANGE: insufficient funds, self-transfer and same-account stay out, for exactly the
 reason given below. The first draft of that change wired insufficient funds as well, and this
 paragraph is what caught it — a decision recorded with its reasoning was still doing its job eight
-days later, against the person who wrote it.
+days later.
 
 **Money REFUSALS are not wired here**, and the reason is measured rather than assumed. There are 19
 throw sites across `TransactionService` and `TransferService`, and most are business validation —
@@ -1310,12 +1309,11 @@ can raise the same 2601/2627 a duplicate handle does, so `UserService`'s number-
 reported a hash-chain collision to the caller as "that handle is already taken". The narrowing moved
 to `ConcurrencyRetry.IsAzureTagCollision`, matching by INDEX NAME like its three siblings.
 
-### And one the sweep added, which no bot and no test had seen
+### And one that no review and no test had seen
 
 **The reuse path was made fail-open by its own audit row** — see D1's exception above. Found by
-fanning out over the audit write path with instructions to classify every call site and then refute
-each finding, rather than by re-reading the diff. *(That path is gone since 2026-09-28; see the note
-under D1.)*
+classifying every call site of the audit write path, rather than by re-reading the diff. *(That
+path is gone since 2026-09-28; see the note under D1.)*
 
 ## References
 
@@ -1325,7 +1323,3 @@ under D1.)*
 - `backend/src/AzureBank.Shared/Constants/SecurityEvents.cs` — the event names this table stores
 - [ADR-0009](0009-idempotency-monetary-operations.md) — the enlisting-writer contract D1 copies
 - [ADR-0008](0008-step-up-authentication.md) — the PIN events among them
-- The working notes that hold the measurements behind every number above; they are kept outside
-  this repository.
-  *(2026-10-05: what was cited here, by path or by name, sits in a private working folder that no
-  reader of this repository can open; the citation is replaced by what it stood for, not struck.)*

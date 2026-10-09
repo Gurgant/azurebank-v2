@@ -115,9 +115,8 @@ test('a deposit moves the money and the dashboard figure follows', async ({ page
     point is the entry's button, which opens the transaction's page.
   It reads the rows as they are drawn, then again with the longest amount a row can show,
   "+€100,000.00", and the longest status written into each: this suite's ledger holds one
-  deposit of €1.00, which fits anything. A page that scrolls sideways fails it too. _(Until
-  2026-10-07 the amount written was "+€12,450.00", named here as the longest. It is not: the API
-  takes one amount of up to 100,000.00.)_
+  deposit of €1.00, which fits anything. A page that scrolls sideways fails it too. The API
+  takes one amount of up to 100,000.00.
 
   IN THE TABLE'S COLUMNS A LONG WORD OF AN ENTRY WRAPS INSIDE ITS OWN. A description is free text
   and may be one word with no space in it. On two lines such a word wrapped; in the columns of a

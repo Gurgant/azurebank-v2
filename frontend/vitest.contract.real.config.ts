@@ -9,7 +9,7 @@ import { contractTest } from './vitest.contract.config';
  * starts ("'CONTRACT_TARGET=real' is not recognized..."), so on this repo's own dev platform the
  * real target would simply be unrunnable. Measured, not assumed.
  *
- * Needs the stack up (`azurebank-api` :7215 + `azurebank-bff` :5000, database migrated and seeded).
+ * Needs the stack up (the API on :7215 and the BFF on :5000, database migrated and seeded).
  * If nothing answers, the setup THROWS rather than skipping — see src/contract/setup.ts.
  */
 export default defineConfig({

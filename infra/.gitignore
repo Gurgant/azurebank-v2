@@ -1,4 +1,4 @@
-# What a session may leave beside the templates. The parameter file itself is written outside the
+# What a run may leave beside the templates. The parameter file itself is written outside the
 # repository by secrets.ps1; these rules are the second line.
 *.bicepparam
 parameters.json

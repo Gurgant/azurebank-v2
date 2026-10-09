@@ -34,7 +34,7 @@ export interface AmountFieldProps<
 }
 
 /**
- * The shared money-amount input (plan G2): a Controller-driven sanitized STRING field with a
+ * The shared money-amount input: a Controller-driven sanitized STRING field with a
  * STATIC € prefix (never Fluent `contentBefore` — it closes modals on type, a known Fluent
  * gotcha) and the schema-driven error hint. The hint only shows once something is typed
  * (mirrors the legacy `amount > 0 &&` rule — an empty field disables the CTA silently).

@@ -90,7 +90,7 @@ identical, which is the half that matters when two runners' logs are read togeth
 the queue: *"a queue would carry a copy of the obligation, and the row is the obligation … A lease on
 the row keeps that property; a queue would have to be reconciled with it."* A queue trigger needs a
 producer, and the only honest producer here is the row — so a queue would be that declined design
-wearing a trigger. The backlog entry said "timer- or queue-triggered"; this is the ADR that closes
+wearing a trigger. The choice was "timer- or queue-triggered"; this is the ADR that closes
 the *or*.
 
 Which leaves Azurite doing what it actually does, and the ADR says so rather than implying a queue

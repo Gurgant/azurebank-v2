@@ -37,7 +37,7 @@ that matters for local development is **LocalDB**, which runs the Express engine
 support them at all. Index migrations run offline.
 
 **SQL Server only.** Provider-specific migration SQL is deliberate. Do not "make it portable": the
-portability would be untested, and the specificity is buying correctness we rely on.
+portability would be untested, and the specificity is buying correctness the code relies on.
 
 ## Validation and DTOs
 
@@ -70,8 +70,6 @@ to Production, its user-secrets do not load, and it exits 2 with `reset refused:
 connection string. Set ConnectionStrings__DefaultConnection.` — a message that points at
 configuration rather than at the missing environment variable. Note that
 `ASPNETCORE_ENVIRONMENT` does **not** work here; the Generic Host reads the `DOTNET_` prefix.
-*(Until 2026-10-01 it died with an unhandled `PinPepper must be ≥32 chars` exception, before it
-read its command line.)*
 
 **Run the API on the `https` profile (7215).** The BFF's proxy cluster points there, so starting the
 API on `http`/5068 produces a BFF that builds, starts, and fails every proxied call.
@@ -82,7 +80,7 @@ API on `http`/5068 produces a BFF that builds, starts, and fails every proxied c
 **A running BFF locks `AzureBank.Bff.exe`, and the build failure blames the wrong thing.** Building
 the solution while the BFF is up fails with MSB3027/MSB3021 — "could not copy … the file is locked"
 — which reads like a corrupted output directory and invites a `clean`. Stop the BFF first. This bites
-hardest mid-session, when the stack is up for a live measurement and the next step is a rebuild.
+hardest when the stack is up for a live measurement and the next step is a rebuild.
 
 **`sqlcmd` WRITES against `AspNetUsers` need `-I`; reads do not.** Without it, every write fails
 with *"SET options have incorrect settings: 'QUOTED_IDENTIFIER'"* and a long list of possible
@@ -96,10 +94,10 @@ index, so the split is observed rather than assumed:
 | `SELECT` | succeeds |
 | `INSERT` / `UPDATE` / `DELETE` | all fail, Msg 1934 |
 
-*(2026-09-28: `RefreshTokens` too, which carries a filtered index of its own. Measured against
-LocalDB, inside transactions that were rolled back: without `-I` the UPDATEs that the PIN runbook
-and the refresh-token reuse runbook run by hand, on `AspNetUsers` and on `RefreshTokens`, fail with
-Msg 1934; with it they run.)*
+`RefreshTokens` carries a filtered index of its own, and the same holds there. Measured against
+LocalDB on 2026-09-28, inside transactions that were rolled back: without `-I` the UPDATEs that
+the PIN runbook and the refresh-token reuse runbook run by hand, on `AspNetUsers` and on
+`RefreshTokens`, fail with Msg 1934; with it they run.
 
 **`DangerousAcceptAnyServerCertificate` belongs only in `appsettings.Development.json`.** It must
 never appear in the base file. Be aware that stale `bin/Release` artifacts can still carry it and be
@@ -181,11 +179,11 @@ The remaining frontend testing traps — Fluent and jsdom behaviour — live in
 
 ## Tooling
 
-**The in-app browser pane cannot be used to judge this application.** Its tabs are permanently
-hidden, so `requestAnimationFrame` never fires and React 19 freezes partway through a passive
-update: the network response arrives with a 200 and the spinner spins forever. This is a harness
-defect and must never be written up as an application bug. Drive the real browser instead, and when
-anything looks hung, check the network tab and the DOM before believing it.
+**A browser tab that is hidden cannot be used to judge this application.** In a hidden tab
+`requestAnimationFrame` never fires and React 19 freezes partway through a passive update: the
+network response arrives with a 200 and the spinner spins forever. That is the hidden tab, and it
+must never be written up as an application bug. Drive a browser whose tab is visible instead, and
+when anything looks hung, check the network tab and the DOM before believing it.
 
 ## MSW mocks
 
@@ -321,9 +319,9 @@ tests are silent:
 1. `appsettings.json` — the non-secret parts (the window, the TTL).
 2. `appsettings.Development.json.example` — the section **and** the `user-secrets` command list in
    its header comment; a developer who reads only the list gets a crash.
-3. `README.md` and `docs/engineering-practices.md` — both carry the same setup recipe — and the
-   env-var tables in `backend/README.md` and `backend/src/AzureBank.Api/README.md`, which drifted
-   to one secret of six because they were not on this list.
+3. `docs/engineering-practices.md`, which carries the setup recipe, and the env-var tables in
+   `backend/README.md` and `backend/src/AzureBank.Api/README.md`, which drifted to one secret
+   of six because they were not on this list.
 4. `.github/workflows/*.yml` — an env var plus **every** "Start API" step. `ci.yml` has two (the
    real-stack job and, since 2026-09-15, the `conformance` job), `contract-tests.yml` one (Bruno).
 5. `CustomWebApplicationFactory` — `UseSetting`, which is the one that makes the tests pass while
@@ -331,7 +329,7 @@ tests are silent:
 
 Grep for an existing required secret in BOTH spellings (`Idempotency__HashKey` and
 `Idempotency:HashKey`) and mirror every hit. That grep is the cheapest form of this checklist; the
-`__` form alone misses the three user-secrets recipes.
+`__` form alone misses the user-secrets recipes.
 
 ## The dev database goes stale and EVERY money endpoint answers 500
 
@@ -380,10 +378,10 @@ So the `HostAbortedException` is that probe rather than a failure, and
 That factory reads
 `appsettings.json`, where `DefaultConnection` is `""`, plus the git-ignored
 `appsettings.Development.json`, and never user-secrets. It also resolves `../AzureBank.Api` from
-the current directory, which is why the `cd` above is part of the recipe. *(Since 2026-10-01 the
-factory no longer throws when that folder is not there: it builds a context with no connection
-string, and applies the hosts' connection limits and retry budget to a string it does read. The
-recipe is unchanged, and `--connection` is still what supplies the string; ADR-0060.)*
+the current directory, which is why the `cd` above is part of the recipe. When that folder is not
+there the factory does not throw: it builds a context with no connection string, and it applies
+the hosts' connection limits and retry budget to a string it does read (ADR-0060). `--connection`
+is still what supplies the string.
 `migrations list` takes
 the same `--connection` and then marks each migration `(Pending)` against the real database, so the
 diagnosis is one command rather than a comparison.
@@ -397,10 +395,9 @@ day `database update --connection` brought `AzureBankDev` and `AzureBankE2E` to 
 ## A tool that writes source can inject a control character the compiler accepts
 
 `MoneyFormattingTests` shipped a regex whose pattern began with a literal `U+0008` BACKSPACE, where
-a backslash-b was intended. The writer expanded the escape on its way to disk; C# verbatim strings
+a backslash-b was intended. The escape was expanded on its way to disk; C# verbatim strings
 do not process escapes, so the byte went into the pattern as a character to match. The guard could
-never match anything and reported clean for a full session while the defect it existed to catch sat
-in the tree.
+never match anything and reported clean while the defect it existed to catch sat in the tree.
 
 Every ordinary instrument was blind to it. The compiler accepted it — a backspace in a regex is
 legal and means "match a backspace". `grep` rendered it as nothing. Reading the file showed the
@@ -442,7 +439,7 @@ and `<Analyzer Remove="/analyzers/dotnet/cs/…" />` matched nothing. The build 
 `Analyzer Remove` of a path that is not in the list is not an error. Measured with
 `dotnet msbuild -getProperty:PkgMicrosoft_AspNetCore_OpenApi` (empty) and by the document itself:
 not one of the 27 attribute strings had ever reached `docs/api/openapiv1.json`, while seven XML
-summaries several lines long had (ADR-0053, corrected 2026-09-14).
+summaries several lines long had (ADR-0053).
 
 Two things to recognise by sight: a target whose only effect is a `Remove` of a computed path,
 and a comment that describes the intended outcome ("attributes control the titles") rather than
@@ -496,7 +493,7 @@ produce is as false as an undocumented body.
 
 ## `dotnet ef` reads the compiled assembly, not your source files
 
-Found in B2 (ADR-0044), and it cost two rounds of confusion in a row.
+Found in the work on ADR-0044, and it cost two rounds of confusion in a row.
 
 `dotnet ef migrations add … --no-build` scaffolds from the **dll**. Adding an entity and scaffolding
 without rebuilding first produces a migration with an **empty `Up()`** — no error, no warning, just a
@@ -515,7 +512,8 @@ Two neighbours of the same trap:
 
 ## `datetime2` stores no `DateTimeKind`, so a hash over a formatted timestamp changes on read
 
-Also from B2, and the more dangerous of the two because everything was green while it was wrong.
+From the same work, and the more dangerous of the two because everything was green while it was
+wrong.
 
 `DateTime.ToString("O")` emits a trailing `Z` when `Kind` is `Utc` and omits it when `Kind` is
 `Unspecified`. SQL Server's `datetime2` has no kind column, so a value written from `DateTime.UtcNow`
@@ -548,7 +546,7 @@ has one (`Database.CurrentTransaction is not null`) or the provider is not relat
 
 ## The test host is not the production host: the retrying strategy is opt-in
 
-The one in this batch that no test could have found, because the tests were the blind spot.
+The one that no test could have found, because the tests were the blind spot.
 
 `ServiceCollectionExtensions` configures the API with `EnableRetryOnFailure`, and EF **refuses a
 user-initiated transaction** under a retrying strategy. `CustomWebApplicationFactory` rebuilds the
@@ -581,7 +579,7 @@ production's retry budget: the factory keeps 3 retries under 5 s when a test opt
 
 ## "The writer was called" is not evidence that a row exists
 
-The most expensive one in this batch, because every layer of the suite agreed it was fine.
+The most expensive one, because every layer of the suite agreed it was fine.
 
 `IAuditService.Record` deliberately only calls `Add` — the caller's `SaveChanges` is what persists
 the row (ADR-0044 D1). A unit test holding a `Mock<IAuditService>` and asserting
@@ -590,8 +588,8 @@ the row (ADR-0044 D1). A unit test holding a `Mock<IAuditService>` and asserting
 _auditMock.Verify(a => a.Record(SecurityEvents.PinEnrolled, ...), Times.Once);
 ```
 
-therefore passes whether or not anything is ever written. On this branch `AuthService.SetPinAsync`
-called `Record` *after* `UserManager.UpdateAsync` had already saved and nothing saved again:
+therefore passes whether or not anything is ever written. `AuthService.SetPinAsync` called
+`Record` *after* `UserManager.UpdateAsync` had already saved, and nothing saved again:
 `POST /api/auth/pin` answered **200**, the security log line was emitted, and `AuditEvents` held
 **zero** rows — with the mock assertion green and the whole suite green.
 
@@ -603,7 +601,7 @@ will miss (`ExecuteUpdate` is worse: it commits without flushing tracked entitie
 
 ## Only a grant whose session ended trips the tripwire
 
-Since PR-1 (ADR-0057) the grant does not rotate, and `RefreshTokenReuse` is raised in one case
+Since ADR-0057 the grant does not rotate, and `RefreshTokenReuse` is raised in one case
 only: a grant revoked with the reason `SessionEnded`, presented in a request the API received after
 that revoke. A grant revoked through `/api/auth/logout` (`SignOutEverywhere`), by the migration
 (`Deployment`) or by a runbook's SQL, presented again, is refused with a plain log line and no
@@ -611,15 +609,10 @@ event, and so is one whose revoke committed while its renewal was waiting to rea
 wants the tripwire revokes through `/api/auth/revoke`, as the BFF does when a session ends, and
 presents the grant afterwards; `AuditChainSqlServerTests` does, and its comment says why.
 
-The second trap still holds: a test whose setup already satisfies its postcondition proves nothing.
+A second trap: a test whose setup already satisfies its postcondition proves nothing.
 "The user's other session is still active" is worth asserting only when there is another session —
 sign in twice first — and only once breaking the code on purpose has turned the assertion red. The
 test will not tell you which kind it is.
-
-*(Until 2026-09-28 this entry was about rotation's 10 s `RotationGraceWindow`: a rotated token
-replayed inside it was a benign retry with no event, so genuine reuse needed a token revoked without
-a successor, by logging out, and logging out revoked everything, so "the family ends with zero
-active tokens" held whether or not containment ran. Rotation and the containment are gone.)*
 
 ## Three binding kinds, two parsers — and a `Guid` does not mean the same thing in each
 
@@ -728,8 +721,8 @@ prevent the notice?** If yes, it is a receipt, not a notification.
 
 The obvious place to send a notice is the request that caused it, and both places to put it there
 are wrong. AFTER the save: a crash, a kill or a lost connection between the commit and the call
-loses the notice with no record that it was ever owed — the enrolment stands, the owner is never
-told, and nothing can tell later. INSIDE the save: the request holds the audit tail lock
+loses the notice with no record that it was ever owed — the enrolment stands, the account's owner
+is never told, and nothing can tell later. INSIDE the save: the request holds the audit tail lock
 (`UPDLOCK, HOLDLOCK`) for as long as the I/O takes, and a slow or failing relay stalls every audited
 write behind it, while a rollback after the send leaves a message about an enrolment that never
 happened.
@@ -764,8 +757,8 @@ The idempotent endpoints refuse a body over 32 KB from its `Content-Length`, bef
 (ADR-0009: an oversized body is never buffered or hashed). The refusal went out as a keep-alive 413
 with the body still unread; Kestrel then drained it to keep the connection, hit the endpoint's 32 KB
 `MaxRequestBodySize` (applied from `[RequestSizeLimit]` by routing) and aborted the connection.
-*(Since 2026-10-05 the four idempotent endpoints declare the limit with
-`[EndpointRequestSizeLimit]`; routing applies it the same way.)*
+The four idempotent endpoints now declare the limit with `[EndpointRequestSizeLimit]`, which
+routing applies the same way.
 Through the BFF that is three different failures, all measured on 2026-09-24 with Kestrel and YARP
 logging at Debug: YARP, still sending the body, gets the abort and answers **502**; or it aborts the
 client's connection as well, and the client sees `ECONNRESET`; or it had finished, pooled the
@@ -786,8 +779,7 @@ about to go. Without the deadline the read had no bound of its own: a 60 KB body
 got its 413 after 60 s, and at Kestrel's minimum data rate of 240 bytes a second 1 MiB would take 73
 minutes. With it the 413 left at 5.07 s. Through the BFF a sender that slow gets a 502 instead, at
 13 s: YARP was still copying the body when the API reset the connection, and did not pass the 413
-on. ~~The four mints refuse an oversized body elsewhere — MVC reading past the limit — and are not
-covered yet.~~ *(Since 2026-10-06 they are. A mint sent a `Content-Length` over 32,768 bytes reads
+on. The four mints are covered too: a mint sent a `Content-Length` over 32,768 bytes reads
 and discards the body first, through the type `IdempotencyMiddleware` uses (`OversizedBodyDrain`,
 so the same 1 MiB and five seconds), and then answers 413 `PAYLOAD_TOO_LARGE`; when all of the body
 came, that answer carries no `Connection: close`. A chunked body has no length to check first: the
@@ -797,7 +789,7 @@ server's refusal during the read becomes the same 413, with `Connection: close`.
 finds 40,000 bytes read to their end, 2,000,000 left unread with `Connection: close`, and, at one
 mint, a body that stops arriving given up on when the host's clock reaches five seconds. On
 Kestrel no test sends a mint more than 1 MiB or stalls a body, and none of this was run through
-the BFF. ADR-0009, "Placement & limits".)*
+the BFF (ADR-0009, "Placement & limits").
 
 Two more traps on the way, both measured on 2026-09-24:
 

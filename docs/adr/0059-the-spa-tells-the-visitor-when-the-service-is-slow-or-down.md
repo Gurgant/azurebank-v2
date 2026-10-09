@@ -16,8 +16,8 @@ decisions 7 and 8.
 ## Context
 
 Measured on 2026-09-30 on the local compose stack, before this decision: headless Chromium through
-the SPA the BFF serves, signed in, with the outage scripts ADR-0058 used, kept outside this
-repository. One run per row.
+the SPA the BFF serves, signed in, with the outage scripts ADR-0058 used.
+One run per row.
 
 | Outage, and what the visitor did | What the visitor got |
 |---|---|
@@ -147,11 +147,10 @@ not happened.
      withdrawal) the 20 s words are "Still trying… Keep this page open." While it is pending the
      one unsafe thing left to the visitor is a reload: the key lives only in the page (ADR-0022
      decision 1), and a reload sends the money again with a new one. The words ask; nothing stops
-     a reload (see the Consequences). Ratified on 2026-09-30. They need a key to protect: while a
+     a reload (see the Consequences). They need a key to protect: while a
      PIN step's authorisation runs before the send, and no key is held yet, the same wait says
      "Still trying…", and its words change when the send starts.
-   - A read that said something and then loads says "Loaded." (decision 5). Ratified on
-     2026-09-30.
+   - A read that said something and then loads says "Loaded." (decision 5).
 
 5. **Each host shows its own hint, under the control or spinner that started the wait**
    (`WaitHint`).
@@ -281,12 +280,11 @@ not happened.
    then, a reload or a new tab, sends a new key, and the promise would be false exactly there.
    Never on a deposit, where nothing is charged; never after `RESULT_UNKNOWN` or the check of
    decision 9, when the key is gone.
-   - The plan this work was approved under, kept outside this repository, put this sentence in the
-     20 s hint. It moved here for the reason above, ratified on 2026-09-30.
-   - The in-flight bar does not say "check your history", which the plan asked for: while it is
+   - An earlier design put this sentence in the 20 s hint. It moved here for the reason above.
+   - The in-flight bar does not say "check your history": while it is
      up the first request can still commit (up to 71 s after a commit starts, ADR-0058), and a
      visitor who finds nothing in the history and starts again pays twice; nor would the page let
-     them leave while the key is live. Ratified on 2026-09-30.
+     them leave while the key is live.
 
 9. **A money send rejected with no HTTP status asks for a check before any new key, and so does
    an edit while a key is held.**
@@ -323,8 +321,8 @@ not happened.
       for a sign-out.
     - At 0:00 of the countdown, if the status check fails, the session still ends as expired: the
       countdown ended it, not the error, and keeping account data on screen past the session while
-      the service is down would be worse. The plan said a 5xx never shows "session expired"; this
-      exception was ratified on 2026-09-30.
+      the service is down would be worse. Elsewhere a 5xx never shows "session expired"; this
+      is the exception.
 
 11. **A sign-out that fails says the visitor is still signed in, and the expiry dialog opens on
     staying.**
@@ -334,7 +332,7 @@ not happened.
       failed connection or an unreadable answer and the outage sentence otherwise, the 65 s abort
       included; in the shell's and Settings' toast the problem's own words. A visitor who leaves a
       shared computer believing they signed out leaves it signed in. A 401 says the session was
-      already gone, which is what a sign-out asks for. Ratified on 2026-09-30.
+      already gone, which is what a sign-out asks for.
     - In the inactivity branch "Stay signed in" comes first, in the page and on screen. The dialog
       opens with focus on its first control, so Space or Enter, pressed by someone who meant to
       stay, keeps the session instead of ending it: one `/me`, no logout. HMRC's timeout pattern
@@ -511,7 +509,7 @@ Test files are under `frontend/src/`, browser specs under `frontend/e2e/`.
 - **In a browser on the compose stack**, on 2026-10-01, on this change as committed just before
   this section was written: headless Chromium 151 through the SPA the BFF serves, signed in, with
   outages made by `docker compose stop` or `pause`, or by an exclusive lock on `Transactions`,
-  from a script kept outside this repository. One run per item unless the item names several;
+  from a script. One run per item unless the item names several;
   times are seconds after the visitor's action unless the item says otherwise. A stopped database
   could not be reached at all: the API logged SQL error 35, its name no longer resolving. For a
   send to meet an outage, the browser held it until the outage had begun and then let it go

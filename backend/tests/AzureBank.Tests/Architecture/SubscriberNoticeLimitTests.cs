@@ -5,8 +5,8 @@ using Xunit;
 namespace AzureBank.Tests.Architecture;
 
 /// <summary>
-/// Two tripwires for the limit ADR-0045 states: nothing in the API can send, and the withdrawn
-/// citation does not come back.
+/// Two checks for the limit ADR-0045 states: nothing in the API can send, and NIST SP 800-63B-4
+/// is cited by its correct designation.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -61,11 +61,8 @@ public class SubscriberNoticeLimitTests
     }
 
     /*
-      A PROSE GUARD, admitted as such. Five public sites cited "NIST SP 800-63-4B §4.1.2" — a
-      document that does not exist under that name, and a quote cut before "as described in
-      Sec. 4.6", which is where the requirements the ADR has to answer for actually live. The
-      withdrawn wording is the kind that returns by copy-paste, so the repo's own rule — grep for
-      the OLD wording when a claim is withdrawn — is made mechanical for this one string.
+      The NIST document is SP 800-63B-4: Revision 4 of volume B. "800-63-4B" names no document.
+      This test keeps the wrong designation out of the source and the documents it scans.
     */
     [Fact]
     public void TheWithdrawnCitation_DoesNotReturn()

@@ -17,8 +17,7 @@ own account number. An account number exists to be shared (it is how money reach
 account), so a permanently invisible number is a functional hole, not a security win.
 
 The architecture had already reserved the answer: the BFF's `AuthLevelMiddleware` gates
-`/api/accounts/*/full-number` at auth level 2 (PIN), and `08-security-design.md`
-specifies the route — but the API endpoint did not exist.
+`/api/accounts/*/full-number` at auth level 2 (PIN) — but the API endpoint did not exist.
 
 What the standards actually say, verified against primary sources:
 

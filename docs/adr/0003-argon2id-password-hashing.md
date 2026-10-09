@@ -27,7 +27,7 @@
 > iteration count is a setting (`PasswordHasherOptions.IterationCount`; login goes through
 > `UserManager.CheckPasswordAsync`, which rehashes a stored hash it finds weaker than the setting on
 > the next successful sign-in), but the login path's timing defence is calibrated to this hasher's
-> cost (ADR-0012) and must move with it — so it is its own change, recorded in the backlog, not a
+> cost (ADR-0012) and must move with it — so it is its own change, not a
 > line in a documentation correction.
 
 ---

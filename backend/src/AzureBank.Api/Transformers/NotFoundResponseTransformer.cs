@@ -69,9 +69,8 @@ public sealed class NotFoundResponseTransformer : IOpenApiOperationTransformer
                 Content-Type: application/problem+json
                 {"type":"https://tools.ietf.org/html/rfc9110#section-15.5.5","title":"Not Found",
                  "status":404,"traceId":"00-a312a2025a7caa5f8f598243ed9a3fe3-ec5554599395a843-01"}
-              Until 2026-09-15 this note ended "is not documented as it"; the Schemathesis gate's
-              first run found the omission on six operations, and it is declared below as a second
-              media type on the same 404, since a client generated from this document meets both.
+              It is declared below as a second media type on the same 404, since a client
+              generated from this document meets both.
             */
             ProblemDetailsResponses.Declare(
                 operation.Responses,

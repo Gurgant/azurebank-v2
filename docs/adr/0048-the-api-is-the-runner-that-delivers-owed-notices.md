@@ -182,7 +182,7 @@ obligation: written in the enrolment's own save so it is never lost and never su
 (ADR-0045 D1). A lease on the row keeps that property; a queue would have to be reconciled with it.
 
 _Noted 2026-09-08 (ADR-0051 D2): **this paragraph is what closed the "timer- or queue-triggered"
-question the backlog left open.** A queue TRIGGER needs a producer, and the only honest producer is
+question.** A queue TRIGGER needs a producer, and the only honest producer is
 the row, so a queue trigger would be this declined design wearing a trigger. The Function is
 timer-triggered, and what Azurite provides is the HOST's own storage — a blob singleton lease that
 elects one host among instances of one app, and NOT the timer's schedule state: ADR-0051 D2 pins
@@ -292,9 +292,9 @@ is one arm, not two. What the relay inherits is therefore the CURRENT limit — 
 - **A sending transport.** A second `INoticeTransport` behind a provider credential — the seventh
   secret — is the change; the runner, the claim and the options are ready for it, and D3's duplicate
   becomes a mail the recipient sees twice, which is when an idempotency key stops being optional.
-- **The Azure Function.** ~~The backlog's next relay item:~~ the same claim protocol in a Function,
-  developed against Azurite, and `Notices:Runner=Function` telling this loop to step aside
-  *(struck 2026-09-08: shipped as ADR-0051; correction below)*.
+- **The Azure Function.** The same claim protocol in a Function,
+  developed against Azurite, and `Notices:Runner=Function` telling this loop to step aside:
+  shipped as ADR-0051 (correction below).
   _Correction (2026-09-08) — it came out as written: one `NoticeSweep` in Infrastructure rather than
   a second implementation, a timer trigger (this ADR's own declined queue is why), and the flag
   telling this loop to step aside at Information rather than Warning. What it did NOT inherit is the

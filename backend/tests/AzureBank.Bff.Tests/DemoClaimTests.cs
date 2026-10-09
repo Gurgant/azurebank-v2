@@ -347,7 +347,6 @@ public class DemoClaimTests : IClassFixture<WebApplicationFactory<Program>>, IDi
     /// exact: a failure shows <c>%7B</c> and <c>%7D</c> where the braces are, <c>%%</c> for a
     /// percent sign, and the index counts the encoded text. This project does not reference that
     /// one, so the three calls are copied here.
-    /// (Until 2026-10-06 this said parentheses where the body has braces.)
     /// The assertion library builds a failure's
     /// message with <c>string.Format</c>, and a brace in either of two texts that differ can make
     /// it throw in place of the message that shows where they differ.
@@ -667,7 +666,6 @@ public class DemoClaimTests : IClassFixture<WebApplicationFactory<Program>>, IDi
 
         // Each event as one text: its message, the value of every property, its exception. The
         // lines are searched as written.
-        // (Until 2026-10-06 this said parentheses for braces, as AnswerOfAsync does and for its reason.)
         var written = log
             .Select(e => string.Join(" ", e.Properties.Select(p => p.Value.ToString()).Prepend(e.RenderMessage()).Append(e.Exception?.ToString())))
             .ToList();

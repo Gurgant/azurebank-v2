@@ -60,9 +60,7 @@ eight and six files respectively, every value of it light-only.
 **Contrast is guaranteed; beauty is not.** `surfaces.test.ts` now runs over BOTH palettes and asserts
 4.5:1 for primary text, secondary text and all four transaction chips, plus that no seam has
 collapsed into its neighbours. Those are floors, not judgement. Whether the result is handsome needs
-a human in a real browser, and U8 is where that belongs — the in-app browser pane cannot be used for
-it, since its permanently hidden tabs never fire `requestAnimationFrame` and React 19 freezes
-mid-update there.
+a human in a real browser.
 
 **The pre-paint script duplicates the storage key, the media query and the default.** It cannot
 import them; that is the price of running first. A test reads the file and asserts all three still

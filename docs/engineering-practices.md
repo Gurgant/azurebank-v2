@@ -2,8 +2,8 @@
 
 How this project is built and kept correct. It is deliberately **not** called `CONTRIBUTING.md`:
 this is a solo portfolio project with no outside contributors, and a document that opens with "fork
-and clone" is describing an audience that does not exist. The real readers are the person who wrote
-this and whoever picks it up in six months.
+and clone" is describing an audience that does not exist. It is written for whoever picks the
+project up in six months.
 
 Decisions live in [`adr/`](adr/README.md). Sharp edges that fail silently live in
 [`engineering-traps.md`](engineering-traps.md). Frontend rules live in
@@ -13,9 +13,7 @@ Decisions live in [`adr/`](adr/README.md). Sharp edges that fail silently live i
 
 ## Local setup
 
-The one copy of these instructions; the root README links here. *(Until 2026-09-24 the root README
-carried its own copy, and this one had fallen behind it: it never set `ServiceCredential:BffKey`,
-without which neither the API nor the BFF starts.)*
+The one copy of these instructions; the root README links here.
 
 Configuration comes from **user-secrets**, never from a committed settings file. The API fails at
 startup without them, by design — `ValidateOnStart` refuses to run a bank with a missing pepper.
@@ -65,12 +63,11 @@ can still open the documentation. Calling an API OPERATION by hand — curl, Bru
 --env-var serviceKey="$SERVICE_KEY" --insecure`. The `-r` is not optional — without it bru sends no
 requests at all and still reports PASS. The six token endpoints — login, register, refresh, revoke,
 logout and the public demo's claim — and the session-stamp feed also answer 404 unless the call
-comes over loopback and
-carries exactly one `X-AzureBank-Token-Road`, the marker the BFF's own client adds; calling one by
-hand needs that header too, and the Bruno requests that call them send it. *(It said five until
-2026-10-04: `POST /api/auth/demo/claim` is the sixth, ADR-0063. It also answers 404 to every
-caller that sends the key while `Demo:Enabled` is false, which is what this setup leaves it.)* In
-production the API also has no public address; the key is the second line behind that.
+comes over loopback and carries exactly one `X-AzureBank-Token-Road`, the marker the BFF's own
+client adds; calling one by hand needs that header too, and the Bruno requests that call them send
+it. The claim, `POST /api/auth/demo/claim` (ADR-0063), also answers 404 to every caller that sends
+the key while `Demo:Enabled` is false, which is what this setup leaves it. In production the API
+also has no public address; the key is the second line behind that.
 
 `Demo:ClientKeySecret` is not among the secrets set above, and nothing in this setup needs it: the
 public demo is off unless `Demo:Enabled` is true. Where it is, the API refuses to start without 32
@@ -160,22 +157,21 @@ Container Apps sidecar would be. Its header lists the eight secrets it requires 
 default. The database starts empty, and two one-shot containers of the tools image prepare it
 before the API starts: `migrate` creates it and applies the migrations, then `seed` adds the demo
 users and their history (ADR-0060; `backend/tools/AzureBank.Seeder/README.md` has their variables
-and exit codes). Both run again on every `up` and change nothing the second time. *(Until
-2026-10-01 the header had one seed command, run from the host: `reset --confirm`, which drops the
-database first.)* `compose.demo.yaml`, an override of that file, turns the public demo on:
-`seed-pool` fills the database with the demo pool's private copies in place of `seed` (ADR-0062),
+and exit codes). Both run again on every `up` and change nothing the second time.
+`compose.demo.yaml`, an override of that file, turns the public demo on: `seed-pool`
+fills the database with the demo pool's private copies in place of `seed` (ADR-0062),
 and the API and the BFF run with `Demo__Enabled=true`: a visitor claims a copy, registration is
 closed, and only the owner of a claimed copy signs in (ADR-0063). It asks for a ninth variable,
 `DEMO_CLIENT_KEY_SECRET`, 32 characters or more, and every command that loads the file needs it,
 `down` included.
 Its header says how to run it, and that there a later `up` builds a new set of copies once the
-old ones are too old to count. *(Until 2026-10-04 the override ran the pool's commands and left
-the app as it was, with the demo off and its registration open.)* The database is published on 127.0.0.1:14330, not 1433, for tools on the host: a
-SQL Server installed on the host usually holds 1433, publishing over it does not fail, and a tool
-aimed at it then reaches the host's instance instead. Measured on 2026-09-25: the e2e suite, 24 of
-24, against the two containers. Sign in from a Chromium browser, as that run does: the `__Host-`
-cookie is Secure, Chromium keeps it on `http://localhost`, and Safari keeps no Secure cookie over
-http even there, which is why the development profile's cookie is neither (the BFF's `Program.cs`).
+old ones are too old to count. The database is published on 127.0.0.1:14330, not 1433, for tools
+on the host: a SQL Server installed on the host usually holds 1433, publishing over it does not
+fail, and a tool aimed at it then reaches the host's instance instead. Measured on 2026-09-25: the
+e2e suite, 24 of 24, against the two containers. Sign in from a Chromium browser, as that run
+does: the `__Host-` cookie is Secure, Chromium keeps it on `http://localhost`, and Safari keeps no
+Secure cookie over http even there, which is why the development profile's cookie is neither (the
+BFF's `Program.cs`).
 
 ```bash
 docker compose up --build -d   # after exporting the eight variables compose.yaml names
@@ -194,8 +190,8 @@ between its two halves it **restarts the BFF's container and then the API's** wi
 needs the `docker` command, and `E2E_DEMO_COMPOSE_PROJECT` when the stack was started with `-p`
 (`frontend/playwright.demo.config.ts` has the rest, and what a run leaves on disk to delete).
 Measured three times on 2026-10-05, each time on three images built from one commit. The
-third time, on commit `8ce36aa0`, after which the change touches documents only: 17 tests
-passed in 25.8 s, and after the two restarts the BFF's `/health/ready`, asked three times,
+third time, on commit `8ce36aa0`: 17 tests passed in 25.8 s, and after the two restarts
+the BFF's `/health/ready`, asked three times,
 said `200 Degraded` twice and then `200 Healthy`. The second time, on `340813a5`: 17 tests
 passed in 23.4 s, with the same three answers. The first time, on an earlier commit, 15 tests
 passed in 35.6 s and the first of the three asks met a request that threw. The default suite,
@@ -265,8 +261,8 @@ in a browser, verify it in a browser and keep the evidence.
 
 ## Merging
 
-**Merging is a human act.** The repository requires a pull request, permits squash only, and has no
-bypass. Automated contributors open pull requests and stop there.
+**Every pull request is merged by hand after review.** The repository requires a pull request,
+permits squash only, and has no bypass.
 
 **Branches are not deleted after merge.** Several are cited as evidence in decision records — one
 holds the only pinned reproduction of a library incompatibility — and deleting one turns that
@@ -316,43 +312,9 @@ better than a half-applied taxonomy.
 
 ## Correcting a document
 
-A decision record is never rewritten to look as if it had always been right: what changed is
-recorded beside what it changes. This rule lived in the ADR index until 2026-09-15, written down
-because it had never been stated and a review round went on it; it applies to every document here,
-so it moved.
-
-**The note goes immediately against what it corrects.** That is the load-bearing half: a note in a
-section further down is one that the reader of the wrong sentence never reaches, and the reader of
-the note has to go hunting for what it refers to. **And nothing is deleted — a superseded clause
-is struck in place with `~~…~~` and the note follows it inline**, which is what ADR-0044 already
-does at its #231 revisit and ADR-0007 at its envelope note. Struck rather than merely annotated,
-because a wrong sentence left looking current is read as current: that is not a hypothetical here,
-it is why `docs/runbooks/audit-chain-unavailable.md` went on repeating a claim ADR-0044 had already
-withdrawn.
-
-**The first exception is text an operator reads under pressure** — runbooks, printed verdicts,
-error strings. There the wrong wording is removed rather than struck, because nobody scrolls past a
-struck line during an incident and a `~~` renders as noise in a terminal. **The second is the root
-README** (since 2026-09-24): it is the first page a visitor reads, often not an engineer, and a line
-about what it used to claim reads there as noise, or as doubt about everything around it. It is
-corrected in place without that line; git keeps what it said. **The third is a citation of
-something no reader of this repository can open** (since 2026-10-05): a path into a private working
-folder, the name of a file kept there, a row number of a private list. A struck path is still a
-published path, so in a decision record the citation is replaced by what it stood for, and a dated
-note against the place says, in kind, what stood there; in a code comment the address is dropped
-with no line about it, because what was measured, when and where does not change. Everything else
-that describes the system AS IT IS rather than as it was decided — `docs/deferred/`, code comments,
-XML docs — is simply corrected in place, with a line saying what it used to claim.
-
-**What this rule does not ask anybody to decide.** An earlier draft of it split corrections by kind
-— a decision that was right when made versus a statement of fact that was never true — and that is a
-real distinction, but it puts a judgement in the middle of a rule, and a rule with a judgement in it
-is one that gets re-argued every time somebody new reads the file. The ADR directory has already
-learnt that about MD040, four times across #94, #96, #127 and #129. Adjacency needs no
-classification. The two corrections ADR-0044 made before this rule existed (`Corrected 2026-08-25`,
-`CORRECTED 2026-08-20`) are already adjacent and quote the superseded wording in full, so nothing is
-lost by leaving them as they are; from here the wording is struck in place instead, which costs less
-and reads better.
+Every document here says what is true now. A sentence that turns out wrong, or that the code has
+moved away from, is corrected in place, with no line about what it used to claim: git keeps what
+it said. A date stays where it is a fact about the system, such as the day something was measured.
 
 ## Code style
 

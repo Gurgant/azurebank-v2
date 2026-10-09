@@ -429,7 +429,7 @@ not know.
   the claim 404, its registration is open and its page is the built file. The change that adds
   the pool's job (ADR-0062, decision 13) is the one that turns the demo on, and it has to set:
   `Demo__Enabled=true` on the `api` and the `bff` containers as on the job; `Demo__ClientKeySecret`
-  on `api`, an eighth application secret where ADR-0061's decision 9 counts seven; and, until what
+  on `api`, the eighth application secret of the app (ADR-0061, decision 9); and, until what
   the BFF sees as a visitor's address behind the ingress has been measured,
   `Demo__Claim__MaxPerClientPerDay=1000` on `api` and on the job. No file under `infra/` sets
   `ForwardedHeaders:KnownProxies` ~~(`git grep -n "KnownProxies" -- infra` prints nothing)~~
@@ -446,7 +446,7 @@ not know.
   there whether the demo is on or off; and the cap of 1,000 on `api` and on the job from one
   variable. So `git grep -n "Demo__" -- infra` prints lines now. No template or script under
   `infra/` sets a forwarded-headers value, and a test holds that no container carries one. What
-  the BFF sees as a visitor's address is still not measured: the runbook's third session has
+  the BFF sees as a visitor's address is still not measured: the runbook's "Turn the demo on" has
   the step, and what follows from each answer.)*
   *(2026-10-07: the address is measured, and the template no longer sets the cap. On 2026-10-06,
   before any network was named, twelve sign-ins sent from one connection in under eight seconds
@@ -471,9 +471,9 @@ not know.
   "the cap of 1,000 on `api` and on the job from one variable". On Azure the run of the
   template that takes the 1,000 out has not been made: on 2026-10-07 the deployed `api`
   container read back 13 settings, the template's count with the cap, and no visitor has been
-  seen refused an eleventh copy there (`infra/README.md`, step 30). "On Azure the demo is still
-  off", at the head of this decision, is no longer so either: on 2026-10-07 the deployed app
-  gave a visitor a copy, and this record holds no read of the session that turned the demo
+  seen refused an eleventh copy there (`infra/README.md`, "Measured on Azure"). "On Azure the demo
+  is still off", at the head of this decision, is no longer so either: on 2026-10-07 the deployed
+  app gave a visitor a copy, and this record holds no read of the steps that turned the demo
   on.)*
 
 **15. What is logged and counted.** Plain log lines, no `SecurityEvent` line and no audit row, so

@@ -64,7 +64,6 @@ public sealed class DemoModeEndpointTests : IDisposable
     /// Returned through <see cref="ComparableText"/>, so two answers compare exactly: a parenthesis
     /// where a brace belongs fails, and a failure shows <c>%7B</c> and <c>%7D</c> where the braces
     /// are, <c>%%</c> for a percent sign, with the index counting the encoded text.
-    /// (Until 2026-10-06 this said parentheses where the body has braces.)
     /// The assertion library builds a failure's message
     /// with <c>string.Format</c>, and a brace in either of two long texts that differ makes it throw
     /// <see cref="FormatException"/> in place of the message that shows where they differ; inside
@@ -418,7 +417,6 @@ public sealed class DemoModeEndpointTests : IDisposable
             "ARRANGE: the request's own line is written last, so the claim's events are all in");
 
         // The lines are searched as written.
-        // (Until 2026-10-06 this said parentheses for braces, as ShapeOfAsync does and for its reason.)
         var written = _demo.CapturedEvents
             .Select(e => string.Join(
                 " ",

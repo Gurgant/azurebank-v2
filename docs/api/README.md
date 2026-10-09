@@ -75,33 +75,26 @@ The failure worth catching is a regeneration that silently drops something a hum
 whole-file textual diff — over four thousand lines by 2026-09-10 — hides that perfectly. This is not
 hypothetical: every one of the
 spec's operations carries a summary — 27 of 27 on 2026-09-10, 28 of 28 on 2026-09-21 after the
-withdrawal mint (this said "24" in the present tense and the count had moved; each figure carries
-its date for that reason, and a reader should trust the date over the number).
+withdrawal mint. Each figure carries its date because the count moves: trust the date over the
+number.
 
 **The REPORT does not describe schemas, parameters, examples, tags or security — the check still
 catches them.** `check` compares the whole document and fails on any difference; a change confined to
 those is then reported as "the difference is elsewhere" rather than named, and the fallback message
-states the scope, so the report never claims more than it checked. *(This used to read "It does not
-compare schemas…", which describes the report and reads like the check — and it was read that way,
-into a design record, before the script's code was opened.)*
+states the scope, so the report never claims more than it checked.
 
 ## What this does NOT do
 
-**The script is still not wired into CI — and that is no longer the gap.** This section used to say
-that a stale committed spec passed every gate, because the only gate regenerated the frontend
-artifacts *from* this file. Since ADR-0053 a stale spec fails the backend suite instead. Both the
-test and this script's `check` compare the WHOLE document, schemas included, and both fail on any
-difference — what differs is where they run and what they can say. `check` needs a running
-Development API with every secret, and for a change outside the prose it can only report "the
-difference is elsewhere"; the test needs neither, and names the JSON path. The route this section
-anticipated — running `check` against a live API in the pipeline — was declined on those grounds;
-ADR-0053 D1 has the argument. *(An earlier draft of this paragraph said `check` does not compare
-schemas. It does; only its REPORT is limited to prose.)*
+**The script is not wired into CI, and that is not a gap.** Since ADR-0053 a stale committed spec
+fails the backend suite. Both the test and this script's `check` compare the WHOLE document,
+schemas included, and both fail on any difference — what differs is where they run and what they
+can say. `check` needs a running Development API with every secret, and for a change outside the
+prose it can only report "the difference is elsewhere"; the test needs neither, and names the JSON
+path. Running `check` against a live API in the pipeline was declined on those grounds; ADR-0053
+D1 has the argument.
 
 **Neither the test nor the script proves the document tells the TRUTH.** Both compare the committed
 file with what the API generates. If a transformer generates a response the server can never send,
 both agree with it, because both read the same generator. That is a claim about runtime behaviour,
 and only a call to the running API can disagree with it — Schemathesis, which since 2026-09-15 does
-so on every pull request as the `conformance` job in `ci.yml` (ADR-0053 D6). *(Until 2026-09-17
-this said Schemathesis "still reports without gating and runs only when somebody starts it by hand",
-pointing at a case in `docs/engineering-traps.md` where that is exactly what happened.)*
+so on every pull request as the `conformance` job in `ci.yml` (ADR-0053 D6).
