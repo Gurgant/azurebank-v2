@@ -67,8 +67,7 @@ const router = createBrowserRouter(
       `RouteAnnouncer` renders a status region and then an `<Outlet />`, so every child below renders
       exactly as it did; it reads the `title` in each route's `handle` to title the document and to
       announce and focus a route change. A route that renders a page names its title; a redirect
-      does not, and the page it lands on is the one announced. (Until 2026-09-17 this said the route
-      had no `element` and existed only to own `errorElement`.)
+      does not, and the page it lands on is the one announced.
     */
     <Route element={<RouteAnnouncer />} errorElement={<RouteError />}>
       <>

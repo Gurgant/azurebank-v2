@@ -33,7 +33,7 @@ brew install bruno
 The API serves only the BFF (ADR-0055), so every request here carries
 `X-AzureBank-Service-Key`, which `collection.bru` reads from `serviceKey`. Supply your own
 `ServiceCredential:BffKey` — the [local setup](../../docs/engineering-practices.md#local-setup)'s
-recipe generates it _(until 2026-09-25 this said the root README's)_ — on the command line:
+recipe generates it — on the command line:
 
 ```bash
 cd tests/api-collection
@@ -61,37 +61,26 @@ this file starts telling you to write it there.
 
 The six token endpoints — login, register, refresh, revoke, logout and the public demo's claim —
 and the BFF's session-stamp feed take one thing more; no request here calls the claim or the
-feed. *(It said five until 2026-10-04: the claim, `POST /api/auth/demo/claim`, is the sixth, and
-answers 404 while the demo is off.)* They answer 404 unless the
-request carries exactly one `X-AzureBank-Token-Road`, the marker the BFF's own client sends, and
-comes from the machine the API listens on (loopback). So the requests that call them — register,
-login, revoke, logout and the transfers folder's register-recipient — send
+feed. They answer 404 unless the request carries exactly one `X-AzureBank-Token-Road`, the marker
+the BFF's own client sends, and comes from the machine the API listens on (loopback). So the
+requests that call them — register, login, revoke, logout and the transfers folder's
+register-recipient — send
 `X-AzureBank-Token-Road: bff` themselves. It is not a secret: the API checks that exactly one
-arrived and that it says `bff`, compared exactly *(until 2026-09-29 this said the API checked only
-that it was not empty: two copies sent over a real socket arrive as one value, `bff, bff`, which
-that check let through)*. Measured on 2026-09-28 against the API as
+arrived and that it says `bff`, compared exactly. Measured on 2026-09-28 against the API as
 `Contract tests` starts it: this collection before the marker, 28 of 28 requests failed, register,
 login and logout on 404; with it, all green (below).
 
-**Measured on 2026-09-19 and again on 2026-09-20** with Bruno CLI 4.1.0 against the running API,
-because the wiring above had been written and not run: with the command above, `register` answered
-**201**; with `local.bru`'s empty `serviceKey`, every request answered **401**.
+**Measured on 2026-09-19 and again on 2026-09-20** with Bruno CLI 4.1.0 against the running API:
+with the command above, `register` answered **201**; with `local.bru`'s empty `serviceKey`, every
+request answered **401**.
 
-`baseUrl` was `http://localhost:5068` until 2026-09-20 — CI's address, from when CI ran `--env
-local`. The local dev profile also listens on HTTPS, so `UseHttpsRedirection` answered **307** to
-every request there, including the ones this README told you to make. CI has its own environment
-now, so this one names the address a developer actually has. *(Since 2026-09-25 the API redirects
-nothing: measured on the `https` profile, `GET http://localhost:5068/health/live` answered 307 to
-`https://localhost:7215/health/live` before and 200 after.)*
+Since 2026-09-25 the API redirects nothing to HTTPS: measured on the `https` profile,
+`GET http://localhost:5068/health/live` answered 307 to `https://localhost:7215/health/live`
+before and 200 after.
 
-~~One defect is left, older than all of this and not fixed here: `login` posts `{{testEmail}}`
-(`test@example.com`), but `register` creates `test.{{$timestamp}}@example.com` and never writes it
-back, so every request after `register` answers 401 `INVALID_CREDENTIALS` — the collection's own
-credentials, not the service key.~~ *(Struck 2026-09-23: fixed on 2026-09-21 by `c51b266`, where
-`register` began publishing the address it registered as `testEmail` — and this paragraph was left
-behind. Every run of the collection measured on 2026-09-23 passed its login.)* Telling those two
-401s apart is still what `errorCode` is for: `SERVICE_CREDENTIAL_REQUIRED` is this API refusing
-the caller, `INVALID_CREDENTIALS` is the credentials.
+Two 401s can answer a request here, and `errorCode` tells them apart:
+`SERVICE_CREDENTIAL_REQUIRED` is this API refusing the caller, `INVALID_CREDENTIALS` is the
+credentials.
 
 ## Collection Structure
 
@@ -146,12 +135,6 @@ api-collection/
         └── get-user-by-tag.bru
 ```
 
-Regenerated from the directory on 2026-09-23, in run order. The tree it replaced had been drawn
-by hand and no longer matched the directory: it listed `users/search-users.bru` - a request for
-`/api/users/search`, the route ADR-0014 deleted, and a file that no longer exists - and it was
-missing `collection.bru`, every `folder.bru`, the whole `idempotency/` folder, three of the five
-transfer requests and `users/user-not-found.bru`.
-
 ## Running Tests
 
 ### Via Bruno GUI
@@ -183,23 +166,10 @@ bru run endpoints/auth --env local --env-var serviceKey="$YOUR_KEY" --insecure
 bru run . -r --env local --env-var serviceKey="$YOUR_KEY" --insecure --reporter-junit results.xml
 ```
 
-Measured by the `Contract tests` workflow under `--env ci` on 2026-09-23 (run 35926861629, Bruno
-CLI 4.1.0): the whole collection is **28 requests, 79 tests, 62 assertions, all green**. It was 78
-tests (run 35873554844) until login gained the test that its token is the object register answers.
-
-Measured again on 2026-09-28, by hand, with that workflow's command line and Bruno CLI 4.1.0,
-against the API started as it starts it (SQL Server in a container, the database reset and
-seeded): **29 requests, 82 tests, 63 assertions, all green**, and 145 test cases in the JUnit
-report. Revoke added a request, two tests and an assertion, and login a test that no access token
-outlives the grant it came from.
-
-~~Measured with these exact lines on 2026-09-21 against the running API: the whole collection is
-27 requests, 76 tests, 59 assertions, all green.~~ True under `--env local` - and `--env ci`, the
-environment the workflow runs, had never been run at all. Its first dispatch (run 35872727972,
-2026-09-23) found two requests red that `local` hid: the withdrawal, still sending its PIN in the
-body after ADR-0056 moved it to a mint, and register, asserting a literal first name that only
-`local` sends. `endpoints/auth` alone measured 6 requests, 16 tests, 13 assertions on 2026-09-21
-under `--env local`, and was not re-measured by folder since.
+Measured on 2026-09-28, by hand, with the `Contract tests` workflow's command line (`--env ci`)
+and Bruno CLI 4.1.0, against the API started as the workflow starts it (SQL Server in a
+container, the database reset and seeded): the whole collection is **29 requests, 82 tests, 63
+assertions, all green**, and 145 test cases in the JUnit report.
 
 ## Test Workflow
 
@@ -260,10 +230,8 @@ tests {
 
 ### GitHub Actions
 
-What the repository actually runs is `.github/workflows/contract-tests.yml`, on every pull
-request and every push to `main` since 2026-09-24. Until then it ran only by hand, and nothing
-noticed that the collection's withdrawal answered 401 on `main` from #198 until #200. Its shape,
-and the reason for each part:
+The repository runs `.github/workflows/contract-tests.yml` on every pull request that targets
+`main`, on every push to `main`, and by hand. Its shape, and the reason for each part:
 
 ```yaml
 on:
@@ -283,10 +251,9 @@ on:
       --reporter-junit ../../bruno-results.xml
 ```
 
-That step used to end in `|| true`, and its command line had no `-r`. Both are gone: a job that
-runs the collection and cannot fail is the same silence one layer down, and the step that follows
-it now refuses a report with too few test cases, so a run that did not happen cannot look like a
-run that found nothing.
+The step can fail: a job that runs the collection and cannot fail says nothing. The step that
+follows it refuses a report with too few test cases, so a run that did not happen cannot look
+like a run that found nothing.
 
 ## Why Bruno?
 

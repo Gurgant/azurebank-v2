@@ -225,10 +225,9 @@ jobs:
         working-directory: frontend
         # Regenerates schema.d.ts FROM the committed OpenAPI document and fails if it differs
         # from what's checked in. That proves the generated client matches the DOCUMENT — and
-        # nothing more. It does NOT catch a stale document: this comment used to say "spec
-        # drift becomes a red build", and measured 2026-09-10 it does not — with a property added
-        # to a DTO and the document left alone, this step and the Zod step below both exited 0,
-        # because both regenerate from the same stale file. The document-versus-code half is
+        # nothing more. It does NOT catch a stale document: measured 2026-09-10, with a property
+        # added to a DTO and the document left alone, this step and the Zod step below both exited
+        # 0, because both regenerate from the same stale file. The document-versus-code half is
         # CommittedOpenApiDocumentTests, in the backend suite (ADR-0053).
         run: |
           npm run generate:api
@@ -579,7 +578,6 @@ jobs:
       # The accessibility sweep's findings (accessibility.spec.ts, axe-core, WCAG 2.0 A/AA, 2.1 AA
       # and 2.2 AA), one JSON per scan. The spec fails on a serious or critical finding outside
       # colour contrast, which is reported only, so this is uploaded on every run, green or red.
-      # (Until 2026-09-17 the spec failed on no finding at all, and this said so.)
       - name: Upload the accessibility report
         uses: actions/upload-artifact@v7
         if: always()
@@ -779,7 +777,7 @@ jobs:
         if: failure()
         run: cat "$RUNNER_TEMP/api.log"
 
-  # The infrastructure: the three Bicep templates, the deployment script, the two PowerShell scripts
+  # The infrastructure: the three Bicep templates, the deployment script, the PowerShell scripts
   # and the workflows themselves. Nothing here signs in to Azure or reads a secret.
   infra:
     name: Infrastructure (templates, scripts, workflows)

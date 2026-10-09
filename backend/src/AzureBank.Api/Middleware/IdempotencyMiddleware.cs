@@ -83,11 +83,9 @@ public class IdempotencyMiddleware
         // Routing has already applied the endpoint's 32 KB limit, before authentication
         // and this middleware. Reject a known oversized body BEFORE buffering or hashing,
         // draining or closing it so the caller receives our 413. The claim is NOT INSERTed
-        // on this path (no orphan rows). Until 2026-10-05 this comment said the limit was
-        // an MVC filter that ran only after this middleware, and that without this guard a
-        // body up to Kestrel's ~28 MB default would be hashed. Measured on Kestrel, and held
-        // by KestrelRequestSizeLimitTests: routing sets 32,768 when the endpoint is matched,
-        // before authentication. It did with the old attribute too.
+        // on this path (no orphan rows). Measured on Kestrel, and held by
+        // KestrelRequestSizeLimitTests: routing sets 32,768 when the endpoint is matched,
+        // before authentication.
         if (context.Request.ContentLength > MaxRequestBodyBytes)
         {
             await new OversizedBodyDrain(_timeProvider).DrainOrCloseAsync(context);
@@ -97,9 +95,8 @@ public class IdempotencyMiddleware
         // Chunked / unknown-length requests carry no Content-Length to pre-check
         // (the comparison above is lifted-false for null). Reassert the routing limit
         // while the feature is writable. Exceeding it surfaces as a 413
-        // BadHttpRequestException, normalized to our ProblemDetails below. Until 2026-10-05
-        // this said the cap set here was what stopped Kestrel reading to its ~28 MB default:
-        // routing has set 32,768 before this middleware runs, as measured above.
+        // BadHttpRequestException, normalized to our ProblemDetails below. Routing has set
+        // 32,768 before this middleware runs, as measured above.
         if (context.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } sizeLimit)
         {
             sizeLimit.MaxRequestBodySize = MaxRequestBodyBytes;

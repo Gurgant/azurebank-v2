@@ -272,9 +272,7 @@ try
     // configured: by its exact IPs (ForwardedHeaders:KnownProxies), by the networks its IPs come
     // from (ForwardedHeaders:KnownIPNetworks), or both. Default — none configured, e.g. local/dev
     // where the BFF is the edge — do NOT process X-Forwarded-For; partition on the direct
-    // connection IP (fail-safe). Deployments behind a proxy MUST set one of the two. (Until
-    // 2026-10-06 this said "MUST set KnownProxies", the only form there was: an exact address
-    // stops matching, in silence, the day a platform moves its proxy inside its own range.)
+    // connection IP (fail-safe). Deployments behind a proxy MUST set one of the two.
     var proxyConfig = builder.Configuration
         .GetSection(ProxyOptions.SectionName).Get<ProxyOptions>() ?? new ProxyOptions();
     // "is { Length: > 0 }", not ".Length > 0": a list bound as null is the validator's to refuse,

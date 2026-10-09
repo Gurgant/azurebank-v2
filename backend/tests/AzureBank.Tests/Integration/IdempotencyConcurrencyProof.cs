@@ -23,9 +23,6 @@ namespace AzureBank.Tests.Integration;
 /// must be answered as a replay: the winner's status, the Idempotency-Replayed
 /// header with the value true, and a response text exactly equal to the
 /// winner's (the text a body decodes to: no bytes are compared).
-/// (Until 2026-10-06 this spoke of the burst alone, and only the replays that
-/// came back inside it were compared with the winner's answer. Whether one
-/// does is timing: a burst with none compared nothing.)
 ///
 /// Every helper is parallel-safe: authorization travels per request message,
 /// never via HttpClient.DefaultRequestHeaders.
@@ -47,9 +44,6 @@ internal static class IdempotencyConcurrencyProof
     ///   winner's status, the header, and exactly the winner's text
     /// - balances move exactly once (mathematically verified)
     /// - exactly one TransferOut / TransferIn transaction pair exists
-    /// (Until 2026-10-06 the second line said "a byte-identical replay", where
-    /// the proof compares the decoded texts, and no line said that the burst
-    /// can come back with no replay, so that nothing was compared.)
     /// </summary>
     public static async Task RunTransferProofAsync(
         HttpClient client, int parallelism, Action<string> log)
@@ -99,7 +93,6 @@ internal static class IdempotencyConcurrencyProof
     /// Same proof for deposits: N identical parallel deposits, one key →
     /// the balance grows by the amount exactly once, and the same request
     /// sent once more after the burst is a replay of the winner's answer.
-    /// (Until 2026-10-06 this said nothing of replays.)
     /// </summary>
     public static async Task RunDepositProofAsync(
         HttpClient client, int parallelism, Action<string> log)
