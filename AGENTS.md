@@ -61,7 +61,9 @@ stack up: `npm run test:contract:real`, `npm run test:integration` and `npm run 
   failed, skipped. "Should pass" is not a result.
 - A check that prints nothing proves nothing until you have seen it fail. Break the thing once on
   purpose and watch the check go red.
-- The running API is the oracle, never the mock. Where the two disagree, the mock is wrong.
+- The running API is the oracle for what the server does, never the mock. Where the two disagree,
+  read the contract and the decision record first: if the API is right the mock changes, and if
+  the API is wrong that is a defect to report, not a mock to bend.
 - The contract is generated, and so are the frontend's types and validators. To change them,
   change the API and regenerate; the steps are under
   [Merging](docs/engineering-practices.md#merging).
@@ -73,7 +75,7 @@ stack up: `npm run test:contract:real`, `npm run test:integration` and `npm run 
 ## Pull requests and review
 
 - One topic per pull request, in fewer than 100 files. Past 100, CodeRabbit refuses the whole
-  pull request.
+  pull request on this repository.
 - A contract change is two pull requests: the endpoint with the regenerated contract and types
   first, the screen that uses them second.
 - The commands above are green before a pull request is opened. A second, adversarial reader is
