@@ -15,7 +15,12 @@ const text = computed(() => decodeURIComponent(props.source))
 const drawing = ref('')
 const width = ref('0px')
 
+// A change of theme asks for a second drawing while the first may still be under way. Only
+// the drawing asked for last is kept, whatever order the two finish in.
+let asked = 0
+
 async function draw(): Promise<void> {
+  const mine = ++asked
   try {
     const { default: mermaid } = await import('mermaid')
     mermaid.initialize({
@@ -25,6 +30,7 @@ async function draw(): Promise<void> {
     })
     drawn += 1
     const { svg } = await mermaid.render(`diagram-${drawn}`, text.value)
+    if (mine !== asked) return
     // Mermaid writes the drawing's own width as its largest width.
     width.value = /max-width:\s*([\d.]+px)/.exec(svg)?.[1] ?? '0px'
     drawing.value = svg
