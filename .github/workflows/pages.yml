@@ -1,7 +1,9 @@
 name: Pages
 
-# Publishes the folder site/ as it is, with no build: the entry page of the live demo, at
-# https://gurgant.github.io/azurebank-v2/ . From main only.
+# Publishes one artifact, from main only:
+#   /       the entry page of the live demo: the folder site/, as it is, with no build;
+#   /docs/  the documentation site, built from docs/, README.md and SECURITY.md by docs-site/.
+# https://gurgant.github.io/azurebank-v2/ and https://gurgant.github.io/azurebank-v2/docs/ .
 # The repository's Pages setting must say "Source: GitHub Actions"; this workflow does not set it.
 
 on:
@@ -9,53 +11,102 @@ on:
     branches: [main]
     paths:
       - site/**
+      - docs/**
+      - README.md
+      - SECURITY.md
+      - docs-site/**
       - .github/workflows/pages.yml
   workflow_dispatch:
 
-# Nothing by default: the job names what it needs.
+# Nothing by default: each job names what it needs.
 permissions: {}
 
+# One run at a time, and one that has started is left to finish. The group covers the build as
+# well as the publication, so that two pushes cannot publish in the wrong order.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
 jobs:
-  publish:
-    name: Publish the entry page
+  build:
+    name: Build the documentation and assemble the site
     runs-on: ubuntu-24.04
-    # deploy-pages gives up by itself after 10 minutes, its default; the steps before it take
-    # seconds.
-    timeout-minutes: 15
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    # One publication at a time, and one that has started is left to finish.
-    concurrency:
-      group: pages
-      cancel-in-progress: false
-    # What deploy-pages asks for: `pages` to create the deployment, and `id-token` for the OIDC
-    # token in which GitHub reads the run's branch before it accepts the deployment.
+    timeout-minutes: 10
+    # The packages the documentation is built with run in this job, and this job can only read
+    # the repository: it cannot publish and is handed no OIDC token.
     permissions:
       contents: read
-      pages: write
-      id-token: write
-    # Each action is pinned to a full commit, not a tag, as the sign-in to Azure is in deploy.yml:
-    # this job publishes the site and is handed an OIDC token. The comment names the release.
+    # Each action is pinned to a full commit, not a tag, as the sign-in to Azure is in deploy.yml.
+    # The comment names the release.
+    # actionlint 1.7.12, which ci.yml runs on this file, checks no input of an action pinned to
+    # a commit: measured on 2026-10-07 with an input that does not exist, nothing is reported.
+    # The inputs of setup-node are the three ci.yml passes to the same major; `path` is an input
+    # in the action.yml of upload-pages-artifact v5.0.0.
     steps:
       - name: Refuse any branch but main
         if: github.ref != 'refs/heads/main'
         run: |
-          echo "::error::The entry page is published from main only."
+          echo "::error::The site is published from main only."
           exit 1
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
-      - name: Read the Pages setting
-        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
-      # actionlint 1.7.12, which ci.yml runs on this file, checks no input of an action pinned to
-      # a commit: measured on 2026-10-07 with an input that does not exist, nothing is reported.
-      # `path` is an input in the action.yml of v5.0.0.
-      - name: Upload the folder site/
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: docs-site/package-lock.json
+      # `npm ci` installs what package-lock.json names and fails if package.json disagrees with
+      # it. No package's install script runs.
+      - name: Install the packages of the documentation site
+        working-directory: docs-site
+        run: npm ci --ignore-scripts
+      # The build stops on a link to a file that does not exist. The check after it stops on an
+      # address or a #fragment that the built site does not have.
+      - name: Build the documentation and check every link
+        working-directory: docs-site
+        run: npm run build
+      - name: Put the entry page at the root and the documentation under docs/
+        run: |
+          set -euo pipefail
+          mkdir _site
+          cp -R site/. _site/
+          if [ -e _site/docs ]; then
+            echo "::error::site/ has an entry named docs: the documentation would overwrite it."
+            exit 1
+          fi
+          cp -R docs-site/.vitepress/dist _site/docs
+          # The entry page is published byte for byte as it is in site/.
+          diff -r --exclude=docs site _site
+          test -s _site/index.html
+          test -s _site/docs/index.html
+          test -s _site/docs/sitemap.xml
+          du -sb _site
+      - name: Upload the site
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
-          path: site
+          path: _site
+
+  publish:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-24.04
+    # deploy-pages gives up by itself after 10 minutes, its default.
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    # What deploy-pages asks for: `pages` to create the deployment, and `id-token` for the OIDC
+    # token in which GitHub reads the run's branch before it accepts the deployment. This job
+    # checks nothing out and runs no package.
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - name: Read the Pages setting
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - name: Publish
         id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

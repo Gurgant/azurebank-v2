@@ -68,3 +68,7 @@ AzuriteConfig
 # RUNNER_TEMP and never here.
 schemathesis-report/
 test-results.xml
+
+# The documentation site: the copy of the pages it is built from, and its build cache.
+docs-site/src/
+docs-site/.vitepress/cache/
