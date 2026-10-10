@@ -8,7 +8,7 @@ is in [`deferred/anchoring-the-audit-trail.md`](deferred/anchoring-the-audit-tra
 ## The short answer
 
 **The shape is mainstream.** Two layers: a keyed hash per record, over the record and its
-predecessor, and a periodic checkpoint over (range, count, tail hash), chained to the checkpoint
+predecessor, and a checkpoint over (range, count, tail hash), chained to the checkpoint
 before it. That is the structure of AWS CloudTrail's log-file integrity validation, where the
 digests are chained so that a deleted digest is detected
 ([digest file structure](https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-log-file-validation-digest-file-structure.html)),
@@ -17,7 +17,10 @@ and of SQL Server's ledger, where each block is hashed over the root hash of the
 It is not a copy of either: CloudTrail's digest lists the log files of a time window and is signed
 with `SHA256withRSA`, and this checkpoint carries a sequence range with a row count under an HMAC.
 That difference is a real divergence: only a holder of the key can check an HMAC, so nobody outside
-can check this chain.
+can check that a record or a checkpoint is authentic. Without the key, a reader of an exported copy
+of the checkpoints can still follow them: each one names the hash of the one before it and carries
+an unkeyed digest of the state it claims
+([what a reader can check with no key](audit/README.md#what-a-reader-can-check-with-no-key-at-all)).
 
 **The stated limit is standard too.** Microsoft's page says of the ledger that it cannot prevent
 such attacks, and that tampering is detected when the ledger data is verified. ADR-0044 states this
@@ -42,7 +45,7 @@ true thing and nothing is built.
 | # | A real deployment has | Here | Gap |
 |---|---|---|---|
 | 1 | A copy of the checkpoint that whoever runs the system cannot revise | **Half built**: `export` writes the anchor chain to a file and refuses to overwrite one | The file is on the machine that would be attacked, and nobody else has seen it |
-| 2 | A cadence, so that absence is evidence | **Named, plus a number**: the UNCOVERED WINDOW under every verdict | Nothing anchors on a schedule, and the number is blind to anchors deleted with the rows (`ConsistentSuffixRemovalFromBOTHChains_IsNotDetected_AndThisPinsTheLimit`) |
+| 2 | A cadence, so that absence is evidence | **Named, plus a number**: the UNCOVERED WINDOW under a `verify` verdict, not computed when either chain is broken | Nothing anchors on a schedule, and the number is blind to anchors deleted with the rows (`ConsistentSuffixRemovalFromBOTHChains_IsNotDetected_AndThisPinsTheLimit`) |
 | 3 | Third-party time (RFC 3161) | **Named only** | No code; the hard part is the pinned trust root |
 | 4 | Immutability in the storage or the engine | **Named only** | The app's database user may update and delete audit rows |
 | 5 | Scheduled verification with alerting | **Named only**: `verify` runs when a person runs it | No schedule verifies the chain |
@@ -75,8 +78,9 @@ DELETE SUCCEEDED despite DENY -- rows left: 0
 `infra/sql-principals.sql`). That user is not `dbo`, may update and delete audit rows, and no `DENY`
 is recorded against it. `AuditWritePermissionSqlServerTests` already creates a user, denies it
 `INSERT` and runs as it, so the means for the demonstration exist. A `DENY` on the app's user would
-constrain the application and not whoever administers the database, and it would refuse the accident
-the runbook warns against: deleting rows to clear a stuck table.
+constrain the application and not whoever administers the database: it would refuse the accident the
+runbook warns against, deleting rows to clear a stuck table, only when that is done as the app's
+user.
 
 ### Row 7: a tail anchor gives no inclusion proof
 

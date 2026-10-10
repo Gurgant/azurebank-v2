@@ -15,20 +15,27 @@ Traps that cut across the stack are in [`docs/engineering-traps.md`](../docs/eng
 invalidates the blanket `Account` tag, because changing the primary account moves state on two
 rows; and a historical balance (`?at=`) carries no tag, because a past balance cannot go stale.
 
-**Every endpoint unwraps its envelope through `unwrap(envelope, schema?)`, and typing is not
-validation.** Without a schema `unwrap` returns `envelope.data` as it came: a compile-time type
-is a claim about what the server sends, not a check. A schema passed bare fails closed, in
-production too: the four money receipts, the four step-up authorisations, the accounts list, the
-transaction summary and all of `/bff/auth/*`, which has no OpenAPI contract behind it. The rest
-of `/api/*` passes `devOnly(schema)` and is checked in development and test only. A 2xx whose
-`data` is null always throws (ADR-0023).
+**An endpoint that answers with data in an envelope unwraps it through
+`unwrap(envelope, schema?)`, and typing is not validation.** Two endpoints answer with no
+envelope and never pass through it: `GET /api/transactions`, a page of results, and
+`GET /bff/auth/session-status`. Each checks its body with its own schema: the first in
+development and test only, the second in production too. Without a schema `unwrap` returns
+`envelope.data` as it came: a compile-time type is a claim about what the server sends, not a
+check. A schema passed as it is fails closed, in production too: the four money receipts, the
+four step-up authorisations, the accounts list, the transaction summary and what `/bff/auth/*`
+answers with data, which has no OpenAPI contract behind it. One endpoint under `/bff/auth/*` is
+not among them: the AzureTag rename has a schema generated from the API's contract and passes
+`devOnly(schema)`, as does the rest of `/api/*` that answers with data, checked in development
+and test only. Where `unwrap` runs, a 2xx whose `data` is null throws (ADR-0023); set-primary,
+account deletion, sign-out and set-PIN answer with no data and do not call it.
 
 **Route a 422 on `errorCode`, never on the status alone.** Several unrelated rules share 422, and
 the rule that failed decides the message and the field (`src/api/moneyProblem.ts`).
 
-**A 429's countdown is computed in the browser from `retryAfterSeconds`**, in all three places
-that have one: the login lockout, the PIN lockout and the per-user rate limit. Never trust an
-absolute `lockedUntil` from the server: a skewed browser clock unlocks early or hangs for ever.
+**A 429's countdown is computed in the browser from `retryAfterSeconds`**, for all three refusals
+that have one: the login lockout, the PIN lockout and the BFF's authentication limiter. Never
+trust an absolute `lockedUntil` from the server: a skewed browser clock unlocks early or hangs
+for ever.
 
 **In demo mode a claim adds three 429s, and two are worded with no countdown, by decision.**
 `RATE_LIMIT_EXCEEDED` is the BFF's limiter, shared with sign-in: counted down on the sign-in
@@ -42,10 +49,10 @@ sign-in page removes a kept demo copy whose `expiresAt` has passed when the page
 ahead by more than the copy has left forgets a living copy (ADR-0063, "What the browser keeps in
 demo mode", item 5).
 
-**Errors surface through one root `<Toaster>`.** An error toast persists and carries a copyable
-`traceId`, the only bridge between what a user saw and the server's trace (ADR-0016). One toast
-is a success, "You have a new copy." (`src/features/demo/useNewCopyToast.tsx`): it leaves by
-itself and carries no `traceId`.
+**An error with no surface of its own goes to one root `<Toaster>`.** An error toast persists and
+carries a copyable `traceId` when the problem has one, the only bridge between what a user saw
+and the server's trace (ADR-0016). One toast is a success, "You have a new copy."
+(`src/features/demo/useNewCopyToast.tsx`): it leaves by itself and carries no `traceId`.
 
 **Region discipline for async state.** A first load renders a skeleton shaped like the content;
 a background refetch keeps the stale data and shows a small inline indicator; a failed region
@@ -57,12 +64,12 @@ that started it, never as a page-level overlay.
 - Each page or dialog renders its own, under the control or spinner that started the wait: a
   Fluent modal hides everything outside it from assistive technology. Never inside a
   `role="alert"` or an element an `aria-describedby` points at.
-- It says nothing for 5 s, then "Taking longer than usual…", then from 20 s "Still trying…". A
-  money send that holds a key is `kind="moneySend"` and adds "Keep this page open."; a PIN check
-  before it is a `"write"`.
+- It says nothing for 5 s (6 s for the session check at start-up), then "Taking longer than
+  usual…", then from 20 s "Still trying…". A money send that holds a key is `kind="moneySend"`
+  and adds "Keep this page open."; a PIN check before it is a `"write"`.
 - Only a read is offered "Stop waiting", from 20 s and only when its host passes
   `onStopWaiting`. A write the server may already be doing is never given up on.
-- A read's spinner and error bar follow `readWait`, not `isLoading` and `error`: the bar hides
+- A page read's spinner and error bar follow `readWait`, not `isLoading` and `error`: the bar hides
   while the read runs again. A read whose content takes the wait's place passes `failed`.
 - The error bar goes inside the page's `AlertSlot`, an empty `role="alert"` that is on the page
   from the start, never into an alert that mounts already filled. One slot for each page; a
@@ -70,9 +77,9 @@ that started it, never as a page-level overlay.
 - Stop and Retry arm `useWaitLanding`, which puts focus on the bar's Retry unless the visitor
   has moved it meanwhile.
 
-**The view that says how a money send ended puts lost focus on its sentence.** The control that
-sent is disabled during the send, so the view appears with focus on `body`, and a view that
-mounts with its words in it is not announced. The sentence is a `<Text as="p">` with
+**The view that says a send went through with no receipt puts lost focus on its sentence.** The
+control that sent is disabled during the send, so the view appears with focus on `body`, and a
+view that mounts with its words in it is not announced. The sentence is a `<Text as="p">` with
 `tabIndex={-1}` and the ref of `useFocusWhenLost(active)`. It is not a live region, an alert or
 a status as well, and no button's `aria-describedby` points at it: each would say the sentence a
 second time. `WentThroughView` does this on the two transfer pages, and the same block in the
@@ -87,15 +94,17 @@ by a state, so Fluent has no trigger to go back to. A component that is mounted 
 its dialog is open calls `useReturnFocus()` (`src/hooks/useReturnFocus.ts`); `MoneyDialogShell`
 calls it for the three dialogs it frames. Not Fluent's `useRestoreFocusTarget` on the openers:
 it acts whenever focus is lost inside the dialog, and a money send loses it on purpose. The
-hand-rolled `ConfirmDialog` returns focus by itself. Only Chromium was driven.
+hand-rolled `ConfirmDialog` returns focus by itself. The session warning gives none back: the
+clock opens it, and no control. Only Chromium was driven.
 
 ## Money and formatting
 
 **Amounts are always positive; direction lives in `type`.** A negative amount in the UI means
 that somebody derived a sign the contract already encodes.
 
-**One `formatCurrency`.** EUR, one implementation, no local `Intl.NumberFormat`: a second
-formatter is how two screens come to disagree about what €1.005 rounds to.
+**One `formatCurrency`.** EUR, one implementation, and no local `Intl.NumberFormat` but the
+whole-euro bound in `src/forms/moneySchemas.ts`: a second formatter is how two screens come to
+disagree about what €1.005 rounds to.
 
 ## UI stack
 
@@ -103,10 +112,14 @@ formatter is how two screens come to disagree about what €1.005 rounds to.
 library: a second system means two focus models, two theme sources and two sets of accessibility
 behaviour.
 
-**Colour belongs in `src/theme/` and nowhere else.** Lint refuses a hex colour or an `rgb()`,
-`rgba()`, `hsl()` or `hsla()` call in a string anywhere else. Use a Fluent token, or the local
-palette in `src/theme/tokens.ts` for what Fluent has no name for. Lint does not see a named
-colour, `color-mix()` or a 3- or 4-digit hex inside a longer string: those are caught by reading.
+**In TypeScript, colour belongs in `src/theme/` and nowhere else.** Lint refuses a hex colour or
+an `rgb()`, `rgba()`, `hsl()` or `hsla()` call in a string of any other `.ts` or `.tsx` file. Use
+a Fluent token, or the local palette in `src/theme/tokens.ts` for what Fluent has no name for.
+Lint does not see every form: a named colour, `color-mix()` and a 3- or 4-digit hex inside a
+longer string are among those caught only by reading. Outside TypeScript lint reads nothing: the
+theme variables in `src/index.css` are generated from the palettes and held to them by
+`src/theme/themeVariables.test.ts`, and `index.html` and `public/site.webmanifest` name the
+colours of the browser's own surfaces.
 
 **MSW is a test tool.** `dev:mock` is for click-throughs and demos, never the development path:
 a frontend developed only against mocks drifts from the real contract.
@@ -148,10 +161,10 @@ the owner of a claimed copy and nobody else (`accountForLogin` in `src/mocks/han
 
 **The demo's sentences are in `src/features/demo/demoWords.ts`**, and the digits of the demo PIN
 in `demoPin.ts` beside it. What the demo spells as the backend does is held against the
-backend's source by `src/features/demo/demoContract.test.ts`. A file that is not a test and
-names one of the demo's codes in a string, and any file that types a refusal out with its
-sentence, has to be written into that test's expectations: until then it fails and names the
-file.
+backend's source by `src/features/demo/demoContract.test.ts`. A file under `src` that is not a
+test and names one of the demo's codes in single quotes, and any file there that types a refusal
+out as `errorCode: '…', detail: '…'`, has to be written into that test's expectations: until
+then it fails and names the file.
 
 ## Testing with Fluent and jsdom
 
@@ -179,7 +192,7 @@ None of these fails in a way that points at the cause.
 The traps of jsdom's missing layout are in
 [`docs/engineering-traps.md`](../docs/engineering-traps.md#jsdom).
 
-## `vitest run` does not run the whole suite — it excludes `contract/**` and `integration/**`
+## `vitest run` does not run the whole suite — it excludes `src/contract/**` and `src/integration/**`
 
 The suite is five commands: `npm test`, `test:contract:mock`, `test:contract:real`,
 `test:integration` and `test:e2e` ([`README.md`](README.md#check-it)). `vitest run`, which is
@@ -191,16 +204,16 @@ The last three need the real stack: a seeded `AzureBankE2E`, the API on
 **`https://localhost:7215`**, and the BFF on `:5000` through
 `dotnet run --project backend/src/AzureBank.Bff --launch-profile http`.
 
-- **The launch profile is not optional.** It alone sets `ASPNETCORE_ENVIRONMENT=Development`,
-  without which the development certificate is not trusted on the hop from the BFF to the API:
-  the run fails on TLS there, and the failure does not name the profile. Outside Development the
-  session cookie is also `__Host-` and `Secure`; Chromium still keeps it from
-  `http://localhost:5000` (measured on 2026-10-05), and what the suites that run in node meet at
-  sign-in there was not measured.
+- **The launch profile is not optional.** In that command it alone sets
+  `ASPNETCORE_ENVIRONMENT=Development`, without which the development certificate is not trusted
+  on the hop from the BFF to the API: the run fails on TLS there, and the failure does not name
+  the profile. Outside Development the session cookie is also `__Host-` and `Secure`; Chromium
+  still keeps it from `http://localhost:5000` (measured on 2026-10-05), and what the suites that
+  run in node meet at sign-in there was not measured.
 - **`:5068` is a real port and still the wrong one.** The API's `https` profile listens on both
   `https://localhost:7215` and `http://localhost:5068`, so `:5068` answers, which is what makes
-  the mistake survive. Everything that names the API means 7215. The
-  `--ReverseProxy:Clusters:backend-api:…` arguments in `ci.yml` are CI's alone, because CI moves
-  the API to `:5068`.
+  the mistake survive. The BFF's `appsettings.json` points at 7215. The
+  `--ReverseProxy:Clusters:backend-api:…` arguments in `ci.yml` are CI's, because CI moves the
+  API to `:5068`; `compose.yaml` does the same with environment variables.
 - **Authentication is rate-limited to 10 attempts in 60 seconds for one address.** Leave about
   70 seconds between suites, or the second one fails on the limiter.
