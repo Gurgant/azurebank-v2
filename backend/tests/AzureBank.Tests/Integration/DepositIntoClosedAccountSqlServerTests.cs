@@ -13,6 +13,7 @@ using AzureBank.Shared.DTOs.Transfer;
 using AzureBank.Shared.Enums;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
+using FluentAssertions.Execution;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit.Abstractions;
@@ -90,8 +91,21 @@ public sealed class DepositIntoClosedAccountSqlServerTests : IDisposable
         _factory!.AddInterceptor(race);
         race.Arm();
 
-        var response = await SendDepositAsync(client, user.Token, spare, 5m, Guid.NewGuid().ToString());
+        var key = Guid.NewGuid();
+        var response = await SendDepositAsync(client, user.Token, spare, 5m, key.ToString());
         var body = await response.Content.ReadAsStringAsync();
+        var recordsAfterTheRefusal = await ReadIdempotencyRecordsAsync(user.UserId, key);
+
+        /*
+          The same key and the same bytes, sent again. The first attempt marked its record as
+          executed in memory before the save that lost the race, and that mark must not have
+          reached the database: a record left there as executed or completed would answer this
+          second request with a stored success, or with "the result is unknown, it was applied".
+        */
+        var again = await SendDepositAsync(client, user.Token, spare, 5m, key.ToString());
+        var bodyAgain = await again.Content.ReadAsStringAsync();
+        var replayed = again.Headers.Contains(IdempotencyConstants.ReplayedHeaderName);
+        var recordsAfterTheSecond = await ReadIdempotencyRecordsAsync(user.UserId, key);
 
         using var scope = _factory!.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
@@ -105,21 +119,53 @@ public sealed class DepositIntoClosedAccountSqlServerTests : IDisposable
         _output.WriteLine(
             $"status: {(int)response.StatusCode}, body: {body}, "
             + $"race.Fired: {race.Fired}, race.OutOfBandRowsAffected: {race.OutOfBandRowsAffected}, "
+            + $"idempotency records after the refusal: [{string.Join(",", recordsAfterTheRefusal)}], "
+            + $"same key again: {(int)again.StatusCode}, replayed: {replayed}, body: {bodyAgain}, "
+            + $"idempotency records after it: [{string.Join(",", recordsAfterTheSecond)}], "
             + $"IsDeleted: {account.IsDeleted}, balance: {account.Balance}, "
             + $"transaction rows: {transactionRows}, deposit audit rows: {depositAuditRows}");
+
+        using var assertions = new AssertionScope();
 
         race.Fired.Should().BeTrue("the out-of-band closure must actually have run");
         race.OutOfBandRowsAffected.Should().Be(1, "and it must have closed the open account");
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound,
             "a deposit racing a closure must receive the same refusal as a closed account");
-        var problem = JsonSerializer.Deserialize<JsonElement>(body);
-        problem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.AccountNotFound);
+        ErrorCodeOf(body).Should().Be(ErrorCodes.AccountNotFound);
+        recordsAfterTheRefusal.Should().BeEmpty(
+            "a refusal before the commit releases the key and leaves no record that could answer for it");
+
+        again.StatusCode.Should().Be(HttpStatusCode.NotFound,
+            "the same key sent again is a new execution, refused the same way");
+        ErrorCodeOf(bodyAgain).Should().Be(ErrorCodes.AccountNotFound);
+        replayed.Should().BeFalse("no stored answer exists to replay, least of all a success");
+        recordsAfterTheSecond.Should().BeEmpty();
 
         account.IsDeleted.Should().BeTrue("the account was closed by the racing update");
         account.Balance.Should().Be(0m, "a closed account must not receive deposits");
         transactionRows.Should().Be(0, "no transaction row may be written for a closed account");
         depositAuditRows.Should().Be(0, "no deposit audit row may be written for a closed account");
+    }
+
+    /// <summary>The status of every record the key holds for this user, read in a scope of its own.</summary>
+    private async Task<List<IdempotencyStatus>> ReadIdempotencyRecordsAsync(Guid userId, Guid key)
+    {
+        using var scope = _factory!.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        return await db.IdempotencyRecords.AsNoTracking()
+            .Where(r => r.UserId == userId && r.Key == key)
+            .Select(r => r.Status)
+            .ToListAsync();
+    }
+
+    /// <summary>The body's <c>errorCode</c>, or null for a body that carries none, as a success does.</summary>
+    private static string? ErrorCodeOf(string body)
+    {
+        var json = JsonSerializer.Deserialize<JsonElement>(body);
+        return json.ValueKind == JsonValueKind.Object && json.TryGetProperty("errorCode", out var code)
+            ? code.GetString()
+            : null;
     }
 
     private sealed record TestUser(string Token, Guid UserId, Guid PrimaryAccountId);
