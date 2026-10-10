@@ -213,7 +213,9 @@ function sidebar(): Item[] {
     if (inside.every((page) => listed.has(page))) continue
     for (const page of inside) listed.add(page)
     const index = `${folder}/README.md`
-    const others = inside.filter((page) => page !== index)
+    // The template of a decision record is a page, reached from the index of decisions. It is
+    // no decision, so the menu does not list it.
+    const others = inside.filter((page) => page !== index && !/\/0000-template\.md$/.test(page))
     const entry: Item = { text: title(index), link: address(index) }
     if (others.length > 0) {
       entry.collapsed = others.length > 8
