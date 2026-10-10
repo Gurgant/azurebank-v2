@@ -93,8 +93,9 @@ public class AccountService : IAccountService
 
         for (var attempt = 1; ; attempt++)
         {
-            // A reload includes soft-deleted rows, so closure must be checked before reapplying the name.
-            if (account.IsDeleted)
+            // A reload brings back a closed row and detaches a row that is gone. Either way there is
+            // no account to rename, and a name set on a detached entity would be saved nowhere.
+            if (account.IsDeleted || _context.Entry(account).State == EntityState.Detached)
             {
                 throw new NotFoundException("Account", accountId);
             }
