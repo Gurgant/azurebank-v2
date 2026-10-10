@@ -34,6 +34,12 @@ namespace AzureBank.Tests.Integration;
 /// transfer does when there is no row to read.
 /// </para>
 /// <para>
+/// After a lost save the transfer looks at the payee account in two places, at the top of its loop
+/// and inside the attempt, and the first of the two makes the choice. The reads these proofs count
+/// are the same whichever of the two makes it: they hold that the choice is made and what it reads,
+/// not which place made it.
+/// </para>
+/// <para>
 /// Gated by AZUREBANK_TEST_SQLSERVER and serialised with the other SQL proofs: the closure is
 /// written by a raw <c>SqlConnection</c> beside the request, and the races at the save need a
 /// <c>rowversion</c> to lose.
@@ -56,6 +62,9 @@ public sealed class PayeeAccountClosedMeanwhileSqlServerTests(ITestOutputHelper 
     private static readonly Expected RowGone = new(null, "gone");
 
     private readonly ITestOutputHelper _output = output;
+
+    /// <summary>What the request had sent when a second closure fired, read before the observation.</summary>
+    private OutOfBandClosureInterceptor.Sent? _secondClosure;
 
     /// <summary>One account as a proof expects it: its row, and the types of its ledger rows in order.</summary>
     private sealed record Expected(AccountRow? Row, string Ledger);
@@ -138,6 +147,44 @@ public sealed class PayeeAccountClosedMeanwhileSqlServerTests(ITestOutputHelper 
         using var scope = new AssertionScope();
         ShouldHaveClosedBeforeTheFirstReload(race, seen, readsAfterwards: 6, savesAfterwards: 1, rowsWritten: 2);
         ShouldHavePaidTheNewPrimary(seen);
+        ShouldBeTheStoredAnswer(again, seen);
+    }
+
+    // ── The payee only replaced the primary account ──────────────────────────
+
+    [SqlServerFact]
+    public async Task Collision_TransferRacingThePayeeMakingAnotherAccountPrimary_StillPaysTheAccountItChose()
+    {
+        var client = CreateSqlClient();
+        var sender = await RegisterWithPinAsync(client, "ppk");
+        var payee = await RegisterAsync(client, "ppkp");
+        var newPrimary = await CreateSpareAsync(client, payee);
+        await FundAsync(client, sender, sender.PrimaryAccountId);
+        var authorizationId = await MintTransferAsync(client, sender, sender.PrimaryAccountId, payee.AzureTag);
+
+        /*
+          The write a change of primary makes, and no closure: on the transfer's own save the
+          account it chose stops being the primary one and stays open. The save loses, the
+          reload hands the account back open, and it is paid. Only a closed or missing account
+          is replaced, so no list of the payee's accounts is read.
+        */
+        var race = ArmClosureOf(payee.PrimaryAccountId, newPrimaryId: newPrimary, keepOpen: true);
+
+        var (seen, again) = await TransferTwiceAsync(
+            client, sender, payee, authorizationId, race,
+            sender.PrimaryAccountId, payee.PrimaryAccountId, newPrimary);
+
+        using var scope = new AssertionScope();
+        race.Fired.Should().BeTrue("the change of primary must actually have run");
+        race.OutOfBandRowsAffected.Should().Be(2, "one account stops being primary and one becomes it");
+        seen.Sent!.RodeAnAccountUpdate.Should().BeTrue("the change lands on the transfer's own save");
+        seen.Sent.AccountUpdatesBefore.Should().Be(1, "that save is the first the transfer sends");
+        seen.Sent.AccountReadsAfter.Should().Be(
+            5, "the accounts are reloaded, and no list of the payee's is read");
+        seen.Sent.AccountUpdatesAfter.Should().Be(1, "the save that lost is sent once more");
+        seen.Primary.Should().Equal(
+            new bool?[] { true, false, true }, "the account paid is no longer the primary one");
+        ShouldHavePaidOnce(seen, SenderDebited, Paid, OpenAndUntouched);
         ShouldBeTheStoredAnswer(again, seen);
     }
 
@@ -278,6 +325,11 @@ public sealed class PayeeAccountClosedMeanwhileSqlServerTests(ITestOutputHelper 
         ShouldHaveClosedAtTheSave(race, seen.Sent!, savesAfterwards: 1, readsAfterwards: 8);
         second.Fired.Should().BeTrue("the second closure must actually have run");
         second.OutOfBandRowsAffected.Should().Be(1, "and it must have met the chosen account still open");
+        _secondClosure!.RodeAnAccountUpdate.Should().BeFalse(
+            "it lands on a read, the fresh read of the account chosen");
+        _secondClosure.AccountUpdatesBefore.Should().Be(1, "after the save that lost to the first closure");
+        _secondClosure.AccountUpdatesAfter.Should().Be(
+            1, "and before the one save that pays the next account");
         ShouldHavePaidOnce(seen, SenderDebited, ClosedAndUntouched, ClosedAndUntouched, Paid);
         ShouldBeTheStoredAnswer(again, seen);
     }
@@ -323,6 +375,7 @@ public sealed class PayeeAccountClosedMeanwhileSqlServerTests(ITestOutputHelper 
 
         // Read now: the reads of the observation below go through the same interceptor.
         var secondSent = second?.Seen;
+        _secondClosure = secondSent;
         var seen = await ObserveAsync(
             response, sender, SecurityEvents.MoneyTransferred, authorizationId, key, race, accounts);
         if (second is not null)

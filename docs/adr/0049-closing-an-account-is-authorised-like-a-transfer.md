@@ -55,16 +55,18 @@ balance before primary, is code (`RefuseIfNotClosable`), held by a unit test and
 - **D9: A money write whose account closed while it ran is refused as a request on a closed
   account**: 404 `ACCOUNT_NOT_FOUND` for the caller's own account, with nothing written and nothing
   spent. A deposit, a withdrawal and both transfers look at their accounts again after every
-  reload, because a reload returns a closed row with a current `RowVersion`. An account whose row
-  is gone gets the same answer: proven for a deposit, for the destination of an internal transfer
-  and for a payee. A withdrawal's account and a sender's pass through the same test with no proof
-  that removes their rows, because a row that holds money has ledger rows the store does not let
-  go. An external transfer whose payee account is closed pays another open account of the same
-  payee, at its first look and at every later one: the primary first, then the oldest. The payer
-  names a person, and the authorisation binds that person, not an account. An account that only
-  stopped being primary while the transfer ran is still paid. The transfer answers 422
-  `RECIPIENT_NO_ACCOUNT` only when none is open. A write that committed and lost its
-  acknowledgement answers from its idempotency claim, also when its account closed in between.
+  reload, because a reload returns a closed row with a current `RowVersion`. A row that is gone is
+  treated as a closed one: proven for a deposit and for the destination of an internal transfer,
+  which answer the same 404, and for a payee. A withdrawal's account, a sender's and the source of
+  an internal transfer pass through the same test with no proof that removes their rows, because
+  a row that holds money has ledger rows the store does not let go. An external transfer whose
+  payee account is closed or gone pays another open account of the same payee, at its first look
+  and at every later one: the primary first, then the oldest. The payer names a person, and the
+  authorisation binds that person, not an account. An account that only stopped being primary
+  while the transfer ran is still paid. The transfer answers 422 `RECIPIENT_NO_ACCOUNT` only when
+  none is open. A withdrawal or a transfer that committed and lost its acknowledgement answers
+  from its idempotency claim, also when its account closed in between: proven for a withdrawal
+  and for the source of an external transfer.
 
 ```sql
 SELECT s.Id, s.Operation, s.Status, s.CreatedAt, s.ConsumedAt, s.ConsumedByTransactionId,
@@ -95,11 +97,12 @@ too; `PIN_REQUIRED` (422), `INVALID_PIN` (401) and `PIN_LOCKED` (429) come only 
 - Rejected: `/api/accounts/{id}/authorizations`, because a second kind of mint would collide there.
 - Rejected: the account id in `ConsumedByTransactionId`, because the evidence join never matches it.
 - Rejected: the presence check ahead of the guards, because the guards are no oracle (D6).
-- Rejected: a "closing" state between open and closed, because every operation is one database
-  transaction, so nothing is in flight for longer than a request. The row version says which of
-  the two committed first, and the one that lost reads the row again: a closure that meets a
-  deposit sees the money and refuses, a deposit that meets a closure sees the closed account and
-  refuses (D8, D9).
+- Rejected: a "closing" state between open and closed, because nothing is in flight for longer
+  than a request. A write carries the row version it read: when a closure and a money write meet
+  at the save, the one that commits second loses and reads the row again. A closure that meets a
+  deposit sees the money and refuses; a deposit that meets a closure sees the closed account and
+  refuses. A write that reloads after a closure committed loses no save: it sees the closed row
+  and refuses (D8, D9).
 
 ## Consequences
 

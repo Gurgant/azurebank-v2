@@ -507,6 +507,10 @@ public class TransferService : ITransferService
                       the first reload. TransferOrWithdrawalOnClosedAccountSqlServerTests holds the
                       refusals, and PayeeAccountClosedMeanwhileSqlServerTests the payee paid on
                       another account.
+
+                      THE PAYEE BEFORE THE FUNDS, the order of the first look: a transfer whose
+                      payee has no open account left answers that, whatever the sender's account
+                      holds by now.
                     */
                     recipientAccount = await RefuseOrChooseThePayeeAccountAgainAsync(
                         fromAccount, recipient, recipientAccount, ct);

@@ -224,11 +224,12 @@ public abstract class ClosedAccountSqlServerProofs(ITestOutputHelper output) : I
     /// <summary>Registered now and armed now, so every write of the setup is behind it.</summary>
     protected OutOfBandClosureInterceptor ArmClosureOf(
         Guid accountId, string trigger = OutOfBandClosureInterceptor.AccountUpdate,
-        bool emptyFirst = false, Guid? newPrimaryId = null, bool remove = false, Guid? onTheReadOf = null)
+        bool emptyFirst = false, Guid? newPrimaryId = null, bool remove = false, Guid? onTheReadOf = null,
+        bool keepOpen = false)
     {
         var race = new OutOfBandClosureInterceptor(
             SqlServerFactAttribute.ConnectionString!, accountId, trigger, emptyFirst, newPrimaryId, remove,
-            onTheReadOf);
+            onTheReadOf, keepOpen);
         _factory!.AddInterceptor(race);
         race.Arm();
         return race;

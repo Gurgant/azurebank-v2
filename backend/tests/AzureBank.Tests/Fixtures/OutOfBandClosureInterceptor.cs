@@ -25,12 +25,14 @@ namespace AzureBank.Tests.Fixtures;
 /// spent authorisation, since the proofs are about what the racing request does with the row.
 /// </para>
 /// <para>
-/// Three variations of that write. With <c>emptyFirst</c> the same statement also sets the balance
+/// Four variations of that write. With <c>emptyFirst</c> the same statement also sets the balance
 /// to zero: the account columns a withdrawal of everything followed by a closure leaves; the
 /// ledger is not touched. With <c>newPrimaryId</c> the closed account also stops being the primary
 /// one and the named account becomes it, in one transaction: the columns the API leaves when a
-/// user makes another account primary and then closes the old one. With <c>remove</c> the row is
-/// deleted instead of closed, which only an account with no ledger rows allows.
+/// user makes another account primary and then closes the old one. With <c>keepOpen</c> beside
+/// <c>newPrimaryId</c> nothing is closed: the account only stops being the primary one, the columns
+/// the API leaves when a user makes another account primary. With <c>remove</c> the row is deleted
+/// instead of closed, which only an account with no ledger rows allows.
 /// </para>
 /// <para>
 /// ONE READ OF ONE ACCOUNT. A request reads its accounts by id with one statement, whichever
@@ -42,7 +44,8 @@ namespace AzureBank.Tests.Fixtures;
 /// </remarks>
 public sealed class OutOfBandClosureInterceptor(
     string connectionString, Guid accountId, string trigger = OutOfBandClosureInterceptor.AccountUpdate,
-    bool emptyFirst = false, Guid? newPrimaryId = null, bool remove = false, Guid? onTheReadOf = null)
+    bool emptyFirst = false, Guid? newPrimaryId = null, bool remove = false, Guid? onTheReadOf = null,
+    bool keepOpen = false)
     : DbCommandInterceptor
 {
     /// <summary>The text every write of a request to the accounts table holds.</summary>
@@ -175,7 +178,7 @@ public sealed class OutOfBandClosureInterceptor(
         if (fireNow)
         {
             OutOfBandRowsAffected = await CloseAsync(
-                connectionString, accountId, emptyFirst, newPrimaryId, remove, cancellationToken);
+                connectionString, accountId, emptyFirst, newPrimaryId, remove, keepOpen, cancellationToken);
         }
     }
 
@@ -186,7 +189,7 @@ public sealed class OutOfBandClosureInterceptor(
     /// </summary>
     public static async Task<int> CloseAsync(
         string connectionString, Guid accountId, bool emptyFirst = false, Guid? newPrimaryId = null,
-        bool remove = false, CancellationToken cancellationToken = default)
+        bool remove = false, bool keepOpen = false, CancellationToken cancellationToken = default)
     {
         await using var connection = new SqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
@@ -203,7 +206,8 @@ public sealed class OutOfBandClosureInterceptor(
             "UPDATE [Accounts] SET "
             + (emptyFirst ? "[Balance] = 0, " : string.Empty)
             + (newPrimaryId is null ? string.Empty : "[IsPrimary] = 0, ")
-            + "[IsDeleted] = 1, [DeletedAt] = @now, [UpdatedAt] = @now "
+            + (keepOpen ? string.Empty : "[IsDeleted] = 1, [DeletedAt] = @now, ")
+            + "[UpdatedAt] = @now "
             + "WHERE [Id] = @id AND [IsDeleted] = 0";
         close.Parameters.Add(new SqlParameter("@now", DateTime.UtcNow));
 
