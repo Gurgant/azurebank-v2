@@ -12,433 +12,959 @@
     />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
-    <title>AzureBank</title>
+    <meta name="theme-color" content="#001d3d" />
+    <title>AzureBank: a working bank, live. By Vladislav Aleshaev</title>
     <meta
       name="description"
-      content="A personal banking app built as a portfolio project. Open the live demo, with no sign-up."
+      content="A working bank. Open it and try to break it. AzureBank is a portfolio project by Vladislav Aleshaev: a .NET 10 API behind a BFF, a React app and SQL Server, live on Azure."
     />
+    <meta name="author" content="Vladislav Aleshaev" />
+    <link rel="canonical" href="https://gurgant.github.io/azurebank-v2/" />
+
+    <!-- The card a link to this page gets when it is pasted in a message or a post. The readers
+         of these tags run no script, so the words are English and the image address is whole. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="AzureBank" />
+    <meta property="og:title" content="A working bank. Open it and try to break it." />
+    <meta
+      property="og:description"
+      content="A portfolio project by Vladislav Aleshaev: .NET 10, React and SQL Server, live on Azure. No sign-up."
+    />
+    <meta property="og:url" content="https://gurgant.github.io/azurebank-v2/" />
+    <meta property="og:locale" content="en_GB" />
+    <meta property="og:locale:alternate" content="it_IT" />
+    <meta property="og:image" content="https://gurgant.github.io/azurebank-v2/img/card.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="627" />
+    <meta
+      property="og:image:alt"
+      content="AzureBank, a personal banking app built as a portfolio project, beside a screenshot of its dashboard."
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="A working bank. Open it and try to break it." />
+    <meta
+      name="twitter:description"
+      content="A portfolio project by Vladislav Aleshaev: .NET 10, React and SQL Server, live on Azure. No sign-up."
+    />
+    <meta name="twitter:image" content="https://gurgant.github.io/azurebank-v2/img/card.png" />
+    <meta
+      name="twitter:image:alt"
+      content="AzureBank, a personal banking app built as a portfolio project, beside a screenshot of its dashboard."
+    />
+
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="entry.css" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+    <!-- The number after the name changes when the page and its two files change together, so
+         that a browser never pairs this page with an older copy of them. -->
+    <link rel="stylesheet" href="entry.css?v=2" />
     <!-- A blocking script in the head, so that the language is chosen before the first paint. -->
-    <script src="entry.js"></script>
+    <script src="entry.js?v=2"></script>
   </head>
   <body>
-    <div class="page">
-      <header class="top">
-        <div class="bar">
-          <span class="stamp">
-            <span lang="en" data-lang="en">Portfolio · live demo</span>
-            <span lang="it" data-lang="it">Portfolio · demo online</span>
-          </span>
-          <span class="lang" role="group" aria-label="Language / Lingua">
-            <button type="button" id="lang-en" lang="en" aria-pressed="true">EN</button>
-            <button type="button" id="lang-it" lang="it" aria-pressed="false">IT</button>
-          </span>
-        </div>
-        <h1>AzureBank</h1>
+    <a class="skip" href="#content">
+      <span lang="en" data-lang="en">Skip to the content</span>
+      <span lang="it" data-lang="it">Vai al contenuto</span>
+    </a>
 
-        <!-- The start panel. As written here it works without the script: the link is a link.
-             With the script, entry.js wakes the demo and enables the link when it answers. -->
-        <div class="start" id="start">
-          <p class="wake">
-            <span id="wake-status" role="status"></span>
-            <span id="wake-count"></span>
-          </p>
-          <div class="meter" aria-hidden="true"><div class="fill" id="wake-fill"></div></div>
-          <div class="doors">
-            <a
-              class="door primary"
-              id="open-demo"
-              href="https://azurebank.lemonmoss-e3015c47.italynorth.azurecontainerapps.io/"
-            >
+    <!-- The three drawings the page uses. Same document, so no request leaves for them. -->
+    <svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false">
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4.5 12h15M13.5 6l6 6-6 6" /></symbol>
+      <symbol id="i-out" viewBox="0 0 24 24"><path d="M7.5 16.5l9-9M9 7.5h7.5V15" /></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" /></symbol>
+    </svg>
+
+    <header class="top">
+      <div class="top__in">
+        <span class="brand">
+          <img src="favicon.svg" width="32" height="32" alt="" />
+          <span>AzureBank</span>
+        </span>
+        <p class="live">
+          <span lang="en" data-lang="en">Live demo · Portfolio project</span>
+          <span lang="it" data-lang="it">Demo online · Progetto di portfolio</span>
+        </p>
+        <!-- The switch needs the script: without it the page is English and the switch is not
+             shown. -->
+        <div class="lang" role="group" aria-label="Language / Lingua">
+          <button type="button" class="lang__btn" data-set-lang="en" lang="en" aria-pressed="true">
+            <span aria-hidden="true">EN</span><span class="vh">English</span>
+          </button>
+          <button type="button" class="lang__btn" data-set-lang="it" lang="it" aria-pressed="false">
+            <span aria-hidden="true">IT</span><span class="vh">Italiano</span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main id="content">
+      <!-- ============ THE FIRST SCREEN ============ -->
+      <section class="hero" aria-labelledby="title">
+        <div class="hero__grid">
+          <div class="hero__copy">
+            <h1 id="title">
               <span lang="en" data-lang="en">
-                <span class="label-open">Open the demo</span>
-                <span class="label-anyway">Open the demo anyway</span>
+                <span>A working bank.</span>
+                <span>Open it and try to break it.</span>
               </span>
               <span lang="it" data-lang="it">
-                <span class="label-open">Apri la demo</span>
-                <span class="label-anyway">Apri comunque la demo</span>
+                <span>Una banca che funziona.</span>
+                <span>Aprila e prova a romperla.</span>
               </span>
-              <span aria-hidden="true">→</span>
-            </a>
-            <a
-              class="door plain"
-              href="https://github.com/Gurgant/azurebank-v2"
-              target="_blank"
-              rel="noopener"
-            >
-              <span lang="en" data-lang="en">Code on GitHub</span>
-              <span lang="it" data-lang="it">Codice su GitHub</span>
-            </a>
+            </h1>
+
+            <p class="lede" lang="en" data-lang="en">
+              AzureBank is my portfolio project: a .NET&nbsp;10 API behind a BFF, a React app and SQL
+              Server, live on Azure. A payment is applied once, the access token never reaches the
+              browser, and every sensitive action leaves a record that can&nbsp;be&nbsp;checked.
+            </p>
+            <p class="lede" lang="it" data-lang="it">
+              AzureBank è il mio progetto di portfolio: un'API .NET&nbsp;10 dietro un BFF, un'app React
+              e SQL Server, online su Azure. Un pagamento viene eseguito una sola volta, il token di
+              accesso non arriva mai al browser e ogni azione sensibile lascia una traccia che si
+              può&nbsp;verificare.
+            </p>
+
+            <!-- The start panel. One object: the key, the 25 lamps (one for each second the
+                 server needs), the status. As written here it needs no script: the sentence is
+                 the one for a sleeping demo and the key is a plain link. With the script,
+                 entry.js wakes the demo, writes the state on <html data-wake> and the words in
+                 the status line. -->
+            <div class="launch" id="launch">
+              <a
+                class="launch__key"
+                id="open-demo"
+                data-door
+                href="https://azurebank.lemonmoss-e3015c47.italynorth.azurecontainerapps.io/"
+                aria-describedby="wake-status"
+              >
+                <span lang="en" data-lang="en">Open the live demo</span>
+                <span lang="it" data-lang="it">Apri la demo</span>
+                <svg class="i launch__go" aria-hidden="true" focusable="false"><use href="#i-arrow" /></svg>
+              </a>
+              <div class="meter" data-meter aria-hidden="true">
+                <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+                <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+              </div>
+              <div class="launch__status">
+                <span class="lamp" aria-hidden="true">
+                  <svg class="i" aria-hidden="true" focusable="false"><use href="#i-check" /></svg>
+                </span>
+                <p class="launch__msg">
+                  <span id="wake-status" role="status" data-wake-text>
+                    <span lang="en" data-lang="en"
+                      >The demo is asleep. Starting it takes about 25&nbsp;seconds.</span
+                    >
+                    <span lang="it" data-lang="it"
+                      >La demo è spenta. Per avviarla servono circa 25&nbsp;secondi.</span
+                    >
+                  </span>
+                  <span class="count" data-wake-count></span>
+                  <!-- Shown when the wait passes a minute. The script gives it the address. -->
+                  <a class="launch__anyway" data-demo-link>
+                    <span lang="en" data-lang="en">Open the demo anyway</span>
+                    <span lang="it" data-lang="it">Apri comunque la demo</span>
+                  </a>
+                </p>
+              </div>
+            </div>
+
+            <div class="actions">
+              <a class="btn btn--ghost" href="https://github.com/Gurgant/azurebank-v2">
+                <span lang="en" data-lang="en">View the code</span>
+                <span lang="it" data-lang="it">Guarda il codice</span>
+              </a>
+              <a
+                class="textlink"
+                href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/architecture/overview.md"
+              >
+                <span lang="en" data-lang="en">How it works</span>
+                <span lang="it" data-lang="it">Come funziona</span>
+              </a>
+            </div>
+
+            <div class="byline">
+              <span class="byline__mark" aria-hidden="true">VA</span>
+              <p class="byline__text" lang="en" data-lang="en">
+                Designed and built by <strong>Vladislav Aleshaev</strong>
+                <span class="byline__dot">·</span>
+                <span class="byline__role">full-stack engineer (.NET, React, Azure)</span>
+              </p>
+              <p class="byline__text" lang="it" data-lang="it">
+                Progettata e sviluppata da <strong>Vladislav Aleshaev</strong>
+                <span class="byline__dot">·</span>
+                <span class="byline__role">sviluppatore full-stack (.NET, React, Azure)</span>
+              </p>
+              <p class="byline__links">
+                <a href="https://github.com/Gurgant">GitHub</a>
+                <a href="https://www.linkedin.com/in/vladislav-aleshaev">LinkedIn</a>
+              </p>
+            </div>
           </div>
-          <p class="wait note">
-            <span lang="en" data-lang="en">The server sleeps when nobody is using it and wakes up
-              on the next visit: the first page can take about half a minute.</span>
-            <span lang="it" data-lang="it">Il server si spegne quando nessuno lo usa e si riaccende
-              alla visita successiva: la prima pagina può richiedere circa mezzo minuto.</span>
-          </p>
-        </div>
 
-        <div lang="en" data-lang="en" class="copyblock">
-          <p class="lede">A personal banking app, built as a portfolio project and live on Azure
-            since 6 October 2026: anyone can try it in a browser, with no sign-up.</p>
-          <p class="by">Designed and built solo by Vladislav Aleshaev.</p>
-        </div>
-        <div lang="it" data-lang="it" class="copyblock">
-          <p class="lede">Un'app di home banking, costruita come progetto di portfolio e online su
-            Azure dal 6 ottobre 2026: chiunque può provarla dal browser, senza registrarsi.</p>
-          <p class="by">Progettata e sviluppata in autonomia da Vladislav Aleshaev.</p>
-        </div>
-      </header>
-
-      <main>
-        <!-- ============ ENGLISH ============ -->
-        <div lang="en" data-lang="en" class="page">
-          <section>
-            <h2>In short</h2>
-            <p><strong>What it is.</strong> A personal banking application: accounts, deposits,
-              withdrawals and transfers between users. A React frontend, a .NET backend, a SQL
-              Server database. The money is not real: it is a demonstration, not a bank.</p>
-            <p><strong>Why it exists.</strong> To show how software that moves money is built. The
-              interesting part is not the screens but what has to stay true when something goes
-              wrong: a payment applied only once even when the request is repeated, an access token
-              that never reaches the browser, a PIN entry that authorises one payment only.</p>
-          </section>
-
-          <section>
-            <h2>Try it</h2>
-            <ol class="steps">
-              <li>Open the demo with the button at the top of this page. It opens on the sign-in
-                page.</li>
-              <li>Press <strong>Try the demo</strong>. You get a private copy that no other visitor
-                can see: two accounts (Main Savings <span class="mono">€12,450.00</span> and
-                Checking <span class="mono">€2,300.00</span>), two months of transactions and two
-                contacts you can pay.</li>
-              <li>Send money to one of the contacts: type their handle, press
-                <strong>Verify</strong>, enter an amount and confirm with the PIN
-                <span class="mono">123456</span>, which is shown on the page itself.</li>
-              <li>Try a deposit and a withdrawal, open the transaction history and reveal the full
-                account number, which is shown only after you enter the PIN.</li>
-              <li><strong>Start over</strong> gives you a fresh copy. Each copy lasts 24 hours.
-                Don't enter real personal data.</li>
-            </ol>
-            <p class="wait">The layout also adapts to a phone screen.</p>
-          </section>
-
-          <section>
-            <h2>What it demonstrates</h2>
-            <dl class="proves">
-              <div>
-                <dt>A payment is applied only once.</dt>
-                <dd>Every operation that moves money carries a key the server recognises: retries,
-                  network errors and duplicate requests do not create a second charge. It held
-                  under 24 identical concurrent requests on a real SQL Server.</dd>
-              </div>
-              <div>
-                <dt>The access token never reaches the browser.</dt>
-                <dd>An intermediary service keeps the token in a session on the server and gives
-                  the browser a cookie that the page's scripts cannot read.</dd>
-              </div>
-              <div>
-                <dt>One PIN entry authorises one payment.</dt>
-                <dd>The authorisation is bound to that account, that amount and that payee, is
-                  valid for two minutes and can be used only once. Three wrong PINs lock the PIN
-                  for 15 minutes.</dd>
-              </div>
-              <div>
-                <dt>A security log that can be checked.</dt>
-                <dd>Security events go to an append-only table (rows can only be added), each row
-                  chained to the previous one by a hash, with its own verifier. What it cannot
-                  detect is documented.</dd>
-              </div>
-              <div>
-                <dt>Frontend and backend held to one contract.</dt>
-                <dd>The API's contract is generated by the backend and the frontend is checked
-                  against it automatically, against the real backend and database too.</dd>
-              </div>
-              <div>
-                <dt>On Azure, no database password and a capped size.</dt>
-                <dd>The database has no password: the services authenticate with managed
-                  identities. Every release starts only after manual approval, and a rule rejects
-                  any configuration larger than the planned one. Automatic alerts by e-mail and as
-                  a phone notification report traffic and running time: one fired on 7 October
-                  2026 and arrived on both channels.</dd>
-              </div>
-            </dl>
-          </section>
-
-          <section>
-            <h2>Figures</h2>
-            <div class="facts">
-              <div class="fact"><b>239</b><span>pull requests merged; changes are gated by
-                  automated tests and security analysis (CodeQL), with AI review</span></div>
-              <div class="fact"><b>64</b><span>documented design decisions, with rejected
-                  alternatives and limits</span></div>
-              <div class="fact"><b>2,846</b><span>backend tests</span></div>
-              <div class="fact"><b>1,405</b><span>frontend tests</span></div>
-              <div class="fact"><b>89</b><span>browser tests against the real backend and database,
-                  run automatically</span></div>
-              <div class="fact"><b>€0.63</b><span>cost on Azure from 1 to 7 October 2026, all of
-                  it for the database</span></div>
+          <!-- Real screenshots of the running application, never a drawing. Each one exists in
+               the two themes and the style sheet shows the one that matches; a picture that is
+               not shown is not fetched. The larger ones also exist in a smaller size, for a
+               screen that would not show the difference. -->
+          <figure class="visual">
+            <div class="shot">
+              <img
+                class="on-light"
+                src="img/dashboard-light.png"
+                width="1600"
+                height="1000"
+                loading="lazy"
+                decoding="async"
+                alt="The AzureBank dashboard on a desktop: the balance across two accounts, this month's money in and out, a transfer shortcut and the latest movements."
+                data-alt-it="La dashboard di AzureBank su desktop: il saldo dei due conti, le entrate e le uscite del mese, la scorciatoia per un bonifico e gli ultimi movimenti."
+              />
+              <img
+                class="on-dark"
+                src="img/dashboard-dark.png"
+                width="1600"
+                height="1000"
+                loading="lazy"
+                decoding="async"
+                alt="The AzureBank dashboard on a desktop, dark theme: the balance across two accounts, this month's money in and out, a transfer shortcut and the latest movements."
+                data-alt-it="La dashboard di AzureBank su desktop, tema scuro: il saldo dei due conti, le entrate e le uscite del mese, la scorciatoia per un bonifico e gli ultimi movimenti."
+              />
             </div>
-            <p class="wait">Figures read on 7 October 2026. Stack: .NET 10, ASP.NET Core, EF Core,
-              SQL Server · React 19, TypeScript, Fluent UI · GitHub Actions, CodeQL · Azure
-              Container Apps, Azure SQL Database, Bicep.</p>
-          </section>
+            <div class="device">
+              <img
+                class="on-light"
+                src="img/phone-light.png"
+                srcset="img/phone-light-390.png 390w, img/phone-light.png 780w"
+                sizes="(min-width: 45em) 24vw, (min-width: 32.5em) 21.5rem, 100vw"
+                width="780"
+                height="1688"
+                loading="lazy"
+                decoding="async"
+                alt="The same dashboard on a phone: the available balance, the two accounts, the month so far and the transfer button."
+                data-alt-it="La stessa dashboard su un telefono: il saldo disponibile, i due conti, il mese in corso e il pulsante per un bonifico."
+              />
+              <img
+                class="on-dark"
+                src="img/phone-dark.png"
+                srcset="img/phone-dark-390.png 390w, img/phone-dark.png 780w"
+                sizes="(min-width: 45em) 24vw, (min-width: 32.5em) 21.5rem, 100vw"
+                width="780"
+                height="1688"
+                loading="lazy"
+                decoding="async"
+                alt="The same dashboard on a phone, dark theme: the available balance, the two accounts, the month so far and the transfer button."
+                data-alt-it="La stessa dashboard su un telefono, tema scuro: il saldo disponibile, i due conti, il mese in corso e il pulsante per un bonifico."
+              />
+            </div>
+          </figure>
 
-          <section>
-            <h2>Known limitations</h2>
-            <ul class="plain">
-              <li>The first load after a quiet spell is slow: about 25 seconds while the server
-                starts. This page starts it and shows the wait. Once awake, the app answers in
-                under a second.</li>
-              <li>The visual design is not final: the interface redesign is the next step.</li>
-              <li>It has been tested in Chromium (the engine of Chrome and Edge) at desktop and
-                phone widths. A full visual check in Safari and on an iPhone has not been done
-                yet.</li>
-              <li>It is a demo: made-up data, one small instance, no availability guarantee.</li>
-              <li>Limits apply per network address: 10 new copies in 24 hours and 10 sign-ins a
-                minute.</li>
+          <!-- Four figures, each a link to the place that shows it. They are counted from the
+               repository on the day written under them. -->
+          <div class="proof">
+            <ul
+              class="proof__list"
+              role="list"
+              aria-label="The project in four figures"
+              data-label-it="Il progetto in quattro numeri"
+            >
+              <li>
+                <a href="https://github.com/Gurgant/azurebank-v2/pulls?q=is%3Apr+is%3Amerged">
+                  <span class="fig" lang="en" data-lang="en"><b>248</b><span>pull requests merged</span></span>
+                  <span class="fig" lang="it" data-lang="it"><b>248</b><span>pull request unite</span></span>
+                </a>
+              </li>
+              <li>
+                <a href="https://github.com/Gurgant/azurebank-v2/actions/workflows/ci.yml?query=branch%3Amain">
+                  <span class="fig" lang="en" data-lang="en"
+                    ><b>4,347</b
+                    ><span
+                      >automated tests
+                      <small>2,846 backend, 1,412 frontend, 89 in a real browser on the real stack</small></span
+                    ></span
+                  >
+                  <span class="fig" lang="it" data-lang="it"
+                    ><b>4.347</b
+                    ><span
+                      >test automatici
+                      <small>2.846 di backend, 1.412 di frontend, 89 in un browser vero sullo stack reale</small></span
+                    ></span
+                  >
+                </a>
+              </li>
+              <li>
+                <a href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/adr/README.md">
+                  <span class="fig" lang="en" data-lang="en"><b>64</b><span>design decisions written down</span></span>
+                  <span class="fig" lang="it" data-lang="it"><b>64</b><span>decisioni di progettazione documentate</span></span>
+                </a>
+              </li>
+              <li>
+                <a href="https://github.com/Gurgant/azurebank-v2/rules">
+                  <span class="fig" lang="en" data-lang="en"
+                    ><b>9</b><span>required checks and a security scan before any merge</span></span
+                  >
+                  <span class="fig" lang="it" data-lang="it"
+                    ><b>9</b><span>controlli obbligatori e un'analisi di sicurezza prima di ogni merge</span></span
+                  >
+                </a>
+              </li>
             </ul>
-          </section>
-
-          <section>
-            <h2>Further reading</h2>
-            <p>Start with the demo. Then the repository's front page and "How AzureBank works".
-              With more time: the design decisions, starting with those on the payment
-              protocol.</p>
-            <div class="links">
-              <div>
-                <a href="https://github.com/Gurgant/azurebank-v2" target="_blank" rel="noopener"
-                >Repository</a>
-                <small>The code and an introduction to the project</small>
-              </div>
-              <div>
-                <a
-                  href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/architecture/overview.md"
-                  target="_blank"
-                  rel="noopener"
-                >How AzureBank works</a>
-                <small>One request followed end to end</small>
-              </div>
-              <div>
-                <a
-                  href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/adr/README.md"
-                  target="_blank"
-                  rel="noopener"
-                >Decisions</a>
-                <small>Every decision, with its alternatives</small>
-              </div>
-              <div>
-                <a
-                  href="https://github.com/Gurgant/azurebank-v2/blob/main/SECURITY.md"
-                  target="_blank"
-                  rel="noopener"
-                >Security</a>
-                <small>Security in one place, including what is not done</small>
-              </div>
-              <div>
-                <a
-                  href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/testing/try-the-demo.md"
-                  target="_blank"
-                  rel="noopener"
-                >Try the demo</a>
-                <small>What to try and the limits you may run into</small>
-              </div>
-              <div>
-                <a
-                  href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/engineering-practices.md"
-                  target="_blank"
-                  rel="noopener"
-                >Engineering practices</a>
-                <small>How work is done in this repository</small>
-              </div>
-            </div>
-          </section>
+            <p class="proof__date">
+              <span lang="en" data-lang="en">Counted on <time datetime="2026-10-10">10 October 2026</time></span>
+              <span lang="it" data-lang="it">Contati il <time datetime="2026-10-10">10 ottobre 2026</time></span>
+            </p>
+          </div>
         </div>
+      </section>
 
-        <!-- ============ ITALIANO ============ -->
-        <div lang="it" data-lang="it" class="page">
-          <section>
-            <h2>In breve</h2>
-            <p><strong>Che cos'è.</strong> Un'applicazione di home banking: conti, depositi,
-              prelievi e bonifici tra utenti. Frontend in React, backend in .NET, database SQL
-              Server. Il denaro è finto: è una dimostrazione, non una banca.</p>
-            <p><strong>Perché esiste.</strong> Per mostrare come si costruisce software che muove
-              denaro. La parte interessante non sono le schermate, ma ciò che deve restare vero
-              quando qualcosa va storto: un pagamento eseguito una sola volta anche se la richiesta
-              viene ripetuta, un token di accesso che non arriva mai al browser, un PIN che a ogni
-              inserimento autorizza un solo pagamento.</p>
-          </section>
+      <!-- ============ A. WHAT IT PROVES ============ -->
+      <section class="block block--alt" aria-labelledby="proves-title">
+        <div class="wrap">
+          <h2 id="proves-title">
+            <span lang="en" data-lang="en">What it proves</span>
+            <span lang="it" data-lang="it">Che cosa dimostra</span>
+          </h2>
 
-          <section>
-            <h2>Provarla</h2>
-            <ol class="steps">
-              <li>Apri la demo con il pulsante in cima a questa pagina. Si apre sulla pagina di
-                accesso.</li>
-              <li>Premi <strong lang="en">Try the demo</strong>. Ricevi una copia privata, che
-                nessun altro visitatore vede: due conti (Main Savings
-                <span class="mono">€12,450.00</span> e Checking
-                <span class="mono">€2,300.00</span>), due mesi di movimenti e due contatti a cui
-                inviare denaro.</li>
-              <li>Fai un bonifico a uno dei contatti: scrivi il suo handle (il suo nome pubblico
-                nell'app), premi <strong lang="en">Verify</strong>, inserisci un importo e conferma
-                con il PIN <span class="mono">123456</span>, indicato nella pagina stessa.</li>
-              <li>Prova un deposito e un prelievo, apri lo storico dei movimenti e fatti mostrare
-                il numero di conto completo, che compare solo dopo aver inserito il PIN.</li>
-              <li><strong lang="en">Start over</strong> ti dà una copia nuova. Ogni copia dura 24
-                ore. Non inserire dati personali veri.</li>
-            </ol>
-            <p class="wait">L'interfaccia è in inglese. Si adatta anche allo schermo di un
-              telefono.</p>
-          </section>
-
-          <section>
-            <h2>Che cosa dimostra</h2>
-            <dl class="proves">
-              <div>
-                <dt>Un pagamento viene eseguito una sola volta.</dt>
-                <dd>Ogni operazione che muove denaro porta con sé una chiave che il server
-                  riconosce: nuovi tentativi, errori di rete e richieste doppie non creano un
-                  secondo addebito. Verificato con 24 richieste identiche simultanee su un vero SQL
-                  Server.</dd>
-              </div>
-              <div>
-                <dt>Il token di accesso non arriva mai al browser.</dt>
-                <dd>Un servizio intermedio tiene il token in una sessione sul server e dà al
-                  browser un cookie che gli script della pagina non possono leggere.</dd>
-              </div>
-              <div>
-                <dt>Un inserimento del PIN autorizza un solo pagamento.</dt>
-                <dd>L'autorizzazione è legata a quel conto, a quell'importo e a quel beneficiario,
-                  vale due minuti e si può usare una sola volta. Tre PIN sbagliati bloccano il PIN
-                  per 15 minuti.</dd>
-              </div>
-              <div>
-                <dt>Un registro di sicurezza che si può verificare.</dt>
-                <dd>Gli eventi di sicurezza finiscono in una tabella append-only (le righe si
-                  possono solo aggiungere), in cui ogni riga è legata alla precedente da un hash,
-                  con un suo programma di verifica. Ciò che non riesce a rilevare è
-                  documentato.</dd>
-              </div>
-              <div>
-                <dt>Frontend e backend legati dallo stesso contratto.</dt>
-                <dd>Il contratto dell'API è generato dal backend e il frontend viene verificato
-                  automaticamente rispetto a quel contratto, anche con backend e database veri.</dd>
-              </div>
-              <div>
-                <dt>Su Azure, nessuna password del database e una dimensione bloccata.</dt>
-                <dd>Il database non ha password: i servizi si autenticano con identità gestite.
-                  Ogni rilascio parte solo dopo un'approvazione manuale, e una regola impedisce
-                  configurazioni più grandi di quella prevista. Avvisi automatici via e-mail e con
-                  notifica sul telefono segnalano traffico e ore di funzionamento: uno è scattato
-                  il 7 ottobre 2026 ed è arrivato su entrambi i canali.</dd>
-              </div>
-            </dl>
-          </section>
-
-          <section>
-            <h2>Numeri</h2>
-            <div class="facts">
-              <div class="fact"><b>239</b><span>pull request unite; le modifiche passano da test
-                  automatici e analisi di sicurezza (CodeQL), con revisione AI</span></div>
-              <div class="fact"><b>64</b><span>decisioni di progettazione documentate, con
-                  alternative scartate e limiti</span></div>
-              <div class="fact"><b>2.846</b><span>test del backend</span></div>
-              <div class="fact"><b>1.405</b><span>test del frontend</span></div>
-              <div class="fact"><b>89</b><span>test nel browser su backend e database veri,
-                  eseguiti in automatico</span></div>
-              <div class="fact"><b>0,63 €</b><span>costo su Azure dal 1° al 7 ottobre 2026, tutto
-                  per il database</span></div>
-            </div>
-            <p class="wait">Numeri letti il 7 ottobre 2026. Tecnologie: .NET 10, ASP.NET Core, EF
-              Core, SQL Server · React 19, TypeScript, Fluent UI · GitHub Actions, CodeQL · Azure
-              Container Apps, Azure SQL Database, Bicep.</p>
-          </section>
-
-          <section>
-            <h2>Limiti noti</h2>
-            <ul class="plain">
-              <li>Il primo caricamento dopo una pausa è lento: circa 25 secondi, il tempo di avvio
-                del server. Questa pagina lo avvia e mostra l'attesa. Una volta attiva, l'app
-                risponde in meno di un secondo.</li>
-              <li>La grafica non è quella definitiva: il ridisegno dell'interfaccia è il prossimo
-                passo.</li>
-              <li>È stata verificata in Chromium (il motore di Chrome ed Edge), su desktop e alla
-                larghezza di un telefono. In Safari e su iPhone manca ancora un controllo visivo
-                completo.</li>
-              <li>È una demo: dati inventati, una sola piccola istanza, nessuna garanzia di
-                disponibilità.</li>
-              <li>I limiti d'uso valgono per indirizzo di rete: 10 copie nuove in 24 ore e 10
-                accessi al minuto.</li>
+          <div class="sheet claims">
+            <p class="claims__head" aria-hidden="true">
+              <span><span lang="en" data-lang="en">Claim</span><span lang="it" data-lang="it">Affermazione</span></span>
+              <span><span lang="en" data-lang="en">Proof</span><span lang="it" data-lang="it">Prova</span></span>
+              <span><span lang="en" data-lang="en">Source</span><span lang="it" data-lang="it">Fonte</span></span>
+            </p>
+            <ul role="list">
+              <li class="claim">
+                <h3>
+                  <span lang="en" data-lang="en">A payment is applied once.</span>
+                  <span lang="it" data-lang="it">Un pagamento viene eseguito una sola volta.</span>
+                </h3>
+                <p lang="en" data-lang="en">
+                  Every money operation carries a key the server recognises: retries, network
+                  errors and duplicate requests do not create a second charge. It held under
+                  24&nbsp;identical parallel requests on a real SQL Server.
+                </p>
+                <p lang="it" data-lang="it">
+                  Ogni operazione che muove denaro porta con sé una chiave che il server riconosce:
+                  nuovi tentativi, errori di rete e richieste doppie non creano un secondo addebito.
+                  Ha retto a 24&nbsp;richieste identiche in parallelo su un vero SQL Server.
+                </p>
+                <a
+                  class="claim__src"
+                  href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/adr/0009-idempotency-monetary-operations.md"
+                >
+                  <span lang="en" data-lang="en">Decision 0009</span>
+                  <span lang="it" data-lang="it">Decisione 0009</span>
+                </a>
+              </li>
+              <li class="claim">
+                <h3>
+                  <span lang="en" data-lang="en">The access token never reaches the browser.</span>
+                  <span lang="it" data-lang="it">Il token di accesso non arriva mai al browser.</span>
+                </h3>
+                <p lang="en" data-lang="en">
+                  A BFF keeps it in a session on the server; the browser gets a cookie that the
+                  page's scripts cannot read.
+                </p>
+                <p lang="it" data-lang="it">
+                  Un BFF lo tiene in una sessione sul server; il browser riceve un cookie che gli
+                  script della pagina non possono leggere.
+                </p>
+                <a class="claim__src" href="https://github.com/Gurgant/azurebank-v2/blob/main/SECURITY.md"
+                  >SECURITY.md</a
+                >
+              </li>
+              <li class="claim">
+                <h3>
+                  <span lang="en" data-lang="en">One PIN entry authorises one payment.</span>
+                  <span lang="it" data-lang="it">Un inserimento del PIN autorizza un solo pagamento.</span>
+                </h3>
+                <p lang="en" data-lang="en">
+                  Bound to that account, that amount and that payee, valid two minutes, usable
+                  once. Three wrong PINs lock the PIN for 15&nbsp;minutes.
+                </p>
+                <p lang="it" data-lang="it">
+                  Legato a quel conto, a quell'importo e a quel beneficiario, valido due minuti,
+                  utilizzabile una sola volta. Tre PIN sbagliati bloccano il PIN per
+                  15&nbsp;minuti.
+                </p>
+                <a
+                  class="claim__src"
+                  href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/adr/0042-a-transfer-authorisation-is-bound-and-spent-once.md"
+                >
+                  <span lang="en" data-lang="en">Decision 0042</span>
+                  <span lang="it" data-lang="it">Decisione 0042</span>
+                </a>
+              </li>
+              <li class="claim">
+                <h3>
+                  <span lang="en" data-lang="en">A security log that can be checked.</span>
+                  <span lang="it" data-lang="it">Un registro di sicurezza che si può verificare.</span>
+                </h3>
+                <p lang="en" data-lang="en">
+                  Append-only, each row chained to the one before by a hash, with its own
+                  verifier. What it cannot detect is documented.
+                </p>
+                <p lang="it" data-lang="it">
+                  Le righe si possono solo aggiungere, ognuna è legata alla precedente da un hash,
+                  e un programma apposito lo verifica. Ciò che non riesce a rilevare è documentato.
+                </p>
+                <a
+                  class="claim__src"
+                  href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/adr/0044-the-audit-trail-is-append-only-and-chained.md"
+                >
+                  <span lang="en" data-lang="en">Decision 0044</span>
+                  <span lang="it" data-lang="it">Decisione 0044</span>
+                </a>
+              </li>
             </ul>
-          </section>
-
-          <section>
-            <h2>Per approfondire</h2>
-            <p>Si parte dalla demo. Poi la pagina principale del repository e «How AzureBank
-              works». Con più tempo: le decisioni di progettazione, a partire da quelle sul
-              protocollo dei pagamenti. I documenti sono in inglese.</p>
-            <div class="links">
-              <div>
-                <a href="https://github.com/Gurgant/azurebank-v2" target="_blank" rel="noopener"
-                >Repository</a>
-                <small>Il codice e la presentazione del progetto</small>
-              </div>
-              <div>
-                <a
-                  href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/architecture/overview.md"
-                  target="_blank"
-                  rel="noopener"
-                  lang="en"
-                >How AzureBank works</a>
-                <small>Una richiesta seguita dall'inizio alla fine</small>
-              </div>
-              <div>
-                <a
-                  href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/adr/README.md"
-                  target="_blank"
-                  rel="noopener"
-                  lang="en"
-                >Decisions</a>
-                <small>Ogni decisione, con le alternative</small>
-              </div>
-              <div>
-                <a
-                  href="https://github.com/Gurgant/azurebank-v2/blob/main/SECURITY.md"
-                  target="_blank"
-                  rel="noopener"
-                  lang="en"
-                >Security</a>
-                <small>La sicurezza in un posto solo, compreso ciò che non è stato fatto</small>
-              </div>
-              <div>
-                <a
-                  href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/testing/try-the-demo.md"
-                  target="_blank"
-                  rel="noopener"
-                  lang="en"
-                >Try the demo</a>
-                <small>I percorsi da provare e i limiti che si possono incontrare</small>
-              </div>
-              <div>
-                <a
-                  href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/engineering-practices.md"
-                  target="_blank"
-                  rel="noopener"
-                  lang="en"
-                >Engineering practices</a>
-                <small>Come si lavora in questo repository</small>
-              </div>
-            </div>
-          </section>
+          </div>
         </div>
-      </main>
+      </section>
 
-      <footer>
-        <span lang="en" data-lang="en">A demo with made-up data, not a banking service.</span>
-        <span lang="it" data-lang="it">Demo con dati inventati: non è un servizio bancario.</span>
-      </footer>
-    </div>
+      <!-- ============ B. TRY IT IN THREE MINUTES ============ -->
+      <section class="block" aria-labelledby="try-title">
+        <div class="wrap">
+          <h2 id="try-title">
+            <span lang="en" data-lang="en">Try it in three minutes</span>
+            <span lang="it" data-lang="it">Provala in tre minuti</span>
+          </h2>
+
+          <ol class="steps" role="list">
+            <li class="step">
+              <div class="step__shot step__shot--one">
+                <img
+                  class="cap cap--a on-light"
+                  src="img/step-accounts.png"
+                  srcset="img/step-accounts-560.png 560w, img/step-accounts.png 812w"
+                  sizes="(min-width: 100em) 34rem, (min-width: 64em) 36vw, (min-width: 45em) 52vw, 114vw"
+                  width="812"
+                  height="520"
+                  loading="lazy"
+                  decoding="async"
+                  alt="The dashboard of a demo copy: 14,750.00 euros across Main Savings and Checking."
+                  data-alt-it="La dashboard di una copia della demo: 14.750,00 euro tra Main Savings e Checking."
+                />
+                <img
+                  class="cap cap--a on-dark"
+                  src="img/step-accounts-dark.png"
+                  srcset="img/step-accounts-dark-560.png 560w, img/step-accounts-dark.png 812w"
+                  sizes="(min-width: 100em) 34rem, (min-width: 64em) 36vw, (min-width: 45em) 52vw, 114vw"
+                  width="812"
+                  height="520"
+                  loading="lazy"
+                  decoding="async"
+                  alt="The dashboard of a demo copy, dark theme: 14,750.00 euros across Main Savings and Checking."
+                  data-alt-it="La dashboard di una copia della demo, tema scuro: 14.750,00 euro tra Main Savings e Checking."
+                />
+              </div>
+              <div class="step__body">
+                <span class="step__n" aria-hidden="true">1</span>
+                <p lang="en" data-lang="en">
+                  Open the demo and press <strong>“Try the demo”</strong>: you get a private copy
+                  that no other visitor sees, two accounts (Main Savings
+                  <span class="num">€12,450.00</span> and Checking <span class="num">€2,300.00</span>)
+                  and two months of history.
+                </p>
+                <p lang="it" data-lang="it">
+                  Apri la demo e premi <strong lang="en">«Try the demo»</strong>: ricevi una copia
+                  privata che nessun altro visitatore vede, due conti (Main Savings
+                  <span class="num">€12,450.00</span> e Checking <span class="num">€2,300.00</span>)
+                  e due mesi di movimenti.
+                </p>
+              </div>
+            </li>
+            <li class="step">
+              <div class="step__shot step__shot--two">
+                <img
+                  class="cap cap--a on-light"
+                  src="img/step-form.png"
+                  width="440"
+                  height="386"
+                  loading="lazy"
+                  decoding="async"
+                  alt="The transfer form: a verified contact, the amount and the button that leads to the review."
+                  data-alt-it="Il modulo del bonifico: un contatto verificato, l'importo e il pulsante che porta al riepilogo."
+                />
+                <img
+                  class="cap cap--a on-dark"
+                  src="img/step-form-dark.png"
+                  width="440"
+                  height="386"
+                  loading="lazy"
+                  decoding="async"
+                  alt="The transfer form, dark theme: a verified contact, the amount and the button that leads to the review."
+                  data-alt-it="Il modulo del bonifico, tema scuro: un contatto verificato, l'importo e il pulsante che porta al riepilogo."
+                />
+                <img
+                  class="cap cap--b on-light"
+                  src="img/step-pin.png"
+                  width="440"
+                  height="350"
+                  loading="lazy"
+                  decoding="async"
+                  alt="The confirmation step: six boxes for the PIN."
+                  data-alt-it="Il passo di conferma: sei caselle per il PIN."
+                />
+                <img
+                  class="cap cap--b on-dark"
+                  src="img/step-pin-dark.png"
+                  width="440"
+                  height="350"
+                  loading="lazy"
+                  decoding="async"
+                  alt="The confirmation step, dark theme: six boxes for the PIN."
+                  data-alt-it="Il passo di conferma, tema scuro: sei caselle per il PIN."
+                />
+              </div>
+              <div class="step__body">
+                <span class="step__n" aria-hidden="true">2</span>
+                <p lang="en" data-lang="en">
+                  Send money to a contact: type the handle, press <strong>“Verify”</strong>, enter
+                  an amount and confirm with the PIN <code class="pin">123456</code>, which the
+                  page shows.
+                </p>
+                <p lang="it" data-lang="it">
+                  Invia denaro a un contatto: scrivi il suo handle, premi
+                  <strong lang="en">«Verify»</strong>, inserisci un importo e conferma con il PIN
+                  <code class="pin">123456</code>, indicato nella pagina.
+                </p>
+              </div>
+            </li>
+            <li class="step">
+              <div class="step__shot step__shot--three">
+                <img
+                  class="cap cap--a on-light"
+                  src="img/step-history.png"
+                  srcset="img/step-history-560.png 560w, img/step-history.png 1000w"
+                  sizes="(min-width: 100em) 34rem, (min-width: 64em) 36vw, (min-width: 45em) 52vw, 114vw"
+                  width="1000"
+                  height="625"
+                  loading="lazy"
+                  decoding="async"
+                  alt="The history page: income, expenses and the list of movements."
+                  data-alt-it="La pagina dello storico: entrate, uscite e l'elenco dei movimenti."
+                />
+                <img
+                  class="cap cap--a on-dark"
+                  src="img/step-history-dark.png"
+                  srcset="img/step-history-dark-560.png 560w, img/step-history-dark.png 1000w"
+                  sizes="(min-width: 100em) 34rem, (min-width: 64em) 36vw, (min-width: 45em) 52vw, 114vw"
+                  width="1000"
+                  height="625"
+                  loading="lazy"
+                  decoding="async"
+                  alt="The history page, dark theme: income, expenses and the list of movements."
+                  data-alt-it="La pagina dello storico, tema scuro: entrate, uscite e l'elenco dei movimenti."
+                />
+                <img
+                  class="cap cap--b on-light"
+                  src="img/step-deposit.png"
+                  width="368"
+                  height="432"
+                  loading="lazy"
+                  decoding="async"
+                  alt="The receipt of a deposit of 250.00 euros."
+                  data-alt-it="La ricevuta di un deposito di 250,00 euro."
+                />
+                <img
+                  class="cap cap--b on-dark"
+                  src="img/step-deposit-dark.png"
+                  width="368"
+                  height="432"
+                  loading="lazy"
+                  decoding="async"
+                  alt="The receipt of a deposit of 250.00 euros, dark theme."
+                  data-alt-it="La ricevuta di un deposito di 250,00 euro, tema scuro."
+                />
+              </div>
+              <div class="step__body">
+                <span class="step__n" aria-hidden="true">3</span>
+                <p lang="en" data-lang="en">
+                  Try a deposit and a withdrawal, open the history, reveal the full account number
+                  with the PIN.
+                </p>
+                <p lang="it" data-lang="it">
+                  Prova un deposito e un prelievo, apri lo storico, fatti mostrare il numero di
+                  conto completo con il PIN.
+                </p>
+              </div>
+            </li>
+          </ol>
+
+          <div class="try__foot">
+            <p class="smallprint" lang="en" data-lang="en">
+              Invented money, no sign-up, each copy lasts 24&nbsp;hours, don't enter real personal
+              data.
+            </p>
+            <p class="smallprint" lang="it" data-lang="it">
+              Denaro inventato, nessuna registrazione, ogni copia dura 24&nbsp;ore: non inserire
+              dati personali veri. L'interfaccia della demo è in inglese.
+            </p>
+            <!-- A second way in, for a reader who has just read the steps. The script gives it
+                 the address and the same behaviour as the key of the first screen; without the
+                 script it is not shown. -->
+            <div class="try__open">
+              <p class="try__wake"><span data-wake-text></span> <span class="count" data-wake-count></span></p>
+              <a class="btn btn--line" data-door>
+                <span lang="en" data-lang="en">Open the live demo</span>
+                <span lang="it" data-lang="it">Apri la demo</span>
+              </a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ C. HOW IT IS BUILT ============ -->
+      <section class="block block--alt" aria-labelledby="built-title">
+        <div class="wrap">
+          <h2 id="built-title">
+            <span lang="en" data-lang="en">How it is built</span>
+            <span lang="it" data-lang="it">Com'è costruita</span>
+          </h2>
+
+          <!-- The path of a request: five stops, the line between the browser's side and the
+               server's, and four guarantees marked on the stop that keeps each one. -->
+          <div class="sheet route">
+            <div class="route__head">
+              <h3>
+                <span lang="en" data-lang="en">The path of a request</span>
+                <span lang="it" data-lang="it">Il percorso di una richiesta</span>
+              </h3>
+              <p lang="en" data-lang="en">Four guarantees, each linked to its proof.</p>
+              <p lang="it" data-lang="it">Quattro garanzie, ognuna collegata alla sua prova.</p>
+            </div>
+
+            <ol class="path" role="list">
+              <li class="node node--zone">
+                <p class="node__zone">
+                  <span lang="en" data-lang="en">Browser side</span>
+                  <span lang="it" data-lang="it">Lato browser</span>
+                </p>
+                <div class="node__lead">
+                  <p class="node__box">Browser</p>
+                  <span class="wire" aria-hidden="true"></span>
+                </div>
+                <p class="node__role" lang="en" data-lang="en">
+                  gets a cookie the page's scripts cannot read
+                </p>
+                <p class="node__role" lang="it" data-lang="it">
+                  riceve un cookie che gli script della pagina non possono leggere
+                </p>
+              </li>
+              <li class="node">
+                <div class="node__lead">
+                  <p class="node__box">
+                    <span lang="en" data-lang="en">React app</span>
+                    <span lang="it" data-lang="it">App React</span>
+                  </p>
+                  <span class="wire">
+                    <span class="vh">
+                      <span lang="en" data-lang="en">To the next stop goes:</span>
+                      <span lang="it" data-lang="it">Alla tappa successiva passa:</span>
+                    </span>
+                    <span class="wire__label">cookie</span>
+                  </span>
+                </div>
+                <p class="node__role">React 19 · TypeScript · Fluent UI</p>
+              </li>
+              <li class="node node--server node--core node--zone">
+                <p class="node__zone">
+                  <span lang="en" data-lang="en">Server side</span>
+                  <span lang="it" data-lang="it">Lato server</span>
+                </p>
+                <div class="node__lead">
+                  <p class="node__box">BFF</p>
+                  <span class="wire">
+                    <span class="vh">
+                      <span lang="en" data-lang="en">To the next stop goes:</span>
+                      <span lang="it" data-lang="it">Alla tappa successiva passa:</span>
+                    </span>
+                    <span class="wire__label">+ token</span>
+                  </span>
+                </div>
+                <p class="node__role" lang="en" data-lang="en">
+                  holds the session, adds the token on the server
+                </p>
+                <p class="node__role" lang="it" data-lang="it">
+                  tiene la sessione, aggiunge il token sul server
+                </p>
+                <ul class="node__flags" role="list">
+                  <li>
+                    <a class="flag" href="https://github.com/Gurgant/azurebank-v2/blob/main/SECURITY.md">
+                      <span class="flag__say">
+                        <span lang="en" data-lang="en">The token stays here</span>
+                        <span lang="it" data-lang="it">Il token resta qui</span>
+                      </span>
+                      <span class="flag__src">SECURITY.md</span>
+                    </a>
+                  </li>
+                </ul>
+              </li>
+              <li class="node node--server node--core">
+                <div class="node__lead">
+                  <p class="node__box">API</p>
+                  <span class="wire">
+                    <span class="vh">
+                      <span lang="en" data-lang="en">To the next stop, through:</span>
+                      <span lang="it" data-lang="it">Alla tappa successiva, attraverso:</span>
+                    </span>
+                    <span class="wire__label">EF Core</span>
+                  </span>
+                </div>
+                <p class="node__role" lang="en" data-lang="en">the money rules, the audit trail</p>
+                <p class="node__role" lang="it" data-lang="it">
+                  le regole sul denaro, il registro di controllo
+                </p>
+                <ul class="node__flags" role="list">
+                  <li>
+                    <a
+                      class="flag"
+                      href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/adr/0009-idempotency-monetary-operations.md"
+                    >
+                      <span class="flag__say">
+                        <span lang="en" data-lang="en">Applied once</span>
+                        <span lang="it" data-lang="it">Eseguito una sola volta</span>
+                      </span>
+                      <span class="flag__src">
+                        <span lang="en" data-lang="en">Decision 0009</span>
+                        <span lang="it" data-lang="it">Decisione 0009</span>
+                      </span>
+                    </a>
+                  </li>
+                  <li>
+                    <a
+                      class="flag"
+                      href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/adr/0042-a-transfer-authorisation-is-bound-and-spent-once.md"
+                    >
+                      <span class="flag__say">
+                        <span lang="en" data-lang="en">One PIN, one payment</span>
+                        <span lang="it" data-lang="it">Un PIN, un pagamento</span>
+                      </span>
+                      <span class="flag__src">
+                        <span lang="en" data-lang="en">Decision 0042</span>
+                        <span lang="it" data-lang="it">Decisione 0042</span>
+                      </span>
+                    </a>
+                  </li>
+                </ul>
+              </li>
+              <li class="node node--server">
+                <div class="node__lead">
+                  <p class="node__box">SQL Server</p>
+                </div>
+                <p class="node__role">Azure SQL Database</p>
+                <ul class="node__flags" role="list">
+                  <li>
+                    <a
+                      class="flag"
+                      href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/adr/0044-the-audit-trail-is-append-only-and-chained.md"
+                    >
+                      <span class="flag__say">
+                        <span lang="en" data-lang="en">Recorded and chained</span>
+                        <span lang="it" data-lang="it">Registrato e concatenato</span>
+                      </span>
+                      <span class="flag__src">
+                        <span lang="en" data-lang="en">Decision 0044</span>
+                        <span lang="it" data-lang="it">Decisione 0044</span>
+                      </span>
+                    </a>
+                  </li>
+                </ul>
+              </li>
+            </ol>
+          </div>
+
+          <div class="stack">
+            <h3 class="datalabel">
+              <span lang="en" data-lang="en">Stack</span>
+              <span lang="it" data-lang="it">Tecnologie</span>
+            </h3>
+            <ul role="list">
+              <li>.NET 10</li>
+              <li>ASP.NET Core</li>
+              <li>EF Core</li>
+              <li>SQL Server</li>
+              <li>React 19</li>
+              <li>TypeScript</li>
+              <li>Fluent UI</li>
+              <li>GitHub Actions</li>
+              <li>CodeQL</li>
+              <li>Azure Container Apps</li>
+              <li>Azure SQL Database</li>
+              <li>Bicep</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ D. HOW I WORK ============ -->
+      <section class="block" aria-labelledby="work-title">
+        <div class="wrap work">
+          <div class="work__say">
+            <h2 id="work-title">
+              <span lang="en" data-lang="en">How I work</span>
+              <span lang="it" data-lang="it">Come lavoro</span>
+            </h2>
+            <p class="work__lead" lang="en" data-lang="en">
+              <strong>Human-led, multi-agent-assisted development.</strong> I decide what is built,
+              approve the approach and merge every pull request myself; AI coding agents build under
+              written rules and automated gates.
+            </p>
+            <p class="work__lead" lang="it" data-lang="it">
+              <strong>Sviluppo guidato da una persona, con l'aiuto di più agenti AI.</strong> Decido
+              io che cosa si costruisce, approvo l'approccio e unisco di persona ogni pull request;
+              gli agenti AI scrivono il codice seguendo regole scritte e controlli automatici.
+            </p>
+          </div>
+
+          <ul class="tally" role="list">
+            <li>
+              <span class="fig" lang="en" data-lang="en"><b>248</b><span>pull requests, each merged by me</span></span>
+              <span class="fig" lang="it" data-lang="it"><b>248</b><span>pull request, ognuna unita da me</span></span>
+            </li>
+            <li>
+              <span class="fig" lang="en" data-lang="en"><b>9</b><span>required checks before a merge</span></span>
+              <span class="fig" lang="it" data-lang="it"><b>9</b><span>controlli obbligatori prima di un merge</span></span>
+            </li>
+            <li>
+              <span class="fig" lang="en" data-lang="en"><b>0</b><span>merges made by an agent</span></span>
+              <span class="fig" lang="it" data-lang="it"><b>0</b><span>merge fatti da un agente</span></span>
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- ============ E. KNOWN LIMITS, AND THE DOORS ============ -->
+      <section class="block block--alt" aria-labelledby="ends-title">
+        <div class="wrap">
+          <h2 id="ends-title">
+            <span lang="en" data-lang="en">Known limits, and the doors</span>
+            <span lang="it" data-lang="it">Limiti noti, e dove approfondire</span>
+          </h2>
+
+          <div class="ends">
+            <div>
+              <h3 class="datalabel">
+                <span lang="en" data-lang="en">Known limits</span>
+                <span lang="it" data-lang="it">Limiti noti</span>
+              </h3>
+              <ul class="limits" role="list" lang="en" data-lang="en">
+                <li>
+                  The first load after a quiet spell takes about 25&nbsp;seconds. Once awake, the app
+                  answers in under a second.
+                </li>
+                <li>It is a demo: invented data, one small instance, no availability guarantee.</li>
+                <li>
+                  The application's own interface is functional; its visual redesign is the next
+                  step.
+                </li>
+              </ul>
+              <ul class="limits" role="list" lang="it" data-lang="it">
+                <li>
+                  Il primo caricamento dopo una pausa richiede circa 25&nbsp;secondi. Una volta
+                  attiva, l'app risponde in meno di un secondo.
+                </li>
+                <li>
+                  È una demo: dati inventati, una sola piccola istanza, nessuna garanzia di
+                  disponibilità.
+                </li>
+                <li>
+                  L'interfaccia dell'applicazione è funzionale; il suo ridisegno grafico è il
+                  prossimo passo.
+                </li>
+              </ul>
+            </div>
+
+            <div>
+              <h3 class="datalabel">
+                <span lang="en" data-lang="en">The doors</span>
+                <span lang="it" data-lang="it">Per approfondire (in inglese)</span>
+              </h3>
+              <ul class="sheet doors" role="list">
+                <li>
+                  <a href="https://github.com/Gurgant/azurebank-v2/blob/main/SECURITY.md">
+                    <span>
+                      <span lang="en" data-lang="en">Security</span>
+                      <span lang="it" data-lang="it">Sicurezza</span>
+                    </span>
+                    <svg class="i" aria-hidden="true" focusable="false"><use href="#i-out" /></svg>
+                  </a>
+                </li>
+                <li>
+                  <a href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/adr/README.md">
+                    <span>
+                      <span lang="en" data-lang="en">Decisions</span>
+                      <span lang="it" data-lang="it">Decisioni</span>
+                    </span>
+                    <svg class="i" aria-hidden="true" focusable="false"><use href="#i-out" /></svg>
+                  </a>
+                </li>
+                <li>
+                  <a href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/engineering-practices.md">
+                    <span>
+                      <span lang="en" data-lang="en">Engineering practices</span>
+                      <span lang="it" data-lang="it">Pratiche di sviluppo</span>
+                    </span>
+                    <svg class="i" aria-hidden="true" focusable="false"><use href="#i-out" /></svg>
+                  </a>
+                </li>
+                <li>
+                  <a href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/testing/try-the-demo.md">
+                    <span>
+                      <span lang="en" data-lang="en">Try the demo, step by step</span>
+                      <span lang="it" data-lang="it">Provare la demo, passo per passo</span>
+                    </span>
+                    <svg class="i" aria-hidden="true" focusable="false"><use href="#i-out" /></svg>
+                  </a>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <div class="wrap foot__in">
+        <span class="brand brand--foot">
+          <img src="favicon.svg" width="28" height="28" alt="" />
+          <span>AzureBank</span>
+        </span>
+        <p class="foot__note">
+          <span lang="en" data-lang="en">A demo with invented data, not a banking service.</span>
+          <span lang="it" data-lang="it">Una demo con dati inventati: non è un servizio bancario.</span>
+        </p>
+        <div class="lang" role="group" aria-label="Language / Lingua">
+          <button type="button" class="lang__btn" data-set-lang="en" lang="en" aria-pressed="true">
+            <span aria-hidden="true">EN</span><span class="vh">English</span>
+          </button>
+          <button type="button" class="lang__btn" data-set-lang="it" lang="it" aria-pressed="false">
+            <span aria-hidden="true">IT</span><span class="vh">Italiano</span>
+          </button>
+        </div>
+        <p class="foot__date">
+          <span lang="en" data-lang="en">Updated <time datetime="2026-10-10">10 October 2026</time></span>
+          <span lang="it" data-lang="it">Aggiornata il <time datetime="2026-10-10">10 ottobre 2026</time></span>
+        </p>
+      </div>
+    </footer>
+
+    <!-- The door at the thumb. On a phone, once the key of the first screen has scrolled away,
+         the same key and the same status stand at the bottom of the screen. The script shows it
+         and gives it the address; without the script it never appears. -->
+    <aside class="dock" id="dock" aria-label="The live demo" data-label-it="La demo">
+      <div class="meter meter--edge" data-meter aria-hidden="true">
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+      </div>
+      <p class="dock__msg">
+        <span class="lamp" aria-hidden="true">
+          <svg class="i" aria-hidden="true" focusable="false"><use href="#i-check" /></svg>
+        </span>
+        <span><span data-wake-text></span> <span class="count" data-wake-count></span></span>
+      </p>
+      <a class="dock__key" data-door>
+        <span lang="en" data-lang="en">Open the live demo</span>
+        <span lang="it" data-lang="it">Apri la demo</span>
+        <svg class="i launch__go" aria-hidden="true" focusable="false"><use href="#i-arrow" /></svg>
+      </a>
+    </aside>
   </body>
 </html>
