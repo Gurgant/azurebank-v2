@@ -317,6 +317,8 @@ internal static class ConcurrencyRetry
     /// The money write calls this itself, after the reload, and the reload does not: an idempotent
     /// attempt reads its claim after reloading, and a write that committed and lost its
     /// acknowledgement must answer from that claim, also when the account closed in between.
+    /// <c>ClosureAfterALostAcknowledgementSqlServerTests</c> holds that order for a withdrawal and
+    /// for an external transfer.
     /// </para>
     /// <para>
     /// For the caller's own accounts only. The message names the account, and a payer must not

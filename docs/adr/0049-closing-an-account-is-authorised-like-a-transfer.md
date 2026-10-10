@@ -53,12 +53,18 @@ balance before primary, is code (`RefuseIfNotClosable`), held by a unit test and
   raced the closure ends in 422. An outer loop retries a `DbUpdateConcurrencyException`; without it
   eight DELETEs at once answered `500,500,500,500,500,200,500,500`.
 - **D9: A money write whose account closed while it ran is refused as a request on a closed
-  account**, and so is one whose account row is gone: 404 `ACCOUNT_NOT_FOUND` for the caller's own
-  account, with nothing written and nothing spent. A deposit, a withdrawal and both transfers look
-  at their accounts again after every reload, because a reload returns a closed row with a current
-  `RowVersion`. An external transfer whose payee account closed pays another open account of the
-  same payee, the primary first, then the oldest: the payer names a person, and the authorisation
-  binds that person, not an account. It answers 422 `RECIPIENT_NO_ACCOUNT` only when none is open.
+  account**: 404 `ACCOUNT_NOT_FOUND` for the caller's own account, with nothing written and nothing
+  spent. A deposit, a withdrawal and both transfers look at their accounts again after every
+  reload, because a reload returns a closed row with a current `RowVersion`. An account whose row
+  is gone gets the same answer: proven for a deposit, for the destination of an internal transfer
+  and for a payee. A withdrawal's account and a sender's pass through the same test with no proof
+  that removes their rows, because a row that holds money has ledger rows the store does not let
+  go. An external transfer whose payee account is closed pays another open account of the same
+  payee, at its first look and at every later one: the primary first, then the oldest. The payer
+  names a person, and the authorisation binds that person, not an account. An account that only
+  stopped being primary while the transfer ran is still paid. The transfer answers 422
+  `RECIPIENT_NO_ACCOUNT` only when none is open. A write that committed and lost its
+  acknowledgement answers from its idempotency claim, also when its account closed in between.
 
 ```sql
 SELECT s.Id, s.Operation, s.Status, s.CreatedAt, s.ConsumedAt, s.ConsumedByTransactionId,
@@ -128,7 +134,8 @@ too; `PIN_REQUIRED` (422), `INVALID_PIN` (401) and `PIN_LOCKED` (429) come only 
 - `AccountDeletionSqlServerTests` (D8), `AccountDeletionAuthorizationTests`, `AccountServiceTests`,
   `StepUpAuthorizationServiceTests` (the operation name in the hash).
 - D9, on SQL Server: `DepositIntoClosedAccountSqlServerTests`,
-  `TransferOrWithdrawalOnClosedAccountSqlServerTests`, `PayeeAccountClosedMeanwhileSqlServerTests`.
+  `TransferOrWithdrawalOnClosedAccountSqlServerTests`, `PayeeAccountClosedMeanwhileSqlServerTests`,
+  `ClosureAfterALostAcknowledgementSqlServerTests`.
 - The SPA: `stepUp.contract.test.ts`, `money.contract.test.ts` and `deleteAccount.spec.ts`.
 
 ## Related

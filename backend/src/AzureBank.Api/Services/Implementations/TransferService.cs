@@ -205,7 +205,6 @@ public class TransferService : ITransferService
 
         // Find recipient by AzureTag, among the users of the sender's copy
         var recipient = await _context.Users
-            .Include(u => u.Accounts)
             .FirstOrDefaultAsync(
                 u => u.AzureTag == recipientAzureTag.ToLower() && u.DemoCopyId == senderUser.DemoCopyId,
                 cancellationToken);
@@ -215,9 +214,9 @@ public class TransferService : ITransferService
             throw new NotFoundException("Recipient", recipientAzureTag);
         }
 
-        // Get recipient's primary account
-        var recipientAccount = recipient.Accounts.FirstOrDefault(a => a.IsPrimary && !a.IsDeleted)
-            ?? recipient.Accounts.FirstOrDefault(a => !a.IsDeleted);
+        // The account to pay: the first of the payee's open accounts, in the one order both looks use.
+        var recipientAccount =
+            (await OpenAccountsInPayingOrderAsync(recipient.Id, cancellationToken)).FirstOrDefault();
 
         if (recipientAccount == null)
         {
@@ -234,6 +233,25 @@ public class TransferService : ITransferService
     /// </summary>
     private static BusinessRuleException RecipientHasNoActiveAccount() =>
         new("Recipient does not have an active account.", ErrorCodes.RecipientNoAccount);
+
+    /// <summary>
+    /// A payee's open accounts in the order they are paid: the primary first, then the oldest, and
+    /// the lowest id between two opened at the same instant.
+    /// </summary>
+    /// <remarks>
+    /// ONE ORDER, WRITTEN ONCE. The first look of a transfer and the look after a reload both read
+    /// this list, so a payee with no open primary account is paid on the same account whichever
+    /// look chooses. The order is the store's: it and .NET do not sort a <c>uniqueidentifier</c>
+    /// the same way, so the list is never sorted again in memory. Closed accounts are left out by
+    /// the filter on every query of accounts.
+    /// </remarks>
+    private Task<List<Account>> OpenAccountsInPayingOrderAsync(Guid payeeId, CancellationToken cancellationToken) =>
+        _context.Accounts
+            .Where(a => a.UserId == payeeId)
+            .OrderByDescending(a => a.IsPrimary)
+            .ThenBy(a => a.CreatedAt)
+            .ThenBy(a => a.Id)
+            .ToListAsync(cancellationToken);
 
     /// <summary>
     /// Looks at an external transfer's two accounts again after a reload and returns the payee
@@ -253,16 +271,26 @@ public class TransferService : ITransferService
     /// <para>
     /// THE PAYEE IS A PERSON, NOT AN ACCOUNT. A payer names a handle, and which account receives is
     /// the server's choice, the primary first. So a payee account that closed under the transfer is
-    /// chosen again among the open accounts of the SAME user: the primary, or else the oldest.
-    /// The handle is not resolved a second time, because a handle can change hands and the second
-    /// look could find someone else. The step-up authorisation binds the recipient user and no
-    /// account of theirs, so nothing the payer authorised changes: same payee, same amount.
+    /// chosen again among the open accounts of the SAME user, in the order of
+    /// <see cref="OpenAccountsInPayingOrderAsync"/>. The step-up authorisation binds the recipient
+    /// user and no account of theirs, so nothing the payer authorised changes: same payee, same
+    /// amount.
     /// </para>
     /// <para>
-    /// The account chosen is read fresh from the store before it is returned. The first look
-    /// loaded every account of the payee, so the tracker can hold this one with the values and the
-    /// <c>RowVersion</c> of that moment. A choice that is itself closed or gone by the time it is
-    /// read is chosen again.
+    /// THE HANDLE IS NOT RESOLVED A SECOND TIME, by design: a handle can be renamed and taken by
+    /// someone else (ADR-0015), so a second look by handle could find another person than the one
+    /// the authorisation names. The choice is keyed on the user the first look resolved.
+    /// </para>
+    /// <para>
+    /// ONLY A CLOSED OR MISSING ACCOUNT IS REPLACED. An account that only stopped being the primary
+    /// one while the transfer ran is still paid: it is open and it is the payee's.
+    /// </para>
+    /// <para>
+    /// THE CHOICE IS BOUNDED BY WHAT IT READ. The open accounts are read once, and each is read
+    /// fresh from the store before it is taken: the first look loaded every account of the payee,
+    /// so the tracker can hold one with the values and the <c>RowVersion</c> of that moment. One
+    /// that is closed or gone by the time it is read fresh is passed over for the next in the list,
+    /// and a list with none left open is the 422. The turns are at most the accounts read.
     /// </para>
     /// <para>
     /// Never a <see cref="NotFoundException"/> for the payee's account: its message carries the
@@ -275,22 +303,22 @@ public class TransferService : ITransferService
     {
         ConcurrencyRetry.RefuseIfClosed(_context, fromAccount);
 
-        while (ConcurrencyRetry.IsClosedOrGone(_context, recipientAccount))
+        if (!ConcurrencyRetry.IsClosedOrGone(_context, recipientAccount))
         {
-            // Closed accounts are left out by the filter on every query of accounts. The id last,
-            // so two accounts opened at the same instant are always chosen in the same order.
-            recipientAccount = await _context.Accounts
-                .Where(a => a.UserId == recipient.Id)
-                .OrderByDescending(a => a.IsPrimary)
-                .ThenBy(a => a.CreatedAt)
-                .ThenBy(a => a.Id)
-                .FirstOrDefaultAsync(cancellationToken)
-                ?? throw RecipientHasNoActiveAccount();
-
-            await _context.Entry(recipientAccount).ReloadAsync(cancellationToken);
+            return recipientAccount;
         }
 
-        return recipientAccount;
+        foreach (var candidate in await OpenAccountsInPayingOrderAsync(recipient.Id, cancellationToken))
+        {
+            await _context.Entry(candidate).ReloadAsync(cancellationToken);
+
+            if (!ConcurrencyRetry.IsClosedOrGone(_context, candidate))
+            {
+                return candidate;
+            }
+        }
+
+        throw RecipientHasNoActiveAccount();
     }
 
     /// <inheritdoc />
@@ -439,6 +467,10 @@ public class TransferService : ITransferService
               the API closes only an empty account, so a sender's account that closed under this
               transfer comes back with nothing in it, and the funds check would answer 422
               INSUFFICIENT_FUNDS for an account that answers 404 to every other request.
+
+              THIS PLACE HOLDS THE SENDER'S ACCOUNT: it is what answers that 404 before the funds
+              check. For the payee's account the look after the preparation, inside the attempt, is
+              the one that matters; here the same choice is only made a moment earlier.
             */
             recipientAccount = await RefuseOrChooseThePayeeAccountAgainAsync(
                 fromAccount, recipient, recipientAccount, cancellationToken);
@@ -466,10 +498,15 @@ public class TransferService : ITransferService
                       included. An account that closes between the first look and this reload loses
                       no save and goes round no retry: it is simply here, closed, with a current
                       RowVersion, and the transfer below would commit on it at the first attempt.
-                      After the preparation, not before it: a transfer that committed and lost its
-                      acknowledgement is answered from its claim, also when an account closed in
-                      between. TransferOrWithdrawalOnClosedAccountSqlServerTests holds both places,
-                      and PayeeAccountClosedMeanwhileSqlServerTests the payee paid on another account.
+                      After the preparation, and not inside it between its reload and its read of
+                      the claim: a transfer that committed and lost its acknowledgement is answered
+                      from its claim, also when an account closed in between
+                      (ClosureAfterALostAcknowledgementSqlServerTests).
+
+                      THIS PLACE HOLDS THE PAYEE'S ACCOUNT, and the sender's when it closes before
+                      the first reload. TransferOrWithdrawalOnClosedAccountSqlServerTests holds the
+                      refusals, and PayeeAccountClosedMeanwhileSqlServerTests the payee paid on
+                      another account.
                     */
                     recipientAccount = await RefuseOrChooseThePayeeAccountAgainAsync(
                         fromAccount, recipient, recipientAccount, ct);

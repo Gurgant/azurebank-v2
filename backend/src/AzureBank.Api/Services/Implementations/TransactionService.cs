@@ -313,9 +313,11 @@ public class TransactionService : ITransactionService
                       closed since the ownership check is here as an ordinary row with IsDeleted
                       set, and the guard below would let a withdrawal out of it.
 
-                      AFTER the preparation, not before it: a withdrawal that committed and lost its
-                      acknowledgement is answered from its claim, also when the account closed in
-                      between. TransferOrWithdrawalOnClosedAccountSqlServerTests holds the refusal.
+                      AFTER the preparation, and not inside it between its reload and its read of
+                      the claim: a withdrawal that committed and lost its acknowledgement is
+                      answered from its claim, also when the account closed in between.
+                      TransferOrWithdrawalOnClosedAccountSqlServerTests holds the refusal, and
+                      ClosureAfterALostAcknowledgementSqlServerTests the answer from the claim.
                     */
                     ConcurrencyRetry.RefuseIfClosed(_context, account);
 
