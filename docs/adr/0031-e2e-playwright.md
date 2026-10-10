@@ -1,170 +1,81 @@
 # ADR-0031: The app in a real browser, against the real stack
 
-**Status**: Accepted. Phase 3 of the test-layer plan opened in ADR-0029 and continued in ADR-0030.
-
-**Date**: 2026-08-04
-
-**Decision Makers**: Vladislav Aleshaev
-
----
+**Status:** Accepted · **Date:** 2026-08-04 · **Amended:** 2026-09-04 (ADR-0041), 2026-09-11 and
+2026-09-15 (decision 1, ADR-0054), 2026-10-05 (ADR-0063) · **Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
-Before this ADR there were three layers. The unit suite (519 tests) ran React against MSW. The
-contract suite (ADR-0029) read the raw wire from both the mock and the real backend. The integration
-suite (ADR-0030) drove the app's own data layer — real store, real `apiSlice`, real Zod — against the
-real backend.
-
-None of them rendered a page. ADR-0030 said so in as many words under "What is NOT covered": *no
-React*. Two consequences followed, and both are the kind of defect a user notices first:
-
-- **A correct response could still be rendered wrongly**, or not at all. Nothing below this layer
-  would have seen it.
-- **The step-up modal was not tested at all.** ADR-0030's harness deliberately STANDS IN for
-  `<StepUpModal/>`, because the modal is the one genuinely visual piece of the flow. So the protocol
-  was proven and the component was not.
+Three test layers sit below this one. The unit suite runs React against MSW, the contract suite
+(ADR-0029) reads the raw wire from the mock and from the real backend, and the integration suite
+(ADR-0030) drives the app's own data layer against the real backend with no React. None of them
+renders a page: a correct response can be rendered wrongly or not at all, and the step-up modal,
+which the integration harness stands in for, is never rendered against the real backend.
 
 ## Decision
 
-**1. Playwright, driving the dev topology unchanged.** vite on 5173 proxies `/api` and `/bff` to the
-BFF on 5000, which proxies to the API on 7215 over SQL Server LocalDB — exactly what a developer's
-browser does. Playwright owns the vite server (`webServer`) and does NOT own the backend.
-*(Changed for CI on 2026-09-11 by
-[ADR-0054](0054-the-bff-serves-the-built-spa-under-a-csp-measured-against-it.md): the real-stack
-job runs the suite against the build the BFF serves, under its real CSP, with `E2E_BASE_URL` set
-and no vite. Locally this topology is still the default.)*
-*(2026-10-05, [ADR-0063](0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md): the
-public demo has a run of its own, `npm run test:e2e:demo` (`frontend/playwright.demo.config.ts`,
-the specs in `frontend/e2e-demo/`), and that run does own part of the backend, for one step. On
-the compose stack with the demo on, it restarts the BFF's container and then the API's with
-`docker restart`, to show that the copy a browser keeps still signs in once every session is
-gone. It is started by hand and is part of no other run and of no CI job. The run this record
-decides, `npm run test:e2e`, still owns none of the backend.)*
+1. **Playwright drives the dev topology unchanged**: vite on 5173 proxies `/api` and `/bff` to the
+   BFF on 5000, which proxies to the API on 7215 over SQL Server, because that is what a
+   developer's browser talks to. Playwright owns the vite server and none of the backend. In CI,
+   with `E2E_BASE_URL` set, it drives the build the BFF serves under its real CSP (ADR-0054).
+2. **One sign-in per run, reused through `storageState`**, because the BFF allows 10 auth requests
+   per 60 s per IP and a suite that signed in per test would rate-limit itself. The saved state
+   holds a live session, so it is gitignored and made again on every run.
+3. **Serial, `workers: 1`**, for three reasons, each sufficient: the auth budget; one seeded
+   account, so a balance read would race a deposit; and step-up elevation is server-side session
+   state, so one test elevating changes what a concurrent test sees.
+4. **No retries**, because a retry hides the flakiness this layer is most likely to introduce
+   (portals, animation, refetch on invalidation). A spec that needs a retry is a finding.
+5. **`npm run dev`, never `dev:mock`**, because a run against the mock must not pass: the mock knows
+   `demo@azurebank.dev` only, so the real fixture's sign-in gets `401 INVALID_CREDENTIALS` in setup.
+6. **The setup project fails, and does not skip, when the backend is down**, as
+   `src/integration/setup.ts` does, because a skipped suite reports success without having asked.
+7. **Locators come from the page's accessibility tree, never from reading the source**, because
+   the rendered names are not the ones the source suggests: the label is "Email address", and
+   `getByLabel(/password/i)` also matches the "Show password" toggle.
 
-**2. One login per run, reused via `storageState`.** Not an optimisation: the BFF allows 10 auth
-requests per 60s per IP, so a suite that signed in per test would rate-limit itself into red before
-testing anything. The saved state is gitignored and regenerated every run — it holds a live session,
-and the dev session is 10 minutes' inactivity / 20 absolute, so it is perishable by design.
+## Rejected
 
-**3. Serial, `workers: 1`.** Three independent reasons, each sufficient: the auth budget above; one
-seeded account, so a balance read would race a deposit; and step-up elevation is server-side session
-state, so one test elevating changes what a concurrent test sees.
-
-**4. No retries.** A retry would hide exactly the flakiness this layer is most likely to introduce
-(portals, animation, refetch-on-invalidate). A suite that is green only on the second attempt is the
-"green and wrong" state the whole strategy exists to avoid. If a spec needs a retry, that is a
-finding.
-
-**5. `npm run dev`, never `dev:mock` — and the suite proves it.** The mock validates credentials
-against `demo@azurebank.dev`, so signing in with the real fixture returns `401 INVALID_CREDENTIALS`
-there and `200` here. Pointing this suite at the mock therefore fails in the setup project rather
-than quietly testing the mock for the rest of the run.
-
-**6. The setup project FAILS rather than skips when the backend is down**, mirroring
-`src/integration/setup.ts`. A skipped suite reports success without having asked anything.
-
-**7. Locators come from the page's own accessibility snapshot, never from reading source.** Every
-name in these specs was measured off the rendered tree.
+- Rejected: an assertion, after the redirect settles, that the protected text has count 0, because
+  it passes against a guard that renders its children while the boot probe is in flight.
+- Rejected: the URL as proof of a session, because an address does not prove the cookie was set:
+  the setup project also waits for the `Main navigation` landmark, shown to a signed-in user only.
+- Rejected: `"DOM"` added to `tsconfig.node.json` in place of a project for the specs, because it
+  hands `vite.config.ts` browser globals it cannot use at run time.
 
 ## Consequences
 
-**Seven tests: the guard, the signed-in shell, a deposit end to end, and three on step-up.** The
-step-up ones are the point of the layer — a real 403 from the real BFF, the real modal, six real
-digits, a real replay.
+- The step-up modal is exercised whole: a real 403 from the real BFF, the real modal, six real
+  digits (the sixth is the submit), a real replay.
+- A stale balance fails here and in no lower layer: with `invalidatesTags` removed from the deposit
+  endpoint the money moves in SQL, the dashboard keeps the old figure and the deposit spec fails.
+- That no protected content is shown without a session is held by a detector: a `MutationObserver`
+  installed through `addInitScript`, before any page script, latches the moment the text appears.
+  The signed-in test is its positive control.
+- `e2e/` and `playwright.config.ts` are type-checked by a project of their own, `tsconfig.e2e.json`,
+  in `npm run build`, because Playwright transpiles specs without checking types. The callbacks of
+  `addInitScript` and `evaluate` run inside the page, so the specs need the DOM types as well.
+- Suite order is a correctness property, because elevation cannot be undone: `SetPinVerified` is the
+  only mutator and the level drops only when `PinValidityMinutes` pass (10 in development, 5 in the
+  base configuration). In `e2e/stepUp.spec.ts` cancel runs before verify, and nothing that elevates
+  sorts ahead of that file: only `/full-number` is gated since ADR-0041, and a transfer carries its
+  authorisation in-band (ADR-0042). Each run starts at level 1: the setup project signs in fresh.
+- In CI the BFF runs with `--RateLimiting:AuthPermitLimit=1000`, because the auth budget is per IP
+  and not per process; the workflow marks it as environmental, not a weakened assertion.
+- Not covered: a transfer or a withdrawal completed through the page against the real stack:
+  `e2e/wentThrough.spec.ts` drives both to the send with a real PIN, and `page.route` answers the
+  send in the browser, so no money moves. The demo's own run, `npm run test:e2e:demo`
+  (ADR-0063), sends one transfer and restarts two containers; it is started by hand, in no CI job.
+- Not covered: Firefox and WebKit (the one browser project is Chromium), and session expiry in
+  the UI, which needs a clock the suite controls.
+- Not covered: a clean room: each run deposits €1.00 into the shared dev database, and every
+  assertion is relative to a figure read moments earlier.
 
-**Both claims were falsified before being trusted.** Removing `invalidatesTags` from the deposit
-endpoint left the money moved in SQL (€50,027) and the dashboard showing the old figure (€50,026) —
-the spec caught a stale balance no lower layer can see. Forcing `baseQueryWithStepUp` to skip its
-interceptor made the modal never appear, and the step-up specs went red.
+## Verified by
 
-**Four things the rendered app does that source-reading would have got wrong**, each found by
-running:
+- `npm run test:e2e` in `frontend/`: `playwright.config.ts` and the specs in `e2e/`, among them
+  `auth.setup.ts`, `auth.spec.ts`, `deposit.spec.ts` and `stepUp.spec.ts`.
+- `npm run build`, which type-checks the specs through `tsconfig.e2e.json`.
 
-| Assumption | What the app actually does |
-|---|---|
-| Label is "Email" | It is **"Email address"** |
-| `getByLabel(/password/i)` is unambiguous | It also matches the **"Show password"** toggle |
-| Six digits then click "Verify" | The **sixth digit IS the submit** — `PinInput` fires `onComplete`, which `StepUpModal` wires to `verify`; the button is gone by the time you look for it |
-| The deposit dialog closes on success | It becomes a **"Deposit Complete" receipt**, modal, with the page behind it inert |
+## Related
 
-Also measured: the account number is masked with **bullets** in the UI (`AB-••••-••••-01`) while the
-API sends asterisks — the component substitutes. And the deposit submit button **renames itself** to
-"Deposit €1.00" once the amount is valid, which is a real anti-fat-finger property and is now
-pinned.
-
-**"No protected content leaked" needed a detector, not an assertion after the fact.** The first
-version checked `getByText(/available balance/i)` had count 0 AFTER the redirect settled, under a
-comment claiming the content "must never have rendered, not merely be gone by now" — a stronger
-property than the code could possibly check. Measured by mutating `ProtectedRoute` to render its
-children while the boot probe is in flight, which is a genuine flash: **the old assertion passed**.
-It now installs a `MutationObserver` via `addInitScript`, before any page script runs, and latches a
-boolean the instant the text appears; against the same mutant it fails. The signed-in test doubles as
-the POSITIVE CONTROL — the same detector on a page that really does render the balance must come
-back true, otherwise "nothing was seen" would be a statement about a broken observer rather than
-about the guard.
-
-**A URL is not a session, either.** The setup project asserted
-`/\/(dashboard)?$|\/dashboard/`, whose left branch matches a bare `/`. It now requires `/dashboard`
-and, more to the point, waits for the `Main navigation` landmark — `ProtectedShell` renders that only
-for an authenticated user, and it appears before any data resolves.
-
-**A gap closed on the way past: `e2e/` and `playwright.config.ts` were typechecked by nothing.**
-`tsc -b` covered only `src` and `vite.config.ts`, and Playwright transpiles specs without checking
-types, so a bad locator signature would have surfaced at runtime or not at all. They now have their
-OWN project, `tsconfig.e2e.json`, and a deliberate type error was confirmed to fail `npm run build`.
-
-The separate project rather than a line added to `tsconfig.node.json` is itself a measured decision:
-the E2E suite is the only code here that is both node and browser, because `addInitScript` and
-`evaluate` callbacks are serialised and run inside the page, so they legitimately reference `window`
-and `MutationObserver`. Adding `"DOM"` to the node project would have been one line and would have
-handed `vite.config.ts` browser globals it cannot use at runtime. The gate caught this the moment the
-observer was written — which is the gate doing exactly what it was added for.
-
-**Elevation is sticky and cannot be undone, which makes suite ORDER a correctness property.**
-`SetPinVerified` (`SessionService.cs:103`) is the only mutator; the level drops only when it expires
-on its own after `PinValidityMinutes` — 10 in dev, 5 in the base config. There is no de-elevation
-endpoint. Three consequences, all now written down next to the specs: cancel runs before verify
-within the step-up file; nothing that elevates may sort ahead of that file across the suite (~~only
-`/api/transfers`, `/api/transfers/internal` and `/full-number` are gated~~ only `/full-number` is
-gated since ADR-0041 — struck 2026-09-04, note below — and no other spec touches it; a future
-transfer spec elevates nothing); and each RUN is safe regardless, because the setup project
-signs in fresh and a new session starts at level 1, so elevation never leaks between runs. The first
-step-up assertion carries that explanation in its failure message, because otherwise the symptom is
-"modal not found", which reads like a broken selector.
-
-*(Correction 2026-09-04: "only `/api/transfers`, `/api/transfers/internal` and `/full-number` are
-gated" was true on 2026-08-04. Since ADR-0041 (dd84179, 2026-08-13) only `/full-number` is; a
-transfer carries its authorisation in-band (ADR-0042) and elevates nothing, so a future transfer
-spec would NOT disturb the ordering — `e2e/stepUp.spec.ts` already says so in its header.)*
-
-**React 19 renders correctly under headless Chromium.** Worth recording because a known trap in this
-project is a HIDDEN tab never firing `requestAnimationFrame`, which freezes React 19 mid-update.
-Playwright's browser does not have that problem; the earlier finding is specific to a backgrounded
-tab driven over CDP.
-
-**What is NOT covered.** An honest floor:
-
-- **Only Chromium.** No Firefox or WebKit project, and no mobile viewport — the responsive work has
-  its own audit (U8) and belongs there.
-- **Transfers and withdrawals**, for the same reason as ADR-0030: the dev database seeds one account
-  and one user, so both need a counterparty that does not exist.
-  *(2026-10-05, [ADR-0063](0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md): the
-  demo's own run, `npm run test:e2e:demo`, sends one transfer through the stack: one euro from
-  the owner of a copy it claimed to that copy's first contact, with the PIN the page prints. A
-  demo copy comes with two contacts to pay, which is the counterparty this line says is missing.
-  Measured that day on the compose stack with the demo on: `POST /api/transfers/authorizations`
-  201, `POST /api/transfers` 201, and the page said "Transfer Complete". That run is not this
-  record's suite and no CI job runs it.)*
-- **Session expiry in the UI** — the warning dialog and the forced sign-out. Reaching it means
-  waiting out a 10-minute inactivity window; it needs a clock the suite can control, which is its
-  own piece of work.
-- **Money still accumulates.** Each run deposits €1.00 into the shared dev database. Every assertion
-  is relative to a figure read moments earlier, so nothing depends on a fixed starting balance, but
-  it is not a clean-room. A database the suite owns belongs with Phase 4.
-- ~~**Not wired into CI.** Phase 4. It needs a backend in the runner, and the auth budget is per IP
-  rather than per process, so concurrent jobs would steal each other's quota.~~ *(struck 2026-09-15,
-  in the same PR as the note under §1 — a review caught the two paragraphs contradicting each other:
-  the real-stack CI job runs the suite against the build the BFF serves, with the backend in the
-  runner and `E2E_BASE_URL` set (ADR-0054); the auth-budget point is met by starting that BFF with
-  `--RateLimiting:AuthPermitLimit=1000`, which the workflow marks as environmental, not a weakened
-  assertion.)*
+ADR-0029, ADR-0030, ADR-0032, ADR-0041, ADR-0042, ADR-0054, ADR-0063.

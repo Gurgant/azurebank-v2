@@ -1,203 +1,53 @@
 # ADR-0006: Mapperly Object Mapping
 
-**Status**: Accepted
-
-**Date**: 2026-01-11
-
-**Decision Makers**: Vladislav Aleshaev
-
----
+**Status:** Accepted · **Date:** 2026-01-11 · **Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
-The application needs to map between:
-- Domain entities and DTOs (response objects)
-- Request DTOs and entities (for creation)
-- Internal service objects and external contracts
-
-Manual mapping is error-prone, verbose, and maintenance-heavy.
-
-## Decision Drivers
-
-- **Performance**: Mapping should not impact API latency
-- **Type Safety**: Compile-time checking of mappings
-- **Maintainability**: Easy to update when models change
-- **Debugging**: Ability to inspect generated mapping code
-- **Simplicity**: Minimal configuration required
-
-## Considered Options
-
-1. **Mapperly**: Source generator-based mapper
-2. **AutoMapper**: Reflection-based convention mapper
-3. **Mapster**: Fast reflection-based mapper
-4. **Manual Mapping**: Hand-written mapping code
+The API maps domain entities to response DTOs, request DTOs to entities, and internal service
+objects to external contracts. Hand-written mapping is verbose and error-prone, and it has to be
+kept up as the models change. The mapping must not add to the API's latency, must be checked at
+compile time, must be open to a debugger, and must need little configuration.
 
 ## Decision
 
-Use **Mapperly** (`Riok.Mapperly` v4.1.1) for object mapping via source generators.
+1. **Object mapping is generated at compile time by Mapperly (`Riok.Mapperly`), a source
+   generator**, because it emits plain C# with no runtime reflection and no expression compilation:
+   a mapping costs what hand-written code costs, a mapping that cannot be generated is a build
+   error, and the generated code can be stepped through. It works with Native AOT and trimming.
+2. **A mapper is a partial class marked `[Mapper]` in `AzureBank.Api.Mappers`, whose partial methods
+   Mapperly implements, and a property that needs a rule gets an attribute (`[MapProperty]`)**,
+   because that is all the configuration the generator needs. There are three: `AccountMapper`
+   (`Account` to `AccountResponse`), `TransactionMapper` (`Transaction` to `TransactionResponse`)
+   and `UserMapper` (`ApplicationUser` to `UserResponse`).
 
-```csharp
-[Mapper]
-public static partial class AccountMapper
-{
-    public static partial AccountResponse ToResponse(this Account account);
-    public static partial IEnumerable<AccountResponse> ToResponse(this IEnumerable<Account> accounts);
-}
-```
+## Rejected
 
-## Rationale
-
-### Why Mapperly?
-
-1. **Zero Runtime Overhead**: Generates plain C# code at compile time
-2. **AOT Compatible**: Works with Native AOT and trimming
-3. **Compile-Time Errors**: Mapping issues caught during build
-4. **Debuggable**: Can step through generated mapping code
-5. **No Reflection**: No runtime reflection or expression compilation
-
-### Performance Comparison
-
-| Mapper | Technique | Relative Performance |
-|--------|-----------|---------------------|
-| Manual | Hand-written | 1.0x (baseline) |
-| Mapperly | Source Gen | 1.0x |
-| Mapster | Expression | ~1.5x slower |
-| AutoMapper | Reflection | ~3-5x slower |
-
-*Based on benchmark data from Mapperly documentation*
-
-### Why Not AutoMapper?
-
-AutoMapper is the most popular .NET mapper, but:
-
-1. **Runtime Reflection**: Performance overhead on each map
-2. **Magic Strings**: Convention-based, harder to refactor
-3. **Runtime Errors**: Configuration issues only found at runtime
-4. **Complex Configuration**: Profile-based setup adds complexity
-5. **Not AOT Ready**: Incompatible with Native AOT
-
-### Feature Comparison
-
-| Feature | Mapperly | AutoMapper | Mapster | Manual |
-|---------|----------|------------|---------|--------|
-| Performance | ✅ Best | ⚠️ Slower | ⚠️ Medium | ✅ Best |
-| Type Safety | ✅ Compile-time | ❌ Runtime | ⚠️ Partial | ✅ Yes |
-| AOT Compatible | ✅ Yes | ❌ No | ❌ No | ✅ Yes |
-| Debuggable | ✅ Yes | ❌ No | ❌ No | ✅ Yes |
-| Configuration | ✅ Minimal | ❌ Profiles | ⚠️ Medium | N/A |
-| Auto-mapping | ✅ Yes | ✅ Yes | ✅ Yes | ❌ No |
+- Rejected: AutoMapper, because it maps by reflection at runtime (about 3 to 5 times slower than
+  hand-written code in the benchmarks of [Mapperly's documentation](https://mapperly.riok.app/)),
+  its conventions are harder to refactor, a configuration mistake shows only at runtime, its
+  profiles add configuration, and it is not compatible with Native AOT.
+- Rejected: Mapster's runtime mapping (`Adapt`), because it is about 1.7 times slower than Mapperly
+  in the same benchmarks, a mapping mistake shows only at runtime, the expression trees it compiles
+  are only interpreted under Native AOT, and stepping into a mapping takes an extra package
+  (`ExpressionDebugger`). `Mapster.Tool`, which generates the mappers as C# files, is not evaluated.
+- Rejected: manual mapping, because nothing is mapped automatically: it is as fast and as safe, and
+  it is the verbose, maintenance-heavy code this decision exists to avoid.
 
 ## Consequences
 
-### Positive
+- A mapping runs as plain generated C#, with no reflection at runtime, and is validated when the
+  solution builds. The generated code is readable in the IDE, under the `obj` folder.
+- It costs a rebuild to see a mapping change, and it is less dynamic than AutoMapper: everything is
+  decided at compile time.
+- Mapperly needs C# 9 and .NET 5 or later, which .NET 10 meets.
+- Not covered: Mapperly's community is smaller than AutoMapper's.
 
-- Zero runtime performance cost
-- Compile-time validation of all mappings
-- Generated code is readable and debuggable
-- Native AOT and trimming compatible
-- Minimal configuration required
+## Verified by
 
-### Negative
-
-- Requires C# 9+ / .NET 5+ (not an issue for .NET 10)
-- Less dynamic than AutoMapper (compile-time only)
-- Smaller community than AutoMapper
-- Must rebuild to see mapping changes
-
-### Neutral
-
-- Generated code visible in IDE (obj folder)
-- Partial class/method pattern
-- Attribute-based configuration
-
-## Implementation
-
-### Mapper Definition
-
-```csharp
-// Mappers/AccountMapper.cs
-using Riok.Mapperly.Abstractions;
-
-namespace AzureBank.Api.Mappers;
-
-[Mapper]
-public static partial class AccountMapper
-{
-    public static partial AccountResponse ToResponse(this Account account);
-
-    public static partial IEnumerable<AccountResponse> ToResponse(
-        this IEnumerable<Account> accounts);
-
-    [MapProperty(nameof(Account.AccountNumber), nameof(AccountResponse.AccountNumber))]
-    private static partial AccountResponse MapAccount(Account account);
-}
-```
-
-### Generated Code (Conceptual)
-
-```csharp
-// Generated by Mapperly
-public static partial class AccountMapper
-{
-    public static partial AccountResponse ToResponse(this Account account)
-    {
-        return new AccountResponse
-        {
-            Id = account.Id,
-            AccountNumber = account.AccountNumber,
-            Name = account.Name,
-            Type = account.Type,
-            Balance = account.Balance,
-            IsPrimary = account.IsPrimary,
-            CreatedAt = account.CreatedAt
-        };
-    }
-}
-```
-
-### Usage in Services
-
-```csharp
-public class AccountService : IAccountService
-{
-    public async Task<IEnumerable<AccountResponse>> GetAccountsAsync(Guid userId)
-    {
-        var accounts = await _context.Accounts
-            .Where(a => a.UserId == userId)
-            .ToListAsync();
-
-        return accounts.ToResponse(); // Extension method from Mapperly
-    }
-}
-```
-
-### Mappers in Solution
-
-| Mapper | Source | Target |
-|--------|--------|--------|
-| `AccountMapper` | `Account` | `AccountResponse` |
-| `TransactionMapper` | `Transaction` | `TransactionResponse` |
-| `UserMapper` | `ApplicationUser` | `UserResponse` |
-
-## Validation
-
-Success criteria:
-- All entity-to-DTO mappings defined
-- No unmapped properties warnings
-- Build succeeds without mapping errors
-- API responses match expected schema
-- Performance benchmarks match manual mapping
+- `dotnet build`: a mapping Mapperly cannot generate fails the build, and an unmapped property is
+  reported as a warning.
 
 ## Related
 
-- [ADR-0007: FluentValidation](./0007-fluentvalidation.md)
-- [AzureBank.Shared README](../../backend/src/AzureBank.Shared/README.md)
-
----
-
-## References
-
-- [Mapperly Documentation](https://mapperly.riok.app/)
-- [Mapperly GitHub](https://github.com/riok/mapperly)
-- [Source Generators Overview](https://learn.microsoft.com/dotnet/csharp/roslyn-sdk/source-generators-overview)
-- [AutoMapper Migration Guide](https://mapperly.riok.app/docs/migration/automapper/)
+ADR-0007.
