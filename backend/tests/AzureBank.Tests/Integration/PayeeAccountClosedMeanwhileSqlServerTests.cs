@@ -320,13 +320,16 @@ public sealed class PayeeAccountClosedMeanwhileSqlServerTests(ITestOutputHelper 
         var key = Guid.NewGuid();
         var response = await TransferAsync(
             client, sender, sender.PrimaryAccountId, payee.AzureTag, authorizationId, key);
+
+        // Read now: the reads of the observation below go through the same interceptor.
+        var secondSent = second?.Seen;
         var seen = await ObserveAsync(
             response, sender, SecurityEvents.MoneyTransferred, authorizationId, key, race, accounts);
         if (second is not null)
         {
             _output.WriteLine(
                 $"second closure: Fired: {second.Fired}, OutOfBandRowsAffected: {second.OutOfBandRowsAffected}, "
-                + $"{second.Seen}");
+                + $"{secondSent}");
         }
 
         var again = await TransferAsync(
