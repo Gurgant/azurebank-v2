@@ -11,16 +11,18 @@
  *    fetch could read nothing from it; an image needs none. crossOrigin is never set: it would
  *    turn the probe into a CORS request, and that one fails.
  *  - A key is every element with data-door: the one of the first screen, the one under the three
- *    steps and the one of the dock. While a probe is out the script takes their address away, so
- *    that a press does not open a blank tab, and makes them buttons. A press is answered at once:
- *    the status says that the demo opens when the server answers, and it does. A second press, or
- *    Escape, takes the request back.
+ *    steps, the one that closes the page and the one of the dock. While a probe is out the script
+ *    takes their address away, so that a press does not open a blank tab, and makes them buttons
+ *    whose words say what a press does: "Open when ready". A press is answered at once: the key
+ *    reads "Opening when ready · Cancel", the status says that the demo opens by itself, and it
+ *    does. A second press, or Escape, takes the request back.
+ *  - The keyboard's focus is never moved: the status line is a live region and says the change.
  *  - Nothing is ever sent to keep the server awake. An answer is trusted for four minutes. After
  *    that the page probes again when the tab comes back, or when a key is pressed: the press
  *    wakes the server first and opens the demo at the answer.
  *
  * The state is written on <html data-wake>, and entry.css says what each one shows:
- *   checking  a probe is out and may still come back at once: the status line is empty
+ *   checking  a probe is out and may still come back at once
  *   starting  no answer after the first moment: the lamps and the seconds
  *   ready     the server answered
  *   late      no answer in a minute: the keys work, with no promise
@@ -38,35 +40,62 @@
   var GIVE_UP_MS = 60000; // with no answer the keys are given back anyway
   var TRUST_MS = 240000; // the server goes back to sleep after about five idle minutes
   var LANGUAGE_KEY = 'azurebank-entry-language';
-  // On a developer's own machine ?state=<one of these> shows that state and sends nothing.
-  var PREVIEW = ['asleep', 'starting', 'pressed', 'ready', 'late', 'unknown'];
-  var PREVIEW_MS = 12000; // the second a preview shows
+  // On a developer's own machine ?state=<one of these> shows that state and sends nothing. The
+  // number is the second the preview shows.
+  var PREVIEW = {
+    checking: 0,
+    asleep: 0,
+    starting: 12000,
+    pressed: 12000,
+    almost: 31000,
+    ready: 0,
+    late: 0,
+    unknown: 0,
+  };
 
+  // For each state, the line that says it and the line under it. A key has three sets of words:
+  // what it opens, what a press does while the server starts, and what a second press does.
   var TEXT = {
     en: {
-      asleep: 'The demo is asleep. Starting it takes about {t} seconds.',
-      starting: 'Starting the server…',
-      almost: 'Almost there…',
-      queued: 'The demo opens when the server answers',
+      key: 'Open the live demo',
+      keyWait: 'Open when ready',
+      keyHeld: 'Opening when ready · Cancel',
+      keyLate: 'Open the demo anyway',
+      short: 'Open the demo',
+      shortWait: 'Open when ready',
+      shortHeld: 'Cancel',
+      shortLate: 'Open anyway',
       count: '{n} s of about {t}',
       lateCount: '{n} s',
-      ready: 'The demo is awake.',
-      late: 'This is taking longer than usual.',
-      unknown:
-        'This browser cannot check the server. If the demo is asleep, the first page takes about {t} seconds.',
+      checking: ['Checking the demo…', 'Invented money, no sign-up.'],
+      asleep: ['The demo is asleep.', 'Starting it takes about {t} seconds.'],
+      starting: ['Waking the demo…', ''],
+      almost: ['Almost there…', ''],
+      queued: ['The demo opens by itself.', ''],
+      ready: ['The demo is awake.', 'Invented money, no sign-up.'],
+      late: ['This is taking longer than usual.', 'The code and pictures are below.'],
+      unknown: ['The demo may be asleep.', 'If so, allow about {t} seconds.'],
     },
     it: {
       title: 'AzureBank: una banca che funziona, online. Di Vladislav Aleshaev',
-      asleep: 'La demo è spenta. Per avviarla servono circa {t} secondi.',
-      starting: 'Avvio del server…',
-      almost: 'Ci siamo quasi…',
-      queued: 'La demo si apre appena il server risponde',
+      key: 'Apri la demo',
+      keyWait: 'Apri appena pronta',
+      keyHeld: 'Si apre appena pronta · Annulla',
+      keyLate: 'Apri comunque la demo',
+      short: 'Apri la demo',
+      shortWait: 'Apri appena pronta',
+      shortHeld: 'Annulla',
+      shortLate: 'Apri comunque',
       count: '{n} s di circa {t}',
       lateCount: '{n} s',
-      ready: 'La demo è pronta.',
-      late: 'Ci sta mettendo più del solito.',
-      unknown:
-        'Da questo browser non si può controllare il server. Se la demo è spenta, la prima pagina richiede circa {t} secondi.',
+      checking: ['Controllo la demo…', 'Denaro inventato, senza registrarsi.'],
+      asleep: ['La demo dorme.', 'Si sveglia in circa {t} secondi.'],
+      starting: ['Sveglio la demo…', ''],
+      almost: ['Ci siamo quasi…', ''],
+      queued: ['La demo si apre da sola.', ''],
+      ready: ['La demo è sveglia.', 'Denaro inventato, senza registrarsi.'],
+      late: ['Ci sta mettendo più del solito.', 'Intanto il codice è qui sotto.'],
+      unknown: ['La demo forse dorme.', 'Se dorme, circa {t} secondi.'],
     },
   };
 
@@ -94,10 +123,24 @@
     return Array.prototype.slice.call((scope || document).querySelectorAll(selector));
   }
 
+  function write(elements, text) {
+    elements.forEach(function (element) {
+      if (element.textContent !== text) element.textContent = text;
+    });
+  }
+
   function start() {
     var first = document.getElementById('open-demo');
     var doors = all('[data-door]');
-    var texts = all('[data-wake-text]');
+    var labels = all('[data-door-text]').map(function (node) {
+      var door = node.closest('[data-door]');
+      return {
+        node: node,
+        set: door && door.getAttribute('data-door') === 'short' ? 'short' : 'key',
+      };
+    });
+    var leads = all('[data-wake-lead]');
+    var hints = all('[data-wake-hint]');
     var counts = all('[data-wake-count]');
     var meters = all('[data-meter]').map(function (meter) {
       return all('i', meter);
@@ -131,6 +174,7 @@
     var settled = 0; // Date.now() when the last cycle ended: it goes on while the computer sleeps
     var queued = false; // a press is waiting for the answer
     var previewing = false;
+    var previewMs = 0;
     var timers = [];
 
     function later(task, delay) {
@@ -152,28 +196,33 @@
 
       var words = TEXT[language];
       var estimate = String(ESTIMATE_MS / 1000);
-      var elapsed = previewing ? PREVIEW_MS : performance.now() - began;
+      var elapsed = previewing ? previewMs : performance.now() - began;
       var past = elapsed >= ESTIMATE_MS;
-      var message = '';
+      var pair = null;
       var counter = '';
       var lit = -1;
       if (state === 'starting') {
         counter = (past ? words.lateCount : words.count)
           .replace('{n}', String(Math.max(1, Math.floor(elapsed / 1000))))
           .replace('{t}', estimate);
-        message = queued ? words.queued + ':' : past ? words.almost : words.starting;
+        pair = queued ? words.queued : past ? words.almost : words.starting;
       } else if (state === 'checking') {
-        message = queued ? words.queued + '.' : '';
+        pair = queued ? words.queued : words.checking;
       } else if (state) {
-        message = words[state].replace('{t}', estimate);
+        pair = words[state];
       }
       // The status is a live region: it is written when its words change, never on a tick.
-      texts.forEach(function (text) {
-        if (text.textContent !== message) text.textContent = message;
+      if (pair) {
+        write(leads, pair[0]);
+        write(hints, pair[1].replace('{t}', estimate));
+      }
+      write(counts, counter);
+
+      var turn = queued ? 'Held' : state === 'starting' ? 'Wait' : state === 'late' ? 'Late' : '';
+      labels.forEach(function (label) {
+        write([label.node], words[label.set + turn]);
       });
-      counts.forEach(function (count) {
-        if (count.textContent !== counter) count.textContent = counter;
-      });
+
       // One lamp for each second of the estimate. The last one never lights before the answer.
       meters.forEach(function (lamps) {
         if (state === 'starting') {
@@ -196,7 +245,6 @@
       doors.forEach(function (door) {
         door.removeAttribute('href');
         door.setAttribute('role', 'button');
-        door.setAttribute('aria-pressed', String(queued));
         door.tabIndex = 0;
       });
     }
@@ -205,16 +253,12 @@
       doors.forEach(function (door) {
         door.setAttribute('href', demo);
         door.removeAttribute('role');
-        door.removeAttribute('aria-pressed');
         door.removeAttribute('tabindex');
       });
     }
 
     function queue(next) {
       queued = next;
-      doors.forEach(function (door) {
-        if (!door.hasAttribute('href')) door.setAttribute('aria-pressed', String(next));
-      });
       show();
     }
 
@@ -282,14 +326,7 @@
           show('asleep');
         }, TRUST_MS);
       }
-      if (open) {
-        first.click();
-        return;
-      }
-      var focused = document.activeElement;
-      if (outcome === 'ready' && (!focused || focused === document.body || focused === first)) {
-        first.focus({ preventScroll: true });
-      }
+      if (open) first.click();
     }
 
     function press(event) {
@@ -364,7 +401,7 @@
       } catch (error) {
         // An old browser: no preview.
       }
-      return PREVIEW.indexOf(asked) === -1 ? '' : asked;
+      return Object.prototype.hasOwnProperty.call(PREVIEW, asked) ? asked : '';
     }
 
     switches.forEach(function (button) {
@@ -378,10 +415,8 @@
     if (!first || !first.href) return;
     demo = first.href;
     favicon = new URL('/favicon.ico', demo).href;
-    doors.concat(all('[data-demo-link]')).forEach(function (link) {
-      link.setAttribute('href', demo);
-    });
     doors.forEach(function (door) {
+      door.setAttribute('href', demo);
       door.addEventListener('click', press);
       door.addEventListener('keydown', type);
     });
@@ -402,10 +437,16 @@
     var asked = preview();
     if (asked) {
       previewing = true;
-      if (asked === 'starting' || asked === 'pressed') {
+      previewMs = PREVIEW[asked];
+      if (
+        asked === 'checking' ||
+        asked === 'starting' ||
+        asked === 'pressed' ||
+        asked === 'almost'
+      ) {
         queued = asked === 'pressed';
         hold();
-        show('starting');
+        show(asked === 'checking' ? 'checking' : 'starting');
       } else {
         show(asked);
       }
