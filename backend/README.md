@@ -1,661 +1,111 @@
-<p align="center">
-  <h1 align="center">AzureBank Backend</h1>
-  <p align="center">
-    A modern, secure banking backend system built with .NET 10
-    <br />
-    <a href="../docs/architecture/overview.md"><strong>Explore the Architecture »</strong></a>
-    <br />
-    <br />
-    <a href="../docs/api/README.md">API Documentation</a>
-    ·
-    <a href="../docs/adr/">Architecture Decisions</a>
-    ·
-    <a href="#getting-started">Getting Started</a>
-  </p>
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/.NET-10.0-512BD4?style=for-the-badge&logo=dotnet&logoColor=white" alt=".NET 10" />
-  <img src="https://img.shields.io/badge/C%23-14.0-239120?style=for-the-badge&logo=csharp&logoColor=white" alt="C# 14" />
-  <img src="https://img.shields.io/badge/SQL_Server-2022-CC2927?style=for-the-badge&logo=microsoftsqlserver&logoColor=white" alt="SQL Server" />
-  <img src="https://img.shields.io/badge/Entity_Framework-10.0-512BD4?style=for-the-badge&logo=dotnet&logoColor=white" alt="EF Core" />
-</p>
-
----
-
-## Table of Contents
-
-- [Overview](#overview)
-- [Key Features](#key-features)
-- [Architecture](#architecture)
-- [Technology Stack](#technology-stack)
-- [Solution Structure](#solution-structure)
-- [NuGet Packages (CPM)](#nuget-packages-cpm)
-- [Getting Started](#getting-started)
-- [API Documentation](#api-documentation)
-- [Testing](#testing)
-- [Configuration](#configuration)
-- [Contributing](#contributing)
-
----
-
-## Overview
-
-The backend of **AzureBank**: a .NET 10 REST API behind a **Backend-For-Frontend (BFF)** — accounts,
-deposits, withdrawals and transfers, with the security controls split between the two hosts as
-[`SECURITY.md`](../SECURITY.md) sets out.
-
-### What This Project Does
-
-- **Account Management**: Create, update, and manage multiple bank accounts per user
-- **Transaction Processing**: Handle deposits, withdrawals with full audit trails
-- **Money Transfers**: Secure internal transfers with step-up authentication
-- **User Authentication**: JWT-based authentication with session management
-- **BFF Gateway**: Secure API gateway with rate limiting and security headers
-
-### Why BFF Pattern?
-
-The Backend-For-Frontend pattern provides:
-
-- **Token Security**: JWT tokens stored server-side, never exposed to browser
-- **Session Management**: HTTP-only cookies with automatic timeout
-- **Rate Limiting**: Protection against abuse at the gateway level
-- **Security Headers**: OWASP-recommended headers: CSP and five others, and HSTS everywhere but
-  Development.
-
----
-
-## Key Features
-
-### Authentication & Security
-
-- JWT Bearer token authentication with refresh tokens
-- Passwords hashed by ASP.NET Core Identity's default (PBKDF2, HMAC-SHA512, 100,000 iterations);
-  PINs hashed with Argon2id and peppered (ADR-0011)
-- Step-up authentication with 6-digit PIN for sensitive operations
-- Session management with configurable timeouts
-- Rate limiting at the BFF: 300 requests a minute overall and 10 a minute on sign-in and
-  registration, both per client IP; 20 a minute on user lookups by handle, per signed-in user
-
-### Account Management
-
-- Multiple account types (Checking, Savings, Investment)
-- Account balance tracking with optimistic concurrency
-- Soft-delete support for account closure
-- Primary account designation
-
-### Transactions & Transfers
-
-- Deposit and withdrawal processing
-- Internal transfers between accounts
-- Transaction history with filtering
-- Immutable transaction records (audit compliance)
-
-### API Features
-
-- RESTful API design with OpenAPI 3.1 specification
-- Scalar API documentation (modern Swagger alternative)
-- Comprehensive input validation with FluentValidation
-- Structured error responses with problem details
-
----
-
-## Architecture
-
-### High-Level Architecture
-
-```mermaid
-flowchart TB
-    subgraph Client["Client Layer"]
-        Browser["Browser"]
-    end
-
-    subgraph BFF["BFF Gateway (Port 5000)"]
-        YARP["YARP Reverse Proxy"]
-        Session["Session Management"]
-        RateLimit["Rate Limiting"]
-        SecHeaders["Security Headers"]
-    end
-
-    subgraph API["API Layer (Port 7215)"]
-        Controllers["REST Controllers"]
-        Services["Business Services"]
-        Validators["FluentValidation"]
-    end
-
-    subgraph Data["Data Layer"]
-        EFCore["Entity Framework Core"]
-        SQLServer[("SQL Server")]
-    end
-
-    Browser -->|"HTTPS + Cookie"| BFF
-    BFF -->|"HTTPS + Bearer Token"| API
-    API --> Data
-
-    %% 🎨 STYLES
-    classDef bffStyle fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#000;
-    classDef apiStyle fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,color:#000;
-    classDef dataStyle fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000;
-
-    class BFF bffStyle
-    class API apiStyle
-    class Data dataStyle
-
-```
-
-### Request Flow
-
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant B as BFF Gateway
-    participant A as API
-    participant DB as Database
-
-    C->>B: Request (Session Cookie)
-    B->>B: Validate Session
-    B->>B: Retrieve JWT from Store
-    B->>A: Forward Request (Bearer Token)
-    A->>A: Validate & Authorize
-    A->>DB: Execute Query
-    DB-->>A: Data
-    A-->>B: Response
-    B-->>C: Response
-```
-
-### Dependency Flow
-
-```mermaid
-flowchart LR
-    subgraph Source["Source Projects"]
-        API["AzureBank.Api"]
-        BFF["AzureBank.Bff"]
-    end
-
-    subgraph Libraries["Libraries"]
-        Shared["AzureBank.Shared"]
-        Infra["AzureBank.Infrastructure"]
-    end
-
-    subgraph Tests["Test Projects"]
-        Test["AzureBank.Tests"]
-    end
-
-    API --> Shared
-    API --> Infra
-    BFF --> Shared
-    Infra --> Shared
-    Test --> API
-    Test --> Infra
-    Test --> Shared
-```
-
-> **See Also**: [Full Architecture Documentation](../docs/architecture/overview.md)
-
----
-
-## Technology Stack
-
-### Core Technologies
-
-| Category          | Technology            | Version | Purpose                        |
-| ----------------- | --------------------- | ------- | ------------------------------ |
-| **Runtime**       | .NET                  | 10.0    | Latest LTS with C# 14 features |
-| **Framework**     | ASP.NET Core          | 10.0    | Web API framework              |
-| **ORM**           | Entity Framework Core | 10.0.1  | Database access & migrations   |
-| **Database**      | SQL Server            | 2022    | Primary data store             |
-| **Reverse Proxy** | YARP                  | 2.3.0   | BFF gateway routing            |
-
-### Security & Authentication
-
-| Technology            | Version | Purpose                  |
-| --------------------- | ------- | ------------------------ |
-| ASP.NET Core Identity | 10.0.1  | User management          |
-| JWT Bearer            | 10.0.1  | API authentication       |
-| Argon2id              | 1.3.1   | PIN hashing (passwords use Identity's PBKDF2) |
-
-### Validation & Mapping
-
-| Technology       | Version | Purpose                         |
-| ---------------- | ------- | ------------------------------- |
-| FluentValidation | 12.1.1  | Request validation              |
-| Mapperly         | 4.3.1   | Source-generated object mapping |
-
-### Observability
-
-| Technology | Version | Purpose              |
-| ---------- | ------- | -------------------- |
-| Serilog    | 10.0.0  | Structured logging   |
-| Scalar     | 2.12.4  | API documentation UI |
-
-### Testing
-
-| Technology       | Version | Purpose               |
-| ---------------- | ------- | --------------------- |
-| xUnit            | 2.9.3   | Test framework        |
-| Moq              | 4.20.72 | Mocking library       |
-| FluentAssertions | 8.8.0   | Assertion library     |
-| NetArchTest      | 1.4.5   | Architecture testing  |
-
----
-
-## Solution Structure
-
-```
-AzureBank.Backend/
-│
-├── 📁 src/                                    # Source code
-│   ├── 📦 AzureBank.Api/                      # REST API project
-│   │   ├── Controllers/                       # API endpoints
-│   │   ├── Services/                          # Business logic
-│   │   ├── Validators/                        # FluentValidation
-│   │   ├── Mappers/                           # Mapperly mappings
-│   │   ├── Middleware/                        # Custom middleware
-│   │   └── README.md                          # Project documentation
-│   │
-│   ├── 📦 AzureBank.Bff/                      # BFF Gateway project
-│   │   ├── Controllers/                       # Gateway endpoints
-│   │   ├── Services/                          # Session management
-│   │   ├── Middleware/                        # Security middleware
-│   │   ├── Transforms/                        # YARP transforms
-│   │   └── README.md                          # Project documentation
-│   │
-│   ├── 📦 AzureBank.Shared/                   # Shared library
-│   │   ├── Entities/                          # Domain models
-│   │   ├── DTOs/                              # Data transfer objects
-│   │   ├── Exceptions/                        # Custom exceptions
-│   │   ├── Constants/                         # Error codes, rules
-│   │   └── README.md                          # Project documentation
-│   │
-│   ├── 📦 AzureBank.Infrastructure/           # Data access layer
-│   │   ├── Data/                              # DbContext & configs
-│   │   ├── Migrations/                        # EF Core migrations
-│   │   ├── Notices/                           # The shared notice relay
-│   │   └── README.md                          # Project documentation
-│   │
-│   └── 📦 AzureBank.Functions.NoticeRelay/    # The notice relay as an Azure Function
-│       ├── DeliverOwedNotices.cs              # Timer trigger: one sweep per tick
-│       ├── host.json                          # Functions host configuration
-│       ├── local.settings.sample.json         # Shape of the gitignored local settings
-│       └── README.md                          # Project documentation
-│
-├── 📁 tests/                                  # Test projects
-│   └── 🧪 AzureBank.Tests/                    # All tests
-│       ├── Unit/                              # Unit tests
-│       ├── Integration/                       # Integration tests
-│       ├── Architecture/                      # Architecture tests
-│       └── README.md                          # Test documentation
-│
-├── 📁 docs/                                   # Documentation
-│   ├── 📁 architecture/                       # Architecture docs
-│   ├── 📁 adr/                                # Decision records
-│   └── 📁 diagrams/                           # Mermaid sources
-│
-├── 📄 Directory.Build.props                   # Shared build config
-├── 📄 Directory.Packages.props                # Central Package Management
-└── 📄 README.md                               # This file
-```
-
-### Project Descriptions
-
-| Project                                                                | Type          | Description                                                        |
-| ---------------------------------------------------------------------- | ------------- | ------------------------------------------------------------------ |
-| [**AzureBank.Api**](src/AzureBank.Api/README.md)                       | Web API       | REST API with business logic, validation, and authentication       |
-| [**AzureBank.Bff**](src/AzureBank.Bff/README.md)                       | Web API       | BFF gateway with session management, rate limiting, and YARP proxy |
-| [**AzureBank.Shared**](src/AzureBank.Shared/README.md)                 | Class Library | Domain entities, DTOs, exceptions, and constants                   |
-| [**AzureBank.Infrastructure**](src/AzureBank.Infrastructure/README.md) | Class Library | EF Core DbContext, migrations, data configurations, and the shared notice relay |
-| [**AzureBank.Functions.NoticeRelay**](src/AzureBank.Functions.NoticeRelay/README.md) | Azure Function | Timer-triggered notice runner, rehearsed locally against Azurite (ADR-0051) |
-| [**AzureBank.Tests**](tests/AzureBank.Tests/README.md)                 | Test Project  | Unit, integration, and architecture tests                          |
-| **AzureBank.Bff.Tests**                                                | Test Project  | BFF gateway integration tests — the second "Test run for" line of the gate |
-| **AzureBank.AuditVerifier**                                            | Console Tool  | `verify`, `anchor`, `evidence`, `export` and `notify` over the audit trail |
-| [**AzureBank.Seeder**](tools/AzureBank.Seeder/README.md)               | Console Tool  | `migrate`, `seed`, `reset`, and the demo pool's `seed-pool` and `recycle`; also what the tools image runs |
-
----
-
-## NuGet Packages (CPM)
-
-This solution uses **Central Package Management (CPM)** via `Directory.Packages.props` for consistent versioning across all projects.
-
-### What is Central Package Management?
-
-CPM centralizes all NuGet package versions in a single file, ensuring:
-
-- **Consistency**: All projects use the same package versions
-- **Maintainability**: Single location for version updates
-- **Auditability**: Easy to review all dependencies
-
-### Package Inventory
-
-#### Core & Framework
-
-| Package                        | Version | What                      | How Used               | Why Chosen              |
-| ------------------------------ | ------- | ------------------------- | ---------------------- | ----------------------- |
-| `Microsoft.AspNetCore.OpenApi` | 10.0.1  | OpenAPI schema generation | Document API endpoints | Native .NET integration |
-
-#### Authentication & Identity
-
-| Package                                             | Version | What                          | How Used                  | Why Chosen                |
-| --------------------------------------------------- | ------- | ----------------------------- | ------------------------- | ------------------------- |
-| `Microsoft.Extensions.Identity.Stores`              | 10.0.1  | Identity storage abstractions | User storage interface    | ASP.NET Identity standard |
-| `Microsoft.AspNetCore.Identity.EntityFrameworkCore` | 10.0.1  | EF Core identity provider     | Store users in SQL        | Production-ready identity |
-| `Microsoft.AspNetCore.Authentication.JwtBearer`     | 10.0.1  | JWT token validation          | Authenticate API requests | Industry standard auth    |
-
-#### Data Access
-
-| Package                                   | Version | What                   | How Used            | Why Chosen           |
-| ----------------------------------------- | ------- | ---------------------- | ------------------- | -------------------- |
-| `Microsoft.EntityFrameworkCore.SqlServer` | 10.0.1  | SQL Server EF provider | Database access     | Enterprise-grade ORM |
-| `Microsoft.EntityFrameworkCore.Tools`     | 10.0.1  | EF CLI tools           | Generate migrations | Development tooling  |
-| `Microsoft.EntityFrameworkCore.Design`    | 10.0.1  | Design-time services   | Scaffold DbContext  | Migration support    |
-
-#### Validation
-
-| Package                                          | Version | What               | How Used              | Why Chosen           |
-| ------------------------------------------------ | ------- | ------------------ | --------------------- | -------------------- |
-| `FluentValidation`                               | 12.1.1  | Validation library | Validate request DTOs | Fluent API, testable |
-| `FluentValidation.DependencyInjectionExtensions` | 12.1.1  | DI integration     | Register validators   | Clean DI setup       |
-
-#### Security
-
-| Package                                  | Version | What           | How Used       | Why Chosen        |
-| ---------------------------------------- | ------- | -------------- | -------------- | ----------------- |
-| `Konscious.Security.Cryptography.Argon2` | 1.3.1   | Argon2 hashing | Hash PINs (passwords use Identity's PBKDF2) | OWASP recommended |
-
-#### Gateway & Proxy
-
-| Package             | Version | What                  | How Used         | Why Chosen                 |
-| ------------------- | ------- | --------------------- | ---------------- | -------------------------- |
-| `Yarp.ReverseProxy` | 2.3.0   | Reverse proxy library | Route BFF to API | Microsoft-backed, flexible |
-
-#### Mapping
-
-| Package         | Version | What              | How Used            | Why Chosen            |
-| --------------- | ------- | ----------------- | ------------------- | --------------------- |
-| `Riok.Mapperly` | 4.3.1   | Source-gen mapper | Map entities ↔ DTOs | Zero-reflection, fast |
-
-#### API Documentation
-
-| Package             | Version | What           | How Used                  | Why Chosen           |
-| ------------------- | ------- | -------------- | ------------------------- | -------------------- |
-| `Scalar.AspNetCore` | 2.12.4  | API docs UI    | Interactive documentation | Modern, clean UI     |
-| `Microsoft.OpenApi` | 2.0.0   | OpenAPI models | Document transformers     | Schema customization |
-
-#### Logging & Diagnostics
-
-| Package                 | Version | What               | How Used            | Why Chosen             |
-| ----------------------- | ------- | ------------------ | ------------------- | ---------------------- |
-| `Serilog.AspNetCore`    | 10.0.0  | Structured logging | Log requests/errors | Rich structured logs   |
-| `Serilog.Sinks.Console` | 6.1.1   | Console sink       | Output to terminal  | Text in development, JSON lines in Production |
-
-#### Testing
-
-| Package                                  | Version | What                 | How Used             | Why Chosen              |
-| ---------------------------------------- | ------- | -------------------- | -------------------- | ----------------------- |
-| `Microsoft.NET.Test.Sdk`                 | 18.0.1  | Test SDK             | Run tests            | .NET test standard      |
-| `xunit`                                  | 2.9.3   | Test framework       | Write test cases     | .NET community standard |
-| `xunit.runner.visualstudio`              | 3.1.5   | VS test adapter      | IDE integration      | Visual Studio support   |
-| `Moq`                                    | 4.20.72 | Mocking library      | Mock dependencies    | Flexible mocking        |
-| `FluentAssertions`                       | 8.8.0   | Assertion library    | Readable assertions  | Fluent syntax           |
-| `coverlet.collector`                     | 6.0.4   | Code coverage        | Measure coverage     | CI/CD integration       |
-| `Microsoft.AspNetCore.Mvc.Testing`       | 10.0.1  | Integration testing  | Test API in-memory   | End-to-end tests        |
-| `Microsoft.EntityFrameworkCore.InMemory` | 10.0.1  | In-memory provider   | Fast unit tests      | No database needed      |
-| `NetArchTest.eNhancedEdition`            | 1.4.5   | Architecture tests   | Enforce design rules | Actively maintained     |
-
----
-
-## Getting Started
-
-### Prerequisites
-
-| Requirement | Minimum Version | Download                                          | Verify Command               |
-| ----------- | --------------- | ------------------------------------------------- | ---------------------------- |
-| .NET SDK    | 10.0            | [Download](https://dotnet.microsoft.com/download) | `dotnet --version`           |
-| SQL Server  | 2019            | [Download](https://www.microsoft.com/sql-server)  | SQL Server Management Studio |
-| Docker      | 24.0            | [Download](https://docker.com)                    | `docker --version`           |
-| Git         | 2.40            | [Download](https://git-scm.com)                   | `git --version`              |
-
-### Installation
-
-#### 1. Clone the Repository
-
-```bash
-git clone https://github.com/Gurgant/azurebank-v2.git
-cd azurebank-v2/backend
-```
-
-#### 2. Restore NuGet Packages
-
-```bash
-dotnet restore
-```
-
-#### 3. Configure, Create the Database and Run
-
-The [local setup](../docs/engineering-practices.md#local-setup) is the one copy of these steps,
+# AzureBank Backend
+
+The backend of AzureBank: a .NET 10 REST API behind a Backend-For-Frontend (BFF), on SQL Server
+through EF Core. The API owns accounts, deposits, withdrawals and transfers. The BFF is what the
+browser talks to: it keeps the session, holds the JWT server-side and adds it to each call it
+forwards. Which host enforces which security control is set out in
+[`SECURITY.md`](../SECURITY.md).
+
+## What is here
+
+One solution, `AzureBank.slnx`.
+
+| Project | What it is |
+|---|---|
+| [`src/AzureBank.Api`](src/AzureBank.Api/README.md) | The REST API: business logic, validation and authentication |
+| [`src/AzureBank.Bff`](src/AzureBank.Bff/README.md) | The BFF gateway: session management, rate limiting, security headers and a YARP proxy to the API |
+| [`src/AzureBank.Shared`](src/AzureBank.Shared/README.md) | Class library: domain entities, DTOs, exceptions and constants |
+| [`src/AzureBank.Infrastructure`](src/AzureBank.Infrastructure/README.md) | Class library: the EF Core `DbContext`, migrations, data configurations and the shared notice relay |
+| [`src/AzureBank.Functions.NoticeRelay`](src/AzureBank.Functions.NoticeRelay/README.md) | The notice relay as a timer-triggered Azure Function, rehearsed locally against Azurite (ADR-0051) |
+| [`tests/AzureBank.Tests`](tests/AzureBank.Tests/README.md) | Unit, integration and architecture tests |
+| `tests/AzureBank.Bff.Tests` | The BFF's integration tests |
+| `tools/AzureBank.AuditVerifier` | Console tool over the audit trail: `verify`, `anchor`, `evidence`, `export` and `notify` |
+| [`tools/AzureBank.Seeder`](tools/AzureBank.Seeder/README.md) | Console tool: `migrate`, `seed`, `reset`, and the demo pool's `seed-pool` and `recycle`; also what the tools image runs |
+
+The API, the function and the two tools reference `AzureBank.Infrastructure` and
+`AzureBank.Shared`. The BFF references `AzureBank.Shared` only: it has no access to the database.
+
+`Directory.Build.props` holds what every project shares: `net10.0`, nullable reference types, and
+warnings as errors in a Release build. `Directory.Packages.props` holds every NuGet version, and
+a project file names a package without one (ADR-0004).
+
+## Run it
+
+It needs the .NET 10 SDK (`global.json`, at the repository root, names the version) and a SQL
+Server.
+
+The [local setup](../docs/engineering-practices.md#local-setup) is the one copy of the steps,
 written from the repository root: the user-secrets each project reads, the one Seeder command
-that drops, migrates and seeds the database, and the `dotnet run` line of each host. The API
-must run its `https` profile: the BFF's proxy points at `https://localhost:7215`.
+that drops, migrates and seeds the database, and the `dotnet run` line of each host.
 
-#### 4. Verify Installation
+With both hosts running:
 
-- **API Documentation**: https://localhost:7215/scalar/v1
-- **BFF Session Status**: http://localhost:5000/bff/auth/session-status
+- The API's documentation, served in Development only: <https://localhost:7215/scalar/v1>
+- The BFF's session status: <http://localhost:5000/bff/auth/session-status>
 
----
+## Test it
 
-## API Documentation
-
-### Interactive Documentation
-
-The API is documented using **Scalar**, available at:
-
-- **Development**: https://localhost:7215/scalar/v1
-
-### API Endpoints Overview
-
-| Category         | Endpoint                     | Method | Description         | Auth      |
-| ---------------- | ---------------------------- | ------ | ------------------- | --------- |
-| **Auth**         | `/api/auth/login`            | POST   | Authenticate user   | No        |
-|                  | `/api/auth/register`         | POST   | Register new user (on the public demo: 403 `REGISTRATION_CLOSED`) | No        |
-|                  | `/api/auth/demo/claim`       | POST   | On the public demo only: claim a prepared demo copy (404 while `Demo:Enabled` is false; ADR-0063) | No (the BFF names the visitor's address) |
-|                  | `/api/auth/refresh`          | POST   | Renew the access token with the session's grant | No (the grant is the credential) |
-|                  | `/api/auth/revoke`           | POST   | Revoke the grants of ended sessions | No (the grant is the credential) |
-|                  | `/api/auth/me`               | GET    | Get current user    | Yes       |
-|                  | `/api/auth/logout`           | POST   | Revoke every grant of the user (every session) and raise the user's session stamp | Yes |
-|                  | `/api/auth/session-stamps`   | POST   | Read the listed users' session stamps (the BFF's watcher) | No (the BFF's own client) |
-|                  | `/api/auth/pin`              | POST   | Set/update PIN      | Yes       |
-|                  | `/api/auth/pin/verify`       | POST   | Verify PIN          | Yes       |
-| **Accounts**     | `/api/accounts`              | GET    | List user accounts  | Yes       |
-|                  | `/api/accounts`              | POST   | Create account      | Yes       |
-|                  | `/api/accounts/{id}`         | GET    | Get account details | Yes       |
-|                  | `/api/accounts/{id}`         | PATCH  | Update account      | Yes       |
-|                  | `/api/accounts/{id}`         | DELETE | Close account       | Yes       |
-| **Transactions** | `/api/transactions`          | GET    | List transactions   | Yes       |
-|                  | `/api/transactions/deposit`  | POST   | Deposit funds       | Yes       |
-|                  | `/api/transactions/withdraw` | POST   | Withdraw funds      | Yes + auth |
-|                  | `/api/transactions/withdraw/authorizations` | POST | Authorise a withdrawal | Yes + PIN |
-| **Transfers**    | `/api/transfers`             | POST   | External transfer   | Yes + PIN |
-|                  | `/api/transfers/internal`    | POST   | Internal transfer   | Yes + PIN |
-| **Users**        | `/api/users/{azureTag}`      | GET    | Get user by tag     | Yes       |
-
-### BFF Gateway Endpoints
-
-| Endpoint                   | Method | Description                            |
-| -------------------------- | ------ | -------------------------------------- |
-| `/bff/auth/login`          | POST   | Login via BFF (returns session cookie) |
-| `/bff/auth/register`       | POST   | Register via BFF (on the public demo: 403 `REGISTRATION_CLOSED`) |
-| `/bff/auth/demo/claim`     | POST   | On the public demo only: claim a private demo copy and open a session on it |
-| `/bff/auth/logout`         | POST   | Logout and clear session               |
-| `/bff/auth/me`             | GET    | Get user info with session details     |
-| `/bff/auth/session-status` | GET    | Check authentication status            |
-| `/bff/auth/set-pin`        | POST   | Set PIN via BFF                        |
-| `/bff/auth/verify-pin`     | POST   | Verify PIN (upgrade to AuthLevel 2)    |
-
----
-
-## Testing
-
-### Running Tests
+From `backend/`:
 
 ```bash
-# Run all tests
-dotnet test
-
-# Run with detailed output
-dotnet test --logger "console;verbosity=detailed"
-
-# The tests that need SQL Server: the only Category trait the suite defines
-dotnet test --filter "Category=SqlServer"
-
-# Everything except them
-dotnet test --filter "Category!=SqlServer"
-
-# Run with code coverage
-dotnet test --collect:"XPlat Code Coverage"
-
-# Generate coverage report (requires reportgenerator tool)
-dotnet tool install -g dotnet-reportgenerator-globaltool
-reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
+dotnet test AzureBank.slnx                                  # both test projects
+dotnet test AzureBank.slnx --filter "Category=SqlServer"    # the tests that need SQL Server
+dotnet test AzureBank.slnx --filter "Category!=SqlServer"   # everything except them
 ```
 
-### Test Categories
-
-| Category         | Description                          | Database                  |
-| ---------------- | ------------------------------------ | ------------------------- |
-| **Unit**         | Service logic, validators, utilities | In-memory/Mocked          |
-| **Integration**  | End-to-end API tests                 | In-memory, or SQL Server via `AZUREBANK_TEST_SQLSERVER` (below) |
-| **Architecture** | Design & dependency rules            | N/A                       |
-
-### Test Infrastructure
-
-- **`AZUREBANK_TEST_SQLSERVER`**: the tests that need a real database connect to the SQL Server it
-  names — LocalDB locally, a service container in CI — and skip without it. They also skip when it
-  names an Azure SQL server: several of them create and drop databases there. There is no
-  Testcontainers harness.
-- **CustomWebApplicationFactory**: Creates isolated API instance for each test
-- **Architecture Tests**: Enforces layer dependencies and naming conventions
-
-> **See Also**: [Test Project Documentation](tests/AzureBank.Tests/README.md)
-
----
+The tests that need a real database connect to the SQL Server that `AZUREBANK_TEST_SQLSERVER`
+names, LocalDB locally and a service container in CI, and skip without it. They also skip when it
+names an Azure SQL server: several of them create and drop databases there. `Category=SqlServer`
+is the only `Category` trait the suite defines. The other commands, code coverage among them, are
+in the [test project's README](tests/AzureBank.Tests/README.md).
 
 ## Configuration
 
-### API Configuration (appsettings.json)
+Each host's `appsettings.json` holds its settings that are not secret. A secret comes from
+`dotnet user-secrets` in development and from an environment variable elsewhere, spelled with
+`__` in place of `:`; none is in a committed settings file.
 
-```json
-{
-  "ConnectionStrings": {
-    "DefaultConnection": "Server=localhost;Database=AzureBank;..."
-  },
-  "Database": {
-    "MaxRetryCount": 4,
-    "MaxRetryDelay": "00:00:10"
-  },
-  "RequestDeadline": {
-    "Seconds": 40
-  },
-  "Jwt": {
-    "Issuer": "AzureBank.Api",
-    "Audience": "AzureBank.Bff",
-    "ExpirationMinutes": 15,
-    "RefreshTokenLifetimeMinutes": 60
-  },
-  "Serilog": {
-    "MinimumLevel": "Information"
-  }
-}
-```
+- **Secrets.** The API needs a connection string and its secrets, and checks each at start:
+  [Environment variables](src/AzureBank.Api/README.md#environment-variables). The Seeder needs
+  only the connection string and the PIN pepper, and the BFF only `ServiceCredential__BffKey`,
+  the same value the API holds.
+- **The environment.** `dotnet run` sets Development for the API and the BFF, from each one's
+  `launchSettings.json`; with nothing set a host runs as Production. `DOTNET_ENVIRONMENT`, when
+  set, wins over `ASPNETCORE_ENVIRONMENT` (measured 2026-09-25). The console format (JSON in
+  Production) and the BFF's HSTS (outside Development) follow the environment.
+- **Waiting on the database (ADR-0058).** EF retries a transient failure 4 times with its
+  back-off capped at 10 s, and a request still running after `RequestDeadline:Seconds` (40)
+  answers 503 `SERVICE_UNAVAILABLE`. The BFF waits `BackendApi:TimeoutSeconds` (55) on the API, on
+  its own client and on every proxied call, before it answers the same 503 itself: above the
+  API's deadline and what the API may still need after it. The connection limits are code
+  defaults and not in the file: `Database:ConnectTimeoutSeconds` (10),
+  `Database:ConnectRetryCount` (0) and `Database:MaxPoolSize` (12; the Seeder's
+  `appsettings.json` sets 5), plus `Pool Blocking Period=NeverBlock`, each written into the
+  connection string only where the string leaves it unset, so a value in the string wins. The API
+  checks every one at start and logs the limits it opened with. The API's README has
+  [the ranges](src/AzureBank.Api/README.md#database-limits-and-the-request-deadline).
+- **The BFF's own settings**, the session and the rate limits among them, are in
+  [its README](src/AzureBank.Bff/README.md).
 
-How long the backend waits on the database, and how often it tries again (ADR-0058): EF retries a
-transient failure 4 times with its back-off capped at 10 s, and a request still running after
-`RequestDeadline:Seconds` answers 503 `SERVICE_UNAVAILABLE`. The connection limits are code defaults
-and not in the file: `Database:ConnectTimeoutSeconds` (10), `Database:ConnectRetryCount` (0) and
-`Database:MaxPoolSize` (12; the seeder's `appsettings.json` sets 5), plus `Pool Blocking
-Period=NeverBlock`, each written into the connection string only where the string leaves it unset,
-so a value in the string wins. The API checks every one at start and logs the limits it opened
-with. The [API README](src/AzureBank.Api/README.md#database-limits-and-the-request-deadline) has
-the ranges.
+## Easy to get wrong
 
-### BFF Configuration (appsettings.json)
+- **The API runs its `https` profile.** The BFF's proxy points at `https://localhost:7215`, and
+  the API's `http` profile listens on port 5068 only.
+- **Name the solution in `dotnet test`.** A filter on a test project's name leaves the BFF's
+  tests out and still reports success ([engineering traps](../docs/engineering-traps.md)).
+- **A secret two projects share is set in each of them.** The API, the BFF and the Seeder each
+  have a user-secrets store of their own. The PIN pepper must be the same in the API and the
+  Seeder, and the service credential the same in the API and the BFF.
+- **The Seeder needs `DOTNET_ENVIRONMENT=Development`.** It has no launch profile, so a bare
+  `dotnet run` runs it as Production, where its user-secrets do not load, and
+  `ASPNETCORE_ENVIRONMENT` does not count there ([engineering traps](../docs/engineering-traps.md)).
 
-```json
-{
-  "Session": {
-    "CookieName": ".AzureBank.Session",
-    "InactivityTimeoutMinutes": 15,
-    "AbsoluteTimeoutMinutes": 60
-  },
-  "Security": {
-    "PinValidityMinutes": 5
-  },
-  "BackendApi": {
-    "BaseUrl": "https://localhost:7215",
-    "TimeoutSeconds": 55
-  }
-}
-```
+## See also
 
-`BackendApi:TimeoutSeconds` is how long the BFF waits on the API, on its own client and on every
-proxied call, before it answers the same 503 itself: above the API's 40 s deadline and what the API
-may still need after it (ADR-0058).
-
-### Environment Variables
-
-| Variable                               | Description                              | Default     |
-| -------------------------------------- | ---------------------------------------- | ----------- |
-| `ASPNETCORE_ENVIRONMENT`               | Runtime environment                      | Production* |
-| `ConnectionStrings__DefaultConnection` | Database connection (checked at start)   | -           |
-| `Jwt__Secret`                          | JWT signing key (32+ bytes, checked)     | -           |
-| `Idempotency__HashKey`                 | Idempotency HMAC key (32+, ADR-0009)     | -           |
-| `StepUp__BindingKey`                   | Step-up binding HMAC key (32+, ADR-0042) | -           |
-| `Audit__ChainKey`                      | Audit chain HMAC key (32+, ADR-0044)     | -           |
-| `Audit__AnchorKey`                     | Audit anchor HMAC key (32+, ADR-0044)    | -           |
-| `Security__PinPepper`                  | PIN pepper (32+, ADR-0011) — also Seeder | -           |
-| `ServiceCredential__BffKey`            | The BFF's key (32+, ADR-0055) — also BFF | -           |
-
-\* `dotnet run` sets Development, from `launchSettings.json`; with nothing set a host runs as
-Production. `DOTNET_ENVIRONMENT`, when set, wins over it (measured 2026-09-25). The console format
-(JSON in Production) and HSTS (outside Development) follow the environment.
-
-The seven secrets are the [local setup](../docs/engineering-practices.md#local-setup)'s recipe
-spelled with `__` instead of `:`; in development they come from `dotnet user-secrets`. The Seeder
-needs only the connection string and the pepper, and the BFF only `ServiceCredential__BffKey`,
-the same value the API holds.
-
----
-
-## Contributing
-
-How this project is built and kept correct — local setup, quality gates, code style, merge policy —
-is in [Engineering practices](../docs/engineering-practices.md). Two things from there are worth
-repeating because getting them wrong looks like success: run `dotnet test AzureBank.slnx` and name
-the solution, and use `npm run build` rather than `tsc --noEmit` as the frontend type gate.
-
----
-
-## Architecture Decision Records
-
-Key architectural decisions are documented as ADRs:
-
-| ADR                                                     | Title                        | Status   |
-| ------------------------------------------------------- | ---------------------------- | -------- |
-| [ADR-0001](../docs/adr/0001-bff-pattern.md)                | Backend-For-Frontend Pattern | Accepted |
-| [ADR-0002](../docs/adr/0002-yarp-proxy.md)                 | YARP Reverse Proxy Selection | Accepted |
-| [ADR-0003](../docs/adr/0003-argon2id-password-hashing.md)  | Argon2id hashing — built for PINs; passwords use Identity's PBKDF2 | Accepted |
-| [ADR-0004](../docs/adr/0004-central-package-management.md) | Central Package Management   | Accepted |
-| [ADR-0005](../docs/adr/0005-scalar-api-documentation.md)   | Scalar API Documentation     | Accepted |
-| [ADR-0006](../docs/adr/0006-mapperly-object-mapping.md)    | Mapperly Object Mapping      | Accepted |
-| [ADR-0007](../docs/adr/0007-fluentvalidation.md)           | FluentValidation Strategy    | Accepted |
-| [ADR-0008](../docs/adr/0008-step-up-authentication.md)     | Step-Up Authentication       | Accepted |
-
----
-
-## Acknowledgments
-
-- [ASP.NET Core](https://docs.microsoft.com/aspnet/core) - Web framework
-- [Entity Framework Core](https://docs.microsoft.com/ef/core) - ORM
-- [YARP](https://microsoft.github.io/reverse-proxy/) - Reverse proxy
-- [FluentValidation](https://fluentvalidation.net/) - Validation library
-- [Serilog](https://serilog.net/) - Structured logging
-- [Scalar](https://github.com/scalar/scalar) - API documentation
+- [How AzureBank works](../docs/architecture/overview.md): the architecture, one request end to
+  end.
+- [The OpenAPI contract](../docs/api/README.md): generated by the API and committed. The API's
+  README lists its endpoints, and the BFF's its own.
+- [The decision records](../docs/adr/README.md): why each part is the way it is.
+- [Engineering practices](../docs/engineering-practices.md): local setup, quality gates, code
+  style, merge policy.
