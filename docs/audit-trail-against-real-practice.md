@@ -45,7 +45,7 @@ true thing and nothing is built.
 | # | A real deployment has | Here | Gap |
 |---|---|---|---|
 | 1 | A copy of the checkpoint that whoever runs the system cannot revise | **Half built**: `export` writes the anchor chain to a file and refuses to overwrite one | The file is on the machine that would be attacked, and nobody else has seen it |
-| 2 | A cadence, so that absence is evidence | **Named, plus a number**: the UNCOVERED WINDOW under a `verify` verdict, not computed when either chain is broken | Nothing anchors on a schedule, and the number is blind to anchors deleted with the rows (`ConsistentSuffixRemovalFromBOTHChains_IsNotDetected_AndThisPinsTheLimit`) |
+| 2 | A cadence, so that absence is evidence | **Named, plus a number**: the UNCOVERED WINDOW under a `verify` verdict and under an evidence pack's, not computed when either chain is broken | Nothing anchors on a schedule, and the number is blind to anchors deleted with the rows (`ConsistentSuffixRemovalFromBOTHChains_IsNotDetected_AndThisPinsTheLimit`) |
 | 3 | Third-party time (RFC 3161) | **Named only** | No code; the hard part is the pinned trust root |
 | 4 | Immutability in the storage or the engine | **Named only** | The app's database user may update and delete audit rows |
 | 5 | Scheduled verification with alerting | **Named only**: `verify` runs when a person runs it | No schedule verifies the chain |

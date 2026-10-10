@@ -724,8 +724,8 @@ The argument is the `TXN-…` number the movement response returned, for a trans
 It prints one pack: the ledger row, the step-up authorisation that paid for it, the audit rows
 that name it, and the chain verdict `verify` would print. `EVIDENCE PACK for <number>` is the first
 line of every successful assembly. **The exit code is the chain's**: a pack over a broken chain
-prints the pack and exits **1**. `evidence` does not read the anchor table: take the
-UNCOVERED WINDOW from `verify`, not from the block under the pack's verdict.
+prints the pack and exits **1**. `evidence` reads the anchor table as `verify` does, so the
+UNCOVERED WINDOW block under the pack's verdict is the one `verify` would print.
 
 What the second section of the pack can say:
 
