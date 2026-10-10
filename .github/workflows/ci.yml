@@ -831,3 +831,30 @@ jobs:
           tar --extract --gzip --file "$RUNNER_TEMP/$archive" --directory "$RUNNER_TEMP" actionlint
           "$RUNNER_TEMP/actionlint" -version
           "$RUNNER_TEMP/actionlint" -color
+
+  docs-site:
+    name: Documentation site (build + links)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: docs-site/package-lock.json
+
+      - name: Install
+        working-directory: docs-site
+        run: npm ci --ignore-scripts
+
+      # On every pull request, not only on those that touch docs/: a page can link to a source
+      # file, and a pull request that moves that file breaks the link without touching the page.
+      - name: Build and check every link
+        working-directory: docs-site
+        run: npm run build
