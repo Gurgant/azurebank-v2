@@ -4,6 +4,17 @@ The single-page app: React 19, TypeScript, Vite, Fluent UI v9, and Redux Toolkit
 never calls the API itself. Every request goes to the BFF, which holds the session server-side, so
 the cookie stays first-party and the JWT never reaches the browser (ADR-0038).
 
+| Path | What is there |
+| --- | --- |
+| `src/pages/`, `src/components/` | The screens, and what they are built from |
+| `src/features/` | The RTK Query API slice, sign-in and the session, the public demo |
+| `src/api/` | The envelope, errors and outages; the types and Zod schemas generated from the contract |
+| `src/mocks/` | The MSW mock backend, for the tests and for `dev:mock` |
+| `src/contract/`, `src/integration/` | The contract suite, and the data layer against the running stack |
+| `src/theme/`, `src/test/` | The theme, the one place a colour is spelled out; the tests' setup and helpers |
+| `e2e/`, `e2e-demo/`, `screenshots/` | Playwright: the e2e suite, the demo's own run, the capture script |
+| `scripts/`, `public/` | The icon generator, and the icons it writes ([brand assets](../docs/brand-assets.md)) |
+
 ## Run it
 
 ```bash
@@ -12,21 +23,17 @@ npm run dev        # http://localhost:5173 — /api and /bff are proxied to the 
 npm run dev:mock   # the same app against MSW in the browser — no BFF, API or database
 ```
 
-`npm run dev` needs the BFF and the API running; the
+`npm run dev` needs the BFF and the API running: the
 [local setup](../docs/engineering-practices.md#local-setup) has the commands. Under `dev:mock`, sign
 in as `demo@azurebank.dev` / `Password1!`, PIN `123456`. The mock's state resets on every page
 reload.
 
 Either loop shows the public demo's screens when it is started with `AZUREBANK_DEMO=true` in its
-environment: the dev server then puts the demo's tag on the page, and under `dev:mock` the mock
-hands out demo copies and no longer signs its own user in. The console says so there:
-`[MSW] Mock backend ON, as the public demo: press "Try the demo" (PIN 123456)`. The copies the
-mock hands out live as long as the page, three to a page load. After a reload the browser still
-keeps its copy and the mock no longer knows it: "Continue with my copy" is refused as a copy
-that is gone, and the page offers "Try the demo" again (seen on 2026-10-05 in Chromium, where
-the fourth claim of one page load was refused with every demo copy in use).
-[`CONVENTIONS.md`](CONVENTIONS.md#demo-mode) has the tag, the key the demo keeps in the browser and
-how a test turns the demo on.
+environment: `AZUREBANK_DEMO=true npm run dev:mock` in bash, `$env:AZUREBANK_DEMO = 'true'` and
+then the command in PowerShell. The value is exactly `true`, and an env file does not set it.
+Under `dev:mock` the mock then hands out demo copies, three to a page load, and no longer signs
+its own user in; after a reload it no longer knows the copy the browser kept, and the page offers
+"Try the demo" again. [`CONVENTIONS.md`](CONVENTIONS.md#demo-mode) has the rest.
 
 ## Check it
 
@@ -42,90 +49,47 @@ npm run test:e2e            # Playwright; starts vite itself, needs the BFF and 
 npm run test:e2e:demo       # the public demo in a browser: by hand, on the compose demo stack
 ```
 
-`npm test` runs neither the contract suite nor the integration suite. The contract suite has two
-targets: against the real one it needs a running stack, while `npm run test:contract:mock` runs it
-against the mock with nothing else running. The integration suite has no mock target, so it always
-needs the stack.
-[`CONVENTIONS.md`](CONVENTIONS.md) has the details. `npm run build` is the type check that counts:
-`tsc --noEmit` skips the project references this tsconfig is built from.
-
-`npm run test:e2e:demo` is part of no other run and of no CI job. It wants the stack of
-`compose.yaml` with `compose.demo.yaml` and nobody else using it: it claims two demo copies, sends
-one transfer inside a copy it claimed, and restarts the BFF's and the API's containers.
-[`playwright.demo.config.ts`](playwright.demo.config.ts) says how to run it, why it keeps no
-trace, and what it leaves on disk to be deleted.
-
-One test in `test:contract:real` sends an oversized body, refused at 32 KB. The API reads the body
-before it answers 413: answered without reading it, the connection was aborted, the BFF passed
-that on, and the test sometimes failed on Windows with `ECONNRESET`.
-[`docs/engineering-traps.md`](../docs/engineering-traps.md) has the measurements.
+- **`npm test` is not the whole suite.** It runs neither the contract suite nor the integration
+  suite. The three commands that need the running stack want the API on `https://localhost:7215`:
+  [`CONVENTIONS.md`](CONVENTIONS.md) has what that stack must be.
+- **`npm run build` is the type check that counts.** `tsc --noEmit` skips the project references
+  this tsconfig is built from.
+- **`npm run test:e2e:demo` is part of no other run and of no CI job.** It wants the stack of
+  `compose.yaml` with `compose.demo.yaml` and nobody else using it: it claims two demo copies and
+  restarts the BFF's and the API's containers.
+  [`playwright.demo.config.ts`](playwright.demo.config.ts) says how to run it, why it keeps no
+  trace, and what it leaves on disk to be deleted.
 
 ## Accessibility
 
-axe-core (WCAG 2.0 A/AA, 2.1 AA and 2.2 AA) runs in the e2e step of CI's `real-stack` job over nine
-pages, the deposit dialog, the Change PIN dialog, the accounts page while its read is slow (light,
-dark and 375 px wide) and the open leave prompt of a transfer: fifteen scans. It fails that job on
-any serious or critical finding except colour contrast, which it only reports: on 2026-09-17 that
-was 25 nodes on theme tokens (muted secondary text, the sidebar avatar, a button group and the
-danger-zone button) on seven pages and the deposit dialog, a count that moves with the data a page
-shows. Fluent's own
-focus sentinels, which axe flags as `aria-hidden-focus` two per page, are excluded by a selector the
-spec proves matches nothing else. Every page carries its own title, and a route change is announced
-and moves focus to the new page. The per-scan JSON reports are a CI artifact.
+axe-core (WCAG 2.0 A/AA, 2.1 AA and 2.2 AA) runs in the e2e step of CI's `real-stack` job:
+fifteen scans, over nine pages, the deposit dialog, the Change PIN dialog, the accounts page
+while its read is slow (light, dark and 375 px wide) and the open leave prompt of a transfer. It
+fails that job on any serious or critical finding except colour contrast, which it only reports.
+Fluent's own focus sentinels, which axe flags as `aria-hidden-focus`, are excluded by a selector
+the gate proves matches nothing else. Every page carries its own title, and a route change is
+announced and moves focus to the new page. The report of each scan is a CI artifact.
 
-The same spec holds six more things by measuring them, where the sweep only reports or cannot
-see: what is typed in the app's three plain text fields, and their placeholder, can be read in
-both themes; each amount field shows where focus is; seven dialogs give focus back to the control
-that opened them; at 375 px the two money tiles share a row and two buttons of Settings keep their
-label on one line; and seven texts that measured under 4.5 to 1 stay at or above it in both
-themes. Two more need an entry in the ledger, which the suite's user is not seeded with, so
-`e2e/deposit.spec.ts` holds them after its deposit: at 375 px a status pill stays in its cell,
-and the "Completed" badge of a transaction's page can be read in both themes. That is 37 rows, 33
-and 4. On 2026-10-06, 24 of them failed before the fix they hold and all 37 passed after it,
-against `npm run dev:mock`. None was run that day in this suite's own configuration, which needs
-the real stack.
-
-A transaction's row is two lines wherever its table is under 480 px wide, which is a phone held
-upright: its four columns do not fit on one, and with them an amount ran under the status
-beside it. Two more rows of `e2e/deposit.spec.ts` hold that at 375 px, one on the home page and
-one on History, which makes 39. For every row of the page: the entry and the amount are on one
-line, with when and the status on the line under it; the amount is on one line, ends inside the
-row and is over no other cell; the pill is inside the row; and down the row's middle a press
-meets the entry's button over 44 px or more. Each reads the rows as they are drawn and again with
-the longest amount a row can show, "+€100,000.00", written into them: the API takes one amount
-of up to 100,000.00. Both failed on the four columns and passed on the two lines, against the
-same mock; neither was run in this suite's own configuration.
-
-Two more rows of the same file, which makes 41, hold a long word of an entry where the table has
-its columns. A description is free text and may be one word with no space in it, so an entry
-wraps inside a word at every width; with nothing to break it, such a word runs over the amount
-and the status. At 800 px of screen, where both tables have columns, sixty letters written as the
-entry of every row end inside the Entry column and are over no other cell, and the amount stays
-on one line. On 2026-10-07 both failed before the entry was let wrap inside a word and passed
-after it, against the same mock; neither was run in this suite's own configuration.
+The same run holds more by measuring it, each with its note in
+[`e2e/accessibility.spec.ts`](e2e/accessibility.spec.ts) and `e2e/deposit.spec.ts`: text that can
+be read in both themes, a visible focus on each amount field, focus given back by seven dialogs,
+and the layout of the money tiles and of a transaction's row at 375 px.
 
 The public demo's screens are scanned by the same gate only in `npm run test:e2e:demo`, which is
-run by hand: the sign-in page as the demo shows it to a browser that keeps no copy, the
-dashboard with its panel, once with the copy's sign-in details closed and once with them open,
-and the "Start over" dialog. The sign-in page of a browser that keeps a copy is under no scan.
-Until CI has a job for that run, the gate catches a finding on a demo screen nowhere else. On
-2026-10-05, against the compose stack with the demo on, in each of the day's three runs none of
-the four scans had a finding the gate fails on: the sign-in page and the dialog had no
-violation, and the dashboard had colour contrast alone, on two nodes, in both of its scans.
+run by hand: no CI job catches a finding on a demo screen. The sign-in page of a browser that
+keeps a copy is under no scan.
 
 ## Screenshots
 
 The README's pictures, the repository's social preview and a LinkedIn card are taken by a script,
-so they can be taken again when the UI changes. It drives the built app through the BFF as the
-seeded user John, like the e2e suite, and is never part of a test run:
+which drives the built app through the BFF as the seeded user John and is never part of a test
+run. [`playwright.screenshots.config.ts`](playwright.screenshots.config.ts) has the steps in
+order and why the reseed comes first.
 
 ```bash
 npm run capture:screenshots   # after a reseed, with the API and the BFF running
 npm run capture:publish       # the pictures the README uses, into ../docs/images/ (ffmpeg, pngquant)
 ```
-
-[`playwright.screenshots.config.ts`](playwright.screenshots.config.ts) has the steps in order and why
-the reseed comes first.
 
 ## Generated code
 
@@ -136,5 +100,5 @@ committed copies differ from what the contract generates.
 
 ## Conventions
 
-The data layer, money and formatting, the UI stack, and the traps of testing Fluent under jsdom:
-[`CONVENTIONS.md`](CONVENTIONS.md).
+The data layer, money and formatting, the UI stack, demo mode, and the traps of testing Fluent
+under jsdom: [`CONVENTIONS.md`](CONVENTIONS.md).
