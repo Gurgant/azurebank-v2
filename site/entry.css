@@ -1,331 +1,2234 @@
-/* The entry page of the live demo. One reading column, like a bank statement: the title, the
-   start panel, then short sections, with the figures in a grid of tabular numbers.
-   No font is downloaded: the three families are used where they are installed, and the system's
-   own otherwise. Light and dark follow the system. */
+/* ==========================================================================
+   The entry page of the live demo.
+
+   A launch page. The first screen is one navy field: who made it, the claim, the start panel,
+   two quieter actions, four figures, the real product. Below it the page turns light and each
+   block has its own shape: a statement table, three steps with real captures, the path of a
+   request, a sentence beside one figure, limits beside further reading, and the author again.
+
+   COLOUR  The application's own ramp and nothing else: navy #001D3D and #002D5E for the field,
+           #0077B6 for the key (the app's primary button), #0068A1 for links on light ground,
+           the pale end of the ramp for lines and tinted grounds, the app's green and amber for
+           "awake" and "late". The dark theme changes everything below the field.
+   TYPE    System faces only, so no font is ever requested: the app's stack for text, Segoe UI
+           Variable Display in front of it for headings, a monospace only for the PIN.
+   WIDTHS  The composition changes at 520, 720, 1024, 1240 and 1600 pixels, and the path of a
+           request changes with the width of its own sheet.
+   STATES  entry.js writes the state of the start panel on <html data-wake>. Without the script
+           there is no state: the panel shows the words for a sleeping demo and the key is a
+           plain link. The panel is as tall in one state as in any other.
+   ========================================================================== */
+
+/* ---------- 1. Tokens ---------- */
+
 :root {
   color-scheme: light dark;
-  --paper: #f6f8fa;
-  --sheet: #ffffff;
-  --ink: #15222c;
-  --muted: #55656f;
-  --rule: #d5dde3;
-  --accent: #0a6a70;
-  --accent-ink: #ffffff;
-  --done: #1d6b3a;
-  --chip: #e9eef2;
-  --display: 'IBM Plex Serif', Georgia, 'Times New Roman', serif;
-  --body: 'IBM Plex Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
-  --data: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+
+  /* The application's ramp, the same in both themes. Where a value below is written as
+     rgb(... / alpha) it is one of these colours made translucent (128 179 242 is blue-90,
+     204 224 250 blue-110, 179 205 247 blue-100, 0 29 61 navy); 0 6 16 is the navy's own shadow. */
+  --navy: #001d3d;
+  --navy-2: #002d5e;
+  --blue-press: #003f64;
+  --blue: #0077b6;
+  --blue-hover: #0068a1;
+  --blue-90: #80b3f2;
+  --blue-100: #b3cdf7;
+  --blue-110: #cce0fa;
+  --blue-120: #e6f0fc;
+  --blue-130: #f0f6fe;
+  --blue-140: #f5faff;
+  --white: #ffffff;
+  --green: #34a853;
+  --amber: #f59e0b;
+
+  --font:
+    'Segoe UI', 'Segoe UI Web (West European)', -apple-system, BlinkMacSystemFont, Roboto,
+    'Helvetica Neue', sans-serif;
+  --display:
+    'Segoe UI Variable Display', 'Segoe UI', 'Segoe UI Web (West European)', -apple-system,
+    BlinkMacSystemFont, Roboto, 'Helvetica Neue', sans-serif;
+  --mono: Consolas, 'SF Mono', Menlo, 'Courier New', monospace;
+
+  --gutter: 16px;
+  --container: 80rem;
+  --top-h: 58px;
+  --dock-h: 4.75rem;
+  /* The side padding of the page: the gutter, or a phone's own safe area where that is wider. */
+  --pad-left: max(var(--gutter), env(safe-area-inset-left, 0px));
+  --pad-right: max(var(--gutter), env(safe-area-inset-right, 0px));
+
+  /* The navy field. It is the brand's own dark, so it is the same in both themes. */
+  --on-field: var(--white);
+  --on-field-soft: var(--blue-110);
+  --on-field-muted: var(--blue-100);
+  --field-line: rgb(128 179 242 / 0.26);
+  --field-focus: var(--blue-100);
+  --bezel: var(--navy);
+  --bezel-edge: rgb(128 179 242 / 0.5);
+
+  /* The light part of the page. */
+  --page: var(--white);
+  --page-alt: var(--blue-140);
+  --surface: var(--white);
+  --tint: var(--blue-130);
+  --tile: var(--blue-120);
+  --line: var(--blue-110);
+  --line-strong: var(--blue-100);
+  --ink: var(--navy);
+  --text: #24364e; /* the app's neutral 700, tinted toward the ramp */
+  --muted: #4a5d77; /* the app's neutral 600, tinted toward the ramp */
+  --link: var(--blue-hover);
+  --focus: var(--blue-hover);
+  --stop: var(--blue);
+  --shot-ground: #f3f4f6; /* the app's own canvas, behind its captures */
+  --cap-edge: rgb(0 29 61 / 0.12);
+  --cap-shade: rgb(0 29 61 / 0.4);
+
+  /* The start panel: a card of the app, on the field. */
+  --console: var(--white);
+  --console-edge: rgb(255 255 255 / 0.2);
+  --console-ink: var(--navy);
+  --console-text: #24364e;
+  --console-muted: #4a5d77;
+  --console-link: var(--blue-hover);
+  --console-line: var(--blue-100);
+  --key: var(--blue);
+  --key-hover: var(--blue-hover);
+  --key-press: var(--blue-press);
+  --key-ink: var(--white);
+  --lamp-off: var(--blue-100);
+  --lamp-on: var(--blue);
+  --lamp-mid: var(--blue-90);
+  --ok-fill: var(--green);
+  --ok-on: var(--white);
+  --ok-text: #137333;
+  --late-fill: var(--amber);
+  --dock-shade: rgb(0 29 61 / 0.22);
 }
+
+/* The dark values, once for a visitor whose system asks for dark... */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --paper: #0f161b;
-    --sheet: #162028;
-    --ink: #e7eef2;
-    --muted: #9fb0ba;
-    --rule: #2b3943;
-    --accent: #56c7bf;
-    --accent-ink: #06201f;
-    --done: #6fcf97;
-    --chip: #1f2c35;
+  :root:not([data-theme='light']) {
+    --page: #06111e;
+    --page-alt: #0a1929;
+    --surface: #0e2137;
+    --tint: #12294a;
+    --tile: #12294a;
+    --line: #1f3a5a;
+    --line-strong: #2d4d74;
+    --ink: var(--blue-140);
+    --text: #d3e1f4;
+    --muted: #a3b8d4;
+    --link: var(--blue-90);
+    --focus: var(--blue-90);
+    --stop: var(--blue-90);
+    --shot-ground: #141414;
+    --cap-edge: rgb(255 255 255 / 0.14);
+    --cap-shade: rgb(0 0 0 / 0.7);
+
+    --console: #12305a;
+    --console-edge: rgb(128 179 242 / 0.6);
+    --console-ink: var(--white);
+    --console-text: var(--blue-110);
+    --console-muted: var(--blue-100);
+    --console-link: var(--blue-90);
+    --console-line: rgb(128 179 242 / 0.5);
+    --lamp-off: rgb(128 179 242 / 0.6);
+    --lamp-on: var(--white);
+    --lamp-mid: var(--blue-110);
+    --ok-fill: #4cb86a;
+    --ok-on: var(--navy);
+    --ok-text: #8fe0a6;
+    --late-fill: #f5a623;
+    --dock-shade: rgb(0 0 0 / 0.55);
   }
 }
 
-* {
-  box-sizing: border-box;
+/* ...and once more for a page that is told to be dark. */
+:root[data-theme='dark'] {
+  --page: #06111e;
+  --page-alt: #0a1929;
+  --surface: #0e2137;
+  --tint: #12294a;
+  --tile: #12294a;
+  --line: #1f3a5a;
+  --line-strong: #2d4d74;
+  --ink: var(--blue-140);
+  --text: #d3e1f4;
+  --muted: #a3b8d4;
+  --link: var(--blue-90);
+  --focus: var(--blue-90);
+  --stop: var(--blue-90);
+  --shot-ground: #141414;
+  --cap-edge: rgb(255 255 255 / 0.14);
+  --cap-shade: rgb(0 0 0 / 0.7);
+
+  --console: #12305a;
+  --console-edge: rgb(128 179 242 / 0.6);
+  --console-ink: var(--white);
+  --console-text: var(--blue-110);
+  --console-muted: var(--blue-100);
+  --console-link: var(--blue-90);
+  --console-line: rgb(128 179 242 / 0.5);
+  --lamp-off: rgb(128 179 242 / 0.6);
+  --lamp-on: var(--white);
+  --lamp-mid: var(--blue-110);
+  --ok-fill: #4cb86a;
+  --ok-on: var(--navy);
+  --ok-text: #8fe0a6;
+  --late-fill: #f5a623;
+  --dock-shade: rgb(0 0 0 / 0.55);
 }
+
+/* The captures exist in both themes: show the one that matches. The other one has no box, and
+   a lazy picture without a box is not fetched. */
+.on-dark {
+  display: none;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .on-light {
+    display: none;
+  }
+  :root:not([data-theme='light']) .on-dark {
+    display: block;
+  }
+}
+:root[data-theme='dark'] .on-light {
+  display: none;
+}
+:root[data-theme='dark'] .on-dark {
+  display: block;
+}
+
 /* One language at a time. entry.js sets the attribute on <html>; without it the page is English. */
 html[lang='en'] [data-lang='it'],
 html[lang='it'] [data-lang='en'] {
-  display: none;
+  display: none !important;
+}
+
+/* ---------- 2. Base ---------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 body {
   margin: 0;
-  background: var(--paper);
-  color: var(--ink);
-  font-family: var(--body);
-  font-size: 1rem;
-  line-height: 1.55;
-  padding-inline: 16px;
-  padding-block: 28px 56px;
+  background: var(--page);
+  color: var(--text);
+  font: 400 1rem/1.55 var(--font);
+  -webkit-font-smoothing: antialiased;
 }
-.page {
-  max-width: 46rem;
+h1,
+h2,
+h3,
+p,
+ul,
+ol,
+figure {
+  margin: 0;
+}
+ul,
+ol {
+  padding: 0;
+  list-style: none;
+}
+img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+a {
+  color: var(--link);
+}
+strong {
+  font-weight: 600;
+}
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.wrap {
+  max-width: calc(var(--container) + 2 * var(--gutter));
   margin-inline: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 28px;
+  padding-left: var(--pad-left);
+  padding-right: var(--pad-right);
 }
-header.top {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
+.sprite {
+  position: absolute;
 }
-.bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  min-height: 2rem;
+.i {
+  flex: none;
+  width: 1.125em;
+  height: 1.125em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
-.stamp {
-  font-family: var(--data);
-  font-size: 0.8rem;
+.num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* Said to a screen reader, not shown. */
+.vh {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.skip {
+  position: absolute;
+  left: 12px;
+  top: -80px;
+  z-index: 30;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: var(--white);
+  color: var(--navy);
+  font-weight: 600;
+}
+.skip:focus {
+  top: 12px;
+}
+
+/* A sheet: the app's card. One hairline, no shadow. */
+.sheet {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+/* A data label, in the app's own idiom ("AVAILABLE BALANCE", "WHEN", "ENTRY"). */
+.datalabel,
+.node__zone {
+  font: 600 0.75rem/1.2 var(--font);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
   color: var(--muted);
-  letter-spacing: 0.02em;
 }
-/* The switch needs the script: without it the buttons would do nothing. */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 20px;
+  border-radius: 8px;
+  font: 600 1rem/1.2 var(--font);
+  text-decoration: none;
+}
+.btn--ghost {
+  color: var(--white);
+  border: 1px solid rgb(179 205 247 / 0.55);
+}
+.btn--ghost:hover {
+  background: rgb(255 255 255 / 0.08);
+  border-color: var(--blue-100);
+}
+.btn--line {
+  color: var(--link);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+}
+.btn--line:hover {
+  border-color: var(--link);
+  background: var(--tint);
+}
+.btn--key {
+  background: var(--key);
+  color: var(--key-ink);
+}
+.btn--key:hover {
+  background: var(--key-hover);
+}
+/* A key without its address is a button for as long as the server takes to answer. */
+[data-door]:not([href]) {
+  cursor: pointer;
+  user-select: none;
+}
+
+/* ---------- 3. The top bar (laid over the field) ---------- */
+
+.top {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 5;
+  color: var(--on-field);
+}
+.top__in {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: calc(var(--container) + 2 * var(--gutter));
+  margin-inline: auto;
+  padding: 6px var(--pad-right) 0 var(--pad-left);
+}
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 46px;
+  font: 700 1.0625rem/1 var(--display);
+  letter-spacing: -0.015em;
+  color: var(--white);
+}
+.brand img {
+  width: 30px;
+  height: 30px;
+}
+
+/* The language switch: two quiet words, the current one marked by its weight and a line. It
+   needs the script: without it the two buttons would do nothing, so they are not shown. */
 .lang {
   display: none;
-  margin-left: auto;
-  border: 1px solid var(--rule);
-  border-radius: 6px;
-  overflow: hidden;
+  margin-right: -10px;
 }
 .js .lang {
   display: inline-flex;
 }
-.lang button {
-  font: 500 0.8rem var(--data);
-  letter-spacing: 0.04em;
-  padding: 6px 12px;
+.lang__btn {
+  position: relative;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 10px;
   border: 0;
-  cursor: pointer;
+  border-radius: 8px;
   background: transparent;
-  color: var(--muted);
+  font: 500 0.8125rem/1 var(--font);
+  letter-spacing: 0.06em;
+  color: var(--blue-100);
+  cursor: pointer;
 }
-.lang button[aria-pressed='true'] {
-  background: var(--ink);
-  color: var(--paper);
+.lang__btn:hover {
+  color: var(--white);
 }
-a:focus-visible,
-button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.lang__btn[aria-pressed='true'] {
+  font-weight: 700;
+  color: var(--white);
 }
-.lang button:focus-visible {
-  outline-offset: -2px;
+.lang__btn[aria-pressed='true']::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 9px;
+  width: 18px;
+  height: 2px;
+  margin-left: -9px;
+  border-radius: 1px;
+  background: var(--blue-90);
 }
-h1 {
-  font: 500 clamp(2rem, 6vw, 2.9rem) / 1.1 var(--display);
-  margin: 0;
+.lang__btn:focus-visible {
+  outline-offset: -3px;
+}
+
+/* ---------- 4. The first screen ---------- */
+
+.hero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  overflow: clip;
+  color: var(--on-field);
+  /* One soft tonal lift behind the product (blue 30 of the ramp, #003D7F, at 60%), on a field
+     that goes from the navy to the next step of the same ramp. No second hue. */
+  background:
+    radial-gradient(72rem 42rem at 92% 18%, rgb(0 61 127 / 0.6), transparent 68%),
+    linear-gradient(176deg, var(--navy) 0%, var(--navy) 34%, var(--navy-2) 100%);
+}
+.hero :focus-visible,
+.top :focus-visible {
+  outline-color: var(--field-focus);
+}
+.hero__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  max-width: calc(var(--container) + 2 * var(--gutter));
+  margin-inline: auto;
+  padding: calc(var(--top-h) + 6px) var(--pad-right) 0 var(--pad-left);
+}
+/* Below the desktop split the copy's children are items of the first screen's own grid. */
+.hero__copy {
+  display: contents;
+}
+
+/* Who made it: the first words under the brand, at a size that is read. */
+.by {
+  font-size: 0.9375rem;
+  line-height: 1.4;
+  color: var(--on-field-soft);
+}
+.by__who {
+  display: block;
+  font-weight: 600;
+  color: var(--white);
+}
+.by__role {
+  display: block;
+  font-size: 0.875rem;
+}
+.by a {
+  display: inline-block;
+  padding-block: 12px;
+  margin-block: -12px;
+  color: var(--white);
+  white-space: nowrap;
+  text-decoration-thickness: 1px;
+  text-decoration-color: rgb(204 224 250 / 0.7);
+  text-underline-offset: 4px;
+}
+.by a:hover {
+  text-decoration-color: var(--white);
+}
+
+.hero h1 {
+  margin-top: 14px;
+  font: 650 clamp(2.125rem, 0.9rem + 5.6vw, 3.25rem) / 1.05 var(--display);
+  letter-spacing: -0.026em;
   text-wrap: balance;
 }
-.lede {
-  font-size: 1.12rem;
-  margin: 0;
-  max-width: 40rem;
+.hero h1 span {
+  display: block;
 }
-.by {
-  color: var(--muted);
-  margin: 0;
-  font-size: 0.95rem;
+.lede {
+  max-width: 36rem;
+  margin-top: 12px;
+  font-size: 0.96875rem;
+  line-height: 1.5;
+  color: var(--on-field-soft);
+  text-wrap: pretty;
+}
+/* The second sentence waits for a screen with room for it. */
+.lede__more {
+  display: none;
 }
 
-/* The start panel. Its states are written by entry.js in data-state:
-   checking  a probe is out and may still come back at once: nothing is shown yet
-   waiting   no answer after the first moment: the bar and the seconds
-   ready     the server answered
-   anyway    the probe failed or gave up: the link works, with no promise
-   idle      the last answer is old: as without the script, and the link probes first
-   With no data-state the script has not run, and the link is a plain link. */
-.start {
+/* ----- The start panel ----- */
+
+.launch {
+  max-width: 30rem;
+  margin-top: 18px;
+  padding: 8px;
+  border-radius: 14px;
+  background: var(--console);
+  color: var(--console-text);
+  box-shadow:
+    0 0 0 1px var(--console-edge),
+    0 22px 44px -18px rgb(0 6 16 / 0.7);
+}
+.launch :focus-visible,
+.dock :focus-visible {
+  outline-color: var(--console-ink);
+}
+.launch__key,
+.dock__key {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  background: var(--sheet);
-  border: 1px solid var(--rule);
-  border-radius: 6px;
-  padding: 14px;
-}
-.wake,
-.meter {
-  display: none;
-}
-/* With the script the status line keeps its room in every state: when the server is awake the
-   words appear and nothing moves. */
-.js .wake {
-  display: block;
-  margin: 0;
-  min-height: 1.55em;
-}
-.start[data-state='waiting'] #wake-status {
-  font-weight: 500;
-}
-.start[data-state='ready'] #wake-status {
-  color: var(--done);
-  font-weight: 600;
-}
-#wake-count {
-  font-family: var(--data);
-  font-size: 0.9em;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.start[data-state='waiting'] .meter {
-  display: block;
-  height: 6px;
-  border-radius: 3px;
-  background: var(--chip);
-  overflow: hidden;
-}
-.fill {
-  height: 100%;
-  background: var(--accent);
-  transform: scaleX(0);
-  transform-origin: left center;
-}
-/* The bar moves only for a visitor who has not asked for less motion; the seconds are written
-   either way. */
-@media (prefers-reduced-motion: no-preference) {
-  .start[data-state='waiting'] .fill {
-    transition: transform 1s linear;
-  }
-}
-.doors {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
   align-items: center;
-}
-.door {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+  justify-content: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 0 16px;
+  border-radius: 8px;
+  background: var(--key);
+  color: var(--key-ink);
+  font: 600 1.0625rem/1.2 var(--font);
+  text-align: center;
   text-decoration: none;
-  font-weight: 600;
-  padding: 11px 18px;
-  border-radius: 6px;
-  border: 1px solid var(--accent);
 }
-.door.primary {
-  background: var(--accent);
-  color: var(--accent-ink);
+.launch__key:hover,
+.dock__key:hover {
+  background: var(--key-hover);
 }
-.door.plain,
-.start[data-state='anyway'] .door.primary {
-  color: var(--accent);
-  background: transparent;
+.launch__key:active,
+.dock__key:active {
+  background: var(--key-press);
 }
-/* While a probe is out the way in is not a link: no address, dashed, muted. */
-.door[aria-disabled='true'] {
-  background: transparent;
-  color: var(--muted);
-  border-color: var(--muted);
-  border-style: dashed;
-  cursor: progress;
+.launch__go {
+  width: 20px;
+  height: 20px;
 }
-.label-anyway,
-.start[data-state='anyway'] .label-open {
+/* A key that holds a press keeps its colour: a ring turns where the arrow was. */
+.spin {
+  display: none;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgb(255 255 255 / 0.4);
+  border-top-color: var(--white);
+  border-radius: 50%;
+}
+[data-queued] .launch__key .launch__go {
   display: none;
 }
-.start[data-state='anyway'] .label-anyway {
+[data-queued] .launch__key .spin {
+  display: block;
+}
+
+/* The status: one line that says the state, and one line under it. While the server starts, the
+   second line is the 25 lamps and the seconds stand at the end of the first. */
+.launch__status {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(calc(1.4 * 0.875rem), auto);
+  column-gap: 10px;
+  align-items: start;
+  /* Room for two lines in every state: when the words change, nothing moves. */
+  min-height: calc(2 * 1.4 * 0.875rem + 22px);
+  padding: 12px 8px 10px;
+}
+.launch__msg,
+.dock__msg,
+.try__wake {
+  font-size: 0.875rem;
+  line-height: 1.4;
+  color: var(--console-text);
+}
+.launch__msg {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+[data-wake-lead] {
+  font-weight: 600;
+  color: var(--console-ink);
+}
+.launch__msg [data-wake-lead],
+.launch__msg [data-wake-hint] {
+  display: block;
+}
+[data-wake='ready'] [data-wake-lead] {
+  color: var(--ok-text);
+}
+/* The page as written says that the demo sleeps: true without the script. With the script, and
+   until it has set the first state, the panel says that it is checking. */
+.with-js,
+.js:not([data-wake]) .before-js {
+  display: none;
+}
+.js:not([data-wake]) .with-js {
   display: inline;
 }
-.wait {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.92rem;
+.count {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--console-muted);
 }
-.start[data-state='checking'] .note,
-.start[data-state='ready'] .note,
-.start[data-state='anyway'] .note {
-  display: none;
+.launch__status > .count {
+  grid-column: 3;
+  grid-row: 1;
+  font-size: 0.875rem;
+  line-height: 1.4;
 }
 
-section {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-h2 {
-  font: 600 0.78rem var(--body);
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin: 0;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--rule);
-}
-p {
-  margin: 0;
-  max-width: 42rem;
-}
-ol.steps,
-ul.plain {
-  margin: 0;
-  padding-left: 1.3rem;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-width: 42rem;
-}
-.mono {
-  font-family: var(--data);
-  font-size: 0.92em;
-}
-.facts {
+/* Twenty-five lamps: one for each second the server needs. They are shown only while the page
+   counts, on the line the hint leaves free. */
+.meter {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(13.5rem, 1fr));
-  gap: 0;
-  background: var(--sheet);
-  border: 1px solid var(--rule);
-  border-radius: 6px;
+  grid-template-columns: repeat(25, minmax(0, 1fr));
+  gap: 3px;
 }
-.fact {
-  padding: 14px;
+.launch__status > .meter {
+  grid-column: 2 / -1;
+  grid-row: 2;
+  align-self: center;
+  visibility: hidden;
+}
+[data-wake='starting'] .launch__status > .meter {
+  visibility: visible;
+}
+.meter i {
+  height: 8px;
+  border-radius: 2px;
+  background: var(--lamp-off);
+}
+.meter i.on {
+  background: var(--lamp-on);
+}
+
+/* The round lamp beside the words: an "i" while nothing is known, a turning ring while the page
+   checks, a dot while the server starts, a tick when it answers. */
+.lamp {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  border: 2px solid var(--console-muted);
+  border-radius: 50%;
+  color: var(--ok-on);
+}
+.lamp::after {
+  content: 'i';
+  font: 700 0.6875rem/1 var(--font);
+  color: var(--console-muted);
+}
+.lamp .i {
+  display: none;
+  width: 12px;
+  height: 12px;
+  stroke-width: 3.2;
+}
+.js:not([data-wake]) .lamp,
+[data-wake='checking'] .lamp {
+  border-color: var(--console-line);
+  border-top-color: var(--lamp-on);
+}
+[data-wake='starting'] .lamp {
+  border-color: var(--key);
+  background: radial-gradient(circle, var(--key) 0 3.5px, transparent 4px);
+}
+[data-wake='ready'] .lamp {
+  border-color: var(--ok-fill);
+  background: var(--ok-fill);
+}
+[data-wake='ready'] .lamp .i {
+  display: block;
+}
+[data-wake='late'] .lamp {
+  border-color: var(--late-fill);
+  background: radial-gradient(circle, var(--late-fill) 0 3.5px, transparent 4px);
+}
+.js:not([data-wake]) .lamp::after,
+[data-wake='checking'] .lamp::after,
+[data-wake='starting'] .lamp::after,
+[data-wake='ready'] .lamp::after,
+[data-wake='late'] .lamp::after {
+  content: none;
+}
+
+/* ----- The two quieter actions ----- */
+
+.actions {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  border-top: 1px solid var(--rule);
-  margin-top: -1px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 22px;
+  margin-top: 12px;
 }
-.fact b {
-  font: 500 1.45rem/1.2 var(--data);
-  font-variant-numeric: tabular-nums;
-}
-.fact span {
-  color: var(--muted);
-  font-size: 0.9rem;
-}
-dl.proves {
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  max-width: 42rem;
-}
-dl.proves dt {
+.textlink {
+  display: inline-flex;
+  align-items: center;
+  min-height: 48px;
   font-weight: 600;
+  color: var(--on-field-soft);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-decoration-color: rgb(204 224 250 / 0.55);
+  text-underline-offset: 5px;
 }
-dl.proves dd {
-  margin: 0;
-  color: var(--muted);
+.textlink:hover {
+  color: var(--white);
+  text-decoration-color: var(--white);
 }
-.links {
+
+/* ----- The four figures: on a phone two by two, on the field, before the product ----- */
+
+.proof {
+  --p-num: var(--white);
+  --p-lab: var(--on-field-soft);
+  --p-sub: var(--on-field-muted);
+  --p-line: var(--field-line);
+  margin-top: 14px;
+  border-top: 1px solid var(--p-line);
+}
+.proof__list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-  gap: 8px 20px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 16px;
 }
-.links a,
-p a,
-li a {
-  color: var(--accent);
+.proof li:nth-child(n + 3) {
+  border-top: 1px solid var(--p-line);
+}
+.proof a {
+  display: block;
+  min-height: 64px;
+  height: 100%;
+  padding: 12px 0;
+  color: inherit;
+  text-decoration: none;
+}
+/* A figure and what it counts. */
+.fig {
+  display: grid;
+  row-gap: 4px;
+}
+.fig b {
+  font: 650 1.625rem/1 var(--display);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--p-num);
+}
+/* What a figure counts is underlined, like every other link of the first screen. */
+.fig > span {
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: var(--p-lab);
+  /* A label of two or three lines, not a paragraph: its lines are kept even. */
+  text-wrap: balance;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-decoration-color: rgb(204 224 250 / 0.5);
   text-underline-offset: 3px;
 }
-.links div {
+.fig small {
+  display: none;
+  width: 100%;
+  margin-top: 2px;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: var(--p-sub);
+}
+.proof a:hover .fig > span,
+.proof a:focus-visible .fig > span {
+  color: var(--white);
+  text-decoration-color: var(--white);
+}
+.proof a:focus-visible {
+  outline-offset: 0;
+}
+.proof__date {
+  padding-top: 10px;
+  border-top: 1px solid var(--p-line);
+  font-size: 0.75rem;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  color: var(--p-sub);
+}
+
+/* ----- The product: real captures ----- */
+
+/* On a phone: the app's own phone layout rises from the bottom of the field, shown down to the
+   end of its first card, and its last pixels sink into the field. */
+.visual {
+  position: relative;
+  margin-top: 22px;
+  padding: 1px 1px 0;
+  overflow: hidden;
+}
+.visual::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0;
+  z-index: 2;
+  height: 28px;
+  background: linear-gradient(to bottom, rgb(0 45 94 / 0), var(--navy-2));
+  pointer-events: none;
+}
+/* The desktop capture is shown up to the right edge of the app's main column, 1131 of its 1600
+   pixels: the picture is wider than its frame by that ratio, and the frame cuts it. */
+.shot {
+  display: none;
+  overflow: hidden;
+  aspect-ratio: 1131 / 1000;
+  border-radius: 12px;
+  background: var(--shot-ground);
+  box-shadow:
+    0 0 0 1px rgb(255 255 255 / 0.14),
+    0 32px 64px -24px rgb(0 6 16 / 0.8);
+}
+.shot img {
+  width: 141.47%;
+  max-width: none;
+}
+.device {
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  /* Down to the gap under the first card: 737 of the capture's 1688 pixels. */
+  aspect-ratio: 780 / 737;
+  border: 5px solid var(--bezel);
+  border-bottom: 0;
+  border-radius: 26px 26px 0 0;
+  background: var(--bezel);
+  box-shadow: 0 0 0 1px var(--bezel-edge);
+}
+.device img {
+  width: 100%;
+  border-radius: 21px 21px 0 0;
+}
+
+/* ---------- 5. The light part: shared ---------- */
+
+.block {
+  padding-block: clamp(3.5rem, 8vw, 6.75rem);
+  background: var(--page);
+}
+.block--alt {
+  background: var(--page-alt);
+}
+.block h2 {
+  font: 650 clamp(1.75rem, 1.25rem + 2.2vw, 2.75rem) / 1.08 var(--display);
+  letter-spacing: -0.024em;
+  color: var(--ink);
+  text-wrap: balance;
+}
+
+/* ---------- A. What it proves: one sheet, read like a statement ---------- */
+
+.claims {
+  margin-top: clamp(24px, 4vw, 40px);
+}
+.claims__head {
+  display: none;
+}
+.claim {
+  display: grid;
+  gap: 8px;
+  padding: 20px;
+}
+.claim + .claim {
+  border-top: 1px solid var(--line);
+}
+.claim h3 {
+  font: 600 1.1875rem/1.25 var(--display);
+  letter-spacing: -0.012em;
+  color: var(--ink);
+  text-wrap: balance;
+}
+.claim p {
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+/* The decision that states the claim, and a test that holds it. */
+.claim__src {
   display: flex;
-  flex-direction: column;
-  min-width: 0;
+  flex-wrap: wrap;
+  gap: 0 24px;
+  margin-block: -6px -12px;
 }
-.links small {
+.claim__src a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  font-weight: 600;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}
+
+/* ---------- B. Try it in three minutes ---------- */
+
+.steps {
+  display: grid;
+  gap: 32px;
+  margin-top: clamp(24px, 4vw, 40px);
+}
+.step {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+/* Each step shows one thing the visitor will see: a piece of a real capture, whole, framed on a
+   tinted tile at a size that can be read. */
+.step__shot {
+  display: grid;
+  /* One cell as large as the tile, so that the picture's largest height is the tile's own. */
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  place-items: center;
+  height: clamp(232px, 74vw, 300px);
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--tile);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.step__shot img {
+  width: auto;
+  min-height: 0;
+  max-height: 100%;
+  border-radius: 8px;
+  box-shadow:
+    0 0 0 1px var(--cap-edge),
+    0 14px 28px -16px var(--cap-shade);
+}
+.step__body {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 14px;
+  align-items: start;
+}
+.step__n {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--tile);
+  font: 700 0.9375rem/1 var(--font);
+  font-variant-numeric: tabular-nums;
+  color: var(--link);
+}
+.step__body p {
+  padding-top: 3px;
+  text-wrap: pretty;
+}
+.step__body strong {
+  color: var(--ink);
+}
+/* Three ways to try to break it, each with what the demo answers. */
+.breaks {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+.breaks li {
+  position: relative;
+  padding-left: 20px;
+  text-wrap: pretty;
+}
+.breaks li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.72em;
+  width: 10px;
+  height: 2px;
+  background: var(--stop);
+}
+.pin {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--tile);
+  font: 600 0.9375em/1 var(--mono);
+  letter-spacing: 0.08em;
+  color: var(--ink);
+}
+.try__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px 24px;
+  margin-top: clamp(28px, 4vw, 44px);
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+.smallprint {
+  max-width: 38rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
   color: var(--muted);
 }
-footer {
+.smallprint a {
+  display: inline-block;
+  padding-block: 12px;
+  margin-block: -12px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+/* The second key. It needs the script, which gives it the address. */
+.try__open {
+  display: none;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px 16px;
+}
+.js .try__open {
+  display: flex;
+}
+.try__wake {
+  color: var(--text);
+}
+.try__wake .count {
   color: var(--muted);
-  font-size: 0.85rem;
-  border-top: 1px solid var(--rule);
-  padding-top: 14px;
+}
+.try__wake [data-wake-lead] {
+  color: var(--ink);
+}
+[data-wake='ready'] .try__wake [data-wake-lead] {
+  color: var(--ok-text);
+}
+[data-wake='asleep'] .try__wake,
+[data-wake='unknown'] .try__wake {
+  visibility: hidden;
+}
+
+/* ---------- C. How it is built: the path of a request ---------- */
+
+.route {
+  container-type: inline-size;
+  max-width: 42rem;
+  margin-top: clamp(24px, 4vw, 40px);
+  overflow: hidden;
+}
+.route__head {
+  padding: 20px 20px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.route__head h3 {
+  font: 600 1.1875rem/1.25 var(--display);
+  letter-spacing: -0.012em;
+  color: var(--ink);
+}
+.route__head p {
+  margin-top: 2px;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+/* A narrow sheet: the stops run down it. Each stop is a box; what it does and what it guarantees
+   stand under the box, beside the line that leads to the next stop; what travels on that line is
+   named at its end. */
+.path {
+  display: grid;
+}
+.node {
+  padding: 0 20px;
+}
+.node--zone {
+  padding-top: 16px;
+}
+/* The server's side is tinted, and a dashed line marks where a request crosses over. */
+.node--server {
+  background: var(--tint);
+}
+.node--server.node--zone {
+  border-top: 2px dashed var(--line-strong);
+}
+.node__zone {
+  position: relative;
+  margin-bottom: 12px;
+  text-align: right;
+}
+/* Under the dashed line the path goes on, past the name of the side, down to the first box. */
+.node--server .node__zone::before {
+  content: '';
+  position: absolute;
+  left: 20px;
+  top: -18px;
+  bottom: -12px;
+  width: 2px;
+  background: var(--stop);
+}
+.node__box {
+  position: relative;
+  width: 9rem;
+  padding: 11px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  font: 600 1rem/1.3 var(--display);
+  color: var(--ink);
+}
+/* The two stops that hold the rules are filled with the key's blue. */
+.node--core .node__box {
+  border-color: var(--blue);
+  background: var(--blue);
+  color: var(--white);
+}
+/* The point of the arrow, on the box the path arrives at. */
+.node + .node .node__box::before {
+  content: '';
+  position: absolute;
+  left: 15.5px;
+  top: -8px;
+  width: 9px;
+  height: 9px;
+  border-right: 2px solid var(--stop);
+  border-bottom: 2px solid var(--stop);
+  transform: rotate(45deg);
+}
+/* The line to the next stop is the left edge of what stands under the box. */
+.node__body {
+  margin-left: 20px;
+  padding: 10px 0 16px 22px;
+  border-left: 2px solid var(--stop);
+}
+.node:last-child .node__body {
+  padding-bottom: 22px;
+  border-left-color: transparent;
+}
+.node__role {
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+.node__flags {
+  display: grid;
+  margin-top: 4px;
+}
+/* A guarantee, marked on the stop that keeps it, and a link to the document that states it. */
+.flag {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 8px;
+  align-content: center;
+  min-height: 48px;
+  padding-block: 4px;
+  color: inherit;
+  text-decoration: none;
+}
+.flag::before {
+  content: '';
+  grid-row: span 2;
+  width: 10px;
+  height: 10px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--stop);
+}
+.flag__say {
+  font: 600 0.9375rem/1.3 var(--font);
+  color: var(--ink);
+}
+.flag__src {
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: var(--link);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+.flag:hover .flag__say {
+  color: var(--link);
+}
+.flag:focus-visible {
+  outline-offset: 0;
+  border-radius: 6px;
+}
+/* What travels on the line: a small plate beside it, clear of the dashed line. */
+.hop {
+  margin-top: 8px;
+  line-height: 1;
+}
+.hop__label {
+  display: inline-block;
+  padding: 4px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  font: 600 0.75rem/1 var(--font);
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+/* A wide sheet: the path lies down. The four boxes are one width and stand on one line; each
+   wire carries its plate above it; what a stop does and what it guarantees stand under its box,
+   and the guarantees start on one line. */
+@container (min-width: 50rem) {
+  .path {
+    --hop: 5.5rem;
+    --box: calc((100% - 3 * var(--hop)) / 4);
+    grid-template-columns: repeat(3, calc(var(--box) + var(--hop))) var(--box);
+    grid-template-rows: repeat(4, auto);
+    padding-inline: 28px;
+  }
+  .route__head {
+    padding-inline: 28px;
+  }
+  .node {
+    display: grid;
+    grid-row: 1 / span 4;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: subgrid;
+    padding: 20px 0 26px;
+  }
+  .node:last-child {
+    margin-right: -28px;
+    padding-right: 28px;
+  }
+  /* The dashed line stands 20 pixels before the first box of the server's side, and crosses the
+     wire there. */
+  .node--server.node--zone {
+    margin-left: -20px;
+    padding-left: 18px;
+    border-top: 0;
+    border-left: 2px dashed var(--line-strong);
+  }
+  .node__zone {
+    grid-row: 1;
+    margin-bottom: 14px;
+    text-align: left;
+  }
+  .node--server .node__zone::before,
+  .node + .node .node__box::before {
+    content: none;
+  }
+  .node__box {
+    grid-column: 1;
+    grid-row: 2;
+    width: auto;
+    margin-right: var(--hop);
+    padding: 13px 14px;
+    font-size: 1.0625rem;
+  }
+  .node:last-child .node__box {
+    margin-right: 0;
+  }
+  /* Its children become items of the stop's own rows. */
+  .node__body {
+    display: contents;
+  }
+  .hop {
+    position: relative;
+    z-index: 1;
+    grid-column: 1;
+    grid-row: 2;
+    justify-self: end;
+    align-self: center;
+    width: var(--hop);
+    height: 3rem;
+    margin: 0;
+  }
+  .hop::before {
+    content: '';
+    position: absolute;
+    left: 5px;
+    right: 5px;
+    top: 50%;
+    height: 2px;
+    margin-top: -1px;
+    background: var(--stop);
+  }
+  .hop::after {
+    content: '';
+    position: absolute;
+    right: 5px;
+    top: 50%;
+    width: 9px;
+    height: 9px;
+    border-right: 2px solid var(--stop);
+    border-top: 2px solid var(--stop);
+    transform: translateY(-50%) rotate(45deg);
+  }
+  .hop__label {
+    position: absolute;
+    left: 50%;
+    bottom: calc(50% + 7px);
+    transform: translateX(-50%);
+    padding: 3px 7px;
+    font-size: 0.6875rem;
+  }
+  /* The plate of the wire that crosses over stays on the browser's side of the dashed line. */
+  .node--crossing .hop__label {
+    left: calc((var(--hop) - 20px) / 2);
+  }
+  .node__role {
+    grid-row: 3;
+    padding: 12px 24px 0 0;
+  }
+  .node:last-child .node__role {
+    padding-right: 0;
+  }
+  .node__flags {
+    grid-row: 4;
+    align-self: start;
+    margin: 14px 24px 0 0;
+    padding-top: 6px;
+    border-top: 1px solid var(--line-strong);
+  }
+}
+
+/* What the picture does not name. */
+.also {
+  max-width: 42rem;
+  margin-top: 20px;
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+.also strong {
+  color: var(--ink);
+}
+
+/* ---------- D. How I work ---------- */
+
+.work {
+  display: grid;
+  gap: 32px;
+}
+.work__lead {
+  max-width: 40rem;
+  margin-top: clamp(16px, 2.4vw, 28px);
+  font: 400 clamp(1.1875rem, 1rem + 0.9vw, 1.625rem) / 1.4 var(--display);
+  letter-spacing: -0.008em;
+  color: var(--text);
+  text-wrap: pretty;
+}
+/* The one dark object of the light part: the field of the first screen, come back, with one
+   figure and the two places that show it. */
+.tally {
+  padding: clamp(20px, 3vw, 32px);
+  border-radius: 14px;
+  background: linear-gradient(176deg, var(--navy) 0%, var(--navy-2) 100%);
+  box-shadow: 0 0 0 1px var(--line);
+  color: var(--white);
+}
+.tally :focus-visible {
+  outline-color: var(--field-focus);
+}
+.tally .fig {
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 18px;
+  align-items: center;
+}
+.tally .fig b {
+  font-size: clamp(3rem, 2.2rem + 3vw, 4.25rem);
+  letter-spacing: -0.03em;
+  color: var(--white);
+}
+.tally .fig > span {
+  font-size: 1.0625rem;
+  line-height: 1.35;
+  color: var(--blue-110);
+  text-decoration: none;
+}
+.tally__links {
+  margin-top: 16px;
+  border-top: 1px solid rgb(128 179 242 / 0.24);
+}
+.tally__links li + li {
+  border-top: 1px solid rgb(128 179 242 / 0.24);
+}
+.tally__links a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--blue-110);
+  text-decoration: none;
+}
+.tally__links a:hover {
+  color: var(--white);
+}
+.tally__links li:last-child a {
+  margin-bottom: -12px;
+}
+
+/* ---------- E. Limits, and further reading ---------- */
+
+.ends {
+  display: grid;
+  gap: 36px;
+  margin-top: clamp(24px, 4vw, 40px);
+}
+.ends .datalabel {
+  margin-bottom: 14px;
+}
+.limits {
+  display: grid;
+  gap: 14px;
+}
+.limits li {
+  position: relative;
+  padding-left: 24px;
+  font-size: 0.9375rem;
+  text-wrap: pretty;
+}
+.limits li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.72em;
+  width: 12px;
+  height: 2px;
+  background: var(--line-strong);
+}
+.doors {
+  overflow: hidden;
+}
+.doors li + li {
+  border-top: 1px solid var(--line);
+}
+.doors a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 56px;
+  padding: 12px 20px;
+  font: 600 1.0625rem/1.3 var(--font);
+  color: var(--ink);
+  text-decoration: none;
+}
+.doors a .i {
+  width: 20px;
+  height: 20px;
+  color: var(--link);
+}
+.doors a:hover {
+  background: var(--tint);
+  color: var(--link);
+}
+.doors a:focus-visible {
+  outline-offset: -3px;
+  border-radius: 12px;
+}
+
+/* ---------- 6. The author and the key again, then the footer: the field ---------- */
+
+.close {
+  padding-block: clamp(2.5rem, 6vw, 4rem);
+  background: var(--navy);
+  color: var(--blue-110);
+}
+.close :focus-visible,
+.foot :focus-visible {
+  outline-color: var(--field-focus);
+}
+.close__in {
+  display: grid;
+  gap: 22px;
+}
+/* The name is never broken across two lines. */
+.close h2 {
+  font: 650 clamp(1.625rem, 1.2rem + 1.8vw, 2.25rem) / 1.1 var(--display);
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  color: var(--white);
+}
+.close p {
+  margin-top: 6px;
+  text-wrap: pretty;
+}
+.close__go {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.close__go .i {
+  width: 18px;
+  height: 18px;
+}
+/* The key needs the script, which gives it the address. */
+.close__key {
+  display: none;
+}
+.js .close__key {
+  display: inline-flex;
+}
+
+.foot {
+  padding-block: 24px 36px;
+  border-top: 1px solid var(--field-line);
+  background: var(--navy);
+  color: var(--blue-100);
+}
+.foot__in {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px 24px;
+  align-items: center;
+}
+.brand--foot {
+  font-size: 1rem;
+}
+.brand--foot img {
+  width: 28px;
+  height: 28px;
+}
+.foot__note {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+.foot__date {
+  grid-column: 1 / -1;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 7. The dock: the door at the thumb ---------- */
+
+/* Only on a phone held upright, and only with the script. One row: the state on the left, the
+   key on the right. It waits under the screen until entry.js says that the key of the first
+   screen has scrolled away. */
+.dock {
+  display: none;
+}
+@media (max-width: 44.99em) and (min-height: 30em) {
+  .js .dock {
+    position: fixed;
+    inset: auto 0 0;
+    z-index: 20;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 12px;
+    padding: 10px var(--pad-right) max(10px, env(safe-area-inset-bottom, 0px)) var(--pad-left);
+    border-top: 1px solid var(--console-line);
+    background: var(--console);
+    color: var(--console-text);
+    box-shadow: 0 -8px 18px -10px var(--dock-shade);
+    transform: translateY(110%);
+    visibility: hidden;
+  }
+  .js .dock.is-on {
+    transform: none;
+    visibility: visible;
+  }
+  /* While the page counts, the dock's top edge is one line that fills. */
+  .meter--edge {
+    position: absolute;
+    inset: -1px 0 auto;
+    display: none;
+    gap: 0;
+    background: var(--console-line);
+  }
+  [data-wake='starting'] .meter--edge {
+    display: grid;
+  }
+  .meter--edge i {
+    height: 3px;
+    border-radius: 0;
+    background: transparent;
+  }
+  .meter--edge i.on,
+  .meter--edge i.now {
+    background: var(--key);
+  }
+  .dock__msg {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: 9px;
+    align-items: center;
+    line-height: 1.3;
+  }
+  .dock__msg .count {
+    display: block;
+    font-size: 0.8125rem;
+  }
+  .dock__msg .count:empty {
+    display: none;
+  }
+  .dock__key {
+    min-height: 48px;
+    font-size: 1rem;
+    white-space: nowrap;
+  }
+  .dock__key .launch__go {
+    width: 18px;
+    height: 18px;
+  }
+  /* A held press: the dock's key takes it back, and looks like the quieter thing it now is. */
+  [data-queued] .dock__key {
+    background: transparent;
+    box-shadow: inset 0 0 0 1px var(--console-muted);
+    color: var(--console-ink);
+  }
+  [data-queued] .dock__key .launch__go {
+    display: none;
+  }
+  /* The dock holds the key: the two keys further down the page give way to it. */
+  .has-dock .try__open,
+  .has-dock .close__key {
+    display: none;
+  }
+  /* The last lines of the page stay clear of the dock. */
+  .has-dock .foot {
+    padding-bottom: calc(36px + var(--dock-h) + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* ==========================================================================
+   8. The composition, width by width
+   ========================================================================== */
+
+/* ----- under 384: the dock gives the room of its round lamp and of its arrow to the words ----- */
+@media (max-width: 23.99em) {
+  .dock__msg .lamp,
+  .dock__key .launch__go {
+    display: none;
+  }
+  .dock__msg {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dock__msg [data-wake-lead] {
+    font-size: 0.8125rem;
+  }
+  .dock__key {
+    padding-inline: 12px;
+  }
+}
+
+/* ----- 520: wider gutters, taller step pictures, the footer on two rows ----- */
+@media (min-width: 32.5em) {
+  :root {
+    --gutter: 24px;
+  }
+  .step__shot {
+    height: 300px;
+  }
+  .foot__in {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .foot__note {
+    grid-column: 1 / 3;
+  }
+  .foot__date {
+    grid-column: 3;
+    grid-row: 2;
+    justify-self: end;
+  }
+  .foot .lang {
+    grid-column: 3;
+  }
+}
+
+/* ----- 520 to 720: the app's phone layout on the left, the four figures beside it ----- */
+@media (min-width: 32.5em) and (max-width: 44.99em) {
+  .hero__grid {
+    grid-template-columns: 17rem minmax(0, 1fr);
+    grid-auto-flow: row dense;
+    column-gap: 28px;
+  }
+  .hero__copy > * {
+    grid-column: 1 / -1;
+  }
+  .visual {
+    grid-column: 1;
+    align-self: end;
+  }
+  .proof {
+    grid-column: 2;
+    margin-top: 22px;
+    padding-bottom: 16px;
+  }
+  .proof__list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .proof li + li {
+    border-top: 1px solid var(--p-line);
+  }
+  .proof a {
+    min-height: 0;
+  }
+}
+
+/* ----- 720: tablet. Headline across, text beside the start panel, the whole capture. ----- */
+@media (min-width: 45em) {
+  :root {
+    --gutter: 32px;
+    --top-h: 72px;
+  }
+  .top__in {
+    min-height: var(--top-h);
+    padding-block: 12px;
+  }
+  .brand {
+    font-size: 1.1875rem;
+  }
+  .brand img {
+    width: 32px;
+    height: 32px;
+  }
+
+  .hero__grid {
+    grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr);
+    grid-template-areas:
+      'by      by'
+      'title   title'
+      'lede    launch'
+      'lede    actions'
+      'visual  visual'
+      'proof   proof';
+    grid-template-rows: auto auto auto 1fr auto auto;
+    column-gap: 40px;
+    padding-top: calc(var(--top-h) + 16px);
+  }
+  .by {
+    grid-area: by;
+    font-size: 1rem;
+  }
+  /* Name and role share a line, with a dot between them. */
+  .by__who,
+  .by__role {
+    display: inline;
+    font-size: inherit;
+  }
+  .by__role::before {
+    content: '·';
+    margin-inline: 0.4em;
+  }
+  .hero h1 {
+    grid-area: title;
+    font-size: clamp(2.75rem, 6.3vw, 3.75rem);
+  }
+  .lede {
+    grid-area: lede;
+    margin-top: 26px;
+    font-size: 1rem;
+    line-height: 1.55;
+  }
+  .lede__more {
+    display: block;
+    margin-top: 0.6em;
+  }
+  .launch {
+    grid-area: launch;
+    align-self: start;
+    width: 100%;
+    margin-top: 28px;
+  }
+  .actions {
+    grid-area: actions;
+    align-self: start;
+    margin-top: 14px;
+  }
+
+  /* The whole capture, cut on the line under its second movement. */
+  .visual {
+    grid-area: visual;
+    margin: 44px 0 0;
+    padding: 0;
+    overflow: visible;
+  }
+  .visual::after {
+    content: none;
+  }
+  .shot {
+    display: block;
+    aspect-ratio: 1131 / 778;
+  }
+  /* No phone on the capture until the first screen is wide enough to show one at a size worth
+     looking at. What follows is its shape for that width. */
+  .device {
+    display: none;
+    position: absolute;
+    aspect-ratio: auto;
+    border-width: 4px;
+    border-bottom: 4px solid var(--bezel);
+    border-radius: clamp(16px, 2.4vw, 24px);
+    box-shadow:
+      0 0 0 1px var(--bezel-edge),
+      0 26px 50px -14px rgb(0 6 16 / 0.85);
+  }
+  .device img {
+    border-radius: clamp(12px, 2vw, 20px);
+  }
+
+  /* The figures: one row under the capture, each with all its words. */
+  .proof {
+    grid-area: proof;
+    margin: 36px 0 0;
+    padding-bottom: 18px;
+  }
+  .proof__list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 40px;
+  }
+  .proof li:nth-child(n + 3) {
+    border-top: 1px solid var(--p-line);
+  }
+  .proof a {
+    padding: 20px 0;
+  }
+  .fig {
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: 16px;
+    align-items: center;
+  }
+  .fig b {
+    font-size: 2.25rem;
+  }
+  .fig > span {
+    font-size: 0.9375rem;
+  }
+  /* An inline block takes no underline from the words above it. */
+  .fig small {
+    display: inline-block;
+  }
+  .proof__date {
+    font-size: 0.8125rem;
+  }
+
+  /* A: the statement gets its columns and its column heads. */
+  .claims {
+    --cols: minmax(0, 5fr) minmax(0, 7fr) 10rem;
+  }
+  .claims__head {
+    display: grid;
+    grid-template-columns: var(--cols);
+    column-gap: 32px;
+    padding: 14px 28px;
+    border-bottom: 1px solid var(--line);
+    font: 600 0.75rem/1.2 var(--font);
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .claim {
+    grid-template-columns: var(--cols);
+    column-gap: 32px;
+    align-items: start;
+    padding: 24px 28px;
+  }
+  .claim__src {
+    display: grid;
+    margin-block: -10px;
+  }
+  .claim__src a {
+    font-size: 0.9375rem;
+  }
+
+  /* B: picture left, words right. */
+  .step {
+    grid-template-columns: minmax(0, 24rem) minmax(0, 1fr);
+    column-gap: 28px;
+    align-items: center;
+  }
+  .step__shot {
+    height: 290px;
+  }
+
+  /* D and E: two columns. */
+  .work {
+    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+    gap: clamp(32px, 5vw, 80px);
+    align-items: center;
+  }
+  .ends {
+    grid-template-columns: minmax(0, 6fr) minmax(0, 5fr);
+    gap: clamp(36px, 6vw, 96px);
+  }
+  .foot__in {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    gap: 28px;
+  }
+  .foot__note {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .foot__date {
+    grid-column: 4;
+    grid-row: 1;
+  }
+  .foot .lang {
+    grid-column: 3;
+  }
+}
+
+/* ----- 900: the sheet of the path is wide enough to lie down, so it takes the full width ----- */
+@media (min-width: 56em) {
+  .route {
+    max-width: none;
+  }
+}
+
+/* ----- 1024: desktop. The split first screen. ----- */
+@media (min-width: 64em) {
+  :root {
+    --gutter: 40px;
+  }
+  .hero {
+    display: grid;
+    min-height: min(100vh, 62rem);
+    min-height: min(100svh, 62rem);
+  }
+  .hero__grid {
+    width: 100%;
+    grid-template-columns: minmax(0, clamp(29rem, 43%, 34.5rem)) minmax(0, 1fr);
+    grid-template-rows: 1fr auto;
+    grid-template-areas:
+      'copy  visual'
+      'proof proof';
+    column-gap: clamp(3rem, 6.4vw, 6.5rem);
+    padding-top: var(--top-h);
+  }
+  .hero__copy {
+    grid-area: copy;
+    container-type: inline-size;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    /* Never less than 24 pixels between the last action and the line over the figures. */
+    padding-block: clamp(8px, 2vh, 28px) clamp(24px, 3vh, 44px);
+  }
+  /* Name and role each on a line again: the column is narrow. */
+  .by__who,
+  .by__role {
+    display: block;
+  }
+  .by__role {
+    font-size: 0.9375rem;
+  }
+  .by__role::before {
+    content: none;
+  }
+  /* The headline is bound to its column and to the height of the window. */
+  .hero h1 {
+    margin-top: clamp(8px, 1.6vh, 20px);
+    font-size: clamp(2.5rem, min(4.6vw, 7.3vh), 4rem);
+    font-size: clamp(2.5rem, min(11.6cqi, 7.3vh), 4.75rem);
+  }
+  /* Italian needs four lines where English has three: a tenth smaller, and still the taller
+     block of the two. */
+  html[lang='it'] .hero h1 {
+    font-size: clamp(2.25rem, min(4.1vw, 6.5vh), 3.6rem);
+    font-size: clamp(2.25rem, min(10.4cqi, 6.5vh), 4.25rem);
+  }
+  .lede {
+    margin-top: clamp(10px, 1.8vh, 22px);
+    font-size: clamp(1rem, 2.05vh, 1.125rem);
+  }
+  .lede__more {
+    display: inline;
+    margin: 0;
+  }
+  .launch {
+    width: min(100%, 30rem);
+    margin-top: clamp(14px, 2.6vh, 30px);
+  }
+  .launch__key {
+    min-height: clamp(52px, 6.6vh, 60px);
+  }
+  .actions {
+    margin-top: clamp(8px, 1.6vh, 16px);
+  }
+
+  /* The capture is whole and stands inside the page: its width is the column's, or what the
+     height of the window leaves. */
+  .visual {
+    grid-area: visual;
+    align-self: center;
+    justify-self: end;
+    width: min(100%, (100vh - 12rem) * 1.131);
+    width: min(100%, (100svh - 12rem) * 1.131);
+    margin: 0;
+  }
+  .shot {
+    aspect-ratio: 1131 / 1000;
+  }
+
+  /* The figures: one band, pinned to the bottom of the first screen. The day they were counted
+     stands at the end of the line over them. */
+  .proof {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0 0 clamp(10px, 2vh, 20px);
+    border-top: 0;
+  }
+  .proof__date {
+    order: -1;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0;
+    border: 0;
+    font-size: 0.75rem;
+    line-height: 1;
+  }
+  .proof__date::before {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--p-line);
+  }
+  .proof__list {
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.6fr) minmax(0, 1.05fr) minmax(0, 1.3fr);
+    column-gap: clamp(24px, 3vw, 48px);
+  }
+  .proof li:nth-child(n + 3) {
+    border-top: 0;
+  }
+  .proof a {
+    display: grid;
+    align-items: center;
+    min-height: 0;
+    padding: clamp(12px, 2.2vh, 22px) 0 clamp(6px, 1vh, 10px);
+  }
+  .fig {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .fig b {
+    font-size: clamp(2rem, 4.6vh, 2.75rem);
+  }
+  .fig > span {
+    font-size: 0.875rem;
+  }
+
+  .claims {
+    --cols: minmax(0, 4.4fr) minmax(0, 6fr) 10.5rem;
+  }
+  .claims__head,
+  .claim {
+    column-gap: 48px;
+    padding-inline: 32px;
+  }
+  .claim {
+    padding-block: 28px;
+  }
+  .claim h3 {
+    font-size: 1.375rem;
+  }
+  .claim p {
+    font-size: 1rem;
+  }
+  .step {
+    grid-template-columns: minmax(0, 26rem) minmax(0, 1fr);
+  }
+  .limits li {
+    font-size: 1rem;
+  }
+  .close__in {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 32px;
+  }
+}
+
+/* ----- 1024 to 1200: the band of figures has less room, and gives more of it to the tests ----- */
+@media (min-width: 64em) and (max-width: 74.99em) {
+  .proof__list {
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.8fr) minmax(0, 0.95fr) minmax(0, 1.25fr);
+    column-gap: 20px;
+  }
+  .fig {
+    column-gap: 12px;
+  }
+}
+
+/* ----- 1240: the phone stands on the capture's corner, under the app's menu; three steps
+   across, the picture on top ----- */
+@media (min-width: 77.5em) {
+  .visual {
+    width: min(100%, (100vh - 16rem) * 1.131);
+    width: min(100%, (100svh - 16rem) * 1.131);
+    margin-bottom: 4rem;
+  }
+  .device {
+    display: block;
+    left: clamp(-32px, -2vw, -20px);
+    bottom: -11%;
+    width: 23.5%;
+  }
+  .steps {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 28px;
+  }
+  .step {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+  .step__shot {
+    height: clamp(290px, 23.5vw, 330px);
+  }
+}
+
+/* ----- A short desktop window: tighter type and gaps, so that the first screen still fits ----- */
+@media (min-width: 64em) and (max-height: 48.5em) {
+  .hero h1 {
+    font-size: clamp(2.375rem, min(4.2vw, 6.6vh), 4rem);
+    font-size: clamp(2.375rem, min(11.6cqi, 6.6vh), 4.75rem);
+  }
+  html[lang='it'] .hero h1 {
+    font-size: clamp(2.125rem, min(3.7vw, 5.9vh), 3.6rem);
+    font-size: clamp(2.125rem, min(10.4cqi, 5.9vh), 4.25rem);
+  }
+  .launch__key {
+    min-height: 50px;
+  }
+  .proof a {
+    padding: 12px 0 6px;
+  }
+}
+
+/* ----- A shorter one still: the second sentence under the headline gives its room away. In
+   Italian, where the headline is a line longer, it does so sooner. ----- */
+@media (min-width: 64em) and (max-height: 46em) {
+  .lede__more {
+    display: none;
+  }
+}
+@media (min-width: 64em) and (max-height: 54.99em) {
+  html[lang='it'] .lede__more {
+    display: none;
+  }
+}
+
+/* ----- 1600: wide. The measure widens. ----- */
+@media (min-width: 100em) {
+  :root {
+    --gutter: 48px;
+    --container: 90rem;
+  }
+  .hero__grid {
+    grid-template-columns: minmax(0, 38rem) minmax(0, 1fr);
+  }
+  .visual {
+    width: min(100%, 50rem, (100vh - 16rem) * 1.131);
+    width: min(100%, 50rem, (100svh - 16rem) * 1.131);
+  }
+  .launch {
+    width: min(100%, 32rem);
+    max-width: 32rem;
+  }
+  .lede {
+    max-width: 37rem;
+  }
+}
+
+/* ---------- 9. Motion: only for a visitor who has not asked for less ---------- */
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+  .btn,
+  .launch__key,
+  .dock__key,
+  .textlink,
+  .doors a,
+  .lang__btn {
+    transition:
+      background-color 150ms ease,
+      border-color 150ms ease,
+      color 150ms ease;
+  }
+  /* The second being counted blinks; the lamps already lit stay lit. */
+  .launch .meter i.now {
+    animation: lamp 1s steps(2, jump-none) infinite;
+  }
+  @keyframes lamp {
+    from {
+      background: var(--lamp-off);
+    }
+    to {
+      background: var(--lamp-mid);
+    }
+  }
+  /* The ring of a check that is out, and of a press that is held. */
+  .js:not([data-wake]) .lamp,
+  [data-wake='checking'] .lamp,
+  [data-queued] .spin {
+    animation: turn 0.9s linear infinite;
+  }
+  @keyframes turn {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  .js .dock {
+    transition:
+      transform 180ms ease,
+      visibility 0s linear 180ms;
+  }
+  .js .dock.is-on {
+    transition:
+      transform 180ms ease,
+      visibility 0s;
+  }
 }

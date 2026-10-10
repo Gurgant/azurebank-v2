@@ -1,48 +1,101 @@
 /*
- * The entry page's one script: the language switch and the start panel.
+ * The entry page's one script: the language switch, the start panel and the door at the thumb.
  *
  * It is loaded from <head> as a blocking classic script, so that the language is chosen before
  * the first paint. It is a file because the page's Content-Security-Policy allows no inline script.
+ * The page is complete without it: English, with the key of the first screen a plain link.
  *
  * THE START PANEL. The demo scales to zero: its first request after an idle spell waits while the
- * server starts. The panel sends that request itself and enables the link when the server answers.
+ * server starts. The panel sends that request itself and opens the way in when the server answers.
  *  - The probe is an Image pointed at the demo's /favicon.ico. The demo sends no CORS headers, so
  *    fetch could read nothing from it; an image needs none. crossOrigin is never set: it would
  *    turn the probe into a CORS request, and that one fails.
- *  - The link in the HTML works without this script. While a probe is out the script takes its
- *    href away, so that a click does not open a blank tab, and gives it back at the answer.
+ *  - A key is every element with data-door: the one of the first screen, the one under the three
+ *    steps, the one that closes the page and the one of the dock. While a probe is out the script
+ *    takes their address away, so that a press does not open a blank tab, and makes them buttons
+ *    whose words say what a press does: "Open when ready". A press is answered at once: the key
+ *    reads "Opening when ready · Cancel", the status says that the demo opens by itself, and it
+ *    does. A second press, or Escape, takes the request back.
+ *  - The keyboard's focus is never moved: the status line is a live region and says the change.
  *  - Nothing is ever sent to keep the server awake. An answer is trusted for four minutes. After
- *    that the page probes again when the tab comes back, or when the link is pressed: the press
+ *    that the page probes again when the tab comes back, or when a key is pressed: the press
  *    wakes the server first and opens the demo at the answer.
+ *
+ * The state is written on <html data-wake>, and entry.css says what each one shows:
+ *   checking  a probe is out and may still come back at once
+ *   starting  no answer after the first moment: the lamps and the seconds
+ *   ready     the server answered
+ *   late      no answer in a minute: the keys work, with no promise
+ *   unknown   the probe cannot work from this browser: the keys work, with no promise
+ *   asleep    the last answer is old: as without the script, and a press wakes the server first
+ * <html data-queued> is there while a press waits for the answer.
  */
 (function () {
   'use strict';
 
   var ESTIMATE_MS = 25000; // a start from zero takes about this long
-  var QUIET_MS = 600; // an answer inside it comes from a server that was awake: no bar is shown
+  var QUIET_MS = 600; // an answer inside it comes from a server that was awake: no lamp is lit
   var BLOCKED_MS = 3000; // an error inside it: the probe cannot work from this browser
   var RETRY_MS = 3000; // after a later error the probe asks again
-  var GIVE_UP_MS = 60000; // with no answer the link is enabled anyway
+  var GIVE_UP_MS = 60000; // with no answer the keys are given back anyway
   var TRUST_MS = 240000; // the server goes back to sleep after about five idle minutes
-  var FULL = 0.95; // the bar never looks finished before the answer
   var LANGUAGE_KEY = 'azurebank-entry-language';
+  // On a developer's own machine ?state=<one of these> shows that state and sends nothing. The
+  // number is the second the preview shows.
+  var PREVIEW = {
+    checking: 0,
+    asleep: 0,
+    starting: 12000,
+    pressed: 12000,
+    almost: 31000,
+    ready: 0,
+    late: 0,
+    unknown: 0,
+  };
 
+  // For each state, the line that says it and the line under it. A key has three sets of words:
+  // what it opens, what a press does while the server starts, and what a second press does.
   var TEXT = {
     en: {
-      starting: 'Starting the server...',
+      key: 'Open the live demo',
+      keyWait: 'Open when ready',
+      keyHeld: 'Opening when ready · Cancel',
+      keyLate: 'Open the demo anyway',
+      short: 'Open the demo',
+      shortWait: 'Open when ready',
+      shortHeld: 'Cancel',
+      shortLate: 'Open anyway',
       count: '{n} s of about {t}',
-      late: 'Almost there...',
       lateCount: '{n} s',
-      ready: 'The server is ready',
-      anyway: 'The server has not answered yet: the first page may still be starting.',
+      checking: ['Checking the demo…', 'Invented money, no sign-up.'],
+      asleep: ['The demo is asleep.', 'Starting it takes about {t} seconds.'],
+      starting: ['Waking the demo…', ''],
+      almost: ['Almost there…', ''],
+      queued: ['The demo opens by itself.', ''],
+      ready: ['The demo is awake.', 'Invented money, no sign-up.'],
+      late: ['This is taking longer than usual.', 'The code and pictures are below.'],
+      unknown: ['The demo may be asleep.', 'If so, allow about {t} seconds.'],
     },
     it: {
-      starting: 'Avvio del server...',
+      title: 'AzureBank: una banca che funziona, online. Di Vladislav Aleshaev',
+      key: 'Apri la demo',
+      keyWait: 'Apri appena pronta',
+      keyHeld: 'Si apre appena pronta · Annulla',
+      keyLate: 'Apri comunque la demo',
+      short: 'Apri la demo',
+      shortWait: 'Apri appena pronta',
+      shortHeld: 'Annulla',
+      shortLate: 'Apri comunque',
       count: '{n} s di circa {t}',
-      late: 'Ci siamo quasi...',
       lateCount: '{n} s',
-      ready: 'Il server è pronto',
-      anyway: 'Il server non ha ancora risposto: la prima pagina potrebbe essere ancora in avvio.',
+      checking: ['Controllo la demo…', 'Denaro inventato, senza registrarsi.'],
+      asleep: ['La demo dorme.', 'Si sveglia in circa {t} secondi.'],
+      starting: ['Sveglio la demo…', ''],
+      almost: ['Ci siamo quasi…', ''],
+      queued: ['La demo si apre da sola.', ''],
+      ready: ['La demo è sveglia.', 'Denaro inventato, senza registrarsi.'],
+      late: ['Ci sta mettendo più del solito.', 'Intanto il codice è qui sotto.'],
+      unknown: ['La demo forse dorme.', 'Se dorme, circa {t} secondi.'],
     },
   };
 
@@ -51,7 +104,8 @@
   root.lang = language;
   root.classList.add('js');
 
-  // The address may name the language (#it, #en); then the visitor's own choice; then the browser.
+  // The address may name the language (#it, #en); then the visitor's own choice. Otherwise the
+  // page is English, whatever the browser's language is.
   function chooseLanguage() {
     if (location.hash === '#it') return 'it';
     if (location.hash === '#en') return 'en';
@@ -62,29 +116,65 @@
     } catch (error) {
       // No storage in this browser: the page works without it.
     }
-    return (navigator.language || '').toLowerCase().indexOf('it') === 0 ? 'it' : 'en';
+    return 'en';
+  }
+
+  function all(selector, scope) {
+    return Array.prototype.slice.call((scope || document).querySelectorAll(selector));
+  }
+
+  function write(elements, text) {
+    elements.forEach(function (element) {
+      if (element.textContent !== text) element.textContent = text;
+    });
   }
 
   function start() {
-    var panel = document.getElementById('start');
-    var link = document.getElementById('open-demo');
-    var status = document.getElementById('wake-status');
-    var count = document.getElementById('wake-count');
-    var fill = document.getElementById('wake-fill');
-    var switches = {
-      en: document.getElementById('lang-en'),
-      it: document.getElementById('lang-it'),
-    };
+    var first = document.getElementById('open-demo');
+    var doors = all('[data-door]');
+    var labels = all('[data-door-text]').map(function (node) {
+      var door = node.closest('[data-door]');
+      return {
+        node: node,
+        set: door && door.getAttribute('data-door') === 'short' ? 'short' : 'key',
+      };
+    });
+    var leads = all('[data-wake-lead]');
+    var hints = all('[data-wake-hint]');
+    var counts = all('[data-wake-count]');
+    var meters = all('[data-meter]').map(function (meter) {
+      return all('i', meter);
+    });
+    var switches = all('[data-set-lang]');
+    var dock = document.getElementById('dock');
+    var englishTitle = document.title;
 
-    // The demo's address is written once, in the link.
-    var demo = link.href;
-    var favicon = new URL('/favicon.ico', demo).href;
+    // What a picture or a list is called is an attribute, and an attribute holds one language:
+    // the English one is in the page, the Italian one beside it.
+    var twins = [];
+    [
+      ['alt', 'data-alt-it'],
+      ['aria-label', 'data-label-it'],
+    ].forEach(function (pair) {
+      all('[' + pair[1] + ']').forEach(function (element) {
+        twins.push({
+          element: element,
+          name: pair[0],
+          en: element.getAttribute(pair[0]),
+          it: element.getAttribute(pair[1]),
+        });
+      });
+    });
 
-    var state = ''; // checking, waiting, ready, anyway, idle: entry.css says what each one shows
+    var demo = ''; // the demo's address: written once, in the first key
+    var favicon = '';
+    var state = '';
     var cycle = 0; // an answer to an earlier probe is ignored
     var began = 0; // performance.now() when the cycle started: timers slow down in a hidden tab
     var settled = 0; // Date.now() when the last cycle ended: it goes on while the computer sleeps
-    var openAtAnswer = false; // the cycle was started by a press of the link
+    var queued = false; // a press is waiting for the answer
+    var previewing = false;
+    var previewMs = 0;
     var timers = [];
 
     function later(task, delay) {
@@ -99,29 +189,50 @@
     function show(next) {
       if (next) {
         state = next;
-        panel.setAttribute('data-state', next);
+        root.setAttribute('data-wake', next);
       }
-      var text = TEXT[language];
-      var elapsed = performance.now() - began;
-      var late = elapsed >= ESTIMATE_MS;
-      var message = '';
+      if (queued) root.setAttribute('data-queued', '');
+      else root.removeAttribute('data-queued');
+
+      var words = TEXT[language];
+      var estimate = String(ESTIMATE_MS / 1000);
+      var elapsed = previewing ? previewMs : performance.now() - began;
+      var past = elapsed >= ESTIMATE_MS;
+      var pair = null;
       var counter = '';
-      var filled = 0;
-      if (state === 'waiting') {
-        message = late ? text.late : text.starting;
-        counter = (late ? text.lateCount : text.count)
+      var lit = -1;
+      if (state === 'starting') {
+        counter = (past ? words.lateCount : words.count)
           .replace('{n}', String(Math.max(1, Math.floor(elapsed / 1000))))
-          .replace('{t}', String(ESTIMATE_MS / 1000));
-        filled = Math.min(elapsed / ESTIMATE_MS, 1) * FULL;
-      } else if (state === 'ready') {
-        message = text.ready;
-      } else if (state === 'anyway') {
-        message = text.anyway;
+          .replace('{t}', estimate);
+        pair = queued ? words.queued : past ? words.almost : words.starting;
+      } else if (state === 'checking') {
+        pair = queued ? words.queued : words.checking;
+      } else if (state) {
+        pair = words[state];
       }
       // The status is a live region: it is written when its words change, never on a tick.
-      if (status.textContent !== message) status.textContent = message;
-      count.textContent = counter;
-      fill.style.transform = 'scaleX(' + filled + ')';
+      if (pair) {
+        write(leads, pair[0]);
+        write(hints, pair[1].replace('{t}', estimate));
+      }
+      write(counts, counter);
+
+      var turn = queued ? 'Held' : state === 'starting' ? 'Wait' : state === 'late' ? 'Late' : '';
+      labels.forEach(function (label) {
+        write([label.node], words[label.set + turn]);
+      });
+
+      // One lamp for each second of the estimate. The last one never lights before the answer.
+      meters.forEach(function (lamps) {
+        if (state === 'starting') {
+          lit = Math.min(Math.floor((elapsed / ESTIMATE_MS) * lamps.length), lamps.length - 1);
+        }
+        lamps.forEach(function (lamp, index) {
+          var wanted = index < lit ? 'on' : index === lit ? 'now' : '';
+          if (lamp.className !== wanted) lamp.className = wanted;
+        });
+      });
     }
 
     function tick() {
@@ -129,24 +240,42 @@
       later(tick, Math.max(50, 1000 - ((performance.now() - began) % 1000)));
     }
 
+    // Not links while a probe is out, and still where the keyboard's focus can stay.
+    function hold() {
+      doors.forEach(function (door) {
+        door.removeAttribute('href');
+        door.setAttribute('role', 'button');
+        door.tabIndex = 0;
+      });
+    }
+
+    function release() {
+      doors.forEach(function (door) {
+        door.setAttribute('href', demo);
+        door.removeAttribute('role');
+        door.removeAttribute('tabindex');
+      });
+    }
+
+    function queue(next) {
+      queued = next;
+      show();
+    }
+
     function probe(pressed) {
       forget();
       cycle += 1;
       var mine = cycle;
       began = performance.now();
-      openAtAnswer = pressed === true;
-      // Not a link while it waits, and still where the keyboard's focus can stay.
-      link.tabIndex = 0;
-      link.setAttribute('role', 'link');
-      link.setAttribute('aria-disabled', 'true');
-      link.removeAttribute('href');
+      queued = pressed === true;
+      hold();
       show('checking');
       later(function () {
-        show('waiting');
+        show('starting');
         tick();
       }, QUIET_MS);
       later(function () {
-        settle(mine, 'anyway');
+        settle(mine, 'late');
       }, GIVE_UP_MS);
       afterLoad(function () {
         if (mine === cycle) ask(mine);
@@ -157,7 +286,14 @@
     // show a page still loading for as long as the server takes to start.
     function afterLoad(task) {
       if (document.readyState === 'complete') task();
-      else window.addEventListener('load', function () { setTimeout(task, 0); }, { once: true });
+      else
+        window.addEventListener(
+          'load',
+          function () {
+            setTimeout(task, 0);
+          },
+          { once: true },
+        );
     }
 
     function ask(mine) {
@@ -166,85 +302,171 @@
         settle(mine, 'ready');
       };
       image.onerror = function () {
-        if (mine !== cycle || state === 'ready' || state === 'anyway') return;
-        if (performance.now() - began < BLOCKED_MS) settle(mine, 'anyway');
-        else later(function () { ask(mine); }, RETRY_MS);
+        if (mine !== cycle || state === 'ready' || state === 'late' || state === 'unknown') return;
+        if (performance.now() - began < BLOCKED_MS) settle(mine, 'unknown');
+        else
+          later(function () {
+            ask(mine);
+          }, RETRY_MS);
       };
       image.src = favicon + '?wake=' + Date.now();
     }
 
-    // An image that loads after the link was enabled anyway still turns the panel to ready.
+    // An image that loads after the keys were given back anyway still turns the panel to ready.
     function settle(mine, outcome) {
       if (mine !== cycle || state === 'ready' || state === outcome) return;
       forget();
       settled = Date.now();
-      link.setAttribute('href', demo);
-      link.removeAttribute('aria-disabled');
-      link.removeAttribute('role');
-      link.removeAttribute('tabindex');
+      var open = queued;
+      queued = false;
+      release();
       show(outcome);
       if (outcome === 'ready') {
         later(function () {
-          show('idle');
+          show('asleep');
         }, TRUST_MS);
       }
-      if (openAtAnswer) {
-        openAtAnswer = false;
-        link.click();
-        return;
-      }
-      var focused = document.activeElement;
-      if (outcome === 'ready' && (!focused || focused === document.body || focused === link)) {
-        link.focus({ preventScroll: true });
-      }
+      if (open) first.click();
     }
 
-    // A plain press of the link after the answer has gone stale: wake first, open at the answer.
-    link.addEventListener('click', function (event) {
-      var stale = state === 'idle' || (state === 'ready' && Date.now() - settled > TRUST_MS);
+    function press(event) {
+      if (state === 'checking' || state === 'starting') {
+        event.preventDefault();
+        queue(!queued);
+        return;
+      }
+      if (previewing) return;
+      // A plain press after the answer has gone stale: wake first, open at the answer.
+      var stale = state === 'asleep' || (state === 'ready' && Date.now() - settled > TRUST_MS);
       var plain =
         event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
       if (!stale || !plain) return;
       event.preventDefault();
       probe(true);
-    });
+    }
+
+    // A key without its address is a button, and a button answers Enter and the space bar.
+    function type(event) {
+      if (event.currentTarget.hasAttribute('href')) return;
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        queue(!queued);
+      }
+    }
 
     function comeBack() {
-      var running = state === 'checking' || state === 'waiting';
+      var running = state === 'checking' || state === 'starting';
       if (document.visibilityState === 'visible' && !running && Date.now() - settled > TRUST_MS) {
         probe();
       }
     }
-    document.addEventListener('visibilitychange', comeBack);
-    window.addEventListener('pageshow', function (event) {
-      if (event.persisted) comeBack();
-    });
 
     function speak(next, remember) {
       language = next;
       root.lang = next;
-      switches.en.setAttribute('aria-pressed', String(next === 'en'));
-      switches.it.setAttribute('aria-pressed', String(next === 'it'));
+      document.title = TEXT[next].title || englishTitle;
+      switches.forEach(function (button) {
+        button.setAttribute('aria-pressed', String(button.getAttribute('data-set-lang') === next));
+      });
+      twins.forEach(function (twin) {
+        if (twin[next] !== null) twin.element.setAttribute(twin.name, twin[next]);
+      });
       if (remember) {
         try {
           localStorage.setItem(LANGUAGE_KEY, next);
         } catch (error) {
           // The choice lasts for this visit only.
         }
+        // An address that names a language wins at the next load: it follows the choice.
+        if (location.hash === '#it' || location.hash === '#en') {
+          try {
+            history.replaceState(null, '', '#' + next);
+          } catch (error) {
+            // The address stays as it is.
+          }
+        }
       }
       show();
     }
-    switches.en.addEventListener('click', function () {
-      speak('en', true);
-    });
-    switches.it.addEventListener('click', function () {
-      speak('it', true);
+
+    // Which state the address asks to be shown, on a developer's own machine and nowhere else.
+    function preview() {
+      var local =
+        location.protocol === 'file:' ||
+        /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+      if (!local) return '';
+      var asked = '';
+      try {
+        asked = new URLSearchParams(location.search).get('state') || '';
+      } catch (error) {
+        // An old browser: no preview.
+      }
+      return Object.prototype.hasOwnProperty.call(PREVIEW, asked) ? asked : '';
+    }
+
+    switches.forEach(function (button) {
+      button.addEventListener('click', function () {
+        speak(button.getAttribute('data-set-lang'), true);
+      });
     });
     speak(language, false);
 
+    // Without the first key there is nothing to wake and nothing to open.
+    if (!first || !first.href) return;
+    demo = first.href;
+    favicon = new URL('/favicon.ico', demo).href;
+    doors.forEach(function (door) {
+      door.setAttribute('href', demo);
+      door.addEventListener('click', press);
+      door.addEventListener('keydown', type);
+    });
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape' && queued) queue(false);
+    });
+
+    // The dock stands at the bottom of a phone's screen while the first key is above the screen.
+    if (dock && 'IntersectionObserver' in window) {
+      new IntersectionObserver(function (entries) {
+        var entry = entries[entries.length - 1];
+        var away = !entry.isIntersecting && entry.boundingClientRect.bottom <= 0;
+        dock.classList.toggle('is-on', away);
+        root.classList.toggle('has-dock', away);
+      }).observe(first);
+    }
+
+    var asked = preview();
+    if (asked) {
+      previewing = true;
+      previewMs = PREVIEW[asked];
+      if (
+        asked === 'checking' ||
+        asked === 'starting' ||
+        asked === 'pressed' ||
+        asked === 'almost'
+      ) {
+        queued = asked === 'pressed';
+        hold();
+        show(asked === 'checking' ? 'checking' : 'starting');
+      } else {
+        show(asked);
+      }
+      return;
+    }
+
+    document.addEventListener('visibilitychange', comeBack);
+    window.addEventListener('pageshow', function (event) {
+      if (event.persisted) comeBack();
+    });
+
     // A page the browser loads ahead of a visit must not start the server for nobody.
     if (document.prerendering) {
-      document.addEventListener('prerenderingchange', function () { probe(); }, { once: true });
+      document.addEventListener(
+        'prerenderingchange',
+        function () {
+          probe();
+        },
+        { once: true },
+      );
     } else {
       probe();
     }
