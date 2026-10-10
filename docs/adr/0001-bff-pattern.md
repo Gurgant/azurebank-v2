@@ -1,100 +1,63 @@
 # ADR-0001: Backend-For-Frontend (BFF) Pattern
 
-**Status**: Accepted
-
-**Date**: 2026-01-12
-
-**Decision Makers**: Vladislav Aleshaev
-
----
+**Status:** Accepted · **Date:** 2026-01-12 · **Amended:** 2026-07-20 (ADR-0018, no CORS),
+2026-09-19 (ADR-0055, the API serves the BFF only) · **Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
-AzureBank requires a secure architecture for serving web and mobile clients. The frontend applications need to communicate with backend APIs while maintaining security best practices for authentication tokens.
-
-Traditional approaches expose JWT tokens to the browser via localStorage or sessionStorage, making them vulnerable to XSS attacks.
-
-## Decision Drivers
-
-- **Security**: Tokens must not be accessible to JavaScript
-- **Session Management**: Need centralized session handling
-- **Rate Limiting**: Require gateway-level request throttling
-- **Cross-Cutting Concerns**: Security headers, logging, CORS in one place
-- **Future Scalability**: Support multiple frontend applications
-
-## Considered Options
-
-1. **Direct API Access**: Frontend communicates directly with API using localStorage tokens
-2. **API Gateway (Kong/AWS)**: External gateway service with token relay
-3. **Backend-For-Frontend (BFF)**: Custom gateway with session management
+AzureBank's frontend has to call the backend API with an authenticated identity. The traditional
+approach hands the JWT to the browser, in localStorage or sessionStorage, where any script on the
+page can read it: one XSS is a stolen token
+([OWASP](https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html#token-storage-on-client-side)
+on token storage in the client). The architecture needs tokens that JavaScript cannot reach, session
+handling in one place, request throttling at the gateway, one place for the cross-cutting concerns
+(security headers, logging), and room for more than one frontend application.
 
 ## Decision
 
-Implement a **Backend-For-Frontend (BFF) pattern** using a dedicated ASP.NET Core service (`AzureBank.Bff`) that:
+A dedicated ASP.NET Core service, `AzureBank.Bff`, sits between the browser and the API, in the
+[Backends-for-Frontends](https://docs.microsoft.com/en-us/azure/architecture/patterns/backends-for-frontends)
+pattern:
 
-1. Handles user authentication and stores JWT tokens server-side
-2. Issues HTTP-only session cookies to clients
-3. Proxies API requests with automatic token injection
-4. Provides rate limiting and security headers
+1. **It handles user authentication and stores the JWT server-side**, because a token that never
+   reaches the browser cannot be stolen by script running there.
+2. **It issues an HTTP-only session cookie to the client**, because the browser then holds only a
+   reference to the session, which JavaScript cannot read.
+3. **It proxies API requests and injects the token**, because the frontend then needs no token
+   management, and token refresh is managed by the server.
+4. **It provides rate limiting and security headers**, because one gateway is one place to apply
+   them.
 
-## Rationale
+## Rejected
 
-### Why BFF over Direct API Access?
-
-| Concern | Direct API | BFF Pattern |
-|---------|------------|-------------|
-| Token Storage | Browser (vulnerable) | Server (secure) |
-| XSS Token Theft | High risk | Not possible |
-| Token Refresh | Client-managed | Server-managed |
-| Rate Limiting | Per-endpoint | Centralized |
-
-### Why Custom BFF over External Gateway?
-
-- **Full Control**: Custom session management logic
-- **No Vendor Lock-in**: Standard .NET technologies
-- **Cost**: No additional infrastructure costs
-- **Team Expertise**: .NET skills already available
-- **Integration**: Seamless with existing authentication
+- Rejected: direct API access with the token in localStorage, because the token sits in the browser,
+  where XSS token theft is a high risk, refresh is managed by the client and rate limiting is per
+  endpoint.
+- Rejected: an external API gateway (Kong, AWS) with token relay, because a custom BFF gives full
+  control of the session logic, uses standard .NET with no vendor lock-in and no extra
+  infrastructure cost, relies on .NET skills already available, and integrates with the existing
+  authentication.
 
 ## Consequences
 
-### Positive
+- JWTs are never exposed to browser JavaScript, and the frontend has no token management.
+- Sessions are managed in one place, with configurable timeouts.
+- Security headers and rate limiting have a single point, and a new cross-cutting concern has an
+  obvious home.
+- It costs one more service to deploy and maintain, a slight latency increase for the extra hop, and
+  the learning curve of the YARP reverse proxy (ADR-0002).
+- The browser reaches the BFF same-origin, so there is no CORS policy at all (ADR-0018).
+- Session state is held in memory, so it has to be considered before scaling horizontally: a shared
+  store, such as Redis, comes before a second instance (ADR-0057).
+- This decision alone does not stop a caller that goes round the BFF. ADR-0055 completes it: the API
+  refuses a request that does not carry the BFF's service credential.
 
-- JWT tokens never exposed to browser JavaScript
-- Centralized session management with configurable timeouts
-- Single point for security headers and rate limiting
-- Simplified frontend - no token management needed
-- Easy to add new cross-cutting concerns
+## Verified by
 
-### Negative
-
-- Additional service to deploy and maintain
-- Slight latency increase (extra hop)
-- Session state requires consideration for horizontal scaling
-- Learning curve for YARP reverse proxy
-
-### Neutral
-
-- Need to implement session storage (in-memory initially, Redis for production)
-- CORS configuration moves to BFF layer
-
-## Validation
-
-Success criteria:
-- Zero token exposure incidents
-- Session timeout working as configured
-- Rate limiting protecting against abuse
-- All security headers present in responses
+- `SessionCookieTests`: the session cookie and its attributes. `SessionActivityTests`: the session's
+  timeouts. `AuthLevelMiddlewareTests`: the token injected by the proxy.
+- `RateLimiterTests` and `SecurityHeadersTests`: the limiter and every security header.
 
 ## Related
 
-- [ADR-0002: YARP Proxy Selection](./0002-yarp-proxy.md)
-- [Architecture Overview](../architecture/overview.md)
-- [BFF Documentation](../../backend/src/AzureBank.Bff/README.md)
-
----
-
-## References
-
-- [Microsoft BFF Pattern](https://docs.microsoft.com/en-us/azure/architecture/patterns/backends-for-frontends)
-- [OWASP Token Storage](https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html#token-storage-on-client-side)
+ADR-0002, ADR-0018, ADR-0019, ADR-0021, ADR-0038, ADR-0055, ADR-0057.
