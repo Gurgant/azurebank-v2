@@ -1,143 +1,80 @@
 # ADR-0023: Runtime response validation — spec-generated Zod, fail-closed on money
 
-**Status**: Accepted
-
-**Date**: 2026-07-25
-
-**Decision Makers**: Vladislav Aleshaev
-
----
+**Status:** Accepted · **Date:** 2026-07-25 · **Amended:** 2026-09-10 and 2026-09-17 (ADR-0053),
+2026-09-15 (ADR-0043) · **Amends:** ADR-0019, decision 6 · **Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
-Everything on `/api/*` is guarded by three layers already: `openapi-typescript` types, the
-`schema.d.ts` drift gate in CI, and Schemathesis contract tests. *(Corrected 2026-09-10,
-ADR-0053: "guarded" said more than two of those did. The drift gate proves the generated types
-match the COMMITTED document, not that the document matches the API; ~~Schemathesis runs only when
-started by hand and ends `|| true  # report, don't gate`~~ (struck 2026-09-17: since 2026-09-15 it
-gates every pull request as the `conformance` job in `ci.yml`, ADR-0053 D6). The
-document-versus-code half is now a backend test.)* The BFF surface is different —
-`/bff/auth/*` is **not in the OpenAPI spec at all**, so its response types were hand-written
-mirrors of `BffResponses.cs`. That made the auth boundary the weakest one in the system: a silent
-FE/BFF drift would flow into the auth slice with nothing to catch it.
-
-This ADR also exists to correct a recorded decision that has since become false. **ADR-0019
-Decision 6** states that `src/api/bffTypes.ts` is a hand-written mirror and calls that "the
-accepted cost until the BFF surface joins the spec". The direction of truth has inverted:
-`bffTypes.ts` now begins `import type { z } from 'zod'` and its own header says the Zod schemas are
-the single source of truth. A contributor reading only ADR-0019 would "restore" hand-written types
-and silently delete a live runtime guard. **A wrong ADR is more dangerous than a missing one.**
+TypeScript types are erased at run time and assert nothing about what a server sent. On `/api/*`
+the types are generated from the committed OpenAPI document, a CI gate holds them to it, a backend
+test holds the document to the code (ADR-0053) and Schemathesis checks the running API against it
+on every pull request, as the `conformance` job. The BFF surface has none of that: `/bff/auth/*` is
+not in the OpenAPI document at all, and hand-written types that mirror `BffResponses.cs` check
+nothing. That makes the auth boundary the weakest one in the system: a silent drift between the
+SPA and the BFF flows into the auth slice with nothing to catch it.
 
 ## Decision
 
-The two surfaces get different treatment, and items 1 and 4–5 below must be read as scoped to one
-each: **the BFF surface** (`/bff/auth/*`) is fail-closed in its entirety, because it is small and
-every response on it gates authentication; **the API surface** (`/api/*`) is fail-closed only where
-money is displayed. Confusing the two produces either a needless production crash surface or a
-missing guard.
+The BFF surface (`/bff/auth/*`) is fail-closed in its entirety, because it is small and every
+response on it gates authentication; the API surface (`/api/*`) only where money is displayed.
 
-1. **On the BFF surface, schemas are the source of truth and validation is fail-closed —
-   everywhere, production included.** `src/api/bffSchemas.ts` holds the Zod schemas and
-   `src/api/bffTypes.ts` is `z.infer` of them, so the type and the validator cannot disagree. All
-   five responses — `getMe`, `login`, `register`, `session-status`, `verify-pin` — parse through
-   the `unwrap(envelope, schema?)` seam with no environment gate. This is the boundary with no
-   spec behind it, so it gets the strictest treatment. `location.state` and error bodies are the
-   exception and use `safeParse` with a fallback — soft on purpose, because a garbled error
-   payload should not replace the error it was carrying.
-
-2. **Zod for `/api/*` is generated, never hand-written.** `typed-openapi` with
-   `--runtime zod --schemas-only`, output **committed** to `src/api/generated/`, behind
-   `npm run generate:zod` sitting next to `generate:api`. Hand-writing validators for a surface that
-   already has a machine-readable contract duplicates the contract and guarantees eventual drift.
-   _(Noted 2026-09-15: generated faithfully from a document that was wrong about errors.
-   [ADR-0043](0043-the-document-declares-the-error-body.md) (2026-08-18) found 58 declared refusals
-   promising no body and a `ProblemDetails` without `errorCode`, and corrected the document; the
-   generated `ProblemDetails` in `apiSchemas.ts` now carries `errorCode`. The generation is
-   unchanged.)_
-
-3. **The generators that were rejected, and why.** This is the part that is expensive to re-derive,
-   so all four are recorded. **`openapi-zod-client` is a dead end** — stale for roughly 17 months,
-   wired to Zod 3, its v4 pull request abandoned — and it is the obvious first search result, which
-   is precisely why the rejection has to be written down. `kubb` carries three-package configuration
-   overhead. `orval`'s Zod-4 migration was still settling. `hey-api` is an acceptable fallback if
-   schema-filtering needs ever grow.
-
+1. **On the BFF surface the schemas are the source of truth and validation is fail-closed
+   everywhere, production included**, because this boundary has no document behind it.
+   `src/api/bffSchemas.ts` holds the Zod schemas and `src/api/bffTypes.ts` is `z.infer` of them, so
+   type and validator cannot disagree; the responses parse through the `unwrap(envelope, schema?)`
+   seam with no environment gate. `location.state` and error bodies use `safeParse` with a
+   fallback, because a garbled error payload must not replace the error it was carrying.
+2. **Zod for `/api/*` is generated, never hand-written**: `typed-openapi` with
+   `--runtime zod --schemas-only`, its output committed to `src/api/generated/`, behind
+   `npm run generate:zod`, because a hand-written validator for a surface that already has a
+   machine-readable contract duplicates the contract and drifts. The generated `ProblemDetails`
+   carries `errorCode` since ADR-0043 corrected the document.
+3. **Three generators are rejected, by name**, because the reasons are expensive to find again.
+   `openapi-zod-client`, the obvious first search result, is a dead end: stale for roughly 17
+   months, wired to Zod 3, its v4 pull request abandoned. `kubb` carries three-package overhead in
+   configuration. `orval`'s Zod 4 migration was still settling. `hey-api` is an acceptable fallback.
 4. **On the API surface, fail-closed in production is limited to the money surfaces**: the four
-   mutation receipts (deposit, withdraw, transfer, internal transfer), the accounts list, and the
-   transaction summary — about six schemas. These are the responses where silent contract drift
-   means *wrong money on the screen*.
-
+   mutation receipts (deposit, withdraw, transfer, internal transfer), the accounts list and the
+   transaction summary, because there a silent contract drift means wrong money on the screen.
 5. **Every other `/api/*` response validates in development and test only**, gated on
-   `import.meta.env` inside the same seam. This catches MSW mock drift in vitest and local integration drift with **zero
-   production crash surface**. The asymmetry is deliberate: someone who sees a conditional and
-   "simplifies" it, or who decides validation ought to be uniform, breaks either the money guarantee
-   or the production safety margin depending on which way they go.
-
+   `import.meta.env` inside the same seam, because that catches mock drift in vitest and local
+   integration drift with no production crash surface. The asymmetry is deliberate: making it
+   uniform breaks either the money guarantee or the production margin.
 6. **Two CI gates hold it.** `generate:zod` followed by `git diff --exit-code` proves the committed
-   schemas are byte-reproducible from the spec; a 12-way `AssertExtends` tuple proves the generated
-   `z.infer` types and the `openapi-typescript` types agree **in both directions** under `tsc`. A
-   red gate means real drift: fix the source or revert. Never regenerate-and-commit to quiet it.
+   schemas are byte-reproducible from the document; an `AssertExtends` tuple proves under `tsc`
+   that the generated `z.infer` types and the `openapi-typescript` types agree in both directions.
+   A red gate means real drift: the source is fixed or reverted, never regenerated to quiet it.
+7. **MSW mocks satisfy the real contract, not merely the tests**, because a test that passes
+   against an invalid mock tests nothing. The development and test tier enforces it on every run.
+8. **One shared `amountSchema`**: `makeAmountSchema` and `amountIsValid` are the declarative seam
+   for an amount's validity in the money forms, because the checks were scattered and imperative.
 
-7. **MSW mocks must satisfy the real contract, not merely satisfy the tests.** The dev/test tier
-   enforces this automatically, and its first run proved the point: 23 failures, every one a
-   legitimate mock-contract violation — non-hex thirteen-character fake UUIDs, partial receipt
-   stubs, `'x'`/`'y'` placeholder account ids. Tests that pass against invalid mocks are testing
-   nothing.
+## Rejected
 
-8. **One shared `amountSchema`.** `makeAmountSchema` / `amountIsValid` is the declarative seam for
-   money-form amount validity, replacing checks that were previously scattered and imperative.
-
-**Amendment to ADR-0019.** Decision 6 of ADR-0019 is superseded by items 1 and 2 above: BFF
-response types are inferred from Zod schemas, not hand-mirrored. ADR-0019 carries the reciprocal
-marker.
-
-## Alternatives considered
-
-**Hand-writing Zod for the whole `/api/*` surface.** Rejected: it duplicates a contract that is
-already machine-readable and already gated, at a per-response maintenance cost, and it would drift
-from the spec the first time someone was in a hurry.
-
-**No runtime validation at all, trusting the types.** This was the status quo, and it is what left
-the BFF boundary unguarded — TypeScript types are erased at runtime and assert nothing about what
-the server actually sent.
-
-**Uniform fail-closed validation everywhere, production included.** Rejected: it converts every
-non-money contract wobble into a user-facing crash. The money surfaces are worth that trade; a
-transaction-list field is not.
-
-## Residuals (accepted, documented)
-
-- **The BFF surface is still outside the OpenAPI spec.** Its Zod schemas are hand-written, so they
-  are a *mirror* like the types were — the improvement is that there is now exactly one mirror
-  instead of two that could disagree. Bringing the BFF into the spec remains open.
-- **Fail-closed means a contract drift on a money surface takes the feature down** rather than
-  showing a wrong number. That is the intended trade and it is worth restating: the failure is
-  loud on purpose.
-- **The dev/test tier can only catch drift the mocks or the local stack exercise.** A production
-  contract change that no test covers still reaches users unvalidated on non-money surfaces.
-- The 23-failure result is n=1 on one repository — illustrative of the mechanism working, not
-  evidence of a general effect size.
+- Rejected: hand-written Zod for the whole `/api/*` surface, because it duplicates a contract that
+  is already machine-readable and gated, at a maintenance cost per response.
+- Rejected: no runtime validation, the types trusted, because it left the BFF boundary unguarded.
+- Rejected: uniform fail-closed validation, production included, because it turns every non-money
+  contract wobble into a crash in front of the user.
 
 ## Consequences
 
-**Positive** — the auth boundary is validated instead of assumed; the money receipts cannot render
-a shape the server did not promise; mock drift surfaces as a red test rather than as confidence in
-a test that proves nothing; the generated schemas are reproducible from the spec by construction.
+- The auth boundary is validated and not assumed, a money receipt cannot render a shape the server
+  did not promise, and mock drift is a red test.
+- It costs a step that is easy to forget: a new response that carries money has to be added to
+  the fail-closed set. `unwrap` is load-bearing and is not refactored casually.
+- A contract drift on a money surface takes the feature down and shows no wrong number, on purpose.
+- Not covered: the BFF surface is still outside the OpenAPI document. Its Zod schemas are
+  hand-written, one mirror where there were two that could disagree.
+- Not covered: the development and test tier catches only the drift that the mocks or the local
+  stack exercise; any other contract change reaches users unvalidated on the non-money surfaces.
 
-**Negative** — adding a money-bearing response now means adding it to the fail-closed set, which is
-a step that is easy to forget; `unwrap` is load-bearing and must not be casually refactored;
-`mocks/handlers.ts` and `mocks/state.ts` are frozen files partly because of item 7.
+## Verified by
 
-## Verification
-
-`frontend/src/api/bffSchemas.test.ts` pins the BFF schema contract. The full suite exercises the
-dev/test validation tier on every run — a mock that violates the contract fails the suite rather
-than passing quietly. In CI, the `generate:zod` drift gate and the `AssertExtends` tuple both fail
-the build on divergence.
+- `frontend/src/api/bffSchemas.test.ts` pins the BFF schemas.
+- In `ci.yml`: `npm run generate:zod` then `git diff --exit-code src/api/generated/apiSchemas.ts`.
+- `_GeneratedSchemasMatchSpec` in `frontend/src/api/responseSchemas.ts`, checked by `tsc -b`.
 
 ## Related
 
-- **ADR-0019** — this ADR amends its Decision 6.
-- **ADR-0007** — FluentValidation, the server-side contract these schemas mirror.
-- **ADR-0009** — the money protocol whose receipts are the fail-closed set.
-- **ADR-0022** — the client money-mutation protocol that consumes these validated responses.
+ADR-0007, ADR-0009, ADR-0019, ADR-0022, ADR-0043, ADR-0053.

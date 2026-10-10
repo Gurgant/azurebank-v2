@@ -1,118 +1,76 @@
 # ADR-0014: Recipient lookup — exact-match, harvest-resistant
 
-**Status**: Accepted
-
-**Date**: 2026-07-17
-
-**Decision Makers**: Vladislav Aleshaev
-
----
+**Status:** Accepted · **Date:** 2026-07-17 · **Amended:** 2026-09-15 (the limit is the BFF's),
+2026-10-04 (ADR-0063, the public demo) · **Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
-Transfers need a way to confirm a payee by their public handle (`AzureTag`). The API had
-two authenticated (`[Authorize]`) endpoints:
-
-- `GET /api/users/{azureTag}` — **exact** match, returns a masked display name
-  (`"Vladislav A."`) + `Exists` so the payer can confirm the right person.
-- `GET /api/users/search?azureTag=...` — a **substring** search (`AzureTag.Contains(query)`,
-  min 2 chars in the service / 3 in the attribute, capped at 10 results).
-
-The substring search is a **customer-directory harvester**. `[Authorize]` is a weak barrier
-because registration is open and auto-logs-in, so an attacker registers one throwaway account
-*(2026-10-04, [ADR-0063](0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md): on the
-public demo, `Demo:Enabled`, registration is closed, and the throwaway account is a claimed demo
-copy. A copy's owner looks up handles inside its own copy only (ADR-0062, decision 7), so there
-the sweep finds the copy's two contacts and nobody else)*
-and then sweeps: iterating the 3-character space (~46k queries) against `Contains` + 10
-results/query, bounded only by the generous per-IP global limit (~300/min ⇒ ~3000 handles/min),
-reveals most of the handle namespace and the masked names attached to it. No real payments app
-offers substring search on a payment handle for exactly this reason.
-
-**Key insight — this is NOT the login-enumeration problem (ADR-0012/0013).** Recipient lookup
-*cannot* be enumeration-neutral and still work: revealing "this handle exists and belongs to
-Vladislav A." **is the feature** (it prevents misdirected transfers). So the goal is not to
-hide existence; it is **harvest-resistance** — remove the amplification so an attacker is
-reduced to guessing exact handles one at a time, at a metered, monitored cost.
-
-The masked name is not a leak to apologise for — showing a partial name after an *exact* hit
-is the accepted industry pattern (Zelle shows the enrolled name; Cash App shows the $cashtag
-owner). The anomaly was the substring sweep, not the confirmation.
+A transfer needs a way to confirm a payee by its public handle (`AzureTag`). Saying "this handle
+exists and belongs to this person" is the feature: it prevents misdirected transfers, so the lookup
+cannot be enumeration-neutral the way login and registration are (ADR-0012, ADR-0013). A partial
+name after an exact hit is the accepted pattern (Zelle shows the enrolled name, Cash App the
+$cashtag's owner). The danger is amplification. A substring search is a customer-directory
+harvester, and `[Authorize]` is a weak barrier while registration is open: one throwaway account
+sweeps the 3-character space (about 46k queries, 10 results each) under the per-IP global limit. The
+goal is harvest-resistance: guessing exact handles one at a time, at a metered, monitored cost.
 
 ## Decision
 
-1. **Exact-match only.** Delete `GET /api/users/search` and `SearchUsersAsync`. The exact
-   `GET /api/users/{azureTag}` is the sole recipient lookup — the Zelle / Cash App model.
-2. **Per-user rate limit.** A dedicated `lookup` policy (sliding, default 20/60s) on the BFF's
-   `/api/users/*` route, partitioned per **authenticated user** (session → user id, IP
-   fallback), not per IP — because with open registration the abuse unit is the account, not
-   the address (the Venmo precedent: per-IP limiting alone was bypassed via many IPs/accounts).
-   *(2026-10-04, ADR-0063: on the public demo the unit is still the account, and the account is
+1. **Exact-match only.** `GET /api/users/search` and `SearchUsersAsync` are deleted, because a
+   substring search is the harvest amplifier. `GET /api/users/{azureTag}` is the sole recipient
+   lookup, the Zelle / Cash App model: it answers 200 with a masked display name (the first name and
+   the surname's initial) and `exists`, and an unknown handle is `exists: false`, never a 404.
+2. **Per-user rate limit.** A dedicated `lookup` policy (sliding, 20 per 60 s by default) on the
+   BFF's `/api/users/*` route, partitioned per authenticated user (session to user id, IP as the
+   fallback) and not per IP, because with open registration the abuse unit is the account, not the
+   address (the Venmo precedent: per-IP limiting alone was bypassed with many addresses and
+   accounts). On the public demo (`Demo:Enabled`) the unit is still the account, and the account is
    a claimed copy: registration is closed there, and the API gives one client address
-   `Demo:Claim:MaxPerClientPerDay` copies in a rolling 24 hours, 10 by default. So an address
-   is given that many budgets of the lookup's limit in a day, not as many as it cares to
-   register; ADR-0063's decision 7 says by how much that cap can be overshot.)*
-3. **Hardening of the exact lookup.** `[Required][AzureTagQuery]` on the route parameter (was
-   unvalidated); project the EF query to only `{Id, FirstName, LastName}` so it never
-   materialises `PasswordHash`/`PinHash`/`SecurityStamp`; `ToLowerInvariant` normalisation to
-   match registration; a self-lookup returns not-found with no name echoed.
+   `Demo:Claim:MaxPerClientPerDay` copies in a rolling 24 hours, 10 by default (ADR-0063, decision
+   7, says by how much that cap can be overshot).
+3. **Hardening of the exact lookup.** `[Required][AzureTagQuery]` validates the route parameter; the
+   EF query projects only `{Id, FirstName, LastName}`, so it never materialises `PasswordHash`,
+   `PinHash` or `SecurityStamp`; the handle is normalised with `ToLowerInvariant` to match
+   registration; a self-lookup answers `exists: false` with no name echoed.
 
-## Residuals (accepted, documented)
+## Rejected
 
-- **Per-user limiting is bounded, not absolute.** A determined attacker registers many
-  throwaway accounts, each with its own budget (Venmo lost exactly this argument). Combined
-  with exact-match — which removes the wildcard sweep so each account can only guess one exact
-  handle per request — the attack is reduced from "sweep the directory" to "guess handles at
-  20/min/account", and the rejections are logged for detection. This is harvest-resistance, not
-  prevention; closing it fully needs bot-defense / device signals (out of scope for a demo).
-- **The limit is the BFF's, and the API has none** _(measured 2026-09-15 on `main`, f1b3509, both
-  hosts running)_. 21 × `GET /api/users/janesmith` inside a minute answered 200 ×20 then 429 through
-  the BFF on :5000, and 200 ×21 sent straight to the API on :7215 with a bearer token. The API
-  registers no rate limiter at all, so a caller holding a JWT — its login hands one to anyone with
-  the password — guesses handles at network speed, not at 20 a minute, by calling the API's own
-  origin. A browser has no token to present there (the JWT never reaches the SPA and the BFF clears
-  inbound `Authorization`: ADR-0001, ADR-0038, ADR-0041), so its lookups all pass the BFF's limiter,
-  and this narrows the guarantee above rather than voiding it: "20/min/account" is the BFF's number,
-  and the API's is unbounded. `SECURITY.md` tabulates it beside the other controls that stop at the
-  BFF. Closing it means a limiter in the API, partitioned on the token's subject — a change this
-  note records the need for and does not make.
-- **`AzureTag` is currently the Identity `UserName`.** Harmless today (login is by email;
-  nothing authenticates by `UserName`), but decoupling it (set `UserName` to the immutable
-  user Id, keep `AzureTag` as a plain public-handle column) is tracked as a separate hygiene
-  follow-up that also unblocks a "rename your handle" feature.
-- **Discovery** (finding *who* to pay when you don't have their handle) is intentionally
-  out-of-band — a shared handle, QR, or pay-me link — as in Revolut/Cash App, not a directory
-  browse. A roadmap item, not this change.
-
-## Alternatives considered
-
-- **Keep the substring search (rejected).** No payment app ships directory substring search;
-  it is the harvest amplifier.
-- **Downgrade to a prefix (`StartsWith`) type-ahead (rejected).** Cuts coverage-per-query but
-  is still a browsable directory; a payments handle lookup is an exact-match confirmation, not
-  a search box.
-- **CAPTCHA / proof-of-work on lookup (rejected).** No bank taxes a core payment path this
-  way; per-user limiting + monitoring achieves the protection without the friction.
-- **Confirmation-of-Payee "assert then verify" (deferred).** The payer supplies the expected
-  name and the API answers match/close/no-match — maximally harvest-resistant and what the
-  regulated SEPA/UK rails mandate, but disproportionate for an MVP with no such flow.
+- Rejected: keeping the substring search, because no payment app ships directory substring search.
+- Rejected: a prefix (`StartsWith`) type-ahead, because it cuts coverage per query but is still a
+  browsable directory: a payment-handle lookup is an exact-match confirmation, not a search box.
+- Rejected: CAPTCHA or proof-of-work on the lookup, because no bank taxes a core payment path this
+  way, and per-user limiting with monitoring protects without the friction.
+- Deferred: Confirmation-of-Payee "assert then verify" (the payer supplies the expected name, the
+  API answers match, close or no-match), because it is the most harvest-resistant and what the
+  regulated SEPA and UK rails mandate, but disproportionate for an MVP with no such flow. The EPC
+  Verification-of-Payee rulebook treats lax matching as a name-harvesting risk.
 
 ## Consequences
 
-**Positive** — the directory is no longer browsable; the mandated anti-automation control (OWASP
-ASVS 5.0 §2.4.1, L2, names *data exfiltration* explicitly) is enforced per-user on the lookup path
-*(at the BFF — see the 2026-09-15 residual)*; the exact lookup no longer loads secrets into memory
-and validates its input.
+- The directory is not browsable. The anti-automation control of OWASP ASVS 5.0 §2.4.1 (L2, which
+  names data exfiltration) is enforced per user on the lookup path, at the BFF. The exact lookup
+  validates its input and loads no secrets into memory.
+- There is no in-app recipient type-ahead. Finding a payee takes the exact handle, obtained out of
+  band (a shared handle, a QR code, a pay-me link), as in Revolut and Cash App.
+- On the public demo a copy's owner looks up handles inside its own copy only (ADR-0062, decision
+  7), so a sweep there finds the copy's two contacts and nobody else.
+- The handle is not the Identity `UserName`: ADR-0015 decouples the two and adds the rename.
+- Not covered: per-user limiting is bounded, not absolute. An attacker registers many throwaway
+  accounts, each with its own budget; with exact match each can only guess one handle per request,
+  at 20 a minute per account, and the rejections are logged. This is harvest-resistance, not
+  prevention: closing it fully needs bot defence or device signals.
+- Not covered: the limit is the BFF's. The API registers no rate limiter, so 20 a minute is the
+  BFF's number and the API's is unbounded. A browser has no token to present to the API's own origin
+  (ADR-0001, ADR-0038, ADR-0041), and the API refuses a request without the BFF's service credential
+  (ADR-0055). Closing it means a limiter in the API, partitioned on the token's subject.
+  `SECURITY.md` lists it beside the other controls that stop at the BFF.
 
-**Negative** — there is no in-app recipient type-ahead; finding a payee requires their exact
-handle (obtained out-of-band). This matches how real payment apps work and is the intended
-trade-off. The per-user residual is accepted and monitored.
+## Verified by
 
-## References
+- `UserEndpointTests` and `UserServiceTests`: exact match only, the masked name, an unknown handle,
+  a self-lookup, an invalid handle.
+- `RateLimiterTests` (`YarpUsersRoute_CarriesTheLookupPolicy_PerClient`): the BFF's `lookup` policy.
 
-- OWASP ASVS 5.0 §2.4.1 (anti-automation vs data exfiltration).
-- Zelle / Cash App recipient-confirmation model; Venmo scraping precedent (per-IP limits alone
-  are insufficient under cheap accounts); EPC Verification-of-Payee rulebook (lax matching =
-  name-harvesting risk).
-- ADR-0012 (login enumeration/lockout), ADR-0013 (registration enumeration + the BFF limiter
-  this reuses).
+## Related
+
+ADR-0012, ADR-0013, ADR-0015, ADR-0055, ADR-0062, ADR-0063.
