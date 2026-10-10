@@ -35,9 +35,7 @@ namespace AzureBank.Bff.Options;
 /// 2026-10-06): with <c>::ffff:10.0.0.0/104</c> listed the header was read on a connection
 /// reported as <c>::ffff:10.0.0.5</c> and not on one reported as <c>10.0.0.5</c>; with
 /// <c>::ffff:0:0/96</c>, every IPv4 address, on neither of the two. Such an entry would work
-/// or fail, in silence, by how the socket is bound (as first written that day, this said the
-/// mapped network "answered false for an address inside it, written either way" and "would
-/// match nobody": so the /96 did; the /104 and a /128 did not);</item>
+/// or fail, in silence, by how the socket is bound;</item>
 /// <item>written exactly as the framework prints the network it reads. Its parser accepts texts
 /// that mean something else than they show (measured the same day): <c>10.0.0.1/8</c> is
 /// widened to <c>10.0.0.0/8</c>, <c>010.0.0.0/8</c> is read in octal as <c>8.0.0.0/8</c>,

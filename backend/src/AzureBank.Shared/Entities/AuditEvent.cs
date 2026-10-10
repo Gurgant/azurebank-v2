@@ -138,12 +138,12 @@ public class AuditEvent
     /// hashes nothing, and is the absence of a claim rather than a claim.
     /// </para>
     /// <para>
-    /// ⚠️ WHAT HAPPENS TO SUCH A ROW DEPENDS ON THE VERSION IT DECLARES, and this paragraph said it
-    /// did not. A legacy <c>v2</c> row records no identity because that version had nowhere to keep
-    /// one, so it is answered for by the FOUNDING key, which <c>Audit:FoundingChainKey</c> names —
-    /// and that is <c>Audit:ChainKey</c> only while nothing has been retired, because until then it
-    /// is the only key there has ever been. A <c>v3</c> row is the opposite case: its version DOES
-    /// keep an identity, so an empty one was removed after the fact. The walk refuses it as
+    /// ⚠️ WHAT HAPPENS TO SUCH A ROW DEPENDS ON THE VERSION IT DECLARES. A legacy <c>v2</c> row
+    /// records no identity because that version had nowhere to keep one, so it is answered for by
+    /// the FOUNDING key, which <c>Audit:FoundingChainKey</c> names — and that is
+    /// <c>Audit:ChainKey</c> only while nothing has been retired, because until then it is the only
+    /// key there has ever been. A <c>v3</c> row is the opposite case: its version DOES keep an
+    /// identity, so an empty one was removed after the fact. The walk refuses it as
     /// <c>UnknownScheme</c> before recomputing anything — a modification
     /// rather than a configuration note — and the column is inside the hashed payload, which is what
     /// makes that reading available at all.
@@ -151,18 +151,10 @@ public class AuditEvent
     /// pins the distinction.
     /// </para>
     /// <para>
-    /// The unqualified version of this was written before the ring, when a null identity had exactly
-    /// one meaning. The arm that gives the second meaning was added by the same branch that left
-    /// this paragraph generalising over both.
-    /// </para>
-    /// <para>
-    /// This paragraph used to end "whatever adds a second key must add a ring entry for the founding
-    /// key rather than silently re-point every historical row at whatever is current", as future
-    /// work. That work landed with the key ring: the designation is REQUIRED as soon as anything is
-    /// retired, it must name material already in the ring, and it INHERITS that entry's epoch — so a
-    /// row recording no identity is refused OUTSIDE that epoch exactly as a keyed row is outside its
-    /// own, at either end. (This named only the upper one, "refused above the founding key's
-    /// boundary", in the file that carries the two-ends lesson.)
+    /// The founding key is a DESIGNATION: it is REQUIRED as soon as anything is retired, it must
+    /// name material already in the ring, and it INHERITS that entry's epoch — so a row recording
+    /// no identity is refused OUTSIDE that epoch exactly as a keyed row is outside its own, at
+    /// either end.
     /// </para>
     /// </remarks>
     public string? KeyId { get; set; }
@@ -179,25 +171,23 @@ public class AuditEvent
     /// </summary>
     /// <remarks>
     /// <para>
-    /// ⚠️ THE QUALIFIER IS THE CLAIM, AND THIS SENTENCE CARRIED THE WITHDRAWN VERSION OF IT. It read
-    /// "makes a DELETED row detectable", full stop. That is true of an interior row and false of the
-    /// TAIL: verification only ever looks backwards, so deleting the last row — or the last thousand
-    /// — leaves every surviving row hashing correctly and linking correctly, and needs no key at
-    /// all. ADR-0044 withdrew the unqualified wording in its own text; this summary is where it went
-    /// on living. What would close that end, and why neither control that would is built here, is in
-    /// that record and in <c>docs/deferred/anchoring-the-audit-trail.md</c>.
+    /// ⚠️ THE QUALIFIER IS THE CLAIM. "Makes a DELETED row detectable", full stop, is true of an
+    /// interior row and false of the TAIL: verification only ever looks backwards, so deleting the
+    /// last row — or the last thousand — leaves every surviving row hashing correctly and linking
+    /// correctly, and needs no key at all. What would close that end, and why neither control that
+    /// would is built here, is in ADR-0044 and in
+    /// <c>docs/deferred/anchoring-the-audit-trail.md</c>.
     /// </para>
     /// <para>
-    /// NULLABLE ON PURPOSE, AND THE DECISION IT WAS LEFT OPEN FOR HAS SINCE BEEN MADE — this
-    /// paragraph still said it was open. Chaining every row to its predecessor at insert time
-    /// requires the writer to read the current tail and append to it atomically, which serialises
-    /// audit inserts and therefore serialises every business operation that writes one. The
-    /// alternative was to leave this null on the hot path and have a verifier compute the chain over
-    /// <see cref="Sequence"/> order at checkpoints, keeping writes concurrent but detecting a
-    /// deletion only at the next checkpoint. ADR-0044 D3 took the first: the chain is applied in the
-    /// <c>SaveChanges</c> funnel, so <c>AuditChain</c> assigns this at insert, unconditionally. The
-    /// column stays nullable because the first row of a chain has no predecessor — not because the
-    /// strategy is undecided.
+    /// NULLABLE ON PURPOSE, AND NOT BECAUSE THE STRATEGY IS UNDECIDED. Chaining
+    /// every row to its predecessor at insert time requires the writer to read the current tail and
+    /// append to it atomically, which serialises audit inserts and therefore serialises every
+    /// business operation that writes one. The alternative was to leave this null on the hot path
+    /// and have a verifier compute the chain over <see cref="Sequence"/> order at checkpoints,
+    /// keeping writes concurrent but detecting a deletion only at the next checkpoint. ADR-0044 D3
+    /// took the first: the chain is applied in the <c>SaveChanges</c> funnel, so <c>AuditChain</c>
+    /// assigns this at insert, unconditionally. The column stays nullable because the first row of
+    /// a chain has no predecessor — not because the strategy is undecided.
     /// </para>
     /// </remarks>
     public string? PreviousHash { get; set; }

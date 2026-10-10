@@ -212,9 +212,9 @@ public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransform
     /// </para>
     /// <para>
     /// <c>requested</c> is the one member two codes share, so its description is built from the
-    /// operation's codes. On <c>POST /api/transfers</c> it read "DAILY_LIMIT_EXCEEDED only" until
-    /// 2026-09-11, while the <c>INSUFFICIENT_FUNDS</c> body there carried it too — measured on
-    /// 2026-09-07 as <c>{"available": 300.0, "requested": 400}</c>, and again on 2026-09-11 as
+    /// operation's codes. On <c>POST /api/transfers</c> the <c>INSUFFICIENT_FUNDS</c> body carries
+    /// it as well as the <c>DAILY_LIMIT_EXCEEDED</c> one — measured on 2026-09-07 as
+    /// <c>{"available": 300.0, "requested": 400}</c>, and again on 2026-09-11 as
     /// <c>"available":100.2500,"requested":500.5</c>.
     /// </para>
     /// </remarks>
