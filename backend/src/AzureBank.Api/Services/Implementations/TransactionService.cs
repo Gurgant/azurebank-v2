@@ -58,11 +58,12 @@ public class TransactionService : ITransactionService
               account came through the ownership check. A later attempt holds the row a reload
               brought back, and a closure that won the race is in it as IsDeleted, because a reload
               does not apply the filter that hides closed accounts. Without this line the retry
-              credits the closed account and answers 201. With it the deposit answers the 404 an
-              account closed before the request gets, and writes nothing.
+              credits the closed account and answers 201, and inserts again an account whose row
+              is gone. With it the deposit answers the 404 an account closed before the request
+              gets, and writes nothing.
               DepositIntoClosedAccountSqlServerTests holds both on SQL Server.
             */
-            ConcurrencyRetry.RefuseIfClosed(account);
+            ConcurrencyRetry.RefuseIfClosed(_context, account);
 
             var balanceBefore = account.Balance;
             var balanceAfter = balanceBefore + request.Amount;
@@ -316,7 +317,7 @@ public class TransactionService : ITransactionService
                       acknowledgement is answered from its claim, also when the account closed in
                       between. TransferOrWithdrawalOnClosedAccountSqlServerTests holds the refusal.
                     */
-                    ConcurrencyRetry.RefuseIfClosed(account);
+                    ConcurrencyRetry.RefuseIfClosed(_context, account);
 
                     /*
                       AND THE GUARD AGAIN, against the balance this attempt actually reloaded. The

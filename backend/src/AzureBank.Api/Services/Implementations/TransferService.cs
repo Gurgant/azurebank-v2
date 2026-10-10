@@ -229,45 +229,68 @@ public class TransferService : ITransferService
 
     /// <summary>
     /// The refusal for a payee with no account the money can go to. One copy, because an external
-    /// transfer gives it in two places: where it resolves the payee, and where the account it
-    /// resolved comes back closed from a reload.
+    /// transfer gives it in two places: where it resolves the payee, and where the payee's account
+    /// comes back closed from a reload and no other account of that payee is open.
     /// </summary>
     private static BusinessRuleException RecipientHasNoActiveAccount() =>
         new("Recipient does not have an active account.", ErrorCodes.RecipientNoAccount);
 
     /// <summary>
-    /// Looks at an external transfer's two accounts again after a reload, and refuses a closed one
-    /// as the first look does: the sender's with the ownership check's 404, the payee's with the
-    /// 422 of a payee who has no account to be paid into.
+    /// Looks at an external transfer's two accounts again after a reload and returns the payee
+    /// account to pay. The sender's account, closed or gone, is refused with the ownership
+    /// check's 404. The payee's account, closed or gone, is replaced by another open account of
+    /// the same payee, the primary first, and the transfer answers the 422 of a payee with no
+    /// account only when that payee has none open.
     /// </summary>
     /// <remarks>
     /// <para>
     /// A reload reads a row by its key and does not apply the filter that hides closed accounts, so
     /// an account closed after the transfer first read it comes back as an ordinary row with
-    /// <c>IsDeleted</c> set. A transfer that looks only at the sender's balance then pays into a
-    /// closed account, or out of one, and answers 201.
+    /// <c>IsDeleted</c> set, and a row that is gone leaves its entry detached
+    /// (<see cref="ConcurrencyRetry.IsClosedOrGone"/>). A transfer that looks only at the sender's
+    /// balance then pays into such an account, or out of one, and answers 201.
     /// </para>
     /// <para>
-    /// THE PAYEE'S CLOSED ACCOUNT IS REFUSED, NOT REPLACED. The payee can hold another open
-    /// account, and a first look would pay that one. This does not choose again: choosing means
-    /// resolving the handle again, and a payee found the second time would not be the one the
-    /// authorisation was validated against until that ran again too. The refusal spends no
-    /// authorisation and releases the idempotency key, so the same request sent again starts from
-    /// the top and pays the open account.
+    /// THE PAYEE IS A PERSON, NOT AN ACCOUNT. A payer names a handle, and which account receives is
+    /// the server's choice, the primary first. So a payee account that closed under the transfer is
+    /// chosen again among the open accounts of the SAME user: the primary, or else the oldest.
+    /// The handle is not resolved a second time, because a handle can change hands and the second
+    /// look could find someone else. The step-up authorisation binds the recipient user and no
+    /// account of theirs, so nothing the payer authorised changes: same payee, same amount.
+    /// </para>
+    /// <para>
+    /// The account chosen is read fresh from the store before it is returned. The first look
+    /// loaded every account of the payee, so the tracker can hold this one with the values and the
+    /// <c>RowVersion</c> of that moment. A choice that is itself closed or gone by the time it is
+    /// read is chosen again.
     /// </para>
     /// <para>
     /// Never a <see cref="NotFoundException"/> for the payee's account: its message carries the
     /// account id, and a payer knows a payee by handle only.
     /// </para>
     /// </remarks>
-    private static void RefuseIfAnAccountClosed(Account fromAccount, Account recipientAccount)
+    private async Task<Account> RefuseOrChooseThePayeeAccountAgainAsync(
+        Account fromAccount, ApplicationUser recipient, Account recipientAccount,
+        CancellationToken cancellationToken)
     {
-        ConcurrencyRetry.RefuseIfClosed(fromAccount);
+        ConcurrencyRetry.RefuseIfClosed(_context, fromAccount);
 
-        if (recipientAccount.IsDeleted)
+        while (ConcurrencyRetry.IsClosedOrGone(_context, recipientAccount))
         {
-            throw RecipientHasNoActiveAccount();
+            // Closed accounts are left out by the filter on every query of accounts. The id last,
+            // so two accounts opened at the same instant are always chosen in the same order.
+            recipientAccount = await _context.Accounts
+                .Where(a => a.UserId == recipient.Id)
+                .OrderByDescending(a => a.IsPrimary)
+                .ThenBy(a => a.CreatedAt)
+                .ThenBy(a => a.Id)
+                .FirstOrDefaultAsync(cancellationToken)
+                ?? throw RecipientHasNoActiveAccount();
+
+            await _context.Entry(recipientAccount).ReloadAsync(cancellationToken);
         }
+
+        return recipientAccount;
     }
 
     /// <inheritdoc />
@@ -408,14 +431,17 @@ public class TransferService : ITransferService
         for (var attempt = 1; ; attempt++)
         {
             /*
-              THE ACCOUNTS AGAIN, BEFORE THE BALANCE. It refuses nothing on the first attempt. After
+              THE ACCOUNTS AGAIN, BEFORE THE BALANCE. It changes nothing on the first attempt. After
               a lost save, the reload at the bottom of this loop hands both rows back, closed or
-              not (RefuseIfAnAccountClosed). Ahead of the funds check on purpose: the API closes
-              only an empty account, so a sender's account that closed under this transfer comes
-              back with nothing in it, and the funds check would answer 422 INSUFFICIENT_FUNDS for
-              an account that answers 404 to every other request.
+              not, and the payee account to pay is the one this returns
+              (RefuseOrChooseThePayeeAccountAgainAsync): from here on the ledger row, the balance,
+              the log line and the next reload all name it. Ahead of the funds check on purpose:
+              the API closes only an empty account, so a sender's account that closed under this
+              transfer comes back with nothing in it, and the funds check would answer 422
+              INSUFFICIENT_FUNDS for an account that answers 404 to every other request.
             */
-            RefuseIfAnAccountClosed(fromAccount, recipientAccount);
+            recipientAccount = await RefuseOrChooseThePayeeAccountAgainAsync(
+                fromAccount, recipient, recipientAccount, cancellationToken);
 
             // Check sufficient funds (inside the loop: a reloaded balance
             // may no longer cover the transfer)
@@ -442,9 +468,11 @@ public class TransferService : ITransferService
                       RowVersion, and the transfer below would commit on it at the first attempt.
                       After the preparation, not before it: a transfer that committed and lost its
                       acknowledgement is answered from its claim, also when an account closed in
-                      between. TransferOrWithdrawalOnClosedAccountSqlServerTests holds both places.
+                      between. TransferOrWithdrawalOnClosedAccountSqlServerTests holds both places,
+                      and PayeeAccountClosedMeanwhileSqlServerTests the payee paid on another account.
                     */
-                    RefuseIfAnAccountClosed(fromAccount, recipientAccount);
+                    recipientAccount = await RefuseOrChooseThePayeeAccountAgainAsync(
+                        fromAccount, recipient, recipientAccount, ct);
 
                     // Funds re-check against the reloaded balance: a transient
                     // retry may run after a concurrent debit moved the balance.
@@ -776,7 +804,7 @@ public class TransferService : ITransferService
             // Both accounts again before the balance, here and after the reload inside the attempt,
             // for the reasons TransferAsync gives at the same two places. Both accounts are the
             // caller's own, so a closed one is the ownership check's 404.
-            ConcurrencyRetry.RefuseIfClosed(fromAccount, toAccount);
+            ConcurrencyRetry.RefuseIfClosed(_context, fromAccount, toAccount);
 
             // Check sufficient funds (inside the loop: a reloaded balance
             // may no longer cover the transfer)
@@ -797,7 +825,7 @@ public class TransferService : ITransferService
                     await PrepareTransferAttemptAsync([fromAccount, toAccount], ct);
 
                     // The second place: the line above reloads on every attempt, the first included.
-                    ConcurrencyRetry.RefuseIfClosed(fromAccount, toAccount);
+                    ConcurrencyRetry.RefuseIfClosed(_context, fromAccount, toAccount);
 
                     // Funds re-check against the reloaded balance: a transient
                     // retry may run after a concurrent debit moved the balance.

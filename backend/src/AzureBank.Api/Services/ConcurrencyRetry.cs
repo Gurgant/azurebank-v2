@@ -296,7 +296,8 @@ internal static class ConcurrencyRetry
 
     /// <summary>
     /// Refuses a money write when one of the caller's own accounts came back closed from a reload,
-    /// with the 404 the ownership check gives an account that was closed before the request.
+    /// or did not come back at all, with the 404 the ownership check gives an account that was
+    /// closed before the request.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -306,26 +307,40 @@ internal static class ConcurrencyRetry
     /// a write that looks only at its balance moves money on a closed account.
     /// </para>
     /// <para>
+    /// A ROW THAT IS GONE IS NOT IN THE FLAG. A reload that finds no row detaches the entry and
+    /// leaves the entity as it was, <c>IsDeleted</c> false and the old balance in it. A write that
+    /// adds a ledger row naming that entity then inserts the account again. So the entry's state is
+    /// read too, which is why this takes the context: an account the request holds is tracked from
+    /// the ownership check on, and only a reload that found nothing detaches it.
+    /// </para>
+    /// <para>
     /// The money write calls this itself, after the reload, and the reload does not: an idempotent
     /// attempt reads its claim after reloading, and a write that committed and lost its
     /// acknowledgement must answer from that claim, also when the account closed in between.
     /// </para>
     /// <para>
     /// For the caller's own accounts only. The message names the account, and a payer must not
-    /// learn a payee's account id: <c>TransferService</c> refuses a closed payee account its own
-    /// way.
+    /// learn a payee's account id: <c>TransferService</c> handles a payee's account its own way,
+    /// with <see cref="IsClosedOrGone"/>.
     /// </para>
     /// </remarks>
-    public static void RefuseIfClosed(params Account[] accounts)
+    public static void RefuseIfClosed(AzureBankDbContext context, params Account[] accounts)
     {
         foreach (var account in accounts)
         {
-            if (account.IsDeleted)
+            if (IsClosedOrGone(context, account))
             {
                 throw new NotFoundException("Account", account.Id);
             }
         }
     }
+
+    /// <summary>
+    /// True when the account, as the last reload left it, cannot take a money write: the row is
+    /// closed, or the reload found no row and detached the entry.
+    /// </summary>
+    public static bool IsClosedOrGone(AzureBankDbContext context, Account account) =>
+        account.IsDeleted || context.Entry(account).State == EntityState.Detached;
 
     /// <summary>
     /// Prepares one more attempt of an idempotent money operation: resets the accounts to the store

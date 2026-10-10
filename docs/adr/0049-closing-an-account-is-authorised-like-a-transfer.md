@@ -1,7 +1,7 @@
 # ADR-0049: Closing an account is authorised like a transfer
 
 **Status:** Accepted · **Date:** 2026-09-06 · **Amended:** 2026-09-07 (ADR-0050),
-2026-09-11 (ADR-0044), 2026-09-14 (ADR-0044), 2026-09-21 (ADR-0056)
+2026-09-11 (ADR-0044), 2026-09-14 (ADR-0044), 2026-09-21 (ADR-0056), 2026-10-10 (D9)
 
 ## Context
 
@@ -52,6 +52,13 @@ balance before primary, is code (`RefuseIfNotClosable`), held by a unit test and
   reloads the account, answers 404 if it is closed and runs the guards again, so a deposit that
   raced the closure ends in 422. An outer loop retries a `DbUpdateConcurrencyException`; without it
   eight DELETEs at once answered `500,500,500,500,500,200,500,500`.
+- **D9: A money write whose account closed while it ran is refused as a request on a closed
+  account**, and so is one whose account row is gone: 404 `ACCOUNT_NOT_FOUND` for the caller's own
+  account, with nothing written and nothing spent. A deposit, a withdrawal and both transfers look
+  at their accounts again after every reload, because a reload returns a closed row with a current
+  `RowVersion`. An external transfer whose payee account closed pays another open account of the
+  same payee, the primary first, then the oldest: the payer names a person, and the authorisation
+  binds that person, not an account. It answers 422 `RECIPIENT_NO_ACCOUNT` only when none is open.
 
 ```sql
 SELECT s.Id, s.Operation, s.Status, s.CreatedAt, s.ConsumedAt, s.ConsumedByTransactionId,
@@ -82,6 +89,11 @@ too; `PIN_REQUIRED` (422), `INVALID_PIN` (401) and `PIN_LOCKED` (429) come only 
 - Rejected: `/api/accounts/{id}/authorizations`, because a second kind of mint would collide there.
 - Rejected: the account id in `ConsumedByTransactionId`, because the evidence join never matches it.
 - Rejected: the presence check ahead of the guards, because the guards are no oracle (D6).
+- Rejected: a "closing" state between open and closed, because every operation is one database
+  transaction, so nothing is in flight for longer than a request. The row version says which of
+  the two committed first, and the one that lost reads the row again: a closure that meets a
+  deposit sees the money and refuses, a deposit that meets a closure sees the closed account and
+  refuses (D8, D9).
 
 ## Consequences
 
@@ -108,11 +120,15 @@ too; `PIN_REQUIRED` (422), `INVALID_PIN` (401) and `PIN_LOCKED` (429) come only 
 - A second non-money operation wants a mint: `StepUpBinding` gets its own shape, the payload `v2|`.
 - A closure notice is decided: it joins an audit row (ADR-0047's shape), and the gate does not move.
 - The reveal moves onto a mint: `AuthLevelMiddleware`'s level-2 rule then protects nothing.
+- An operation outlives its request, a scheduled payment or a hold: a closing state then earns its
+  column, because something is in flight while no transaction holds the account.
 
 ## Verified by
 
 - `AccountDeletionSqlServerTests` (D8), `AccountDeletionAuthorizationTests`, `AccountServiceTests`,
   `StepUpAuthorizationServiceTests` (the operation name in the hash).
+- D9, on SQL Server: `DepositIntoClosedAccountSqlServerTests`,
+  `TransferOrWithdrawalOnClosedAccountSqlServerTests`, `PayeeAccountClosedMeanwhileSqlServerTests`.
 - The SPA: `stepUp.contract.test.ts`, `money.contract.test.ts` and `deleteAccount.spec.ts`.
 
 ## Related
