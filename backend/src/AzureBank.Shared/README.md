@@ -1,604 +1,132 @@
 # AzureBank.Shared
 
-**Shared Library** - Domain entities, DTOs, exceptions, and constants
+The types every backend project compiles against: the entities, the API's request and response
+bodies, the exceptions that become its error answers, the constants, the configuration classes and
+a few helpers. The API, the BFF, Infrastructure, the notice-relay Function, the Seeder and the
+AuditVerifier reference it. It holds no database mapping (that is
+[AzureBank.Infrastructure](../AzureBank.Infrastructure/README.md)) and depends on no host.
 
-[![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com)
-[![Class Library](https://img.shields.io/badge/Type-Class_Library-green?style=flat-square)](https://docs.microsoft.com/dotnet/core/project-sdk)
+It has two package references: `Microsoft.Extensions.Identity.Stores`, for the `IdentityUser<Guid>`
+that `ApplicationUser` extends, and `Konscious.Security.Cryptography.Argon2`, for the PIN hash.
 
----
+## What it holds
 
-## Overview
+| Folder | Holds |
+| --- | --- |
+| `Entities/` | The persisted types. Their tables are listed in [Infrastructure](../AzureBank.Infrastructure/README.md), which maps them |
+| `DTOs/` | The API's request and response bodies, by area: `Auth`, `Account`, `Transaction`, `Transfer`, `User`, and the envelopes in `Common` |
+| `Exceptions/` | `AppException` and its subclasses: each carries the HTTP status and the error code of a refusal |
+| `Constants/` | `ErrorCodes`, `SecurityEvents`, `ValidationRules`, `Roles`, and the header names of the idempotency and step-up protocols |
+| `Enums/` | The enums the database stores, each by its member's name |
+| `Options/` | The classes the configuration sections bind to, each naming its section in `SectionName` |
+| `Validation/` | Attributes for a money amount, a PIN, a password, an AzureTag, a GUID that is not empty and a list with no null item |
+| `Utilities/` | `IdGenerator` (account and transaction numbers), `LogSanitizer`, `SecretPrefix` |
+| `Services/` | `IPasswordHasher`: Argon2id for the PIN, and for nothing else |
+| `Observability/` | The console log format and the rule for an OTLP endpoint, shared by the API and the BFF |
 
-`AzureBank.Shared` contains all shared types used across the solution including domain entities, DTOs (Data Transfer Objects), custom exceptions, validation attributes, and constants.
+A success body is one of the envelopes in `DTOs/Common`: `ApiResponse<T>` (`data` and `message`),
+`ApiResponse` (`message` alone) where there is nothing to return, and `PaginatedResponse<T>`
+(`data` and `pagination`) for the transaction list.
 
-**Parent Solution**: [AzureBank Backend](../../README.md)
+## Exceptions and error codes
 
-**Consumers:**
-- `AzureBank.Api` - Uses entities, DTOs, exceptions
-- `AzureBank.Bff` - Uses DTOs for API communication
-- `AzureBank.Infrastructure` - Uses entities for EF Core
-- `AzureBank.Tests` - Uses all types for testing
+`AppException` is abstract and carries an HTTP status, an `ErrorCode` and optional `Details`. The
+API's `AppExceptionHandler` writes it as problem details: `errorCode` and `traceId` are members of
+the body, so is every entry of `Details`, and a `retryAfterSeconds` detail is also sent as the
+`Retry-After` header. Throw the subclass that owns the status and the code:
 
----
+| Exception | Status | Code |
+| --- | --- | --- |
+| `AuthenticationException` | 401 | `INVALID_CREDENTIALS`, or the one passed |
+| `AuthorizationException` | 403 | `ACCESS_DENIED` |
+| `RegistrationClosedException` | 403 | `REGISTRATION_CLOSED` |
+| `NotFoundException` | 404 | `ACCOUNT_NOT_FOUND`, whatever the resource: the frontend mirrors it, and `NotFoundExceptionTests` pins it |
+| `ConflictException` | 409 | `CONFLICT`, or the one passed |
+| `IdempotencyException` | 400, 409, 413 or 422 | One of the `IDEMPOTENCY_*` codes (ADR-0009) |
+| `PayloadTooLargeException` | 413 | `PAYLOAD_TOO_LARGE` |
+| `BusinessRuleException` | 422 | `BUSINESS_RULE_VIOLATION`, or the one passed |
+| `InsufficientFundsException` | 422 | `INSUFFICIENT_FUNDS`, with `available` and `requested` |
+| `DailyLimitExceededException` | 422 | `DAILY_LIMIT_EXCEEDED`, with `limit`, `used`, `requested` and `resetsAt` |
+| `AccountLockedException`, `PinLockedException` | 429 | `ACCOUNT_LOCKED`, `PIN_LOCKED`, each with `retryAfterSeconds` and `lockedUntil` |
+| `DemoRefusalException` | 429 | `DEMO_POOL_EMPTY`, `DEMO_DAILY_LIMIT` (with `retryAfterSeconds`) or `DEMO_COPY_LIMIT` |
+| `ServiceUnavailableException` | 503 | `SERVICE_UNAVAILABLE`, with `retryAfterSeconds` |
 
-## Project Structure
+The sentence of a money refusal carries no figure: the amounts travel in `Details`, and the client
+formats them.
 
-```
-AzureBank.Shared/
-├── 📁 Entities/                    # Domain models
-│   ├── BaseEntity.cs               # Base class with Id, timestamps
-│   ├── ApplicationUser.cs          # User entity (extends IdentityUser)
-│   ├── Account.cs                  # Bank account entity
-│   ├── Transaction.cs              # Transaction entity (immutable)
-│   └── RefreshToken.cs             # JWT refresh token entity
-│
-├── 📁 DTOs/                        # Data Transfer Objects
-│   ├── 📁 Auth/                    # Authentication DTOs
-│   │   ├── LoginRequest.cs
-│   │   ├── LoginResponse.cs
-│   │   ├── RegisterRequest.cs
-│   │   ├── RegisterResponse.cs
-│   │   ├── TokenResponse.cs
-│   │   ├── SetPinRequest.cs
-│   │   └── VerifyPinRequest.cs
-│   ├── 📁 Account/                 # Account DTOs
-│   │   ├── CreateAccountRequest.cs
-│   │   ├── UpdateAccountRequest.cs
-│   │   ├── AccountResponse.cs
-│   │   ├── AccountSummaryResponse.cs
-│   │   └── BalanceResponse.cs
-│   ├── 📁 Transaction/             # Transaction DTOs
-│   │   ├── DepositRequest.cs
-│   │   ├── WithdrawRequest.cs
-│   │   ├── TransactionResponse.cs
-│   │   └── TransactionFilter.cs
-│   ├── 📁 Transfer/                # Transfer DTOs
-│   │   ├── TransferRequest.cs
-│   │   ├── InternalTransferRequest.cs
-│   │   └── TransferResponse.cs
-│   ├── 📁 User/                    # User DTOs
-│   │   ├── UserResponse.cs
-│   │   └── RecipientSearchResult.cs
-│   └── 📁 Common/                  # Shared DTOs
-│       ├── ApiResponse.cs          # Wrapper response
-│       └── PaginatedResponse.cs    # Pagination wrapper
-│
-├── 📁 Exceptions/                  # Custom exceptions
-│   ├── AppException.cs             # Base exception
-│   ├── NotFoundException.cs        # 404 Not Found
-│   ├── UnauthorizedException.cs    # 401 Unauthorized
-│   ├── ForbiddenException.cs       # 403 Forbidden
-│   ├── BusinessRuleException.cs    # 422 Business rule violation
-│   ├── InsufficientFundsException.cs # 422 Not enough balance
-│   ├── DuplicateEntityException.cs # 409 Conflict
-│   └── ValidationException.cs      # 400 Validation failed
-│
-├── 📁 Enums/                       # Enumeration types
-│   ├── AccountType.cs              # Checking, Savings, Investment
-│   ├── TransactionType.cs          # Deposit, Withdrawal, Transfer
-│   └── TransactionStatus.cs        # Pending, Completed, Failed
-│
-├── 📁 Constants/                   # Static values
-│   ├── ErrorCodes.cs               # Error code constants
-│   └── ValidationRules.cs          # Validation rule constants
-│
-├── 📁 Validation/                  # Custom validation attributes
-│   ├── NotEmptyGuidAttribute.cs    # Non-empty GUID validation
-│   ├── MoneyRangeAttribute.cs      # Currency amount validation
-│   ├── PasswordAttribute.cs        # Password policy validation
-│   ├── PinAttribute.cs             # 6-digit PIN validation
-│   └── AzureTagAttribute.cs        # AzureTag format validation
-│
-├── 📁 Options/                     # Configuration classes
-│   ├── JwtOptions.cs               # JWT configuration
-│   └── SeedDataOptions.cs          # Seeding configuration
-│
-└── 📁 Utilities/                   # Helper classes
-    └── IdGenerator.cs              # UUID v7 generation
+An error code is written once, in `ErrorCodes`: `ErrorCodeConstantTests` fails a code written as a
+string literal in the API's services or in `Exceptions/`. A security event's name is written once,
+in `SecurityEvents`, which is here because both the API and the BFF log them:
+`SecurityEventConstantTests` fails a name written inline at a log site.
+
+## Limits
+
+`Constants/ValidationRules.cs` is where a limit is written once. The attributes on the DTOs, the
+API's validators and the column widths in Infrastructure read it, and the API publishes the same
+values in the OpenAPI document.
+
+| Rule | Value |
+| --- | --- |
+| Currency | `EUR` |
+| One amount | 0.01 to 100,000.00, with at most two decimal places; stored as `decimal(19,4)` |
+| Password | 8 to 128 printable ASCII characters, with a lowercase letter, an uppercase letter, a digit and a special character |
+| PIN | Exactly six digits, `0` to `9`. Three wrong attempts in a row lock it for 15 minutes |
+| Sign-in | Five failed attempts in a row lock the account for 15 minutes |
+| AzureTag | 3 to 20 characters: a lowercase letter, then lowercase letters, digits and underscores |
+| Names and text | First and last name 2 to 50 characters, account name 2 to 100, e-mail at most 255, description at most 500 |
+| Account number | `AB-XXXX-XXXX-XX`, all digits after the prefix |
+| Transaction number | `TXN-YYYYMMDD-XXXXXXXXXXC`: 24 characters, the last a check symbol |
+| Page size | 1 to 100, and 20 when none is asked for |
+
+Money leaves the server as a number. Where the server itself has to state a figure in a sentence
+it calls `ValidationRules.DescribeAmount`: an invariant number and the ISO code, never a symbol and
+never the process's culture. `MoneyFormattingTests` fails a `C` format and a currency symbol in a
+message.
+
+## Test it
+
+From `backend/`:
+
+```bash
+dotnet test tests/AzureBank.Tests/AzureBank.Tests.csproj
 ```
 
----
-
-## Domain Entities
-
-### Entity Class Diagram
-
-```mermaid
-classDiagram
-    class BaseEntity {
-        <<abstract>>
-        +Guid Id
-        +DateTime CreatedAt
-        +DateTime UpdatedAt
-    }
-
-    class ApplicationUser {
-        +string Email
-        +string AzureTag
-        +string FirstName
-        +string LastName
-        +string? PinHash
-        +ICollection~Account~ Accounts
-    }
-
-    class Account {
-        +Guid UserId
-        +string AccountNumber
-        +string Name
-        +AccountType Type
-        +decimal Balance
-        +bool IsPrimary
-        +bool IsDeleted
-        +byte[] RowVersion
-        +ApplicationUser User
-        +ICollection~Transaction~ Transactions
-    }
-
-    class Transaction {
-        +Guid AccountId
-        +TransactionType Type
-        +decimal Amount
-        +TransactionStatus Status
-        +string? Description
-        +Account Account
-    }
-
-    class RefreshToken {
-        +Guid UserId
-        +string TokenHash
-        +DateTime ExpiresAt
-        +DateTime? RevokedAt
-        +ApplicationUser User
-    }
-
-    BaseEntity <|-- Account
-    BaseEntity <|-- Transaction
-    BaseEntity <|-- RefreshToken
-    IdentityUser <|-- ApplicationUser
-    ApplicationUser "1" --> "*" Account : owns
-    ApplicationUser "1" --> "*" RefreshToken : has
-    Account "1" --> "*" Transaction : contains
-```
-
-### ApplicationUser
-
-Extends ASP.NET Core Identity's `IdentityUser<Guid>`:
-
-```csharp
-public class ApplicationUser : IdentityUser<Guid>
-{
-    [StringLength(20)]
-    public required string AzureTag { get; set; }  // Public username
-
-    [StringLength(50)]
-    public required string FirstName { get; set; }
-
-    [StringLength(50)]
-    public required string LastName { get; set; }
-
-    [StringLength(128)]
-    public string? PinHash { get; set; }  // Step-up auth PIN
-
-    public DateTime CreatedAt { get; set; }
-    public DateTime UpdatedAt { get; set; }
-
-    public virtual ICollection<Account> Accounts { get; set; } = [];
-}
-```
-
-**Key Properties:**
-- `AzureTag`: Unique public username (3-20 chars, lowercase)
-- `PinHash`: Optional 6-digit PIN for step-up authentication
-- `Accounts`: Navigation to user's bank accounts
-
-### Account
-
-Bank account entity with soft-delete support:
-
-```csharp
-public class Account : BaseEntity
-{
-    public Guid UserId { get; set; }
-
-    [StringLength(20)]
-    public required string AccountNumber { get; set; }
-
-    [StringLength(100)]
-    public required string Name { get; set; }
-
-    public AccountType Type { get; set; }
-
-    [Precision(19, 4)]
-    public decimal Balance { get; set; }
-
-    public bool IsPrimary { get; set; }
-    public bool IsDeleted { get; set; }  // Soft delete
-
-    [Timestamp]
-    public byte[] RowVersion { get; set; } = [];  // Optimistic concurrency
-
-    public virtual ApplicationUser User { get; set; } = null!;
-    public virtual ICollection<Transaction> Transactions { get; set; } = [];
-}
-```
-
-**Key Features:**
-- `Balance`: Precision 19,4 for currency calculations
-- `RowVersion`: Optimistic concurrency control
-- `IsDeleted`: Soft delete (query filter applied in DbContext)
-
-### Transaction
-
-Immutable transaction record:
-
-```csharp
-public class Transaction : BaseEntity
-{
-    public Guid AccountId { get; set; }
-    public TransactionType Type { get; set; }
-
-    [Precision(18, 2)]
-    public decimal Amount { get; set; }
-
-    public TransactionStatus Status { get; set; }
-
-    [StringLength(500)]
-    public string? Description { get; set; }
-
-    public virtual Account Account { get; set; } = null!;
-}
-```
-
-**Immutability:**
-- A tracked transaction cannot be modified or deleted
-- Enforced at DbContext level, in `SaveChanges`: a set-based statement never reaches the check, and
-  the Seeder's recycler deletes a demo copy's ledger that way (ADR-0062)
-- Ensures audit trail integrity
-
----
-
-## DTOs (Data Transfer Objects)
-
-### Request/Response Pattern
-
-All API operations use dedicated request and response DTOs:
-
-```mermaid
-flowchart LR
-    subgraph Request["Request DTOs"]
-        LoginReq["LoginRequest"]
-        RegReq["RegisterRequest"]
-        CreateAccReq["CreateAccountRequest"]
-    end
-
-    subgraph Response["Response DTOs"]
-        LoginRes["LoginResponse"]
-        RegRes["RegisterResponse"]
-        AccRes["AccountResponse"]
-    end
-
-    subgraph Wrapper["API Wrapper"]
-        ApiRes["ApiResponse&lt;T&gt;"]
-    end
-
-    Request --> API["API Controller"]
-    API --> Response
-    Response --> Wrapper
-```
-
-### ApiResponse Wrapper
-
-All API responses are wrapped in `ApiResponse<T>`:
-
-```csharp
-public class ApiResponse<T>
-{
-    public T? Data { get; set; }
-    public string? Message { get; set; }
-}
-```
-
-**Usage:**
-```json
-{
-  "data": { ... },
-  "message": "Operation successful"
-}
-```
-
-### Key DTOs
-
-#### LoginRequest
-```csharp
-public class LoginRequest
-{
-    [Required, EmailAddress, MaxLength(255)]
-    public required string Email { get; set; }
-
-    [Required, MinLength(8), MaxLength(128)]
-    public required string Password { get; set; }
-}
-```
-
-#### RegisterRequest
-```csharp
-public class RegisterRequest
-{
-    [Required, EmailAddress, MaxLength(255)]
-    public required string Email { get; set; }
-
-    [Required, MinLength(8), MaxLength(128)]
-    public required string Password { get; set; }
-
-    [Required, MinLength(2), MaxLength(50)]
-    public required string FirstName { get; set; }
-
-    [Required, MinLength(2), MaxLength(50)]
-    public required string LastName { get; set; }
-
-    [Required, MinLength(3), MaxLength(20)]
-    public required string AzureTag { get; set; }
-}
-```
-
-#### AccountResponse
-```csharp
-public class AccountResponse
-{
-    public Guid Id { get; set; }
-    public string AccountNumber { get; set; } = string.Empty;  // Masked
-    public string Name { get; set; } = string.Empty;           // Masked
-    public AccountType Type { get; set; }
-    public decimal Balance { get; set; }
-    public bool IsPrimary { get; set; }
-    public DateTime CreatedAt { get; set; }
-}
-```
-
----
-
-## Exceptions
-
-### Exception Hierarchy
-
-```mermaid
-classDiagram
-    class Exception {
-        <<.NET>>
-    }
-
-    class AppException {
-        +string Code
-        +int StatusCode
-        +string Title
-    }
-
-    class NotFoundException {
-        +StatusCode = 404
-    }
-
-    class UnauthorizedException {
-        +StatusCode = 401
-    }
-
-    class ForbiddenException {
-        +StatusCode = 403
-    }
-
-    class BusinessRuleException {
-        +StatusCode = 422
-    }
-
-    class InsufficientFundsException {
-        +StatusCode = 422
-    }
-
-    class DuplicateEntityException {
-        +StatusCode = 409
-    }
-
-    class ValidationException {
-        +StatusCode = 400
-        +Dictionary Errors
-    }
-
-    Exception <|-- AppException
-    AppException <|-- NotFoundException
-    AppException <|-- UnauthorizedException
-    AppException <|-- ForbiddenException
-    AppException <|-- BusinessRuleException
-    BusinessRuleException <|-- InsufficientFundsException
-    AppException <|-- DuplicateEntityException
-    AppException <|-- ValidationException
-```
-
-### AppException Base Class
-
-```csharp
-public class AppException : Exception
-{
-    public string Code { get; }
-    public int StatusCode { get; }
-    public string Title { get; }
-
-    public AppException(string code, string message, int statusCode = 500, string title = "Error")
-        : base(message)
-    {
-        Code = code;
-        StatusCode = statusCode;
-        Title = title;
-    }
-}
-```
-
-### Exception Types
-
-| Exception | HTTP Status | Use Case |
-|-----------|-------------|----------|
-| `NotFoundException` | 404 | Resource not found |
-| `UnauthorizedException` | 401 | Authentication required |
-| `ForbiddenException` | 403 | Access denied |
-| `BusinessRuleException` | 422 | Domain rule violation |
-| `InsufficientFundsException` | 422 | Not enough balance |
-| `DuplicateEntityException` | 409 | Unique constraint violation |
-| `ValidationException` | 400 | Input validation failed |
-
----
-
-## Enums
-
-### AccountType
-
-```csharp
-public enum AccountType
-{
-    Checking = 0,
-    Savings = 1,
-    Investment = 2
-}
-```
-
-### TransactionType
-
-```csharp
-public enum TransactionType
-{
-    Deposit = 0,
-    Withdrawal = 1,
-    TransferIn = 2,
-    TransferOut = 3
-}
-```
-
-### TransactionStatus
-
-```csharp
-public enum TransactionStatus
-{
-    Pending = 0,
-    Completed = 1,
-    Failed = 2
-}
-```
-
----
-
-## Constants
-
-### ErrorCodes
-
-```csharp
-public static class ErrorCodes
-{
-    // Authentication
-    public const string InvalidCredentials = "AUTH_INVALID_CREDENTIALS";
-    public const string EmailAlreadyExists = "AUTH_EMAIL_EXISTS";
-    public const string AzureTagAlreadyExists = "AUTH_AZURE_TAG_EXISTS";
-    public const string InvalidPin = "AUTH_INVALID_PIN";
-
-    // Account
-    public const string AccountNotFound = "ACCOUNT_NOT_FOUND";
-    public const string AccountAccessDenied = "ACCOUNT_ACCESS_DENIED";
-
-    // Transaction
-    public const string InsufficientFunds = "TRANSACTION_INSUFFICIENT_FUNDS";
-    public const string InvalidAmount = "TRANSACTION_INVALID_AMOUNT";
-
-    // Transfer
-    public const string SameAccountTransfer = "TRANSFER_SAME_ACCOUNT";
-    public const string RecipientNotFound = "TRANSFER_RECIPIENT_NOT_FOUND";
-}
-```
-
-### ValidationRules
-
-```csharp
-public static class ValidationRules
-{
-    public const int PasswordMinLength = 8;
-    public const int PasswordMaxLength = 128;
-    public const int PinLength = 6;
-    public const int AzureTagMinLength = 3;
-    public const int AzureTagMaxLength = 20;
-    public const decimal MinTransactionAmount = 0.01m;
-    public const decimal MaxTransactionAmount = 1_000_000_000m;
-}
-```
-
----
-
-## Validation Attributes
-
-### MoneyRangeAttribute
-
-Validates currency amounts:
-
-```csharp
-[MoneyRange(0.01, 1000000000)]
-public decimal Amount { get; set; }
-```
-
-### PinAttribute
-
-Validates 6-digit PINs:
-
-```csharp
-[Pin]
-public string Pin { get; set; }  // Must be exactly 6 digits
-```
-
-### AzureTagAttribute
-
-Validates AzureTag format:
-
-```csharp
-[AzureTag]
-public string AzureTag { get; set; }  // 3-20 chars, lowercase, starts with letter
-```
-
-### NotEmptyGuidAttribute
-
-Validates non-empty GUIDs:
-
-```csharp
-[NotEmptyGuid]
-public Guid AccountId { get; set; }  // Cannot be Guid.Empty
-```
-
----
-
-## Utilities
-
-### IdGenerator
-
-Generates UUIDs for entities:
-
-```csharp
-public static class IdGenerator
-{
-    public static Guid NewId() => Guid.CreateVersion7();  // UUID v7 (time-ordered)
-}
-```
-
-**Why UUID v7?**
-- Time-ordered for database index efficiency
-- No coordination required (unlike sequences)
-- Globally unique
-
----
-
-## Dependencies
-
-This is a **dependency-free** library with no external NuGet packages.
-
-**Framework Dependencies:**
-- `Microsoft.AspNetCore.Identity` (for IdentityUser)
-- `System.ComponentModel.DataAnnotations` (for validation attributes)
-
----
-
-## See Also
-
-- [Root README](../../README.md) - Solution overview
-- [AzureBank.Api](../AzureBank.Api/README.md) - Uses DTOs and entities
-- [AzureBank.Infrastructure](../AzureBank.Infrastructure/README.md) - EF Core mappings
+Its tests are under `tests/AzureBank.Tests/Unit`, by folder: `Utilities`, `Exceptions`, `Options`,
+`Validators`, `Observability`, and `Services/PasswordHasher*Tests.cs`. The three guards named
+above are in `tests/AzureBank.Tests/Architecture`; `CommittedOpenApiDocumentTests`, named below, is
+in `tests/AzureBank.Tests/Integration`.
+
+## Easy to get wrong
+
+- **A DTO is the contract.** A change to a request or response type, to its attributes or to a
+  `ValidationRules` value they use changes `docs/api/openapiv1.json`, and
+  `CommittedOpenApiDocumentTests` fails until the committed file is what the API generates
+  (ADR-0053). How to regenerate it: [docs/api/README.md](../../../docs/api/README.md).
+- **An entity change is a schema change, and so is a width in `ValidationRules`**: both need a
+  migration ([Infrastructure](../AzureBank.Infrastructure/README.md)).
+- **An enum member's name is stored in the database.** Reordering members changes nothing;
+  renaming one changes what the stored rows say.
+- **`IPasswordHasher` hashes the PIN and nothing else**: Argon2id, keyed with the pepper in
+  `Security:PinPepper` (ADR-0003, ADR-0011). Account passwords are hashed by ASP.NET Core Identity
+  and never reach it.
+- **`LogSanitizer.Sanitize(string)` is named in a CodeQL model**,
+  `.github/codeql/extensions/azurebank-csharp-models/models/logsanitizer.model.yml`, by its
+  namespace, type, name and signature. Rename it, move it or add an overload and that row matches
+  nothing, with no error: change the file in the same commit (ADR-0017, decisions 6 and 7). Its
+  result is safe in a log line, and only there.
+- **A secret reaches a log line only through `SecretPrefix.Of`**: its first eight characters
+  (ADR-0017, the log-identifier rule).
+- **`AzureTag` is a public handle that can be renamed, not a login.** Identity's `UserName` holds
+  the user's id, and sign-in is by e-mail (ADR-0015).
+- **A tracked `Transaction` cannot be changed or deleted**: the context refuses the save
+  ([what every save does](../AzureBank.Infrastructure/README.md#what-every-save-does)).
+- **`IdGenerator.IsValidTransactionNumber` answers false for the rows written before the check
+  symbol**, which keep their shorter numbers of 19 and 20 characters. Nothing on the request path
+  calls it.
+
+## See also
+
+- [backend/README.md](../../README.md): the solution, and how to run it.
+- [AzureBank.Infrastructure](../AzureBank.Infrastructure/README.md): the tables, the context and
+  the migrations.
+- [docs/adr](../../../docs/adr/README.md): the decision records cited here by number.

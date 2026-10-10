@@ -4,8 +4,7 @@ namespace AzureBank.Api.Transformers;
 
 /// <summary>
 /// One place that declares an error response as the <c>application/json</c> ProblemDetails the API
-/// actually sends, for the transformers that fill in 401, 403, 404, 413, 415 and 503. (Until
-/// 2026-10-06 this said "401, 403, 404, 415 and 503".)
+/// actually sends, for the transformers that fill in 401, 403, 404, 413, 415 and 503.
 /// </summary>
 /// <remarks>
 /// Shared rather than repeated because the alternative is what this codebase already demonstrates:

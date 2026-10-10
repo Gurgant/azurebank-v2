@@ -66,6 +66,14 @@ public sealed class TransferTransientFault(TransferFaultMode mode)
     /// </remarks>
     public Action? BeforeCommandFault { get; set; }
 
+    /// <summary>
+    /// Awaited once, at the instant the acknowledgement of the commit is lost and before the fault
+    /// is thrown: the commit has landed, so what it wrote is in the database and unlocked. For a
+    /// test that changes the database between a write that landed and the re-run that looks for it.
+    /// </summary>
+    /// <remarks>A connection of its own, for the reason <see cref="BeforeCommandFault"/> gives.</remarks>
+    public Func<Task>? BeforeAcknowledgementFault { get; set; }
+
     /// <summary>Arm the fault. Call AFTER funding, right before the transfer.</summary>
     public void Arm() => Interlocked.Exchange(ref _armed, 1);
 
@@ -237,17 +245,22 @@ public sealed class TransferCommitFaultInterceptor(TransferTransientFault fault)
         return base.TransactionCommitting(transaction, eventData, result);
     }
 
-    public override Task TransactionCommittedAsync(
+    public override async Task TransactionCommittedAsync(
         DbTransaction transaction, TransactionEndEventData eventData,
         CancellationToken cancellationToken = default)
     {
         if (fault.ShouldFailCommitOnce())
         {
+            if (fault.BeforeAcknowledgementFault is { } beforeTheFault)
+            {
+                await beforeTheFault();
+            }
+
             throw new TimeoutException(
                 "Injected one-shot transient fault right after the transfer commit (test).");
         }
 
-        return base.TransactionCommittedAsync(transaction, eventData, cancellationToken);
+        await base.TransactionCommittedAsync(transaction, eventData, cancellationToken);
     }
 
     public override void TransactionCommitted(
@@ -255,6 +268,7 @@ public sealed class TransferCommitFaultInterceptor(TransferTransientFault fault)
     {
         if (fault.ShouldFailCommitOnce())
         {
+            fault.BeforeAcknowledgementFault?.Invoke().GetAwaiter().GetResult();
             throw new TimeoutException(
                 "Injected one-shot transient fault right after the transfer commit (test).");
         }

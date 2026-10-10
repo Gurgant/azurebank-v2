@@ -1,118 +1,74 @@
 # The exported anchor copy
 
-`anchors.sample.jsonl` is what `AzureBank.AuditVerifier export <path>` writes: the anchor chain,
-one record per line, copied out of the database so that a later run has something to disagree with.
+`anchors.sample.jsonl` is what the `export` verb of the audit tool writes: the anchor chain, one
+record per line, copied out of the database so that a later run has something to disagree with. It
+is a **sample**, produced by the real command against a throwaway in-memory database, and not the
+audit trail of any deployment. **Do not regenerate it**: a test depends on these very records
+([the sample's provenance](#the-samples-provenance)).
 
-This is a **sample**. It was produced by the real command against a throwaway in-memory database, so
-that a reader can see the shape without running anything. It is not the audit trail of any
-deployment.
+To copy a real chain, from the repository root:
+`dotnet run --project backend/tools/AzureBank.AuditVerifier -- export <path>`. The verb refuses to
+overwrite an existing file. The tool reads the connection string and the two audit keys from the
+environment, as [the runbook](../runbooks/audit-chain-unavailable.md) shows.
 
-## Why the file exists at all
+## What the copy buys, and what it does not
 
-The audit chain cannot see rows deleted from its END. A surviving prefix links and hashes perfectly,
-so verification reports intact, and nothing in the chain records how many rows there should have
-been. The anchor record was added to give that a witness — it stores how far a verification walk
-reached and how many rows it held — but on its own it does not close the gap either: the same person
-who truncates `AuditEvents` can delete the anchors covering past the cut, and then **both** chains
-verify, because each links backwards only. `ConsistentSuffixRemovalFromBOTHChains_IsNotDetected_AndThisPinsTheLimit`
-asserts exactly that, on SQL Server, using the two DELETE statements an attacker would really use.
-
-A copy that is no longer in the database is the thing that cannot be deleted along with it.
-
-## What this does NOT buy, first
-
-**A file this machine wrote to this machine's disk has been seen by nobody.** The property an anchor
-buys is scoped narrowly in `docs/deferred/anchoring-the-audit-trail.md`, and the scope is the whole
-point: *for every anchor a third party has **seen**, the operator loses the ability to tell a
-different story about the rows that anchor covers.* Seen, not stored safely. Whoever can truncate the
-table can delete the export in the same breath, so the write is the beginning of the control and not
-the end of it.
-
-**And it is a demonstration rather than a control.** The same document rules that out in advance: a
-control that depends on somebody choosing to run it does not constrain that person. `export` is a
-verb an operator types, and nothing runs it unattended. That is honest as a demonstration and
-would be dishonest as a guarantee, which is why this paragraph is above the interesting one.
-
-**Nothing here is timestamped by anybody else.** ADR-0044 records what would change that — an
-RFC 3161 token, deferred rather than rejected — and records that it is not built.
-
-## What it does buy
-
-One record per line, appended in counter order, never rewritten. So `diff` between two exports is
-the comparison, and it needs no code:
+The audit chain cannot see rows deleted from its end, and whoever truncates `AuditEvents` can delete
+the anchors that cover past the cut: both chains then verify, because each links backwards only
+(`ConsistentSuffixRemovalFromBOTHChains_IsNotDetected_AndThisPinsTheLimit`). A copy that is no
+longer in the database cannot be deleted along with it. It holds one record per line, appended in
+counter order and never rewritten, so `diff` between two exports is the comparison and needs no
+code:
 
 ```
 export → (time passes) → export to a second path → diff
 ```
 
-A new anchor is one **added** line. A history that has been rewritten downward is a **removed** one.
-Under version control the same property holds for free: a commit that appends is additions only, and
-a commit that revises the past cannot look like one.
+A new anchor is one **added** line, and a history rewritten downward is a **removed** one. Under
+version control the same holds: a commit that appends is additions only. That is why the format is
+JSON Lines and not a JSON array, which would rewrite the previous last line on every append.
 
-That is why the format is JSON Lines and not a JSON array. An array would rewrite the previous last
-line on every append — one comma — and every line after the first would show as changed, drowning
-the only signal the file carries.
+**It is a demonstration and not a control.** A file this machine wrote to its own disk has been seen
+by nobody, and whoever can truncate the table can delete the export too. `export` is a verb an
+operator types, nothing runs it unattended, and nothing here is timestamped by anybody else.
+[`anchoring-the-audit-trail.md`](../deferred/anchoring-the-audit-trail.md) has the argument.
 
 ## What a reader can check with no key at all
 
-Two of the fields on every line are meant to be checkable by somebody holding none of this project's
-secrets:
-
 - **`previousAnchorPayloadHash`** on each line equals **`payloadHash`** on the line before it. That
-  is the chain, and it is plain SHA-256 over values you can see.
-  `ExportedSampleTests.The_sample_is_a_chain_a_reader_can_follow_without_any_key` asserts it
-  against this very file.
-- **`anchoredValue`** is an unkeyed digest of the state the record claims. It is unkeyed on purpose:
-  it has to survive a key rotation and be checkable by somebody holding none of those secrets.
+  is the chain, and it is plain SHA-256 over values in the file.
+  `ExportedSampleTests.The_sample_is_a_chain_a_reader_can_follow_without_any_key` asserts it against
+  this file.
+- **`anchoredValue`** is an unkeyed digest of the state the record claims, so that it survives a key
+  rotation and can be checked by somebody who holds no secret.
 
-**`mac` is not one of those.** It is keyed under `Audit:AnchorKey`, and it is present here only
-because the sample was made with a key this file prints in full under **The sample's
-provenance**, and a key that is written down is not a secret at all. A real export carries real
-authentication codes and belongs wherever real secrets belong.
+**`mac` is not one of those.** It is keyed under `Audit:AnchorKey`, and it can be checked here only
+because the sample's keys are printed below. A real export carries real authentication codes and
+belongs wherever real secrets belong.
 
 ## What publishing one of these reveals
 
-Not the content of any audited event — no line carries an actor, a subject, an amount or a
-description. An anchor record holds a counter, a scheme version, two key identities, a kind, three
-coverage numbers and three hashes.
-
-**The coverage numbers are not a digest, and they are not nothing.** `lowestCoveredSequence`,
-`coveredThroughSequence` and `coveredRowCount` say how many audited events existed at each anchoring.
-Published on a schedule, the difference between consecutive counts is how busy the bank was in that
-interval, and where it was quiet. That is traffic analysis rather than disclosure, and on a system
-with no users it is a non-issue — but it is a decision taken rather than a property assumed, and
-anybody copying this design onto a system with real users should take it again.
+Not the content of any audited event: no line carries an actor, a subject, an amount or a
+description. A record holds a counter, a payload version, a kind, two key identities, three coverage
+numbers, four hashes, a MAC and a creation time. The coverage numbers (`lowestCoveredSequence`,
+`coveredThroughSequence`, `coveredRowCount`) say how many audited events existed at each anchoring,
+so published on a schedule they show how busy the system was in each interval. That is traffic
+analysis and not disclosure, and on a system with real users it is a decision to take.
 
 ## The sample's provenance
 
-- **Produced by** `ExportCommand.RunAsync` — the same code path the verb runs, not a hand-written
-  illustration of it.
-- **Store**: EF Core InMemory, discarded after generation.
+- **Produced by** `ExportCommand.RunAsync`, the code path the verb runs, against EF Core InMemory.
 - **`Audit:ChainKey`**: `azurebank-sample-chain-key-published-in-this-repo`
 - **`Audit:AnchorKey`**: `azurebank-sample-anchor-key-published-in-this-repo`
-- **Shape**: one gap marker from an empty table, then three anchors over four events each.
+- **Shape**: one gap marker from an empty table, then three anchors, after four, eight and twelve
+  events.
 
-Both keys are printed above deliberately. A published HMAC is an offline oracle for guessing the key
-behind it, and ADR-0044's argument that publishing a key identity "is not a widening" is scoped to an
-attacker who already holds the table — which a reader on GitHub does not. Publishing the key removes
-the question rather than answering it: there is nothing to guess.
+Both keys are printed on purpose: a published HMAC is an offline oracle for guessing the key behind
+it, and publishing the key leaves nothing to guess.
 
-🔒 **Do not regenerate this file.** It stopped being only an illustration when the anchor payload
-gained a second payload version: these records were written under the older one, they are the only
-records in the tree under it, and `ExportedSampleLadderTests` reads them to prove this build still
-authenticates a scheme it no longer writes. If the documentation needs a fresher illustration, add
-a second file and leave this one alone.
-
-**Regenerating does not slip past anything, and the danger is not silence.** Measured by rewriting
-the version field of all four records and running the test: it goes RED at the assertion requiring
-a record under the older version — *"this fixture exists to exercise the OLDER payload version; if
-every record here is current, the sample was regenerated and the ladder is unguarded again"* — while
-the record-count assertion PASSES in that same run, because regenerating the same rounds does not
-change the count. So the hazard is the next step, not that one: somebody meets a red they did not
-expect, reads it as a stale fixture, and clears it by deleting the assertion. That is the move that
-actually unguards the ladder, and nothing in the code can stop it.
-
-Two tests read this exact file. `ExportedSampleTests` checks its shape, its chain and its bytes as
-properties it must have on its own terms, rather than against a stored copy of itself.
-`ExportedSampleLadderTests` checks the version ladder and, separately, pins the record count: the
-first fails on ANY regeneration, the second only when the number of rounds changes too.
+**Do not regenerate this file.** Its four records were written under the older payload version,
+`a1`. They are the only records in the tree under it, and `ExportedSampleLadderTests` reads them to
+prove that this build still authenticates a scheme it no longer writes. A regenerated file turns
+that test red: restore the file, and never clear the red by deleting the assertion. For a fresher
+illustration, add a second file. `ExportedSampleTests` reads the file too, and checks its shape, its
+chain and its bytes.

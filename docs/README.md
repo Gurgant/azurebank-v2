@@ -14,9 +14,9 @@ from the code fails a test.
 | [`testing/`](testing/) | The public demo: [how to try it by hand](testing/try-the-demo.md) |
 | [`deferred/`](deferred/README.md) | What was understood well enough to build and chosen not to, and why |
 | [`audit/`](audit/README.md) | A sample of the audit trail's exported anchor copy |
-| [`notices/`](notices/README.md) | The notices a PIN enrolment or change sends, as rendered |
+| [`notices/`](notices/README.md) | The notices owed for a PIN enrolment or change, as rendered |
 | [`audit-trail-against-real-practice.md`](audit-trail-against-real-practice.md) | The audit trail held against published practice |
 | [`engineering-practices.md`](engineering-practices.md) | How this project is built and kept correct |
 | [`engineering-playbook.md`](engineering-playbook.md) | How the work is led: my role, the path of a change, the guards |
-| [`engineering-traps.md`](engineering-traps.md) | Things that fail silently or ship green, and how each was caught |
+| [`engineering-traps.md`](engineering-traps.md) | Things that fail silently or ship green: what goes wrong, why nothing reports it, and what to do |
 | [`brand-assets.md`](brand-assets.md) | Where every icon comes from |

@@ -15,10 +15,7 @@ public enum NoticeRunner
     /// NAMES a runner outside this process, and the API must not also send: the Azure Function in
     /// <c>AzureBank.Functions.NoticeRelay</c>, which runs the same <c>NoticeSweep</c> on a timer
     /// trigger (ADR-0051). Naming it does not START it — set this with that host not running and
-    /// nothing delivers, until somebody runs the tool's <c>notify</c> verb. Until 2026-09-08 this
-    /// said "Reserved: nothing in this repository implements it yet", and the API logged a Warning
-    /// to match; until 2026-09-09 it said that outside runner "is live", which is a thing the flag
-    /// cannot make true.
+    /// nothing delivers, until somebody runs the tool's <c>notify</c> verb.
     /// </summary>
     Function,
 }
@@ -74,13 +71,13 @@ public class NoticeRelayOptions
     /// <remarks>
     /// THE CEILING IS 1800 AND IT IS ARITHMETIC, not taste. The API also validates
     /// <c>LeaseSeconds &gt;= 2 * PeriodSeconds</c>, and <see cref="LeaseSeconds"/> is itself capped
-    /// at 3600 — so a period above 1800 asks for a lease no admissible value can supply. Until
-    /// 2026-09-09 this said 3600 and advertised a band, 1801-3600, that was unusable in every case:
-    /// MEASURED through the real composition root, 1800 starts and 1801 refuses, and at 3600 no
-    /// lease starts the host at all. Worse, the refusal named <c>Notices:LeaseSeconds</c> — the one
-    /// key the operator could not fix — because the period was legal by its own annotation. No
-    /// other host reads this value, so the band was not merely unreachable for the API; it was
-    /// unreachable for anybody.
+    /// at 3600 — so a period above 1800 asks for a lease no admissible value can supply. A ceiling
+    /// of 3600 would advertise a band, 1801-3600, that is unusable in every case: MEASURED with
+    /// that ceiling through the real composition root, 1800 starts and 1801 refuses, and at 3600 no
+    /// lease starts the host at all. Worse, with that ceiling the refusal names
+    /// <c>Notices:LeaseSeconds</c> — the one key that cannot fix it — because the period is legal
+    /// by its own annotation. No other host reads this value, so the band would be unreachable for
+    /// anybody, not only for the API.
     /// </remarks>
     [Range(5, 1800, ErrorMessage = "Notices:PeriodSeconds must be between 5 and 1800.")]
     public int PeriodSeconds { get; set; } = 15;

@@ -258,12 +258,6 @@ internal static class ConcurrencyRetry
     /// ChangeTracker.Clear would drop it). No transactions other than the
     /// pair(s) created inside the delegate are ever tracked here, so detaching
     /// all of them is safe.
-    ///
-    /// The summary said only "Transaction" until 2026-08-20, because the edit that added the
-    /// AuditEvent behaviour matched an anchor that did not exist and silently changed nothing —
-    /// leaving the new rule in a body comment that IntelliSense does not show. That is the same
-    /// shape of stale contract doc ADR-0044 blames for the overcount going unasked in the first
-    /// place.
     /// </summary>
     public static async Task ResetToStoreAsync(
         AzureBankDbContext context, Account[] accounts, CancellationToken cancellationToken)
@@ -295,6 +289,56 @@ internal static class ConcurrencyRetry
     }
 
     /// <summary>
+    /// Refuses a money write when one of the caller's own accounts came back closed from a reload,
+    /// or did not come back at all, with the 404 the ownership check gives an account that was
+    /// closed before the request.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="ResetToStoreAsync"/> reloads each account by its key, and a reload does not apply
+    /// the filter that hides closed accounts from every query. An account closed after the request
+    /// first read it therefore comes back as an ordinary tracked row with <c>IsDeleted</c> set, and
+    /// a write that looks only at its balance moves money on a closed account.
+    /// </para>
+    /// <para>
+    /// A ROW THAT IS GONE IS NOT IN THE FLAG. A reload that finds no row detaches the entry and
+    /// leaves the entity as it was, <c>IsDeleted</c> false and the old balance in it. A write that
+    /// adds a ledger row naming that entity then inserts the account again. So the entry's state is
+    /// read too, which is why this takes the context: an account the request holds is tracked from
+    /// the ownership check on, and only a reload that found nothing detaches it.
+    /// </para>
+    /// <para>
+    /// The money write calls this itself, after the reload, and the reload does not: an idempotent
+    /// attempt reads its claim after reloading, and a write that committed and lost its
+    /// acknowledgement must answer from that claim, also when the account closed in between.
+    /// <c>ClosureAfterALostAcknowledgementSqlServerTests</c> holds that order for a withdrawal and
+    /// for an external transfer.
+    /// </para>
+    /// <para>
+    /// For the caller's own accounts only. The message names the account, and a payer must not
+    /// learn a payee's account id: <c>TransferService</c> handles a payee's account its own way,
+    /// with <see cref="IsClosedOrGone"/>.
+    /// </para>
+    /// </remarks>
+    public static void RefuseIfClosed(AzureBankDbContext context, params Account[] accounts)
+    {
+        foreach (var account in accounts)
+        {
+            if (IsClosedOrGone(context, account))
+            {
+                throw new NotFoundException("Account", account.Id);
+            }
+        }
+    }
+
+    /// <summary>
+    /// True when the account, as the last reload left it, cannot take a money write: the row is
+    /// closed, or the reload found no row and detached the entry.
+    /// </summary>
+    public static bool IsClosedOrGone(AzureBankDbContext context, Account account) =>
+        account.IsDeleted || context.Entry(account).State == EntityState.Detached;
+
+    /// <summary>
     /// Prepares one more attempt of an idempotent money operation: resets the accounts to the store
     /// and then decides, from the tracked <see cref="IdempotencyRecord"/>, whether re-executing is
     /// safe at all.
@@ -320,9 +364,7 @@ internal static class ConcurrencyRetry
     /// A record reloaded as committed, under the request hash this request claimed with, carries
     /// <c>applied: true</c>; a claim row that vanished under us, or that was replaced by a record
     /// claimed with another body, carries no <c>applied</c>, because nothing is proven there.
-    /// (Until 2026-10-01 this named the committed record and the vanished row as one answer:
-    /// "a prior attempt committed, or the claim row vanished under us".) The detail tells a
-    /// missing row from another request's record under the key.
+    /// The detail tells a missing row from another request's record under the key.
     /// </exception>
     public static async Task PrepareIdempotentAttemptAsync(
         AzureBankDbContext context, Account[] accounts, CancellationToken cancellationToken)

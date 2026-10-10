@@ -1,100 +1,64 @@
 # The OpenAPI document
 
-`openapiv1.json` is the contract. It is **generated from the API**, committed, and then everything
-downstream is generated from it — the frontend's `schema.d.ts` (`openapi-typescript`) and its runtime
-Zod validators (`typed-openapi`), both of which CI regenerates and compares on every pull request.
-**The document itself is gated too, since ADR-0053:** `CommittedOpenApiDocumentTests` fails whenever
-this file is not byte-for-byte what the API generates — line endings and the newlines inside
-strings excepted, which belong to the machine (ADR-0053 D3) — on every test run, local and CI alike.
+`openapiv1.json` is the contract. It is **generated from the API**, committed, and never edited by
+hand. The frontend's `schema.d.ts` (`openapi-typescript`) and its runtime Zod validators
+(`typed-openapi`) are generated from it, and CI regenerates and compares both on every pull request.
+The document itself is gated too (ADR-0053): `CommittedOpenApiDocumentTests` fails, on every test
+run, when this file is not byte for byte what the API generates, line endings and the newlines
+inside strings excepted.
 
 ## Regenerating it
 
-**From the test, with no running API and no secrets** — the usual route. From `backend/`:
+**From the test, with no running API and no secrets**: the usual route. From `backend/`:
 
 ```bash
 AZUREBANK_REGENERATE_OPENAPI=1 dotnet test --filter "FullyQualifiedName~CommittedOpenApiDocumentTests"
 ```
 
-It writes this file and then fails on purpose, so the flag can only ever make a build red. Re-run
-without it to confirm, then regenerate the frontend artefacts (step 3 below). The test host generates
-the document through `IOpenApiDocumentProvider` from the same composition the API uses, and on
-2026-09-10 that document, the one the API serves over HTTP, and this file were byte-identical once
-the file's line endings were normalised.
+It writes this file and then fails on purpose, so that the flag can only make a build red. Run it
+again without the flag to confirm, then regenerate the frontend artefacts (step 3 below).
 
-**Or against a running API, with the script** — when you want to check a server that is actually up,
-or read the prose report below:
+**Or against a running API, with the script**, to check a server that is up or to read its report.
+The API needs its secrets to start ([local setup](../engineering-practices.md#local-setup)).
 
 ```bash
-# 1. Start the API. The document is only mapped in Development — see below.
+# 1. Start the API. The document is only mapped in Development.
 cd backend/src/AzureBank.Api
 ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS=http://localhost:5068 dotnet run --no-launch-profile
 
-# 2. From the repo root, once /health/ready answers 200 (about six seconds on a warm build):
+# 2. From the repo root, once /health/ready answers 200:
 node scripts/openapi-spec.mjs check    # is the committed document what the API serves?
 node scripts/openapi-spec.mjs regen    # make it so
 
-# 3. If regen changed anything, the frontend artifacts must follow or CI fails on the drift gate:
+# 3. If the document changed, the frontend artifacts must follow or CI fails on the drift gate:
 cd frontend && npm run generate:api && npm run generate:zod
 ```
 
 `OPENAPI_BASE_URL` overrides the address. Port 5068 is the plain-HTTP port CI's real-stack job uses.
 
-## Why a script rather than a paragraph
+## What the script does, and what goes wrong without it
 
-Until it existed, this procedure lived in one commit message, and every part of it had a way to go
-wrong quietly:
-
-- **`MapOpenApi()` is registered only in Development.** Start the API any other way and
-  `/openapi/v1.json` is a 404 that reads like a routing bug.
-- **Round-tripping the document through a JSON parser reformats all of it** (106 KB when this was
-  written, 140 KB on 2026-09-10). Indentation, key
-  escaping, the trailing newline — a real change then hides inside a whole-file diff. The script
-  passes the served text through untouched apart from line endings.
-- **Line endings.** The API serves LF; a Windows checkout with `core.autocrlf=true` holds the same
-  document as CRLF. Measured on 2026-08-13: 109,944 bytes on disk against 106,506 served, 3,438 line
-  endings differing, not one byte of content. A raw byte comparison calls that drift; a text-mode
-  read in a language that silently normalises newlines calls it a byte match. Neither is true, and
-  the script normalises both sides before comparing.
-
-## What `check` reports, and why it is not a diff
-
-When the document has moved, `check` prints a **semantic** report of every piece of hand-written
-prose — operation summaries, operation descriptions and response descriptions, each added, removed
-or reworded. A path or an operation appearing or disappearing shows up as all of its entries doing
-so:
-
-```text
-  ~ CHANGED  GET /api/accounts 200
-      was: ""
-      now: "List of user's accounts"
-
-  - REMOVED  GET /api/accounts [summary]  ("Get all accounts for the current user")
-```
-
-The failure worth catching is a regeneration that silently drops something a human wrote, and a
-whole-file textual diff — over four thousand lines by 2026-09-10 — hides that perfectly. This is not
-hypothetical: every one of the
-spec's operations carries a summary — 27 of 27 on 2026-09-10, 28 of 28 on 2026-09-21 after the
-withdrawal mint. Each figure carries its date because the count moves: trust the date over the
-number.
-
-**The REPORT does not describe schemas, parameters, examples, tags or security — the check still
-catches them.** `check` compares the whole document and fails on any difference; a change confined to
-those is then reported as "the difference is elsewhere" rather than named, and the fallback message
-states the scope, so the report never claims more than it checked.
+- **`MapOpenApi()` is registered only in Development.** Started any other way, the API answers
+  `/openapi/v1.json` with a 404 that reads like a routing bug.
+- **A round trip through a JSON parser reformats the whole document**, and a real change then hides
+  in a whole-file diff. The script writes the served text through, untouched apart from line
+  endings.
+- **Line endings.** The API serves LF, and a Windows checkout with `core.autocrlf=true` holds the
+  same document as CRLF: a raw byte comparison calls that drift. The script normalises both sides
+  before it compares, and `regen` writes LF.
+- **`check` reports the prose and compares everything.** When the document has moved it exits 1 and
+  lists each operation summary, operation description and response description that was added,
+  removed or reworded: a regeneration that drops something a person wrote hides in a textual diff of
+  more than five thousand lines. A change confined to schemas, parameters, examples, tags or
+  security still fails the check, and is reported only as "The difference is elsewhere".
 
 ## What this does NOT do
 
-**The script is not wired into CI, and that is not a gap.** Since ADR-0053 a stale committed spec
-fails the backend suite. Both the test and this script's `check` compare the WHOLE document,
-schemas included, and both fail on any difference — what differs is where they run and what they
-can say. `check` needs a running Development API with every secret, and for a change outside the
-prose it can only report "the difference is elsewhere"; the test needs neither, and names the JSON
-path. Running `check` against a live API in the pipeline was declined on those grounds; ADR-0053
-D1 has the argument.
-
-**Neither the test nor the script proves the document tells the TRUTH.** Both compare the committed
-file with what the API generates. If a transformer generates a response the server can never send,
-both agree with it, because both read the same generator. That is a claim about runtime behaviour,
-and only a call to the running API can disagree with it — Schemathesis, which since 2026-09-15 does
-so on every pull request as the `conformance` job in `ci.yml` (ADR-0053 D6).
+- **The script is not wired into CI, and that is not a gap.** A stale committed document fails the
+  backend suite (ADR-0053 D1). `check` needs a running Development API with every secret and names
+  no JSON path. The test needs neither, and names the first paths that differ.
+- **Neither the test nor the script proves that the document tells the truth.** Both compare the
+  committed file with what the API generates, so if a transformer describes a response the server
+  can never send, both agree with it. Only a call to the running API can disagree: Schemathesis
+  does, on every pull request, as the `conformance` job in `ci.yml` (ADR-0053 D6,
+  [`tests/contract/`](../../tests/contract/README.md)).

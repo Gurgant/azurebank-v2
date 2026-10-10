@@ -13,9 +13,9 @@ namespace AzureBank.Shared.Exceptions;
 /// - 422: same key reused with a different request payload
 /// </summary>
 /// <remarks>
-/// Until 2026-10-01 the second 409 read "executed with the response lost", in one sentence for
-/// every path. <see cref="ResultUnknownApplied"/> says the key's record was read from the database
-/// as committed. Nothing is proven by <see cref="ResultUnknown"/>, where the record is gone, or
+/// The second 409 is not one sentence for every path. <see cref="ResultUnknownApplied"/> says
+/// the key's record was read from the database as committed. Nothing is proven by
+/// <see cref="ResultUnknown"/>, where the record is gone, or
 /// <see cref="ResultUnknownReplaced"/>, where the key now holds another request's record.
 /// </remarks>
 public class IdempotencyException(string message, string errorCode, int statusCode)
@@ -74,10 +74,10 @@ public class IdempotencyException(string message, string errorCode, int statusCo
     /// found no row. A record claimed with another body uses <see cref="ResultUnknownReplaced"/>.
     /// </summary>
     /// <remarks>
-    /// Until 2026-10-01 this was the one answer of every path and said "was executed, but its
-    /// response was not recorded ... before retrying with a new key": for a record read as
-    /// committed that invited a second payment of a proven one, and for a record that is gone
-    /// "was executed" was never proven.
+    /// Not the answer of every path. For a record read as committed, advice to verify and then
+    /// send again with a new key would invite a second payment of a proven operation; and for a
+    /// record that is gone, "was executed" is not proven, so this sentence says "may have been
+    /// executed".
     /// </remarks>
     public static IdempotencyException ResultUnknown() => new(
         "A request with this idempotency key may have been executed: its record is no longer there, " +

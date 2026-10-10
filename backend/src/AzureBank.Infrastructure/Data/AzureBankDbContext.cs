@@ -79,8 +79,7 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
     /// <c>Notices:Runner</c> NAMES — the API's relay (ADR-0048) or the Function (ADR-0051) — or by
     /// the operator tool (ADR-0045), which that flag does not gate. Purged by nothing: a row leaves
     /// only with its user, by the database's cascade, and the one statement that deletes users is
-    /// the Seeder's recycler's, which deletes a demo copy's (ADR-0062). This said "purged by
-    /// nothing" with no exception until then.
+    /// the Seeder's recycler's, which deletes a demo copy's (ADR-0062).
     /// </summary>
     public DbSet<SubscriberNotice> SubscriberNotices => Set<SubscriberNotice>();
 
@@ -334,7 +333,7 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
     /// <c>SaveChanges</c> runs this check over the change tracker. A set-based statement
     /// (<c>ExecuteUpdate</c>, <c>ExecuteDelete</c>, raw SQL) tracks nothing and never reaches it,
     /// even sent through this context: the Seeder's recycler deletes a demo copy's ledger that way,
-    /// on purpose (ADR-0062). This said "cannot be modified or deleted" with no exception until then.
+    /// on purpose (ADR-0062).
     ///
     /// Single exception (write-once): RelatedTransactionId may go from null
     /// to a value. Transfer pairs reference EACH OTHER, and two mutually

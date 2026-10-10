@@ -1,362 +1,146 @@
 # AzureBank.Api
 
-**REST API** - Core backend service providing business logic and API endpoints
+The REST API of AzureBank: sign-in and tokens, accounts, deposits, withdrawals and transfers, with
+the business rules behind them. It serves one client, the BFF (ADR-0055): a browser reaches it
+only through the BFF's proxy, and it has no CORS (ADR-0018). Part of the
+[backend solution](../../README.md).
 
-[![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com)
-[![ASP.NET Core](https://img.shields.io/badge/ASP.NET_Core-10.0-512BD4?style=flat-square)](https://docs.microsoft.com/aspnet/core)
+## What is here
 
----
+The main folders:
 
-## Overview
+| Folder | What it holds |
+|---|---|
+| `Controllers/` | Five controllers: auth, accounts, transactions, transfers, users |
+| `Services/` | The business logic behind interfaces, and the background services: two clean-up sweeps, the notice relay, the start-up check of the audit key ring |
+| `Middleware/`, `Attributes/` | The pipeline in front of the controllers, and the markers on an endpoint that it reads, such as `[TokenEndpoint]` and `[RequireIdempotency]` |
+| `Validators/`, `Handlers/` | The FluentValidation validators; the exception handlers |
+| `Transformers/` | What shapes the generated OpenAPI document |
+| `Extensions/`, `Program.cs` | The registrations, grouped by concern, and the pipeline in its order |
 
-`AzureBank.Api` is the main REST API backend that handles all business logic, user authentication, account management, and transaction processing. It follows a layered architecture with clear separation of concerns.
+It references [`AzureBank.Shared`](../AzureBank.Shared/README.md) (entities, DTOs, exceptions) and
+[`AzureBank.Infrastructure`](../AzureBank.Infrastructure/README.md) (the `DbContext` and the
+migrations).
 
-**Parent Solution**: [AzureBank Backend](../../README.md)
+## Run it
 
----
+From `backend/`, once the [local setup](../../../docs/engineering-practices.md#local-setup) has
+set the secrets and created the database:
 
-## Architecture
-
-### Layer Diagram
-
-```mermaid
-flowchart TB
-    subgraph Presentation["Presentation Layer"]
-        Controllers["Controllers"]
-        Middleware["Middleware"]
-        Handlers["Exception Handlers"]
-    end
-
-    subgraph Business["Business Layer"]
-        Services["Services"]
-        Validators["Validators"]
-        Mappers["Mappers"]
-    end
-
-    subgraph Data["Data Access"]
-        DbContext["AzureBankDbContext"]
-        Entities["Entities"]
-    end
-
-    Controllers --> Services
-    Controllers --> Validators
-    Services --> DbContext
-    Mappers -.-> Services
-    Handlers -.-> Controllers
-    Middleware -.-> Controllers
-
-    style Presentation fill:#e3f2fd
-    style Business fill:#f3e5f5
-    style Data fill:#e8f5e9
+```bash
+dotnet run --project src/AzureBank.Api --launch-profile https
 ```
 
-### Request Flow
+It listens on `https://localhost:7215` and `http://localhost:5068`. The BFF's proxy points at the
+first, and the `http` profile opens only the second. In Development, and in no other environment,
+it serves its documentation at <https://localhost:7215/scalar/v1> and the generated contract at
+`/openapi/v1.json`. `/health/live` answers while the process is up; `/health/ready` runs the
+`database` and `audit-chain` checks and names each with its status.
 
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant M as Middleware
-    participant Ctrl as Controller
-    participant V as Validator
-    participant S as Service
-    participant DB as Database
+## In front of every endpoint
 
-    C->>M: HTTP Request
-    M->>M: Add Correlation ID
-    M->>Ctrl: Route to Controller
-    Ctrl->>V: Validate Request DTO
+After the request log and the exception handler, a request passes these, in this order. The order
+is part of the behaviour: it decides which refusal a caller gets, and whether a refused request
+leaves a record. `Program.cs` says why each step sits where it does.
 
-    alt Validation Failed
-        V-->>Ctrl: Validation Errors
-        Ctrl-->>C: 400 Bad Request
-    else Validation Passed
-        V-->>Ctrl: Valid
-        Ctrl->>S: Call Service Method
-        S->>DB: Query/Command
-        DB-->>S: Result
-        S-->>Ctrl: Domain Result
-        Ctrl-->>C: HTTP Response
-    end
-```
+1. **The request deadline** (ADR-0058). A request still running after `RequestDeadline:Seconds`
+   is cancelled and answers 503: [the limits](#database-limits-and-the-request-deadline).
+2. **The service key** (ADR-0055). Without exactly one `X-AzureBank-Service-Key` header holding
+   `ServiceCredential:BffKey`, the answer is 401 `SERVICE_CREDENTIAL_REQUIRED`, before the token
+   is looked at. `/health/*` is exempt, and in Development `/openapi` and `/scalar`: the
+   documentation opens in a browser, and a call made by hand needs the header.
+3. **The token road** (ADR-0057 §4.2). The six token endpoints (login, register, refresh, revoke,
+   logout and the demo's claim) and the stamp feed, session-stamps, answer only the BFF's own
+   client: a request from loopback carrying exactly one `X-AzureBank-Token-Road` header. Anything
+   else gets 404, as an unknown path would.
+4. **The demo's flag** (ADR-0063). While `Demo:Enabled` is false the claim answers 404; while it
+   is true registration answers 403 `REGISTRATION_CLOSED`, whatever the body.
+5. **Authentication**: the JWT bearer.
+6. **The demo's count of changes** (ADR-0063). On the public demo each request of a signed-in
+   user that could change something, and each reveal of an account number, is counted on that
+   user's copy; the one past `Demo:Copy:MaxWrites` answers 429 `DEMO_COPY_LIMIT`. A token
+   endpoint is never counted: of the six, only signing out everywhere asks for a signed-in user,
+   and it is answered the same whatever the copy has spent.
+7. **Idempotency** (ADR-0009): the four money endpoints need an `Idempotency-Key` header.
 
----
+On the public demo sign-in lets in only the owner of a claimed demo copy whose time is not over,
+and answers everybody else as an email nobody has (ADR-0063).
 
-## Project Structure
+## Endpoints
 
-```
-AzureBank.Api/
-├── 📁 Controllers/                 # API endpoints
-│   ├── AuthController.cs           # Authentication endpoints
-│   ├── AccountController.cs        # Account management
-│   ├── TransactionController.cs    # Deposits/withdrawals
-│   ├── TransferController.cs       # Money transfers
-│   └── UserController.cs           # User search
-│
-├── 📁 Services/
-│   ├── 📁 Interfaces/              # Service contracts
-│   │   ├── IAuthService.cs
-│   │   ├── IAccountService.cs
-│   │   └── ...
-│   └── 📁 Implementations/         # Service logic
-│       ├── AuthService.cs          # Auth & JWT handling
-│       ├── AccountService.cs       # Account operations
-│       ├── TransactionService.cs   # Transaction processing
-│       ├── TransferService.cs      # Transfer logic
-│       ├── UserService.cs          # User operations
-│       ├── JwtService.cs           # JWT generation
-│       ├── PasswordHasher.cs       # Argon2id hashing, used for PINs
-│       └── AccountAccessService.cs # Access control
-│
-├── 📁 Validators/                  # FluentValidation
-│   ├── 📁 Auth/
-│   │   ├── LoginRequestValidator.cs
-│   │   ├── RegisterRequestValidator.cs
-│   │   └── ...
-│   ├── 📁 Account/
-│   ├── 📁 Transaction/
-│   └── 📁 Transfer/
-│
-├── 📁 Mappers/                     # Mapperly mappings
-│   ├── AccountMapper.cs
-│   ├── TransactionMapper.cs
-│   └── UserMapper.cs
-│
-├── 📁 Middleware/                  # Custom middleware
-│   ├── CorrelationIdMiddleware.cs  # Request correlation
-│   └── InvalidRequestMiddleware.cs # Malformed request handling
-│
-├── 📁 Handlers/                    # Exception handlers
-│   ├── GlobalExceptionHandler.cs
-│   ├── ValidationExceptionHandler.cs
-│   └── AppExceptionHandler.cs
-│
-├── 📁 Transformers/                # OpenAPI customization
-│   ├── BearerSecuritySchemeTransformer.cs
-│   ├── ValidationResponseTransformer.cs
-│   └── ... (11 transformers)
-│
-├── 📁 Converters/                  # JSON converters
-│   ├── Rfc3339DateTimeConverter.cs
-│   └── StrictJsonStringEnumConverter.cs
-│
-├── 📁 Extensions/                  # DI extensions
-│   ├── ServiceCollectionExtensions.cs
-│   └── WebApplicationExtensions.cs
-│
-├── 📄 Program.cs                   # Application entry point
-├── 📄 appsettings.json             # Configuration
-└── 📄 appsettings.Development.json # Dev configuration
-```
+The contract is [`docs/api/openapiv1.json`](../../../docs/api/README.md): this project generates
+it, and a test compares the committed file with what it generates (ADR-0053). "Bearer" is the
+access token, which the BFF adds.
 
----
+| Endpoint | What it does | Needs |
+|---|---|---|
+| `POST /api/auth/login` | Sign in: the tokens and the user | Token road |
+| `POST /api/auth/register` | Register a user with a first account; on the public demo 403 `REGISTRATION_CLOSED` | Token road |
+| `POST /api/auth/demo/claim` | On the public demo only: take a free demo copy for a visitor, give its owner a password and sign in as that owner; answers the tokens, the user and what signs in to the copy again | Token road; the BFF names the visitor's address |
+| `POST /api/auth/refresh` | Renew the access token with the session's grant; the grant is not rotated | Token road; the grant is the credential |
+| `POST /api/auth/revoke` | Revoke the grants of ended sessions; 200 for unknown grants too | Token road; the grant is the credential |
+| `POST /api/auth/logout` | Revoke every grant of the user (every session) and raise the user's session stamp | Token road, bearer |
+| `POST /api/auth/session-stamps` | Read the session stamps of the listed users (the BFF's watcher) | Token road |
+| `GET /api/auth/me` | The current user | Bearer |
+| `POST /api/auth/pin` | Set the PIN; changing it takes `currentPin` (ADR-0040) | Bearer |
+| `POST /api/auth/pin/verify` | Check a PIN: 200 with `verified` true or false | Bearer |
+| `GET /api/accounts`, `POST /api/accounts` | List the user's accounts; create one | Bearer |
+| `GET /api/accounts/{id}`, `PATCH /api/accounts/{id}` | Read an account; change its name | Bearer |
+| `PATCH /api/accounts/{id}/set-primary` | Make it the primary account | Bearer |
+| `GET /api/accounts/{id}/balance` | The balance, current or historical | Bearer |
+| `GET /api/accounts/{id}/full-number` | Reveal the full account number, answered `no-store`; the PIN in front of this path is the BFF's to ask for (ADR-0020) | Bearer |
+| `POST /api/accounts/{id}/deletion-authorizations` | Mint a one-shot authorisation to close the account (ADR-0049); the balance and primary rules answer 422 before the PIN is consulted | Bearer, the PIN in the body |
+| `DELETE /api/accounts/{id}` | Close the account, a soft delete | Bearer, `Step-Up-Authorization` |
+| `GET /api/transactions`, `GET /api/transactions/{id}` | The history, filtered and paged; one transaction | Bearer |
+| `GET /api/transactions/summary` | Income, expenses, net and pending count over a date window, the current UTC month by default | Bearer |
+| `POST /api/transactions/deposit` | Deposit | Bearer, `Idempotency-Key` |
+| `POST /api/transactions/withdraw/authorizations` | Mint a one-shot authorisation for a withdrawal (ADR-0056) | Bearer, the PIN in the body |
+| `POST /api/transactions/withdraw` | Withdraw | Bearer, `Idempotency-Key`, `Step-Up-Authorization` |
+| `POST /api/transfers/authorizations`, `POST /api/transfers/internal/authorizations` | Mint a one-shot authorisation for a transfer, to another user or between own accounts (ADR-0042) | Bearer, the PIN in the body |
+| `POST /api/transfers`, `POST /api/transfers/internal` | Transfer to another user; between own accounts | Bearer, `Idempotency-Key`, `Step-Up-Authorization` |
+| `GET /api/users/{azureTag}` | Look a recipient up by exact AzureTag: 200 with `exists` true or false, never 404 (ADR-0014) | Bearer |
+| `PATCH /api/users/me/azuretag` | Rename the user's own AzureTag (ADR-0015) | Bearer |
 
-## API Endpoints
-
-### Authentication (`/api/auth`)
-
-| Endpoint | Method | Description | Auth Required |
-|----------|--------|-------------|---------------|
-| `/api/auth/login` | POST | Authenticate user, receive JWT | No |
-| `/api/auth/register` | POST | Register new user with account. On the public demo (`Demo:Enabled`): 403 `REGISTRATION_CLOSED`, whatever the body | No |
-| `/api/auth/demo/claim` | POST | On the public demo only: take a free demo copy for a visitor, give its owner a password and sign in as that owner; answers the tokens, the user and what signs in to the copy again. 404 while `Demo:Enabled` is false (ADR-0063) | No (the BFF names the visitor's address) |
-| `/api/auth/refresh` | POST | Renew the access token with the session's grant; the grant is not rotated | No (the grant is the credential) |
-| `/api/auth/revoke` | POST | Revoke the grants of ended sessions; 200 for unknown grants too | No (the grant is the credential) |
-| `/api/auth/me` | GET | Get current user info | Yes |
-| `/api/auth/logout` | POST | Revoke every grant of the user (every session) and raise the user's session stamp | Yes |
-| `/api/auth/session-stamps` | POST | Read the session stamps of the listed users (the BFF's watcher) | No (the BFF's own client) |
-| `/api/auth/pin` | POST | Set or update PIN | Yes |
-| `/api/auth/pin/verify` | POST | Verify PIN for step-up auth | Yes |
-
-The six token endpoints (login, register, refresh, revoke, logout and the demo's claim) and the
-stamp feed, session-stamps, answer only the BFF's own client: a request from loopback carrying
-exactly one `X-AzureBank-Token-Road` header, besides the service key. Anything else gets 404, as an
-unknown path would.
-
-On the public demo two more things hold, both in the API (ADR-0063): sign-in lets in only the
-owner of a claimed demo copy whose time is not over, and answers everybody else as an email nobody
-has; and each request of a signed-in user that could change something, and each reveal of an
-account number, is counted on that user's copy, the one past `Demo:Copy:MaxWrites` being 429
-`DEMO_COPY_LIMIT`. A token endpoint is never counted: of the six, only signing out everywhere
-asks for a signed-in user, and it is answered the same whatever the copy has spent.
-
-### Accounts (`/api/accounts`)
-
-| Endpoint | Method | Description | Auth Required |
-|----------|--------|-------------|---------------|
-| `/api/accounts` | GET | List user's accounts | Yes |
-| `/api/accounts` | POST | Create new account | Yes |
-| `/api/accounts/{id}` | GET | Get account details | Yes |
-| `/api/accounts/{id}` | PATCH | Update account name | Yes |
-| `/api/accounts/{id}/deletion-authorizations` | POST | Mint a one-shot deletion authorisation from the PIN (ADR-0049); 201 `{authorizationId, expiresAt}`; the balance and primary guards answer 422 before the PIN is consulted | Yes + PIN |
-| `/api/accounts/{id}` | DELETE | Close account (soft delete); requires a live `Step-Up-Authorization` header minted above, else 401 `AUTHORIZATION_REQUIRED` (ADR-0042/0049) | Yes + Step-Up-Authorization |
-| `/api/accounts/{id}/balance` | GET | Get current/historical balance | Yes |
-| `/api/accounts/{id}/full-number` | GET | Reveal the full account number (level 2, ADR-0038) | Yes |
-| `/api/accounts/{id}/set-primary` | PATCH | Set as primary account | Yes |
-
-### Transactions (`/api/transactions`)
-
-| Endpoint | Method | Description | Auth Required |
-|----------|--------|-------------|---------------|
-| `/api/transactions` | GET | List transactions with filters | Yes |
-| `/api/transactions/{id}` | GET | Get transaction details | Yes |
-| `/api/transactions/deposit` | POST | Deposit funds | Yes |
-| `/api/transactions/withdraw` | POST | Withdraw funds | Yes + Step-Up-Authorization |
-| `/api/transactions/withdraw/authorizations` | POST | Authorise a withdrawal (proves the PIN) | Yes + PIN |
-
-### Transfers (`/api/transfers`)
-
-| Endpoint | Method | Description | Auth Required |
-|----------|--------|-------------|---------------|
-| `/api/transfers/authorizations` | POST | Mint a one-shot transfer authorisation from the PIN (ADR-0042) | Yes + PIN |
-| `/api/transfers/internal/authorizations` | POST | Mint a one-shot internal-transfer authorisation from the PIN (ADR-0042) | Yes + PIN |
-| `/api/transfers` | POST | Transfer to external user; presents the authorisation minted above | Yes + Step-Up-Authorization |
-| `/api/transfers/internal` | POST | Transfer between own accounts; presents the authorisation minted above | Yes + Step-Up-Authorization |
-
-### Users (`/api/users`)
-
-| Endpoint | Method | Description | Auth Required |
-|----------|--------|-------------|---------------|
-| `/api/users/{azureTag}` | GET | Get user by AzureTag | Yes |
-
----
-
-## Services
-
-### AuthService
-
-Handles user authentication, registration, and PIN management.
-
-**Key Methods:**
-- `LoginAsync(LoginRequest)` - Authenticate and generate JWT
-- `RegisterAsync(RegisterRequest)` - Create user with initial account
-- `SetPinAsync(userId, pin)` - Set/update user PIN
-- `VerifyPinAsync(userId, pin)` - Verify PIN for step-up auth
-
-### AccountService
-
-Manages bank account CRUD operations.
-
-**Key Methods** (the `IAccountService` names):
-- `GetUserAccountsAsync(userId)` - List user's accounts
-- `GetAccountByIdAsync(accountId, userId)` - One account, ownership-checked
-- `CreateAccountAsync(userId, request)` - Create new account
-- `UpdateAccountAsync(accountId, userId, request)` - Update account name
-- `SetPrimaryAccountAsync(userId, accountId)` - Set as primary
-- `AuthoriseDeletionAsync(userId, accountId, pin)` - Mint the closure authorisation (ADR-0049)
-- `DeleteAccountAsync(accountId, userId, stepUpAuthorizationId)` - Soft delete; spends the
-  authorisation in the same transaction
-- `GetBalanceAsync(accountId, userId, atTime)` - Current or historical balance
-- `GetFullAccountNumberAsync(accountId, userId)` - The unmasked number (ADR-0038)
-
-### TransactionService
-
-Processes deposits and withdrawals.
-
-**Key Methods:**
-- `DepositAsync(accountId, amount)` - Add funds to account
-- `WithdrawAsync(accountId, amount)` - Remove funds from account
-- `GetTransactionsAsync(filter)` - Query transaction history
-
-### TransferService
-
-Handles money transfers between accounts.
-
-**Key Methods:**
-- `TransferAsync(request)` - Transfer to external user
-- `InternalTransferAsync(request)` - Transfer between own accounts
-
----
+A mint answers 201 with `authorizationId` and `expiresAt`, and the operation it authorises
+presents that id in `Step-Up-Authorization`. That header's refusals are 401s:
+`AUTHORIZATION_REQUIRED` with no header, `AUTHORIZATION_INVALID` for an authorisation already
+spent, minted for something else or not the caller's own, and `AUTHORIZATION_EXPIRED` past its
+window, which is `StepUp:Window`, two minutes.
 
 ## Validation
 
-Requests pass through **two** validation layers, and it matters which one answers.
+A request passes two layers, and it matters which one answers (ADR-0007).
 
-1. **DataAnnotations on the DTO**, run by `[ApiController]` model-state validation **before the
-   action body**. If any annotation fails, the framework replies immediately — title
-   `"One or more validation errors occurred."`, keyed by the binding name — and the FluentValidation
-   call below never executes.
-2. **FluentValidation**, invoked by hand inside the action (`ValidateAndThrowAsync`);
-   `ValidationExceptionHandler` turns the throw into title `"Validation Failed"` with camelCased
-   keys. Validators are registered via DI (`AddValidatorsFromAssemblyContaining<Program>`), but
-   auto-validation is deliberately **not** wired — `FluentValidation.AspNetCore` is deprecated.
+1. **DataAnnotations on the DTO**, run by `[ApiController]` before the action body. A failure is
+   answered at once, with the title `"One or more validation errors occurred."` and keyed by the
+   binding name, and the layer below never runs.
+2. **FluentValidation**, called by hand in the action (`ValidateAndThrowAsync`).
+   `ValidationExceptionHandler` turns the throw into the title `"Validation Failed"` with
+   camelCased keys. The validators are registered through DI
+   (`AddValidatorsFromAssemblyContaining<Program>`); auto-validation is not wired, because
+   `FluentValidation.AspNetCore` is deprecated.
 
-So layer 2 is reached only where a validator is stricter than every annotation on that property
-(today: the unannotated `CreateAccountRequest.Type`, money **scale** which `[MoneyRange]` does not
-check, and the cross-field same-account transfer rule). Note also that **3 of the 13 request DTOs
-have no validator at all** — `SetPrimaryAccountRequest`, `RefreshRequest`, `UpdateAzureTagRequest` —
-so those can only ever produce the layer-1 envelope.
+So layer 2 answers only where a validator is stricter than every annotation on that property:
+the unannotated `CreateAccountRequest.Type`, the money scale, which `[MoneyRange]` does not
+check, and the same-account rule of an internal transfer. A request DTO with no validator, such as
+`RefreshRequest`, `RevokeRequest` or `UpdateAzureTagRequest`, can only produce the layer-1 answer.
 
-### Example Validator
-
-```csharp
-public class LoginRequestValidator : AbstractValidator<LoginRequest>
-{
-    public LoginRequestValidator()
-    {
-        RuleFor(x => x.Email)
-            .NotEmpty()
-            .EmailAddress()
-            .MaximumLength(255);
-
-        RuleFor(x => x.Password)
-            .NotEmpty()
-            .MinimumLength(8)
-            .MaximumLength(128);
-    }
-}
-```
-
-### Validation Rules
-
-| Field | Rules |
-|-------|-------|
-| **Email** | Required, valid email format, max 255 chars |
-| **Password** | Required, 8-128 chars, uppercase, lowercase, digit, special char |
-| **PIN** | Exactly 6 digits |
-| **AzureTag** | 3-20 chars, lowercase, starts with letter |
-| **Account Name** | 2-100 chars |
-| **Amount** | Positive, max 2 decimal places |
-
----
+The limits are constants in `../AzureBank.Shared/Constants/ValidationRules.cs`: a password of 8
+to 128 characters with an uppercase letter, a lowercase letter, a digit and a special character;
+a PIN of exactly 6 digits; an AzureTag of 3 to 20 characters, lowercase, starting with a letter;
+an account name of 2 to 100 characters; an email of at most 255 characters; an amount from 0.01
+to 100,000.00 with at most 2 decimal places.
 
 ## Configuration
 
-### appsettings.json
+`appsettings.json` holds what is not a secret, and its comments say what a value bounds and why.
+An access token lives 15 minutes (`Jwt:ExpirationMinutes`), and a session's grant 60 minutes from
+sign-in (`Jwt:RefreshTokenLifetimeMinutes`).
 
-```json
-{
-  "ConnectionStrings": {
-    "DefaultConnection": "Server=localhost;Database=AzureBank;Trusted_Connection=True;TrustServerCertificate=True"
-  },
-  "Database": {
-    "MaxRetryCount": 4,
-    "MaxRetryDelay": "00:00:10"
-  },
-  "RequestDeadline": {
-    "Seconds": 40
-  },
-  "Jwt": {
-    "Issuer": "AzureBank.Api",
-    "Audience": "AzureBank.Bff",
-    "ExpirationMinutes": 15,
-    "RefreshTokenLifetimeMinutes": 60
-  },
-  "Serilog": {
-    "MinimumLevel": {
-      "Default": "Information",
-      "Override": {
-        "Microsoft.AspNetCore": "Warning",
-        "Microsoft.EntityFrameworkCore": "Warning"
-      }
-    },
-    "Enrich": ["FromLogContext"]
-  }
-}
-```
-
-The console is not configured here: the code writes it, one JSON object per line in Production and
-text everywhere else (`ConsoleLogFormat`), and a `WriteTo` in configuration takes its place: in
-Production such a console should use `RenderedCompactJsonFormatter`, to match the bootstrap lines.
+The console is not configured there: the code writes it, one JSON object per line in Production
+and text everywhere else (`ConsoleLogFormat`). A `Serilog:WriteTo` in configuration takes its
+place; in Production such a console should use `RenderedCompactJsonFormatter`, to match the
+bootstrap lines.
 
 ### Database limits and the request deadline
 
@@ -365,7 +149,7 @@ request (ADR-0058). Each is checked at start, and the API logs the limits it ope
 has started (`Database limits: …`).
 
 | Setting | Default | In `appsettings.json` | What it bounds |
-|---------|---------|-----------------------|----------------|
+|---|---|---|---|
 | `Database:MaxRetryCount` | 4 | yes | EF's retries of a transient failure (0 to 20; 0 turns retrying off). A command timeout, −2, is never retried |
 | `Database:MaxRetryDelay` | `00:00:10` | yes | The cap on EF's back-off between two retries (above zero, at most a minute) |
 | `Database:ConnectTimeoutSeconds` | 10 | no | Opening a connection, and every BEGIN, COMMIT and ROLLBACK (1 to 60). Not an open to a name that does not resolve: on the compose stack those took 11.81 to 23.75 s (ADR-0058) |
@@ -378,13 +162,13 @@ connection string only where the string leaves them unset (`SqlConnectionDefault
 string sets wins, under any of its names. A commit that has started is never cancelled by the
 deadline, and none starts after it has fired.
 
-### Environment Variables
+### Environment variables
 
 | Variable | Description |
-|----------|-------------|
+|---|---|
 | `ASPNETCORE_ENVIRONMENT` | Runtime environment (Development/Production) |
 | `ConnectionStrings__DefaultConnection` | Database connection string; it must be there, parse and name a server, checked at startup |
-| `Jwt__Secret` | JWT signing key — the local setup's recipe; 32+ bytes as UTF-8, checked at startup |
+| `Jwt__Secret` | JWT signing key; 32+ bytes as UTF-8, checked at startup |
 | `Idempotency__HashKey` | Request-fingerprint HMAC key (32+ chars, ADR-0009) |
 | `StepUp__BindingKey` | Step-up binding HMAC key (32+ chars, ADR-0042) |
 | `Audit__ChainKey` | Audit hash-chain HMAC key (32+ chars, ADR-0044) |
@@ -392,102 +176,50 @@ deadline, and none starts after it has fired.
 | `Security__PinPepper` | PIN-hash pepper (32+ chars, ADR-0011); the Seeder needs the same value |
 | `ServiceCredential__BffKey` | The key the BFF presents in `X-AzureBank-Service-Key` (32+ chars, ADR-0055); the BFF needs the same value |
 
-In development every value above but `ASPNETCORE_ENVIRONMENT` comes from `dotnet user-secrets`
-(`:` instead of `__`) — see the [local setup](../../../docs/engineering-practices.md#local-setup),
-the one copy of the recipe.
+The API refuses to start, with exit code 1, when the connection string or a secret above is
+missing or too short. With `Demo__Enabled=true` it also needs `Demo__ClientKeySecret`, 32
+characters or more. In development every value above but `ASPNETCORE_ENVIRONMENT` comes from
+`dotnet user-secrets` (`:` instead of `__`): the
+[local setup](../../../docs/engineering-practices.md#local-setup) is the one copy of the recipe.
 
----
+## Errors
 
-## Dependencies
+Every error is a ProblemDetails body that carries a `traceId`.
 
-This project uses packages from the central `Directory.Packages.props`:
+- **A domain refusal** is an `AppException` (`../AzureBank.Shared/Exceptions`), which fixes its
+  status and its `errorCode`: `AuthenticationException` 401, `AuthorizationException` 403,
+  `NotFoundException` 404, `ConflictException` 409, `BusinessRuleException` and
+  `InsufficientFundsException` 422, a locked sign-in or PIN and the demo's `DEMO_*` refusals 429.
+  `AppExceptionHandler` writes the body, and a `Retry-After` header when the refusal carries
+  `retryAfterSeconds`.
+- **A validation failure** is 400, with an `errors` dictionary and no `errorCode`.
+- **An outage** is 503 `SERVICE_UNAVAILABLE` (ADR-0058): a database that cannot be reached, a
+  command timeout, an exhausted pool, EF's retries spent, or a request past its deadline. It
+  comes from `ServiceUnavailableExceptionHandler` with `retryAfterSeconds` 10, `Retry-After` and
+  a `Cache-Control` that includes `no-store` (on the wire `no-cache,no-store`, with
+  `Pragma: no-cache` and `Expires: -1`). On the four money endpoints it adds `applied: false`
+  when the request is known to have changed nothing. Revoke answers 503 when its database write
+  fails: send it again after `retryAfterSeconds`.
+- **A client that hung up** gets no body at all.
+- **Anything else unexpected** is the 500, with no `errorCode`.
 
-| Package | Purpose |
-|---------|---------|
-| `Microsoft.AspNetCore.OpenApi` | OpenAPI schema generation |
-| `Microsoft.AspNetCore.Authentication.JwtBearer` | JWT authentication |
-| `FluentValidation.DependencyInjectionExtensions` | Validation |
-| `Konscious.Security.Cryptography.Argon2` | PIN hashing (passwords use Identity's PBKDF2) |
-| `Riok.Mapperly` | Object mapping |
-| `Scalar.AspNetCore` | API documentation |
-| `Serilog.AspNetCore` | Structured logging |
+## Easy to get wrong
 
-**Project References:**
-- `AzureBank.Shared` - Entities, DTOs, exceptions
-- `AzureBank.Infrastructure` - DbContext, migrations
+- **An XML `<summary>` on a DTO property is published.** It becomes that property's description in
+  the contract whenever no validation attribute supplies one, so reasoning goes in ordinary
+  comments.
+- **A change to a route or a DTO changes the contract.** `CommittedOpenApiDocumentTests` fails
+  until `docs/api/openapiv1.json` is generated again:
+  [the OpenAPI document](../../../docs/api/README.md) says how.
+- **A new required setting is invisible to the tests.** Each secret is checked at start, and
+  `CustomWebApplicationFactory` injects every one, so the suite stays green while the workflows
+  and a developer's own secrets lack the new value.
+  [Engineering traps](../../../docs/engineering-traps.md) lists the places to update.
 
----
+## See also
 
-## Running Locally
-
-```bash
-# From solution root
-dotnet run --project src/AzureBank.Api
-
-# With specific environment
-ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/AzureBank.Api
-
-# Access API docs
-# https://localhost:7215/scalar/v1
-```
-
----
-
-## API Documentation
-
-Interactive API documentation is available via **Scalar** at:
-
-**Development**: https://localhost:7215/scalar/v1
-
-Features:
-- Try out endpoints interactively
-- View request/response schemas
-- Authentication support (Bearer token)
-- Code samples in multiple languages
-
----
-
-## Error Handling
-
-The API uses **Problem Details** (RFC 7807) for error responses.
-
-### Response Structure
-
-```json
-{
-  "type": "https://tools.ietf.org/html/rfc9110#section-15.5.5",
-  "title": "Not Found",
-  "status": 404,
-  "detail": "Account with ID 'xxx' was not found",
-  "instance": "/api/accounts/xxx",
-  "traceId": "00-abc123..."
-}
-```
-
-### Exception Types
-
-| Exception | HTTP Status | Use Case |
-|-----------|-------------|----------|
-| `NotFoundException` | 404 | Resource not found |
-| `UnauthorizedException` | 401 | Authentication required |
-| `ForbiddenException` | 403 | Access denied |
-| `BusinessRuleException` | 422 | Domain rule violation |
-| `InsufficientFundsException` | 422 | Not enough balance |
-| `ValidationException` | 400 | Input validation failed |
-| `ServiceUnavailableException` | 503 | The request cannot be served now; send it again after `retryAfterSeconds` (revoke, when its database write fails) |
-
-A database that cannot be reached, a command timeout, an exhausted pool, EF's retries spent, or a
-request past its deadline also answers **503** `SERVICE_UNAVAILABLE`, with `retryAfterSeconds` 10,
-`Retry-After` and a `Cache-Control` that includes `no-store` (on the wire `no-cache,no-store`, with
-`Pragma: no-cache` and `Expires: -1`), from `ServiceUnavailableExceptionHandler` (ADR-0058); on the
-four money endpoints it adds `applied: false` when the request is known to have changed nothing.
-A client that hung up gets no body at all. Anything else unexpected is the 500.
-
----
-
-## See Also
-
-- [Root README](../../README.md) - Solution overview
-- [AzureBank.Shared](../AzureBank.Shared/README.md) - DTOs and entities
-- [AzureBank.Infrastructure](../AzureBank.Infrastructure/README.md) - Data layer
-- [Architecture Overview](../../../docs/architecture/overview.md) - System design
+- [`tests/api-collection`](../../../tests/api-collection/README.md): the Bruno collection, whose
+  requests carry the service key.
+- [How AzureBank works](../../../docs/architecture/overview.md) and
+  [`SECURITY.md`](../../../SECURITY.md): the system, and which host enforces what.
+- [AzureBank.Tests](../../tests/AzureBank.Tests/README.md): the tests that start this host.

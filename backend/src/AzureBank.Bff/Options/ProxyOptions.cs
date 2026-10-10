@@ -5,8 +5,7 @@ namespace AzureBank.Bff.Options;
 /// "ForwardedHeaders". With <see cref="KnownProxies"/> and <see cref="KnownIPNetworks"/> both
 /// empty (the default) the BFF is the edge: X-Forwarded-For is NOT honoured and the rate limiter
 /// partitions on the direct connection IP. Deployments behind a proxy/LB MUST list the proxy
-/// here, by its exact addresses or by the networks its addresses come from. (Until 2026-10-06
-/// this said "MUST list the proxy IPs here": exact addresses were the only form.)
+/// here, by its exact addresses or by the networks its addresses come from.
 /// </summary>
 public class ProxyOptions
 {
