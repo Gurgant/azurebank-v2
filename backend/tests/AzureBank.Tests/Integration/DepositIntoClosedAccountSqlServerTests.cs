@@ -170,17 +170,10 @@ public sealed class DepositIntoClosedAccountSqlServerTests : IDisposable
 
     /// <summary>
     /// The closure rides the deposit's own save, the first it sends; the deposit then reads the
-    /// account again, which only its retry does, and sends no second save.
+    /// account again once, which only its retry does, and sends no second save.
     /// </summary>
-    private static void ShouldHaveClosedAtTheSave(OutOfBandClosureInterceptor race, OutOfBandClosureInterceptor.Sent sent)
-    {
-        race.Fired.Should().BeTrue("the out-of-band write must actually have run");
-        race.OutOfBandRowsAffected.Should().Be(1, "and it must have met the open account");
-        sent.RodeAnAccountUpdate.Should().BeTrue("the write lands on the deposit's own save");
-        sent.AccountUpdatesBefore.Should().Be(1, "that save is the first the deposit sends");
-        sent.AccountReadsAfter.Should().Be(1, "a save that loses sends the deposit round its retry, which reloads the account");
-        sent.AccountUpdatesAfter.Should().Be(0, "a refused deposit saves nothing");
-    }
+    private static void ShouldHaveClosedAtTheSave(OutOfBandClosureInterceptor race, OutOfBandClosureInterceptor.Sent sent) =>
+        ClosedAccountSqlServerProofs.ShouldHaveClosedAtTheSave(race, sent, savesAfterwards: 0, readsAfterwards: 1);
 
     /// <summary>What the database holds for one account and one key, as a fresh scope reads it.</summary>
     private sealed record Rows(

@@ -7,6 +7,7 @@ namespace AzureBank.Tests.Fixtures;
 /// <summary>
 /// Closes an account from a second connection, once, on the first command after arming whose text
 /// holds the trigger, and records what the request sends to the accounts table before and after.
+/// With <c>onTheReadOf</c> the command must also carry that account's id among its parameters.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -31,14 +32,24 @@ namespace AzureBank.Tests.Fixtures;
 /// user makes another account primary and then closes the old one. With <c>remove</c> the row is
 /// deleted instead of closed, which only an account with no ledger rows allows.
 /// </para>
+/// <para>
+/// ONE READ OF ONE ACCOUNT. A request reads its accounts by id with one statement, whichever
+/// account it is, so the text alone cannot place a closure on the read of a given account.
+/// <c>onTheReadOf</c> narrows the trigger to the command that carries that id as a parameter. A
+/// list of a user's accounts carries the user's id, not an account's, so an account that the
+/// request has only listed is first read by its own id when the request reads it fresh.
+/// </para>
 /// </remarks>
 public sealed class OutOfBandClosureInterceptor(
     string connectionString, Guid accountId, string trigger = OutOfBandClosureInterceptor.AccountUpdate,
-    bool emptyFirst = false, Guid? newPrimaryId = null, bool remove = false)
+    bool emptyFirst = false, Guid? newPrimaryId = null, bool remove = false, Guid? onTheReadOf = null)
     : DbCommandInterceptor
 {
     /// <summary>The text every write of a request to the accounts table holds.</summary>
     public const string AccountUpdate = "UPDATE [Accounts]";
+
+    /// <summary>The text every read of the accounts table holds.</summary>
+    public const string AccountRead = "FROM [Accounts]";
 
     private const string AccountsTable = "[Accounts]";
 
@@ -139,7 +150,10 @@ public sealed class OutOfBandClosureInterceptor(
                 return;
             }
 
-            fireNow = !_fired && text.Contains(trigger, StringComparison.Ordinal);
+            fireNow = !_fired
+                && text.Contains(trigger, StringComparison.Ordinal)
+                && (onTheReadOf is not { } id
+                    || command.Parameters.Cast<DbParameter>().Any(p => p.Value is Guid value && value == id));
             if (_fired)
             {
                 _readsAfter += isRead ? 1 : 0;

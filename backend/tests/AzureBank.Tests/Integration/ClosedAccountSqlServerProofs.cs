@@ -24,6 +24,10 @@ namespace AzureBank.Tests.Integration;
 /// accounts they set up through the API, the out-of-band closure, and one reading of the answer
 /// and of the database, written to the test output before anything is asserted.
 /// </summary>
+/// <remarks>
+/// The audit chain is verified over the whole shared database, not over a proof's own rows: a
+/// chain broken by any class that ran earlier in the serialised collection fails every proof here.
+/// </remarks>
 public abstract class ClosedAccountSqlServerProofs(ITestOutputHelper output) : IDisposable
 {
     protected static readonly JsonSerializerOptions Json =
@@ -52,7 +56,7 @@ public abstract class ClosedAccountSqlServerProofs(ITestOutputHelper output) : I
     /// is null in the first two and "gone" in the third.
     /// </summary>
     protected sealed record Observed(
-        HttpStatusCode Status, string? ErrorCode, string? Detail, bool Replayed,
+        HttpStatusCode Status, string? ErrorCode, string? Detail, bool Replayed, string Body,
         IReadOnlyList<AccountRow?> Accounts, IReadOnlyList<bool?> Primary, IReadOnlyList<string> Ledgers,
         int MoneyAuditRows, StepUpAuthorizationStatus Authorization, DateTime? ConsumedAt,
         IReadOnlyList<IdempotencyStatus> IdempotencyRecords, bool ChainIntact, string? ChainReason,
@@ -62,32 +66,45 @@ public abstract class ClosedAccountSqlServerProofs(ITestOutputHelper output) : I
 
     /// <summary>
     /// The closure rides the request's own save: one save sent before it, which loses, the accounts
-    /// read again afterwards, and then as many saves as the outcome needs.
+    /// read again afterwards, and then as many saves as the outcome needs. The one copy: the
+    /// deposit's proofs, which are not built on this class, call it too, and give the number of
+    /// reads, which a deposit fixes at one.
     /// </summary>
-    protected static void ShouldHaveClosedAtTheSave(
-        OutOfBandClosureInterceptor race, Observed seen, int savesAfterwards, int rowsWritten = 1)
+    internal static void ShouldHaveClosedAtTheSave(
+        OutOfBandClosureInterceptor race, OutOfBandClosureInterceptor.Sent sent, int savesAfterwards,
+        int rowsWritten = 1, int? readsAfterwards = null)
     {
         race.Fired.Should().BeTrue("the out-of-band closure must actually have run");
         race.OutOfBandRowsAffected.Should().Be(rowsWritten, "and it must have met an account that was still open");
-        seen.Sent!.RodeAnAccountUpdate.Should().BeTrue("the closure lands on the request's own save");
-        seen.Sent.AccountUpdatesBefore.Should().Be(1, "that save is the first the request sends");
-        seen.Sent.AccountReadsAfter.Should().BeGreaterThan(
+        sent.RodeAnAccountUpdate.Should().BeTrue("the closure lands on the request's own save");
+        sent.AccountUpdatesBefore.Should().Be(1, "that save is the first the request sends");
+        sent.AccountReadsAfter.Should().BeGreaterThan(
             0, "a save that loses sends the request round its retry, which reads the accounts again");
-        seen.Sent.AccountUpdatesAfter.Should().Be(savesAfterwards);
+        if (readsAfterwards is { } reads)
+        {
+            sent.AccountReadsAfter.Should().Be(reads);
+        }
+
+        sent.AccountUpdatesAfter.Should().Be(savesAfterwards);
     }
 
     /// <summary>
     /// The closure lands after the request read its accounts and before it saves anything: it
-    /// rides no save, so no save loses and nothing goes round a retry because of it.
+    /// rides no save, so no save loses and nothing goes round a retry because of it. The reads of
+    /// accounts after it are counted exactly: the reload of each account of the attempt, the reads
+    /// of a choice where one is made, and what the request reads of accounts on its way to the
+    /// save. One read more is one look more, and a lost save would add a reload of each account.
     /// </summary>
     protected static void ShouldHaveClosedBeforeTheFirstReload(
-        OutOfBandClosureInterceptor race, Observed seen, int savesAfterwards, int rowsWritten = 1)
+        OutOfBandClosureInterceptor race, Observed seen, int readsAfterwards, int savesAfterwards,
+        int rowsWritten = 1)
     {
         race.Fired.Should().BeTrue("the out-of-band closure must actually have run");
         race.OutOfBandRowsAffected.Should().Be(rowsWritten, "and it must have met an account that was still open");
         seen.Sent!.RodeAnAccountUpdate.Should().BeFalse("the closure rides a read, not a save");
         seen.Sent.AccountReadsBefore.Should().BeGreaterThan(0, "the request looks at its accounts before the closure");
         seen.Sent.AccountUpdatesBefore.Should().Be(0, "and saves nothing before it");
+        seen.Sent.AccountReadsAfter.Should().Be(readsAfterwards, "the accounts are read again after it, this many times");
         seen.Sent.AccountUpdatesAfter.Should().Be(savesAfterwards);
     }
 
@@ -160,7 +177,7 @@ public abstract class ClosedAccountSqlServerProofs(ITestOutputHelper output) : I
 
         var seen = new Observed(
             response.StatusCode, errorCode, detail,
-            response.Headers.Contains(IdempotencyConstants.ReplayedHeaderName),
+            response.Headers.Contains(IdempotencyConstants.ReplayedHeaderName), body,
             accounts, primary, ledgers, moneyAuditRows, authorization.Status, authorization.ConsumedAt,
             idempotencyRecords, verification.IsIntact, verification.Reason, sent);
 
@@ -175,25 +192,43 @@ public abstract class ClosedAccountSqlServerProofs(ITestOutputHelper output) : I
                 : $"[IsDeleted: {a.IsDeleted}, primary: {primary[i]}, balance: {a.Balance}, "
                     + $"transaction rows: {a.TransactionRows} ({ledgers[i]})]"))
             + $", {moneyEvent} audit rows: {seen.MoneyAuditRows}, authorisation: {seen.Authorization}, "
-            + $"idempotency records: [{string.Join(",", seen.IdempotencyRecords)}], chain intact: {seen.ChainIntact}");
+            + $"consumed at set: {seen.ConsumedAt is not null}, "
+            + $"idempotency records: [{string.Join(",", seen.IdempotencyRecords)}], chain intact: {seen.ChainIntact}, "
+            + $"body: {body}");
 
         return seen;
     }
 
-    protected HttpClient CreateSqlClient()
+    /// <summary>
+    /// A host on the test database. With a fault it also retries transient failures, as production
+    /// does, and carries the two interceptors that inject the fault.
+    /// </summary>
+    protected HttpClient CreateSqlClient(TransferTransientFault? fault = null)
     {
         _factory = new CustomWebApplicationFactory();
         _factory.SetConnectionString(SqlServerFactAttribute.ConnectionString!);
+        if (fault is not null)
+        {
+            _factory.EnableSqlRetryOnFailure();
+            _factory.AddInterceptor(new TransferCommandFaultInterceptor(fault));
+            _factory.AddInterceptor(new TransferCommitFaultInterceptor(fault));
+        }
+
         return _factory.CreateClient();
     }
+
+    /// <summary>One more interceptor on every context the host builds from now on.</summary>
+    protected void AddInterceptor(Microsoft.EntityFrameworkCore.Diagnostics.IInterceptor interceptor) =>
+        _factory!.AddInterceptor(interceptor);
 
     /// <summary>Registered now and armed now, so every write of the setup is behind it.</summary>
     protected OutOfBandClosureInterceptor ArmClosureOf(
         Guid accountId, string trigger = OutOfBandClosureInterceptor.AccountUpdate,
-        bool emptyFirst = false, Guid? newPrimaryId = null, bool remove = false)
+        bool emptyFirst = false, Guid? newPrimaryId = null, bool remove = false, Guid? onTheReadOf = null)
     {
         var race = new OutOfBandClosureInterceptor(
-            SqlServerFactAttribute.ConnectionString!, accountId, trigger, emptyFirst, newPrimaryId, remove);
+            SqlServerFactAttribute.ConnectionString!, accountId, trigger, emptyFirst, newPrimaryId, remove,
+            onTheReadOf);
         _factory!.AddInterceptor(race);
         race.Arm();
         return race;
@@ -233,6 +268,14 @@ public abstract class ClosedAccountSqlServerProofs(ITestOutputHelper output) : I
         return (await response.Content.ReadFromJsonAsync<ApiResponse<AccountResponse>>(Json))!.Data!.Id;
     }
 
+    /// <summary>The bank's own change of the primary account.</summary>
+    protected static async Task MakePrimaryThroughTheApiAsync(HttpClient client, TestUser user, Guid accountId)
+    {
+        var response = await SendAsync<object?>(
+            client, user, HttpMethod.Patch, $"/api/accounts/{accountId}/set-primary", null);
+        response.StatusCode.Should().Be(HttpStatusCode.OK, "the control's account must really be the primary one");
+    }
+
     protected static async Task FundAsync(HttpClient client, TestUser user, Guid accountId)
     {
         (await SendAsync(client, user, HttpMethod.Post, "/api/transactions/deposit",
@@ -251,12 +294,13 @@ public abstract class ClosedAccountSqlServerProofs(ITestOutputHelper output) : I
         response.StatusCode.Should().Be(HttpStatusCode.OK, "the control's account must really be closed");
     }
 
-    protected static Task<Guid> MintTransferAsync(HttpClient client, TestUser user, Guid fromAccountId, string recipientTag) =>
+    protected static Task<Guid> MintTransferAsync(
+        HttpClient client, TestUser user, Guid fromAccountId, string recipientTag, decimal amount = Amount) =>
         MintAsync(client, user, "/api/transfers/authorizations", new TransferAuthorizationRequest
         {
             FromAccountId = fromAccountId,
             RecipientAzureTag = recipientTag,
-            Amount = Amount,
+            Amount = amount,
             Pin = Pin
         });
 
@@ -269,9 +313,10 @@ public abstract class ClosedAccountSqlServerProofs(ITestOutputHelper output) : I
             Pin = Pin
         });
 
-    protected static Task<Guid> MintWithdrawalAsync(HttpClient client, TestUser user, Guid accountId) =>
+    protected static Task<Guid> MintWithdrawalAsync(
+        HttpClient client, TestUser user, Guid accountId, decimal amount = Amount) =>
         MintAsync(client, user, "/api/transactions/withdraw/authorizations",
-            new WithdrawalAuthorizationRequest { AccountId = accountId, Amount = Amount, Pin = Pin });
+            new WithdrawalAuthorizationRequest { AccountId = accountId, Amount = amount, Pin = Pin });
 
     private static async Task<Guid> MintAsync<T>(HttpClient client, TestUser user, string url, T payload)
     {
@@ -283,12 +328,12 @@ public abstract class ClosedAccountSqlServerProofs(ITestOutputHelper output) : I
 
     protected static Task<HttpResponseMessage> TransferAsync(
         HttpClient client, TestUser user, Guid fromAccountId, string recipientTag,
-        Guid authorizationId, Guid idempotencyKey) =>
+        Guid authorizationId, Guid idempotencyKey, decimal amount = Amount) =>
         SendAsync(client, user, HttpMethod.Post, "/api/transfers", new TransferRequest
         {
             FromAccountId = fromAccountId,
             RecipientAzureTag = recipientTag,
-            Amount = Amount,
+            Amount = amount,
             Description = "closed account proof"
         }, authorizationId, idempotencyKey);
 
@@ -304,11 +349,12 @@ public abstract class ClosedAccountSqlServerProofs(ITestOutputHelper output) : I
         }, authorizationId, idempotencyKey);
 
     protected static Task<HttpResponseMessage> WithdrawAsync(
-        HttpClient client, TestUser user, Guid accountId, Guid authorizationId, Guid idempotencyKey) =>
+        HttpClient client, TestUser user, Guid accountId, Guid authorizationId, Guid idempotencyKey,
+        decimal amount = Amount) =>
         SendAsync(client, user, HttpMethod.Post, "/api/transactions/withdraw", new WithdrawRequest
         {
             AccountId = accountId,
-            Amount = Amount,
+            Amount = amount,
             Description = "closed account proof"
         }, authorizationId, idempotencyKey);
 
