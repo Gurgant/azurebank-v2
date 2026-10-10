@@ -1,348 +1,76 @@
 # ADR-0021: Refresh-token rotation with reuse-detection (+ BFF silent re-mint)
 
-**Status**: Accepted — PR-1 (API rotation) and PR-2 (BFF silent re-mint) both shipped.
-*(2026-09-28: the rotation and its reuse detection are superseded by
-[ADR-0057](0057-the-bffs-refresh-token-is-one-reusable-grant-per-session.md): the refresh token is
-one reusable grant per session, and a renewal writes nothing. Every clause that no longer holds is
-struck in place below, with what replaced it.)*
-
-**Date**: 2026-07-22
-
-**Decision Makers**: Vladislav Aleshaev
-
----
+**Status:** Accepted; the rotation and its reuse detection (decisions 3, 5 and 6) are superseded by
+ADR-0057 · **Date:** 2026-07-22 · **Amended:** 2026-08-04, 2026-08-08 (ADR-0034), 2026-09-25,
+2026-09-28 (ADR-0057), 2026-09-30 (ADR-0058) · **Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
-Access tokens are 15-minute JWTs (`Jwt.ExpirationMinutes = 15`, `ClockSkew = Zero`). Before
-this ADR the API minted **only** the access token — `AuthService.LoginAsync`/`RegisterAsync`
-returned a JWT and nothing else, `LogoutAsync` was a no-op, and there was no `/refresh`
-endpoint. The BFF's `InMemoryTokenStore.IsSessionValid` treats access-token expiry as a
-session-KILL condition, so an **actively working user is hard-logged-out every 15 minutes** —
-the session cannot outlive one access token.
-
-The refresh apparatus was fully **scaffolded but 100 % dormant**: a `RefreshToken` entity
-(SHA-256 `TokenHash`, `ExpiresAt`, `RevokedAt`, `ReplacedByTokenId` rotation-chain self-ref,
-`IpAddress`/`UserAgent`, `IsActive`/`IsExpired`/`IsRevoked`), its EF configuration + unique
-index + `IX_RefreshTokens_UserId_Active`, the `RefreshTokens` table already shipped in
-`InitialCreate`, `JwtOptions.RefreshTokenExpirationDays = 7`, and even a dead
-`SessionService.RefreshSession(...)` on the BFF — none of it read or written anywhere. So this
-work is **wiring, not designing from scratch**.
-
-What the standards actually say, verified against primary sources:
-
-- **RFC 9700 (OAuth 2.0 Security BCP, Jan 2025) §4.14.2** — refresh-token rotation: "the
-  authorization server issues a new refresh token with every access token refresh response.
-  The previous refresh token is invalidated, but information about the relationship is
-  retained." Reuse detection: replay of an invalidated token ⇒ revoke the active token /
-  family. Idle expiry (§4.14.2): refresh tokens SHOULD expire after inactivity.
-- **RFC 9700 §2.2.2** scopes the *mandatory* rotation requirement to **public** clients. Our
-  BFF is a **confidential** client (holds tokens server-side), so rotation here is
-  **defense-in-depth — recommended, not strictly mandated**. ~~Duende's BFF, for a confidential
-  client, deliberately *reuses* refresh tokens by default, judging rotation's marginal gain
-  outweighed by DB churn + network-retry breakage.~~ *(Corrected 2026-09-28, ADR-0057: Duende's BFF
-  documentation does not say the BFF reuses them by default. It recommends configuring the token
-  server to issue reusable refresh tokens to BFF clients: "Because the BFF is a confidential client,
-  it does not need one-time use refresh tokens", which avoid performance and user-experience
-  problems.)*
-- **OWASP OAuth2 Cheat Sheet** — store a **hash** of the token, never plaintext; use
-  cryptographically-secure random values (256-bit+), not GUIDs; on reuse, revoke the family +
-  force re-auth.
-- **IETF "OAuth 2.0 for Browser-Based Applications" BCP §6.1.2.2** — ~~the BFF performs re-mint
-  **inline, on-demand** when handling an API call (not on a background timer); refresh-token
-  lifetime SHOULD track the session lifetime;~~ cookie MUST be `Secure`+`HttpOnly`, SHOULD be
-  `SameSite` + `__Host-` (already true here, ADR-0018). *(Corrected 2026-09-28, ADR-0057: the BCP is
-  RFC 10017 now. Its §6.1.2.2 says the BFF "typically" renews inline, and that BFFs "can also
-  request fresh access tokens when they observe a token expiration event", so a renewal off the
-  request path is allowed, not excluded. On lifetimes it has no SHOULD: it says it "makes sense" to
-  make the session as long as the refresh token's maximum lifetime, and to end the session when the
-  refresh token is no longer valid.)*
+Access tokens are 15-minute JWTs with no clock skew. Before this decision the API minted only that
+token, and the BFF ended a session when its access token expired, so a user at work was signed out
+every 15 minutes. The `RefreshToken` entity and its table were already in the schema, unused. The
+BFF is a confidential client, for which RFC 9700 §2.2.2 does not mandate rotation. OWASP's OAuth2
+cheat sheet asks for a stored hash, never the token, and for at least 256 random bits; RFC 10017
+§6.1.2\.2 describes a BFF that typically renews while it handles an API call.
 
 ## Decision
 
-Wire the dormant apparatus into a rotate-on-use refresh flow with reuse-detection, delivered
-in two PRs so the auth-critical surface stays reviewable:
+**The API issues a refresh token at sign-in and renews access tokens from it, and the BFF renews
+silently, so the browser sees neither a token nor an expiry.** The API's part is decisions 1 to 7:
 
-**PR-1 (this ADR — API):**
+1. **Issue on login and register.** A refresh token is 256 bits from a CSPRNG in URL-safe Base64,
+   returned once; only its SHA-256 hash is stored (`ValidationRules.TokenHashLength = 44`), because
+   a stored token is a credential at rest. Its lifetime is ADR-0057 §4.1's. A failed issuance fails
+   a login; at registration it is best-effort (a null token), because the user is already committed.
+2. **`POST /api/auth/refresh` mints a fresh access token for the same user.** It is
+   `[AllowAnonymous]`, because the refresh token is the credential and the access token may already
+   have expired. What a renewal reads and writes is ADR-0057 §4.3.
+3. **Superseded, see ADR-0057 §4.3 and F3:** a grant presented after its session ended is recorded
+   and revokes nothing, where a replayed token once revoked every token of its user, so the
+   amendment of 2026-08-04 (a failing family revoke keeps the 401) no longer applies.
+4. **Uniform failure.** Every refused renewal answers the same 401 `REFRESH_TOKEN_INVALID`, in
+   status, code and body, so the answer never says why; the reason is logged as a security event.
+5. **Superseded, see ADR-0057:** nothing rotates, so there is no chain to fork and no grace window.
+6. **Superseded, see ADR-0057 §4.4 and §4.6:** signing out revokes the grant of that one session.
+7. **Hosted cleanup.** `RefreshTokenCleanupService` deletes expired rows every
+   `Jwt:RefreshTokenCleanupInterval` (6 h unless set): hygiene, because every read filters on
+   expiry. The table references itself (`ReplacedByTokenId`), so the sweep nulls those links first.
 
-1. **Issue on login/register.** A refresh token = **256 bits of CSPRNG entropy**, URL-safe
-   Base64 (same scheme as the BFF session id), returned to the caller **once**; only its
-   **SHA-256 → Base64** hash is persisted (`ValidationRules.TokenHashLength = 44`). ~~Lifetime =
-   `now + RefreshTokenExpirationDays` (7 days).~~ *(Struck 2026-09-28, ADR-0057 §4.1: the issue
-   time plus `Jwt:RefreshTokenLifetimeMinutes`, 60 by default, fixed then and never extended.)*
-   Login issues one on every success (an issuance failure fails the login), but registration
-   issues one **best-effort** — the user + account
-   are already committed, so a token-write failure returns a **null** token (the response field
-   is nullable) and the user obtains one at their next login, rather than failing the register.
-2. **`POST /api/auth/refresh`** (`[AllowAnonymous]` — the refresh token *is* the credential;
-   the access token being refreshed may already be expired). ~~Rotates: the presented token is
-   revoked, a chained successor is minted (`ReplacedByTokenId`), and~~ a fresh access token is
-   minted for the same user. *(Struck 2026-09-28, ADR-0057 §4.3: a renewal reads the grant and
-   writes nothing. The grant is not consumed, and the answer carries no refresh token.)*
-3. ~~**Reuse-detection = theft response.** Replaying an already-revoked token — **outside the
-   grace window (item 5)** — revokes **every active refresh token for that user** (matches the
-   entity's documented "revoke ALL user tokens" intent + the existing
-   `IX_RefreshTokens_UserId_Active` index) and returns 401.~~ *(Superseded 2026-09-28 by ADR-0057
-   §4.3, F3: a grant revoked because its session ended, presented in a request received after that
-   revoke, is a tripwire. It answers 401 and writes a `RefreshTokenReuse` log line and audit row,
-   and it revokes nothing: only code inside the replica can present a grant, and revoking one user's
-   tokens does not contain that code, which ADR-0057's runbook does. Measured before the change: in
-   4 of 8 runs where a renewal met a 10 s database hang, this revoke signed out every session of the
-   user under a false reuse event.)*
-4. **Uniform failure.** Unknown / expired / reused all return **401 `REFRESH_TOKEN_INVALID`** —
-   an identical status + code + body, so the response is never an oracle for *why* a refresh
-   was rejected (the specific reason is logged server-side as a `SecurityEvent`).
-5. ~~**Un-forkable rotation.** The **stored row** for the presented token carries an
-   optimistic-concurrency **rowversion** (the opaque client token itself carries no concurrency
-   metadata), so two concurrent rotations of the same token cannot both commit — the loser's
-   UPDATE matches zero rows and EF rolls the whole unit back (the loser gets a benign 401).
-   Without this, a concurrent double-rotation would *fork* the chain and silently defeat
-   reuse-detection. A just-rotated token replayed within a short **grace window** is treated as a
-   benign lost-response retry, rejected with 401 but *without* revoking the family. The
-   **10-second grace window is purely local application policy** — an availability/security
-   trade-off that bounds the theft-tolerance window (RFC 9700 defines rotation + reuse-detection
-   but does **not** define a grace window; cf. Connect2id's configurable default). A client that
-   loses the rotation response and gets a 401 simply re-authenticates (login) for a fresh pair.~~
-   *(Superseded 2026-09-28 by ADR-0057: with no rotation there is no chain to fork and no grace
-   window. A renewal writes nothing, so eight concurrent renewals of one grant all answer 200 and
-   leave its `RowVersion` unchanged
-   (`RefreshTokenRotationSqlServerTests.EightConcurrentRenewalsOfOneGrant_AllSucceed_AndChangeNothing`),
-   and a client that loses an answer sends the same grant again. The 401 this item handed that
-   client is what signed users out during a database hang.)*
-6. ~~**Logout revokes.** `LogoutAsync` now revokes the user's active refresh tokens.~~
-   *(Superseded 2026-09-28 by ADR-0057 §4.4: `POST /api/auth/logout` still revokes every grant of
-   the user, now with the reason `SignOutEverywhere`, but nothing calls it. "Esci" ends one session,
-   and the BFF revokes that session's grant alone through `POST /api/auth/revoke`.)*
-7. **Hosted cleanup.** `RefreshTokenCleanupService` sweeps expired rows every 6 h *(every
-   `Jwt:RefreshTokenCleanupInterval` since 2026-09-25, 6 h unless set)* (hygiene —
-   reads are already expiry-filtered). Because the table self-references itself
-   (`ReplacedByTokenId`, `DeleteBehavior.Restrict`), the sweep first NULLs intra-set links,
-   then deletes.
+The BFF's part, the silent re-mint (the code cites it as PR-2):
 
-**PR-2 (shipped — BFF silent re-mint):** the BFF captures the refresh token into `UserSession`
-(login + best-effort on register) and re-mints the access token **inline, on-demand** via a new
-`ITokenRefresher`:
+- **Where.** The YARP transform that puts the bearer token on every proxied `/api/**` call, and
+  controller paths that bypass it such as verify-pin and set-pin, call
+  `ITokenRefresher.GetAccessTokenAsync` first. When and how it renews is ADR-0057 §4.5.
+- **Validity decoupling.** `InMemoryTokenStore.IsSessionValid` no longer ends a session at
+  access-token expiry while it holds a refresh token: it slides within the inactivity and absolute
+  limits (15 and 60 minutes, ADR-0057 §4.1 and §4.8). A session without one keeps the hard stop.
+- **Raw-refresh block.** A browser's `POST /api/auth/refresh` through the proxy answers 404 in
+  `AuthLevelMiddleware`, because only the BFF drives renewal; ADR-0057 §4.2 widens the block.
+- **No frontend change.** The SPA's global 401 handler already covers a session the BFF ends because
+  the API called its grant invalid.
 
-- **Where:** the YARP bearer-injection transform (every proxied `/api/**` call) and the
-  verify-pin / set-pin controller paths (which bypass the transform) call
-  ~~`GetFreshAccessTokenAsync`~~ `GetAccessTokenAsync` first. ~~It re-mints when the token is within
-  a **60 s skew** window.~~ *(Struck 2026-09-28, ADR-0057 §4.5: the thresholds come from the token's
-  own lifetime L. With more than L/2 left the token is used; below that a renewal starts in the
-  background; within min(60 s, L/4) of the end, or past it, the caller waits for the renewal at most
-  5 s.)*
-- **Single-flight:** one refresh in flight per session ~~(a per-session `SemaphoreSlim` with a
-  double-check after acquiring), so concurrent proxied calls share ONE rotation instead of each
-  tripping the API's reuse-detection.~~ *(Struck 2026-09-28, ADR-0057 §4.5, F2: single flight lives
-  on the session object, under its lock, beside its `Ended` flag. The map of semaphores dropped a
-  session's entry, so a second semaphore could appear beside the first. With nothing rotated,
-  concurrent calls share one renewal to save round-trips, not to avoid a verdict.)*
-- ~~**Failure policy:** a **401** from `/api/auth/refresh` (the refresh token is dead) revokes the
-  BFF session (forced re-login); a **transient** (network / 5xx) keeps the session and forwards
-  the current token, so a blip can't log the user out.~~ *(Superseded 2026-09-28 by ADR-0057 §4.5:
-  only a 401 whose `errorCode` is `REFRESH_TOKEN_INVALID` ends the session; a refused service key,
-  any other 401, a 5xx, a timeout or a network error keeps it. An expired token is never forwarded:
-  the API answered it 401 `AUTH_TOKEN_EXPIRED`, which the SPA reads as a sign-out. When the held
-  token has 5 s or less left, the caller gets a 503 with `Retry-After` instead.)*
-- **Validity decoupling:** `InMemoryTokenStore.IsSessionValid` no longer kills a session on
-  access-token expiry **when it holds a refresh token** — it slides within the inactivity(~~30 m~~
-  15 m) / absolute(60 m) budgets. A tokenless session (register best-effort failure) keeps the old
-  hard-stop. *(Moved 2026-09-28, ADR-0057 §4.1 and §4.8: inactivity is 15 minutes, and the absolute
-  limit is also never later than the grant's own expiry.)*
-- ~~**Logout propagation:** BFF logout now best-effort calls the API's `/api/auth/logout` (with a
-  fresh Bearer) to revoke the refresh tokens, then always revokes the local session.~~
-  *(Superseded 2026-09-28 by ADR-0057 §4.6: "Esci" ends this session under its lock, deletes the
-  cookie and answers at once, with no re-mint. `GrantRevoker` then revokes that one grant through
-  `/api/auth/revoke`, after any renewal in flight. The API's logout revoked every grant of the user,
-  so the user's other sessions were read as token theft at their next renewal.)*
-- **Raw-refresh block:** a browser-driven `POST /api/auth/refresh` through the proxy is
-  short-circuited to **404** in `AuthLevelMiddleware` — only the BFF drives ~~rotation~~ renewal.
-  *(Widened 2026-09-28, ADR-0057 §4.2: `/api/auth/revoke` and `/api/auth/logout` are blocked the
-  same way, and the API itself answers its token endpoints only over loopback with the BFF's
-  marker.)*
+## Rejected
 
-**No FE change** — the existing client-activity sliding-window warning becomes *correct* under
-re-mint, and the global-401 handler already covers reuse-detection revocation. *(2026-09-28,
-ADR-0057: reuse detection revokes nothing now, so there is no such revocation to cover. The handler
-still covers a session the BFF ends because the API called its grant invalid: the proxied call goes
-on without a token, and the API's 401 reaches the SPA.)*
-
-**Standards alignment:** this matches the IETF *OAuth 2.0 for Browser-Based Apps* ~~BCP (draft-26)
-§6.1~~ RFC 10017 §6.1.2.2 *(citation corrected 2026-09-28, ADR-0057)* — a confidential BFF that
-holds tokens server-side and refreshes **on-demand, inline** ~~(not on a background timer)~~,
-invalidating the session when the refresh token dies. ~~The session's 60-min absolute cap is ≤ the
-7-day refresh-token lifetime, so a live session can always re-mint. (Duende's BFF would use a
-*reusable* refresh token for a confidential client; we keep rotation + reuse-detection as a
-deliberate defense-in-depth showcase, per RFC 9700 §4.14 which makes it optional here.)~~
-*(Struck 2026-09-28, ADR-0057: the grant now lives as long as the session's 60-minute cap and sets
-it; renewal may also start in the background, which RFC 10017 allows; and rotation was dropped,
-because FAPI 2.0 forbids it outside extraordinary circumstances and it signed users out whenever a
-renewal's answer was lost.)*
-
-### Key design decisions
-
-| Decision | Choice | Rationale |
-|---|---|---|
-| Rotate vs. reuse | ~~**Rotate-on-use + reuse-detection**~~ **Reuse: one grant per session** *(2026-09-28, ADR-0057)* | ~~Schema is purpose-built for it (`ReplacedByToken` chain); RFC 9700/OWASP-recommended; strong portfolio signal. (Duende's confidential-client *reuse* default noted as the lighter alternative.)~~ *(Superseded 2026-09-28, ADR-0057 §3: presenting a grant takes the grant, the service key and a loopback socket, which only code inside the replica has, and revoking one user's tokens does not contain that code.)* |
-| Reuse response | ~~**Revoke ALL the user's active tokens**~~ **Record, revoke nothing** *(2026-09-28, ADR-0057)* | ~~Matches the entity's documented intent + the existing user-active index; no migration. Per-family `FamilyId` revocation (multi-device precision) is a future refinement.~~ *(Superseded 2026-09-28, ADR-0057 §4.3, F3: the tripwire writes a log line and an audit row; containment is the operator's, through ADR-0057's levers.)* |
-| Concurrency | ~~**Optimistic-concurrency rowversion on the presented token's stored row + a short (10 s) grace window**~~ **None needed: a renewal writes nothing** *(2026-09-28, ADR-0057)* | *(Superseded 2026-09-28, ADR-0057: nothing to fork and no grace window; the struck text after this note is kept as it was.)* ~~Rotation is un-forkable *regardless of caller* — concurrent rotations of the same token can't both commit (loser → benign 401), so reuse-detection can't be silently bypassed. A just-rotated token replayed within the window is a benign lost-response retry, not theft. The reuse-triggered family revoke **re-runs until it revokes nothing**, so a successor committed concurrently with the revoke (a phantom under READ COMMITTED) is caught on the next pass — and none can commit *after* the final (zero) pass, because minting a successor requires rotating an active parent whose rowversion the revoke has already bumped, so that guarded UPDATE fails (the per-token rowversion is the synchronization; no per-user lock is needed). (The BFF still adds single-flight in PR-2 to avoid the wasted round-trip, but correctness no longer depends on it.)~~ |
-| Failure signalling | **Uniform 401 `REFRESH_TOKEN_INVALID`** | No unknown-vs-expired-vs-reuse oracle. |
-| Token lifetime | ~~**7-day sliding**~~ **60 minutes from sign-in, fixed** *(2026-09-28, ADR-0057)* | ~~Aligns with RFC 9700 idle-expiry. **PR-1 enforces only this 7-day lifetime.** In the deployed BFF model (**PR-2**) the session's 30 m-inactivity / 60 m-absolute timeouts become the effective cap — PR-1 does not itself bound the session (the BFF ignores the refresh token until PR-2).~~ *(Superseded 2026-09-28, ADR-0057 §4.1: `Jwt:RefreshTokenLifetimeMinutes`, 60 by default and 15 to 1440 allowed, never extended; every access token is capped at the grant's expiry, and the BFF session ends no later.)* |
+- Rejected: failing a registration whose token cannot be stored, because the user already exists.
+- Rejected: renewing from `/bff/auth/me`, because `/me` is deliberately not a keep-alive (ADR-0018).
+- Rejected: DPoP or mutual TLS, because the BFF never shows the browser a token (RFC 9700 §4.14
+  leaves it optional for a confidential client); ADR-0057 turns that topology into a precondition.
 
 ## Consequences
 
-**Positive**
+- A user at work is no longer signed out every 15 minutes, and a stored token is only a hash.
+- Not covered: the BFF keeps sessions in memory, so a restart signs everyone out, and a second
+  instance needs a shared session store first.
+- Not covered: a killed BFF leaves its grants live, with no session, until expiry (ADR-0057 §4.6).
+- Not covered: a grant revoked with no stamp raised, or while the BFF cannot read the stamps, is
+  found only at the session's next renewal, up to 7.5 minutes later (ADR-0057 §5.3); until then
+  `/bff/auth/me` reports the session as signed in, and no data is reachable with a dead grant.
 
-- The 15-minute hard-kill of active users disappears once PR-2 lands; sessions slide.
-- Tokens are useless at rest (hash-only); ~~theft is contained (reuse ⇒ family revocation);~~
-  logout genuinely ends re-mint ability. *(Struck 2026-09-28, ADR-0057: a grant presented after its
-  session ended is recorded, not contained; the operator contains it.)*
-- ~~The `RefreshToken` self-ref chain gives a per-user audit trail of rotations.~~ *(Struck
-  2026-09-28, ADR-0057: nothing writes the chain since; its columns stay for the rows written
-  before.)*
+## Verified by
 
-**Residuals (honest)**
+- The API: `RefreshTokenServiceTests`, `AuthEndpointTests`, `RefreshTokenRotationSqlServerTests`.
+- The BFF: `TokenRefreshTests`. The sweep: `RefreshTokenCleanupServiceTests`.
 
-- **In-memory BFF session store ⇒ BFF restart = logout, and multi-instance needs a shared store.**
-  The session (and its cached refresh token) lives only in process memory; a restart drops it
-  (the cookie's session id maps to nothing → forced re-login), and a second BFF instance can't
-  see sessions created on the first. Production scale needs a distributed session store (Redis).
-  ~~Note: rotation *correctness* is already multi-instance-safe — the rowversion guard + grace
-  window make it caller-independent — so only the session cache, not the refresh flow, needs Redis.~~
-  *(Struck 2026-09-28, ADR-0057: there is no rotation to guard; a renewal writes nothing. A shared
-  session store would also need a global stamp for the "everyone now" lever, ADR-0057 §5.2.)*
-- ~~**No `FamilyId` column.** Reuse revokes *all* of a user's active tokens, not just the
-  affected lineage — on multi-device this logs out every device. Acceptable (and arguably
-  correct) as a theft response; `FamilyId` is the future precise-revocation refinement.~~
-  *(Closed 2026-09-28 by ADR-0057: a reuse revokes nothing, and "Esci" revokes one session's grant,
-  so no path signs every device out as a side effect. Signing one user out everywhere is a lever of
-  its own, `/api/auth/logout` or the runbook's SQL.)*
-- **Orphan refresh rows on BFF restart.** With PR-2 the BFF captures and uses the refresh token,
-  and logout revokes it, so refresh rows are no longer routinely orphaned. The remaining case is
-  a BFF **restart** (or a session lost from the in-memory store): the cookie's session id maps to
-  nothing → forced re-login, and that session's API-side refresh token lingers until its ~~7-day~~
-  expiry / the cleanup sweep. This is a facet of the in-memory-store residual above (Redis fixes
-  it); the tokens are inert (no session references them) in the meantime. *(Narrowed 2026-09-28,
-  ADR-0057 §4.6: the grant expires 60 minutes after its sign-in, and a graceful stop revokes every
-  grant the BFF holds. Only a kill leaves them live until their cap.)*
-- **A dead refresh token is discovered lazily (PR-2).** If a session's refresh token is revoked
-  out-of-band (~~reuse-detection from another client, or~~ an admin revoke *(struck 2026-09-28,
-  ADR-0057: reuse detection revokes nothing now; `/api/auth/logout` and the runbook's SQL are the
-  out-of-band revokes~~, and a session learns of them within half its token's life, 7.5 minutes~~)*),
-  the BFF learns it only on the next *re-mint attempt* (a proxied `/api/**` call or a verify-pin /
-  set-pin ~~/ logout~~ → 401 → session revoked). *(Struck 2026-09-28, ADR-0057 §4.6: "Esci" calls
-  no API. It ends the session in the BFF and queues its grant for revocation.)* The no-upstream
-  `/bff/auth/me` and `/bff/auth/session-status` endpoints keep reporting the session as
-  authenticated until then, so the SPA may show a logged-in shell whose first real data call
-  bounces. Bounded by the 60-min absolute timeout, and **no data is accessible with a dead token**.
-  Making `/me` re-mint would close it but conflicts with the deliberately-not-a-keep-alive design
-  (ADR-0018) — left as a known behavior. *(Narrowed 2026-09-29, ADR-0057 §5.3: `/api/auth/logout`
-  and the runbooks' SQL also raise the user's session stamp in the same transaction as the revoke,
-  and the BFF refuses those sessions at their first request after its next read of the stamps,
-  within ~20 s with up to 1,000 signed-in users (up to 5 s more for each further 1,000), with no
-  re-mint: `/bff/auth/me` and `/bff/auth/session-status` read the session through the same check.
-  What this bullet describes is left for a revoke that raises no stamp, and for the time the BFF
-  cannot read the stamps, when a session learns of the revoke at its next renewal, after up to half
-  its token's life, 7.5 minutes. The struck clause above gave those 7.5 minutes for both levers.)*
-- **Sender-constraining (DPoP / mTLS) — considered and deliberately rejected.** RFC 9700 §4.14
-  makes it *optional* for a confidential client (the BFF authenticates to the AS and never exposes
-  tokens to the browser, which is already the boundary DPoP would protect), and DPoP in a BFF is a
-  known architectural mismatch — the proof must be generated where the token lives (the server), so
-  it adds key-management for no attacker-model gain in this topology. A future option if the
-  topology changes, not a gap. *(2026-09-28, ADR-0057: that topology is now a precondition. A
-  reusable grant is safe here because only a loopback socket inside the replica can present one; if
-  the API is ever reached over a network, DPoP (RFC 9449) or mTLS (RFC 8705) comes first.)*
+## Related
 
-## Verification
-
-*(2026-09-28: most of the tests below were rewritten or deleted with the rotation, and
-ADR-0057 §10 lists what replaced them. This section is kept as the record of what was verified
-then.)*
-
-- Unit (`RefreshTokenServiceTests`): issue (hash-at-rest), rotate (revoke + chain), reuse
-  **after** the grace window ⇒ revoke-all, reuse **within** the grace window ⇒ benign (no
-  family revoke), expired, unknown, bulk-revoke scoping.
-- Integration (`AuthEndpointTests`): login+register issue; rotate returns a new pair; an
-  immediate replay within grace ⇒ 401 but leaves the successor usable; unknown ⇒ 401;
-  refresh-after-logout ⇒ 401.
-- SQL-gated (`RefreshTokenRotationSqlServerTests`): the self-referencing FK rotation-chain
-  write and the set-based family-revoke; **8 concurrent rotations of the same token ⇒ exactly
-  one successor, no fork, no false reuse-revoke** (the rowversion guard); **a reuse-triggered
-  family revoke racing concurrent rotations ⇒ zero active tokens** (the revoke re-runs to
-  convergence); and a correct login after a failed attempt issues a refresh token **without
-  re-inserting the detached principal**.
-  InMemory only approximates the relational + concurrency paths. Full suite green on InMemory +
-  SQL Server (2×).
-- BFF (`TokenRefreshTests`): a proxied call with an expired token re-mints and forwards the NEW
-  Bearer, rotating the stored refresh token; N concurrent calls re-mint **exactly once**
-  (single-flight); a refresh-401 revokes the session; a transient keeps it (current token
-  forwarded); a tokenless session still dies at token expiry while a session with a refresh token
-  **outlives** it; logout propagates to the API with a Bearer and revokes locally even when the
-  API call fails; a raw proxied `/api/auth/refresh` is **404** and never reaches the backend;
-  verify-pin re-mints and calls the API with the fresh Bearer.
-
----
-
-## Amendment — 2026-08-04: the family revoke must not be able to change the status code
-
-*(Superseded 2026-09-28 by ADR-0057, F3. The tripwire that replaced reuse detection revokes
-nothing, so there is no family revoke left to fail, and neither this amendment's guard nor its
-residual applies. If the tripwire's own audit row cannot be written, the answer is a 500, as it
-always was for the unknown-grant refusal (ADR-0044). `RefreshTokenReuseRevokeFailed` is no longer
-raised, and the fault-injection test named at the end was deleted with the branch it pinned.)*
-
-"Failure signalling: **uniform 401**" was stated above as a decision, but the reuse branch did not
-actually hold it. It awaited `RevokeAllForUserAsync` unguarded, so any failure of that write
-escaped to `GlobalExceptionHandler` and the caller received **500** instead of the 401 the ADR
-promises — precisely on the path where the token has just been detected as stolen.
-
-That is the worst place to lose the invariant. It re-opens the oracle this ADR closed (a 500
-distinguishes *reuse* from every other rejection, which is what "no unknown-vs-expired-vs-reuse
-oracle" exists to prevent), it contradicts the concurrency-loss branch a few lines below — which
-returns 401 *specifically* so a race is indistinguishable from a rejection — and a 5xx is
-conventionally retryable, so it invites the client to present the stolen token again.
-
-**The 401 is the contract; the family revoke is a mitigation.** A mitigation that fails must not
-be allowed to decide the answer. The revoke is now wrapped: on failure the rejection still
-propagates and the failure is logged at `Error` under `SecurityEvent RefreshTokenReuseRevokeFailed`.
-`OperationCanceledException` is deliberately excluded — a disconnected caller is not a failed
-mitigation.
-
-Swallowing is defensible because **surfacing it never helped**: the 500 did not revoke anything
-either. The exposure of a failed revoke is *identical* before and after this change — only the
-status code differs. This amendment does not trade security for a nicer error.
-
-**Residual (honest), unchanged by this amendment.** A failed revoke is not reliably self-healing.
-The convergence property this ADR established covers a revoke that *runs* (it re-runs until a pass
-revokes nothing, and the rowversion guard stops any successor committing after the final pass) — it
-says nothing about a revoke that never completed. The bad case is attacker-first: the attacker
-rotates the stolen token, the legitimate client later replays the old one after the grace window,
-reuse is detected, and the revoke fails. The 401 goes to the *legitimate* client, so there may be no
-further replay to re-run the mitigation, and the attacker's successor stays active until logout or
-the 7-day expiry. Bounded, but real.
-
-Options deliberately **not** taken here, because a status-code fix is the wrong place to decide
-them: retrying known-transient failures inline, or a durable work item (outbox / background sweep)
-that retries the revoke until it converges. Either is a design change deserving its own decision.
-Until then the failure is at least observable: `SecurityEvent RefreshTokenReuseRevokeFailed`, at
-`Error`.
-
-> **Decided in [ADR-0034](0034-failed-family-revoke-recovery.md) (2026-08-08): neither.** Measuring
-> the shipped EF detector changed the question — a deadlock on this write is already retried three
-> times by `EnableRetryOnFailure` *(~~three~~ by default, `Database:MaxRetryCount` since 2026-09-25;
-> four by default since 2026-09-30, [ADR-0058](0058-the-api-gives-up-cleanly-when-the-database-is-down.md))*,
-> while a command timeout is not retried at all, and retrying *that*
-> inline would hold a connection for another `CommandTimeout` on a path an attacker triggers at will.
-> A durable work item was rejected because its own write shares this write's failure mode. The
-> residual below stands, and the detection it relies on is now pinned by tests rather than asserted.
-
-**Provenance, stated plainly:** this was found by reading the path, not by observing a failure.
-The suspected trigger is contention — the set-based revoke writes the same index concurrent
-rotations are writing, so a deadlock victim or command timeout lands exactly there — but it did
-**not** reproduce locally (12 rounds x 17 concurrent requests, with `READ_COMMITTED_SNAPSHOT` off
-to match a fresh CI database), and no CI run has been seen failing this way. The invariant is
-therefore pinned by **fault injection**
-(~~`RotateAsync_ReuseSurvivesAFailingFamilyRevoke_StillRejectsWith401`~~, deleted 2026-09-28, using
-`ThrowingSaveChangesInterceptor`) rather than by racing. That is the stronger test regardless:
-it names the failure mode — *the revoke threw* — instead of hoping to hit one instance of it, and
-it covers every other way that write can fail. Verified by mutation: reverting the guard turns the
-test red with the injected exception.
+ADR-0018, ADR-0034, ADR-0057, ADR-0058.

@@ -1,121 +1,73 @@
 # ADR-0040: Changing a credential requires proving the current one
 
-**Status:** Accepted · **Date:** 2026-08-12 · **Supersedes nothing.** Closes a hole that made
-[ADR-0008](0008-step-up-authentication.md)'s step-up gate and
-[ADR-0010](0010-pin-attempt-limiting.md)'s attempt-limiting both inoperative.
+**Status:** Accepted · **Date:** 2026-08-12 · **Amended:** 2026-08-15 (the enrolment password),
+2026-09-03 (ADR-0045), 2026-09-04 (ADR-0041, ADR-0042). Supersedes nothing.
 
 ## Context
 
-`POST /api/auth/pin` assigned `user.PinHash` unconditionally. Nothing asked for the PIN already on
-the account, and nothing required an elevated session to call it.
-
-So a caller holding only a session could **replace** the PIN and then satisfy every gate the PIN
-protects. Measured end to end through the BFF, session cookie only, no token ever visible to the
-caller:
-
-```
-register             -> 201, authLevel 1
-set-pin  "131313"    -> 200      (enrolment)
-set-pin  "999999"    -> 200      <- no proof of "131313" asked for
-verify-pin "999999"  -> 200, authLevel 2
-GET .../full-number  -> 200      "AB-3142-8079-89", unmasked
-```
-
-The same chain works directly against the API on `:7215` with a bearer token, and there it also
-reaches withdraw: a wrong PIN is 401 and a missing one 400, but an *attacker-chosen* one passes, and
-the withdrawal then fails only on the balance check (422) — after `VerifyPinAsync` has already
-accepted it.
-
-**Two protections were nullified at once, and neither could have caught it.**
-
-- **ADR-0010's attempt-limiting never engages.** It counts wrong guesses. Nothing was guessed.
-- **ADR-0008's step-up gate cannot help.** It verifies that *a* PIN was entered, never that the
-  entered PIN was the user's. The elevated session was, by the gate's own rules, legitimate.
-
-That is why the check cannot live at either of those layers. The only place that can express it is
-the point of replacement.
+`POST /api/auth/pin` used to assign `user.PinHash` unconditionally: nothing asked for the PIN
+already on the account, and nothing required an elevated session. A caller holding only a session
+could replace the PIN and then satisfy every gate the PIN protects: set a PIN, set another with no
+proof of the first, verify the new one, read the unmasked account number. Two protections fail at
+once and neither can catch it. The attempt-limiting of ADR-0010 counts wrong guesses, and nothing is
+guessed. The step-up gate of ADR-0008 verifies that a PIN was entered, never that it was the user's.
+The only place that can express the check is the point of replacement.
 
 ## Decision
 
-**Changing a PIN requires the current one. Enrolling does not.**
+**Changing a PIN requires the current one. Enrolling does not: it requires the account password.**
 
-1. `SetPinRequest` gains an optional `CurrentPin`. Optional deliberately: the requirement is
-   conditional on stored state the schema cannot see, so `[Pin]` validates format only when a value
-   is present and `AuthService.SetPinAsync` owns the rule.
-2. When `user.PinHash` is non-null, `CurrentPin` is required and verified **through `IPinVerifier`**,
-   not the hasher directly. That is load-bearing: it makes a wrong `CurrentPin` count against the
-   same ADR-0010 lockout as every other wrong PIN. Verifying it any other way would turn this
-   endpoint into an uncounted brute-force oracle — strictly worse than the hole it replaces.
-3. **Enrolment stays open** when `PinHash` is null. The account password already gated getting
-   there, and there is nothing to prove yet.
-4. Failure shapes match what withdraw already returns, so the two step-up paths answer alike:
-   missing proof is **422 `PIN_REQUIRED`** (a rule the schema cannot express — the split
-   `BusinessRuleException` documents), a wrong one is **401 `INVALID_PIN`**, and a locked PIN is
-   **429** inherited from the verifier.
+1. **`SetPinRequest` has an optional `CurrentPin`.** Optional, because the requirement depends on
+   stored state the schema cannot see: `[Pin]` validates the format only when a value is present,
+   and `AuthService.SetPinAsync` owns the rule.
+2. **When `user.PinHash` is non-null, `CurrentPin` is required and verified through
+   `IPinVerifier`**, not the hasher directly, because a wrong `CurrentPin` then counts against the
+   same ADR-0010 lockout as every other wrong PIN. Verified any other way, the endpoint would be an
+   uncounted brute-force oracle, which is worse than the hole it replaces.
+3. **When `PinHash` is null the request is an enrolment.** No current PIN is asked for, because
+   there is none to prove. The account password is required in the same request, because a session
+   cookie alone would otherwise mint the credential that authorises every money movement.
+4. **Failure shapes match the API's other PIN checks**, so the step-up paths answer alike. A missing
+   proof is **422 `PIN_REQUIRED`** and not 400 (a rule the schema cannot express: the split
+   `BusinessRuleException` documents), a wrong PIN is **401 `INVALID_PIN`**, and a locked PIN is
+   **429**, inherited from the verifier. An enrolment without the password is 422
+   `PASSWORD_REQUIRED`.
 
-The BFF needs no change: `/bff/auth/set-pin` forwards the shared DTO wholesale, so the field and
-every error shape ride through untouched.
+The BFF needs no change: `/bff/auth/set-pin` forwards the shared DTO whole, so the fields and every
+error shape ride through.
 
-## What this does not close
+## Rejected
 
-~~**Enrolling the FIRST PIN still requires only a session.** An attacker holding a stolen session on
-an account that has never set a PIN can enrol one of their choosing and elevate. Stated plainly
-rather than left to be rediscovered.~~
-
-~~It is narrower than what this ADR closes — it needs an account with no PIN yet, and the window
-shuts the moment the real user enrols — but it is the same shape of escalation. What would close it
-is requiring the account password at enrolment. Not done here because registration hands the user
-straight to the PIN wizard seconds after authenticating with that same password, so the prompt would
-be asking again for something just proven, and the exposure is a stolen session rather than a
-credential gap. That reasoning is worth re-examining if the enrolment entry point ever moves away
-from the post-registration handoff.~~
-
-*(Struck 2026-09-03. Closed by T8 on 2026-08-15 (`8f0abba`): enrolling the first PIN costs the
-account password, in the same request. The trigger this paragraph named — the entry point moving —
-never fired; what fired was the measurement, a session cookie minting the credential that authorises
-every money movement, which was too cheap a hole to leave for a UX argument. The notification half
-of the same standard clause is ADR-0045.)*
-
-Also unchanged: the **direct-API step-up bypass** for ~~transfers and~~ `/full-number` (struck
-2026-09-04; note below, ADR-0020/ADR-0038 residual). The API has no auth-level concept;
-enforcement for ~~those two~~ it lives only in BFF middleware. Withdraw is unaffected because it
-carries the PIN in-band and the API verifies it. That inconsistency — two step-up models in one
-system, the weaker one guarding the higher-value operation — is a separate decision, and this ADR is
-a precondition for it rather than a substitute: hardening the API gate while the PIN can be replaced
-would be building a control that is not one.
-
-*(Correction 2026-09-04: the "separate decision" was taken the next day. ADR-0041 (dd84179,
-2026-08-13) moved the transfer PIN into the request and the check into the API, and ADR-0042
-(2026-08-16) binds the resulting authorisation to payer, payee and amount and spends it once. The
-direct-API bypass now remains only for `/full-number`, which keeps the session gate by decision
-D3a (`frontend/src/mocks/stepup.test.ts`); "two step-up models" is now withdraw/transfer in-band
-versus the reveal on the session, with the in-band one guarding the money.)*
+- Rejected: the check at the step-up gate or in the attempt-limiting, because neither layer can tell
+  a replaced PIN from the user's own.
+- Rejected: verifying `CurrentPin` with the hasher directly, because wrong values would not count
+  toward the lockout.
+- Rejected: enrolling on a session alone, because a stolen session on an account that has never set
+  a PIN could then enrol one of its choosing and elevate.
 
 ## Consequences
 
-**Positive** — the PIN becomes a credential rather than a formality. ADR-0010's lockout now protects
-something, because replacement is no longer a way around guessing.
+- The PIN is a credential and not a formality: the lockout of ADR-0010 protects something, because
+  replacement is no longer a way around guessing.
+- The contract changes (`SetPinRequest`, the spec, the generated frontend types), and any caller
+  that replaces a PIN fails with 422 `PIN_REQUIRED` until it sends `CurrentPin`.
+- The frontend has two callers: `PinSetupPage` on the enrolment path, which turns away a user whose
+  `hasPin` is already true, and the Change PIN dialog in Settings, which sends the current PIN.
+- A notice follows an enrolment (ADR-0045) and a change (ADR-0047).
+- Not covered: the direct-API step-up bypass for `/full-number`. The API has no auth-level concept,
+  so the reveal's gate lives only in BFF middleware, and it keeps that session model by ADR-0041,
+  decision 6 (`frontend/src/mocks/stepup.test.ts`). Transfers, withdrawals and account closures do
+  not share it: the API itself verifies their PIN, and the authorisation it mints is bound to the
+  operation and spent once (ADR-0041, ADR-0042, ADR-0049, ADR-0056). The stronger model is the one
+  that guards the money.
 
-**Negative** — a contract change (`SetPinRequest`, spec, generated frontend types), and a
-**behaviour change for any caller that REPLACES a PIN**: those requests now fail with 422
-`PIN_REQUIRED` until they send `CurrentPin`. Stated separately from the enrolment case because the
-two differ. **Enrolment is unaffected**, and the frontend's only caller is `PinSetupPage`, which
-bounces a user whose `hasPin` is already true — so this repo's own client reaches the endpoint
-exclusively on the enrolment path. *(True until 2026-09-11: Settings' Change PIN dialog is a
-second caller, on the change path, and it sends the current PIN this decision requires.)* Any other
-consumer replacing a PIN must be updated.
+## Verified by
 
-## Notes on the evidence
+- `PinReplacementTests`: a change without the current PIN or with a wrong one is refused, wrong
+  values trip the same lockout, and a locked PIN cannot be replaced.
+- `AuthEndpointTests` (`SetPin_Enrolling_WithoutPassword_IsRefused`).
 
-The guard was not found by reading the code. It surfaced from a design review of a *different*
-problem, and was then reproduced on the running stack before any code was written.
+## Related
 
-Nothing in the existing suite failed when the guard was added — the tests covered enrolling a PIN
-and verifying a PIN, and never covered changing one. The MSW mock was worse than silent: it
-documented itself as "set/overwrite … no old PIN and no step-up required" and implemented exactly
-that, so a test asserting the mock would have pinned the bypass as correct behaviour.
-
-## References
-
-ADR-0008 (step-up) · ADR-0010 (PIN attempt-limiting) · ADR-0011 (PIN-hash pepper) ·
-ADR-0020 (account-number reveal) · ADR-0038 (the session is the only credential the BFF accepts).
+ADR-0008, ADR-0010, ADR-0011, ADR-0020, ADR-0038, ADR-0041, ADR-0042, ADR-0045, ADR-0047, ADR-0049,
+ADR-0056.
