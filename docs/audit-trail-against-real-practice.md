@@ -29,7 +29,7 @@ whose epoch the row falls in, except at the end of the table. The verifier print
 every intact verdict.
 
 **Almost every divergence below comes from two premises:** nothing verifies or anchors the trail on
-a schedule, and one principal administers everything.
+a schedule, and one account stands over everything (row 6).
 
 **Two things a reader of a banking piece looks for and does not find.** Absence carries no
 information: a missing anchor looks the same as a quiet fortnight, and CloudTrail and RFC 6962 both
@@ -49,10 +49,10 @@ true thing and nothing is built.
 | 3 | Third-party time (RFC 3161) | **Named only** | No code; the hard part is the pinned trust root |
 | 4 | Immutability in the storage or the engine | **Named only** | The app's database user may update and delete audit rows |
 | 5 | Scheduled verification with alerting | **Named only**: `verify` runs when a person runs it | No schedule verifies the chain |
-| 6 | Separation of duties | **Named only** | One account administers the database and everything around it |
+| 6 | Separation of duties | **Named only** | The app, the migration and the deployment run as three managed identities, and the deployment's can run any image under the other two. One account stands over all three: it holds the Owner role on the subscription and is the database's Entra administrator |
 | 7 | Inclusion proofs, to hand over part of the rows | **Named only**: the evidence pack prints the rows and the verdict and claims no proof | A tail anchor yields none |
 | 8 | A retention and erasure policy | **Retention decided, erasure open** (ADR-0044 D6) | The table is never purged, and erasure is not discharged |
-| 9 | A notice to the account holder over a channel the session does not control | **Half built**: the row rides the enrolment (ADR-0045) or the PIN change (ADR-0047), and a runner renders it to a message file (ADR-0048) | The last hop is a directory; one unvalidated address; no relay; no PIN reset behind the contact |
+| 9 | A notice to the account holder over a channel the session does not control | **Half built**: the row rides the enrolment (ADR-0045) or the PIN change (ADR-0047), and a runner renders it to a message file (ADR-0048) | The last hop is a directory, and nothing sends from it; one unvalidated address; no PIN reset behind the contact |
 
 Rows 1 to 3 are argued in [the deferred page](deferred/anchoring-the-audit-trail.md): what `export`
 and the uncovered window buy, and why neither is the control. Row 9 is in
