@@ -5,8 +5,8 @@ For a person who wants to try everything. You need no knowledge of the code.
 Everything below was done on 2026-10-06, on the demo as this repository's two compose files
 run it on one machine, in a Chromium browser, in two walks: the first on one copy, the second,
 which followed this page, on two more. Where a line says **not seen**, the words come from the
-code and neither walk reached them.
-[The last section](#where-these-facts-come-from) names the files.
+code and neither walk reached them. Three lines describe screens that changed after the walks,
+and tests hold them. [The last section](#where-these-facts-come-from) names the files.
 
 ## What the demo is, and is not
 
@@ -27,9 +27,10 @@ network address is kept with the copy and removed when the copy is deleted."
 
 ## Where it runs
 
-Open **the demo's address** in your browser. The public address is in
-[the README](../../README.md#try-it); what a visitor meets there that this page does not say, a
-slow first page after a quiet spell, is under its
+Open **the demo's address** in your browser. For the public demo it is in
+[the README](../../README.md#try-it): the entry page, <https://gurgant.github.io/azurebank-v2/>,
+starts the server, shows the wait and links to the demo. How long the first page takes after a
+quiet spell is under the README's
 [Status and known limits](../../README.md#status-and-known-limits).
 
 **For a developer: start it on one machine.** You need Docker and this repository. Two files at
@@ -62,8 +63,8 @@ Three things those headers say, which you will meet:
 ## Get a copy
 
 1. Open the demo's address. You are on the sign-in page. Its title is "Welcome", and under it:
-   "Try the demo with one click. No sign-up needed." *(Until 2026-10-07 this step said the
-   title is "Welcome back". It still is in a browser that remembers a copy.)*
+   "Try the demo with one click. No sign-up needed." In a browser that remembers a copy the
+   title is "Welcome back".
 2. Press **Try the demo**.
 3. You are on the home page of your copy. At its top is a panel, **Your private copy**.
 
@@ -131,8 +132,7 @@ Account numbers are masked: "AB-••••-••••-50". Showing one in fu
 2. Beside "Main Savings", press the eye button, "Reveal full account number for Main Savings".
 3. You should see a dialog, "Verify it's you", with six boxes and the line "Demo PIN: 123456,
    unless you changed it." Its sentence says what the PIN is for: "Enter your 6-digit PIN to
-   show the full account number." *(Until 2026-10-07 this step quoted a sentence that spoke
-   of a transfer here too. The dialog was corrected that day.)*
+   show the full account number."
 4. Type 123456. The sixth digit sends it.
 5. You should see the number in full, in the form AB-1234-5678-90, and two new buttons: one
    hides the number again, one copies it.
@@ -160,9 +160,8 @@ A deposit asks for no PIN.
 1. On the home page press **Withdraw**.
 2. In "Withdraw Money" choose an account, for example "Checking". Under the amount box you
    should see "Available: €2,300.00". Type an amount, for example 20: the same line now reads
-   "New balance: €2,280.00". *(This step first said the two show together. "Available" is there
-   while the box is empty, and again, with a warning, when the amount is more than the account
-   holds.)*
+   "New balance: €2,280.00". "Available" comes back, with a warning, when the amount is more
+   than the account holds.
 3. Press **Continue · €20.00**.
 4. You should see "Verify Withdrawal" and "Enter your 6-digit PIN to confirm withdrawing €20.00
    from Checking."
@@ -209,8 +208,7 @@ A deposit asks for no PIN.
 2. Press **Deposits**, **Withdrawals**, **Transfers**, then **All**. You should see only entries
    of that kind. "Transfers" shows money sent, money received and moves between your own
    accounts. The three sums stay as they are: they add up every entry loaded so far, of every
-   kind. *(This step first said the sums follow the filter. They did not move under any of
-   the four; they moved when "Load more" added entries.)*
+   kind. They moved when "Load more" added entries.
 3. Press **Load more** at the bottom. You should see older entries added under the first twenty.
    The second walk's copy held 27 entries by then: one press showed them all, and the button
    went.
@@ -267,11 +265,7 @@ Use a phone, or make the browser window about 390 pixels wide.
 
 1. None of these four pages should scroll sideways: the home page, Accounts, History and Send
    Money. On the home page and on History each transaction is on two lines: what it is and
-   its amount, then its date and time and its status, whole. *(Until 2026-10-07 this step
-   said that History's list was nine pixels wider than a window of 390, in a box of its own
-   that scrolled sideways, and that the "Completed" label of each row was cut: so the second
-   walk measured it. Since that day the list is as wide as the window, and a row is two
-   lines.)*
+   its amount, then its date and time and its status, whole.
 2. The menu on the left is gone. A bar at the bottom has Home, Accounts, **Transfer**, History
    and **More**.
 3. Press **More**. You should see Contact, Settings and **Sign out**.
@@ -451,9 +445,9 @@ saw unless it says otherwise.
 7. **Sign out in one tab.** The other tab still shows its page, balances and all. Press
    something in it that asks the server: **History** in its menu, or one of the account buttons
    under the big figure. You should land on the sign-in page with "Your session has expired.
-   Please sign in again." *(This line first said: press anything. "Hide balances" and opening
-   the deposit dialog changed nothing, and "Accounts" in the menu opened the accounts page and
-   sent the tab nowhere.)*
+   Please sign in again." Not every press does: "Hide balances" and opening the deposit dialog
+   changed nothing, and "Accounts" in the menu opened the accounts page and did not lead to the
+   sign-in page.
 8. **Press Back after signing out.** You should stay on the sign-in page. Typing the address of
    a page such as `/accounts` should lead to the sign-in page too. No balance is shown.
 9. **Send more than €5,000.00 to a contact in one day.** See limit J: refused, nothing moves.
@@ -490,20 +484,28 @@ Leave out:
 **The walk.** One copy, claimed on 2026-10-06 on the stack of `compose.yaml` with
 `compose.demo.yaml`, at `http://localhost:5000`. A Chromium browser without a window, driven by
 a script, 1280 by 720 pixels and 390 by 844, the light theme and the dark. Every "you should
-see" above was on the screen then, except the lines marked **not seen** and the lines the
-second walk corrected. No other browser was tried. The stack was already running, and the
-walk did not check which commit it was built from; the code was read at commit `a3de523a`.
+see" above was on the screen then, except the lines marked **not seen**, the lines the second
+walk corrected and the three named below. No other browser was tried. The stack was already
+running, and the walk did not check which commit it was built from; the code was read at commit
+`a3de523a`.
 
-**The second walk.** The same day, on the same stack, in the same kind of browser, by a tester
-that had only this page and the other guide to go by. Two copies: one from "Try the demo", on
-which the other guide's steps were run, and one from a confirmed "Start over", on which this
-page was followed from the home page on. It did again what this page tells, but for the third
-wrong PIN and its lock: it typed one wrong PIN on each copy. It saw three things the first
-walk had not: a confirmed "Start over", another copy's handle, and the end of the hour in a
-browser that does not keep the copy. What it corrected it also read in the code:
+**The second walk.** The same day, on the same stack, in the same kind of browser. Two copies:
+one from "Try the demo", and one from a confirmed "Start over" on which this page was followed
+from the home page on. It did again what this page tells, but for the third wrong PIN and its
+lock: it typed one wrong PIN on each copy. It saw three things the first walk had not: a
+confirmed "Start over", another copy's handle, and the end of the hour in a browser that does
+not keep the copy. What it corrected it also read in the code:
 [`HistoryPage.tsx`](../../frontend/src/pages/HistoryPage.tsx) for the three sums, and
 [`WithdrawDialog.tsx`](../../frontend/src/components/dialogs/WithdrawDialog.tsx) for the line
 under a withdrawal's amount.
+
+**After the walks.** Three lines describe screens that changed after both walks, and neither saw
+them. The repository's tests hold them: the sign-in page's title
+([`LoginPage.test.tsx`](../../frontend/src/pages/LoginPage.test.tsx)), the sentence of the
+dialog in journey 2
+([`account-reveal.test.tsx`](../../frontend/src/pages/account-reveal.test.tsx)), and the first
+step of journey 11, at 375 pixels on the home page and on History
+([`deposit.spec.ts`](../../frontend/e2e/deposit.spec.ts)).
 
 **The words not seen** are typed as they stand in
 [`frontend/src/features/demo/demoWords.ts`](../../frontend/src/features/demo/demoWords.ts),
@@ -540,8 +542,8 @@ does not.
 
 Why the demo works this way is in
 [ADR-0062](../adr/0062-demo-visitors-get-private-copies-from-a-prepared-pool.md) and
-[ADR-0063](../adr/0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md). What an
-operator does about the pool of copies is in [the runbook](../runbooks/demo-pool.md).
+[ADR-0063](../adr/0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md). What to do
+about the pool of copies is in [the runbook](../runbooks/demo-pool.md).
 
 [the Seeder's README]: ../../backend/tools/AzureBank.Seeder/README.md
 [`ValidationRules.cs`]: ../../backend/src/AzureBank.Shared/Constants/ValidationRules.cs

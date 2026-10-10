@@ -1,79 +1,71 @@
 # ADR-0019: SPA–BFF integration architecture for the frontend build-out
 
-**Status**: Accepted
-
-**Date**: 2026-07-20
-
-**Decision Makers**: Vladislav Aleshaev
-
----
+**Status:** Accepted · **Date:** 2026-07-20 · **Amended:** 2026-09-05 (decision 3), and by ADR-0023
+(decision 6) · **Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
-Before this chapter the SPA was a visually complete, 100% mock prototype: its RTK Query
-endpoints had zero consumers, auth was a Bearer-token inversion of the shipped BFF-cookie
-architecture behind a `DEV_BYPASS_AUTH` flag, and the hand-written types disagreed with
-the real contract on every axis. Step-5 is therefore a first-time integration, not a mock
-swap. The backend contract has sharp edges the client must encode structurally: two
-envelope exceptions, a non-ProblemDetails 403 step-up body, two PIN models, a five-state
-idempotency protocol fingerprinting raw body bytes, an authenticated 401 (`INVALID_PIN`),
-and three 429 sources.
+Before this decision the SPA was a complete mock prototype: its RTK Query endpoints had no consumer,
+its auth was a bearer token behind a `DEV_BYPASS_AUTH` flag, the inverse of the BFF's cookie, and
+its hand-written types disagreed with the real contract. The backend contract has sharp edges the
+client must encode structurally: two envelope exceptions, a step-up 403 that is not ProblemDetails,
+two PIN models, a five-state idempotency protocol that fingerprints raw body bytes, an authenticated
+401 (`INVALID_PIN`) and three sources of 429.
 
 ## Decision
 
-1. **One data client, one error channel.** RTK Query only; `problemBaseQuery` normalizes
-   every failure to a typed `ApiProblem` (errorCode-first routing; `VALIDATION_ERROR`
-   synthesized on 400+errors; step-up 403 recognized from the `X-Auth-Level-Required`
-   header before body parsing; `retryAfterSeconds` body-first). Retry is structural:
-   queries only, transport/gateway failures only, never mutations.
-2. **No token ever reaches the browser.** Transport auth is the `__Host-` session cookie
-   (ADR-0018) via `credentials: 'same-origin'`. Client auth state is a four-state
-   machine — `unknown | anonymous | authenticated | expired` — resolved by the ONE
-   bootstrap probe (`GET /bff/auth/me`) and maintained by string-based Redux matchers on
-   the RTK Query action shape (deliberately not `endpoints.X.matchFulfilled`: the wire
-   shape is the stable contract and avoids coupling the auth slice to the api-slice
-   module instance).
-3. **The global 401 rule routes on errorCode, never endpoint identity** (D3):
-   `INVALID_PIN` stays in the calling form; `INVALID_CREDENTIALS` stays on login; the
-   boot probe's 401 resolves to `anonymous` (no banner); every other 401 dispatches
-   `sessionExpired()` AND resets the RTK Query cache — financial data must not outlive
-   the session it was fetched under.
-   *Correction (2026-09-05): the exempt list is `IN_FLOW_401_CODES` in `sessionMiddleware.ts`,
-   and it also holds ADR-0042's three authorisation codes — `AUTHORIZATION_REQUIRED`,
-   `AUTHORIZATION_EXPIRED`, `AUTHORIZATION_INVALID` — 401s about a transfer's authorisation,
-   thrown after the cookie was accepted. `EXPIRED` and `INVALID` joined on 2026-08-17
-   (`e4973da`); `REQUIRED` on 2026-09-05, when a headerless transfer built at the store against
-   the real stack took the session from `authenticated` to `expired` with the cookie alive.*
-4. **No polling, explicit keep-alive** (D6/D14): `session-status` is the safe probe (the
-   BFF excludes it from activity, ADR-0018); `/bff/auth/me` is the deliberate refresher
-   behind the T-2min "Stay signed in" warning, driven by a client mirror of
-   LastActivity. No financial intent is ever parked in Web Storage — a session loss
-   loses unsubmitted form state by policy.
-5. **`DEV_BYPASS_AUTH` is deleted — a one-way door** (D20). The zero-backend static demo
-   no longer exists; the demo capability returns only as the labeled MSW-worker
-   portfolio mode. Dev runs against the real BFF through the Vite proxy (D18); prod will
-   be the BFF serving `dist/` (BE-3).
-6. **BFF response shapes are hand-written mirrors** (`src/api/bffTypes.ts`) of
-   `BffResponses.cs` — the OpenAPI spec covers the API surface only. Request bodies
-   reuse the generated API types (the BFF forwards them verbatim). The mirror is the
-   accepted cost until the BFF surface joins the spec.
-   *(Superseded: ADR-0023 inverts the direction of truth — `bffSchemas.ts` holds Zod
-   schemas validated at runtime, and `bffTypes.ts` is now `z.infer` of them, so the type
-   and the validator cannot disagree. Do not "restore" hand-written types here: that
-   deletes a live runtime guard on the weakest boundary in the system.)*
-7. **One form system.** react-hook-form + zod with Fluent `Field`/`Input` and
-   `register()` spread; the unused hand-rolled `FormField` is deleted, and the
-   previously planned Controller→Field adapter is dropped as unnecessary — the pages
-   already bind natively. Zod schemas mirror the backend validation contract (AzureTag
-   pattern, full password policy).
+1. **One data client, one error channel.** RTK Query only: `problemBaseQuery` turns every failure
+   into a typed `ApiProblem` routed on `errorCode`, so that the contract's edges are encoded once
+   (`VALIDATION_ERROR` synthesized for a 400 with `errors`, the step-up 403 recognized from
+   `X-Auth-Level-Required` before the body, `retryAfterSeconds` from the body first). Retry is
+   structural: queries only, transport and gateway failures only, never mutations.
+2. **No API token ever reaches the browser.** The access and refresh tokens stay in the BFF's
+   session; transport auth is the session cookie, an opaque session id (ADR-0018): its name is
+   `__Host-AzureBank.Session` outside Development and `.AzureBank.Session` in Development.
+   Client auth state is `unknown | anonymous | authenticated | expired`, resolved by the one
+   bootstrap probe (`GET /bff/auth/me`) and kept by string matchers on the RTK Query action shape,
+   because the wire shape is the stable contract.
+3. **The global 401 rule routes on `errorCode`, never on endpoint identity** (D3). The codes of
+   `IN_FLOW_401_CODES` in `sessionMiddleware.ts` stay with the surface that asked: `INVALID_PIN` in
+   the calling form, `INVALID_CREDENTIALS` on login, and ADR-0042's `AUTHORIZATION_REQUIRED`,
+   `AUTHORIZATION_EXPIRED` and `AUTHORIZATION_INVALID` in the transfer, because those are thrown
+   after the cookie was accepted. The boot probe's 401 resolves to `anonymous`, with no banner.
+   Every other 401 dispatches `sessionExpired()` and resets the RTK Query cache, because financial
+   data must not outlive the session it was fetched under.
+4. **No polling, explicit keep-alive** (D6/D14). `session-status` is the safe probe, because the BFF
+   excludes it from activity (ADR-0018); `/bff/auth/me` is the deliberate refresher behind the "Stay
+   signed in" warning, two minutes before the end, driven by a client mirror of LastActivity. No
+   financial intent is ever parked in Web Storage: a session loss loses unsubmitted form state.
+5. **`DEV_BYPASS_AUTH` is deleted, a one-way door** (D20), because the auth behind it inverted the
+   BFF's cookie architecture. A run with no backend returns only as the labelled MSW-worker mode.
+   Development runs against the real BFF through the Vite proxy (D18); production is the BFF serving
+   the built SPA (ADR-0054).
+6. **Superseded by ADR-0023.** BFF response shapes are Zod schemas in `src/api/bffSchemas.ts`,
+   validated at runtime, and `bffTypes.ts` is `z.infer` of them. Hand-written mirrors of
+   `BffResponses.cs` are not restored, because that would delete a live runtime guard on the weakest
+   boundary in the system. Request bodies reuse the generated API types: the BFF forwards them.
+7. **One form system.** react-hook-form and zod with Fluent `Field` and `Input` and the `register()`
+   spread, with Zod schemas that mirror the backend's validation contract.
+
+## Rejected
+
+- Rejected: `endpoints.X.matchFulfilled`, because it couples the auth slice to the api-slice module.
+- Rejected: routing a 401 by its endpoint, because some 401s come after the cookie was accepted.
+- Rejected: a hand-rolled `FormField` or a Controller adapter, because the pages bind natively.
 
 ## Consequences
 
-- PR-4 wires login/register/logout/me/session-status/verify-pin/set-pin, the guard with
-  `returnTo`, register's dual-path banner (D15) and per-source 429 countdowns (D13).
-- The auth flows are pinned by MSW-stateful tests (bootstrap x2, global-expiry with
-  cache reset, guard matrix, returnTo login, register 429 + dual-path) on top of the
-  §2.4 flagship policy tests.
-- Verified live against the real local stack: register → 201 sets the session cookie
-  (HttpOnly — invisible to JS), guarded dashboard reached, post-refresh `/bff/auth/me`
-  → 200 on the cookie alone.
+- Built on this contract: the route guard with `returnTo`, registration's dual-path banner (D15)
+  and a countdown for each source of 429 (D13).
+- The session cookie is HttpOnly: no script reads it, and a reload is answered on the cookie alone.
+- Not covered: the BFF's own responses are not in the OpenAPI document (decision 6).
+- Not covered: a draft that was not submitted is lost with the session (decision 4).
+
+## Verified by
+
+- `frontend/src/features/auth/auth.test.tsx`: the probe, the 401 rule, the guard, registration.
+- `frontend/src/api/policies.test.tsx`: the data-layer policies.
+
+## Related
+
+ADR-0018, ADR-0023, ADR-0042, ADR-0054.

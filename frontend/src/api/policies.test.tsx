@@ -1,4 +1,4 @@
-import type { PropsWithChildren } from 'react';
+import { useCallback, type PropsWithChildren } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { getStepUpSnapshot, settleStepUp } from '../features/auth/stepUpController';
@@ -88,6 +88,24 @@ function hookWrapper() {
 function useDepositIntent() {
   const [trigger] = useDepositMutation();
   return useIdempotentMutation(trigger);
+}
+
+/**
+ * The caller of the send aborts it while the request is still out: only once `received` says the
+ * server has it, so the abort cannot come before the request. No money flow does this; the hook
+ * still treats it as a send whose result is unknown.
+ */
+function useDepositAbortedByItsCaller(received: Promise<void>) {
+  const [trigger] = useDepositMutation();
+  const aborting = useCallback(
+    (arg: Parameters<typeof trigger>[0]) => {
+      const running = trigger(arg);
+      void received.then(() => running.abort());
+      return running;
+    },
+    [trigger, received],
+  );
+  return useIdempotentMutation(aborting);
 }
 
 function useWithdrawIntent() {
@@ -1200,6 +1218,125 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
     expect(first.ok).toBe(false);
     expect(result.current.verifyRequired).toBe(true);
     expect(result.current.wentThrough).toBe(false);
+  });
+
+  /*
+    A body that is not JSON is an answer the client could not read. The key stays, so the retry
+    sends that same key: a fresh one would be a second payment if the first one landed.
+  */
+  it.each(['201', '409', '502'])(
+    '8e — a money send answered %s with a body that is not JSON keeps its key, and the retry carries the same key',
+    async (status) => {
+      const keys: string[] = [];
+      server.use(
+        http.post('*/api/transactions/deposit', ({ request }) => {
+          keys.push(request.headers.get('Idempotency-Key') ?? '(missing)');
+          if (keys.length === 1) {
+            return new HttpResponse('<html><body>not json</body></html>', {
+              status: Number(status),
+              headers: { 'Content-Type': 'text/html' },
+            });
+          }
+          return depositOk();
+        }),
+      );
+      const { Wrapper } = hookWrapper();
+      const { result } = renderHook(() => useDepositIntent(), { wrapper: Wrapper });
+      const body = { accountId: UUID, amount: 50 };
+
+      const first = await act(() => settle(result.current.submit(body)));
+      expect(first.ok).toBe(false);
+      if (first.ok) throw new Error('unreachable');
+      expect(first.error).toMatchObject({ status: 'PARSE', errorCode: 'PARSE_ERROR' });
+      expect(result.current.keyRetained).toBe(true);
+      expect(result.current.verifyRequired).toBe(false);
+
+      const second = await act(() => settle(result.current.submit(body)));
+      expect(second.ok).toBe(true);
+      expect(keys).toHaveLength(2);
+      expect(keys[0]).not.toBe('(missing)');
+      expect(keys[1]).toBe(keys[0]);
+    },
+  );
+
+  const previousResultUnknown = 'Previous result unknown — verify before submitting again.';
+
+  async function expectUnconfirmedDeposit(answer: () => Response) {
+    /*
+      A 2xx whose body cannot become a receipt throws while it is read, and that throw is written
+      to the error channel. This suite fails a test that writes there. The write is this scenario,
+      so it is held back and checked to be the one write.
+    */
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const sent = countDeposits(answer);
+    const { Wrapper } = hookWrapper();
+    const { result } = renderHook(() => useDepositIntent(), { wrapper: Wrapper });
+    const body = { accountId: UUID, amount: 50 };
+
+    const first = await act(() => settle(result.current.submit(body)));
+    expect(first.ok).toBe(false);
+    if (first.ok) throw new Error('unreachable');
+    expect(first.error).not.toHaveProperty('status');
+    expect(result.current.keyRetained).toBe(false);
+    expect(result.current.verifyRequired).toBe(true);
+
+    const second = await act(() => settle(result.current.submit(body)));
+    expect(second.ok).toBe(false);
+    if (second.ok) throw new Error('unreachable');
+    expect(second.error).toBeInstanceOf(Error);
+    if (!(second.error instanceof Error)) throw new Error('unreachable');
+    expect(second.error.message).toBe(previousResultUnknown);
+    expect(sent.count).toBe(1);
+    expect(logged).toHaveBeenCalledTimes(1);
+  }
+
+  it('8f — a money send answered 201 whose JSON fails its schema drops the key and refuses the next submit', async () => {
+    await expectUnconfirmedDeposit(() =>
+      HttpResponse.json({ data: { newBalance: 'one hundred' }, message: null }, { status: 201 }),
+    );
+  });
+
+  it('8g — a money send answered 201 with an envelope that carries no data drops the key and refuses the next submit', async () => {
+    await expectUnconfirmedDeposit(() =>
+      HttpResponse.json({ data: null, message: 'Done.' }, { status: 201 }),
+    );
+  });
+
+  it('8h — a money send answered 201 with an empty body drops the key and refuses the next submit', async () => {
+    await expectUnconfirmedDeposit(() => new HttpResponse(null, { status: 201 }));
+  });
+
+  it('8i — a money send aborted by its caller drops the key and refuses the next submit', async () => {
+    const sent = { count: 0 };
+    let requestReceived = () => {};
+    const received = new Promise<void>((resolve) => {
+      requestReceived = () => resolve();
+    });
+    server.use(
+      http.post('*/api/transactions/deposit', () => {
+        sent.count += 1;
+        requestReceived();
+        return never();
+      }),
+    );
+    const { Wrapper } = hookWrapper();
+    const { result } = renderHook(() => useDepositAbortedByItsCaller(received), {
+      wrapper: Wrapper,
+    });
+    const body = { accountId: UUID, amount: 50 };
+
+    const first = await act(() => settle(result.current.submit(body)));
+    expect(first.ok).toBe(false);
+    expect(result.current.keyRetained).toBe(false);
+    expect(result.current.verifyRequired).toBe(true);
+
+    const second = await act(() => settle(result.current.submit(body)));
+    expect(second.ok).toBe(false);
+    if (second.ok) throw new Error('unreachable');
+    expect(second.error).toBeInstanceOf(Error);
+    if (!(second.error instanceof Error)) throw new Error('unreachable');
+    expect(second.error.message).toBe(previousResultUnknown);
+    expect(sent.count).toBe(1);
   });
 
   it('8d — the money classifier words a 409 that names no code as a check for a send, as a failure for a mint', () => {

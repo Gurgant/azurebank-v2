@@ -1,104 +1,74 @@
 # ADR-0038: The session is the only credential the BFF will accept
 
-**Status:** Accepted · **Date:** 2026-08-10 · **Supersedes nothing.** Corrects an assumption made by
-[ADR-0020](0020-account-number-reveal.md) and closes the proxied half of the caveat it recorded.
+**Status:** Accepted · **Date:** 2026-08-10 · **Amended:** 2026-10-06 (decision 4). Supersedes
+nothing. Corrects an assumption of ADR-0020 and closes the proxied half of its caveat.
 
 ## Context
 
-Before this ADR, the posture was already meant to be closed. The BFF exists so the browser never
-holds a JWT ([ADR-0019](0019-spa-bff-integration.md)): tokens live server-side, keyed by a session
-cookie, and a YARP transform injects one on the way to the API.
-The PIN step-up ([ADR-0008](0008-step-up-authentication.md)) is enforced by `AuthLevelMiddleware`, which
-is the **only** level-2 gate in the system — the API has no auth-level concept and the JWT carries no
-level claim.
-
-Both of those statements were true. What was not true is that a caller had to go through the session
-to be authenticated.
-
-**Measured on the running stack** (API `:7215`, BFF `:5000`, seeded dev database), before any code was
-written:
-
-```
-POST /api/auth/login   (a PROXIED route)                     -> 200, raw JWT in the body
-GET  /api/accounts/{id}/full-number + Bearer, NO cookie      -> 200  {"accountNumber":"AB-0000-0000-01"}
-GET  same, with NO Authorization header                      -> 401
-POST /api/transfers + Bearer, NO cookie, bogus recipient     -> 404 from /api/transfers
-```
-
-The third line is the control: the header was being honoured, not ignored. The fourth reached the
-endpoint — a real recipient would have been paid with no PIN entered.
-
-Two defects compounded, and neither is sufficient alone:
-
-1. **`AuthLevelMiddleware` failed open.** The level-2 check lived inside
-   `if (Request.Cookies.TryGetValue(cookieName, out var sessionId))`, and its `else` branch fell
-   through with the comment *"No session cookie - let the API handle 401"*. That delegation holds
-   only while the API cannot authenticate the caller.
-2. **The transform never cleared an inbound `Authorization` header.** It *set* one inside the same
-   cookie branch, so with a session the client's header was overwritten — but with no session there
-   was nothing to overwrite, and YARP's default header copy had already placed the client's on the
-   outbound request.
-
-The token was obtainable because `/api/auth/login` is proxied. Removing that route would not have
-helped: `api-route` matches `/api/{**catch-all}`, so the path stays proxied and only loses its
-tighter `auth` rate-limit policy. `RateLimiterTests` already says so — *"the proxy path that bypasses
-`BffAuthController` … guarded only because ASP.NET routing scores the literal `/api/auth/login` above
-`/api/{**catch-all}`"*.
+The BFF exists so that the browser never holds a JWT (ADR-0019): tokens live server-side, keyed by a
+session cookie, and a YARP transform injects one on the way to the API. The PIN step-up (ADR-0008)
+is enforced by `AuthLevelMiddleware`, the only level-2 gate in the system: the API has no auth-level
+concept and the JWT carries no level claim. Neither fact makes the session the only way to be
+authenticated. A bearer token presented to a proxied route with no cookie read the unmasked account
+number and reached `/api/transfers`, because two defects compounded. The gate's no-cookie branch
+fell through to "let the API handle 401", and the transform set `Authorization` only inside the
+cookie branch, so with no session YARP's default header copy carried the client's own header on.
 
 ## Decision
 
-**Strip the inbound `Authorization` header unconditionally, then inject from the session.** One line,
-before the cookie branch rather than inside it. `BearerTokenTransformProvider` is registered with
-`AddTransforms<T>()`, which applies it to **every** route, so this covers all four proxied routes
-including the two auth ones — a per-route fix would not have.
-*(2026-10-06: the browser's `Cookie` header is taken off the outbound request in the same place and
-the same way: whole, on every proxied route, and whether or not a session resolves. Until then
-YARP's default header copy carried it to the API beside the injected bearer. Measured that day on
-the BFF's test host, with a recorder in the API's place, before the change: the forwarded request
-held the session's cookie and the two other cookies sent beside it. The API reads no cookie, and
-the session id is the BFF's own secret. Only the outbound copy goes: the BFF reads the session from
-the browser's request as before. `BrowserCookieStaysInTheBffTests` pins it.)*
+1. **The inbound `Authorization` header is stripped unconditionally, then the session's token is
+   injected**: before the cookie branch, not inside it. `BearerTokenTransformProvider` is registered
+   with `AddTransforms<T>()`, which applies it to every route, so the strip covers every proxied
+   route, the auth ones included. A per-route fix would not.
+2. **The step-up gate fails closed.** No resolvable session on a PIN-protected route is a refusal
+   the BFF issues itself, not a question forwarded to the API. The strip already makes the API's 401
+   real; the gate refuses anyway, because a gate whose correctness depends on another file getting
+   something right is not a gate.
+3. **401 for no session, 403 for level 1**, because they are different states and the SPA treats
+   them differently: level 1 opens the PIN modal, no session routes to login. The 401 is
+   byte-identical to the API's own missing-token problem response, so nothing downstream learns a
+   new shape, and a caller probing for the gated paths cannot tell whether the BFF or the API
+   answered.
+4. **The browser's `Cookie` header is taken off the outbound request** in the same place and the
+   same way: whole, on every proxied route, whether or not a session resolves, because the API reads
+   no cookie and the session id is the BFF's own secret. Only the outbound copy goes: the BFF reads
+   the session from the browser's request as before.
 
-**And make the step-up gate fail closed.** No resolvable session on a PIN-protected route is a
-refusal the BFF issues itself, not a question forwarded to the API. The header strip already makes
-the API's 401 real rather than hoped-for; the gate refuses anyway, because a gate whose correctness
-depends on another file getting something right is not a gate.
+## Rejected
 
-**401 for no session, 403 for level 1.** These are different states and the SPA treats them
-differently: level 1 opens the PIN modal, no session must route to login. The 401 is byte-identical
-to the API's own missing-token problem response — observed on the running stack, not copied from a
-doc — so nothing downstream learns a new shape, and a caller probing for which paths carry the gate
-cannot tell whether the BFF short-circuited or the API answered.
-
-## What this rejects
-
-- **Removing the proxied `/api/auth/login` route.** It would not stop the path being proxied (the
-  catch-all matches it) and would silently downgrade its rate limit. A `RequiresPinVerification`-style
-  short-circuit, as `/api/auth/refresh` already has, would work — but it treats the symptom, since the
-  token is obtainable from the real `/bff/auth/login` in any case: what must not work is *presenting*
-  one.
-- **Fixing only the middleware.** It gates two paths. Every other proxied endpoint would stay
-  reachable with a self-obtained token, and the server-side session model would be decorative.
-- **Fixing only the transform.** It is the stronger half, but it leaves the gate's logic wrong, and a
-  future non-proxied auth path would reopen it.
-- **Adding an auth-level claim to the JWT.** That is the real fix for the residual below, and it is a
-  token-format change with a migration; out of scope here for the same reason ADR-0020 gave.
+- Rejected: removing the proxied `/api/auth/login` route, because `api-route` matches
+  `/api/{**catch-all}`, so the path stays proxied and only loses its tighter `auth` rate-limit
+  policy. It also treats the symptom: what must not work is presenting a token.
+- Rejected: fixing only the middleware, because it gates the PIN-protected paths alone. Every other
+  proxied endpoint would stay reachable with a self-obtained token, and the server-side session
+  model would be decorative.
+- Rejected: fixing only the transform, because it is the stronger half but leaves the gate's logic
+  wrong, and a future auth path that is not proxied would reopen it.
+- Rejected here: an auth-level claim in the JWT, because it is a token-format change with a
+  migration. It is the real fix for the direct-API residual below.
 
 ## Consequences
 
-- **`RequireAuthLevelAttribute` is deleted.** It was a plain `Attribute` with no filter behaviour,
-  applied to nothing, whose doc comment said it *"marks an endpoint as requiring a minimum
-  authentication level"*. In a codebase whose only gate is a middleware path list, a marker that
-  looks like enforcement and is not is the same class of defect as the one this ADR closes.
-- **The direct-API residual from ADR-0020 stays open, and is now the whole of it.** Calling the API
-  on `:7215` with a JWT still bypasses the PIN, because the level lives in the BFF session. ADR-0020
-  recorded that as accepted and it remains so. What ADR-0020 did *not* contemplate — and asserted the
-  opposite of, in `AccountController`'s own doc comment — is that the same bypass was reachable
-  **through the BFF**. That half is what closed here.
-- **The denial is now in the `SecurityEvent` series.** The step-up refusals log
-  `SecurityEvent StepUpRequired` and `SecurityEvent StepUpWithoutSession`, matching
-  `RawRefreshBlocked` and `CrossSiteRequestBlocked`, so a dashboard filtered on that property sees
-  them. The previous message carried no such property and was invisible to it.
-- **Four BFF tests pin the behaviour**, three of which failed before the change; the fourth passed
-  and stays as a regression guard, because with a session the client's header was already being
-  overwritten and that must not regress.
+- The session is the only route to an authenticated call through the BFF, on every proxied path.
+  ADR-0041 builds on it: every proxied request needs a live session (decision 4), and the proxied
+  login and register answer 404 (decision 5).
+- `RequireAuthLevelAttribute` is deleted. It was a plain attribute with no filter behaviour, applied
+  to nothing: where the only gate is a middleware path list, a marker that looks like enforcement
+  and is not is the same class of defect.
+- The refusals are in the `SecurityEvent` series: `StepUpRequired` and `StepUpWithoutSession`,
+  beside `RawRefreshBlocked` and `CrossSiteRequestBlocked`, so a dashboard filtered on that property
+  sees them.
+- Not covered: the direct-API residual of ADR-0020. The level lives in the BFF session, so the API
+  itself answers `/full-number` to a JWT with no PIN. What stands in front of it is ADR-0055: the
+  API refuses a caller without the BFF's service credential. Transfers no longer share the residual,
+  because the API verifies their PIN (ADR-0041).
+
+## Verified by
+
+- `AuthLevelMiddlewareTests`: a client bearer with no session is not proxied, a client's
+  `Authorization` is replaced by the session's token, no session is 401 and level 1 is 403.
+- `BrowserCookieStaysInTheBffTests`: no cookie reaches the API.
+
+## Related
+
+ADR-0008, ADR-0019, ADR-0020, ADR-0041, ADR-0055.
