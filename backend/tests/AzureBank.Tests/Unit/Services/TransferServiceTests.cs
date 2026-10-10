@@ -770,6 +770,9 @@ public class TransferServiceTests : IDisposable
         var owner = CreateTestUser("owner");
         owner.Id = userId;
         _context.Users.Add(owner);
+        // Both accounts are rows the context tracks, as the ownership check hands them over: an
+        // account the tracker does not know is one whose row is gone, and that is a 404.
+        _context.Accounts.AddRange(fromAccount, toAccount);
         await _context.SaveChangesAsync();
 
         _accountAccessMock

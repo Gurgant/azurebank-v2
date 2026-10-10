@@ -53,6 +53,18 @@ public class TransactionService : ITransactionService
         // loser reloads and recomputes instead of surfacing a 500.
         for (var attempt = 1; ; attempt++)
         {
+            /*
+              THE ACCOUNT AGAIN, AFTER A RELOAD. On the first attempt this refuses nothing: the
+              account came through the ownership check. A later attempt holds the row a reload
+              brought back, and a closure that won the race is in it as IsDeleted, because a reload
+              does not apply the filter that hides closed accounts. Without this line the retry
+              credits the closed account and answers 201, and inserts again an account whose row
+              is gone. With it the deposit answers the 404 an account closed before the request
+              gets, and writes nothing.
+              DepositIntoClosedAccountSqlServerTests holds both on SQL Server.
+            */
+            ConcurrencyRetry.RefuseIfClosed(_context, account);
+
             var balanceBefore = account.Balance;
             var balanceAfter = balanceBefore + request.Amount;
 
@@ -293,6 +305,21 @@ public class TransactionService : ITransactionService
                       money twice under one Idempotency-Key.
                     */
                     await ConcurrencyRetry.PrepareIdempotentAttemptAsync(_context, [account], ct);
+
+                    /*
+                      THE ACCOUNT ITSELF, BEFORE ITS BALANCE, in the order the top of this method
+                      keeps: a closed account is a 404 whatever it holds. The reload above reads the
+                      row by its key, without the filter that hides closed accounts, so an account
+                      closed since the ownership check is here as an ordinary row with IsDeleted
+                      set, and the guard below would let a withdrawal out of it.
+
+                      AFTER the preparation, and not inside it between its reload and its read of
+                      the claim: a withdrawal that committed and lost its acknowledgement is
+                      answered from its claim, also when the account closed in between.
+                      TransferOrWithdrawalOnClosedAccountSqlServerTests holds the refusal, and
+                      ClosureAfterALostAcknowledgementSqlServerTests the answer from the claim.
+                    */
+                    ConcurrencyRetry.RefuseIfClosed(_context, account);
 
                     /*
                       AND THE GUARD AGAIN, against the balance this attempt actually reloaded. The
