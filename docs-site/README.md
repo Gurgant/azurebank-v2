@@ -13,5 +13,9 @@ they are, and nothing in `docs/` is written for this site.
 Inline code is shown as written. Outside code, a page cannot hold two opening braces in a row: the
 site would read them as an expression, so the build stops and names the line.
 
+A page cannot make the site paste another file into it: an `@include` comment anywhere in a page,
+or a line that starts with `<<<` outside a fenced code block, stops the build with the page and the
+line. GitHub shows neither, so the site would say more than the page does.
+
 A link from a page to a file that is not a page, such as source code, becomes a link to that file
 on GitHub at `main`.
