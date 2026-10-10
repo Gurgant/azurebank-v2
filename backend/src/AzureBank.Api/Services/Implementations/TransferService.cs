@@ -221,10 +221,53 @@ public class TransferService : ITransferService
 
         if (recipientAccount == null)
         {
-            throw new BusinessRuleException("Recipient does not have an active account.", ErrorCodes.RecipientNoAccount);
+            throw RecipientHasNoActiveAccount();
         }
 
         return (senderUser, recipient, recipientAccount);
+    }
+
+    /// <summary>
+    /// The refusal for a payee with no account the money can go to. One copy, because an external
+    /// transfer gives it in two places: where it resolves the payee, and where the account it
+    /// resolved comes back closed from a reload.
+    /// </summary>
+    private static BusinessRuleException RecipientHasNoActiveAccount() =>
+        new("Recipient does not have an active account.", ErrorCodes.RecipientNoAccount);
+
+    /// <summary>
+    /// Looks at an external transfer's two accounts again after a reload, and refuses a closed one
+    /// as the first look does: the sender's with the ownership check's 404, the payee's with the
+    /// 422 of a payee who has no account to be paid into.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A reload reads a row by its key and does not apply the filter that hides closed accounts, so
+    /// an account closed after the transfer first read it comes back as an ordinary row with
+    /// <c>IsDeleted</c> set. A transfer that looks only at the sender's balance then pays into a
+    /// closed account, or out of one, and answers 201.
+    /// </para>
+    /// <para>
+    /// THE PAYEE'S CLOSED ACCOUNT IS REFUSED, NOT REPLACED. The payee can hold another open
+    /// account, and a first look would pay that one. This does not choose again: choosing means
+    /// resolving the handle again, and a payee found the second time would not be the one the
+    /// authorisation was validated against until that ran again too. The refusal spends no
+    /// authorisation and releases the idempotency key, so the same request sent again starts from
+    /// the top and pays the open account.
+    /// </para>
+    /// <para>
+    /// Never a <see cref="NotFoundException"/> for the payee's account: its message carries the
+    /// account id, and a payer knows a payee by handle only.
+    /// </para>
+    /// </remarks>
+    private static void RefuseIfAnAccountClosed(Account fromAccount, Account recipientAccount)
+    {
+        ConcurrencyRetry.RefuseIfClosed(fromAccount);
+
+        if (recipientAccount.IsDeleted)
+        {
+            throw RecipientHasNoActiveAccount();
+        }
     }
 
     /// <inheritdoc />
@@ -364,6 +407,16 @@ public class TransferService : ITransferService
 
         for (var attempt = 1; ; attempt++)
         {
+            /*
+              THE ACCOUNTS AGAIN, BEFORE THE BALANCE. It refuses nothing on the first attempt. After
+              a lost save, the reload at the bottom of this loop hands both rows back, closed or
+              not (RefuseIfAnAccountClosed). Ahead of the funds check on purpose: the API closes
+              only an empty account, so a sender's account that closed under this transfer comes
+              back with nothing in it, and the funds check would answer 422 INSUFFICIENT_FUNDS for
+              an account that answers 404 to every other request.
+            */
+            RefuseIfAnAccountClosed(fromAccount, recipientAccount);
+
             // Check sufficient funds (inside the loop: a reloaded balance
             // may no longer cover the transfer)
             if (fromAccount.Balance < request.Amount)
@@ -381,6 +434,17 @@ public class TransferService : ITransferService
                     // work (Case A) and never re-execute an already-committed
                     // transfer (Case B). See PrepareTransferAttemptAsync.
                     await PrepareTransferAttemptAsync([fromAccount, recipientAccount], ct);
+
+                    /*
+                      AND HERE, because the line above reloads on EVERY attempt, the first one
+                      included. An account that closes between the first look and this reload loses
+                      no save and goes round no retry: it is simply here, closed, with a current
+                      RowVersion, and the transfer below would commit on it at the first attempt.
+                      After the preparation, not before it: a transfer that committed and lost its
+                      acknowledgement is answered from its claim, also when an account closed in
+                      between. TransferOrWithdrawalOnClosedAccountSqlServerTests holds both places.
+                    */
+                    RefuseIfAnAccountClosed(fromAccount, recipientAccount);
 
                     // Funds re-check against the reloaded balance: a transient
                     // retry may run after a concurrent debit moved the balance.
@@ -709,6 +773,11 @@ public class TransferService : ITransferService
 
         for (var attempt = 1; ; attempt++)
         {
+            // Both accounts again before the balance, here and after the reload inside the attempt,
+            // for the reasons TransferAsync gives at the same two places. Both accounts are the
+            // caller's own, so a closed one is the ownership check's 404.
+            ConcurrencyRetry.RefuseIfClosed(fromAccount, toAccount);
+
             // Check sufficient funds (inside the loop: a reloaded balance
             // may no longer cover the transfer)
             if (fromAccount.Balance < request.Amount)
@@ -726,6 +795,9 @@ public class TransferService : ITransferService
                     // work (Case A) and never re-execute an already-committed
                     // transfer (Case B). See PrepareTransferAttemptAsync.
                     await PrepareTransferAttemptAsync([fromAccount, toAccount], ct);
+
+                    // The second place: the line above reloads on every attempt, the first included.
+                    ConcurrencyRetry.RefuseIfClosed(fromAccount, toAccount);
 
                     // Funds re-check against the reloaded balance: a transient
                     // retry may run after a concurrent debit moved the balance.

@@ -295,6 +295,39 @@ internal static class ConcurrencyRetry
     }
 
     /// <summary>
+    /// Refuses a money write when one of the caller's own accounts came back closed from a reload,
+    /// with the 404 the ownership check gives an account that was closed before the request.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="ResetToStoreAsync"/> reloads each account by its key, and a reload does not apply
+    /// the filter that hides closed accounts from every query. An account closed after the request
+    /// first read it therefore comes back as an ordinary tracked row with <c>IsDeleted</c> set, and
+    /// a write that looks only at its balance moves money on a closed account.
+    /// </para>
+    /// <para>
+    /// The money write calls this itself, after the reload, and the reload does not: an idempotent
+    /// attempt reads its claim after reloading, and a write that committed and lost its
+    /// acknowledgement must answer from that claim, also when the account closed in between.
+    /// </para>
+    /// <para>
+    /// For the caller's own accounts only. The message names the account, and a payer must not
+    /// learn a payee's account id: <c>TransferService</c> refuses a closed payee account its own
+    /// way.
+    /// </para>
+    /// </remarks>
+    public static void RefuseIfClosed(params Account[] accounts)
+    {
+        foreach (var account in accounts)
+        {
+            if (account.IsDeleted)
+            {
+                throw new NotFoundException("Account", account.Id);
+            }
+        }
+    }
+
+    /// <summary>
     /// Prepares one more attempt of an idempotent money operation: resets the accounts to the store
     /// and then decides, from the tracked <see cref="IdempotencyRecord"/>, whether re-executing is
     /// safe at all.
