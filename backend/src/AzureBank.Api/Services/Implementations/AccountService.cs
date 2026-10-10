@@ -91,10 +91,31 @@ public class AccountService : IAccountService
     {
         var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(accountId, userId, cancellationToken);
 
-        account.Name = request.Name;
-        account.UpdatedAt = DateTime.UtcNow;
+        for (var attempt = 1; ; attempt++)
+        {
+            // A reload brings back a closed row and detaches a row that is gone. Either way there is
+            // no account to rename, and a name set on a detached entity would be saved nowhere.
+            if (account.IsDeleted || _context.Entry(account).State == EntityState.Detached)
+            {
+                throw new NotFoundException("Account", accountId);
+            }
 
-        await _context.SaveChangesAsync(cancellationToken);
+            account.Name = request.Name;
+            account.UpdatedAt = DateTime.UtcNow;
+
+            try
+            {
+                await _context.SaveChangesAsync(cancellationToken);
+                break;
+            }
+            catch (DbUpdateConcurrencyException ex) when (ConcurrencyRetry.ShouldRetry(ex, attempt))
+            {
+                _logger.LogInformation(
+                    "Concurrency conflict renaming account {AccountId} (attempt {Attempt}); retrying",
+                    accountId, attempt);
+                await ConcurrencyRetry.PrepareNextAttemptAsync(_context, [account], cancellationToken);
+            }
+        }
 
         // The account id, not the new name (ADR-0017's log-identifier rule, 2026-09-11): the name
         // is text the user chose, so it can hold anything, a name or an address included.
