@@ -4,10 +4,6 @@ namespace AzureBank.Shared.Services.Interfaces;
 /// Interface for PIN hashing using Argon2id, with one profile: 19 MB memory, optimized for
 /// 6-digit PINs with limited entropy.
 ///
-/// Until 2026-09-17 this interface also declared <c>HashPassword</c>/<c>VerifyPassword</c> on a
-/// 64 MB "password" profile and said it served "any other custom hashing needs"; nothing but the
-/// unit tests called either method, and both were deleted with their tests.
-///
 /// Note: User account passwords are handled by ASP.NET Core Identity (PBKDF2, ADR-0003's
 /// correction) and never reach this service.
 /// </summary>
@@ -21,8 +17,7 @@ public interface IPasswordHasher
     ///
     /// Rationale: PINs have limited entropy (6 digits = 1,000,000 combinations).
     /// Memory-hardness provides less benefit for small search spaces.
-    /// Lower memory = faster verification with acceptable security. (Until 2026-09-17 this said
-    /// "~50ms vs ~300ms", comparing against the 64 MB password profile deleted that day.)
+    /// Lower memory = faster verification with acceptable security.
     /// </summary>
     /// <param name="pin">The plain text PIN to hash</param>
     /// <returns>Argon2id hash in PHC string format</returns>

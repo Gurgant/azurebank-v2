@@ -50,7 +50,7 @@ public class DemoCopy
     /// <summary>
     /// Requests of the copy's signed-in users that the demo's budget counted: any method but GET,
     /// HEAD, OPTIONS and TRACE, and each reveal of an account number; never a token endpoint.
-    /// Starts at 0. (Until 2026-10-04 this said "authenticated unsafe requests".)
+    /// Starts at 0.
     /// </summary>
     public int Writes { get; set; }
 

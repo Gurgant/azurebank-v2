@@ -1,197 +1,94 @@
 # ADR-0042: A transfer authorisation is bound to its amount and payee, and spent once
 
-**Status:** Accepted · **Date:** 2026-08-16 · Builds on
-[ADR-0041](0041-the-api-verifies-the-transfer-pin.md) (the API verifies the PIN) and
-[ADR-0009](0009-idempotency-monetary-operations.md) (idempotency). Supersedes neither.
+**Status:** Accepted · **Date:** 2026-08-16 · **Amended:** 2026-09-06 (ADR-0049), 2026-09-07
+(ADR-0050), 2026-09-14 (ADR-0044), 2026-10-03 (ADR-0062) · Builds on ADR-0041 and ADR-0009
 
 ## Context
 
-ADR-0041 moved the transfer PIN into the request so the API could refuse on its own. That fixed
-*where* the check happens. It did not change *what the check proves*.
-
-Measured on `main` @ `4811667`, fresh user, PIN enrolled, €300 deposited:
-
-```
-POST /api/transfers  {amount: 10, recipientAzureTag: "admin", pin: "123456"}  -> 201
-POST /api/transfers  {amount: 20, recipientAzureTag: "admin", pin: "123456"}  -> 201
-```
-
-**One static credential authorised two different movements of money**, and nothing recorded that an
-authorisation had been given, let alone spent. A PIN proves *"someone knows the PIN"*. It never
-proved *"the account holder approved THIS amount to THIS payee"*.
-
-Against PSD2-RTS Art. 5 (dynamic linking), only the first of four requirements held:
-
-| Requirement | Before |
-| --- | --- |
-| (a) payer made aware of amount and payee | ✅ the review step shows both |
-| (b) code **specific to** amount and payee | ❌ the same six digits authorised anything |
-| (c) accepted code corresponds to what was agreed | ❌ nothing to correspond to |
-| (d) any change invalidates the code | ❌ it never changed |
+ADR-0041 moved the transfer PIN into the request so that the API could refuse on its own. That fixed
+where the check happens, not what it proves: before this decision one static PIN authorised a
+transfer of 10 and then one of 20, and nothing recorded that an authorisation had been given, let
+alone spent. A PIN proves that someone knows the PIN, never that the account holder approved this
+amount to this payee. Of the four requirements of PSD2-RTS Art. 5 (dynamic linking) only (a) held,
+the payer sees amount and payee: the code was not specific to them (b), matched nothing agreed (c),
+and no change invalidated it (d).
 
 ## Decision
 
-A PIN entry now **mints an authorisation**: a row bound by HMAC to the operation, the payer, the
-source account, the payee and the amount, valid for two minutes, and consumable exactly once by the
-transfer it authorises.
-
-What becomes single-use is **not the secret the user types** but the authorisation minted from it.
-That satisfies (b), (c) and (d) — the value presented to the server is specific, changes with the
-operation, and is spent once. It does **not** make the PIN a one-time code; that needs a second
-channel, which is the same missing infrastructure as T13.
-
-### Five decisions worth their own paragraphs
-
-**The check lives inside `TransferService`, not in front of the pipeline.** This is the one that was
-easiest to get wrong. Measured: `IdempotencyMiddleware` writes a stored response and `return`s
-*before* `await _next(context)`, so a **replay never enters MVC** — no model binding, no validation,
-no controller, no service, and therefore no authorisation check. That is correct, and it is what
-every payment API that documents the ordering does: authenticate the **caller** upstream of the
-replay lookup, authorise the **customer** downstream of it. A gate in front of the idempotency claim
-would refuse a retry whose two-minute authorisation had lapsed *before* the stored 201 could be
-handed back — leaving the one client that provably cannot know whether its money moved unable to
-find out. `StepUpAuthorizationTests.Replay_OfACompletedTransfer_SucceedsEvenWithAnExpiredAuthorisation`
-is the falsifiable form of this decision.
-
-_Noted 2026-09-06 ([ADR-0049](0049-closing-an-account-is-authorised-like-a-transfer.md)): this
-placement argument is about the replay lookup, and it does not apply to `DELETE /api/accounts/{id}`,
-which carries no `[RequireIdempotency]` — there is no stored response to hand back, so the check
-sits in `AccountService` for the plain reason that the service owns the action, not for this one._
-
-**The reference travels in a header, never in the body.** `ComputeRequestHashAsync(Stream body, …)`
-fingerprints the **body alone**. Keeping the authorisation out of it is what lets the same transfer be
-resent byte-identically — same `Idempotency-Key` — while carrying a different, expired or absent
-authorisation. In the body, each of those would change the fingerprint and be refused as
-`IDEMPOTENCY_KEY_REUSE` (422) before the endpoint ever saw it. This is a one-way door: choosing the
-body would make the retry path unfixable.
-
-**Bound to `RecipientUserId`, not the handle.** An AzureTag is renameable (ADR-0015). An
-authorisation naming `@admin` would outlive `@admin` becoming someone else's handle — the binding
-would survive the payee it named. The tag stays a display concern.
-
-**A keyed hash, not a column per bound field.** Same reasoning as `IdempotencyRecord.RequestHash`: a
-hash cannot be partially compared by accident, and adding a field to the operation forces the hash
-definition to change (hence the `v1|` prefix) instead of silently leaving the new field unbound.
-Keyed rather than bare, because `(operation, payer, account, payee, amount)` is a small space — an
-unkeyed digest would let anyone with database read access confirm guesses about who paid whom. The
-key is separate from `Idempotency:HashKey`: the two hashes answer different questions, and one leaked
-key must not forge the other's answer.
-
-_Applied, not bumped, 2026-09-06: ADR-0049 put a NON-MONEY operation on this rail — closing an
-account — without adding a field. `StepUpOperation` has three members (`Transfer`,
-`InternalTransfer`, `AccountDeletion`); the deletion binding is `(accountId, null, null, 0m)` with
-`FromAccountId` read as "the account the operation is about" and `Amount` rendered `0` for an
-operation that moves nothing, so the `v1|` payload is unchanged and a transfer authorisation minted
-on the same account cannot be presented as a deletion — the operation name is in the hash. The rule
-in this paragraph is what decides when `v2|` arrives: the first operation that needs a field this
-record does not have._
-
-**Consumption is one statement, inside the transfer's transaction.** A read-then-write would be a
-double spend, and this repository has been bitten by exactly that shape twice (ADR-0009, and the
-`PinAccessFailedCount` race in ADR-0010). Riding the transaction is equally deliberate: an
-authorisation marked spent by a transfer that rolled back is money the user can no longer send,
-for a payment that never happened.
-
-### Expiry
-
-Two minutes, not refreshable. Not a regulatory figure — the RTS prescribes **no** lifetime for an
-authentication code, and EBA Q&A 2018_4141 says so outright; the five minutes in Art. 4(3)(d) is an
-inactivity limit on *account access*, a different provision. Two minutes is our policy.
-
-In practice the window is invisible: the client sends on the sixth PIN digit, so mint and spend are
-one user action milliseconds apart. **Expiry is only reachable on a retry after a lost response** —
-which is why an expired authorisation gets its own code rather than the generic refusal, why it must
-never consume a PIN attempt (an expiry is not a failed authentication), and why the amount and payee
-stay on screen when the client re-prompts. WCAG 2.2 SC 3.3.7 Redundant Entry is **Level A**: only the
-security information may be asked for again.
+1. **A PIN entry mints an authorisation**: a row bound by HMAC to the operation, the payer, the
+   source account, the payee and the amount, valid for two minutes and consumable exactly once by
+   the transfer it authorises, because what the server is shown is then specific, changes with the
+   operation and is spent once: (b), (c) and (d).
+2. **The check lives inside `TransferService`, not in front of the pipeline**, because
+   `IdempotencyMiddleware` returns a stored response before the action runs: a gate in front of it
+   would refuse a retry whose authorisation had lapsed before the stored 201 could be handed back,
+   to the one client that cannot know whether its money moved.
+3. **The reference travels in a header (`Step-Up-Authorization`), never in the body**, because the
+   idempotency fingerprint is over the body alone: the same bytes are resent with a different,
+   expired or absent authorisation, which in the body would each be a 422 `IDEMPOTENCY_KEY_REUSE`.
+4. **Bound to `RecipientUserId`, not the handle**, because an AzureTag is renameable (ADR-0015): a
+   binding to `@admin` would outlive `@admin` becoming someone else's handle.
+5. **A keyed hash, not a column per bound field**, because a hash cannot be partially compared by
+   accident, and a new field forces its definition to change (the `v1|` prefix). Keyed, because the
+   bound values are a small space that a bare digest would let a reader of the database guess, and
+   with its own key (`StepUp:BindingKey`), so that a leaked `Idempotency:HashKey` cannot forge it.
+6. **Consumption is one statement, inside the transfer's transaction**, because a read-then-write
+   is a double spend (ADR-0009, ADR-0010), and an authorisation spent by a transfer that rolled back
+   is money the user can no longer send.
+7. **Expiry is two minutes, not refreshable**: a policy, because the RTS prescribes no lifetime for
+   an authentication code (EBA Q&A 2018_4141; Art. 4(3)(d)'s five minutes limit inactivity on
+   account access). The client mints and sends on the sixth PIN digit, one user action, so only a
+   retry after a lost response reaches the expiry: it has its own code, costs no PIN attempt, and
+   the re-prompt keeps amount and payee (WCAG 2.2 SC 3.3.7, Level A).
+8. **The header is required, and no transfer body carries a PIN** (the flip, this record's second
+   half: `TransferRequest.Pin` and `InternalTransferRequest.Pin` are gone), because while two proofs
+   are accepted the weaker one decides. A transfer presenting none is refused at the rung the PIN
+   check occupied, after the source account's ownership 404 and before the payee is resolved, so a
+   caller with no second factor cannot ask this endpoint which handles exist.
+   `StepUpAuthorizationOperationTransformer` publishes the header as required.
 
 ### Error codes
 
 | Code | Status | Means |
 | --- | --- | --- |
-| `AUTHORIZATION_REQUIRED` | 401 | none presented |
-| `AUTHORIZATION_EXPIRED` | 401 | valid, window passed — re-prompt the PIN, keep the form |
-| `AUTHORIZATION_INVALID` | 401 | **uniform** across unknown, not-yours, already-spent, wrong binding |
+| `AUTHORIZATION_REQUIRED` | 401 | none presented: the header is absent or empty |
+| `AUTHORIZATION_EXPIRED` | 401 | valid, window passed: re-prompt the PIN, keep the form |
+| `AUTHORIZATION_INVALID` | 401 | uniform across unknown, not-yours, already-spent, wrong binding |
 
-The uniformity is the `RefreshTokenInvalid` posture: the specific reason is logged server-side and
-never put on the wire, so the endpoint is not an oracle for which references exist or who owns them.
-Before this ADR none of these could be said at all — an elapsed elevation and one never granted were
-the same `403 STEP_UP_REQUIRED`.
+The specific reason is logged and never sent, so the endpoint is no oracle for which references
+exist or whose they are. A header value that is not a UUID is refused `400` by model binding, with
+no `errorCode`. `422 PIN_REQUIRED` and `429 PIN_LOCKED` live on the mints,
+`POST /api/transfers/authorizations` and `POST /api/transfers/internal/authorizations`, the only
+place on the transfer path that spends a PIN attempt.
 
-_Noted 2026-09-06: the same three codes, at the same statuses and with the same uniformity, are
-what `DELETE /api/accounts/{id}` answers since ADR-0049 — with one placement difference that ADR
-records as a decision: its two 422 guards sit AHEAD of the `AUTHORIZATION_REQUIRED` check, because
-they reveal only the caller's own account state and a real-stack contract test pins the headerless
-422._
+## Rejected
 
-_Noted 2026-09-07
-([ADR-0050](0050-a-utc-day-bounds-a-users-external-transfers-and-the-mint-says-so-before-the-pin.md)):
-the external-transfer MINT now answers a non-PIN 422 — `DAILY_LIMIT_EXCEEDED` — ahead of the
-PIN, on the rung ADR-0049 D4 established: a guard that reveals only the caller's own state (here,
-their own day's ledger) runs before `IPinVerifier` spends an attempt, so an over-limit mint with a
-wrong PIN is 422, not 401, and costs nothing. On the transfer itself the daily check sits AFTER
-`AUTHORIZATION_REQUIRED` and the payee resolution, so the enumeration argument below — a caller
-holding no second factor cannot ask the endpoint which handles exist — is intact.
-`[ProducesResponseType(422)]` was removed from `AuthoriseTransfer` for the reason ADR-0049's row
-14 recorded: it outranked the document transformer and published a bare reason phrase. Withdraw's
-convergence, "Not done" below, is still its own task; ADR-0050 counts no withdrawal._
+- Rejected: a non-nullable header parameter, because the promised 401 becomes a model-state 400.
+- Rejected: the in-body PIN beside the header as an end state, because the weaker proof decides.
 
 ## Consequences
 
-**Shipped here (PR 1, backend only).** The entity and its migration, the two mint endpoints, the
-header, validation and consumption in both transfer paths, and fourteen tests including a SQL-Server
-concurrency proof that eight simultaneous transfers presenting one authorisation move money exactly
-once.
+- The rail also carries an account closure (ADR-0049) and a withdrawal (ADR-0056) on the same `v1|`
+  payload; `v2|` arrives with the first operation that needs a field the payload does not have.
+- A closure answers the same three codes, with its two 422 guards ahead of `AUTHORIZATION_REQUIRED`;
+  it stores no response to replay, so its check sits in `AccountService` only because the service
+  owns the action, and it consumes with a null `ConsumedByTransactionId` (ADR-0049).
+- The external-transfer mint answers `422 DAILY_LIMIT_EXCEEDED` ahead of the PIN, at no cost in
+  attempts; on the transfer the daily check comes after `AUTHORIZATION_REQUIRED` and the payee
+  resolution, so decision 8's argument is intact (ADR-0050).
+- The audit row a consumed authorisation buys names it, under the chain's hash, and the
+  authorisation's `ConsumedByTransactionId` names the transfer's outgoing ledger row (ADR-0044).
+- Not covered: the PIN is not a one-time code. That needs a second channel, which does not exist.
+- Not covered: nothing sweeps the table by age: its rows are the PSD2 Art. 72 evidence, and
+  retention is a later decision with its own index. Only a demo copy's rows leave, with the copy
+  (ADR-0062).
 
-**Additive at first, then flipped.** The mechanism shipped with the header OPTIONAL: the in-band PIN
-of ADR-0041 was still verified on every transfer, so nothing was weaker whether or not a client sent
-one. That was right for one PR and wrong as an end state — while both proofs are accepted the weaker
-one decides, and six static digits authorising any amount to any payee is the finding this ADR opens
-with. The flip removed `TransferRequest.Pin` and `InternalTransferRequest.Pin`, made the header
-required, and refuses a transfer presenting none with `401 AUTHORIZATION_REQUIRED`.
+## Verified by
 
-Three things about the flip are worth keeping, because each was measured rather than reasoned:
+- `StepUpAuthorizationTests`: `Replay_OfACompletedTransfer_SucceedsEvenWithAnExpiredAuthorisation`
+  is decision 2 in falsifiable form.
+- `StepUpConcurrencySqlServerTests`: eight transfers presenting one authorisation move money once.
 
-- The refusal sits at the rung the PIN check occupied — after the source account's ownership 404 and
-  BEFORE the payee is resolved. That placement is not tidiness: it is what stops a caller holding no
-  second factor from asking the endpoint which handles exist, one 404 at a time. The deleted check
-  was providing that property silently.
-- The parameter stays `Guid?`. An EMPTY header binds to `null` exactly like an absent one, so both
-  reach the same 401, while a value that is not a UUID is still refused `400` by model binding
-  upstream. Making it non-nullable would have bought a `required: true` in the document at the price
-  of replacing the promised 401 with a model-state 400 carrying no `errorCode`.
-- Because the parameter is nullable, the generator published the header as OPTIONAL — a contract
-  narrower than the code, which regenerating could not detect since the spec and the generated
-  artefacts agreed with each other. `StepUpAuthorizationOperationTransformer` marks it required,
-  following the mechanism `[RequireIdempotency]` already used.
+## Related
 
-`422 PIN_REQUIRED` and `429 PIN_LOCKED` left both transfer endpoints with the PIN. They live on the
-mint now, which is the only place on this path that can spend an attempt.
-
-**Not done, and not pretended otherwise.** Withdraw keeps its in-body PIN with the same weakness and
-should follow this route as its own task. Nothing sweeps the table — rows are the Art. 72 evidence B3
-assembles, so a retention policy is a later decision that brings its own index.
-*(Amended 2026-10-03, [ADR-0062](0062-demo-visitors-get-private-copies-from-a-prepared-pool.md):
-one statement deletes from it, and only a demo copy's rows. The Seeder's recycler removes the
-authorisations of a copy's users, by `UserId`, in the transaction that deletes the copy. Nothing
-sweeps the table by age, and no row of a user outside every demo copy is reachable from that
-statement. The copy's ledger leaves in the same transaction, so the evidence of a copy's transfer
-leaves too: `evidence` answers `NOT ASSEMBLED` for its number and exits 4, while the audit row that
-names both the transfer and the authorisation stays.)*
-
-_2026-09-14: the audit row a consumed authorisation buys now names it. `AuditDetails` writes
-`{"authorizationId":"<id>"}` into the `Detail` of `MoneyTransferred`, `MoneyTransferredInternally`
-and `AccountDeleted`, so the binding lives under the chain's hash and not only in this table's
-`ConsumedByTransactionId`. The rows are still the Art. 72 evidence and are still not swept; what
-changed is that sweeping or re-pointing a transfer's row, for transfers written since this date, is
-now something the evidence pack can see and name (ADR-0044, second-factor note of the same date); a
-closure still has no `evidence` verb (ADR-0049), so its row is looked up by the id its
-`AccountDeleted` row now names. Withdraw's in-body PIN is untouched here._
-
-_Generalised 2026-09-06 by [ADR-0049](0049-closing-an-account-is-authorised-like-a-transfer.md).
-The rail built here for transfers now carries its first operation that moves no money: closing an
-account. What that cost, and what it did not: `ConsumeAsync`'s `consumedByTransactionId` became
-`Guid?` — the column always was — and a closure passes `null`, because a deletion produces no
-ledger row and a value that is not a movement id would lie to the evidence pack's join; the transfer
-call sites still pass the outgoing transaction id. No field, no `v2|`, no migration, no new column.
-The "Not done" above is unchanged: withdraw still carries its in-body PIN._
+ADR-0009, ADR-0010, ADR-0015, ADR-0041, ADR-0044, ADR-0049, ADR-0050, ADR-0056, ADR-0062.

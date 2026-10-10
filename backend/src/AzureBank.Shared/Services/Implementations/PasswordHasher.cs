@@ -14,11 +14,8 @@ namespace AzureBank.Shared.Services.Implementations;
 ///    - Salt: 16 bytes (128 bits)
 ///    - Hash: 32 bytes (256 bits)
 ///
-/// Until 2026-09-17 this summary described a second, "PASSWORD" profile (64 MB, 3 iterations,
-/// "Use for: General password hashing, sensitive data") behind <c>HashPassword</c> and
-/// <c>VerifyPassword</c>. Nothing but the unit tests called it: account passwords are hashed
-/// by ASP.NET Core Identity's PBKDF2 (ADR-0003's correction), so the profile was deleted with its
-/// tests.
+/// Account passwords are not hashed here: ASP.NET Core Identity's PBKDF2 hashes them (ADR-0003's
+/// correction).
 ///
 /// PIN PEPPER (ADR-0011): when a pepper is configured, PIN hashing/verification
 /// additionally mixes in a server-side secret — Argon2id's RFC 9106 secret value
@@ -27,8 +24,7 @@ namespace AzureBank.Shared.Services.Implementations;
 /// hashes are stamped with a <c>keyid=N</c> parameter so verification is
 /// self-describing: a hash carrying a keyid is verified WITH the matching pepper;
 /// a hash without one is a legacy (un-peppered) hash verified WITHOUT a pepper and
-/// upgraded on next use (see <see cref="PinNeedsRehash"/>). Account passwords never
-/// reach this hasher.
+/// upgraded on next use (see <see cref="PinNeedsRehash"/>).
 ///
 /// References:
 /// - OWASP Password Storage Cheat Sheet (2024)

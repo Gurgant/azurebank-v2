@@ -1,100 +1,74 @@
 # ADR-0020: On-demand account-number reveal (masked-by-default + PIN-gated `/full-number`)
 
-**Status**: Accepted
-
-**Date**: 2026-07-21
-
-**Decision Makers**: Vladislav Aleshaev
-
----
+**Status:** Accepted · **Date:** 2026-07-21 · **Amended:** 2026-08-13 (the reading of PSD2), and
+by ADR-0038 · **Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
-`AccountMapper` masks account numbers **server-side** (`AB-1234-5678-90` →
-`AB-****-****-90`) on every account DTO, so before this ADR the full number never left
-the backend on any endpoint — which also meant the owner could never see or copy their
-own account number. An account number exists to be shared (it is how money reaches the
-account), so a permanently invisible number is a functional hole, not a security win.
-
-The architecture had already reserved the answer: the BFF's `AuthLevelMiddleware` gates
-`/api/accounts/*/full-number` at auth level 2 (PIN) — but the API endpoint did not exist.
-
-What the standards actually say, verified against primary sources:
-
-- **PCI-DSS masking (first6/last4) applies to card PANs only** — the PCI SSC FAQ puts
-  bank account numbers, sort codes and routing numbers out of scope.
-- **PSD2 art. 4(32)** explicitly states the account owner's name and account number *do
-  not constitute sensitive payment data*.
-  > **Correction (2026-08-13, review of PR #105).** The sentence above is left as written, per this
-  > repo's convention that an ADR records what it got wrong rather than being edited to look right.
-  > It is overstated: Art. 4(32)'s exclusion applies **to the activities of payment-initiation and
-  > account-information service providers**, which this app is not — so it is not the general
-  > exclusion the bullet reads as. The same overstatement was repeated in ADR-0041 and in a BFF code
-  > comment; both now carry the qualifier. Nothing about this ADR's DECISION changes — the reveal
-  > treatment was argued from PCI scope and neobank practice as well — but this clause was doing
-  > more work than the article supports.
-- **Neobank practice** (Monzo, Revolut, Wise, Starling): account numbers/IBANs are shown
-  **in full** on an account-details screen with copy/share affordances, no re-auth. The
-  eye-button + re-auth + timed-rehide treatment is what banks reserve for **card
-  PAN/CVV** (Revolut "security check", Chase Face-ID + timed rehide).
+`AccountMapper` masks account numbers server-side (`AB-1234-5678-90` → `AB-****-****-90`) on every
+account DTO, so before this decision the full number left the backend on no endpoint and the
+account's owner could never see or copy it. An account number exists to be shared: it is how money
+reaches the account. PCI-DSS masking (first6/last4) applies to card PANs only; the PCI SSC FAQ puts
+bank account numbers out of scope. PSD2 Art. 4(32) takes the account number out of sensitive
+payment data only for payment-initiation and account-information providers, which this app is not.
+Neobanks (Monzo, Revolut, Wise, Starling) show the number in full with no re-authentication, and
+keep the eye button, re-authentication and timed re-hide for card PAN and CVV.
 
 ## Decision
 
-Keep **masked-by-default everywhere**, and expose the full number only through a
-dedicated, audited, step-up-gated reveal endpoint — deliberately applying the
-card-details-grade pattern to an account number (stricter than industry norm, chosen as
-a portfolio demonstration of the mechanism):
+The number stays masked by default everywhere, and the full number is exposed only through a
+dedicated, audited, step-up-gated endpoint: the card-details-grade pattern applied to an account
+number, stricter than the industry norm, chosen to demonstrate the mechanism.
 
-1. **`GET /api/accounts/{id:guid}/full-number`** — the path is **load-bearing**: it is
-   the exact suffix the BFF middleware already gates; any other spelling would silently
-   bypass step-up. Returns `ApiResponse<AccountNumberResponse>` (`accountId` +
-   unmasked `accountNumber`), a dedicated DTO so the unmasked value is a
-   self-describing shape no generic mapping can adopt by accident (ASVS 14.2.6 data
-   minimization stays the default).
-2. **Ownership + step-up**: the service reuses the central
-   `GetAccountWithOwnershipCheckAsync` (404/403 like every sibling); PIN level 2 is
-   enforced by the BFF `AuthLevelMiddleware` (`Security:PinValidityMinutes`, default 5 —
-   the dev example config uses 10; `verify-pin` to elevate) — ASVS 3.7.1.
-3. **Audit without the value** (ASVS 8.3.5): `SecurityEvent AccountNumberRevealed` logs
-   user + account **Guids only**. PII redaction in this codebase is opt-in per call
-   site, so the number must never enter the logging pipeline at all. The event fires
-   only when the value is actually returned — denied attempts surface through the
-   exception pipeline instead.
-4. **`Cache-Control: no-store` + `Pragma: no-cache`** on the response (ASVS 14.3.2);
-   YARP forwards response headers untouched, so the BFF needs nothing.
-5. **Middleware hardening**: gate matching now normalizes trailing slashes. Endpoint
-   routing tolerates `/full-number/` (and `/api/transfers/`), so the previous raw
-   suffix/exact match was a **step-up bypass**; `AuthLevelMiddlewareTests` — the
-   middleware's first test suite — pins the 403 short-circuit (backend provably never
-   called), the trailing-slash variants, the post-PIN pass-through, and PIN expiry.
+1. **`GET /api/accounts/{id:guid}/full-number`**: the path is load-bearing, because it is the exact
+   suffix the BFF middleware gates and any other spelling would silently bypass step-up. It
+   returns `ApiResponse<AccountNumberResponse>` (`accountId` and the unmasked `accountNumber`), a
+   dedicated DTO, so that no generic mapping can adopt the unmasked value by accident (ASVS 14.2.6).
+2. **Ownership and step-up**: the service reuses the central `GetAccountWithOwnershipCheckAsync`
+   (404 and 403 like every sibling), and PIN level 2 is enforced by the BFF's `AuthLevelMiddleware`
+   (`Security:PinValidityMinutes`, default 5; `verify-pin` elevates), per ASVS 3.7.1.
+3. **Audit without the value** (ASVS 8.3.5): the security event `AccountNumberRevealed` logs the
+   user's and the account's Guids only, because PII redaction is opt-in per call site, so the
+   number must never enter the logging pipeline. The event fires only when the value is returned;
+   a denied attempt surfaces through the exception pipeline.
+4. **`Cache-Control: no-store` and `Pragma: no-cache`** on the response (ASVS 14.3.2); YARP
+   forwards response headers untouched, so the BFF adds nothing.
+5. **The gate matches the path with trailing slashes normalised**, because endpoint routing
+   tolerates `/full-number/` and a raw suffix match was a step-up bypass.
+6. **In the SPA, `AccountNumberField` shows the masked number with an eye button.** It calls
+   `revealAccountNumber`, an RTK Query mutation although the request is a GET, so that the value
+   is never cached and never retried automatically. The mutation rides `baseQueryWithStepUp`: an
+   un-elevated reveal answers 403 and drives the shared PIN modal, which replays the request, so
+   the component carries no step-up logic. The unmasked value lives in transient component state
+   only (ASVS 14.3.1), is `reset()` out of the RTK Query store the instant it is captured, and is
+   hidden again after 20 s or on unmount. Copy-to-clipboard, with a `role="status"` "Copied"
+   confirmation, is the primary affordance; the eye button carries `aria-pressed` and a
+   per-account `aria-label`. A cancelled PIN step-up leaves the number masked and shows no error.
 
-6. **Frontend consumption (eye button) — implemented (PR-R2).** An `AccountNumberField`
-   component replaces the masked `<Text>` in each account card. It calls `revealAccountNumber`,
-   an RTK Query **mutation** (never cached, never auto-retried; a GET request with mutation
-   semantics so the value never enters the query cache). Because the mutation rides the slice-wide
-   `baseQueryWithStepUp`, an un-elevated reveal 403s and drives the shared PIN modal, which
-   replays the request on elevation — the component carries no step-up logic. The unmasked value
-   lives in **transient component state only** (ASVS 14.3.1) and is `reset()` out of the RTK Query
-   store the instant it is captured; it **auto-rehides** after a 20s timer or on unmount
-   (navigation). A **copy-to-clipboard** button (with a `role="status"` "Copied" confirmation) is
-   the primary affordance, and the eye button carries **`aria-pressed`** toggle semantics with a
-   per-account `aria-label`. A cancelled PIN step-up is a benign no-op (stays masked, no error).
+## Rejected
+
+- Rejected: the number in full on the account screen with no re-authentication, the neobank norm,
+  because the stricter pattern is the mechanism this project sets out to demonstrate.
+- Rejected: a level claim in the token, which would let the API enforce the level itself, because
+  it is deliberately out of scope here.
 
 ## Consequences
 
-- The owner can finally retrieve their real account number; every list/detail read stays
-  masked.
-- **Dual-mode caveat (accepted)**: when the API is called directly with a JWT (Swagger /
-  dev mode), the endpoint is protected by JWT + ownership only — the auth level lives in
-  the BFF session and the JWT carries no level claim. This matches the existing posture
-  for transfers (ADR-0018/0019); closing it would require a level claim in the token and
-  is deliberately out of scope. **That remains accepted, and is now the whole of it.**
-  What this caveat did NOT cover — and what the sentence above it assumed was already
-  true — is the same bypass reached THROUGH the BFF: a caller could present a
-  self-obtained token as `Authorization: Bearer …` on the proxied path with no session
-  cookie, and the step-up gate fell through rather than refusing. Measured, then closed
-  by [ADR-0038](0038-bff-session-is-the-only-credential.md).
-- The reveal is rate-limited only by the BFF global limiter (300/min/IP) — acceptable for
-  an owner-only, non-enumerable resource (Guid ids, ownership-checked).
-- The OpenAPI spec grows to 19 paths; `schema.d.ts` regenerated. The FE gained
-  `AccountNumberResponse`, now consumed by the eye button (PR-R2).
+- The account's owner can retrieve the real number; every list and detail read stays masked.
+- Not covered: called directly with a JWT, the API protects the endpoint with the token and the
+  ownership check only, because the level lives in the BFF session and the JWT carries no level
+  claim (ADR-0041 keeps the reveal on the session model; ADR-0055 refuses a caller that does not
+  hold the BFF's service credential). The same bypass through the BFF, a self-obtained bearer
+  token on the proxied path with no session cookie, is closed by ADR-0038.
+- Not covered: the reveal is rate-limited only by the BFF's global limiter (300 a minute per IP),
+  which is accepted for an owner-only resource that cannot be enumerated (Guid ids, ownership).
+
+## Verified by
+
+- `AuthLevelMiddlewareTests`: the 403 with the backend never called, trailing slashes, PIN expiry.
+- `AccountEndpointTests` (`FullNumber_ForOwner_ReturnsUnmaskedNumber_WithNoStore` and siblings).
+- `frontend/src/pages/account-reveal.test.tsx`: the eye button, the timer and the copy.
+
+## Related
+
+ADR-0008, ADR-0038, ADR-0041, ADR-0055.

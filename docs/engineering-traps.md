@@ -1,707 +1,388 @@
 # Engineering traps
 
-Things that **fail silently or ship green** and whose fix is not obvious from the failure. These
-are not decisions — there is nothing to weigh, and no alternative was considered. They are the
-sharp edges this codebase actually has, written down because each one cost real time to find and
-none of them announces itself.
+Things that **fail silently or ship green**, and whose fix is not obvious from the failure. They
+are not decisions: there was nothing to weigh. Each entry says what goes wrong, why nothing
+reports it, and what to do.
 
-Decisions live in [`docs/adr/`](adr/README.md). Frontend conventions live in
-[`frontend/CONVENTIONS.md`](../frontend/CONVENTIONS.md). This file is for the traps.
+Decisions are in [`docs/adr/`](adr/README.md). Frontend conventions, with the traps of testing
+Fluent under jsdom, are in [`frontend/CONVENTIONS.md`](../frontend/CONVENTIONS.md).
 
 ---
 
 ## Database and EF Core
 
 **An explicit transaction must run inside the execution strategy.** `EnableRetryOnFailure` is on,
-and a bare `BeginTransactionAsync` throws at runtime because a retrying strategy cannot own a
-transaction it did not open. Wrap it:
+and a bare `BeginTransactionAsync` throws at run time, with a message about execution strategies
+that reads as a configuration problem. Wrap it:
 
 ```csharp
 await _context.Database.CreateExecutionStrategy().ExecuteAsync(async () => { /* transaction here */ });
 ```
 
-The failure is a runtime exception with a message about execution strategies that reads as a
-configuration problem rather than a code-shape problem.
-
-**Migrations follow expand → migrate → contract.** Never add a column as non-nullable in one step
-against a populated table.
-
-**A uniqueness migration fails fast on pre-existing duplicates, and must never auto-deduplicate an
-identity table.** "Cleaning up" duplicates during a migration destroys user rows silently, and the
-rows are gone before anyone notices the migration succeeded. Failing the migration is the correct
-outcome: it forces a human to decide which row survives.
-
-**`WITH (ONLINE = ON)` is unavailable here.** Online index operations are edition- and
-version-dependent — newer SQL Server releases widened where they are supported — but the target
-that matters for local development is **LocalDB**, which runs the Express engine and does not
-support them at all. Index migrations run offline.
-
-**SQL Server only.** Provider-specific migration SQL is deliberate. Do not "make it portable": the
-portability would be untested, and the specificity is buying correctness the code relies on.
+- **Migrations follow expand → migrate → contract.** Never add a column as non-nullable in one
+  step against a populated table.
+- **A uniqueness migration fails on pre-existing duplicates, and never deduplicates an identity
+  table.** A clean-up inside a migration destroys user rows before anyone sees that it ran. A
+  failed migration makes a person decide which row survives.
+- **`WITH (ONLINE = ON)` is unavailable here.** LocalDB runs the Express engine, which has no
+  online index operations: index migrations run offline.
+- **SQL Server only.** Provider-specific migration SQL is deliberate: portability would be
+  untested, and the code relies on what the specific SQL guarantees.
 
 ## Validation and DTOs
 
-**Normalise and trim in the DTO setter, not in the service.** FluentValidation runs against the DTO
-as bound, so a service-side trim means the validator inspects the raw value and the stored value is
-a different string from the validated one.
-
-**Do not add `required` members to DTOs that cross the BFF boundary.** The BFF deserializes API
-responses, and a newly-`required` member hard-fails that hop the moment the API is one version
-ahead — an error that surfaces as a broken BFF, not as a contract change.
+- **Normalise and trim in the DTO setter, not in the service.** FluentValidation runs against the
+  DTO as bound: with a trim in the service, the validator inspects one string and another is
+  stored.
+- **Do not add a `required` member to a DTO that crosses the BFF boundary.** The BFF deserializes
+  API responses, and a newly `required` member fails that hop as soon as the two hosts are a
+  version apart: it surfaces as a broken BFF, not as a contract change.
 
 ## Transactions and money
 
-**Transactions are immutable and `CreatedAt` is server-stamped.** A test that wants a row at a
-particular time cannot write one: it must **move the window**, not the data. Tests that try to set
-`CreatedAt` silently get the server's value and then assert against a fiction.
-
-**Money aggregates are computed in SQL, count `Completed` only, and use unsigned amounts** with the
-direction carried by `Type`. Summing signed amounts client-side gives a different — wrong — answer.
-
-**The client sends `fromDate` only.** The server defaults `toDate` to _now_ per request, which is
-what lets a tag-invalidated refetch include the very mutation that triggered it. Sending an explicit
-`toDate` from the client freezes the window at render time and the new transaction disappears from
-the summary until the next reload.
+- **Transactions are immutable and `CreatedAt` is server-stamped.** A test that sets `CreatedAt`
+  gets the server's value and asserts against a fiction: to place a row in time, move the
+  window, not the data.
+- **Money aggregates are computed in SQL, count `Completed` only, and use unsigned amounts**, with
+  the direction carried by `Type`. Summing signed amounts on the client gives a wrong answer.
+- **The client sends `fromDate` only.** The server defaults `toDate` to now at each request, so a
+  refetch after a mutation includes that mutation. A `toDate` sent by the client freezes the
+  window at render time, and the new transaction is missing from the summary until a reload.
 
 ## Local development
 
-**The seeder needs `DOTNET_ENVIRONMENT=Development`.** It is a console Generic Host, so it defaults
-to Production, its user-secrets do not load, and it exits 2 with `reset refused: there is no
-connection string. Set ConnectionStrings__DefaultConnection.` — a message that points at
-configuration rather than at the missing environment variable. Note that
-`ASPNETCORE_ENVIRONMENT` does **not** work here; the Generic Host reads the `DOTNET_` prefix.
-
-**Run the API on the `https` profile (7215).** The BFF's proxy cluster points there, so starting the
-API on `http`/5068 produces a BFF that builds, starts, and fails every proxied call.
-
-**Start the API and the BFF sequentially the first time.** Two parallel first builds race on
-`AzureBank.Shared.dll` and fail with a file lock (CS2012) that looks like a corrupted build.
-
-**A running BFF locks `AzureBank.Bff.exe`, and the build failure blames the wrong thing.** Building
-the solution while the BFF is up fails with MSB3027/MSB3021 — "could not copy … the file is locked"
-— which reads like a corrupted output directory and invites a `clean`. Stop the BFF first. This bites
-hardest when the stack is up for a live measurement and the next step is a rebuild.
-
-**`sqlcmd` WRITES against `AspNetUsers` need `-I`; reads do not.** Without it, every write fails
-with *"SET options have incorrect settings: 'QUOTED_IDENTIFIER'"* and a long list of possible
-causes. The actual cause is the filtered index on the table, and the fix is the one flag. Reads
-succeed in the same session, which is what makes it confusing — it looks like a permissions or
-connection problem rather than a session option. Measured on a scratch table carrying one filtered
-index, so the split is observed rather than assumed:
-
-| without `-I` | result |
-| ------------ | ------ |
-| `SELECT` | succeeds |
-| `INSERT` / `UPDATE` / `DELETE` | all fail, Msg 1934 |
-
-`RefreshTokens` carries a filtered index of its own, and the same holds there. Measured against
-LocalDB on 2026-09-28, inside transactions that were rolled back: without `-I` the UPDATEs that
-the PIN runbook and the refresh-token reuse runbook run by hand, on `AspNetUsers` and on
-`RefreshTokens`, fail with Msg 1934; with it they run.
-
-**`DangerousAcceptAnyServerCertificate` belongs only in `appsettings.Development.json`.** It must
-never appear in the base file. Be aware that stale `bin/Release` artifacts can still carry it and be
-mistaken for evidence that it was configured in the base file — check the source, not the output.
-
-**The `Access-Control-Allow-Origin` header you see in dev comes from Vite, not from this
-application.** Neither service emits it — measured directly, with the Origin header set:
-
-| Response from                                   | `Access-Control-Allow-Origin` |
-| ----------------------------------------------- | ----------------------------- |
-| BFF on `:5000`                                  | absent                        |
-| API on `:7215`                                  | absent                        |
-| the same call through the Vite proxy on `:5173` | **present**                   |
-
-This matters because "no CORS anywhere" is a load-bearing claim: the topology is same-origin, so
-there is no cross-origin grant to misconfigure, and cross-site state-changing requests are rejected
-by Fetch-Metadata on top of `SameSite=Strict`. Reading the dev network tab and concluding the app
-has CORS configured is the wrong conclusion from real evidence — check against `:5000` or `:7215`
-directly before acting on it.
+- **The seeder needs `DOTNET_ENVIRONMENT=Development`.** It is a console Generic Host: without
+  the variable it runs as Production, its user-secrets do not load, and it exits 2 with `reset
+  refused: there is no connection string. Set ConnectionStrings__DefaultConnection. Nothing was
+  opened.` `ASPNETCORE_ENVIRONMENT` does not work: the Generic Host reads the `DOTNET_` prefix.
+- **Run the API on the `https` profile (7215).** The BFF's proxy cluster points there: with the
+  API on the `http` profile, 5068 only, the BFF starts and fails every proxied call.
+- **Start the API and the BFF one after the other the first time.** Two parallel first builds
+  race on `AzureBank.Shared.dll` and fail with a file lock (CS2012).
+- **A running BFF locks `AzureBank.Bff.exe`.** A build of the solution then fails with
+  MSB3027/MSB3021, "could not copy … the file is locked", which reads like a corrupted output
+  directory and invites a `clean`. Stop the BFF first.
+- **`sqlcmd` writes against `AspNetUsers` and `RefreshTokens` need `-I`; reads do not.** Without
+  the flag every `INSERT`, `UPDATE` and `DELETE` fails with Msg 1934, "SET options have incorrect
+  settings: 'QUOTED_IDENTIFIER'". The cause is the filtered index each table carries. A `SELECT`
+  succeeds in the same session, which makes it look like a permissions problem.
+- **`DangerousAcceptAnyServerCertificate` belongs only in `appsettings.Development.json`**, never
+  in the base file. A stale `bin/Release` output can still carry it: check the source.
+- **The `Access-Control-Allow-Origin` header seen in development comes from Vite.** A response
+  from the BFF on `:5000` or from the API on `:7215` has none, and the same call through the Vite
+  proxy on `:5173` has one. The application has no CORS: the topology is same-origin, and
+  cross-site state-changing requests are rejected by Fetch-Metadata on top of `SameSite=Strict`.
 
 ## Frontend test infrastructure
 
-**The frontend type gate is `npm run build` (`tsc -b`), not `tsc --noEmit`.** The root tsconfig is
-solution-style, so `--noEmit` skips project references and misses errors the build catches. This has
-already shipped a red CI once: a stale barrel re-export passed locally and failed on push.
+**The frontend type gate is `npm run build` (`tsc -b`), not `tsc --noEmit`.** The root tsconfig
+is solution-style, so `--noEmit` skips the project references and misses errors the build
+catches.
 
-**Run the whole solution's tests: `dotnet test AzureBank.slnx`.** Narrowing it with a filter has
-two distinct failure modes, both verified on this solution:
+**Run the whole solution's tests: `dotnet test AzureBank.slnx`**, from `backend/`. A filter that
+reads as "the AzureBank test projects" fails in two ways:
 
-- **`--filter ~AzureBank.Tests` is malformed.** The condition needs a property name; without one
-  the discoverer throws `Invalid Condition` and dotnet itself warns that _"the incorrect format can
-  lead to no test getting executed"_. A run that executes nothing is not a run that passed.
-- **`--filter FullyQualifiedName~AzureBank.Tests` is well-formed and still wrong.** It selects
-  **590 of 651** tests — the match is a substring of the fully-qualified name, and BFF tests are
-  namespaced `AzureBank.Bff.Tests.*`, which does not contain `AzureBank.Tests`. All 61 BFF tests
-  are excluded and the run reports success.
+- **`--filter ~AzureBank.Tests` is malformed.** The condition needs a property name. The
+  discoverer throws `Invalid Condition`, and dotnet warns that "the incorrect format can lead to
+  no test getting executed". A run that executes nothing has not passed.
+- **`--filter FullyQualifiedName~AzureBank.Tests` is well formed and still wrong.** The match is
+  a substring of the fully-qualified name, the BFF's tests are namespaced `AzureBank.Bff.Tests`,
+  and the run leaves all of them out and reports success.
 
-The trap in both cases is that the filter reads as "the AzureBank test projects" and means
-"fully-qualified names containing this substring". Name the solution instead.
-
-**Vitest's default reporter prints console output only for FAILING tests, so a passing test can
-write to `console.error` forever and no gate will ever show it.** This is the trap that hid every
-other one in this section: measured on `d6ea72e` with `--reporter=verbose`, the suite emitted
-**3,074** React `act(...)` warnings across 21 tests while `npm test` and CI both reported a clean
-584-passing run. React uses that same channel for invalid props, bad keys, and anything an error
-boundary catches — all of it equally invisible.
-
-Reading the logs harder is not the fix, because there were no logs to read. `src/test/setup.ts` now
-records `console.error` per test and **fails** the test that wrote to it. A test that provokes a
-logged error on purpose stubs it — `vi.spyOn(console, 'error').mockImplementation(() => {})` — which
-is what `AppErrorBoundary.test.tsx` and `RouteError.test.tsx` already did.
-
-Two ordering rules make that gate safe, and both were learned by getting them wrong:
-
-- **A throwing `afterEach` must be registered FIRST, because vitest's default `sequence.hooks` is
-  `stack` — `afterEach` runs in REVERSE registration order.** Registering last runs it _first_,
-  which is the opposite of how it reads. Measured, after getting it backwards: instrumenting both
-  of `setup.ts`'s hooks printed `file-hook → setup:assertion → setup:teardown` while the assertion
-  was registered last. It matters because a throwing hook skips the ones still to run, so the wrong
-  order lets a failing test skip the whole teardown — MSW handlers, mock state, the session and
-  step-up mirrors, the viewport — and hand all of it to the next test.
-  `src/test/hook-order.test.ts` pins the ordering so setting `sequence.hooks: 'list'` cannot flip
-  it silently.
-- **Unmount explicitly, first.** Every reset in `setup.ts` depends on nothing being mounted:
-  `resetMediaEnvironment()` notifies live `MediaQueryList`s, `useMediaQuery` subscribes through
-  `useSyncExternalStore`, and a re-render from teardown lands outside `act(...)`. Testing Library's
-  auto-cleanup happens to run first under `stack`, but that is a property of a default the file does
-  not control, so `setup.ts` calls `cleanup()` itself. It is idempotent; the later auto-cleanup
-  becomes a no-op.
+**Vitest's default reporter prints console output only for failing tests**, so a passing test can
+write to `console.error` and no gate shows it: React's `act(...)` warnings, invalid props,
+anything an error boundary catches. `src/test/setup.ts` fails the test that wrote to it, and a
+test that provokes a logged error on purpose stubs it:
+`vi.spyOn(console, 'error').mockImplementation(() => {})`. That assertion's `afterEach` is
+registered first (`src/test/hook-order.test.ts`): Vitest runs `afterEach` hooks in reverse
+registration order, and a throwing hook skips the ones still to run, the teardown among them.
 
 **`vi.advanceTimersByTimeAsync` is not act-aware.** A component ticking on `setInterval` gets one
-un-acted `setState` per tick advanced — a 61-second advance against a 1-second tick is 61 of them,
-times every component that re-renders. Wrap the advance, not the assertion:
-`await act(async () => { await vi.advanceTimersByTimeAsync(ms) })`. `waitFor` and `userEvent` need
-no wrapper; Testing Library's async wrapper already suspends the act environment for their duration.
-
-The remaining frontend testing traps — Fluent and jsdom behaviour — live in
-[`frontend/CONVENTIONS.md`](../frontend/CONVENTIONS.md), next to the conventions they constrain.
+un-acted `setState` for each tick advanced. Wrap the advance, not the assertion:
+`await act(async () => { await vi.advanceTimersByTimeAsync(ms) })`. `waitFor` and `userEvent`
+need no wrapper.
 
 ## Tooling
 
 **A browser tab that is hidden cannot be used to judge this application.** In a hidden tab
 `requestAnimationFrame` never fires and React 19 freezes partway through a passive update: the
-network response arrives with a 200 and the spinner spins forever. That is the hidden tab, and it
-must never be written up as an application bug. Drive a browser whose tab is visible instead, and
-when anything looks hung, check the network tab and the DOM before believing it.
+response arrives with a 200 and the spinner spins for ever. Drive a browser whose tab is visible,
+and when anything looks hung, check the network tab and the DOM before calling it a bug.
 
 ## MSW mocks
 
-**A block comment cannot quote the glob `*` + `/api/*`.** The `*` followed by `/` in the middle of
-it closes the comment, and everything after becomes code. Documenting `handlers.ts`'s catch-all did
-exactly that: it left a live `api;` expression statement in the file and rewrote the docblock to
-quote a pattern that does not exist. It compiled, the build passed and all tests passed — only
-eslint's `no-unused-expressions` noticed. Describe the glob in prose, or put it in a `//` line
-comment.
-
-**A catch-all that returns `undefined` disables `onUnhandledRequest`.** `sessionActivity` is
-registered over every `/api` path so it can expire the session, and it returns `undefined` to fall
-through to the real handler. MSW counts that as a MATCH, so a route with NO handler is "handled" —
-`onUnhandledRequest: 'error'` never fires and the request escapes to the network. Measured: an
-unmocked `/api` path throws a bare `fetch failed` in vitest, indistinguishable from an outage, and
-in `dev:mock` it reaches Vite and dies on an HTML parse error. Two real API routes stayed unmocked
-for months behind exported hooks because of it. A sentinel handler registered LAST answers
-`501 MOCK_HANDLER_MISSING` and names the route.
-
-**A measurement quoted in a mock comment is dated evidence, not a contract.** `sessionActivity`
-carried a table "Measured 2026-08-05" in which a cookie that no longer resolved met a 403 step-up
-on the level-2 routes, and `fidelity.test.ts` pinned the mock to that quote — so the pair stayed
-green for three and a half weeks after ADR-0038 (2026-08-10) put the BFF's no-session 401 before
-its level-2 check, ADR-0041 (2026-08-13) emptied the transfer gate, and d74603c (2026-08-20)
-widened the session check to every `/api` path. Under MSW a session that died mid-transfer opened
-the PIN modal; in production the same moment is the sign-out. A quoted number proves the mock
-matched the stack ON THAT DAY; only a case that runs against the real target
-(`test:contract:real`) proves it still does. When an ADR moves a gate, grep the mock for the old
-table before trusting any test that cites it.
+- **A block comment cannot quote the glob `*` + `/api/*`.** The `*` followed by `/` closes the
+  comment, and what follows becomes code. It compiled, built and passed every test: only eslint's
+  `no-unused-expressions` noticed. Describe the glob in prose, or put it in a `//` line comment.
+- **A catch-all that returns `undefined` disables `onUnhandledRequest`.** `sessionActivity` is
+  registered over every `/api` path and returns `undefined` to fall through to the real handler.
+  MSW counts that as a match, so a route with no handler is "handled": `onUnhandledRequest:
+  'error'` never fires, and the request escapes to the network as a bare `fetch failed`. A
+  sentinel handler registered last answers `501 MOCK_HANDLER_MISSING` and names the route.
+- **A measurement quoted in a mock's comment is dated evidence, not a contract.** A mock that a
+  test holds to a table measured on one day stays green after the real gate moves. Only a case
+  that runs against the real target (`npm run test:contract:real`) proves that the mock still
+  matches. When a decision moves a gate, grep the mock for the old table.
 
 ## jsdom
 
-**jsdom's missing layout is a wrong answer, not a missing API — and Fluent's focus trap reads it.**
-Every element reports `offsetParent === null` and a 0x0 `getBoundingClientRect()`, which is exactly
-what a real browser reports for an element that is not rendered. tabster's `isDisplayNone()` starts
-with that check, so it concludes an open Fluent dialog contains nothing focusable; Fluent's
-`useFocusFirstElement` falls through to `resetFocus(surface)`, which focuses without the programmatic
-flag, so `ModalizerAPI` never marks the dialog active. Its debounced `hiddenUpdate()`
-(`setTimeout(…, 250)`) then runs, decides this modalizer is not the active one, and puts
-`aria-hidden="true"` on the OPEN dialog's own surface. Nothing removes it.
+**jsdom's missing layout is a wrong answer, not a missing API, and Fluent's focus trap reads it.**
+Every element reports `offsetParent === null` and a 0x0 `getBoundingClientRect()`, as a browser
+does for an element that is not rendered. tabster concludes that an open Fluent dialog holds
+nothing focusable, and 250 ms later puts `aria-hidden="true"` on the dialog's own surface. The
+symptom is a `findByRole(role, { name })` that cannot see a control while `getByText` still can,
+and it looks like a flake. `{ hidden: true }` or a text query silences it and asserts something
+false. `src/test/layout.ts` supplies the two answers tabster reads, and its comment has the
+whole chain; `src/test/layout.test.tsx` fails if it is removed.
 
-The visible symptom is a `findByRole(role, { name })` that cannot see a control while `getByText`
-and `getByLabelText` still can — those never consult the accessibility tree. It presents as a flake
-because it is a race against 250ms: a query inside the window passes, one after it can never pass,
-and CPU contention pushes nearly everything past it. Four tests in three files failed this way,
-each of them the only in-dialog role query in its file.
-
-`{ hidden: true }` or a text query silences it and asserts something false. `src/test/layout.ts`
-supplies the two answers tabster actually reads; `src/test/layout.test.tsx` fails if it is removed.
-
-**Fixing it moves a second race into view, and that one is real.** With the modalizer activating
-properly, tabster does what a modal should: it aria-hides the page behind the dialog. Un-hiding on
-close goes through the same 250ms debounce, so for up to a quarter second after a dialog closes the
-page underneath is still outside the accessibility tree. A bare `getByRole` on the page immediately
-after closing a dialog therefore fails — measured 6 of 6 runs under load. Use `findBy*`: the state
-does settle, and waiting for it is what a user experiences.
+**With that fixed, a second race is real.** tabster hides the page behind an open dialog and
+un-hides it through the same 250 ms debounce after the dialog closes. A bare `getByRole` on the
+page straight after a dialog closes fails: use `findBy*`.
 
 ## An XML `<summary>` on a DTO property IS the published API contract
 
-`Swashbuckle`/OpenAPI lifts the XML doc comment of a request-DTO property into that property's
-`description` in `openapiv1.json` — **unless a validation attribute already supplies one**, in which
-case the attribute's message wins and the summary never reaches the wire.
+The OpenAPI generator lifts the XML doc comment of a request DTO's property into that property's
+`description` in `docs/api/openapiv1.json`, and from there into the generated frontend types,
+**unless a validation attribute already supplies one**: `[Pin]` on `SetPinRequest.Pin` does. A
+property with no such attribute publishes its whole summary: a first draft of
+`SetPinRequest.Password` put 1391 characters of internal history and an attack recipe into the
+public contract. Code comments call this "the T8 trap".
 
-That exception is why the trap stayed invisible. `Pin` and `CurrentPin` on `SetPinRequest` both
-carry `[Pin]`, whose message ("PIN must be exactly 6 digits.") becomes their description, so the
-long forensic histories in their summaries were masked by accident rather than by design. Add a
-property with **no** attribute and the whole summary ships.
-
-Measured on the T8 branch: a first draft of `SetPinRequest.Password` published **1391 characters**
-into `docs/api/openapiv1.json` and into the generated frontend types — internal engineering history,
-a commit SHA, and a step-by-step attack recipe against the product, in the public contract of a
-public repository. The other two descriptions over 200 characters in the whole spec are 557 and 453,
-both legitimate contract prose about refresh tokens.
-
-Two further wrinkles seen in the same output: consecutive `<para>` blocks concatenate with **no
-separator** (`…to ask for.Without it…`), and `<see cref="CurrentPin"/>` renders as the C# member
-(`string? SetPinRequest.CurrentPin`) rather than the JSON field a consumer sees — use `<c>currentPin</c>`.
-
-**Rule:** the `<summary>` of a DTO property is consumer-facing contract prose — one or two lines
-saying when the field is required and what it means. Everything else (why it exists, what it
-prevents, what was measured) goes in a plain `/* … */` comment, which the generator ignores. After
-touching a DTO, `node scripts/openapi-spec.mjs regen` and read the property's `description` back.
+**Rule:** the `<summary>` of a DTO property is contract prose for a consumer: one or two lines
+that say when the field is required and what it means. Everything else goes in a plain `/* … */`
+comment, which the generator ignores. In a summary, consecutive `<para>` blocks are joined with
+no separator, and `<see cref="CurrentPin"/>` renders as the C# member, not as the JSON field:
+use `<c>currentPin</c>`. After touching a DTO, regenerate the document
+([`docs/api/README.md`](api/README.md)) and read the property's `description` back.
 
 ## A `<param>` on a renamed `[FromHeader]` argument lands on the REQUEST BODY
 
-Same family as the DTO-summary trap above, and found the same way — by reading the regenerated
-document instead of trusting the source.
+`[FromHeader(Name = …)]` renames the OpenAPI parameter, here to `Step-Up-Authorization`, so a
+`<param name="stepUpAuthorizationId">` tag matches nothing. The generator does not drop the tag:
+it applies it to the `requestBody`, in place of that argument's own description, and leaves the
+header parameter with none. The compiler pushes towards it: documenting only `request` raises
+CS1573 ("has no matching param tag").
 
-`TransferController.Transfer` documented its new header argument the obvious way:
-
-```csharp
-/// <param name="request">Transfer details</param>
-/// <param name="stepUpAuthorizationId">Authorisation reference from the Step-Up-Authorization header</param>
-public async Task<…> Transfer(
-    [FromBody] TransferRequest request,
-    [FromHeader(Name = StepUpConstants.HeaderName)] Guid? stepUpAuthorizationId = null)
-```
-
-`[FromHeader(Name = …)]` renames the OpenAPI parameter to `Step-Up-Authorization`, so the
-`<param name="stepUpAuthorizationId">` tag matches **nothing**. Measured on #113: the generator did
-not drop it — it applied it to the **`requestBody`**, replacing `"Transfer details"` on both
-money-moving endpoints, and left the header parameter with no description at all. The published
-contract then described the body of a transfer as an authorisation reference.
-
-The compiler pushes you into this: documenting only `request` raises **CS1573** ("has no matching
-param tag"), so the natural fix is to add the second `<param>` — the one that breaks it.
-
-**Rule:** for any argument whose OpenAPI name differs from its C# name — every renamed
-`[FromHeader]`, `[FromQuery]` or `[FromRoute]` — describe it with
-`[Description("…")]` (`System.ComponentModel`) on the parameter, not with `<param>`. Do the same for
-the `[FromBody]` argument in the same signature, so no `<param>` tags remain to be mismatched. Then
-regenerate and **read the description back out of the JSON**, at both the `requestBody` and the
+**Rule:** describe every argument whose OpenAPI name differs from its C# name (a renamed
+`[FromHeader]`, `[FromQuery]` or `[FromRoute]`) with `[Description("…")]`
+(`System.ComponentModel`), and the `[FromBody]` argument of the same signature too. Then
+regenerate and read the description back out of the JSON, at the `requestBody` and at the
 `parameters` entry.
 
 ## A new `ValidateOnStart` option must be taught to five places, and the test suite is not one of them
 
-Adding `StepUp:BindingKey` with `.Validate(…).ValidateOnStart()` (ADR-0042) is correct — a missing
-HMAC key should stop startup, not surface as a 500 on the first transfer. But `ValidateOnStart`
-turns a missing value into a **startup crash**, and the whole test suite is blind to it because
-`CustomWebApplicationFactory` injects the value with `UseSetting`. #113 shipped 799 green tests and
-still broke two things nothing could catch:
+`.Validate(…).ValidateOnStart()` turns a missing value into a crash at startup, which is right
+for a secret such as `StepUp:BindingKey` (ADR-0042). The test suite cannot see a place that was
+missed, because `CustomWebApplicationFactory` injects the value with `UseSetting`: with every
+test green, CI's real-stack job failed with `OptionsValidationException: StepUp:BindingKey must
+be configured`. When adding a required option:
 
-- **`Real-stack layers` in CI went red** with
-  `OptionsValidationException: StepUp:BindingKey must be configured` → `API never became ready at
-  http://localhost:5068/health/ready`. The workflows set `Jwt__Secret`, `Idempotency__HashKey` and
-  `Security__PinPepper`; nobody had told them about the fourth.
-- **The dev database had no table**, because a migration is only exercised against a real database
-  by a human running the stack — the suites build their schema from the model.
+1. `appsettings.json`: the parts that are not secret.
+2. `appsettings.Development.json.example`: the section, and the `user-secrets` commands in its
+   header comment.
+3. The recipe in [`engineering-practices.md`](engineering-practices.md#local-setup) and the table
+   of variables in `backend/src/AzureBank.Api/README.md`.
+4. `.github/workflows/*.yml`: the variable, and every "Start API" step. `ci.yml` has two (the
+   `real-stack` and the `conformance` jobs), `contract-tests.yml` one.
+5. `CustomWebApplicationFactory`: `UseSetting`, the one that makes the tests pass while the rest
+   is still missing.
 
-**Checklist when adding a required option.** Miss any one and the failure appears somewhere the
-tests are silent:
-
-1. `appsettings.json` — the non-secret parts (the window, the TTL).
-2. `appsettings.Development.json.example` — the section **and** the `user-secrets` command list in
-   its header comment; a developer who reads only the list gets a crash.
-3. `docs/engineering-practices.md`, which carries the setup recipe, and the env-var tables in
-   `backend/README.md` and `backend/src/AzureBank.Api/README.md`, which drifted to one secret
-   of six because they were not on this list.
-4. `.github/workflows/*.yml` — an env var plus **every** "Start API" step. `ci.yml` has two (the
-   real-stack job and, since 2026-09-15, the `conformance` job), `contract-tests.yml` one (Bruno).
-5. `CustomWebApplicationFactory` — `UseSetting`, which is the one that makes the tests pass while
-   everything above is still missing.
-
-Grep for an existing required secret in BOTH spellings (`Idempotency__HashKey` and
-`Idempotency:HashKey`) and mirror every hit. That grep is the cheapest form of this checklist; the
-`__` form alone misses the user-secrets recipes.
+A secret also goes into `compose.yaml` and into the Azure deployment (`infra/main.bicep`,
+`infra/secrets.ps1`). Grep for an existing required secret in both spellings
+(`Idempotency__HashKey` and `Idempotency:HashKey`) and mirror every hit.
 
 ## The dev database goes stale and EVERY money endpoint answers 500
 
-Hit twice. On 2026-08-15 the first live PIN-mint answered `500 Invalid object name`; on 2026-08-17
-deposit, withdraw and both transfers all answered
+Nothing after a merge touches a development database, so it falls behind the migrations. With
+`AzureBankDev` two migrations behind, deposit, withdraw and both transfers answered 500:
 
 ```text
 String or binary data would be truncated in table 'AzureBankDev.dbo.Transactions',
 column 'TransactionNumber'. Truncated value: 'TXN-20260817-AJKNG5F'.
 ```
 
-`AzureBankDev` was two migrations behind (`WidenTransactionNumberForCheckSymbol`,
-`AddStepUpAuthorizations`), so the column was still 20 characters while `IdGenerator` produces 24:
-`TXN-` + 8 date digits + `-` + a 10-character suffix + a check symbol.
-
-**The part that wastes the hour.** SQL Server prints the value ALREADY TRUNCATED to the column
-width, so `TXN-20260817-AJKNG5F` looks like exactly 20 characters and therefore looks like it should
-have fitted. Count what `IdGenerator.GenerateTransactionNumber` produces, not what the error prints.
-
-No suite catches this. The SQL CI job and the integration tests build their schema from migrations,
-so they stay green while the hand-maintained dev database rots. Diagnose by comparing
-`dbo.__EFMigrationsHistory` against `dotnet ef migrations list`.
+SQL Server prints the value already truncated to the column's width, so it looks as if it should
+have fitted: count what `IdGenerator.GenerateTransactionNumber` produces, 24 characters. A
+missing table shows as `500 Invalid object name`. No suite catches either: the tests and CI
+build their schema from the migrations.
 
 ```bash
 cd backend/src/AzureBank.Api
 dotnet ef database update --no-build --connection "Server=(localdb)\MSSQLLocalDB;Database=AzureBankDev;Trusted_Connection=True;TrustServerCertificate=True"
 ```
 
-The `--connection` is not optional: the plain form fails with *"The ConnectionString property has
-not been initialized"*, and `ASPNETCORE_ENVIRONMENT=Development` does not change that. The host is
-not the reason, and it IS started: `dotnet ef` runs the entry point, takes the service provider
-from Hosting, aborts the host, and only then resolves the context through the factory. Measured
-2026-09-04 with `--verbose`, in this order:
-
-```
-[02:57:50 INF] Starting AzureBank API...
-Using application service provider from Microsoft.Extensions.Hosting.
-Microsoft.Extensions.Hosting.HostAbortedException: The host was aborted.
-   at Microsoft.Extensions.Hosting.HostFactoryResolver.HostingListener.ThrowHostAborted()
-Found DbContext 'AzureBankDbContext'.
-Using DbContext factory 'DesignTimeDbContextFactory'.
-```
-
-So the `HostAbortedException` is that probe rather than a failure, and
-`DesignTimeDbContextFactory` (`AzureBank.Infrastructure/Data`) is what finally builds the context.
-That factory reads
-`appsettings.json`, where `DefaultConnection` is `""`, plus the git-ignored
-`appsettings.Development.json`, and never user-secrets. It also resolves `../AzureBank.Api` from
-the current directory, which is why the `cd` above is part of the recipe. When that folder is not
-there the factory does not throw: it builds a context with no connection string, and it applies
-the hosts' connection limits and retry budget to a string it does read (ADR-0060). `--connection`
-is still what supplies the string.
-`migrations list` takes
-the same `--connection` and then marks each migration `(Pending)` against the real database, so the
-diagnosis is one command rather than a comparison.
-
-Hit a third time. On 2026-09-04 `dbo.__EFMigrationsHistory` on `AzureBankDev` topped out at
-`AddAuditEvents` while `dotnet ef migrations list` ended at `AddSubscriberNotices` — three behind
-(`AddAuditPayloadVersionAndKeyId`, `AddAuditAnchors`, `AddSubscriberNotices`), accumulated over
-three merges since 2026-08-19 because nothing after a merge touches the dev database. The same
-day `database update --connection` brought `AzureBankDev` and `AzureBankE2E` to head, data intact.
+- `--connection` is not optional. The plain form fails with "The ConnectionString property has
+  not been initialized": `DesignTimeDbContextFactory` reads `appsettings.json`, where
+  `DefaultConnection` is `""`, and the git-ignored `appsettings.Development.json`, never
+  user-secrets or the environment (ADR-0060, decision 8).
+- The `cd` is part of the recipe: the factory resolves `../AzureBank.Api` from the current
+  directory, and where that folder is missing it builds a context with no connection string.
+- `dotnet ef migrations list` takes the same `--connection` and marks each migration `(Pending)`
+  against that database: the diagnosis in one command.
 
 ## A tool that writes source can inject a control character the compiler accepts
 
-`MoneyFormattingTests` shipped a regex whose pattern began with a literal `U+0008` BACKSPACE, where
-a backslash-b was intended. The escape was expanded on its way to disk; C# verbatim strings
-do not process escapes, so the byte went into the pattern as a character to match. The guard could
-never match anything and reported clean while the defect it existed to catch sat in the tree.
-
-Every ordinary instrument was blind to it. The compiler accepted it — a backspace in a regex is
-legal and means "match a backspace". `grep` rendered it as nothing. Reading the file showed the
-intended text. **Only `od -c` revealed it**, because there the byte prints as ONE token where real
-backslashes print as two:
-
-```text
-new  R e g e x ( @ "  \b  C u r r e n c y  \ s * ...
-                     ^^ one token: this is 0x08, not backslash-b
-```
-
-`SourceHygieneTests` now fails the build on any control character outside tab/CR/LF in hand-written
-source. When writing C# through a script, prefer a form with no backslash at all — `(char)0x08`
-rather than `'\b'` — because the escape is what the intermediate tool rewrites.
+A regex in `MoneyFormattingTests` began with a literal `U+0008` BACKSPACE where a backslash-b was
+meant: the escape was expanded on its way to disk, and a C# verbatim string does not process
+escapes. The guard could match nothing and reported clean. The compiler accepted it, `grep`
+rendered it as nothing, and only `od -c` showed it, as one token where a backslash and a `b` are
+two. `SourceHygieneTests` fails the build on any control character outside tab, CR and LF in
+hand-written source. When a script writes C#, prefer a form with no backslash, `(char)0x08` and
+not `'\b'`.
 
 ## A guard that has never been watched refusing anything is a wish
 
-Both incidents above have the same shape: a rule that reports clean, and no way to tell that from a
-rule that cannot report anything else. Two independent mechanisms produce that identical green — a
-corrupted pattern, and a path filter that silently eats its own input (an unnormalised root
-containing `\bin\` skips every file while `Directory.Exists` still answers true).
-
-So every source-scanning guard in `tests/AzureBank.Tests/Architecture/` now carries both halves:
-
-- **liveness** — assert the scan read a plausible number of files, not merely that the folder exists;
-- **coverage** — a `[Theory]` driving the detector against shapes that are NOT in the tree, so the
-  rule is observed refusing something on every run.
-
-Add both when adding a scanner. The coverage theory is the one that pays: writing it for the
-currency rule immediately exposed a second hole the scan could never have shown.
+A rule that reports clean looks the same as a rule that cannot report anything else: a corrupted
+pattern, or a path filter that eats its own input (an unnormalised root containing `\bin\` skips
+every file while `Directory.Exists` still answers true). So a source-scanning guard in
+`tests/AzureBank.Tests/Architecture/` carries both halves: **liveness**, an assertion that the
+scan read a plausible number of files, and **coverage**, a `[Theory]` that drives the detector
+against shapes that are not in the tree, so that the rule is seen refusing on every run.
 
 ## A `$(PkgSomePackage)` path property is EMPTY unless the PackageReference asks for it
 
-`AzureBank.Api.csproj` carried a target that removed the OpenAPI XML-comment generator at
-`$(PkgMicrosoft_AspNetCore_OpenApi)/analyzers/…`, so that `[EndpointSummary]` attributes would
-control the published titles. NuGet defines `Pkg<PackageId>` only when the `PackageReference`
-sets `GeneratePathProperty="true"`; this one did not, the property evaluated to the empty string,
-and `<Analyzer Remove="/analyzers/dotnet/cs/…" />` matched nothing. The build did not warn: an
-`Analyzer Remove` of a path that is not in the list is not an error. Measured with
-`dotnet msbuild -getProperty:PkgMicrosoft_AspNetCore_OpenApi` (empty) and by the document itself:
-not one of the 27 attribute strings had ever reached `docs/api/openapiv1.json`, while seven XML
-summaries several lines long had (ADR-0053).
-
-Two things to recognise by sight: a target whose only effect is a `Remove` of a computed path,
-and a comment that describes the intended outcome ("attributes control the titles") rather than
-an observed one. Check `-getProperty` before trusting any `$(Pkg…)`, and check the ARTEFACT the
-target is meant to change — here the committed document — not the build log.
+NuGet defines `Pkg<PackageId>` only when the `PackageReference` sets
+`GeneratePathProperty="true"`. Without it the property is the empty string, an
+`<Analyzer Remove="$(Pkg…)/analyzers/…" />` matches nothing, and the build does not warn. A
+target written that way in `AzureBank.Api.csproj` was meant to let `[EndpointSummary]` attributes
+set the published titles, and none of them ever reached the document (ADR-0053). Check the
+property, as in `dotnet msbuild -getProperty:PkgMicrosoft_AspNetCore_OpenApi`, and check the
+artefact the target is meant to change, here the committed document, not the build log.
 
 ## An OpenAPI transformer that ASSIGNS silently discards what the controller declared
 
-`AuthorizationResponseTransformer` set `operation.Responses["401"]` outright, with the comment
-"Always set 401/403 with no content (even if already defined)". `TransferController` had declared
+A transformer that sets `operation.Responses["401"] = …` replaces what a controller declared with
+`[ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]`: the published
+contract is then worse than the source, and the source looks right. Regenerating cannot reveal
+it: the document and the generated artefacts both derive from the transformer, so the drift gate
+compares two copies of one wrong answer. Only an HTTP call to the running API disagrees.
 
-```csharp
-// AUTHORIZATION_REQUIRED, AUTHORIZATION_EXPIRED, AUTHORIZATION_INVALID (ADR-0042)
-[ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
-```
-
-and the assignment replaced it with an empty body. **The published contract was therefore worse than
-what the source said, and the source looked right.** `NotFoundResponseTransformer` did the same for
-404. Two consequences worth recognising by sight:
-
-- **Fifteen responses elsewhere carried hand-written INLINE error schemas.** That duplication is what
-  an unusable shared route looks like from the outside — people work around it one endpoint at a
-  time rather than reporting it.
-- **Regenerating cannot reveal it.** The document and the generated artefacts both derive from the
-  transformer, so the drift gate compares two copies of the same wrong answer. Only an HTTP call to
-  the running API disagrees.
-
-`TryAdd`, or a helper that fills gaps, instead of `[...] =`. And when a transformer's comment
-justifies itself with framework behaviour ("ASP.NET Core returns empty 401s"), check whether THIS
-application still uses that default — here `OnChallenge` calls `context.HandleResponse()`, whose
-whole purpose is to replace it.
+Fill gaps and never assign: `TryAdd`, or a helper such as `ProblemDetailsResponses.Declare`. When
+a transformer's comment rests on the framework's default ("ASP.NET Core returns empty 401s"),
+check that this application still has it: here `OnChallenge` calls `context.HandleResponse()`,
+which replaces it.
 
 ## A `{id:guid}` route constraint 404s; it never produces a binding 400
 
-Four endpoints published a 400 for "invalid path parameter format". Measured, all four answer **404**
-with `application/problem+json` and a W3C trace-context `traceId` — a third envelope, from the
-framework rather than from `GlobalExceptionHandler`:
-
-```json
-{"type":"https://tools.ietf.org/html/rfc9110#section-15.5.5","title":"Not Found","status":404,
- "traceId":"00-c3755f5dd06635c9f80bd38f90d54f52-6e8251d2e9f65eb0-01"}
-```
-
-A route constraint participates in route MATCHING. A non-GUID segment matches no route, so MVC is
-never entered, so there is no model binding and nothing to produce a 400. An unconstrained path
-parameter cannot fail either, for the opposite reason: every byte sequence is a valid string. So
-"path parameters can fail validation" is wrong both ways round, and a documented response nobody can
-produce is as false as an undocumented body.
+A route constraint takes part in route matching. A segment that is not a GUID matches no route,
+so MVC is never entered and nothing binds or validates. The answer is a 404 from the framework,
+not from `GlobalExceptionHandler`: `application/problem+json` with `type`, `title`, `status` and
+a W3C trace-context `traceId`. An unconstrained string parameter cannot fail either. A
+documented 400 for "invalid path parameter format" is a response nobody can produce.
 
 ---
 
 ## `dotnet ef` reads the compiled assembly, not your source files
 
-Found in the work on ADR-0044, and it cost two rounds of confusion in a row.
+`dotnet ef migrations add … --no-build` scaffolds from the dll. Scaffolding after adding an entity
+without a rebuild gives a migration with an empty `Up()`, and no error or warning. Deleting it
+and generating it again under the same name then fails with "the name is used by an existing
+migration", because the deleted `.cs` is still in the assembly. Rebuild between EF operations.
 
-`dotnet ef migrations add … --no-build` scaffolds from the **dll**. Adding an entity and scaffolding
-without rebuilding first produces a migration with an **empty `Up()`** — no error, no warning, just a
-migration that does nothing. Deleting that migration and regenerating it under the same name then
-fails with *"the name is used by an existing migration"*, because the deleted `.cs` is still inside
-the assembly. Rebuild between every EF operation and both symptoms disappear.
-
-Two neighbours of the same trap:
-
-- `dotnet ef migrations remove` dies with *"The ConnectionString property has not been initialized"*
-  — the same design-time-factory failure this file already records for `database update`, and
-  `remove` has no `--connection` to route around it. Deleting the migration files by hand and
-  rebuilding is the way out.
-- `--connection` is **not** a valid option for `migrations add` or `migrations remove`; it exists on
-  `database update` and `migrations list`.
+- `dotnet ef migrations remove` fails with "The ConnectionString property has not been
+  initialized", and has no `--connection`. Delete the migration's files by hand and rebuild.
+- `--connection` exists on `database update` and `migrations list`, not on `migrations add` or
+  `migrations remove`.
 
 ## `datetime2` stores no `DateTimeKind`, so a hash over a formatted timestamp changes on read
 
-From the same work, and the more dangerous of the two because everything was green while it was
-wrong.
-
-`DateTime.ToString("O")` emits a trailing `Z` when `Kind` is `Utc` and omits it when `Kind` is
-`Unspecified`. SQL Server's `datetime2` has no kind column, so a value written from `DateTime.UtcNow`
-comes back as `Unspecified` and formats differently than it did on the way in. Anything derived from
-that string — a hash, a signature, a cache key — therefore does not survive a round trip:
-
-```
-"2026-08-19T10:39:24.7403300Z" -> HMAC 6a7028…143903   (as written)
-"2026-08-19T10:39:24.7403300"  -> HMAC a98d42…c3dbd9   (as read back)
-```
-
-The EF InMemory provider hides this completely: its identity map hands back the object that was
-written, so nothing is ever re-materialised and the test passes. Hash `Ticks` instead — an integer,
-exact through `datetime2(7)`, with nothing kind-dependent in it — or store a `DateTimeOffset`.
+`DateTime.ToString("O")` ends in `Z` when `Kind` is `Utc` and not when it is `Unspecified`.
+`datetime2` has no kind, so a value written from `DateTime.UtcNow` comes back `Unspecified` and
+formats differently. A hash, a signature or a cache key derived from that string does not survive
+a round trip. The EF InMemory provider hides it: its identity map hands back the object that was
+written. Hash `Ticks`, an integer that is exact through `datetime2(7)`, or store a
+`DateTimeOffset`.
 
 ## `UPDLOCK, HOLDLOCK` outside a transaction is decoration
 
-EF opens its implicit transaction **inside** `SaveChanges`. Code that runs in a `SaveChanges`
-override, before `base.SaveChanges`, is therefore **not** in that transaction: a locking read issued
-there auto-commits and drops its lock immediately, and the write that was meant to be protected
-happens afterwards on its own.
-
-Symptom, from 24 concurrent writers against a table whose sequence column carries a unique index:
-`Cannot insert duplicate key row in object 'dbo.AuditEvents' with unique index
-'IX_AuditEvents_Sequence'. The duplicate key value is (2)`. Without that unique index it would not
-have raised at all — it would have silently produced two rows claiming the same predecessor.
-
-Open the transaction explicitly around the read and the write, and skip it when the caller already
-has one (`Database.CurrentTransaction is not null`) or the provider is not relational.
+EF opens its implicit transaction inside `SaveChanges`. Code in a `SaveChanges` override that
+runs before `base.SaveChanges` is not in it: a locking read there auto-commits and drops its lock
+at once, and the write it was meant to protect happens afterwards, alone. Under concurrent
+writers it shows as a duplicate key on the unique index `IX_AuditEvents_Sequence`; without that
+index, two rows would silently claim the same predecessor. Open the transaction explicitly around
+the read and the write, and skip it when the caller already has one
+(`Database.CurrentTransaction is not null`) or the provider is not relational.
 
 ## The test host is not the production host: the retrying strategy is opt-in
 
-The one that no test could have found, because the tests were the blind spot.
+`AddInfrastructure` configures the API with `EnableRetryOnFailure`, and EF refuses a
+user-initiated transaction under a retrying strategy. `CustomWebApplicationFactory` rebuilds the
+`DbContext` registration and leaves that strategy off unless a test calls
+`EnableSqlRetryOnFailure()`, so that an injected transient fault surfaces. So
+`Database.BeginTransaction()` in shared code passes every test and answers 500 on the real API:
+"The configured execution strategy 'SqlServerRetryingExecutionStrategy' does not support
+user-initiated transactions."
 
-`ServiceCollectionExtensions` configures the API with `EnableRetryOnFailure`, and EF **refuses a
-user-initiated transaction** under a retrying strategy. `CustomWebApplicationFactory` rebuilds the
-`DbContext` registration and leaves that strategy **off** unless a test calls
-`EnableSqlRetryOnFailure()` — deliberately, so an injected transient fault surfaces instead of being
-retried. The consequence is that `Database.BeginTransaction()` in shared infrastructure passes every
-test and throws on the real API:
+- Code that opens its own transaction goes through `Database.CreateExecutionStrategy()`:
+  `AuthService.RegisterAsync` is the worked example.
+- When such code is added, one SQL Server test opts into `EnableSqlRetryOnFailure()`, or nothing
+  exercises the production configuration.
 
-```
-System.InvalidOperationException: The configured execution strategy
-'SqlServerRetryingExecutionStrategy' does not support user-initiated transactions. Use the execution
-strategy returned by 'DbContext.Database.CreateExecutionStrategy()' …
-```
-
-Measured as a **500** on `POST /api/auth/refresh` with the whole 766-test suite green.
-
-Two rules follow. Any code that opens its own transaction goes through
-`Database.CreateExecutionStrategy()` — `AuthService.RegisterAsync` is the worked example. And when
-such code is added, one SQL Server test must opt into `EnableSqlRetryOnFailure()`, or the production
-configuration is exercised by nothing at all.
-
-More generally: the factory removes `DbContextOptions` and `IDbContextOptionsConfiguration` and
-rebuilds them, so **anything attached to the production registration is absent under test** — which
-is also why the audit chain lives in the `DbContext` class rather than in a `SaveChangesInterceptor`.
-Since ADR-0058 the SQL Server branch attaches two of them again by hand, because a test without them
-would run a different pool and no commit gate: the connection defaults (`SqlConnectionDefaults`) and
-the host's interceptors, the commit gate among them. What it still leaves out includes the warning
-level of an EF retry (`RetryBudgetTests` checks it by building `AddInfrastructure` itself) and
-production's retry budget: the factory keeps 3 retries under 5 s when a test opts in.
+Anything attached to the production registration is absent under test unless the factory adds it
+back, which is why the audit chain is in the `DbContext` class and not in a
+`SaveChangesInterceptor`. On SQL Server the factory adds back the connection defaults and the
+host's interceptors, the commit gate among them (ADR-0058). It leaves out the warning level of an
+EF retry and production's retry budget: an opted-in test has 3 retries with the back-off capped
+at 5 s, production 4 capped at 10 s (ADR-0058 D2).
 
 ## "The writer was called" is not evidence that a row exists
 
-The most expensive one, because every layer of the suite agreed it was fine.
+`IAuditService.Record` only calls `Add`: the caller's `SaveChanges` persists the row (ADR-0044
+D1). So a unit test that asserts `_auditMock.Verify(a => a.Record(…), Times.Once)` on a
+`Mock<IAuditService>` passes whether or not anything is written. With `Record` called after
+`UserManager.UpdateAsync` had saved, and nothing saving again, `POST /api/auth/pin` answered 200
+and `AuditEvents` held no row, with the whole suite green.
 
-`IAuditService.Record` deliberately only calls `Add` — the caller's `SaveChanges` is what persists
-the row (ADR-0044 D1). A unit test holding a `Mock<IAuditService>` and asserting
-
-```csharp
-_auditMock.Verify(a => a.Record(SecurityEvents.PinEnrolled, ...), Times.Once);
-```
-
-therefore passes whether or not anything is ever written. `AuthService.SetPinAsync` called
-`Record` *after* `UserManager.UpdateAsync` had already saved, and nothing saved again:
-`POST /api/auth/pin` answered **200**, the security log line was emitted, and `AuditEvents` held
-**zero** rows — with the mock assertion green and the whole suite green.
-
-Two rules. Any writer whose contract is "add, never save" needs at least one test that reads the
-STORE after driving the real endpoint, not one that watches the writer. And when such a writer is
-placed, check what actually performs the save — `UserManager.UpdateAsync`, `SignInManager`, a
-repository and `ExecuteUpdate` are all saves that a reader scanning for `_context.SaveChangesAsync`
-will miss (`ExecuteUpdate` is worse: it commits without flushing tracked entities at all).
+- A writer whose contract is "add, never save" needs one test that reads the store after driving
+  the real endpoint, not one that watches the writer.
+- When placing such a writer, check what performs the save: `UserManager.UpdateAsync`,
+  `SignInManager`, a repository and `ExecuteUpdate` are saves that a search for
+  `_context.SaveChangesAsync` misses, and `ExecuteUpdate` commits without flushing tracked
+  entities.
 
 ## Only a grant whose session ended trips the tripwire
 
-Since ADR-0057 the grant does not rotate, and `RefreshTokenReuse` is raised in one case
-only: a grant revoked with the reason `SessionEnded`, presented in a request the API received after
-that revoke. A grant revoked through `/api/auth/logout` (`SignOutEverywhere`), by the migration
-(`Deployment`) or by a runbook's SQL, presented again, is refused with a plain log line and no
-event, and so is one whose revoke committed while its renewal was waiting to read. So a test that
-wants the tripwire revokes through `/api/auth/revoke`, as the BFF does when a session ends, and
-presents the grant afterwards; `AuditChainSqlServerTests` does, and its comment says why.
+`RefreshTokenReuse` is raised in one case: a grant revoked with the reason `SessionEnded`,
+presented in a request the API received after that revoke (ADR-0057 §4.3). A grant revoked
+through `/api/auth/logout`, by the migration or by a runbook's SQL is refused with a log line and
+no event. A test that wants the tripwire revokes through `/api/auth/revoke`, as the BFF does when
+a session ends, and presents the grant afterwards, as `AuditChainSqlServerTests` does.
 
-A second trap: a test whose setup already satisfies its postcondition proves nothing.
-"The user's other session is still active" is worth asserting only when there is another session —
-sign in twice first — and only once breaking the code on purpose has turned the assertion red. The
-test will not tell you which kind it is.
+**A test whose setup already satisfies its postcondition proves nothing.** "The user's other
+session is still active" is worth asserting only when there is another session (sign in twice
+first), and only once breaking the code on purpose has turned the assertion red.
 
 ## Three binding kinds, two parsers — and a `Guid` does not mean the same thing in each
 
-A `Guid` arriving in a ROUTE or a HEADER is parsed by MVC's `TryParse`, which accepts the `D`, `N`,
-`B`, `P` and `X` forms, in any case, and trims surrounding whitespace. A `Guid` that is a MEMBER of a
-JSON body is parsed by `System.Text.Json`, which accepts the **`D` form only**, is case-insensitive,
-and does **not** trim. So the same value is accepted on one surface and rejected on another, and a
-helper written for one is wrong on the other: `parseGuid` for a route or a header, `parseBodyGuid`
-for a body member.
-
-**Measured**, on the two code paths themselves — the `TypeConverter` MVC uses for a simple type, and
-`System.Text.Json` with the Web defaults ASP.NET Core applies to a body:
-
-```
-form              route / header (TypeConverter)   JSON body member (System.Text.Json)
-D  canonical      ACCEPTED                         ACCEPTED
-N  no dashes      ACCEPTED                         REJECTED
-B  braces         ACCEPTED                         REJECTED
-P  parens         ACCEPTED                         REJECTED
-X  hex            ACCEPTED                         REJECTED
-D uppercase       ACCEPTED                         ACCEPTED
-D with spaces     ACCEPTED                         REJECTED
-```
-
-Related and load-bearing: `fingerprint(raw)` must stay ABOVE `bindAccountIds`, computed over the WIRE
-bytes. Fingerprinting after binding fingerprints a normalised value, which is not what the caller
-sent and therefore not what an idempotency key should key on.
+A `Guid` in a route or a header is parsed by MVC's `TryParse`: it accepts the `D`, `N`, `B`, `P`
+and `X` forms, in any case, and trims surrounding whitespace. A `Guid` that is a member of a JSON
+body is parsed by `System.Text.Json`: the `D` form only, in any case, and untrimmed. The same
+value is accepted on one surface and refused on the other, so the mock
+(`frontend/src/mocks/handlers.ts`) has a helper for each: `parseGuid` for a route or a header,
+`parseBodyGuid` for a body member. There, `fingerprint(raw)` stays above `bindAccountIds`, over
+the bytes on the wire: an idempotency key is keyed on what the caller sent, not on a normalised
+value.
 
 ## `Guid.CreateVersion7()` is not monotonic within a millisecond, and SQL Server disagrees about order
 
-Version-7 GUIDs are time-ordered only to millisecond resolution; two created in the same millisecond
-have no defined order between them. Worse, SQL Server collates `uniqueidentifier` on a **different
-byte order** than .NET's `Guid.CompareTo`, so a sort that looks right in memory is not the sort the
-database performs.
+Version-7 GUIDs are time-ordered to the millisecond only: two created in the same millisecond
+have no defined order. Measured in a burst, 44,712 of 89,508 adjacent pairs were out of order.
+And SQL Server sorts `uniqueidentifier` on a different byte order from .NET's `Guid.CompareTo`,
+so a sort that looks right in memory is not the one the database performs.
 
-**Measured twice.** Within a burst, `Guid.CreateVersion7()` produced **44,712 out-of-order adjacent
-pairs out of 89,508** — essentially a coin flip, so there is no ordering inside a millisecond at all.
-And ten of them, created in sequence, sort three different ways:
-
-```
-creation order : 0,1,2,3,4,5,6,7,8,9
-.NET sort order: 1,7,8,0,2,6,3,9,5,4
-SQL sort order : 4,8,7,0,3,5,1,2,6,9
-```
-
-**Never order by `Id` and call it creation order.** This cost two separate bugs in one PR — one in
-production code, one in a test that agreed with it — which is the shape to watch for: when the code
-and its test share a wrong assumption, the test confirms the bug instead of catching it. Order by the
-column that means what you want (`Sequence`, `OccurredAt`, `CreatedAt`), and if there isn't one, that
-is the finding.
-
+**Never order by `Id` and call it creation order.** Order by the column that means what is wanted
+(`Sequence`, `OccurredAt`, `CreatedAt`); if there is none, that is the finding. When the code and
+its test share the wrong assumption, the test confirms the bug.
 
 ## A withdrawn argument is a guard, so it has to be framed as one
 
-This repository keeps the reasoning that was rejected, not only the decision that won. The reason is
-narrow and it is not sentiment: several of those arguments sound *better* than the rule that
-replaced them, so somebody eventually re-derives one and re-opens the hole. The text exists to stop
-that, and its whole value is being read at the moment of the edit.
-
-Which means the framing decides whether it works. **`A withdrawn argument, left visible.` is an
-archival label** — it tells a reader "here is what we used to think", which is an invitation to
-skip. The person it needs to reach is the one about to loosen the condition, and that person skips
-history by definition. Lead with the constraint and demote the history to evidence:
-
-```
-A withdrawn argument, left visible. This note used to say the tell was the count alone ...
-```
-
-```
-DO NOT WIDEN THIS TO THE COUNT ALONE. It was written that way once, and the wide version is the
-one that helps an attacker. The argument for it reads well: ... That case is unreachable, and the
-tool was gated on it anyway.
-```
-
-Same words, same length, different reader.
-
-**The rule is about WHERE the text lives, not about which framing is nicer.**
-
-- **In code and in runbooks: imperative.** A code comment is read by somebody with the file open and
-  a change in mind. A runbook is read under pressure. Neither reader is browsing.
-- **In an ADR: archival is correct, and should stay.** An ADR is read deliberately, by somebody
-  asking what was decided and why — there the history *is* the content, and an imperative aimed at
-  an editor would be the thing out of place. `docs/adr/0044-...md` keeps its
-  `A withdrawn argument, left visible.` for exactly this reason.
-
-**And the mechanical test for keeping one at all:** a withdrawn argument earns its place only while
-it constrains something that still exists. When the gate, flag or branch it protects is removed, the
-text goes in the same commit. Kept past that point it stops being a guard and becomes what it merely
-looked like all along.
+A rejected argument is kept where it sounds better than the rule that replaced it: otherwise
+somebody derives it again and reopens the hole. Its reader is the person about to loosen the
+condition, and that person skips history. So in code and in runbooks it is an imperative, the
+constraint first ("DO NOT WIDEN THIS TO THE COUNT ALONE. The wide version is the one that helps
+an attacker. The argument for it reads well: …"), and not a label such as "A withdrawn argument,
+left visible". In a decision record it is a line under Rejected, with its reason. When the gate,
+flag or branch it protects is removed, the text goes in the same commit.
 
 ## A notice that reaches the session holder is not a notification
 
@@ -710,134 +391,85 @@ mechanism independent of the transaction binding" it. The cheap reading is a lin
 screen, a toast, an inbox item — and every one of them reaches whoever holds the session, which in
 the threat model is the attacker who just enrolled the PIN. §4.1.2.2 says where in-session text
 belongs: *in addition to* the notice, as instructions for a mishap, never instead of it. The same
-goes for the operator's log line and the audit row: durable, chained, and read by the wrong person.
-ADR-0045 records what does count — a message addressed to the email held on the account, on a path
-the session cannot read, redirect or suppress — and, honestly, where that stops.
+goes for a log line and the audit row, which reach the system's operator and not the subscriber.
+ADR-0045 records what does count, and where that stops.
 
-The test for any candidate channel is one question: **could the attacker who caused the event see or
-prevent the notice?** If yes, it is a receipt, not a notification.
+The test for a channel is one question: **could the attacker who caused the event see or prevent
+the notice?** If yes, it is a receipt, not a notification.
 
 ## A send inside the request inverts D1 — write the row, deliver later
 
-The obvious place to send a notice is the request that caused it, and both places to put it there
-are wrong. AFTER the save: a crash, a kill or a lost connection between the commit and the call
-loses the notice with no record that it was ever owed — the enrolment stands, the account's owner
-is never told, and nothing can tell later. INSIDE the save: the request holds the audit tail lock
-(`UPDLOCK, HOLDLOCK`) for as long as the I/O takes, and a slow or failing relay stalls every audited
-write behind it, while a rollback after the send leaves a message about an enrolment that never
-happened.
-
-The shape that works is the one ADR-0044 D1 already uses for the audit row: record the OBLIGATION in
-the same transaction as the action, and deliver from somewhere else, later, from the row. What
-"later" means is a decision about runners (ADR-0045 D3), not about the request.
+Sending a notice inside the request that caused it is wrong in both places. After the save, a
+crash between the commit and the call loses the notice with no record that it was owed. Inside
+the save, the request holds the audit tail lock (`UPDLOCK, HOLDLOCK`) for as long as the I/O
+takes, and a rollback after the send leaves a message about an enrolment that never happened.
+Record the obligation in the same transaction as the action, as the audit row is (ADR-0044 D1),
+and deliver later, from the row (ADR-0045 D1 and D3, ADR-0048).
 
 ## Restoring a file with `mv` from a backup can leave the build running the MUTATED binary
 
-A falsification changes a source file, builds, watches the test go red, then puts the file back. The
-tempting way to put it back is `cp f f.bak` before the change and `mv f.bak f` after. **That restores
-the CONTENT and the OLD TIMESTAMP** — the backup was taken before the mutation, so its mtime is older
-than the DLL the mutated build produced. MSBuild's incremental check compares exactly those two: a
-source older than its output is up to date. The next `dotnet test` does not recompile, and every run
-after the "restore" still executes the mutated code.
+To watch a test go red, a source file is changed, built and put back. `cp f f.bak` before and
+`mv f.bak f` after restores the content and the old timestamp. The backup is older than the dll
+the changed build produced, MSBuild's incremental check sees a source older than its output, and
+the next `dotnet test` does not recompile: every later run still executes the changed code, and
+a red result can be red for the wrong reason. A plain rebuild skips the project too.
 
-Measured on ADR-0053's gate, 2026-09-10: `SetPinRequest.cs` restored at **18:21:16**, the
-`AzureBank.Shared.dll` built with the mutation in it at **18:21:19**. The next two runs were meant to
-test two OTHER mutations, and both still generated the sentinel property from the first. One of them
-went red and would have been recorded as proof it worked — it was red for the wrong reason, and it
-was caught only because the failure MESSAGE was read rather than the exit code. `--no-build` made it
-worse but is not the cause: a plain rebuild skipped the project for the same reason.
-
-**Restore by writing, not by moving** — `cp -f f.bak f` gives the file a new mtime, or `touch f`
-after an `mv`. And after any restore, **re-run the baseline and watch it PASS before the next
-falsification**: a baseline that still fails is the stale binary telling you so, and it costs one run.
+**Restore by writing, not by moving**: `cp -f f.bak f` gives the file a new mtime, and so does
+`touch f` after an `mv`. After any restore, run the baseline and watch it pass before the next
+change: a baseline that still fails is the stale binary.
 
 ## An early 413 that leaves the body unread can cost the NEXT request a 502
 
-The idempotent endpoints refuse a body over 32 KB from its `Content-Length`, before reading it
-(ADR-0009: an oversized body is never buffered or hashed). The refusal went out as a keep-alive 413
-with the body still unread; Kestrel then drained it to keep the connection, hit the endpoint's 32 KB
-`MaxRequestBodySize` (applied from `[RequestSizeLimit]` by routing) and aborted the connection.
-The four idempotent endpoints now declare the limit with `[EndpointRequestSizeLimit]`, which
-routing applies the same way.
-Through the BFF that is three different failures, all measured on 2026-09-24 with Kestrel and YARP
-logging at Debug: YARP, still sending the body, gets the abort and answers **502**; or it aborts the
-client's connection as well, and the client sees `ECONNRESET`; or it had finished, pooled the
-connection on the strength of the keep-alive, and the **next request** on it — anyone's — got a 502.
-It looked like a Windows-only flake in one contract test (3 failures in 42 local runs; CI on Linux
-never showed it) until the logs were read.
+The idempotent endpoints refuse a body over 32 KB from its `Content-Length`, before buffering or
+hashing it (ADR-0009, decision 7). When that 413 went out keep-alive with the body unread,
+Kestrel drained the body, hit the endpoint's 32 KB limit and aborted the connection. Through the
+BFF that was a 502, or a reset of the client's connection (`ECONNRESET`), or, once YARP had
+pooled the connection, a 502 for the next request on it, anyone's. The in-memory test host cannot
+show it: it copies the whole request body itself.
 
-The in-memory test host could not see it: it offers no `IHttpMaxRequestBodySizeFeature` and copies
-the whole request body itself, so a body the app never touched still arrives complete. What a test
-CAN observe there is whether the app left any of the body unread when it answered —
-`OversizedBodyDrainTests` reads what is left once the response is written.
+**Read the body before an early refusal, or close the connection, and give the read a
+deadline.** `OversizedBodyDrain` reads and discards up to 1 MiB, for five seconds at most, before
+the 413. Above that size, or once the time is up, the 413 carries `Connection: close`. The four
+money endpoints and the four authorisation mints go through it (`OversizedBodyDrainTests`,
+`MintOversizedBodyDrainTests`, `KestrelRequestSizeLimitTests`). A chunked body has no length to
+check first: at a mint the server's refusal during the read becomes the same 413, with
+`Connection: close`. Not covered: on Kestrel no test sends a mint more than 1 MiB or stalls a
+body, and through the BFF a sender that slow gets a 502 at 13 s, not the 413.
 
-**Read the body before an early refusal, or close the connection — and give the read a deadline.**
-`IdempotencyMiddleware` now reads and discards up to 1 MiB before the 413 (0 failures in 40 runs, 0
-aborts in the log), for five seconds at most, the time Kestrel gives its own drain; above that size,
-or once the time is up, it answers `Connection: close`, so no proxy reuses a connection that is
-about to go. Without the deadline the read had no bound of its own: a 60 KB body trickled at 1 KB/s
-got its 413 after 60 s, and at Kestrel's minimum data rate of 240 bytes a second 1 MiB would take 73
-minutes. With it the 413 left at 5.07 s. Through the BFF a sender that slow gets a 502 instead, at
-13 s: YARP was still copying the body when the API reset the connection, and did not pass the 413
-on. The four mints are covered too: a mint sent a `Content-Length` over 32,768 bytes reads
-and discards the body first, through the type `IdempotencyMiddleware` uses (`OversizedBodyDrain`,
-so the same 1 MiB and five seconds), and then answers 413 `PAYLOAD_TOO_LARGE`; when all of the body
-came, that answer carries no `Connection: close`. A chunked body has no length to check first: the
-server's refusal during the read becomes the same 413, with `Connection: close`. On Kestrel,
-`KestrelRequestSizeLimitTests` sends each mint 40,000 bytes in two writes 300 ms apart, reads the
-413 and gets a second answer on the same connection. In memory, `MintOversizedBodyDrainTests`
-finds 40,000 bytes read to their end, 2,000,000 left unread with `Connection: close`, and, at one
-mint, a body that stops arriving given up on when the host's clock reaches five seconds. On
-Kestrel no test sends a mint more than 1 MiB or stalls a body, and none of this was run through
-the BFF (ADR-0009, "Placement & limits").
-
-Two more traps on the way, both measured on 2026-09-24:
-
-- **Stop a body read with `PipeReader.CancelPendingRead`, not with its cancellation token.** A read
-  cancelled by its token leaves Kestrel's body reader mid-read, and Kestrel's own drain of the rest
-  then logs an error for every such request: `automatic draining of the request body failed because
-  the body reader is in an invalid state` (`InvalidOperationException: Reading is already in
-  progress`). `CancelPendingRead` returns a canceled `ReadResult` instead, and what follows is
-  Kestrel's ordinary drain.
+- **Stop a body read with `PipeReader.CancelPendingRead`, not with its cancellation token.** A
+  read cancelled by its token leaves Kestrel's body reader mid-read, and Kestrel's own drain then
+  logs an error for every such request: `automatic draining of the request body failed because
+  the body reader is in an invalid state`.
 - **`WebApplicationFactory`'s default client does not send a body that never ends.** Its redirect
   handler copies the whole request body before sending any of it, so a test body that stalls on
-  purpose never leaves the client, and the app never sees the request. Create that client with
-  `AllowAutoRedirect = false`.
+  purpose never leaves the client. Create that client with `AllowAutoRedirect = false`.
 
 ## A token appended to `ExecuteSqlRawAsync(sql, a, b)` becomes a SQL parameter
 
 `ExecuteSqlRawAsync(string, params object[])` takes every argument after the SQL as a parameter
-value, and a `CancellationToken` is an `object`. So `ExecuteSqlRawAsync(sql, resource, timeout, ct)`
-compiles, forwards no token, and hands the token to EF as a third parameter, which fails at run
-time — measured on LocalDB, `InvalidOperationException`: "The current provider doesn't have a store
-type mapping for properties of type 'CancellationToken'." — and only on SQL Server: the in-memory
-provider never runs raw SQL, and both callers skip it on that provider. `FindAsync(id, ct)` has
-the same shape, with the token taken as a second key value. The token goes after a collection:
+value, and a `CancellationToken` is an `object`. So `ExecuteSqlRawAsync(sql, resource, timeout,
+ct)` compiles, forwards no token and fails at run time, on SQL Server only: "The current provider
+doesn't have a store type mapping for properties of type 'CancellationToken'." The in-memory
+provider never runs raw SQL. `FindAsync(id, ct)` has the same shape, with the token taken as a
+second key value. The token goes after a collection:
 `ExecuteSqlRawAsync(sql, new object[] { resource, timeout }, ct)` and `FindAsync([id], ct)`.
-`CancellationFlowTests` refuses the other shape (ADR-0058).
+`CancellationFlowTests` refuses the other shape.
 
 ## MVC's JSON formatter swallows a cancelled `RequestAborted` and sends an empty success
 
 `SystemTextJsonOutputFormatter` catches the `OperationCanceledException` of its write whenever
-`RequestAborted` is cancelled, and returns. The status, already set to 200 or 201, goes out with an
+`RequestAborted` is cancelled, and returns. The status, already 200 or 201, goes out with an
 empty or cut body, and nothing above it sees an exception. Behind `IdempotencyMiddleware` that
-empty body was stored as the answer: measured on SQL Server with a client that hung up after a
-deposit committed, the record was `Completed` with an empty body and every retry of the key was
-replayed an empty 201 (`RequestDeadlineSqlServerTests`). Two things now stand in the way
-(ADR-0058): `DeadlineResultFilter` gives the write a token that cannot be cancelled once a commit has
-started, and an empty 2xx is never stored for replay. Anything else that makes `RequestAborted`
-cancellable by something other than the client meets the same formatter.
+empty body was stored as the answer and replayed to every retry of the key. So
+`DeadlineResultFilter` gives the write a token that cannot be cancelled once a commit has
+started, and an empty 2xx is never stored for replay (ADR-0058 D5 and D8). Anything else that
+lets something other than the client cancel `RequestAborted` meets the same formatter.
 
 ## A local outage can outlive the database: the pool's blocking period
 
-As documented, after a failed open SqlClient's pool hands the cached error to every caller for 5 s,
-doubling up to a minute, without trying the server again. `Pool Blocking Period=Auto`, the default,
-does that for every server except Azure SQL. Measured on 2026-09-29 on the compose stack: SQL
-Server was answering again at 16:32:04.3 UTC, and every open still failed within about a
-millisecond with 11001 until 16:32:27.0; the first 200 came 26.1 s after the database. That
-matches the blocking period, and a second run showed it: on 2026-09-30, with only `NeverBlock`
-added to the same commit, the same two outages logged no error once the database answered again
-(ADR-0058, Validation). So a local outage run with blocking on says little about how the retry
-budget behaves on Azure: most of its failed opens are the cached error handed out again, with no
-attempt on the server of their own. Since ADR-0058 every host opens with `NeverBlock` unless its
-connection string says otherwise, which is what `Auto` already gives Azure.
+After a failed open, SqlClient's pool hands the cached error to every caller for 5 s, doubling up
+to a minute, without trying the server again: `Pool Blocking Period=Auto`, the default, does that
+for every server except Azure SQL. Measured on the compose stack on 2026-09-29: the first 200
+came 26.1 s after the database was answering again. So a local outage with blocking on says
+little about how the retry budget behaves on Azure. Every host opens with `NeverBlock` unless its
+connection string says otherwise (ADR-0058 D1), which is what `Auto` already gives Azure.

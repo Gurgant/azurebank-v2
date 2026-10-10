@@ -1,168 +1,80 @@
 # ADR-0047: A PIN change owes the same notice an enrolment does
 
-**Status:** Accepted · **Date:** 2026-09-04 · Reverses ADR-0045's D8, which declined to notify a PIN
-change, and fires the trigger that ADR listed for itself. Adds a
-second `SubscriberNotice` kind and the audit row it is joined to; changes no schema, no endpoint, no
-status code and no client.
+**Status:** Accepted · **Date:** 2026-09-04 · **Amended:** 2026-09-09 and 2026-09-10 (ADR-0052) ·
+**Reverses:** ADR-0045, D8, which declines to notify a PIN change
 
 ## Context
 
-ADR-0045 built one notice: when a transfer PIN is bound to an account for the first time, the API
-writes a `SubscriberNotices` row inside the enrolment's own save, and the operator tool's `notify`
-verb renders the pending rows into a pickup directory. Its D8 named what did **not** owe a notice,
-and a PIN CHANGE was first on that list, for four reasons.
-
-Two of the four were true when written and are still true: the wording of the two standards, and
-that a change costs the current PIN. The third — that the change path wrote no audit row — was also
-true, and is the condition D2 below ends. The fourth, that a notice here would need a suppression
-rule that does not exist, is denied by D4 below. None of them was a reason to stay silent, which is
-what measuring showed.
-
-Measured 2026-09-04 through the BFF (`:5000`) in front of the API (`:7215`), Development, against a
-throwaway store, **before any of this ADR was implemented**:
-
-```
-POST /bff/auth/register                                   -> 201
-POST /bff/auth/set-pin  {pin, password}      (enrolment)  -> 200
-POST /bff/auth/set-pin  {pin, currentPin}    (change)     -> 200
-POST /bff/auth/verify-pin {new pin}          (control)    -> 200
-
-SubscriberNotices : 1 row   (PinEnrolled)
-AuditEvents       : 1 row   (PinEnrolled, Succeeded)
-```
-
-The control matters: the new PIN verified, so the credential really had been replaced. A PIN could
-be changed leaving the account holder no notice, the audit trail no row, and the operator's log
-nothing but an unnamed `"User {UserId} set their PIN"` line. The only durable trace of the old PIN's
-replacement was the hash that had overwritten it.
-
-That is the asymmetry this decision closes. An enrolment costs the account **password**. A change
-costs only the **current PIN** (ADR-0040). So the change is precisely the event an attacker who has
-watched a PIN entered — over a shoulder, on a shared screen — and who has never learned the
-password, leaves behind. The one event a PIN-only attacker must produce was the one event the system
-said nothing about.
+Under ADR-0045 one event owes a notice: when a transfer PIN is first bound to an account, the API
+writes a `SubscriberNotices` row inside the enrolment's own save. Its D8 lists a PIN change first
+among the events that owe none. An enrolment costs the account password; a change costs only the
+current PIN (ADR-0040). A change is therefore the one event that someone who watched a PIN being
+entered, and never learned the password, has to produce, and without this decision it leaves the
+account holder no notice, the audit trail no row and the log one unnamed line. This record adds a
+second notice kind and its audit row; it changes no schema, endpoint, status code or client.
 
 ## Decision
 
-**D1 — A PIN change writes its own notice, with its own event name.** `SecurityEvents.PinChanged`,
-a second value in the `Event` column `SubscriberNotice` already carries. No migration: the column is
-`nvarchar(40)` with no allowed-values constraint, the pending query is kind-blind, and the
-`UserId` index is not unique, so a second row of a second kind was already legal.
+- **D1: A PIN change writes its own notice, with its own event name**, `SecurityEvents.PinChanged`,
+  a second value in the `Event` column `SubscriberNotice` already carries. It needs no migration,
+  because the column is `nvarchar(40)` with no allowed-values constraint, the pending query is
+  kind-blind and the `UserId` index is not unique.
+- **D2: The change writes the audit row its notice is joined to, in the same save**, because
+  `notify` prints `NO AUDIT ROW backs notice …` for a notice it cannot match to its evidence, and
+  because an added `AuditEvent` is what opens the owned chain transaction: the change rolls back in
+  both directions as the enrolment does (ADR-0045, D1). Its detail is `{"currentPinProved":true}`,
+  because `{"passwordProved":true}` would be false here.
+- **D3: No `SecurityEvent` log line**, because the row is evidence to keep and not an alert to wake
+  someone for, as for the money movements of ADR-0044. Logged sites and rows written stay two
+  inventories that move independently.
+- **D4: No suppression rule: N changes owe N notices**, because each change costs the current PIN
+  and a wrong PIN is counted by the lockout that guards every PIN use (ADR-0010), so repeats cannot
+  be ground into a flood and are what someone holding a PIN produces. A refused change owes none:
+  no `currentPin` or a password in its place is 422 `PIN_REQUIRED`, a wrong one 401 `INVALID_PIN`.
+- **D5: Different words, and a stronger remedy.** The change notice says that the previous PIN was
+  proved and that the password was not used and has not changed, because "for the first time" and
+  "your account password was proved" are both false for a change. Its remedy is to have the PIN
+  removed, because setting a new one costs the password, which a PIN-only attacker does not have.
 
-**D2 — And the audit row it is joined to.** Not symmetry, and not a nice-to-have. `notify` matches a
-notice to its evidence by ~~`(ActorUserId, Event)`~~ *(struck 2026-09-10: that pair is the FALLBACK
-since ADR-0052, kept only for notices written before its migration. A notice that names its row is
-matched on that `Id`, with the pair checked against it. Left in the sentence rather than rewritten
-because the CONSEQUENCE below is unchanged either way — and because this document has now had three
-separate clauses go stale behind ADR-0052, which is itself the argument for the per-notice reference
-it asked for.)* and prints `NO AUDIT ROW backs notice …` when it cannot, so a change notice without
-an audit row of the same name would raise that finding on every run — a permanent false alarm in the
-runbook's most alarming line. The audit row is also what puts this save under the OWNED chain
-transaction, which opens only when an `AuditEvent` is Added; the change therefore rides the same
-locking path the enrolment does, and the both-directions rollback ADR-0045 D1 proved for the
-enrolment is proved for the change by two SQL-gated tests rather than inherited by assertion. Remove
-the `_audit.Record` and the first of them fails on `fault.Fired`, which is the assertion that says
-why. Its detail is `{"currentPinProved":true}`, because `{"passwordProved":true}` would be false
-here.
+## Rejected
 
-**D3 — No `SecurityEvent` log line.** The row is evidence to keep, not an alert to wake someone for.
-This follows the money-movement precedent ADR-0044 records: a durable row with no operator alert. It
-also leaves the two inventories — logged sites and rows written — moving independently, which is the
-state that ADR's guard already expects.
-
-**D4 — No suppression rule, and the repeatable surface is the signal.** D8 named the missing
-suppression rule as the blocker. Measured on the running stack: three changes in a row produce three
-notices, and three refused attempts produce none.
-
-```
-change x3                          -> PinChanged x3, PinEnrolled x1
-no currentPin                      -> 422 PIN_REQUIRED     notices unchanged
-wrong currentPin                   -> 401 INVALID_PIN      notices unchanged
-password on an account with a PIN  -> 422 PIN_REQUIRED     notices unchanged
-```
-
-A change cannot be ground into a flood, because each one costs the current PIN and a wrong PIN is
-counted by the same lockout that guards every other PIN use (ADR-0010). N changes producing N
-notices is therefore information rather than noise: an owner who receives four notices in a minute
-is being told something true and urgent. Collapsing them at render time was considered and declined
-below.
-
-**D5 — Different words, and a stronger remedy.** The change notice is not the enrolment's text with
-a verb swapped. "For the first time" and "your account password was proved in the same request" are
-both false for a change, and the second would tell a reader whose PIN was watched that their
-password had been used. The change notice says what was proved — the previous PIN — and that the
-password was not used and has not changed. Its remedy is also stronger and says so: removing the PIN
-forces re-enrolment, which costs the password, and a PIN-only attacker does not have it.
-
-## Alternatives declined
-
-**Reuse `PinEnrolled` for both.** The cheapest edit and the worst. The two kinds would be
-indistinguishable in the evidence join, in the operator's console line, in both runbooks' SQL, and —
-because the renderer selects on that string — in the message the owner reads. A notice telling
-someone a PIN was set "for the first time" when it was replaced is worse than no notice.
-
-**Collapse repeats at render time** (one notice per user per window). It hides the signal that
-matters most: repeated changes are what an attacker in possession of a PIN actually does. It also
-puts a policy decision inside a rendering step that has no state to make it with, and it would have
-to survive the relay, which claims the same pending set.
-
-**Wait for the relay.** The relay is ratified and unbuilt _(as of this ADR's morning; built the
-same evening as ADR-0048)_; see `docs/deferred/`. Recording the
-obligation is what ADR-0045 decided is worth doing without delivery; a change is owed
-that same obligation now, and the row is what a later relay will find.
+- Rejected: `PinEnrolled` for both events, because the two would be indistinguishable in the
+  evidence join, the console line, the runbooks' SQL and, since the renderer selects on that
+  string, the message: a notice saying "for the first time" about a replacement is worse than none.
+- Rejected: collapsing repeats at render time, one notice per user per window, because it hides
+  the signal that matters most, puts a policy in a rendering step that has no state to make it
+  with, and would have to survive the relay, which claims the same pending set.
+- Rejected: waiting for a relay that delivers, because recording the obligation is worth doing
+  without delivery (ADR-0045) and the row is what a relay finds.
 
 ## Consequences
 
-The account holder is told when either credential event happens, in words that distinguish them. The
-audit trail carries a row for a credential replacement it did not carry before. `notify` renders
-both kinds in one run and names each. Nothing is delivered — that clause is still open, and this ADR
-does not narrow it.
+- The account holder is owed a notice at either credential event, in words that tell them apart;
+  the audit trail carries a row for a credential replacement; `notify` renders both kinds in one
+  run and names each. Nothing here sends: delivery is ADR-0048's and stops at a pickup directory.
+- The count of `_audit.Record` sites and ADR-0044's inventory of audited events are held by a test.
+- A row whose `Event` has no renderer arm stays owed and is named on the console, because a row
+  wrongly marked delivered is a notice nobody receives.
+- A repeatable kind weakens one check, and ADR-0052 restores it. `notify` asked whether an audit
+  row of that kind exists for the user, so one surviving row answered for every change notice.
+  A notice now carries the id of its audit row, written in the same save, and the check asks about
+  that row. The reference is a plain column and no foreign key: the `AddSubscriberNotices`
+  migration adds none on purpose, so that a notice whose evidence is missing is found, not refused.
+- Not covered: a notice written before ADR-0052's migration names no row and keeps the weaker
+  question, by `(ActorUserId, Event)`.
 
-Two counts move with this decision and are enforced by a test rather than by care: the
-`_audit.Record` site count, and ADR-0044's "What is wired" inventory, which now reads fourteen
-events, eight of them administrative.
+## Revisit when
 
-An unrenderable kind is still a finding, not a silent success: a row whose `Event` has no renderer
-arm stays owed and is named on the console. That branch had no test before this change and has one
-now: once a relay exists, a row wrongly marked delivered is a notice nobody will ever receive.
+- A relay sends: each repeat then has a cost per message, and D4 is measured again.
+- A PIN reset or revocation flow exists: D5's remedy names it, where it now asks for a person.
+- A change-email endpoint exists (ADR-0045, D2): the old address is owed the notice too.
 
-**And one detective control gets weaker, which is the cost of a repeatable kind.** `notify` reports
-`NO AUDIT ROW` by asking whether a row of that kind EXISTS for the user, not by matching each notice
-to its own. While every kind happened once per account those were the same question. A change can
-happen many times, so where several change notices are owed, one surviving audit row answers for all
-of them and a missing one raises nothing. Making the check exact needs a per-notice reference on the
-row — which ~~ADR-0045 deliberately did not add~~ *(struck 2026-09-09: ADR-0045 says nothing about a
-foreign key and never did — the word appears in it zero times *(corrected 2026-09-10: zero was
-true when this was written; the word now appears twice, both inside the note ADR-0045 carries to
-say the decision lives elsewhere — so a grep now answers 2, and that is the note's own doing)*. The
-decision is in the
-`AddSubscriberNotices` MIGRATION's remarks, which is where the next reader should be sent.)* the
-`AddSubscriberNotices` migration deliberately did not add, so that a notice whose evidence has gone
-missing is found rather than refused. That is a schema decision and it is not taken here: the limit
-is pinned by a test that fails if anyone closes it without moving this paragraph, named in the
-repudiation runbook so an operator counts the rows themselves.
+## Verified by
 
-_Correction (2026-09-09) — **taken, by ADR-0052.** A notice now carries the id of the audit row it
-belongs to, written in the same save, and the check asks about THAT row. ⚠️ Only for notices that
-name one: every row written before the migration names none and keeps the weaker question, or the
-first run after deployment would report the whole backlog. ⚠️ **And the forcing function this
-paragraph relied on did NOT fire.** The test built notices that name no row, so it took the fallback
-and stayed GREEN when the join became exact — it was reframed and this paragraph moved deliberately,
-not because a red test demanded it. A test guards the shape it builds, not the claim it announces._
+- `SubscriberNoticePersistenceTests` (D1, D4, a refused change) and `SubscriberNoticeSqlServerTests`
+  (D2: `WhenTheChangeAuditRowCannotBeWritten_NeitherTheNewPinNorItsNoticeSurvives`).
+- `SecurityEventConstantTests` (the site count) and `NotifyCommandTests` (both kinds, the join).
 
-## What would change this
+## Related
 
-- **A relay that delivers.** Then "notified" means something, the repeatable surface has a cost per
-  message, and D4's no-suppression decision is worth re-measuring rather than re-asserting.
-- **A PIN reset or revocation flow.** D5's remedy sentence currently asks the reader to contact a
-  human; when the flow exists the notice should name it.
-- ~~**An exact evidence join.** A per-notice reference from the notice to its audit row would restore
-  the `NO AUDIT ROW` finding to what it was when every kind was singular. It is a schema change and
-  it reopens ADR-0045's no-foreign-key decision, so it is a decision of its own rather than a fix.~~
-  *(struck 2026-09-09: done, ADR-0052 — and the citation was wrong twice over. The no-foreign-key
-  decision is the `AddSubscriberNotices` migration's, not ADR-0045's, and ADR-0052 does not reverse
-  it: the reference is a plain column, because a notice whose evidence is missing must still be
-  FOUND rather than refused. Naming a row is not constraining it.)*
-- **A change-email endpoint.** ADR-0045 D2's trigger, unchanged here: the old address would then
-  have to be notified too, and this notice's "addressed to the email held on your account" line
-  becomes the weaker of two claims.
+ADR-0010, ADR-0040, ADR-0044, ADR-0045, ADR-0048, ADR-0052.

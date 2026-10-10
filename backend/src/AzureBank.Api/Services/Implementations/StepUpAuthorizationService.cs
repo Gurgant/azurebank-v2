@@ -146,8 +146,7 @@ public class StepUpAuthorizationService : IStepUpAuthorizationService
     /// </para>
     /// <para>
     /// ⚠️ <b>THE LIST IS THE ARGUMENT.</b> A mint missing from it is a mint nobody has checked,
-    /// and the sentence above quietly stops being true — which is how it read between ADR-0056
-    /// landing and the review on #198 that caught it. Prose cannot enforce that, so
+    /// and the sentence above quietly stops being true. Prose cannot enforce that, so
     /// <c>EveryMintProvesOwnershipBeforeIt</c> in <c>SecurityEventConstantTests</c> reads the
     /// sources and fails on a fifth caller, or on one that mints before it checks.
     /// </para>

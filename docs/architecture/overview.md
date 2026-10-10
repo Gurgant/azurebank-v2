@@ -34,8 +34,8 @@ flowchart LR
 ```
 
 The arrow labels are the whole security story: **the browser holds a cookie, never the JWT.**
-*(Until 2026-09-25 this said "never a token"; "the JWT" is the exact claim, since the browser
-also holds a one-shot PIN authorisation's id between the PIN and the operation it authorises.)*
+"The JWT" is the exact claim: the browser also holds a one-shot PIN authorisation's id, between
+the PIN and the operation it authorises.
 
 ## The one decision everything else follows from
 
@@ -43,12 +43,12 @@ The SPA never receives, stores or sends a JWT. It authenticates with an `HttpOnl
 `SameSite=Strict` cookie prefixed `__Host-`; the BFF holds the access and refresh tokens
 server-side and attaches the bearer header itself as it proxies. Nothing in the frontend
 constructs an `Authorization` header, and web storage holds no token, no session identifier and
-nothing of a real user's for a script to steal. *(Until 2026-10-05 this said "there is nothing in
-web storage for a script to steal". Where the public demo is on, `localStorage` holds one thing
-a script could use: what signs in to the throwaway demo copy a visitor claimed, its password
-included. [ADR-0063](../adr/0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md#what-the-browser-keeps-in-demo-mode-added-2026-10-05)
-says what that is worth to a script and when the browser removes it. With the demo off the
-sentence is as true as it was.)*
+nothing of a real user's for a script to steal. Where the public demo is on, `localStorage` holds
+one thing a script could use: what signs in to the throwaway demo copy a visitor claimed, its
+password included.
+[ADR-0063](../adr/0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md#what-the-browser-keeps-in-demo-mode-added-2026-10-05)
+says what that is worth to a script and when the browser removes it. With the demo off there is
+nothing in web storage for a script to steal.
 
 Everything downstream is a consequence:
 
@@ -60,9 +60,8 @@ Everything downstream is a consequence:
   timeouts, not by token lifetime. The grant does not rotate and lives 60 minutes from sign-in, so
   nothing from one sign-in outlives the session's cap. Only the BFF's own client, over loopback,
   can present it, and one presented after its session ended is recorded as a security event.
-  *(Until 2026-09-28 this said the refresh token rotated on every use and a reuse revoked the whole
-  family. ADR-0057 replaced that: a renewal whose answer was lost, to a database hang for
-  instance, signed users out.)*
+  A renewal only reads the grant, so a lost answer, to a database hang for instance, has nothing
+  to break; under rotation it is a sign-out (ADR-0057).
 - **Session expiry is a data-loss event, so it is designed rather than accepted.** No unsubmitted
   financial intent is persisted anywhere; a draft transfer is lost on expiry rather than resumed
   against a session that may no longer be yours.
@@ -90,9 +89,6 @@ Five outcomes, and each one tells the client something different:
 | `422 IDEMPOTENCY_KEY_REUSE` | Same key, different payload | Rotates the key |
 | Business `4xx` | Insufficient funds, wrong PIN | Releases the key; fix and retry |
 
-*(Until 2026-10-01 the third row said "It executed but the response was lost" of every such answer,
-and that the client always asked the user to verify.)*
-
 The client half matters as much as the server half, because a client that mints a fresh key after
 a timeout has manufactured a double-spend that the server cannot detect. So the rule is
 inverted from the intuitive one: **a failure the server might have seen keeps the key; only a
@@ -100,9 +96,8 @@ definitive answer spends it.** `RESULT_UNKNOWN` is the one case where the correc
 stop rather than guess. When the server read the key's record as committed it says so, with
 `applied: true`, and the client says the payment went through and offers nothing that could send it
 again. When it did not, the client involves the user, because inventing a guess would be worse than
-asking. *(Until 2026-10-01 this said the user was always involved, because "there is no endpoint
-that answers 'did key X land?'". There is still no endpoint to ask; for a commit the server can
-prove, the 409 itself answers.)*
+asking. There is no endpoint that answers "did key X land?"; for a commit the server can prove,
+the 409 itself answers.
 
 There are **no optimistic updates on money**. Balances come from a refetch after invalidation. In
 a bank a briefly-wrong balance is a correctness failure, not a UX blemish.
@@ -126,14 +121,10 @@ reveal. The API verifies it for the first three; the reveal is gated by the BFF 
 caller presenting a bearer token together with the BFF's service key reads the full number without
 one — and since ADR-0055 only the BFF presents that key in a deployment; the API keeps the same
 value to check it (`SECURITY.md`).
-*(Until 2026-09-06 this said three; until 2026-09-17, that the API verifies all four; until
-2026-09-24, that a bearer token alone was enough, which ADR-0055 ended on 2026-09-19.)*
 Money moves carry their proof in the request: a withdrawal, like a transfer, first turns the PIN
 into a **one-shot authorisation** — bound to the account, the amount and, for a transfer, the payee;
 valid two minutes; spent once — presented in a `Step-Up-Authorization` header (ADR-0041, ADR-0042,
 ADR-0056). Nothing in the session authorises a payment; one PIN entry authorises one payment.
-*(Until 2026-09-24 this said a withdrawal sends the PIN inside its body; ADR-0056 moved it onto a
-one-shot authorisation on 2026-09-21.)*
 
 The account-number reveal is the one route that still uses the **session** level, and the elevation
 lives there rather than in the token: hit at level 1 it returns `403` with `X-Auth-Level-Required`;
@@ -157,13 +148,10 @@ Fourteen security events — nine successes and five on the refusal path — eac
 (ADR-0044). A success rides the act's own transaction, so a row that cannot be written stops the
 act; a refusal commits on its own connection at once, or its rollback would take the record with it.
 A refresh token presented after its session ended is recorded and revokes nothing: containment is
-the operator's, through the incident runbook (ADR-0057). Rows hold ids and no amounts; the table is
+manual, through the incident runbook (ADR-0057). Rows hold ids and no amounts; the table is
 never purged, and `backend/tools/AzureBank.AuditVerifier` verifies it. The claim is narrow: a
 rewrite by whoever holds the database but not that epoch's key is caught; truncating the tail past
-the last anchor needs no key and is not, and nothing verifies the chain on a schedule. *(Until
-2026-09-29 this said fifteen events, six on the refusal path, and that a reused refresh token was
-contained before its row was written. ADR-0057 removed that containment, and with it
-`RefreshTokenReuseRevokeFailed`, the event that reported its failure.)*
+the last anchor needs no key and is not, and nothing verifies the chain on a schedule.
 
 ## Not telling attackers who exists
 
@@ -181,11 +169,9 @@ number never appears in a list response.
 **Honest residual:** registration auto-logs-in, which means the account-existence oracle is
 narrowed rather than closed. Closing it needs out-of-band email confirmation, which needs email
 infrastructure this project does not have. That is a bounded, accepted risk, written down as a
-decision rather than left as an oversight. *(Since ADR-0045 and ADR-0047 a notice to the account's
-email is recorded in the same save as a PIN enrolment or change, and since ADR-0048 and ADR-0051 a
-relay — in the API, or as an Azure Function rehearsed locally against Azurite and not deployed —
-delivers it into a pickup directory with no operator in the loop. Nothing emails it, so the
-sentence still holds.)*
+decision rather than left as an oversight. The notice recorded with a PIN enrolment or change is
+not that infrastructure: its delivery ends in a pickup directory, and nothing emails it
+([below](#a-notice-the-session-cannot-suppress)).
 
 *Depth: ADR-0013, ADR-0014, ADR-0020, ADR-0012.*
 
@@ -247,8 +233,8 @@ ends with Playwright against the built SPA under its CSP (ADR-0029, ADR-0032, AD
 - **Schemathesis** on every pull request, driving the running API from the committed document and
   failing on a response the document does not declare (ADR-0053 D6).
 - Every pull request into `main` runs the full suite and CodeQL on three languages, and `main`
-  takes a merge only when they pass. An AI review is asked for by hand on pull requests, and each
-  pull request is merged by hand.
+  takes a merge only when they pass. An AI review does not start by itself: it is asked for on
+  each pull request. Each pull request is merged by hand.
 
 ## Where to go next
 

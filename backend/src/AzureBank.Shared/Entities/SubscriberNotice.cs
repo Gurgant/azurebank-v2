@@ -17,11 +17,10 @@ namespace AzureBank.Shared.Entities;
 /// the clause it does not, and ADR-0045 says where it stops.
 /// </para>
 /// <para>
-/// AN OUTBOX WITH A PUMP, since 2026-09-04. Until then this paragraph said the opposite — nothing
-/// in the API read it, nothing drained it on a timer, the anchor's decision for the anchor's reason
-/// — and ADR-0048 reversed it: <c>NoticeRelayService</c> claims the free owed rows under the lease
-/// below and delivers them, when <c>Notices:Runner</c> names the API. The verb remains for a store
-/// where nothing runs.
+/// AN OUTBOX WITH A PUMP (ADR-0048). <c>NoticeRelayService</c> claims the free owed rows under the
+/// lease below and delivers them when <c>Notices:Runner</c> names the API; when it names the
+/// Function, <c>AzureBank.Functions.NoticeRelay</c> runs the same sweep on a timer (ADR-0051).
+/// The tool's <c>notify</c> verb remains for a store where nothing runs.
 /// </para>
 /// <para>
 /// NO ADDRESS COLUMN, on purpose. The recipient is joined from the account at rendering time, which
@@ -35,8 +34,7 @@ namespace AzureBank.Shared.Entities;
 /// Not a <c>BaseEntity</c>, like <see cref="StepUpAuthorization"/>: explicit instants, no managed
 /// timestamps, no soft delete. Nothing deletes from this table but the database's cascade from a
 /// deleted user, and the one statement that deletes users is the Seeder's recycler's, which deletes
-/// a demo copy's (ADR-0062); this said "nothing deletes" until then. A delivered row is the only
-/// record that a notice was rendered at all.
+/// a demo copy's (ADR-0062). A delivered row is the only record that a notice was rendered at all.
 /// </para>
 /// </remarks>
 public class SubscriberNotice
@@ -55,7 +53,7 @@ public class SubscriberNotice
     /// Which event owes the notice — a <c>SecurityEvents</c> constant, the same vocabulary as the
     /// audit row written beside it. Two values are written today: <c>PinEnrolled</c> when a PIN is
     /// bound for the first time (ADR-0045) and <c>PinChanged</c> when an existing one is replaced
-    /// (ADR-0047). Until 2026-09-04 this sentence said there was exactly one.
+    /// (ADR-0047).
     /// </summary>
     public required string Event { get; set; }
 

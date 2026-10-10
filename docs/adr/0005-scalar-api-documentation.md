@@ -1,182 +1,49 @@
 # ADR-0005: Scalar API Documentation
 
-**Status**: Accepted
-
-**Date**: 2026-01-10
-
-**Decision Makers**: Vladislav Aleshaev
-
----
+**Status:** Accepted · **Date:** 2026-01-10 · **Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
-The REST API needs interactive documentation for:
-- Developer onboarding
-- API exploration and testing
-- Client integration support
-- Contract documentation
-
-## Decision Drivers
-
-- **Developer Experience**: Modern, intuitive UI
-- **Performance**: Fast loading and rendering
-- **Customization**: Theming and branding options
-- **Maintenance**: Active development and support
-- **Features**: Code samples, try-it-out, authentication
-
-## Considered Options
-
-1. **Scalar**: Modern API documentation platform
-2. **Swagger UI**: OpenAPI's official UI
-3. **ReDoc**: Redocly's documentation generator
-4. **Stoplight Elements**: Stoplight's web components
-5. **RapiDoc**: Open-source API documentation
+The REST API needs interactive documentation: to onboard a developer, to explore and try an
+endpoint, to support a client integration, and as the readable form of the contract. The tool is
+chosen for a modern interface, fast loading and rendering, theming, active maintenance, and
+try-it-out with authentication and code samples.
 
 ## Decision
 
-Use **Scalar** (`Scalar.AspNetCore` v2.0.10) for API documentation.
+1. **The API's documentation page is Scalar (`Scalar.AspNetCore`)**, because it renders large
+   schemas fast, generates code samples in more than 20 languages, has full-text search, keyboard
+   navigation and a native dark mode, and integrates with .NET as a NuGet package.
+2. **The page and the OpenAPI document are mapped in the Development environment only**, for
+   security: a deployed API serves neither. The page is at `https://localhost:7215/scalar/v1`,
+   titled "AzureBank API", and its default code sample is C# with `HttpClient`.
+3. **Scalar renders the document that `Microsoft.AspNetCore.OpenApi` generates, completed by the
+   API's own transformers** (the bearer scheme, the validation and error responses, the operation
+   metadata), so that the page documents the authentication flow and the error bodies.
 
-```csharp
-// Program.cs
-if (app.Environment.IsDevelopment())
-{
-    app.MapScalarApiReference(options =>
-    {
-        options
-            .WithTitle("AzureBank API")
-            .WithTheme(ScalarTheme.BluePlanet)
-            .WithDefaultHttpClient(ScalarTarget.CSharp, ScalarClient.HttpClient);
-    });
-}
-```
+## Rejected
 
-Accessible at: `https://localhost:7215/scalar/v1`
-
-## Rationale
-
-### Why Scalar over Swagger UI?
-
-1. **Modern UI**: Clean, contemporary design vs Swagger's dated interface
-2. **Better Performance**: Faster rendering of large schemas
-3. **Code Generation**: Built-in code samples in 20+ languages
-4. **Dark Mode**: Native dark mode support
-5. **Search**: Full-text search across endpoints
-6. **Keyboard Navigation**: Power-user friendly
-
-### Feature Comparison
-
-| Feature | Scalar | Swagger UI | ReDoc | RapiDoc |
-|---------|--------|------------|-------|---------|
-| Modern UI | ✅ Excellent | ⚠️ Dated | ✅ Good | ✅ Good |
-| Try It Out | ✅ Yes | ✅ Yes | ❌ No | ✅ Yes |
-| Code Samples | ✅ 20+ langs | ❌ Limited | ❌ No | ✅ Yes |
-| Dark Mode | ✅ Native | ❌ No | ✅ Yes | ✅ Yes |
-| Search | ✅ Full-text | ⚠️ Basic | ✅ Yes | ✅ Yes |
-| .NET Integration | ✅ Native | ✅ Native | ⚠️ Manual | ⚠️ Manual |
-| Active Development | ✅ Very | ⚠️ Slow | ✅ Yes | ⚠️ Moderate |
-
-### Screenshots (Conceptual)
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│  AzureBank API                                    🔍 Search  │
-├──────────────────────────────────────────────────────────────┤
-│                                                              │
-│  📁 Authentication                                           │
-│     POST /api/auth/login                                     │
-│     POST /api/auth/register                                  │
-│     GET  /api/auth/me                                        │
-│                                                              │
-│  📁 Accounts                                                 │
-│     GET  /api/accounts                                       │
-│     POST /api/accounts                                       │
-│     GET  /api/accounts/{id}                                  │
-│                                                              │
-│  📁 Transactions                                             │
-│     POST /api/transactions/deposit                           │
-│     POST /api/transactions/withdraw                          │
-│                                                              │
-└──────────────────────────────────────────────────────────────┘
-```
+- Rejected: Swagger UI, because its interface is dated, its code samples are limited, its search is
+  basic, it has no dark mode and its development is slow.
+- Rejected: ReDoc, because it has no try-it-out and no code samples, and its .NET integration is
+  manual.
+- Rejected: RapiDoc, because its .NET integration is manual and it is only moderately maintained.
+- Considered and not compared feature by feature: Stoplight Elements.
 
 ## Consequences
 
-### Positive
+- An endpoint can be read and copied as client code from one page. Trying one from the page also
+  needs the service credential (ADR-0055): in Development the page and the document are exempt
+  from it, the operations they describe are not.
+- It costs familiarity: Scalar is newer than Swagger UI, has a smaller community, and some advanced
+  customisation requires configuration.
+- Not covered: outside Development there is no documentation page.
 
-- Excellent developer experience
-- Modern, professional appearance
-- Built-in code generation saves integration time
-- Active development ensures bug fixes and features
-- Native .NET integration via NuGet
+## Verified by
 
-### Negative
-
-- Less industry familiarity than Swagger UI
-- Newer tool with smaller community
-- Some advanced customization requires configuration
-
-### Neutral
-
-- Requires `Microsoft.AspNetCore.OpenApi` for schema generation
-- Only enabled in Development environment
-
-## Implementation
-
-### Configuration
-
-```csharp
-// ServiceCollectionExtensions.cs
-public static IServiceCollection AddOpenApiServices(this IServiceCollection services)
-{
-    services.AddOpenApi("v1", options =>
-    {
-        options.AddDocumentTransformer<BearerSecuritySchemeTransformer>();
-        options.AddDocumentTransformer<ValidationResponseTransformer>();
-        // ... other transformers
-    });
-
-    return services;
-}
-```
-
-### Custom Transformers
-
-The API uses 11 OpenAPI document transformers for:
-- Bearer authentication scheme
-- Validation error responses
-- Error response schemas
-- Operation metadata
-
-### Access Control
-
-```csharp
-if (app.Environment.IsDevelopment())
-{
-    app.MapOpenApi();
-    app.MapScalarApiReference();
-}
-```
-
-Documentation is only available in Development environment for security.
-
-## Validation
-
-Success criteria:
-- All endpoints documented
-- Try-it-out functionality works
-- Authentication flow documented
-- Request/response schemas accurate
-- Code samples generated correctly
+- `ServiceCredentialTests.TheApiDocument_IsNotExempt_OutsideDevelopment`: outside Development a
+  request for `/openapi/v1.json` that carries no service credential is refused.
 
 ## Related
 
-- [ADR-0001: BFF Pattern](./0001-bff-pattern.md)
-- [AzureBank.Api README](../../backend/src/AzureBank.Api/README.md)
-
----
-
-## References
-
-- [Scalar Documentation](https://github.com/scalar/scalar)
-- [Scalar.AspNetCore NuGet](https://www.nuget.org/packages/Scalar.AspNetCore)
-- [Microsoft.AspNetCore.OpenApi](https://learn.microsoft.com/aspnet/core/fundamentals/openapi/overview)
+ADR-0001, ADR-0055.

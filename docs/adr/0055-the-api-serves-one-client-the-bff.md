@@ -1,163 +1,80 @@
 # ADR-0055: The API serves one client, the BFF
 
-**Status:** Accepted · **Date:** 2026-09-19 · Completes [ADR-0001](0001-bff-pattern.md): the BFF
-keeps the token out of the browser, and that is worth something only while the API will not hand
-the same token to anyone who asks it directly.
+**Status:** Accepted · **Date:** 2026-09-19 · **Amended:** 2026-09-28 (ADR-0057), 2026-10-04
+(ADR-0063) · **Completes:** ADR-0001
 
 ## Context
 
-ADR-0001 chose a BFF so the browser holds a cookie and never a token. Everything built on it since
-— the cookie session, the level-two gate on `/full-number` (ADR-0008), the BFF's rate limits, the
-Fetch-Metadata checks (ADR-0018) — lives in the BFF. None of it is in the way of a caller that goes
-round the BFF, and nothing stopped one. Measured on 2026-09-19 against the running API on the local
-stack, with no BFF in the path and a user created for the probe:
-
-```
-POST /api/auth/register                     201
-POST /api/auth/login                        200, a bearer token in the body
-GET  /api/accounts                          200, number masked (AB-****-****-32)
-GET  /api/accounts/{id}/full-number         200, the unmasked number; no PIN ever set or entered
-POST /api/auth/pin/verify, wrong PIN x3     200, 200, then 429 PIN_LOCKED, Retry-After: 900
-```
-
-So the API's own defences held where it has them: the PIN lock engaged with no BFF, and the three
-operations that move money or close an account refuse without a step-up authorisation the API
-itself minted (ADR-0042). What did not hold is everything the BFF adds, because the BFF was
-optional. The repository said so in passing — `Program.cs` carried the comment "direct API access
-is server-to-server or Swagger/dev" — and had no hosting configuration that would have made the
-API private.
+ADR-0001 puts a BFF in front of the API so that the browser holds a cookie and never a token. The
+cookie session, the level-two gate on `/full-number` (ADR-0008), the rate limits and the
+Fetch-Metadata checks (ADR-0018) live in the BFF, and none stops a caller that goes round it.
+Measured before this decision, with no BFF in the path: login answered 200 with a bearer token in
+the body, and `GET /api/accounts/{id}/full-number` 200 with the unmasked number, no PIN ever set.
+The API's own defences held (the PIN lock, the step-up of ADR-0042); the BFF's were optional.
 
 ## Decision
 
-**D1 — The API refuses a request that does not carry the BFF's service credential.**
-`ServiceCredentialMiddleware` runs before authentication and compares the
-`X-AzureBank-Service-Key` header with `ServiceCredential:BffKey`. Without a match the answer is
-`401 application/problem+json` with `errorCode: SERVICE_CREDENTIAL_REQUIRED`, and nothing about the
-caller's token, body or path is evaluated.
-
-**D2 — One answer for a missing key and a wrong one, compared in constant time.** Both sides are
-hashed with SHA-256 and compared with `CryptographicOperations.FixedTimeEquals`; the digests give
-the comparison two inputs of one length. A header sent twice is refused even if one value is
-right. The log line for a refusal carries the HTTP method and neither the header's value nor the
-path (ADR-0017: a path carries a customer's handle).
-
-**D3 — Both hosts refuse to start without a usable key.** `ValidateOnStart`, 32 characters or
-more, the same rule and the same treatment as the other secrets. An API that started without the
-key and served every caller would be this hole reopened by a deployment mistake; a BFF that
-started without it would run and fail every login with a 401 nobody can read.
-
-**D4 — The BFF sends the key on both of its roads to the API, per request and from one source,
-and no browser can send it instead.** A `DelegatingHandler` sets it on each request the named
-`BackendApi` client makes; the YARP transform removes whatever the caller sent under that name and
-sets the BFF's own, next to where it does the same for `Authorization`. Both read the key from
-`IOptionsMonitor`, so neither road can hold a key the other has stopped using: `IOptions` computes
-its value once for the life of the process, and a road reading it would go on presenting the old
-key after a rotation while its sibling presented the new one — and the API compares one value.
-What that does NOT buy is a rotation across the two hosts: `ServiceCredentialMiddleware` hashes its
-copy once, in its constructor, so a rotation is a deployment event on both sides. While one is half
-applied the answer is the API's 401 — loud and closed, rather than quiet and open.
-
-*(Extended 2026-09-28, [ADR-0057](0057-the-bffs-refresh-token-is-one-reusable-grant-per-session.md)
-§4.2 and §4.7. On the ~~five~~ token endpoints — login, register, refresh, revoke and logout
-*(six since 2026-10-04: the demo's claim, `POST /api/auth/demo/claim`, joined them,
-[ADR-0063](0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md))* — and on
-the session-stamp feed the BFF polls, `POST /api/auth/session-stamps` (ADR-0057 §5.3), the key is
-not enough: the API answers them 404 unless the request comes over loopback and carries exactly one
-`X-AzureBank-Token-Road` header whose value is the BFF's marker, compared exactly. The BFF's own
-client adds that marker, and the YARP transform strips any copy a browser sends, next to where it
-strips the key, because the proxy also reaches the API over loopback and adds the key to every
-browser request. And a half-applied rotation no longer reaches the browser as the API's 401: the
-API marks that refusal with `X-AzureBank-Refusal: service-credential`, and the BFF turns it into a
-503 with `Retry-After`, so the SPA stays signed in. At the API the answer is still the 401.)*
-
-**D5 — The key travels over TLS, or to this machine, and nothing is forwarded anywhere else.** It
-is a bearer secret, so `http://api.internal` would put it on the network in clear. The BFF refuses
-to start when `BackendApi:BaseUrl` or any YARP destination is neither `https` nor `http` on
-loopback — loopback because that is the development and CI topology, and it crosses no network.
-YARP reloads its configuration while the host runs, so the proxy asks the same question per
-request, and a destination that fails it gets NO request: the transform throws and YARP answers
-502. Observed while testing that: a live reload re-runs the options' validation too, and throws the
-startup message.
-
-> ⚠️ The first version of that per-request guard withheld the credential, logged, and let the
-> request go. Review asked what else was on it, and the measurement answered: with the cluster
-> reloaded to `http://api.internal:5068`, 50 of 50 requests reached that destination, every one
-> carrying `Bearer fake-jwt` — the session's own access token, which the lines below the guard put
-> there. **Withholding one secret while handing over another is not a guard**, and "send less" is
-> not a transport boundary. Hence the throw.
-
-The BFF's own client follows no redirect, because .NET drops `Authorization` when a redirect leaves
-the authority and keeps every other header; YARP never follows one. It trusts an unverifiable
-certificate on loopback alone: that exception exists for ASP.NET's development certificate on
-`https://localhost:7215`, and granted to the whole Development environment it would also cover a
-remote `https://` destination, which this same decision allows — so whoever answered that address
-would be handed the key, certificate or not.
-
-> ⚠️ **Both of those are decided per REQUEST on that road too, and the first version of each was
-> decided once.** `IHttpClientFactory` pools the primary handler for its lifetime while the named
-> client reads `BackendApi:BaseUrl` live on every `CreateClient`, so the address a handler was
-> built for and the address a request goes to are not the same thing. The key was a default header
-> on that client, and the certificate exception came from the address read at construction.
-> Measured before the fix, with the configuration reloaded to `http://api.internal:5068`: the next
-> login reached that destination carrying the key. `ServiceCredentialHandler` attaches the key per
-> request and throws when the address is neither `https` nor loopback, and the certificate callback
-> reads `request.RequestUri`, accepting an unverifiable certificate only on this machine and only
-> in Development. Outside Development no callback is installed, so .NET's own validation stands.
-
-**D6 — What is exempt.** `/health/*`, which an orchestrator calls with no credential and which
-says nothing about a customer. In Development only, `/openapi` and `/scalar`, which a developer
-opens in a browser; the operations they describe are not exempt, so Scalar's "Try it" needs the
-header like any other caller.
-
-**D7 — In production the API also has no public address.** ~~A private network, with the
-platform's identity between the two hosts (managed identity on Azure) or mutual TLS from a service
-mesh. That is a hosting decision and this repository has no hosting configuration, so it is
-written here and not in code.~~ The key stays as the second line behind it. *(Struck 2026-09-28,
-ADR-0057: the hosting is decided, and it is not two hosts. The API runs as a sidecar of the BFF and
-listens on loopback only: in `compose.yaml` it shares the BFF's network namespace
-(`network_mode: "service:bff"`) and binds `127.0.0.1:5068`, and the Azure plan runs the two as one
-app. So there is no network between them for a private network or an identity to protect. ADR-0057
-depends on this: its token endpoints refuse every address that is not loopback, and a reusable grant
-is safe only because nothing outside the replica can open that socket.)*
+- **D1: the API refuses a request that does not carry the BFF's service credential**, because
+  everything the BFF adds is otherwise optional. `ServiceCredentialMiddleware` runs before
+  authentication and compares `X-AzureBank-Service-Key` with `ServiceCredential:BffKey`: with no
+  match it answers 401 `SERVICE_CREDENTIAL_REQUIRED` and evaluates nothing else.
+- **D2: a missing key and a wrong key get one answer, compared in constant time** over SHA-256
+  digests with `FixedTimeEquals`, so neither the answer nor its duration says how close a guess
+  came. A header sent twice is refused even if one value is right. The refusal's log line carries
+  the HTTP method, and neither the key nor the path, which can hold a customer's handle (ADR-0017).
+- **D3: both hosts refuse to start without a key of 32 characters or more** (`ValidateOnStart`),
+  because an API without it would serve every caller and a BFF without it would fail every login.
+- **D4: the BFF sends the key on both of its roads to the API, per request and from one source, and
+  no browser can send it instead.** `ServiceCredentialHandler` sets it on each request of the
+  `BackendApi` client; the YARP transform replaces whatever the caller sent under that name with the
+  BFF's own. Both read `IOptionsMonitor`, so neither road keeps a key the other has stopped using.
+  The API hashes its copy once, at start, so a rotation is a deployment event on both sides; half
+  applied, the API answers 401, which the BFF turns into a 503 with `Retry-After` (ADR-0057 §4.7).
+  On the six token endpoints (login, register, refresh, revoke, logout and the demo's claim,
+  ADR-0063) and the session-stamp feed the key is not enough: they answer 404 unless the request
+  comes over loopback with the BFF's `X-AzureBank-Token-Road` marker (ADR-0057 §4.2).
+- **D5: the key travels over TLS or to this machine, and nothing is forwarded anywhere else**,
+  because it is a bearer secret. The BFF refuses to start when `BackendApi:BaseUrl` or a YARP
+  destination is neither `https` nor `http` on loopback, and both roads ask again per request,
+  because the configuration reloads while the host runs: the transform throws (YARP answers 502) and
+  `ServiceCredentialHandler` throws, since withholding the key alone would still send the session's
+  access token. The BFF's own client follows no redirect, because .NET would carry the key header
+  across one, and accepts an unverifiable certificate only on loopback, in Development.
+- **D6: `/health/*` is exempt**, because an orchestrator calls it with no credential and it names no
+  customer. In Development only, so are `/openapi` and `/scalar`, not the operations they describe.
+- **D7: in production the API also has no public address.** It is a sidecar of the BFF and listens
+  on loopback only: in `compose.yaml` it shares the BFF's network namespace and binds
+  `127.0.0.1:5068`, and on Azure the two run as one app. The key is the second line behind that.
 
 ## Rejected
 
-- **Mutual TLS in the repository.** Stronger, and it costs a certificate authority, two
-  certificates to issue and rotate, and Kestrel configured to require them in development, in
-  `WebApplicationFactory` and in the three CI jobs that start the stack — for two processes on one
-  machine. It belongs to D7, where the platform supplies it. *(2026-09-28, ADR-0057: D7 has no
-  network between two hosts any more for the platform to protect. Mutual TLS, or DPoP, comes first
-  on the day the API is reached over a network; see "What would change this".)*
-- **Leaving it to the network alone.** Correct in production and invisible in the repository: a
-  reader who runs `curl` against the API gets a token, and the BFF looks like decoration.
-- **A PIN check inside the API on `/full-number`.** That read is the one sensitive operation
-  whose PIN only the BFF checks, and it was the measurement that started this. Decided NOT to do,
-  2026-09-19: D1 closes the road that made it matter, since no caller reaches the API without the
-  BFF and the BFF checks the PIN. Doing it anyway means a new step-up operation, a regenerated
-  contract and a changed frontend flow, for a read that moves no money. It is worth reopening on
-  the day "What would change this" below comes true, and not before.
-- **An allow-list of caller addresses.** The BFF and the API share a host in development and CI,
-  so the list would be `127.0.0.1`, which is every caller. *(2026-09-28, ADR-0057 §4.2: the token
-  endpoints do now refuse every address that is not loopback, beside the key and not instead of it,
-  and with the BFF's own marker, because loopback alone is every caller, exactly as this says.)*
+- Rejected: mutual TLS in the repository, because it costs a certificate authority and two
+  certificates in development, the test host and three CI jobs, for two processes on one machine.
+- Rejected: the network alone, because it is invisible in the repository: `curl` still gets a token.
+- Rejected: a PIN check inside the API on `/full-number`, because D1 closes the road that made it
+  matter, and it costs a new step-up operation and contract for a read that moves no money.
+- Rejected: an allow-list of addresses in place of the key, because `127.0.0.1` is every caller.
 
 ## Consequences
 
-- Anything that calls the API directly now presents the key: the integration tests (the factory
-  puts it on every client it hands out, and `ServiceCredentialTests` takes it off again), CI's
-  Schemathesis run, and the Bruno collection (`collection.bru`).
-- A seventh secret, and the first one two hosts share. The BFF gains a user-secrets store for it.
-- The key authenticates the BFF, not a user, and it is a bearer secret: whoever reads it off the
-  BFF's host can call the API. D7 is what makes that host hard to reach.
-- The OpenAPI document does not describe the header. It is not part of any operation's contract;
-  it is a condition of reaching the API at all.
+- Every direct caller presents the key: the integration tests, CI's Schemathesis run and Bruno.
+- The key is one more secret, the first that two hosts share. The OpenAPI document does not describe
+  its header: it is a condition of reaching the API, not part of an operation's contract.
+- Not covered: the key authenticates the BFF, not a user, so whoever reads it off the BFF's host can
+  call the API. D7 is what makes that host hard to reach.
 
-## What would change this
+## Revisit when
 
-A second legitimate client of the API (a mobile app with its own token flow, a partner
-integration). One shared key does not distinguish callers; that is the point at which the API
-needs per-client credentials and this ADR is superseded.
+- A second legitimate client of the API (a mobile app, a partner integration): one shared key does
+  not tell callers apart, so the API needs a credential per client, and the PIN check reopens.
+- The API is reached over a network, as anything but the loopback sidecar of D7: stop, DPoP (RFC
+  9449) or mutual TLS (RFC 8705) comes first, because ADR-0057's reusable grant rests on loopback.
 
-**The API reached over a network** *(added 2026-09-28, ADR-0057)*: its own app with internal
-ingress, or anything else that is not the loopback sidecar of D7. Then stop. ADR-0057's reusable
-grant rests on the loopback road, and DPoP (RFC 9449) or mutual TLS (RFC 8705) comes first.
+## Verified by
+
+- `ServiceCredentialTests` in `AzureBank.Tests` (what the API answers a caller that is not the BFF)
+  and in `AzureBank.Bff.Tests` (each road of the BFF); `TokenRoadTests`; `NoHttpsRedirectTests`.
+
+## Related
+
+ADR-0001, ADR-0008, ADR-0017, ADR-0018, ADR-0042, ADR-0057, ADR-0063.

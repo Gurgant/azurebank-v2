@@ -1,157 +1,88 @@
 # Relaying the enrolment notice, and what this deployment still cannot do
 
-_Title until 2026-09-04: "…and why this deployment cannot". It can now DELIVER to a pickup directory
-on its own (ADR-0048); what it still cannot do is SEND, and that is what the rest of this page is
-about._
+When a transfer PIN is enrolled, and when an existing one is changed, the API records in the same
+transaction that the account holder is owed a notice (ADR-0045, ADR-0047). A runner renders each
+owed notice as a complete RFC 5322 message, addressed to the email held on the account, into a
+pickup directory. There are three runners: the operator tool's `notify` verb, a hosted loop in the
+API (ADR-0048) and the same sweep as an Azure Function (ADR-0051). `Notices:Runner` names the hosted
+one and is `None` unless it is set. The template that deploys the demo does not set it, so on Azure
+no hosted runner renders a notice.
 
-When a transfer PIN is enrolled, and again when an existing one is changed, the API records that the
-account holder is owed a notice, in the same transaction as the action — until 2026-09-04 this said
-the enrolment only, before ADR-0047 added the change. The operator tool's `notify` verb renders each
-owed notice as
-a complete RFC 5322 message addressed to the email held on the account, into a pickup directory the
-operator names. ADR-0045 sets out the design and, deliberately, its limit: the message reaches a
-directory on this machine and nobody else. Nothing here sends.
-
-This document is about the thing that would send it, and why it is not here.
+The message reaches a directory on the machine that wrote it and nobody else. **Nothing here
+sends.** This page is about what would send it, and why that is not built. Two rendered samples, and
+how to produce one, are in [`docs/notices/`](../notices/README.md).
 
 ## What would close it
 
-**A relay that collects from the directory.** The file the verb writes is the message a mail server
-expects: headers, a blank line, a body, CRLF throughout. Postfix's pickup daemon, the IIS SMTP
-service's pickup folder and a dozen commercial gateways read exactly this shape from a directory and
-hand it on. Pointing one at the directory closes the last hop without changing a line of this
-repository — to the extent the collector is durable. The row calls the notice delivered when the
-file is published, so a collector that loses a file loses a notice nothing will render again; that
-is ADR-0045 D7's reason to move "delivered" from the row to the relay's own receipt the day one
-exists. The pickup directory was chosen because the file is already the message.
-
-**Or a transport that speaks to a relay.** The seam is one interface, `INoticeTransport`, with one
-implementation. A second one would hand the rendered notice to an SMTP host or a provider's API. The
-BCL's `System.Net.Mail` is already present and unreferenced; a provider client is one package. Both
-need a credential — a seventh validated secret, taught to the five places the other six live — and a
-host or account to send through.
-
-**For a demonstration only, a local relay.** Mailpit or a similar container listening on
-`127.0.0.1` accepts SMTP and shows the messages in a browser. It would let a reader watch the notice
-arrive somewhere. It would also be a demonstration of a demonstration: nothing outside the machine
-is reached, and a second container the reader has to start is more machinery for the same sentence
-the pickup directory already lets the ADR say.
+- **A relay that collects from the directory.** The file is the message a mail server expects:
+  headers, a blank line, a body, CRLF throughout. Postfix's pickup daemon, the pickup folder of the
+  IIS SMTP service and commercial gateways read that shape from a directory and hand it on. Pointing
+  one at the directory closes the last hop with no change to this repository, as far as the
+  collector is durable: the row is marked delivered when the file is published, so a collector that
+  loses a file loses a notice that nothing renders again.
+- **A transport that speaks to a relay.** The seam is one interface, `INoticeTransport`, with one
+  implementation, `PickupDirectoryTransport`. A second one would hand the rendered notice to an SMTP
+  host or to a provider's API. It needs a host or an account to send through and a credential: one
+  more validated secret, set in every place the others are.
+  `NothingOnTheApiSideCanSendMail_AndThisPinsTheLimit` refuses a dependency on `System.Net.Mail`,
+  MailKit, MimeKit, SendGrid or Twilio in the API, Infrastructure, Shared and the Function: a
+  transport built on one of them turns it red, and the test changes with this decision.
+- **For a demonstration only, a local catcher** such as Mailpit on `127.0.0.1`, which shows the
+  messages in a browser. Nothing outside the machine is reached: one more container for what the
+  pickup directory already shows.
 
 ## What it would buy
 
-Detection. In the threat model — an attacker with a stolen session enrols a PIN behind the account
-password, or changes an existing one behind the PIN alone (ADR-0047) — the notice is the only thing
-that reaches the legitimate owner, and — until the API's relay landed (ADR-0048) — it reached them
-only if somebody ran a verb and then moved a file; now the file is written on a period, backlog
-permitting, and a person still has to move it. A sending relay turns "when the operator
-remembers" into
-"within seconds of the enrolment", which is the property NIST SP 800-63B-4 §4.6 is written to
-provide.
+Detection. Whoever holds a stolen session and the account password can enrol a PIN, and whoever
+holds a session and the current PIN can change it (ADR-0047). The notice is the only thing that
+reaches the account's owner, and today it reaches a file that a person has to pass on. A sending
+relay turns that into seconds after the event. NIST SP 800-63B-4 §4.6 requires the notice so that
+the account holder can detect fraud; it sets no delivery time.
 
 ## Why not here
 
-> **Correction (2026-09-04, evening): the runner is here — ADR-0048.** The paragraphs below were
-> true of the deployment they describe and are kept as its record. The ratification at the foot of
-> this page landed the same day: a hosted loop in the API now claims owed rows under a lease and
-> delivers them through the pickup transport. What is still not here is the SENDING half — a
-> provider, a credential, addresses the project may write to — and the preconditions listed under
-> "What would have to be true" are unchanged for it.
-
-The project's rule: a control whose value depends on a process running unattended, on a third party
-watching, or on a paid subscription is out of scope on its own, because there is nothing here to run
-it. A relay is all three — it runs unattended, it is a third party's service, and outside a demo it
-is paid for. The seeded accounts hold addresses at `example.com` and at a domain this project does
-not own; a real relay pointed at that store would mail strangers.
-
-And the relay is not the first gap. The account holds ONE self-asserted, never-validated address,
-where §4.6 asks for at least two; no endpoint changes it; no PIN reset stands behind the contact the
-notice tells the reader to use. Those are data-model and flow decisions that come before any
-transport, and a relay built ahead of them would deliver a notice whose remedy is incomplete to the
-only address that exists.
+Sending needs a provider: a third party's service, paid for outside a demo, with a credential to
+keep. And the relay is not the first gap. No address in the store is proved by its holder, the
+account holds one address where §4.6 asks for at least two, no endpoint changes it, and no PIN reset
+stands behind the contact the notice names. A relay built before those would mail strangers, or
+deliver a notice whose remedy is incomplete to the only address there is.
 
 ## What would have to be true
 
-- Something in the deployment runs between sessions, or an account with a provider exists whose
-  credential can be stored as the seventh secret — the same condition `anchoring-the-audit-trail.md`
-  states for third-party time.
-- The store holds addresses the project may write to, each one proved by its holder before a notice
-  is sent to it — until 2026-09-17 this bullet ended at "may write to". This page calls the address
-  never-validated; what it did not say is that a column claims the opposite. Both paths that create
-  a user write `EmailConfirmed = true` (registration beside "Skip email verification for MVP" in
-  `AuthService.RegisterAsync`, the seeder for every user it creates), sign-in does not require it,
-  and `NoticeDeliveryRun`, which every runner shares, reads `Email` without consulting it. A sending
-  transport that trusted the column would find every address verified, so it must not: the proof is
-  the email-confirmation flow ADR-0013's deferral trigger names, and no notice goes to an address
-  until it has completed that flow.
-- A second notification address, and a path to change either, exist in the data model — or the ADR
-  is amended to say that one address is the whole design.
-- The repudiation path has a remedy: a PIN reset or revocation flow behind the contact.
+These are the preconditions for "delivered" that ADR-0048 and ADR-0051 point to.
+
+- **A provider account, and its credential** stored as one more validated secret.
+- **Addresses the project may write to, each proved by its holder before a notice goes to it.** The
+  seeded accounts and the demo's copies hold addresses at `example.com`, at `azurebank.example` and
+  at a domain this project does not own, and a registered account holds whatever was typed. The
+  column `EmailConfirmed` is not the proof: every path that creates a user writes `true`
+  (registration, the seeder, the demo pool's builder), sign-in does not require it, and
+  `NoticeDeliveryRun`, which every runner shares, reads `Email` without consulting it. A sending
+  transport must not trust the column. The proof is the email-confirmation flow that ADR-0013 defers
+  until email infrastructure exists.
+- **A second notification address, and a way to change either,** in the data model, or ADR-0045
+  amended to say that one address is the whole design.
+- **A remedy behind the contact**: a PIN reset or a revocation flow. What the contact can do today
+  is in [`pin-enrolment-repudiated.md`](../runbooks/pin-enrolment-repudiated.md).
 
 When those hold, the change is a second `INoticeTransport`, registered in place of the pickup
-directory in ~~both composition roots — the tool's and, since ADR-0048, the API's~~ *(corrected
-2026-09-08: THREE — the tool's, the API's and the Function's, ADR-0051)* — and ADR-0045
-D7 — delivery recorded on the row rather than in
-the chain — is the decision to reopen, because "delivered" will then mean something.
+directory in all three composition roots: the tool's, the API's and the Function's.
+`NoticeTransportRegistrationTests` fails unless each root registers exactly one transport and the
+three agree on its lifetime and implementation, because a host left behind would keep writing files.
+ADR-0045 D7, delivery recorded on the row, is then the decision to reopen: "delivered" moves from
+the row to the relay's own receipt.
 
-_Correction (2026-09-08, ADR-0051): the third root is each host's own
-`AddSingleton<INoticeTransport, PickupDirectoryTransport>()`, and it is the first argument for a
-shared registration extension: two hand-written copies were a coincidence, three are a pattern, and
-the day a sending transport arrives it must replace the pickup directory in all of them or one host
-will quietly keep writing files._
+## What exists, and where it stops
 
-_Pinned (2026-09-11): `NoticeTransportRegistrationTests` builds all three roots and fails unless
-each registers exactly one `INoticeTransport` and the three agree on its lifetime and
-implementation. Until then, deleting the tool's line or the Function's left every test green, and
-without the tool's, `notify` exited 4, the usage-error code, on a correct command line._
-
-## Ratified 2026-09-04
-
-Decided, and recorded here so the deferral above reads as history rather than as an open
-question: **the API is the runner first.** A hosted background service inside the API process claims
-pending `SubscriberNotices` rows under a lease and hands each to the registered `INoticeTransport`,
-retrying on failure. Shipped as ADR-0048 the same day: `NoticeRelayService`,
-`Notices:Runner=Api`. **At-least-once, and the lease does not make it once.** A claim stops two
-runners owning the same row at the same moment; it cannot stop a worker that sends a notice and
-then dies before recording that it did, whose lease expires and whose row is picked up and sent
-again. Exactly-once is not the runner's to give: it needs an idempotency key the transport or the
-provider honours, or de-duplication at the recipient. Until one of those exists, a duplicate notice
-is an accepted outcome and this document says so rather than letting the claim column imply
-otherwise. No second deployable, and no credential beyond the six secrets. Later, as a feature
-before the UI/UX train, the same claim protocol runs as an Azure Function developed and exercised
-locally against
-Azurite (`func start`), so the deployment shape is rehearsed without a deployment; a configuration
-flag names which runner is live, so the two never both send. The preconditions above are unchanged:
-a provider credential, addresses the project may write to, a second contact and a remedy behind it
-are still what "delivered" needs before it can mean anything.
-
-## The Function landed, 2026-09-08 — ADR-0051
-
-The ratification above is kept exactly as it was written, and this section records what became of
-it: its middle clause — "Later, as a feature before the UI/UX train, the same claim protocol runs as
-an Azure Function developed and exercised locally against Azurite (`func start`)" — is done, and its
-two ends still stand unaltered. (An earlier draft of this sentence said the paragraph above "is now
-past tense", which described an edit that was never made and must not be: this repository keeps a
-ratification as ratified and records the outcome beside it.)
-`AzureBank.Functions.NoticeRelay` is a timer-triggered isolated-worker Function that runs the same
-`NoticeSweep` the API runs — the sweep moved into Infrastructure so there is one of it, not two —
-selected by `Notices:Runner=Function`, developed and exercised locally with `func start` against
-Azurite. Measured on 2026-09-08: with the API stepping aside, one tick claimed 15 owed rows,
-delivered 15 files and left 0 owed, under the runner name `func/GURGANT/41396/920b6432`.
-
-**What the rehearsal is worth, stated so nobody has to guess.** It exercises the SHAPE of a
-deployment — a second deployable, its own configuration surface and lifetime, a trigger, a host that
-elects a singleton in blob storage — on one machine, started by hand, against a storage emulator.
-It says nothing about availability, scaling, cold start under load, managed identity or a
-consumption plan, and ADR-0051 says so in those words.
-
-**Nothing above is closed by it.** The last hop is still a file on this machine that nobody has
-seen; the account still holds one self-asserted, never-validated address where §4.6 asks for at
-least two; no endpoint changes it; no PIN reset stands behind the contact. A relay pointed at the
-seeded store would still mail strangers. The Function delivers the same file, on a schedule, from a
-different process — which is a rehearsal of a deployment, not a delivery.
-
-The one thing it did close is smaller and worth recording: the `Notices` configuration rules were
-written for the API alone, so a pickup directory INSIDE a git repository was accepted whenever the
-flag named anything else. The three that apply to any runner — the contact, the directory's
-existence, the git-tree guard — are shared now; the fourth, the lease against the period, stays the
-API's, because the Function never reads that period.
+- **Delivery is at-least-once, and the lease does not make it once** (ADR-0048 D3). A claim stops
+  two runners from holding a row at the same moment. It cannot stop a runner that hands a notice to
+  the transport and dies before it marks the row: the lease lapses and another runner takes the row.
+  With the pickup directory the second attempt is refused, because the file is there: nothing goes
+  out twice, and the row stays owed beside its file until somebody moves the file or marks the row.
+  With a sending transport the message goes out twice, unless the transport or the provider honours
+  an idempotency key or the recipient removes duplicates. Until one of those exists a duplicate is
+  an accepted outcome.
+- **The Function is a rehearsal of a deployment, not a delivery** (ADR-0051): it writes the same
+  file from another process, on one machine, against a storage emulator.
+  [Its README](../../backend/src/AzureBank.Functions.NoticeRelay/README.md) says how to run it and
+  what the rehearsal is worth.

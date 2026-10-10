@@ -35,10 +35,9 @@ public class AuditOptions
     /// Azure: automatic digest upload does, but <c>sp_generate_database_ledger_digest</c> takes no
     /// destination at all. An RFC 3161 timestamp supplies time from outside, which is the only thing
     /// that constrains whoever holds every key, and that is the operator rather than the attacker
-    /// this key is against. ⚠️ This paragraph used to name the ledger alone and call it "a digest
-    /// anchored outside the system". The ledger's DIGEST is that; its ENFORCEMENT is not, and needs
-    /// nothing outside this machine. Collapsing the two is what made one control read as the whole
-    /// remedy, here and in ADR-0044, which now carries the argument in full.
+    /// this key is against. ⚠️ The ledger's DIGEST is anchored outside the system; its ENFORCEMENT
+    /// is not, and needs nothing outside this machine. Collapsing the two makes one control read
+    /// as the whole remedy; ADR-0044 carries the argument in full.
     /// </para>
     /// </remarks>
     public string ChainKey { get; set; } = string.Empty;
@@ -111,14 +110,11 @@ public class AuditOptions
     /// read-side only.
     /// </para>
     /// <para>
-    /// ⚠️ READ-SIDE-ONLY IS NOT WHAT KEEPS A RETIRED KEY FROM BEING USABLE, and this paragraph
-    /// claimed it was — one paragraph under the one that disproves it. It stops OUR code writing
-    /// through a retired key. It does nothing about somebody holding that key and a database
-    /// connection, who computes an honest hash and inserts by raw SQL. The BOUNDARY above is what
-    /// stops that, and only OUTSIDE the key's epoch: inside it — from one past the previous
-    /// boundary up to its own — a retired key still mints rows that verify. Raised in review on
-    /// 930495f; the epoch gained its lower end on 10e7c1b, and this sentence said "only ABOVE the
-    /// boundary" until then.
+    /// ⚠️ READ-SIDE-ONLY IS NOT WHAT KEEPS A RETIRED KEY FROM BEING USABLE. It stops OUR code
+    /// writing through a retired key. It does nothing about somebody holding that key and a
+    /// database connection, who computes an honest hash and inserts by raw SQL. The BOUNDARY above
+    /// is what stops that, and only OUTSIDE the key's epoch: inside it — from one past the previous
+    /// boundary up to its own — a retired key still mints rows that verify.
     /// </para>
     /// </remarks>
     public IList<RetiredChainKey> RetiredChainKeys { get; set; } = [];

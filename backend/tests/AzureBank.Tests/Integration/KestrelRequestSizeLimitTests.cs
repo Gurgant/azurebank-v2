@@ -38,6 +38,17 @@ public sealed class KestrelRequestSizeLimitTests : IDisposable
     {
         _output = output;
         _factory.CaptureLog(LogEventLevel.Debug);
+
+        // The host's clock stands still for every test here: none of them holds anything about
+        // time. The API waits five seconds on that clock for the rest of an oversized body, then
+        // answers its 413 with Connection: close and closes (OversizedBodyDrain), and the
+        // split-body theory expects the connection kept after two writes 300 ms apart. On a
+        // machine that holds the second write up for five seconds, the wait is over first.
+        // Measured on 2026-10-09 on Windows with the pause of one round made 5.3 s: on the system
+        // clock 4 rows of 4 failed on that 413; on this clock, pauses of 5.3 s, 11 s and 14 s got
+        // both answers. The five seconds themselves are held in memory, on a clock the test
+        // moves, by MintOversizedBodyDrainTests.
+        _factory.UseFakeClock();
         _factory.UseKestrel();
         _factory.StartServer();
         _client = _factory.CreateClient();
@@ -283,9 +294,17 @@ public sealed class KestrelRequestSizeLimitTests : IDisposable
                 await Task.Delay(300, deadline.Token);
                 await stream.WriteAsync(body.AsMemory(16_000), deadline.Token);
                 first = await ReadWireResponseAsync(stream, deadline.Token);
-                await stream.WriteAsync(MintRequestHead(path, token, Encoding.UTF8.GetByteCount(small)), deadline.Token);
-                await stream.WriteAsync(Encoding.UTF8.GetBytes(small), deadline.Token);
-                second = await ReadWireResponseAsync(stream, deadline.Token);
+
+                // A request sent after a 413 that says Connection: close fails where the system
+                // lets it: on Windows at its own write or at the read of its answer (measured), in
+                // CI on Linux with "Broken pipe" at a write. None is sent, so that the round fails
+                // below on the header, which says what happened.
+                if (first.Headers.GetValueOrDefault("Connection") != "close")
+                {
+                    await stream.WriteAsync(MintRequestHead(path, token, Encoding.UTF8.GetByteCount(small)), deadline.Token);
+                    await stream.WriteAsync(Encoding.UTF8.GetBytes(small), deadline.Token);
+                    second = await ReadWireResponseAsync(stream, deadline.Token);
+                }
             }
             catch (Exception ex) when (ex is IOException or System.Net.Sockets.SocketException or OperationCanceledException)
             {
@@ -296,7 +315,8 @@ public sealed class KestrelRequestSizeLimitTests : IDisposable
             first.Should().NotBeNull();
             first!.Status.Should().Be(413);
             first.Headers["Content-Type"].Should().StartWith("application/json");
-            first.Headers.GetValueOrDefault("Connection").Should().NotBe("close");
+            first.Headers.GetValueOrDefault("Connection").Should().NotBe(
+                "close", $"round {round + 1} sent the whole body, and a body read to its end keeps the connection");
             AssertMintTooLarge(first.Body, path);
             second.Should().NotBeNull();
             second!.Status.Should().Be((int)expected.Status);

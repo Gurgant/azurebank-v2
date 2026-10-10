@@ -1,179 +1,80 @@
 # ADR-0030: Running the app's own data layer against the real backend
 
-**Status**: Accepted. Phase 2 of the test-layer plan opened in ADR-0029.
-
-**Date**: 2026-08-04
-
-**Decision Makers**: Vladislav Aleshaev
-
----
+**Status:** Accepted · **Date:** 2026-08-04 · **Amended:** 2026-08-13 (decision 7, ADR-0041) ·
+**Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
-ADR-0029 built a contract suite that runs one set of assertions twice — against MSW and against the
-real API + BFF. It uses a raw fetch client **on purpose**, so that what it observes is what the
-server actually sent, unmediated by the app.
-
-That leaves a second gap, and it is not the same gap. Between the wire and the screen sit
-`problemBaseQuery` (which synthesises error codes the wire never carries), `unwrap` + the
-spec-generated Zod schemas (which can reject a perfectly valid 200), the idempotency protocol, and
-the step-up interceptor. A backend can be entirely correct and the app still broken, and until this
-ADR every test covering those layers ran against MSW — the very oracle ADR-0029 was written because
-we could not trust it.
-
-There is a third divergence, narrower but sharper: the store itself. Production wires
-`auth: authReducer` plus `sessionMiddleware` (`src/app/store.ts`), and `sessionMiddleware` owns the
-global 401 rule (D3) — a 401 while authenticated dispatches `sessionExpired()` and resets the whole
-RTK Query cache, so financial data cannot outlive the session it was fetched under. A store built
-from `apiSlice` alone cannot observe any of that.
-
-Concretely, three things are unfalsifiable from either side alone:
-
-- **Does the real payload satisfy the app's own strict schemas?** The money surfaces validate
-  fail-closed in every environment. If the API renames a field, the contract suite still passes (the
-  server answered correctly) and the app throws.
-- **Does replay detection work end to end?** `replayed` is read from an `Idempotency-Replayed`
-  header. A unit test with MSW decides both sides of that question and can only agree with itself.
-- **Does step-up actually elevate and replay?** It needs a real 403, a real PIN, a real session, and
-  the ORIGINAL request bytes re-sent.
+The contract suite of ADR-0029 reads the raw wire with a plain fetch client, on purpose: it sees
+what the server sent. Between the wire and the screen sit `problemBaseQuery` (it synthesises error
+codes the wire never carries), `unwrap` with the spec-generated Zod schemas (they can reject a
+valid 200), the idempotency protocol and the step-up interceptor; and the production store adds
+`sessionMiddleware`, which owns the global 401 rule (ADR-0019, D3). A backend can be correct and
+the app still broken, and with MSW as the only oracle three things cannot be falsified: that real
+payloads satisfy the app's strict schemas, that a replay is detected end to end, and that step-up
+elevates and re-sends the original request.
 
 ## Decision
 
-**1. A third suite: `src/integration/`, the app's own data layer against the real stack.** It
-constructs a real Redux store over the real `apiSlice` and dispatches real endpoints. Nothing about
-the production code is aware the suite exists.
+1. **A third suite, `src/integration/`, runs the app's own data layer against the real stack**: a
+   real Redux store over the real `apiSlice` dispatches real endpoints, because drift lives in what
+   the app makes of an answer as well as in the answer. No production code knows the suite exists.
+2. **The data layer is pointed at the backend by the jsdom document URL, not by a code change**:
+   the config sets `environmentOptions.jsdom.url` to `http://localhost:5000`, because
+   `problemBaseQuery` pins `baseUrl` to `window.location.origin`. No production line changes.
+3. **There is no mock target, and the suite fails when the stack is down; it never skips**,
+   because the real server is the point, and a skipped suite reports success having asked nothing.
+4. **It is excluded from `npm test` and runs through `npm run test:integration`**, because a plain
+   unit run must never require a live backend.
+5. **One shim, for the runtime and not for the backend: `setup.ts` stores `Set-Cookie` and sends
+   it back, to the BFF's origin only**, because Node's `fetch` has no cookie jar and the session
+   cookie is HttpOnly: every authenticated request would answer 401. It invents no response.
+6. **The step-up "modal" is a test double for the UI component, not for the server**: the harness
+   performs the same real `verify-pin` call the modal performs and settles the same controller
+   promise, so what runs underneath is production: a real 403, a real PIN verified against SQL, a
+   real replay. It reads `data.verified`, because a rejected PIN is a `200` with `verified: false`.
+7. **Step-up is exercised through the reveal, `GET /api/accounts/{id}/full-number`, not through a
+   transfer**, because it is the only route the BFF gates at level 2 (ADR-0041; a transfer carries
+   its authorisation in-band, ADR-0042) and no money moves, so the suite can run at will.
 
-**2. The data layer is pointed at the backend by the jsdom document URL, not by a code change.**
-`problemBaseQuery` pins `baseUrl` to `window.location.origin`; the config sets
-`environmentOptions.jsdom.url` to `http://localhost:5000`. This is why no production line needed
-touching, and why the suite cannot drift from what the browser does.
+## Rejected
 
-**3. There is no mock target, and the suite FAILS rather than skipping when the stack is down.**
-Unlike the contract suite, "run it against MSW" is not a meaningful option here — the entire point
-is the real server. A skipped suite reports success without having asked anything.
-
-**4. It is excluded from `npm test`.** CI and a plain unit run must never require a live backend.
-It runs through `npm run test:integration`.
-
-**5. One shim, and it is a shim for the RUNTIME, not for the backend.** Measured against the running
-stack before writing a line of it:
-
-    login             -> 200, set-cookie: .AzureBank.Session=…; path=/; samesite=strict; httponly
-    document.cookie   -> ""            (HttpOnly, and undici feeds nothing to jsdom's jar)
-    GET /api/accounts -> 401 AUTH_TOKEN_MISSING
-
-Node's `fetch` has no cookie jar at all, so without one every authenticated request would 401 and
-the suite would be an elaborate way of testing the signed-out path. `setup.ts` stores `Set-Cookie`
-and sends it back — exactly the one browser behaviour the runtime lacks, and nothing else. It never
-invents a status, header or body.
-
-**6. The step-up "modal" is a test double for the UI COMPONENT, not for the server.** When the
-interceptor asks for elevation, the harness performs the same real `verify-pin` call the modal
-performs and settles the same controller promise. What runs underneath is production: real 403, real
-PIN verification against SQL, real replay.
-
-**7. The reveal endpoint is the step-up probe, not a transfer.** The BFF gates
-`/api/accounts/{id}/full-number` at level 2 ~~through the identical code path as `/api/transfers`~~
-(struck 2026-09-04; note below), so the interceptor is exercised the same way — but no money moves,
-so the suite can run as often as it likes and its assertions stay about the protocol.
-
-*(Correction 2026-09-04: "through the identical code path as `/api/transfers`" was true on
-2026-08-04. ADR-0041 (dd84179, 2026-08-13) emptied `PinRequiredPaths`, so the reveal is now the
-ONLY level-2 route and a transfer never 403s — it carries an in-band authorisation (ADR-0042). The
-choice of probe stands; the parity argument for it is history.)*
+- Rejected: running this layer against MSW, because MSW is the oracle the layer exists to check.
+- Rejected: a store built from `apiSlice` alone, because it cannot observe the global 401 rule and
+  the suite would pass with the rule broken: the harness mirrors `src/app/store.ts`.
+- Rejected: asserting the signed-out path inside a signed-in file, because the cookie jar is shared
+  by the file: it lives in `anonymous.integration.test.ts`, which asserts its jar is empty.
+- Rejected: one jar for every origin, because a foreign origin then receives the session cookie.
 
 ## Consequences
 
-**Sixteen test cases across five files, all green against the real stack, run twice** — fifteen
-against the product, plus one guarding the harness's own cookie jar. What they buy:
+- The suite proves what neither side can alone: real payloads pass the strict money schemas; the
+  bare paginated shape is still bare; `VALIDATION_ERROR` is synthesised and a real `errorCode`
+  carried through; a repeated key returns the same receipt and moves money once; step-up elevates,
+  replays the original request once, and sticks; a 401 while authenticated expires the session
+  and empties the cache (D3).
+- Order is load-bearing: elevation is server-side session state, so cancel runs first and
+  "elevation stuck" last, and the D3 test is last in its file because it destroys the session.
+- The first 401 after a session dies does not reject: `sessionMiddleware` resets the cache while
+  the request settles, so `unwrap()` resolves with `undefined`. The test pins that, then fires a
+  second request that proves the server answers `401 AUTH_TOKEN_MISSING`.
+- The BFF limits auth to 10 requests per 60 s per IP and a run spends about 5: `fileParallelism`
+  is off, login is once per file, and `signIn` turns a 429 into an explicit message.
+- Not covered: a successful transfer's own request and response shapes, and the rows of a
+  transaction page: the paginated shape is asserted, not its content.
+- Not covered: React. A page that mis-renders a correct payload, and the step-up modal itself,
+  belong to the browser suite (ADR-0031).
+- Not covered: the 5xx branches of `problemBaseQuery` (`NETWORK`, `PARSE`, the retry policy,
+  `HTTP_502`): a healthy stack cannot produce them, and they stay unit-tested only.
+- Not covered: isolation between runs. The idempotency test deposits €1.00 per run, so every
+  assertion is relative to a balance read just before; and the auth budget is per IP, so a third
+  run inside one minute fails. In CI the suite runs against a stack the job owns (ADR-0032).
 
-| Property | Why nothing else could prove it |
-|---|---|
-| Real payloads satisfy the STRICT money schemas | The contract suite never runs `unwrap` or Zod |
-| The BARE paginated shape is still bare | An added envelope would look like empty history |
-| `VALIDATION_ERROR` synthesis | A code the wire never carries — invented above it |
-| A real `errorCode` is carried through untouched | Distinguishes carrying from synthesising |
-| Replay returns the same receipt AND moves money once | Needs the app to reuse a key and the API to honour it |
-| Step-up elevates and replays the original request | Needs a real 403 + real PIN + real session |
-| Elevation sticks | Proves the previous test elevated rather than got a pass |
-| **The D3 global-401 rule** | Needs the production STORE, a real session, and a real 401 |
-| The harness's own cookie jar is origin-scoped | A leak in the shim would be invisible from the product |
+## Verified by
 
-**The suite was falsified before being trusted.** A schema mutation (`__mutant` added to
-`AccountResponse`) turned it red with a ZodError whose stack runs
-`unwrap (envelope.ts:26)` ← `transformResponse (apiSlice.ts:121)` ← RTK Query, which is the proof
-that the production path — not a test-local copy of it — is what runs. Reverted immediately after.
+- `npm run test:integration`: the five files of `frontend/src/integration/` (`readPath`,
+  `errorPath`, `money`, `anonymous`, `cookieScope`, each `.integration.test.ts`).
 
-**Signed-out has to be a property of the FILE.** The cookie jar is module state shared by every test
-in a file, so a "fresh store" inside a signed-in file is not anonymous and its call simply succeeds.
-The first draft put that assertion in `errorPath` and it failed with `expected true to be false` for
-exactly that reason. It now lives in `anonymous.integration.test.ts`, which never signs in, and
-carries a negative control asserting the jar is empty — without it, every assertion in that file
-would also pass while signed in.
+## Related
 
-**Order is load-bearing in the money file, and that is stated rather than implied.** Elevation is
-server-side session state: once the elevate test runs, later reveals answer 200 with no 403 at all.
-Cancel therefore runs first and "elevation stuck" runs last. The same applies to the D3 test, which
-is last in its file because it destroys the session that file signed in with.
-
-**The first 401 after a session dies does not surface as an error to the caller, and that took
-measuring to believe.** Two drafts of the D3 test asserted the triggering query rejects; both went
-green against a backend that had plainly answered 401 — `auth` had already flipped to `expired`.
-What happens is that `sessionMiddleware` dispatches `resetApiState()` while that very request is
-settling, wiping the cache entry the promise is about to read, so `unwrap()` resolves with
-`undefined` rather than rejecting. (A forced refetch behaves differently again: RTK Query keeps the
-stale `data`, so it resolves with the OLD value.) This is the rule working as intended — the global
-handler takes the session over and the unlucky component has nothing useful to render — but it means
-"did the 401 surface?" is the wrong question to ask of that first request. The test therefore pins
-the resolve-with-`undefined`, then fires a SECOND request as the control that proves the server is
-really answering `401 AUTH_TOKEN_MISSING`.
-
-**The cookie jar is scoped to the BFF, and that was worth doing before it was reachable.** Every
-request the suite makes today goes to the BFF, so nothing leaked — but that is a property of the
-current test list, not of the shim, which patches `globalThis.fetch` process-wide. Measured with the
-check removed: a foreign origin received the real `.AzureBank.Session` value AND its own
-`Set-Cookie` entered the jar, from where it would have been replayed at the BFF. Both directions are
-now asserted by `cookieScope.integration.test.ts`, which seeds a fake cookie rather than signing in
-so the guard costs nothing against the auth budget.
-
-**A hard operational limit, measured rather than guessed.** The BFF rate-limits auth to 10 requests
-per 60s per IP, and the suite spends about 5 per run (three logins, two PIN verifications). Two
-consecutive runs fit; **the third inside the same minute fails**, confirmed by running it. `signIn`
-turns that 429 into an explicit message rather than letting it read as contract drift. This is the
-main reason `fileParallelism` is off and login is once per file, and why the cookie-scoping test
-seeds a fake cookie instead of authenticating.
-
-**A REJECTED PIN IS A 200, and getting that wrong can lock the shared dev account.**
-`BffAuthController.VerifyPin` answers `Ok(... Verified = false, AuthLevel = 1 ...)` with the message
-"Invalid PIN" — it is not an error response. The first version of the step-up double checked only
-for an RTK error, so it settled `elevated` for a PIN the server had just refused; the interceptor
-then replayed against a level-1 session, took a second 403, and failed as `STEP_UP_REQUIRED`, which
-reads as "elevation didn't stick" rather than "the PIN is wrong". The expensive part is not the
-misleading message: `MaxPinAttempts` is 3 and `PinLockoutMinutes` is 15, and the harness verifies
-from two places, so a fixture PIN that ever drifted from the seed would burn two attempts per run
-and **lock the account on the second**, breaking every later run for a quarter of an hour. The
-double now inspects `data.verified` and fails with that explanation. Verified by running the suite
-with a deliberately wrong PIN (one attempt; a success calls `PinService.ResetLockoutAsync`, and the
-counter was confirmed back at 0 afterwards).
-
-**What is NOT covered.** Honest floor, not a ceiling:
-
-- **Transfers are untested here** — both `/api/transfers` and `/api/transfers/internal` need either a
-  second account or a second user, and the dev database seeds exactly one of each. The step-up
-  protocol they rely on IS covered through the reveal, but their own request/response shapes are not.
-- **No React.** This drives the data layer, not components; a page that mis-renders a correct payload
-  is Phase 3's job (Playwright).
-- **`getTransactions` returns an empty page** against the dev seed (`totalItems: 0`), so the
-  paginated shape is asserted but transaction CONTENT is not.
-- **The 5xx branches of `problemBaseQuery`** (`NETWORK`, `PARSE`, the retry policy, `HTTP_502`)
-  cannot be produced against a healthy stack and remain unit-tested only.
-- **Money accumulates.** The idempotency test deposits €1.00 per run into the dev database, and the
-  test account's balance and history therefore differ between runs. Deliberate: a deposit is
-  additive and needs no counterparty, and every assertion is relative to a balance read immediately
-  beforehand, so no test depends on a fixed starting figure. It is still not a clean-room. The
-  honest fixes — a dedicated account or database per run, or a reset step — belong with Phase 4,
-  where the suite gets a database it owns rather than the shared dev one.
-- **The auth budget is per IP, not per process.** `fileParallelism: false` serialises files within
-  one run; it does nothing about two runs sharing an egress address. Locally that is the measured
-  "third run inside a minute fails". In CI it would mean concurrent jobs stealing each other's
-  quota, so Phase 4 needs a concurrency group or its own stack rather than just this config flag.
+ADR-0019, ADR-0029, ADR-0031, ADR-0032, ADR-0041, ADR-0042.
