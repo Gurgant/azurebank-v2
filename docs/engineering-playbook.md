@@ -23,14 +23,14 @@ a change takes from a plan to the live demo, and what stands between an agent an
 
 | Number | What it counts |
 |--:|---|
-| **[244](https://github.com/Gurgant/azurebank-v2/pulls?q=is%3Apr+is%3Amerged)** | pull requests merged: each one by me, each one through the automated tests |
+| **[248](https://github.com/Gurgant/azurebank-v2/pulls?q=is%3Apr+is%3Amerged)** | pull requests merged: each one by me, each one through the automated tests |
 | **[9](https://github.com/Gurgant/azurebank-v2/rules/18930321)** | checks now required before `main` takes a pull request, plus a security scan |
-| **[2,846 · 1,405 · 89](https://github.com/Gurgant/azurebank-v2/actions/workflows/ci.yml?query=branch%3Amain)** | backend tests, frontend tests, and browser tests on the real stack |
+| **[2,846 · 1,412 · 89](https://github.com/Gurgant/azurebank-v2/actions/workflows/ci.yml?query=branch%3Amain)** | backend tests, frontend tests, and browser tests on the real stack |
 | **[64](adr/README.md)** | decisions written down as architecture decision records |
 | **4** | agents coordinated: one orchestrator and three working in parallel |
 | **0** | merges made by an agent |
 
-Counted on 9 October 2026. Each linked number leads to where it can be counted again. The two
+Counted on 10 October 2026. Each linked number leads to where it can be counted again. The two
 without a link, 4 and 0, are my own statement: on GitHub every merge shows one account, mine.
 
 ## The path of a change
