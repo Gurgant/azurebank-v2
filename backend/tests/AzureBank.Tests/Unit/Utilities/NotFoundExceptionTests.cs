@@ -25,12 +25,12 @@ public class NotFoundExceptionTests
     [Fact]
     public void StringIdentifier_BindsToTheResourceConstructor_NotAMessageAndCode()
     {
-        // The regression. Before the second constructor was deleted this produced
-        // Message = "Recipient" and ErrorCode = "mikejohnson" — verified on the wire against the
-        // running API, not inferred.
-        var exception = new NotFoundException("Recipient", "mikejohnson");
+        // The regression. Before the second constructor was deleted, a call of this shape for a
+        // recipient produced Message = "Recipient" and ErrorCode = "mikejohnson" — verified on the
+        // wire against the running API, not inferred.
+        var exception = new NotFoundException("User", "mikejohnson");
 
-        exception.Message.Should().Be("Recipient with identifier 'mikejohnson' was not found.");
+        exception.Message.Should().Be("User with identifier 'mikejohnson' was not found.");
         exception.ErrorCode.Should().Be(ErrorCodes.AccountNotFound);
         exception.StatusCode.Should().Be(404);
     }
@@ -50,13 +50,13 @@ public class NotFoundExceptionTests
     [InlineData("Account")]
     [InlineData("User")]
     [InlineData("Transaction")]
-    [InlineData("Recipient")]
     public void EveryResourceReportsAccountNotFound(string resource)
     {
         // Surprising, and deliberate: the constructor hard-codes AccountNotFound for every
         // resource. TransactionNotFound and UserNotFound exist but are unreachable from this path.
         // The frontend and the MSW mock both mirror this quirk, so a "correction" here would break
         // three places at once. Pinned so that it stays a decision rather than becoming a bug.
+        // A missing recipient is not on this path: RecipientNotFoundException owns its code.
         new NotFoundException(resource, Guid.NewGuid()).ErrorCode
             .Should().Be(ErrorCodes.AccountNotFound);
     }

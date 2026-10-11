@@ -258,7 +258,7 @@ public class TransferServiceTests : IDisposable
     #region TransferAsync - Recipient Not Found Tests
 
     [Fact]
-    public async Task TransferAsync_NonExistentRecipient_ThrowsNotFoundException()
+    public async Task TransferAsync_NonExistentRecipient_ThrowsRecipientNotFoundException()
     {
         // Arrange
         var (sender, senderAccount, _, _) = await SetupTransferScenarioAsync();
@@ -274,9 +274,8 @@ public class TransferServiceTests : IDisposable
         var act = () => _sut.TransferAsync(sender.Id, request, Presented());
 
         // Assert
-        // Note: NotFoundException(string, string) constructor is called with
-        // "Recipient" as message and the AzureTag as error code
-        await act.Should().ThrowAsync<NotFoundException>();
+        (await act.Should().ThrowAsync<RecipientNotFoundException>())
+            .Which.ErrorCode.Should().Be(ErrorCodes.RecipientNotFound);
     }
 
     [Fact]
@@ -324,8 +323,9 @@ public class TransferServiceTests : IDisposable
     /*
       The transfer and its mint share one resolver, and it hands another user to the caller. In the
       demo a copy's users pay each other and nobody else, so a handle in another copy must be
-      refused EXACTLY as a handle nobody holds: 404 Recipient, the same sentence. Outside the demo
-      every user's copy is null and null matches null; every other test in this file runs that way.
+      refused EXACTLY as a handle nobody holds: 404 RECIPIENT_NOT_FOUND, the same sentence. Outside
+      the demo every user's copy is null and null matches null; every other test in this file runs
+      that way.
     */
 
     private async Task<(ApplicationUser Sender, Account SenderAccount, ApplicationUser Recipient)> ScenarioInCopiesAsync(
@@ -350,9 +350,9 @@ public class TransferServiceTests : IDisposable
             new() { FromAccountId = senderAccount.Id, RecipientAzureTag = handle, Amount = 100m };
 
         var foreign = await ((Func<Task>)(() => _sut.TransferAsync(sender.Id, To(recipient.AzureTag), Presented())))
-            .Should().ThrowAsync<NotFoundException>("the payee belongs to another copy");
+            .Should().ThrowAsync<RecipientNotFoundException>("the payee belongs to another copy");
         var unknown = await ((Func<Task>)(() => _sut.TransferAsync(sender.Id, To("nobody_here"), Presented())))
-            .Should().ThrowAsync<NotFoundException>();
+            .Should().ThrowAsync<RecipientNotFoundException>();
 
         WithoutTheHandle(foreign.Which, recipient.AzureTag).Should().Be(WithoutTheHandle(unknown.Which, "nobody_here"));
         foreign.Which.ErrorCode.Should().Be(unknown.Which.ErrorCode);
@@ -368,9 +368,9 @@ public class TransferServiceTests : IDisposable
             new() { FromAccountId = senderAccount.Id, RecipientAzureTag = handle, Amount = 100m, Pin = TestPin };
 
         var foreign = await ((Func<Task>)(() => _sut.AuthoriseTransferAsync(sender.Id, For(recipient.AzureTag))))
-            .Should().ThrowAsync<NotFoundException>("the payee belongs to another copy");
+            .Should().ThrowAsync<RecipientNotFoundException>("the payee belongs to another copy");
         var unknown = await ((Func<Task>)(() => _sut.AuthoriseTransferAsync(sender.Id, For("nobody_here"))))
-            .Should().ThrowAsync<NotFoundException>();
+            .Should().ThrowAsync<RecipientNotFoundException>();
 
         WithoutTheHandle(foreign.Which, recipient.AzureTag).Should().Be(WithoutTheHandle(unknown.Which, "nobody_here"));
         foreign.Which.ErrorCode.Should().Be(unknown.Which.ErrorCode);
@@ -397,7 +397,7 @@ public class TransferServiceTests : IDisposable
             Pin = TestPin
         });
 
-        await act.Should().ThrowAsync<NotFoundException>();
+        await act.Should().ThrowAsync<RecipientNotFoundException>();
         (await _context.StepUpAuthorizations.CountAsync()).Should().Be(0, "nothing was minted");
     }
 

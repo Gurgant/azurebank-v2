@@ -168,7 +168,8 @@ public class TransferService : ITransferService
     /// <summary>
     /// Resolves an external transfer's payee, with the same three refusals in the same order the
     /// transfer has always applied: 404 for a sender whose row is gone, 422
-    /// <c>SELF_TRANSFER_NOT_ALLOWED</c>, 404 <c>Recipient</c>, 422 <c>RECIPIENT_NO_ACCOUNT</c>.
+    /// <c>SELF_TRANSFER_NOT_ALLOWED</c>, 404 <c>RECIPIENT_NOT_FOUND</c>, 422
+    /// <c>RECIPIENT_NO_ACCOUNT</c>.
     ///
     /// <para>
     /// Extracted so minting and sending cannot drift. An authorisation that could name a payee the
@@ -179,10 +180,10 @@ public class TransferService : ITransferService
     ///
     /// <para>
     /// A PAYEE IS RESOLVED ONLY INSIDE THE SENDER'S DEMO COPY. A handle that another copy holds
-    /// gets the 404 <c>Recipient</c> of a handle nobody holds: at the mint, where it comes before
-    /// the PIN is looked at, and at the transfer. No flag is read on this path: outside the demo
-    /// neither user belongs to a copy, both sides of the comparison are null and null matches
-    /// null, so every user goes on paying every other.
+    /// gets the 404 <c>RECIPIENT_NOT_FOUND</c> of a handle nobody holds: at the mint, where it
+    /// comes before the PIN is looked at, and at the transfer. No flag is read on this path:
+    /// outside the demo neither user belongs to a copy, both sides of the comparison are null and
+    /// null matches null, so every user goes on paying every other.
     /// </para>
     /// </summary>
     private async Task<(ApplicationUser Sender, ApplicationUser Recipient, Account RecipientAccount)>
@@ -211,7 +212,7 @@ public class TransferService : ITransferService
 
         if (recipient == null)
         {
-            throw new NotFoundException("Recipient", recipientAzureTag);
+            throw new RecipientNotFoundException(recipientAzureTag);
         }
 
         // The account to pay: the first of the payee's open accounts, in the one order both looks use.

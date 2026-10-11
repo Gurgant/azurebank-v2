@@ -311,6 +311,100 @@ describe('external transfer (PR-11)', () => {
     expect(words.closest('[role="alert"]')).not.toBeNull();
   });
 
+  it('a recipient the mint does not find reads "re-check the handle", not the server sentence', async () => {
+    /*
+      The Verify step found the handle; the mint, a moment later, does not. Observed on the API for
+      a handle no user holds: 404 errorCode RECIPIENT_NOT_FOUND, detail "Recipient with identifier
+      '<the handle>' was not found."
+    */
+    server.use(
+      http.post('*/api/transfers/authorizations', () =>
+        problem({
+          status: 404,
+          errorCode: 'RECIPIENT_NOT_FOUND',
+          detail: "Recipient with identifier 'friend' was not found.",
+        }),
+      ),
+    );
+    renderTransfer();
+    await screen.findByText('Main Account');
+    await verifyRecipient('friend');
+    await screen.findByText('A. Friend');
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+    await confirmWithPin();
+
+    expect(
+      await screen.findByText('That recipient could not be found. Please re-check the handle.', {
+        exact: false,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Recipient with identifier/)).not.toBeInTheDocument();
+  });
+
+  it('a recipient the send does not find reads the same sentence as on the mint', async () => {
+    /*
+      The mint found the handle and minted; the send, a moment later, does not find it. The same
+      code reaches the page by the other of its two paths: the answer of POST /api/transfers.
+    */
+    server.use(
+      http.post('*/api/transfers', () =>
+        problem({
+          status: 404,
+          errorCode: 'RECIPIENT_NOT_FOUND',
+          detail: "Recipient with identifier 'friend' was not found.",
+        }),
+      ),
+    );
+    renderTransfer();
+    await screen.findByText('Main Account');
+    await verifyRecipient('friend');
+    await screen.findByText('A. Friend');
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+    await confirmWithPin();
+
+    expect(
+      await screen.findByText('That recipient could not be found. Please re-check the handle.', {
+        exact: false,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Recipient with identifier/)).not.toBeInTheDocument();
+  });
+
+  it("the caller's own missing account still reads the recipient's sentence", async () => {
+    /*
+      ACCOUNT_NOT_FOUND on this page is the caller's own source account: the API answers it on the
+      mint for an account id nobody holds and for an account that is closed, with the detail
+      "Account with identifier '<the id>' was not found." The page shows the recipient's sentence
+      for it, which is untrue of an account. This test holds what the page shows as it is; the
+      wording belongs to the next change of the screens.
+    */
+    server.use(
+      http.post('*/api/transfers/authorizations', () =>
+        problem({
+          status: 404,
+          errorCode: 'ACCOUNT_NOT_FOUND',
+          detail: "Account with identifier '3f2504e0-4f89-41d3-9a0c-0305e82c3399' was not found.",
+        }),
+      ),
+    );
+    renderTransfer();
+    await screen.findByText('Main Account');
+    await verifyRecipient('friend');
+    await screen.findByText('A. Friend');
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+    await confirmWithPin();
+
+    expect(
+      await screen.findByText('That recipient could not be found. Please re-check the handle.', {
+        exact: false,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Account with identifier/)).not.toBeInTheDocument();
+  });
+
   it('disables Review when the amount exceeds the balance', async () => {
     renderTransfer();
     await screen.findByText('Main Account');

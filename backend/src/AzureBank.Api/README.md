@@ -188,7 +188,8 @@ Every error is a ProblemDetails body that carries a `traceId`.
 
 - **A domain refusal** is an `AppException` (`../AzureBank.Shared/Exceptions`), which fixes its
   status and its `errorCode`: `AuthenticationException` 401, `AuthorizationException` 403,
-  `NotFoundException` 404, `ConflictException` 409, `BusinessRuleException` and
+  `NotFoundException` and `RecipientNotFoundException` 404, `ConflictException` 409,
+  `BusinessRuleException` and
   `InsufficientFundsException` 422, a locked sign-in or PIN and the demo's `DEMO_*` refusals 429.
   `AppExceptionHandler` writes the body, and a `Retry-After` header when the refusal carries
   `retryAfterSeconds`.

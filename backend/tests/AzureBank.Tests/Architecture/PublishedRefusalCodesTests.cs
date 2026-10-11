@@ -179,6 +179,9 @@ public class PublishedRefusalCodesTests
           The first two were named as 422 examples until then ("same account transfer", "recipient
           not found"): refusals the server sends with another status.
 
+          An external transfer to an unknown tag answers 404 RECIPIENT_NOT_FOUND, observed through
+          the API's test host: the code in the list above is the one read on its date.
+
           THE LAST LINE MOVED ON 2026-09-21 (ADR-0056). A withdrawal no longer consults a PIN, so
           PIN_REQUIRED is not among its 422s any more -- it is the withdrawal MINT's, and the
           assertion moved with the behaviour rather than being deleted. The withdrawal keeps exactly
@@ -201,7 +204,7 @@ public class PublishedRefusalCodesTests
         }
 
         transfer.Should().NotContainEquivalentOf(
-            "not found", $"an unknown recipient is a 404, {ErrorCodes.AccountNotFound}");
+            "not found", $"an unknown recipient is a 404, {ErrorCodes.RecipientNotFound}");
 
         var withdraw = Description422("/api/transactions/withdraw");
         withdraw.Should().Contain(ErrorCodes.InsufficientFunds);
@@ -217,6 +220,66 @@ public class PublishedRefusalCodesTests
             ErrorCodes.InsufficientFunds,
             "a mint does not check funds (ADR-0050 D4): an authorisation can be minted for more "
             + "than the account holds, and the withdrawal is what refuses it");
+    }
+
+    [Fact]
+    public void TheExternalTransferAndItsMint_NameTheTwoCodesOfTheir404_AndNoOtherOperationNamesARecipient()
+    {
+        /*
+          Observed through the API's test host, the same movement sent to POST /api/transfers and
+          to POST /api/transfers/authorizations:
+            an open account of the caller, a handle nobody holds   -> 404 RECIPIENT_NOT_FOUND
+            an account id nobody holds, a handle a user holds      -> 404 ACCOUNT_NOT_FOUND
+            a closed account of the caller, a handle a user holds  -> 404 ACCOUNT_NOT_FOUND
+            an open account of another user, a handle a user holds -> 403 ACCESS_DENIED
+          The 404 is one status with two codes, and a client chooses what to say from the code, so
+          the document names both. An account of another user is not among the cases of the 404,
+          so its sentence does not say "not visible". No other operation resolves a payee: the
+          scan reads every response of every operation, so the code cannot appear where nothing
+          sends it.
+        */
+        var named = new List<string>();
+        foreach (var path in Document().GetProperty("paths").EnumerateObject())
+        {
+            foreach (var operation in path.Value.EnumerateObject())
+            {
+                if (operation.Value.ValueKind != JsonValueKind.Object
+                    || !operation.Value.TryGetProperty("responses", out var responses))
+                {
+                    continue;
+                }
+
+                foreach (var response in responses.EnumerateObject())
+                {
+                    if (response.Value.GetRawText().Contains(ErrorCodes.RecipientNotFound, StringComparison.Ordinal))
+                    {
+                        named.Add($"{operation.Name.ToUpperInvariant()} {path.Name} {response.Name}");
+                    }
+                }
+            }
+        }
+
+        named.Should().BeEquivalentTo(
+            ["POST /api/transfers 404", "POST /api/transfers/authorizations 404"],
+            "the payee is resolved by the external transfer and by its mint, and by nothing else");
+
+        foreach (var path in new[] { "/api/transfers", "/api/transfers/authorizations" })
+        {
+            var notFound = Document().GetProperty("paths").GetProperty(path).GetProperty("post")
+                .GetProperty("responses").GetProperty("404");
+            var description = notFound.GetProperty("description").GetString()!;
+
+            description.Should().Contain(ErrorCodes.RecipientNotFound, $"{path} answered it for a missing payee");
+            description.Should().Contain(
+                ErrorCodes.AccountNotFound, $"{path} answered it for the caller's own missing account");
+            description.Should().Contain(
+                "does not exist or is closed", $"{path} answered it for an unknown id and for a closed account");
+            description.Should().NotContainEquivalentOf(
+                "not visible", $"{path} answered 403 {ErrorCodes.AccessDenied} for another user's open account");
+            notFound.GetProperty("content").GetProperty("application/json").GetProperty("schema")
+                .GetProperty("$ref").GetString().Should().Be(
+                    "#/components/schemas/ProblemDetails", "the body is the one every 404 has");
+        }
     }
 
     [Fact]

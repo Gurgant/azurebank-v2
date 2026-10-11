@@ -379,8 +379,8 @@ public sealed class KestrelRequestSizeLimitTests : IDisposable
 
     private static (HttpStatusCode Status, string Code) MintUsualAnswer(string path) => path switch
     {
-        "/api/transfers/authorizations" or "/api/transfers/internal/authorizations" =>
-            (HttpStatusCode.NotFound, ErrorCodes.AccountNotFound),
+        "/api/transfers/authorizations" => (HttpStatusCode.NotFound, ErrorCodes.RecipientNotFound),
+        "/api/transfers/internal/authorizations" => (HttpStatusCode.NotFound, ErrorCodes.AccountNotFound),
         "/api/transactions/withdraw/authorizations" => (HttpStatusCode.UnprocessableEntity, ErrorCodes.PinRequired),
         "/api/accounts/{id}/deletion-authorizations" => (HttpStatusCode.UnprocessableEntity, ErrorCodes.PrimaryAccountDelete),
         _ => throw new ArgumentOutOfRangeException(nameof(path)),

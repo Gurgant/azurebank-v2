@@ -150,18 +150,17 @@ describe('contract: step-up authorisations', () => {
     expect(problem.resetsAt).toMatch(/^\d{4}-\d{2}-\d{2}T00:00:00(\.0+)?Z$/);
   });
 
-  it('answers an unknown payee with ACCOUNT_NOT_FOUND, not a code of its own', async () => {
+  it('answers an unknown payee with RECIPIENT_NOT_FOUND, a code of its own', async () => {
     /*
-      Worth pinning because the obvious guess is wrong twice over: the exception is
-      `NotFoundException("Recipient", tag)`, but that constructor emits `ACCOUNT_NOT_FOUND` for
-      every resource — so the RESOURCE in the sentence and the CODE on the wire disagree, and the
-      client keys off the code.
+      Worth pinning because the mint answers 404 for two different things, and the client keys off
+      the code: the caller's own source account (ACCOUNT_NOT_FOUND, the next test) and the payee.
+      `TransferPage` says "That recipient could not be found. Please re-check the handle." for this
+      one, which is untrue of the other.
 
-      It matters beyond tidiness: `TransferPage` already maps ACCOUNT_NOT_FOUND to "That recipient
-      could not be found. Please re-check the handle.", so a dedicated code would have needed new
-      copy for a case that already had some.
-
-      Observed: 404 detail "Recipient with identifier 'nosuchuser' was not found."
+      Observed through the API's test host for this handle, and the same on the real stack, where
+      this test runs in its real mode:
+        404 errorCode RECIPIENT_NOT_FOUND,
+            detail "Recipient with identifier 'nobody_here_at_all' was not found."
     */
     const id = await firstAccountId();
 
@@ -169,14 +168,17 @@ describe('contract: step-up authorisations', () => {
       method: 'POST',
       body: JSON.stringify({
         fromAccountId: id,
-        recipientAzureTag: 'nosuchuser',
+        recipientAzureTag: 'nobody_here_at_all',
         amount: 1,
         pin: FIXTURES.pin,
       }),
     });
 
     expect(status).toBe(404);
-    expect(asProblem(body).errorCode).toBe('ACCOUNT_NOT_FOUND');
+    expect(asProblem(body).errorCode).toBe('RECIPIENT_NOT_FOUND');
+    expect(asProblem(body).detail).toBe(
+      "Recipient with identifier 'nobody_here_at_all' was not found.",
+    );
   });
 
   it('checks the source account before the PIN, so a probe costs no attempt', async () => {
@@ -267,7 +269,9 @@ describe('contract: step-up authorisations', () => {
       — answers 404, not 401. The mock validated first and turned that into "your confirmation can
       no longer be used", which is both untrue and unactionable for someone who simply mistyped.
 
-      Measured on the real stack, exactly this request: 404 ACCOUNT_NOT_FOUND.
+      Observed through the API's test host for this handle, with an authorisation that names
+      nothing, and the same on the real stack, where this test runs in its real mode:
+      404 RECIPIENT_NOT_FOUND.
     */
     const id = await firstAccountId();
 
@@ -279,13 +283,47 @@ describe('contract: step-up authorisations', () => {
       },
       body: JSON.stringify({
         fromAccountId: id,
-        recipientAzureTag: 'nosuchuser',
+        recipientAzureTag: 'nobody_here_at_all',
+        amount: 1,
+      }),
+    });
+
+    expect(status).toBe(404);
+    expect(asProblem(body).errorCode).toBe('RECIPIENT_NOT_FOUND');
+  });
+
+  it("answers the caller's missing source account with ACCOUNT_NOT_FOUND on the send too", async () => {
+    /*
+      The send looks for the source account before the payee and before the authorisation, as the
+      mint does, and a missing one keeps the account's code. Nothing else is wrong with the payee
+      here: the handle is one a user holds.
+
+      Observed through the API's test host, an account id nobody holds, a handle a user holds and
+      an authorisation that names nothing, and the same on the real stack, where this test runs in
+      its real mode:
+        404 errorCode ACCOUNT_NOT_FOUND,
+            detail "Account with identifier '<the id>' was not found."
+
+      The one GUID that names nothing stands for the account and for the authorisation.
+    */
+    const { status, body } = await call('/api/transfers', {
+      method: 'POST',
+      headers: {
+        'Idempotency-Key': idempotencyKey(),
+        'Step-Up-Authorization': UNKNOWN_AUTHORIZATION,
+      },
+      body: JSON.stringify({
+        fromAccountId: UNKNOWN_AUTHORIZATION,
+        recipientAzureTag: FIXTURES.recipientAzureTag,
         amount: 1,
       }),
     });
 
     expect(status).toBe(404);
     expect(asProblem(body).errorCode).toBe('ACCOUNT_NOT_FOUND');
+    expect(asProblem(body).detail).toBe(
+      `Account with identifier '${UNKNOWN_AUTHORIZATION}' was not found.`,
+    );
   });
 
   it('refuses a transfer that presents NO authorisation, and names why', async () => {

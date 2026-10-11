@@ -343,14 +343,195 @@ public class TransferEndpointTests : IntegrationTestBase
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
 
         var problem = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
-        problem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.AccountNotFound);
+        problem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.RecipientNotFound);
         problem.GetProperty("detail").GetString()
             .Should().Be($"Recipient with identifier '{unknownHandle}' was not found.");
+    }
+
+    /*
+      THE TWO 404s OF AN EXTERNAL TRANSFER, each on the mint and on the transfer. Both endpoints
+      look for the payer's source account first and for the payee second, and each of the two
+      answers under a code of its own, so a client can say which is missing without reading the
+      sentence.
+
+      OBSERVED on this host, the same movement sent to both endpoints:
+        an open account of the caller, handle "nobody_here_at_all"
+          -> 404 "Not Found", errorCode RECIPIENT_NOT_FOUND,
+             detail "Recipient with identifier 'nobody_here_at_all' was not found."
+        an account id nobody holds, a handle a user holds
+          -> 404 "Not Found", errorCode ACCOUNT_NOT_FOUND,
+             detail "Account with identifier '<the id>' was not found."
+        an account id nobody holds, handle "nobody_here_at_all"
+          -> the same ACCOUNT_NOT_FOUND: the account is looked for first.
+        an account of the caller that is closed, either handle
+          -> the same ACCOUNT_NOT_FOUND, with the closed account's id in the detail.
+        an open account of another user, either handle
+          -> 403 "Forbidden", errorCode ACCESS_DENIED,
+             detail "You do not have access to this account."
+      So the 404 of a source account means that the id names no account or that the account is
+      closed, and never that the account is somebody else's.
+    */
+
+    private const string MintUrl = "/api/transfers/authorizations";
+    private const string TransferUrl = "/api/transfers";
+
+    /// <summary>The same movement sent to the mint and to the transfer, each with its answer.</summary>
+    private async Task<List<(string Endpoint, HttpResponseMessage Response)>> MintAndSendAsync(
+        Guid fromAccountId, string recipientAzureTag)
+    {
+        var minted = await Client.PostAsJsonAsync(
+            MintUrl,
+            new TransferAuthorizationRequest
+            {
+                FromAccountId = fromAccountId,
+                RecipientAzureTag = recipientAzureTag,
+                Amount = 100m,
+                Pin = TestPin
+            },
+            JsonOptions);
+        var sent = await PostMonetaryAsync(
+            TransferUrl,
+            new TransferRequest
+            {
+                FromAccountId = fromAccountId,
+                RecipientAzureTag = recipientAzureTag,
+                Amount = 100m
+            },
+            stepUpAuthorizationId: PresentedAuthorization());
+
+        return [(MintUrl, minted), (TransferUrl, sent)];
+    }
+
+    [Fact]
+    public async Task AMissingRecipient_AnswersRecipientNotFound_OnTheMintAndOnTheTransfer()
+    {
+        var (token, _, accountId) = await RegisterTestUserAsync();
+        await SetPinAsync(token);
+        await DepositAsync(token, accountId, 1000m);
+        SetAuthHeader(token);
+
+        const string unknownHandle = "nobody_here_at_all";
+        foreach (var (endpoint, response) in await MintAndSendAsync(accountId, unknownHandle))
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.NotFound, endpoint);
+
+            var problem = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+            problem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.RecipientNotFound, endpoint);
+            problem.GetProperty("title").GetString().Should().Be("Not Found", endpoint);
+            problem.GetProperty("status").GetInt32().Should().Be(404, endpoint);
+            problem.GetProperty("detail").GetString()
+                .Should().Be($"Recipient with identifier '{unknownHandle}' was not found.", endpoint);
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheCallersMissingAccount_AnswersAccountNotFound_OnTheMintAndOnTheTransfer(
+        bool theRecipientExists)
+    {
+        var (token, _, _) = await RegisterTestUserAsync();
+        await SetPinAsync(token);
+        var recipient = theRecipientExists
+            ? (await RegisterRecipientAsync()).AzureTag
+            : "nobody_here_at_all";
+        SetAuthHeader(token);
+
+        var missingAccount = Guid.NewGuid();
+        foreach (var (endpoint, response) in await MintAndSendAsync(missingAccount, recipient))
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.NotFound, endpoint);
+
+            var problem = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+            problem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.AccountNotFound, endpoint);
+            problem.GetProperty("detail").GetString()
+                .Should().Be($"Account with identifier '{missingAccount}' was not found.", endpoint);
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheCallersClosedAccount_AnswersAccountNotFound_OnTheMintAndOnTheTransfer(
+        bool theRecipientExists)
+    {
+        var (token, _, _) = await RegisterTestUserAsync();
+        await SetPinAsync(token);
+        var recipient = theRecipientExists
+            ? (await RegisterRecipientAsync()).AzureTag
+            : "nobody_here_at_all";
+        SetAuthHeader(token);
+        var closedAccount = await OpenAndCloseAnAccountAsync();
+
+        foreach (var (endpoint, response) in await MintAndSendAsync(closedAccount, recipient))
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.NotFound, endpoint);
+
+            var problem = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+            problem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.AccountNotFound, endpoint);
+            problem.GetProperty("detail").GetString()
+                .Should().Be($"Account with identifier '{closedAccount}' was not found.", endpoint);
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AnotherUsersOpenAccount_AnswersAccessDenied_OnTheMintAndOnTheTransfer(
+        bool theRecipientExists)
+    {
+        var (_, _, anotherUsersAccount) = await RegisterTestUserAsync();
+        var (token, _, _) = await RegisterTestUserAsync();
+        await SetPinAsync(token);
+        var recipient = theRecipientExists
+            ? (await RegisterRecipientAsync()).AzureTag
+            : "nobody_here_at_all";
+        SetAuthHeader(token);
+
+        foreach (var (endpoint, response) in await MintAndSendAsync(anotherUsersAccount, recipient))
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.Forbidden, endpoint);
+
+            var problem = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+            problem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.AccessDenied, endpoint);
+            problem.GetProperty("detail").GetString()
+                .Should().Be("You do not have access to this account.", endpoint);
+        }
     }
 
     #endregion
 
     #region Helper Methods
+
+    /// <summary>
+    /// Opens a second account for the signed-in caller and closes it: empty and not primary, the
+    /// only kind a closure succeeds on. The caller has a PIN, which the closure's mint spends.
+    /// </summary>
+    private async Task<Guid> OpenAndCloseAnAccountAsync()
+    {
+        var opened = await Client.PostAsJsonAsync(
+            "/api/accounts",
+            new CreateAccountRequest { Name = "Spare", Type = AccountType.Savings },
+            JsonOptions);
+        opened.EnsureSuccessStatusCode();
+        var accountId = (await opened.Content.ReadFromJsonAsync<ApiResponse<AccountResponse>>(JsonOptions))!
+            .Data!.Id;
+
+        var minted = await Client.PostAsJsonAsync(
+            $"/api/accounts/{accountId}/deletion-authorizations",
+            new AccountDeletionAuthorizationRequest { Pin = TestPin },
+            JsonOptions);
+        minted.EnsureSuccessStatusCode();
+        var authorization = (await minted.Content
+            .ReadFromJsonAsync<ApiResponse<StepUpAuthorizationResponse>>(JsonOptions))!.Data!;
+
+        var closure = new HttpRequestMessage(HttpMethod.Delete, $"/api/accounts/{accountId}");
+        closure.Headers.Add(StepUpConstants.HeaderName, authorization.AuthorizationId.ToString());
+        var closed = await Client.SendAsync(closure);
+        closed.StatusCode.Should().Be(HttpStatusCode.OK, "the account under test has to be closed");
+
+        return accountId;
+    }
 
     private async Task<(string AzureTag, Guid UserId, Guid AccountId)> RegisterRecipientAsync()
     {

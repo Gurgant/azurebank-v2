@@ -2532,7 +2532,7 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Not Found */
+                /** @description Not Found - the source account does not exist or is closed (errorCode ACCOUNT_NOT_FOUND), or no user the caller can pay holds the recipient's handle (errorCode RECIPIENT_NOT_FOUND). */
                 404: {
                     headers: {
                         [name: string]: unknown;
@@ -2829,7 +2829,7 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Not Found */
+                /** @description Not Found - the source account does not exist or is closed (errorCode ACCOUNT_NOT_FOUND), or no user the caller can pay holds the recipient's handle (errorCode RECIPIENT_NOT_FOUND). */
                 404: {
                     headers: {
                         [name: string]: unknown;

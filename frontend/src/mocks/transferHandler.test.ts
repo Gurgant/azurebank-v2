@@ -4,8 +4,8 @@ import { MOCK_DAILY_TRANSFER_LIMIT, MOCK_PIN, mockState, seedMockSession } from 
 /**
  * Executable contract for the recipient-lookup + stateful transfer handlers: the exact-match
  * lookup (self/unknown masked as exists:false), the authorisation protocol that replaced the
- * level-2 403 gate (ADR-0041/0042), and the failure order after it (SELF_TRANSFER → recipient
- * ACCOUNT_NOT_FOUND → INSUFFICIENT_FUNDS → success), plus namespaced idempotency.
+ * level-2 403 gate (ADR-0041/0042), and the failure order after it (SELF_TRANSFER →
+ * RECIPIENT_NOT_FOUND → INSUFFICIENT_FUNDS → success), plus namespaced idempotency.
  */
 
 const T_URL = '/api/transfers';
@@ -194,15 +194,19 @@ describe('transfer handler (in-band PIN + failure order + idempotency)', () => {
     expect((await res.json()).errorCode).toBe('SELF_TRANSFER_NOT_ALLOWED');
   });
 
-  it('404 ACCOUNT_NOT_FOUND for an unknown recipient', async () => {
+  it('404 RECIPIENT_NOT_FOUND for an unknown recipient', async () => {
     const res = await transfer(crypto.randomUUID(), {
       fromAccountId: acct(),
-      recipientAzureTag: 'ghost',
+      recipientAzureTag: 'nobody_here_at_all',
       amount: 10,
       pin: MOCK_PIN,
     });
+    // OBSERVED through the API's test host for this handle: 404 RECIPIENT_NOT_FOUND, detail
+    // "Recipient with identifier 'nobody_here_at_all' was not found."
     expect(res.status).toBe(404);
-    expect((await res.json()).errorCode).toBe('ACCOUNT_NOT_FOUND');
+    const body = await res.json();
+    expect(body.errorCode).toBe('RECIPIENT_NOT_FOUND');
+    expect(body.detail).toBe("Recipient with identifier 'nobody_here_at_all' was not found.");
   });
 
   it('422 INSUFFICIENT_FUNDS when the amount exceeds the balance', async () => {
@@ -925,14 +929,17 @@ describe('step-up authorisations (ADR-0042)', () => {
     seedMockSession();
     const res = await mint(AUTH_URL, {
       fromAccountId: acct(),
-      recipientAzureTag: 'nosuchuser',
+      recipientAzureTag: 'nobody_here_at_all',
       amount: 10,
       pin: MOCK_PIN,
     });
-    // OBSERVED: 404 ACCOUNT_NOT_FOUND, detail "Recipient with identifier 'nosuchuser' was not
-    // found." — the general account code, not a dedicated recipient one.
+    // OBSERVED through the API's test host for this handle: 404 RECIPIENT_NOT_FOUND, detail
+    // "Recipient with identifier 'nobody_here_at_all' was not found." — a code of its own, not
+    // the account's.
     expect(res.status).toBe(404);
-    expect((await res.json()).errorCode).toBe('ACCOUNT_NOT_FOUND');
+    const body = await res.json();
+    expect(body.errorCode).toBe('RECIPIENT_NOT_FOUND');
+    expect(body.detail).toBe("Recipient with identifier 'nobody_here_at_all' was not found.");
     expect(mockState.stepUpAuthorizations.size).toBe(0);
   });
 
@@ -1020,7 +1027,7 @@ describe('step-up authorisations (ADR-0042)', () => {
       pin: MOCK_PIN,
     });
     expect(res.status).toBe(404);
-    expect((await res.json()).errorCode).toBe('ACCOUNT_NOT_FOUND');
+    expect((await res.json()).errorCode).toBe('RECIPIENT_NOT_FOUND');
 
     // ...and the authorisation is untouched, so the user can correct the handle and send.
     expect(mockState.stepUpAuthorizations.get(data.authorizationId)?.consumed).toBe(false);

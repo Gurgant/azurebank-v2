@@ -14,10 +14,10 @@ namespace AzureBank.Tests.Integration;
 /// <para>
 /// THE ANSWER IS THE TEST. A handle in another copy must be answered exactly as a handle nobody
 /// holds, on every road that resolves one: the lookup (200, <c>exists: false</c>; it never answers
-/// 404), the mint and the transfer (404 <c>Recipient</c>). Each foreign answer is compared with the
-/// answer to an unknown handle of the same shape, as status, content type and body, with only the
-/// trace id and the echoed handle taken out. A difference of one byte would tell a visitor that
-/// some other copy uses that handle.
+/// 404), the mint and the transfer (404 <c>RECIPIENT_NOT_FOUND</c>). Each foreign answer is
+/// compared with the answer to an unknown handle of the same shape, as status, content type and
+/// body, with only the trace id and the echoed handle taken out. A difference of one byte would
+/// tell a visitor that some other copy uses that handle.
 /// </para>
 /// <para>
 /// ON SQL SERVER, because the comparison of two copies is a comparison of two nullable columns.
@@ -69,9 +69,9 @@ public sealed class DemoIsolationSqlServerTests
                 await DemoVisitor.AnswerAsync(lookedUpUnknown, unknown),
                 await DemoVisitor.AnswerAsync(lookedUp, foreign));
 
-            // The mint: 404 Recipient, before the PIN is looked at. The PIN sent is WRONG, so a mint
-            // that looked at it first would answer for the PIN and count an attempt; six of them
-            // here would lock it.
+            // The mint: 404 RECIPIENT_NOT_FOUND, before the PIN is looked at. The PIN sent is WRONG,
+            // so a mint that looked at it first would answer for the PIN and count an attempt; six
+            // of them here would lock it.
             using var minted = await visitor.MintTransferAsync(savings.Id, foreign, 10m, WrongPin);
             using var mintedUnknown = await visitor.MintTransferAsync(savings.Id, unknown, 10m, WrongPin);
             minted.StatusCode.Should().Be(HttpStatusCode.NotFound, "{0} belongs to another copy", foreign);
