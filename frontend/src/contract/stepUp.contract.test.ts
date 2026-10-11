@@ -157,7 +157,8 @@ describe('contract: step-up authorisations', () => {
       `TransferPage` says "That recipient could not be found. Please re-check the handle." for this
       one, which is untrue of the other.
 
-      Observed through the API's test host for this handle:
+      Observed through the API's test host for this handle, and the same on the real stack, where
+      this test runs in its real mode:
         404 errorCode RECIPIENT_NOT_FOUND,
             detail "Recipient with identifier 'nobody_here_at_all' was not found."
     */
@@ -269,7 +270,8 @@ describe('contract: step-up authorisations', () => {
       no longer be used", which is both untrue and unactionable for someone who simply mistyped.
 
       Observed through the API's test host for this handle, with an authorisation that names
-      nothing: 404 RECIPIENT_NOT_FOUND.
+      nothing, and the same on the real stack, where this test runs in its real mode:
+      404 RECIPIENT_NOT_FOUND.
     */
     const id = await firstAccountId();
 
@@ -297,7 +299,8 @@ describe('contract: step-up authorisations', () => {
       here: the handle is one a user holds.
 
       Observed through the API's test host, an account id nobody holds, a handle a user holds and
-      an authorisation that names nothing:
+      an authorisation that names nothing, and the same on the real stack, where this test runs in
+      its real mode:
         404 errorCode ACCOUNT_NOT_FOUND,
             detail "Account with identifier '<the id>' was not found."
 
