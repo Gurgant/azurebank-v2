@@ -646,6 +646,164 @@ jobs:
           echo "===== API ====="; tail -n 200 "$RUNNER_TEMP/api.log" || true
           echo "===== BFF ====="; tail -n 200 "$RUNNER_TEMP/bff.log" || true
 
+  # ---------------------------------------------------------------------------------------
+  # The public demo in a real browser, on the stack a deployment runs (ADR-0063).
+  #
+  # The job above starts the API and the BFF as processes, in Development, with the demo off.
+  # This one builds the three images and starts them as Production with the demo on, through
+  # the two compose files, and runs the demo's own suite (frontend/playwright.demo.config.ts):
+  # a visitor claims a private copy, sends a euro, starts over, signs out and comes back. Between
+  # its two halves the suite restarts the BFF's container and then the API's, so that every
+  # session is gone, and shows that the copy the browser keeps still signs in. The stack is this
+  # job's alone, as a run that stops part of it asks.
+  #
+  # The volume is new with the job: the pool holds its free copies, nobody has claimed from it,
+  # and the run's two claims are the first of the day's ten.
+  # ---------------------------------------------------------------------------------------
+  demo-stack:
+    name: Demo suite (compose stack, two restarts)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    env:
+      # CI-only throwaway values: the nine variables the headers of compose.yaml and
+      # compose.demo.yaml name, each required there with no default. The database, the keys and
+      # the copies claimed under them live only for this job. Where the job above has the same
+      # variable the value is the same. SERVICE_KEY is its SERVICE_CREDENTIAL_KEY under the name
+      # compose.yaml asks for, and SQL_SA_PASSWORD is the password its SQL Server is given: it
+      # holds no single quote, which compose.yaml's connection strings could not carry.
+      SQL_SA_PASSWORD: YourStrong@Passw0rd123
+      JWT_SECRET: "ci-only-throwaway-signing-key-0123456789abcdef0123456789abcdef"
+      IDEMPOTENCY_HASH_KEY: "ci-only-throwaway-idempotency-hmac-key-0123456789abcdef"
+      STEPUP_BINDING_KEY: "ci-only-throwaway-stepup-binding-key-0123456789abcdef"
+      SERVICE_KEY: "ci-only-throwaway-service-credential-0123456789abcdef"
+      AUDIT_CHAIN_KEY: "ci-only-throwaway-audit-chain-key-0123456789abcdef"
+      AUDIT_ANCHOR_KEY: "ci-only-throwaway-audit-anchor-key-fedcba9876543210"
+      PIN_PEPPER: "ci-only-throwaway-pin-pepper-0123456789abcdef0123456789"
+      # Asked for by compose.demo.yaml alone: the key the API hashes a claiming client's address
+      # under. 32 characters or more, or the API refuses to start.
+      DEMO_CLIENT_KEY_SECRET: "ci-only-throwaway-demo-client-key-0123456789abcdef"
+      # Where compose.yaml publishes the BFF. The host stays `localhost`: the session's cookie
+      # is Secure, and the suite's own request context sends it over http to that name only
+      # (frontend/playwright.demo.config.ts).
+      E2E_DEMO_BASE_URL: "http://localhost:5000"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # The three images are built here, from this commit; the BFF's holds the built page.
+      # `up -d` comes back once the API's container has been started, which compose.yaml allows
+      # only after `migrate` and `seed-pool` have exited 0: a database that could not be
+      # prepared fails this step and not the wait below.
+      - name: Build and start the stack with the demo on
+        run: |
+          docker compose -f compose.yaml -f compose.demo.yaml up --build -d
+          docker compose -f compose.yaml -f compose.demo.yaml ps --all
+
+      - name: Wait for the stack
+        # Polled, not slept on, and for the word, not for a 200: the BFF's /health/ready answers
+        # 200 Degraded while the API is still starting (frontend/e2e-demo/restart.setup.ts), and
+        # a suite started then would meet a stack that is not whole.
+        run: |
+          url="${{ env.E2E_DEMO_BASE_URL }}/health/ready"
+          answer=""
+          for i in $(seq 1 120); do
+            answer="$(curl -sS --max-time 3 "$url" 2> /dev/null || true)"
+            if [ "$answer" = "Healthy" ]; then
+              echo "The stack is whole after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::$url never answered Healthy; its last answer was: ${answer:-none}"
+          exit 1
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      # No --with-deps: the job above has the reason, and this suite launching a browser is the
+      # same proof that the image carries what Chromium needs.
+      - name: Install Playwright browser
+        working-directory: frontend
+        run: npx playwright install chromium
+
+      # The suite restarts the two containers itself, with `docker restart`, and waits for
+      # /health/ready to say Healthy again before its last project starts. No step of this job
+      # touches the stack while this one runs.
+      #
+      # The JSON reporter is added on the command line, beside the `list` reporter the config
+      # names, for the counts the next two steps read. It holds what `list` prints and nothing
+      # a trace would; the report is written to the runner's temporary folder and uploaded
+      # nowhere.
+      - name: The demo suite (real browser, two restarts)
+        working-directory: frontend
+        run: |
+          export PLAYWRIGHT_JSON_OUTPUT_FILE="$RUNNER_TEMP/demo-results.json"
+          npm run test:e2e:demo -- --reporter=list,json
+
+      # A skipped test proves nothing and still reads green. The script is the job above's,
+      # given this run's report: it fails on any skip and on a run in which nothing passed.
+      - name: Assert every test of the demo suite ran
+        working-directory: frontend
+        run: node scripts/assert-e2e-ran.mjs "$RUNNER_TEMP/demo-results.json"
+
+      # The count on the run's page, where it is read without a sign-in.
+      - name: Report the total
+        run: |
+          node -e '
+            const fs = require("fs");
+            const file = process.env.RUNNER_TEMP + "/demo-results.json";
+            const { stats } = JSON.parse(fs.readFileSync(file, "utf8"));
+            if (!(stats.expected > 0)) {
+              console.log("::error::the report counts no passed test"); process.exit(1);
+            }
+            console.log("::notice title=Demo suite::" + stats.expected + " passed");
+          '
+
+      # The reports of the demo's scans (frontend/e2e/axeScan.ts), one JSON each. The scan of
+      # the dashboard with the sign-in details open writes no markup, and a test of the suite
+      # holds that before anything is claimed.
+      - name: Upload the accessibility report
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: demo-axe-report
+          path: frontend/test-results/axe/
+          if-no-files-found: error
+          retention-days: 30
+
+      # What a red run leaves beside its log: the page as text where a test failed, written
+      # with the sign-in details closed (frontend/playwright.demo.config.ts). No trace, no
+      # screenshot and no video exist to upload.
+      - name: Upload the run's output
+        uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: demo-test-results
+          path: frontend/test-results/
+          retention-days: 7
+
+      - name: Container logs on failure
+        if: failure()
+        run: |
+          docker compose -f compose.yaml -f compose.demo.yaml ps --all || true
+          docker compose -f compose.yaml -f compose.demo.yaml logs --no-color --tail 300 || true
+
+      - name: Bring the stack down
+        if: always()
+        run: docker compose -f compose.yaml -f compose.demo.yaml down --volumes --remove-orphans
+
   conformance:
     name: Runtime conformance (Schemathesis against the running API)
     runs-on: ubuntu-24.04
