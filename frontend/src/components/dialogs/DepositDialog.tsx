@@ -14,7 +14,7 @@ import { useDepositMutation } from '../../features/api/apiSlice';
 import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
 import { useFocusWhenLost } from '../../hooks/useFocusWhenLost';
 import { formatCurrency } from '../../utils/format';
-import { WaitHint } from '../feedback';
+import { useAccountClosedToast, WaitHint } from '../feedback';
 import { MoneyDialogShell } from './MoneyDialogShell';
 import { useMoneyDialogStyles } from './moneyDialogStyles';
 import {
@@ -86,10 +86,14 @@ const QUICK_AMOUNTS = [50, 100, 200, 500];
  * deposit is auth level 1. The shell is a Fluent Dialog now: focus trap, Escape and
  * aria-modal come from the platform, and BOTH dismissal paths (Esc/backdrop and the X)
  * funnel through the keyLive guard.
+ *
+ * The dialog does not outlive its account: when the deposit answers ACCOUNT_NOT_FOUND it closes
+ * and the visitor is told in the app's toast outlet, as the rename dialog does.
  */
 export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositDialogProps) {
   const styles = useMoneyDialogStyles();
   const navigate = useNavigate();
+  const sayAccountClosed = useAccountClosedToast();
 
   const [depositTrigger] = useDepositMutation();
   const { submit, resetIntent, verifyRequired, wentThrough, keyRetained, requireVerify } =
@@ -232,6 +236,15 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
       ) {
         // Client protocol bug — never surface the raw code.
         setError('Something went wrong. Please try again.');
+      } else if (problem.errorCode === 'ACCOUNT_NOT_FOUND') {
+        /*
+          The account was closed elsewhere. A 404 is a refusal: nothing was deposited, and the
+          hook has dropped the key, so closing abandons no send. `onClose` and not
+          `requestClose`: that one still sees this send as running. The list is read again by
+          the mutation's own tags (apiSlice), so the account leaves the page behind the dialog.
+        */
+        sayAccountClosed();
+        onClose();
       } else if (isServiceOutage(problem)) {
         // A 503 or no answer in 65 s — before the NETWORK branch, which the abort would otherwise
         // take. "Nothing was changed" only when the API said so (`applied: false`); otherwise the

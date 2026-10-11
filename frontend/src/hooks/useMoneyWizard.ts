@@ -139,6 +139,13 @@ export interface MoneyWizard<TBody, TResult> {
    * idempotency hook refuses the reset.
    */
   startOver: () => void;
+  /**
+   * Show the check view over a key that is held, for an answer the flow cannot act on: the key is
+   * let go, so the exits open, and no send leaves until `startOver`. The same latch the hook sets
+   * on `IDEMPOTENCY_RESULT_UNKNOWN`, and the one the money dialogs set on an edit under a held key
+   * (`requireVerify` in `useIdempotentMutation`).
+   */
+  requireVerify: () => void;
   /** The ONLY way out. Refuses while a key is live. */
   requestLeave: (to: string) => void;
   /**
@@ -155,7 +162,7 @@ export function useMoneyWizard<TBody, TResult>(
   options: { messages: DomainMessages; fallback: string },
 ): MoneyWizard<TBody, TResult> {
   const navigate = useNavigate();
-  const { submit, resetIntent, verifyRequired, wentThrough, keyRetained } =
+  const { submit, resetIntent, verifyRequired, wentThrough, keyRetained, requireVerify } =
     useIdempotentMutation(trigger);
 
   const [step, setStep] = useState<MoneyWizardStep>('form');
@@ -344,6 +351,8 @@ export function useMoneyWizard<TBody, TResult>(
       // previous attempt is still said about the request being rebuilt.
       goToStep('form', { keepInputErrors: false });
     },
+
+    requireVerify,
 
     requestLeave(to) {
       if (!keyLive) navigate(to);

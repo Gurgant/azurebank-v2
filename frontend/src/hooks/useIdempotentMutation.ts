@@ -54,7 +54,10 @@ function shouldKeepKey(problem: ApiProblem): boolean {
  * `errorCode` — never on HTTP status. A body-affecting form edit calls `resetIntent`
  * only while no key is held (an edited body with the old key is a byte-fingerprint
  * mismatch → 422); while one is retained the flow calls `requireVerify` instead (below),
- * or keeps its form disabled, as the transfer pages do.
+ * or keeps its form disabled, as the transfer pages do. A flow calls `requireVerify` too when
+ * the account turns out closed under a retained key: a transfer page and the withdrawal dialog
+ * when the mint of a new authorisation answers `ACCOUNT_NOT_FOUND`, the dialog also when its
+ * check on Continue finds the account gone (ADR-0022, decision 6).
  *
  * `IDEMPOTENCY_RESULT_UNKNOWN` drops the key and latches `verifyRequired`: submit
  * refuses to mint a new key until the owning flow's explicit "it didn't go through —

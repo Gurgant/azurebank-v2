@@ -22,7 +22,7 @@ import {
   sleep,
   installFakeClock,
 } from '../test/outage';
-import { CONNECTION_FAILED } from '../api/problemMessages';
+import { CONNECTION_FAILED, MOVE_DESTINATION_CLOSED } from '../api/problemMessages';
 import { apiSlice, type AccountResponse } from '../features/api/apiSlice';
 import { StepUpModal } from '../features/auth';
 import { TransferPage } from './TransferPage';
@@ -315,26 +315,21 @@ describe('the confirm wait', () => {
     },
   );
 
-  it('internal: a destination that disappears under the PIN step stops the confirm before any request, and leaves no hint behind', async () => {
+  it('internal: a destination that disappears under the PIN step ends the PIN step, with no request', async () => {
     const mints = countMints('*/api/transfers/internal/authorizations');
     const { store } = renderInternal();
     await internalToPin();
 
-    // The form holds only the destination's id, so it still validates and the sixth digit reaches
-    // the confirm handler; there the destination is looked up in the accounts, found missing, and
-    // the handler returns before it mints. A wait begun before that return would never end.
+    // The page reads the same accounts. A destination that is no longer among them is a choice
+    // the page clears: it goes back to the form and says so, and there are no boxes left for a
+    // sixth digit to confirm a move to an account the visitor no longer has.
     await patchAccountsUnderThePinStep(store, (draft) =>
       draft.filter((account) => account.name !== 'Rainy Day'),
     );
-    installFakeClock();
-    const user = fakeClockUser();
-    await user.click(screen.getByLabelText('Digit 1 of 6'));
-    await user.paste(TEST_PIN);
-
-    await expectNoHintLeftBehind();
+    expect(await screen.findByText(MOVE_DESTINATION_CLOSED)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Review Transfer' })).toBeDisabled();
     expect(mints.count).toBe(0);
-    // And the form did not refuse it, which would have been the other path.
-    expect(screen.queryByText('Please check the details and try again.')).not.toBeInTheDocument();
   });
 });
 

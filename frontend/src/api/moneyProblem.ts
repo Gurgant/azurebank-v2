@@ -210,8 +210,9 @@ export function classifyMoneyProblem(
 
   // 6-10: the shared tail. Note what is NOT here: ACCOUNT_NOT_FOUND. Each flow words it in its own
   // `messages` rather than in a shared branch speaking for a flow it does not know. On the
-  // external transfer the code is the caller's own source account, and that page keeps the
-  // recipient's sentence for it ("re-check the handle") until the screens change.
+  // external transfer the code is the caller's own source account, and the page says that it is
+  // closed; on the internal one it is either of two accounts, and the page says which once the
+  // accounts list has been read again.
   /*
     THE DAILY OUTGOING-TRANSFER BOUND (ADR-0050), keyed on the CODE and never on member presence —
     `requested` also rides INSUFFICIENT_FUNDS (measured A4.4: `{"available": 300.0, "requested": 400}`

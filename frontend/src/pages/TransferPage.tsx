@@ -46,6 +46,7 @@ import { availableBalanceOf } from '../utils/availableBalance';
 import { useFundsGate } from '../hooks/useFundsGate';
 import { PinInput } from '../components/PinInput';
 import {
+  ACCOUNT_CLOSED,
   CONNECTION_FAILED,
   NO_DOUBLE_CHARGE,
   SERVICE_UNAVAILABLE,
@@ -179,13 +180,14 @@ export function TransferPage() {
   const styles = { ...useTransferWizardStyles(), ...useRecipientStyles() };
 
   const {
-    data: accounts = [],
+    data: accountsData,
     isLoading: accountsLoading,
     isFetching: accountsFetching,
     error: accountsError,
     refetch: refetchAccounts,
     requestId: accountsRequestId,
   } = useGetAccountsQuery();
+  const accounts = accountsData ?? [];
   // The accounts bar follows the wait, as on the reading pages: a Retry keeps the old error while
   // it runs, so the bar goes away for the new wait and comes back, announced, only if it fails too.
   const accountsRead = readWait({
@@ -243,11 +245,11 @@ export function TransferPage() {
     // is the wizard's, and the type of this table makes naming one of those here a compile error.
     // The two 404 codes live here rather than in the shared tail because their wording is
     // flow-specific. RECIPIENT_NOT_FOUND is the API's code for a handle no user holds.
-    // ACCOUNT_NOT_FOUND reaches this page for the caller's own source account, missing or closed,
-    // and it keeps the recipient's sentence until the screens change.
+    // ACCOUNT_NOT_FOUND reaches this page for the caller's own source account, closed or gone,
+    // never for the payee: the page says the account is closed, and clears the choice (below).
     messages: {
       SELF_TRANSFER_NOT_ALLOWED: "You can't send money to yourself.",
-      ACCOUNT_NOT_FOUND: 'That recipient could not be found. Please re-check the handle.',
+      ACCOUNT_NOT_FOUND: ACCOUNT_CLOSED,
       RECIPIENT_NOT_FOUND: 'That recipient could not be found. Please re-check the handle.',
     },
     fallback: 'Transfer failed. Please try again.',
@@ -367,12 +369,31 @@ export function TransferPage() {
   const watchedTag = watch('recipientTag');
   const amountNumber = parseAmountInput(watch('amount'));
 
+  /*
+    The source is the account the form names. The default, primary or first, stands in for it
+    only while the form has never named one: once a choice has been cleared because its account
+    is gone (`mustChooseSource`), nothing stands in, and the visitor chooses.
+  */
+  const [mustChooseSource, setMustChooseSource] = useState(false);
   const selectedAccount =
     accounts.find((a) => a.id === watchedAccountId) ??
-    accounts.find((a) => a.isPrimary) ??
-    accounts[0] ??
+    (watchedAccountId === '' && !mustChooseSource
+      ? (accounts.find((a) => a.isPrimary) ?? accounts[0])
+      : undefined) ??
     null;
   const availableBalance = selectedAccount ? availableBalanceOf(selectedAccount) : 0;
+
+  /*
+    The source the form names is gone: the accounts list, read again, came back without it, or
+    the server answered ACCOUNT_NOT_FOUND for it (`sourceRefused`, set where that answer lands).
+    A list that failed to load is not a list without the account: only one that was received
+    counts, and a failed reload keeps the last one received.
+  */
+  const [sourceRefused, setSourceRefused] = useState(false);
+  const sourceGone =
+    watchedAccountId !== '' &&
+    (sourceRefused ||
+      (accountsData !== undefined && !accountsData.some((a) => a.id === watchedAccountId)));
 
   // See `useFundsGate`: the Zod bound is built from a CACHED balance, and reaching the PIN step
   // with a stale one costs a PIN attempt on a request that cannot succeed.
@@ -395,15 +416,41 @@ export function TransferPage() {
       setValue('fromAccountId', selectedAccount.id, { shouldValidate: true });
     }
   }, [selectedAccount, watchedAccountId, setValue]);
+  // With no source the bound stays where it was: an amount is not judged against the balance
+  // of no account, and "Exceeds available balance of €0.00" would be a second, untrue complaint.
   useEffect(() => {
-    setBalanceBound(availableBalance);
-  }, [availableBalance]);
+    if (selectedAccount) setBalanceBound(availableBalance);
+  }, [selectedAccount, availableBalance]);
   // Re-run amount validation once the bound (and thus the resolver) has actually updated:
   // mode 'onChange' only revalidates the field that changed, so an account switch alone
   // would leave the amount's cached validity (and canReview) on the PREVIOUS balance.
   useEffect(() => {
     void trigger('amount');
   }, [balanceBound, trigger]);
+
+  /*
+    NO SILENT SWITCH. When the source is gone the choice is cleared, the page goes back to the
+    form and says that the account is closed, and nothing can be sent until the visitor chooses
+    another: no default stands in, so money never leaves an account the visitor did not pick.
+    The PIN typed for the account that is gone, and an authorisation minted for it, go with it.
+
+    Not while a key is live or a mint is running: the answer still owed decides first, and
+    `toForm` refuses under a live key anyway. Nor under the receipt or the check view, which
+    this would change the page beneath. `wizard` is a new object on every render, so this runs
+    after each one, and has nothing to do once it has run: the form no longer names a source.
+  */
+  useEffect(() => {
+    if (!sourceGone || exitLocked || success || verifyRequired) return;
+    setValue('fromAccountId', '', { shouldValidate: true });
+    setMustChooseSource(true);
+    setSourceRefused(false);
+    setPin('');
+    enteredPin.current = '';
+    lastAuthorization.current = null;
+    setAuthorizationHeld(false);
+    wizard.toForm();
+    wizard.fail(ACCOUNT_CLOSED);
+  }, [sourceGone, exitLocked, success, verifyRequired, setValue, wizard]);
 
   const handleSelectAccount = (account: AccountResponse) => {
     if (keyLive) return;
@@ -504,7 +551,9 @@ export function TransferPage() {
   const reviewWaitsFor = canReview
     ? null
     : !selectedAccount
-      ? 'You have no account to send from.'
+      ? accounts.length > 0
+        ? 'Choose an account to continue.'
+        : 'You have no account to send from.'
       : !normalizeAzureTag(watchedTag)
         ? "Enter the recipient's @handle to continue."
         : !recipient
@@ -540,6 +589,9 @@ export function TransferPage() {
         wizard.fail(insufficientFundsMessage(verdict.available));
         return;
       }
+      // The list just read has no such account. No PIN step for it: the page, which reads the
+      // same list, clears the choice and says so (`sourceGone`).
+      if (verdict.status === 'closed') return;
       // 'unknown' proceeds on purpose: a courtesy check must not become an outage. The server
       // still refuses, and `INSUFFICIENT_FUNDS` is already handled below.
       setPin('');
@@ -760,6 +812,28 @@ export function TransferPage() {
       setPin('');
       enteredPin.current = '';
       setPinLockDeadline(retryDeadline(refusal.retryAfterSeconds ?? DEFAULT_PIN_LOCK_SECONDS));
+    } else if (refusal?.errorCode === 'ACCOUNT_NOT_FOUND') {
+      // The source account is closed or gone, on the mint or on the send. A 404 is a refusal:
+      // nothing moved, and the idempotency hook has dropped the key of a send. The page clears
+      // the choice once it renders with this (`sourceGone`), without waiting for the list.
+      setSourceRefused(true);
+      /*
+        Unless a key is held, which only a mint can meet: the send's is dropped on this very
+        answer. A mint is made under a held key only after the send before it was answered
+        AUTHORIZATION_EXPIRED or AUTHORIZATION_INVALID, the one answer that keeps the key and
+        drops the authorisation. Under that key the PIN step can do nothing more: the transfer it
+        is for names an account that is gone, and the clearing above waits for the key.
+
+        So the page shows the check view, as the money dialogs do for an intent they cannot carry
+        on: the key is let go, the view's two buttons are the ways on, and "start over" comes
+        back to the form, where the choice is cleared and the sentence said. Letting the key go
+        abandons no payment while the key's record lives, 24 hours (ADR-0009): the API gives that
+        answer from inside the action, which it runs only for a key under which nothing was
+        committed, and every authorisation presented under the key has been refused, so a send
+        still on its way is refused too. Past that life the same answer can follow a send that
+        was applied, which is why the view says to check the transactions first.
+      */
+      if (phase === 'mint' && keyLive) wizard.requireVerify();
     } else if (refusal?.errorCode === 'PIN_REQUIRED') {
       // No PIN enrolled. Nothing on this page can fix that, so send them where it can be.
       // `requestLeave`, not a bare navigate: this page deliberately owns no destinations of

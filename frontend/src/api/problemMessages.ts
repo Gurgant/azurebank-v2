@@ -91,6 +91,30 @@ export const TRY_AGAIN = 'Try again';
  */
 export const SIGN_OUT_FAILED = "We couldn't sign you out. You're still signed in.";
 
+/*
+  The visitor's own account, closed under the page: closed in another tab or another session while
+  this one still showed it. The API answers 404 `ACCOUNT_NOT_FOUND` to whatever is then done on
+  it, with a sentence that carries the account's identifier and is never shown.
+*/
+
+/** Every screen where the request names one account of the visitor's own. */
+export const ACCOUNT_CLOSED = 'This account is closed. Choose another account.';
+
+/** A move between the visitor's own accounts, when the list shows that its source is gone. */
+export const MOVE_SOURCE_CLOSED =
+  'The account you are moving money from is closed. Choose another account.';
+
+/** The same move, when the list shows that its destination is gone. */
+export const MOVE_DESTINATION_CLOSED =
+  'The account you are moving money to is closed. Choose another account.';
+
+/**
+ * The same move, when the answer alone is known: the code is one for both accounts, so until the
+ * list says which is gone, only this much is true. Both choices are then made again.
+ */
+export const MOVE_ACCOUNT_CLOSED =
+  'An account of this transfer is closed. Choose the accounts again.';
+
 /**
  * A money send answered 503 with `applied: false`: the server says it changed nothing. Only that
  * answer earns these words; a 503 without it may have landed.
