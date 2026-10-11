@@ -90,8 +90,8 @@ dotnet test backend/AzureBank.slnx    # name the solution
 cd frontend && npm run build && npx vitest run
 ```
 
-A filtered `dotnet test` drops the BFF's tests and still reports success, and `tsc --noEmit`
-skips this tsconfig's project references
+A `dotnet test` filtered on `AzureBank.Tests` drops the BFF's tests and still reports success,
+and `tsc --noEmit` skips this tsconfig's project references
 ([engineering traps](engineering-traps.md#frontend-test-infrastructure)). The concurrency proofs
 need a real SQL Server and skip without one:
 
@@ -151,20 +151,29 @@ expectations met: the browser's context did not close within the test's 30 s. Wh
 
 ## Quality gates
 
-Run all of these before opening a pull request, from `backend/`:
+Run these before opening a pull request, for every part the change touches. From `backend/`:
 
 ```bash
-dotnet build
-dotnet test AzureBank.slnx
-dotnet format --verify-no-changes
+dotnet build AzureBank.slnx --configuration Release
+dotnet test AzureBank.slnx --configuration Release --no-build
+dotnet format AzureBank.slnx --verify-no-changes
 ```
 
-Frontend changes also need, from `frontend/`:
+From `frontend/`:
 
 ```bash
-npm run format:check && npm run lint && npm run build && npx vitest run
+npm run format:check && npm run lint && npm run build && npm test && npm run test:contract:mock
 ```
 
+For the deployment scripts, the templates and the workflows, from the root:
+
+```bash
+python -m unittest discover -s infra -p 'test_*.py'
+actionlint        # for a change to a workflow; with ShellCheck installed, as in CI
+```
+
+- **Build in Release.** Warnings are errors there, as in CI: a Debug build passes with a warning
+  that CI refuses.
 - **Name the solution**, and take `npm run build` as the type gate, not `tsc --noEmit`
   ([traps](engineering-traps.md#frontend-test-infrastructure)).
 - **A gate is a delta against `main`, never an absolute count.** "This change introduces no new
@@ -179,7 +188,7 @@ npm run format:check && npm run lint && npm run build && npx vitest run
 
 ## Merging
 
-- **Every pull request is merged by hand after review.** The repository requires a pull request,
+- **Every pull request is merged by hand after review.** `main` requires a pull request,
   permits squash only, and has no bypass.
 - **Branches are not deleted after merge.** A squash leaves one commit on `main`, and the branch
   is where the commits behind it stay.
@@ -200,15 +209,15 @@ the frontend's artefacts to regenerate, and the other route, against a running A
 
 ## Commit and pull-request titles
 
-This repository squash-merges, so one commit lands on `main`, and **its title and text are the
-pull request's**, put there by hand at the merge. The commits of the branch do not land, but
-they stay public, on the pull request's page and on the branch. They follow the same rules as
-any text here: a subject that says what the commit does, no line that credits a second author,
-no at-sign before a name, no secret. CI reads the commits of a pull request and fails on two
-things: a line that begins with a key ending in `-by:`, the form in which git names a signer, a
-reviewer or a second author, and an at-sign before a name outside backticks. Any other closing
-line, such as `Gate: 12 passed`, passes. A pushed commit is not rewritten, so a branch with a
-message that fails is replaced by a new one.
+This repository squash-merges, so one commit lands on `main`: **its title is the pull request's
+and its text is a shorter one written for the commit**, both put there by hand at the merge.
+The commits of the branch do not land, but they stay public, on the pull request's page and on
+the branch. They follow the same rules as any text here: a subject that says what the commit
+does, no line that credits a second author, no at-sign before a name, no secret. CI reads the
+commits of a pull request and fails on two things: a line that begins with a key ending in
+`-by:`, the form in which git names a signer, a reviewer or a second author, and an at-sign
+before a name outside backticks. Any other closing line, such as `Gate: 12 passed`, passes. A
+pushed commit is not rewritten, so a branch with a message that fails is replaced by a new one.
 
 The title is plain, imperative, at most 72 characters, and names the concrete outcome, not a
 category:

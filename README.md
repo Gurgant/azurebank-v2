@@ -132,9 +132,10 @@ passed and CodeQL reports no error and no security alert rated high or critical.
 
 CodeQL analyses the C#, the TypeScript and the workflows on every pull request as well.
 
-Two more jobs run on every pull request and are not among the checks a merge requires: the
-documentation site, built with every link checked, and the demo's browser suite on the stack a
-deployment runs, with the two restarts of containers it makes.
+Three more jobs run on every pull request and are not among the checks a merge requires: the
+documentation site, built with every link checked, the demo's browser suite on the stack a
+deployment runs, with the two restarts of containers it makes, and a reading of the pull
+request's commit messages for a credit line or a mention.
 
 ## Read deeper
 
@@ -145,6 +146,7 @@ deployment runs, with the two restarts of containers it makes.
 | [Decisions](docs/adr/README.md) | The decisions and their reasons, with the alternatives rejected and what is left open where a record has them; the index names four to start with |
 | [Engineering traps](docs/engineering-traps.md) | The things that fail silently; each one cost real time to find |
 | [SECURITY.md](SECURITY.md) | The security posture in one place, including what is not done |
+| [Engineering Playbook](docs/engineering-playbook.md) | How I lead the work: what I decide, the path of a change, and what stands between an agent and `main` |
 
 ## Status and known limits
 
@@ -172,8 +174,7 @@ Squash-merged: each pull request lands on `main` as one commit. Changes go throu
 gated by CI tests and CodeQL, with AI review, and I merge each one myself; the rules are in
 [engineering practices](docs/engineering-practices.md).
 
-Built in three phases: design documents first (December 2025 to January 2026), then the backend
-(January 2026), then the monorepo as it is now, from July 2026. The design documents and the
-earlier history are kept in private repositories.
+The project started in 2025. This repository is its second version, rebuilt and extended from July
+2026. The design documents and the earlier history are kept in private repositories.
 
 Released under the [MIT License](LICENSE).
