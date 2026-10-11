@@ -117,7 +117,7 @@ describe('Settings — the PIN row', () => {
     /*
       The dialog would be the wrong door: with no PIN stored, the API treats set-pin as an
       ENROLMENT, which costs the password, not a current PIN (AuthService.SetPinAsync) —
-      measured M1 on 2026-09-11: {pin, password} -> 200. So the row goes to the page that asks for
+      measured on 2026-09-11: {pin, password} -> 200. So the row goes to the page that asks for
       the password, and the query string carries a PATH and nothing else.
     */
     await renderSettings({ ...MOCK_USER, hasPin: false });
@@ -133,7 +133,7 @@ describe('Settings — the PIN row', () => {
 
 describe('ChangePinDialog', () => {
   it('changes the PIN with the current one, and sends nothing else', async () => {
-    // Measured M4: {pin:"246802", currentPin:"135790"} -> 200 {"message":"PIN set successfully"}.
+    // Measured: {pin:"246802", currentPin:"135790"} -> 200 {"message":"PIN set successfully"}.
     await renderSettings();
     const sent = observeSetPin();
     const dialog = await openDialog();
@@ -185,7 +185,7 @@ describe('ChangePinDialog', () => {
 
   it('keeps a wrong current PIN in the dialog, names it, and keeps the user signed in', async () => {
     /*
-      Measured M3: {pin:"246802", currentPin:"000000"} -> 401
+      Measured: {pin:"246802", currentPin:"000000"} -> 401
         {"title":"Unauthorized","status":401,"detail":"Invalid PIN.","instance":"/api/auth/pin",
          "errorCode":"INVALID_PIN"}
       and GET /bff/auth/me straight after -> 200. The session survived, so the app must too:
@@ -216,11 +216,11 @@ describe('ChangePinDialog', () => {
 
   it('locks on the third wrong PIN and counts down, with everything disabled', async () => {
     /*
-      Measured M6a-c: two wrong current PINs -> 401 INVALID_PIN, the third ->
+      Measured: two wrong current PINs -> 401 INVALID_PIN, the third ->
         429 {"detail":"Too many incorrect PIN attempts. Your PIN is temporarily locked; try again
              later.","instance":"/api/auth/pin","errorCode":"PIN_LOCKED","retryAfterSeconds":900,
              "lockedUntil":"2026-09-11T13:08:28.9504552+00:00"}
-      with NO Retry-After header, so the deadline has to come from the body. M6d: the CORRECT
+      with NO Retry-After header, so the deadline has to come from the body. Also measured: the CORRECT
       current PIN while locked -> the same 429, because the lock is checked first. The lock is the
       one every PIN gate shares, which is why it is worth a countdown rather than a retry.
     */

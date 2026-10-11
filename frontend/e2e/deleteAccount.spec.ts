@@ -14,10 +14,10 @@ import { USER } from './fixtures';
  *
  * NO wrong-PIN case here, deliberately: fixtures.ts forbids a wrong PIN on the only seeded user
  * (three misses lock the whole suite for fifteen minutes). The wrong-PIN branch is proven at the
- * mock level (DeleteAccountDialog.test.tsx) and was measured on the real stack (row M1,
- * 2026-09-06, main 19742ff). "No PIN attempt spent" on the funded case is a DB
+ * mock level (DeleteAccountDialog.test.tsx) and was measured on the real stack,
+ * 2026-09-06, main 19742ff. "No PIN attempt spent" on the funded case is a DB
  * column (PinAccessFailedCount) a browser cannot read; what this spec observes is that the mint
- * answered 422 and the dialog stayed open — the counter is the manual pass ADR-0049 names.
+ * answered 422 and the dialog stayed open — the counter is ADR-0049's Row 2.
  *
  * Sort/elevation: this spec mints, it never verify-pins, so it does not elevate the session and
  * cannot break stepUp.spec.ts's precondition wherever it sorts. The OTHER way to break it is a
@@ -41,7 +41,7 @@ async function createSpare(page: Page, name: string) {
 
 /**
  * Mint, then DELETE with the header — the same shape the dialog sends, from outside React.
- * `tolerate404` is for the case the dialog already closed the account (D10/D11: the mint answers
+ * `tolerate404` is for the case the dialog already closed the account (the mint answers
  * 404 ACCOUNT_NOT_FOUND once it is gone); anything else that is not a 201 throws, so a leftover
  * is a failure with a status in it, not a silent one.
  */
@@ -129,7 +129,7 @@ test.describe('closing an account (ADR-0049)', () => {
       }
 
       // The mint refuses with 422 before the DELETE is attempted and the dialog maps the code
-      // inline and stays open (D17). That it does so before the PIN is consulted is M2 (a
+      // inline and stays open. That it does so before the PIN is consulted is ADR-0049 Row 2 (a
       // wrong-PIN probe with the counter read on the DB) — not observed here; see the header.
       await expect(
         dialog.getByText('Only accounts with a zero balance can be deleted.'),

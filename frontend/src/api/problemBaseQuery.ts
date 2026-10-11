@@ -15,10 +15,10 @@ import { CONNECTION_FAILED, SERVICE_UNAVAILABLE } from './problemMessages';
  * Sources, in normalization order:
  *  1. step-up 403s are recognized from the X-Auth-Level-Required HEADER before any body
  *     parsing — AuthLevelMiddleware's 403 body is a bare shape, not ProblemDetails, and
- *     must never reach the ProblemDetails path (Decision D2);
+ *     must never reach the ProblemDetails path (ADR-0019 decision 1);
  *  2. RFC 9457 ProblemDetails + errorCode + bare 32-hex traceId (the API's envelope);
  *     validation 400s carry an `errors` dict but no errorCode — synthesized here as
- *     VALIDATION_ERROR so consumers always have a code to branch on (Decision D5);
+ *     VALIDATION_ERROR so consumers always have a code to branch on (ADR-0019 decision 1);
  *  3. transport failures normalize to status 'NETWORK' (`TIMEOUT_ERROR` when the SPA gave up
  *     waiting, `NETWORK_ERROR` otherwise); unparseable bodies to 'PARSE' — except a 503's, which
  *     is the outage whatever its body says (an ingress page is not JSON).
@@ -222,7 +222,7 @@ export function toApiProblem(error: FetchBaseQueryError, response?: Response): A
   const body = (bodyResult.success ? bodyResult.data : {}) as ProblemDetailsBody;
   const retryAfterSeconds = parseRetryAfterSeconds(body, response?.headers);
 
-  // Validation 400s have an errors dict but NO errorCode — synthesize one (D5).
+  // Validation 400s have an errors dict but NO errorCode — synthesize one (ADR-0019 decision 1).
   const errorCode =
     body.errorCode ?? (status === 400 && body.errors ? 'VALIDATION_ERROR' : `HTTP_${status}`);
 
@@ -290,7 +290,7 @@ const RETRY_SPREAD = 0.2;
 const MIN_RETRY_ATTEMPT_MS = 5_000;
 
 const rawBaseQuery = fetchBaseQuery({
-  // Same-origin with explicit /api and /bff paths per endpoint (D5): a '/api' baseUrl
+  // Same-origin with explicit /api and /bff paths per endpoint: a '/api' baseUrl
   // would rewrite every BFF call to /api/bff/* and 404. The explicit origin (instead of
   // baseUrl '') keeps URLs absolute for runtimes whose Request cannot resolve relative
   // ones (undici under the jsdom test environment); in the browser it is identical.
@@ -313,7 +313,7 @@ const problemQuery: BaseQueryFn<
   if (result.error) {
     const response = result.meta?.response;
 
-    // D2: the step-up 403 is recognized from the HEADER, before body normalization —
+    // ADR-0019 decision 1: the step-up 403 is recognized from the HEADER, before body normalization —
     // its bare body must never be interpreted as ProblemDetails.
     const requiredLevel = response?.headers.get('X-Auth-Level-Required');
     if (response?.status === 403 && requiredLevel) {

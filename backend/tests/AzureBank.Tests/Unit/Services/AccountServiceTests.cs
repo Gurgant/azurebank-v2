@@ -528,7 +528,7 @@ public class AccountServiceTests : IDisposable
           above the guards, both original rows failed with AuthenticationException).
 
           The third row settles the order BETWEEN the guards — balance before primary — which no
-          running-stack probe has measured: neither 2026-09-06 transcript deletes a funded primary
+          running-stack probe has measured: neither 2026-09-06 run deletes a funded primary
           (the before-run has D1 funded non-primary and D2 empty primary only).
         */
         var userId = Guid.NewGuid();

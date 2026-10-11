@@ -348,7 +348,7 @@ describe('money flows — the behaviour the unification must preserve', () => {
       /*
         Driven with IDEMPOTENCY_KEY_REUSE rather than the motivating case, STEP_UP_REQUIRED,
         because a 403 never reaches this branch in a test: problemBaseQuery recognises step-up from
-        the X-Auth-Level-Required HEADER before any body parsing (decision D2), so it opens the PIN
+        the X-Auth-Level-Required HEADER before any body parsing (ADR-0019 decision 1), so it opens the PIN
         modal instead of setting a banner. Both codes are attempt-scoped and take the identical
         path through goToStep; this one is reachable without standing up the step-up machinery.
 

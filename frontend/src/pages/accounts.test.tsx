@@ -10,8 +10,8 @@ import { AccountsPage } from './AccountsPage';
 
 /**
  * A1/A4 — the first page on REAL data. Pins: FE-side masking (the full number must
- * never reach the DOM), the isPrimary badge, D22 loading/error/empty as first-class
- * states, and the create flow refreshing the list through D7 tag invalidation only.
+ * never reach the DOM), the isPrimary badge, loading/error/empty as first-class
+ * states, and the create flow refreshing the list through tag invalidation only.
  */
 describe('accounts list (A1)', () => {
   it('renders the query data: masked numbers, EUR amounts, one Primary badge', async () => {

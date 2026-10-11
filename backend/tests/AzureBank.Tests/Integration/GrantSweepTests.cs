@@ -24,7 +24,7 @@ using Xunit;
 namespace AzureBank.Tests.Integration;
 
 /// <summary>
-/// ADR-0057 §10 O2h on the EF InMemory database: "a capture sink finds no grant in any log line or
+/// ADR-0057 §10 O2h on the EF InMemory database: "no grant in a log line or
 /// audit row". The same walk on SQL Server, where a renewal in flight can be made as well, is
 /// <see cref="GrantSweepSqlServerTests"/>.
 /// </summary>

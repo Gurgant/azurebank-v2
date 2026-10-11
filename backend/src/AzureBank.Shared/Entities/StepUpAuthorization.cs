@@ -24,7 +24,7 @@ namespace AzureBank.Shared.Entities;
 ///
 /// <para>
 /// Nothing deletes from this table but the Seeder's recycler, which deletes the rows of a demo
-/// copy's users with the copy (ADR-0062). A consumed row is the evidence B3 has to produce, and a
+/// copy's users with the copy (ADR-0062). A consumed row is the evidence ADR-0044 D8 has to produce, and a
 /// mint-then-delete design would need a second write to record what the first one erased — two
 /// writes that can disagree, with the disagreement invisible until someone asks for the evidence.
 /// </para>

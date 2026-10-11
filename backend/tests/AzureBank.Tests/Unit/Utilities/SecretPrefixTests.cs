@@ -12,7 +12,7 @@ namespace AzureBank.Tests.Unit.Utilities;
 /// which proves the sites call it and nothing about what it returns. A review round on 2026-09-15
 /// read the length as sixteen — it is not, <c>Math.Min(Length, …)</c> with <c>Length = 8</c> — but
 /// the only thing that said so was the source, and a guard that names a helper should also hold
-/// the helper. ADR-0017's rule says "the first eight characters"; <see cref="SecretPrefix.Length"/>
+/// the helper. ADR-0017's rule says "first eight characters"; <see cref="SecretPrefix.Length"/>
 /// is that eight, and this is where the two are tied.
 /// </remarks>
 public class SecretPrefixTests

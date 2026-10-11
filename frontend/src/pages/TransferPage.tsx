@@ -460,7 +460,7 @@ export function TransferPage() {
   };
 
   // The schema owns account/tag-format/amount validity; the VERIFIED recipient is the
-  // extra, server-truth gate that Zod cannot own (D6).
+  // extra, server-truth gate that Zod cannot own.
   const canReview = formState.isValid && !!selectedAccount && !!recipient;
   /*
     What "Review Transfer" is still waiting for, while it cannot be pressed: the first of
@@ -908,7 +908,7 @@ export function TransferPage() {
       />
 
       <div className={styles.body}>
-        {/* Loading/error/empty are first-class states (D22) — the convention AccountsPage and
+        {/* Loading/error/empty are first-class states — the convention AccountsPage and
             DashboardPage already follow and both transfer wizards did not. Without this a failed
             accounts load left the page standing with empty pickers and no explanation, so a
             transient network fault silently blocked transfers. */}

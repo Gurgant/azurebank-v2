@@ -6,7 +6,7 @@ namespace AzureBank.Shared.Enums;
 /// Pending → Consumed. There is no Expired member, deliberately: expiry is a comparison against
 /// <see cref="Entities.StepUpAuthorization.ExpiresAt"/>, so it is always true without anyone having
 /// to write it. A third state would need a sweeper to keep it honest, and a status that lags reality
-/// is worse than one derived from a timestamp — this table is also the evidence B3 assembles.
+/// is worse than one derived from a timestamp — this table is also the evidence ADR-0044 D8 assembles.
 ///
 /// Rows are never deleted, except a demo copy's, which leave with the copy (ADR-0062). A consumed
 /// authorisation is the record that a specific amount was approved for a specific payee, which is

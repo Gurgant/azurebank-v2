@@ -6,10 +6,10 @@ import { requestStepUp } from '../features/auth/stepUpController';
 /**
  * The step-up interceptor (ADR-0022, X1/X2). Wraps problemBaseQuery — which has
  * ALREADY normalized a level-2 403 to `STEP_UP_REQUIRED` (reading X-Auth-Level-Required
- * before body parsing, D2) and never auto-retries mutations. On that code we drive one
+ * before body parsing, ADR-0019) and never auto-retries mutations. On that code we drive one
  * shared modal via requestStepUp(); on elevation we replay the request EXACTLY ONCE with
  * the IDENTICAL `args` reference — same body bytes, same Idempotency-Key header — so an
- * idempotent transfer is never double-sent (D21). The happy path is untouched: a non-403
+ * idempotent transfer is never double-sent (ADR-0022 decision 8). The happy path is untouched: a non-403
  * result returns immediately.
  */
 export const baseQueryWithStepUp: BaseQueryFn<

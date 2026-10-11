@@ -638,7 +638,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
         </div>
       )}
 
-      {/* RESULT_UNKNOWN — verify-first (§2.3) */}
+      {/* RESULT_UNKNOWN — verify-first (ADR-0022 decision 4) */}
       {!success && verifyRequired && !wentThrough && (
         <div className={styles.centeredView}>
           <div className={styles.warningIcon}>

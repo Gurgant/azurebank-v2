@@ -58,7 +58,7 @@ describe('contract: authentication', () => {
 
       The body is a BARE shape, not RFC9457 ProblemDetails — `type` carries a code rather than a
       URI. That is exactly why `problemBaseQuery` recognises step-up from the HEADER before any body
-      parsing (decision D2): trusting this body as ProblemDetails would mis-normalise it.
+      parsing (ADR-0019 decision 1): trusting this body as ProblemDetails would mis-normalise it.
     */
     const id = await firstAccountId();
 
@@ -140,7 +140,7 @@ describe('contract: changing a PIN', () => {
       shared fixture: it spends no PIN attempt, where a wrong current PIN would (stepUp's header).
       No password either — on a fixture without a PIN that would be an ENROLMENT, and change it.
 
-      Measured through the real BFF on 2026-09-11, on a fresh user with a PIN (M2):
+      Measured through the real BFF on 2026-09-11, on a fresh user with a PIN:
         {"pin":"246802"} -> 422 {"type":"https://httpstatuses.com/422",
                                  "title":"Unprocessable Entity","status":422,
                                  "detail":"The current PIN is required to change it.",

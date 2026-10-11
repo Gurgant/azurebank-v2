@@ -320,7 +320,7 @@ public static class SecurityEvents
     public const string TransactionNumberCollision = "TransactionNumberCollision";
 
     /*
-      MONEY MOVED, and until now not one of these existed. B2 gave the seventeen security events a
+      MONEY MOVED, and until now not one of these existed. ADR-0044 gave the seventeen security events a
       durable home; every one of them was administrative or authentication. A bank whose audit trail
       records a renamed handle and not a transfer is not audited, so this is the gap B1 closes.
 

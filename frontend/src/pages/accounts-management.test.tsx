@@ -9,9 +9,9 @@ import { enterPin } from '../test/pinFlow';
 import { AccountsPage } from './AccountsPage';
 
 /**
- * PR-7 (A5/A6/A7) — account management from the card menu. Pins: rename through the
+ * Account management from the card menu. Pins: rename through the
  * {Account,id} invalidation, the DoD blanket-'Account' invalidation on set-primary
- * (the badge MOVES and the list re-sorts primary-first), and the D17 rule that 422
+ * (the badge MOVES and the list re-sorts primary-first), and the rule that 422
  * business codes render INLINE in the confirm dialog, which stays open.
  */
 
@@ -121,7 +121,7 @@ describe('delete account (A7)', () => {
     await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
     expect(await screen.findByRole('dialog', { name: 'Delete account?' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
-    // The sixth digit is the submit: mint, then DELETE with the minted id (M5 -> D9).
+    // The sixth digit is the submit: mint, then DELETE with the minted id.
     await enterPin();
 
     await waitFor(() => expect(screen.queryByText('Temp Fund')).not.toBeInTheDocument());
@@ -143,7 +143,7 @@ describe('delete account (A7)', () => {
     await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
     await screen.findByRole('dialog', { name: 'Delete account?' });
     await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
-    // A WRONG pin on purpose, as row M2 was measured (2026-09-06, main 19742ff: 422
+    // A WRONG pin on purpose, as in ADR-0049's Row 2 (2026-09-06, main 19742ff: 422
     // NON_ZERO_BALANCE, PinAccessFailedCount unchanged). With the correct pin the counter reads 0
     // in either order (checkPinInBand resets it on a match); with this one a mock that consulted
     // the PIN first answers 401 INVALID_PIN and the counter reads 1.
@@ -154,7 +154,7 @@ describe('delete account (A7)', () => {
     ).toBeInTheDocument();
     expect(screen.queryByText('Invalid PIN.')).toBeNull();
     expect(screen.getByRole('dialog', { name: 'Delete account?' })).toBeInTheDocument();
-    // M2: the guard answers before the PIN is consulted, so the attempt is not spent.
+    // The guard answers before the PIN is consulted, so the attempt is not spent.
     expect(mockState.pinAttempts).toBe(0);
 
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
@@ -163,7 +163,7 @@ describe('delete account (A7)', () => {
 
   it('the primary account is refused with its own mapped reason', async () => {
     // The REAL rule order checks balance BEFORE primary (AccountService), so only a
-    // ZERO-balance primary reaches the PRIMARY_ACCOUNT_DELETE rule — mirror that (M3).
+    // ZERO-balance primary reaches the PRIMARY_ACCOUNT_DELETE rule — mirror that.
     const primary = mockState.accounts.find((a) => a.isPrimary);
     primary!.balance = 0;
     renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
@@ -173,8 +173,8 @@ describe('delete account (A7)', () => {
     await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
     await screen.findByRole('dialog', { name: 'Delete account?' });
     await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
-    // M3 was measured with the CORRECT pin; the WRONG one here makes the counter assertion able
-    // to fail — it pins the mock's shared guards-before-checkPinInBand order (the order M2
+    // This was measured with the CORRECT pin; the WRONG one here makes the counter assertion able
+    // to fail — it pins the mock's shared guards-before-checkPinInBand order (the order
     // measured on the balance guard), not a measured wrong-pin-on-primary row.
     await enterPin('000000');
 

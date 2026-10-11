@@ -165,7 +165,7 @@ public class AuditOptions
     /// </para>
     /// <para>
     /// FIVE SECONDS, and the number is a floor argument rather than a guess: the lock is held for the
-    /// few statements between the tail read and the commit, which B2 measured at well under a
+    /// few statements between the tail read and the commit, measured at well under a
     /// millisecond per chained insert, so hundreds of concurrent movements drain inside it. It is six
     /// times shorter than the command timeout it replaces on this path, which is the improvement.
     /// Configurable because the test that proves the refusal fires needs a value it can hit quickly.

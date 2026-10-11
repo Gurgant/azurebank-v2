@@ -9,7 +9,7 @@ namespace AzureBank.Tests.Fixtures;
 /// Two uses in <c>RefreshTokenServiceTests</c>, one in each direction. A renewal run on a context
 /// carrying this must still succeed, which is the unit-level proof that renewal writes nothing
 /// (ADR-0057 §4.3): had it tried, it would have thrown. A revoke run on one must answer 503, which
-/// pins ADR-0057 §4.4's "the database failed, so retry".
+/// pins ADR-0057 §4.4's "503 with <c>Retry-After: 5</c> when the database fails".
 /// </para>
 /// <para>
 /// <b>Why a SaveChanges interceptor reaches a revoke at all.</b> The revokes use

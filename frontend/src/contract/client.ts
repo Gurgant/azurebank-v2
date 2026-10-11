@@ -187,7 +187,7 @@ export async function elevate(): Promise<Wire> {
  *
  * Before this helper existed the two cleanups in money.contract.test.ts sent the bare DELETE on
  * both targets, and on the real stack after ADR-0049 that answers 401 AUTHORIZATION_REQUIRED
- * (measured 2026-09-06T10:44Z, D1 in the change's after-transcript; re-measured 2026-09-06T19:16Z
+ * (measured 2026-09-06T10:44Z; re-measured 2026-09-06T19:16Z
  * on main 19742ff) — and because `call` resolves on every status, `.catch` never fired: each run
  * left the probe account listed and appended an AccountDeletionRefused audit row to the seeded
  * database.

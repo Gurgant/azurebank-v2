@@ -39,7 +39,7 @@ export interface RenameAccountDialogProps {
 
 /**
  * A5 — rename an account. Mounted ON open by the page (fresh form state seeded with
- * the current name; unmount clears everything). The list refreshes through the D7
+ * the current name; unmount clears everything). The list refreshes through the
  * {Account,id} invalidation — the row's tag is provided by the list query.
  */
 export function RenameAccountDialog({ account, onClose }: RenameAccountDialogProps) {

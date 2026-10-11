@@ -168,7 +168,7 @@ describe('internal transfer (PR-11b)', () => {
       a second one, sending them to create an account to solve a network problem.
 
       Fixing that gate alone left SILENCE: the shell stood there with empty pickers and no
-      explanation. Both pages now follow the D22 convention AccountsPage already used — surface the
+      explanation. Both pages now follow the convention AccountsPage already used — surface the
       problem and offer a way out of it.
     */
     let calls = 0;

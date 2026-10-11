@@ -18,9 +18,9 @@ namespace AzureBank.AuditVerifier.Commands;
 /// </summary>
 /// <remarks>
 /// <para>
-/// THE PSD2 ART. 72 READ, BY SUBJECT AND BY TIME. ADR-0042 records that a consumed
-/// <c>StepUpAuthorization</c> row is "the evidence B3 assembles", and the retention plan says B3 joins
-/// that row to the audit rows. This is that join, with the one thing a join alone cannot say added
+/// THE PSD2 ART. 72 READ, BY SUBJECT AND BY TIME. ADR-0044 D8 names what it assembles: "its
+/// ledger row, the consumed <c>StepUpAuthorization</c>, its audit rows and the chain verdict".
+/// This is that join, with the one thing a join alone cannot say added
 /// underneath it: whether the audit rows it found are inside a chain that still verifies.
 /// </para>
 /// <para>

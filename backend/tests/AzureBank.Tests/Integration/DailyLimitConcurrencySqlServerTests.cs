@@ -437,7 +437,7 @@ public sealed class DailyLimitConcurrencySqlServerTests : IDisposable
           but the PAYEE's account row: a transfer credits it with an UPDATE guarded by its
           RowVersion, ConcurrencyRetry accepts a conflict on any Account, and the loser re-enters
           the delegate — where the check runs again. Transfers to one payee are serialised by that
-          row whether or not the applock exists. The two-account premise in ADR-0050 ("no shared
+          row whether or not the applock exists. The two-account premise in ADR-0050 D5 ("share no
           row") is therefore true only for transfers to DIFFERENT payees, which is the shape here.
 
           The window is still STRETCHED, with the fixture ADR-0044's contention proof already

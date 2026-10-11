@@ -888,7 +888,7 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
     // NOT a session problem: still authenticated, cache intact, no sessionExpired.
     expect(store.getState().auth.status).toBe('authenticated');
 
-    // Key DROPPED: the corrected PIN changes the body bytes (D4 — re-key on errorCode).
+    // Key DROPPED: the corrected PIN changes the body bytes (ADR-0022 decision 3).
     const second = await act(() => settle(result.current.submit({ accountId: UUID, amount: 10 })));
     expect(second.ok).toBe(true);
     expect(keys[1]).not.toBe(keys[0]);
@@ -929,7 +929,7 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
     expect(unknown.error.errorCode).toBe('IDEMPOTENCY_RESULT_UNKNOWN');
     expect(result.current.verifyRequired).toBe(true);
 
-    // No new key may exist until the flow's explicit action resets the intent (§2.3):
+    // No new key may exist until the flow's explicit action resets the intent (ADR-0022 decision 4):
     const refused = await act(() => settle(result.current.submit(body)));
     expect(refused.ok).toBe(false);
     expect(call).toBe(3); // refused client-side — no HTTP request happened

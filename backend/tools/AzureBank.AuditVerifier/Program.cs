@@ -27,7 +27,7 @@ namespace AzureBank.AuditVerifier;
 // truncation on its own -- see AnchorCommand -- and it is a mode of this tool rather than a scheduled
 // job, because nothing in this deployment runs between sessions. `export` copies the anchor chain to
 // a file. `evidence` assembles, for one transaction, the consumed step-up authorisation and the audit
-// rows that name it, under the chain verdict -- the PSD2 Art. 72 read (B3), and it adds no exit code:
+// rows that name it, under the chain verdict -- the PSD2 Art. 72 read (ADR-0044 D8), and it adds no exit code:
 // the chain's verdict is the verdict, a number the store does not hold is 4. `notify` renders every
 // notice the API has recorded as owed to an account holder (ADR-0045) into one .eml file each, in a
 // directory outside any git repository, and marks the row delivered -- a pickup directory, not a
