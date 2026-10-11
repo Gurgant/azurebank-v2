@@ -10,7 +10,7 @@ public class StepUpAuthorizationConfiguration : IEntityTypeConfiguration<StepUpA
 
         // Every lookup is (Id, UserId): the reference alone must not be enough to spend, or to
         // discover that someone else's authorisation exists. Indexed on UserId because the evidence
-        // pack (B3) reads by subject, and because the consume statement filters on it.
+        // pack (ADR-0044 D8) reads by subject, and because the consume statement filters on it.
         builder.HasIndex(a => a.UserId)
             .HasDatabaseName("IX_StepUpAuthorizations_UserId");
 

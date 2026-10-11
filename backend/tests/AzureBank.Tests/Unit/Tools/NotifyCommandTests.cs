@@ -418,7 +418,7 @@ public class NotifyCommandTests : IDisposable
           limit), the sibling of the re-point above, and dearer: a MAC over the pair alone does not
           close it, because nulling pointer and MAC together is the backlog's shape, so it also
           needs every pre-migration notice bound or the fallback retired. Since ADR-0052 a notice
-          names its row, and a NULL name is read as "written before that migration" -- but nulling
+          names its row, and a NULL name is read as "written before the migration" -- but nulling
           it is one more write to SubscriberNotices, and the run cannot tell the two apart. Either
           way it asks the fallback question, does a row of this KIND exist for this USER, and for a
           kind ADR-0047 made repeatable another change answers yes.

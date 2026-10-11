@@ -386,8 +386,8 @@ export function AccountsPage() {
   const styles = useStyles();
   const navigate = useNavigate();
 
-  // A1 — the first page on REAL data. Loading/error/empty are first-class states
-  // (D22); the list refreshes through D7 tag invalidation, never hand-patching.
+  // A1 — the first page on REAL data. Loading/error/empty are first-class states;
+  // the list refreshes through tag invalidation, never hand-patching.
   const {
     data: accounts = [],
     isLoading,
@@ -522,7 +522,7 @@ export function AccountsPage() {
           </button>
         </div>
 
-        {/* Loading / error are first-class states (D22). The box is the spinner's while the read
+        {/* Loading / error are first-class states. The box is the spinner's while the read
             waits, and no box at all afterwards: the hint stays inside it for its "Loaded.". */}
         <div className={waiting ? styles.stateContainer : styles.afterWait}>
           {waiting && <Spinner size="large" aria-label="Loading accounts" />}
@@ -662,9 +662,9 @@ export function AccountsPage() {
         />
       )}
 
-      {/* A7 / ADR-0049 — mount-on-open like the rename dialog, so the PIN step's state cannot
+      {/* ADR-0049 — mount-on-open like the rename dialog, so the PIN step's state cannot
           outlive an open. The dialog mints and deletes itself and refreshes the list by tag; the
-          422 business rules stay INLINE in it (D17). */}
+          422 business rules stay INLINE in it. */}
       {deleteTarget && (
         <DeleteAccountDialog
           account={{ id: deleteTarget.id, name: deleteTarget.name }}

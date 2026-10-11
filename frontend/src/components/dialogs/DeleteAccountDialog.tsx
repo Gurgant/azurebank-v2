@@ -130,7 +130,7 @@ export function DeleteAccountDialog({ account, onClose }: DeleteAccountDialogPro
   const handleRefusal = (problem: ApiProblem) => {
     const code = problem.errorCode;
     if (code === 'INVALID_PIN') {
-      // Measured M1: 401 INVALID_PIN "Invalid PIN." — clear the boxes, remount (refocus box 1),
+      // Measured: 401 INVALID_PIN "Invalid PIN." — clear the boxes, remount (refocus box 1),
       // red border. Safe: sessionMiddleware exempts the code from the global sign-out.
       setPin('');
       setPinError(true);
@@ -140,10 +140,10 @@ export function DeleteAccountDialog({ account, onClose }: DeleteAccountDialogPro
       /*
         The DELETE refused the authorisation it was handed. Clear the boxes and stay: the next
         completion mints again (the id was a local — nothing to drop). NO setPinError — an expiry
-        is not a wrong PIN, costs no attempt server-side (E2: PinAccessFailedCount 0/0), and a red
+        is not a wrong PIN, costs no attempt server-side (PinAccessFailedCount 0/0), and a red
         border would tell the user the lock is closer when it is not. The detail is rendered
-        verbatim because the measured sentences are already user-facing (E2: "This authorisation
-        has expired. Enter your PIN again to confirm."; D5/D6: "This authorisation cannot be
+        verbatim because the measured sentences are already user-facing ("This authorisation
+        has expired. Enter your PIN again to confirm."; "This authorisation cannot be
         used."); classifyMoneyProblem's sentences say "transfer" and are NOT reused here.
       */
       setPin('');
@@ -156,19 +156,19 @@ export function DeleteAccountDialog({ account, onClose }: DeleteAccountDialogPro
       setPin('');
       setLockDeadline(retryDeadline(problem.retryAfterSeconds ?? DEFAULT_PIN_LOCK_SECONDS));
     } else if (code === 'PIN_REQUIRED') {
-      // Measured M0: 422 PIN_REQUIRED before anything is spent. Nothing here can fix it, so send
+      // Measured: 422 PIN_REQUIRED before anything is spent. Nothing here can fix it, so send
       // them where it can be; the query string carries a PATH, never the PIN.
       navigate('/pin-setup?returnTo=/accounts');
     } else if (code === 'NON_ZERO_BALANCE' || code === 'PRIMARY_ACCOUNT_DELETE') {
-      // D17: the business rules render INLINE and the dialog stays open. The mint refuses these
-      // BEFORE the PIN is consulted (M2/M3: counter unchanged); the DELETE refuses them before the
-      // authorisation is examined (D7/D8, D12: nothing spent). No red — the PIN was not wrong.
+      // The business rules render INLINE and the dialog stays open. The mint refuses these
+      // BEFORE the PIN is consulted (counter unchanged); the DELETE refuses them before the
+      // authorisation is examined (nothing spent). No red — the PIN was not wrong.
       setPin('');
       setPinNonce((n) => n + 1);
       setError(DELETE_RULES[code]);
     } else if (code === 'ACCOUNT_NOT_FOUND') {
       /*
-        Already closed (M4 on the mint; D10/D11 on the DELETE: 404 once the account is gone,
+        Already closed (on the mint, and on the DELETE: 404 once the account is gone,
         spent header or none alike). Treat it as done — but this mutation invalidates NOTHING on
         error (apiSlice.ts), so the list is refreshed by hand, or the card would stay on screen.
       */
@@ -187,13 +187,13 @@ export function DeleteAccountDialog({ account, onClose }: DeleteAccountDialogPro
       setError(SERVICE_UNAVAILABLE);
     } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
       // A transport failure AFTER the mint leaves one Pending row server-side, and the next
-      // completion mints again — harmless: D12/D16 show a Pending row that is never spent, or is
+      // completion mints again — harmless: a Pending row that is never spent, or is
       // spent later, costs nothing.
       setPin('');
       setPinNonce((n) => n + 1);
       setError(CONNECTION_FAILED);
     } else {
-      // Anything else the rail can answer (5xx, 403 ACCESS_DENIED per D14/D15, the BFF limiter's
+      // Anything else the rail can answer (5xx, 403 ACCESS_DENIED, the BFF limiter's
       // 429). AUTHORIZATION_REQUIRED and the model-state 400 are unreachable from here (the dialog
       // always sends the header it just minted) and fall through deliberately. Clear the boxes and
       // remount as every other branch does: a full, enabled PinInput would otherwise re-submit a

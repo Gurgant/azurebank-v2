@@ -149,7 +149,7 @@ describe('step-up interceptor (PR-11)', () => {
     expect(keys[0]).toBe(keys[1]);
 
     /*
-      ADR-0022's Verification §4 claims "step-up replay carries a byte-identical body and the
+      ADR-0022's "Verified by" item 4 claims "Step-up replay carries a byte-identical body and the
       same key". Until this assertion existed, only the KEY half was pinned — and the key alone
       cannot tell "the same request, replayed" from "the same key with an edited body", which is
       the one case the server answers 422 IDEMPOTENCY_KEY_REUSE for. Byte-identity is a

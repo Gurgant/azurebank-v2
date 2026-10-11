@@ -83,7 +83,7 @@ namespace AzureBank.Tests.Integration;
 /// measured 2026-09-11 through the real route under it-IT and de-DE, <c>/openapi/v1.json</c> writes
 /// <c>0.01</c> and parses as JSON, because <c>MapOpenApi</c> builds its own writer with
 /// <see cref="CultureInfo.InvariantCulture"/>. The risk is confined to a writer this test builds, which
-/// is why the test builds it invariant (ADR-0053, the withdrawal note under its Consequences).
+/// is why the test builds it invariant (ADR-0053, Consequences: "has no culture defect").
 /// </para>
 /// </remarks>
 public class CommittedOpenApiDocumentTests : IntegrationTestBase

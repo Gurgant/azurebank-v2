@@ -72,7 +72,7 @@ public sealed class LoginLockoutConcurrencySqlServerTests : IDisposable
                 $"round {round}: a burst of parallel wrong passwords must leave the account LOCKED, never bypassed");
 
             // The atomic WHERE-guard leaves NO residual count on a just-locked account,
-            // so the next window (after expiry) gets a full budget (ADR-0012 F1 fix).
+            // so the next window (after expiry) gets a full budget (ADR-0012).
             (await ReadAccessFailedCountAsync(email)).Should().Be(0,
                 $"round {round}: a late concurrent increment must not survive onto a locked row");
         }

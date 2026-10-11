@@ -483,7 +483,7 @@ public class SecurityEventConstantTests
           log line — a deposit is worth durable evidence and not worth waking anyone, and the money
           paths already carry their own operational log lines. So the two numbers moved
           independently for the first time, and a guard that only counted templates would have let
-          ADR-0044's "Fifteen events write a row today" go stale in silence,
+          ADR-0044's "Fourteen events write a row" go stale in silence,
           exactly as "the six BFF events" did.
         */
         var sources = SourceFiles(RepoBackendRoot()).Select(File.ReadAllText).ToList();

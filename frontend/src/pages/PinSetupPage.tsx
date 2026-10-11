@@ -113,7 +113,7 @@ function safeReturnTo(raw: string | null): string {
 
 /**
  * PR-10 — the dedicated PIN onboarding wizard (enter → confirm → done). A 6-digit PIN is
- * the credential the withdraw flow (D1) verifies in-body, so a PIN-less user is routed
+ * the credential the withdraw flow verifies in-body, so a PIN-less user is routed
  * here (from the withdraw gate, or the post-register handoff) with a `?returnTo=` so they
  * land back where they came from. Setting the PIN invalidates the session tag, so the
  * `hasPin` the withdraw gate reads refreshes on the way back.

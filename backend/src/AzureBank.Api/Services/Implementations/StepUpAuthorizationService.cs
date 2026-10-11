@@ -85,7 +85,7 @@ public class StepUpAuthorizationService : IStepUpAuthorizationService
         // transfer that used to verify in-band.
         //
         // Both outcomes are AUDITED since 2026-09-11, the way WithdrawAsync audits its own: a
-        // guessed PIN is the security signal ADR-0044 kept for "the step-up path", and until then
+        // guessed PIN is the security signal ADR-0044 names "a wrong or locked PIN", and until then
         // it left only a log line here while the same guess on a withdrawal wrote a row. Measured
         // that day: three wrong PINs at the three mints, then three more against the lock, wrote
         // no row at all. RecordRefusalAsync, never Record: every branch here throws, so a row in

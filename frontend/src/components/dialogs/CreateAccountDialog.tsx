@@ -47,7 +47,7 @@ export interface CreateAccountDialogProps {
 /**
  * A4 — the first real CREATE in the app. No idempotency key: account creation is not a
  * monetary operation (the contract keys only deposit/withdraw/transfers). Success closes
- * the dialog; the new account appears through the D7 tag invalidation ({Account,'LIST'}),
+ * the dialog; the new account appears through the tag invalidation ({Account,'LIST'}),
  * never through a hand-patched cache.
  */
 // The server keys validation errors PascalCase (model-state) or camelCase (FluentValidation)

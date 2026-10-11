@@ -82,7 +82,7 @@ import { DepositDialog, WithdrawDialog } from '../components';
  *
  * ## What each source contributed
  *
- *  - **The current dashboard** — its four zones and its D22 state posture (accounts gate the page;
+ *  - **The current dashboard** — its four zones and its state posture (accounts gate the page;
  *    feed and summary fail sectionally). It was right about the skeleton; what was wrong was the
  *    weighting and the density.
  *  - **A** — the chips as breakdown-and-switcher in one, and refusing a second row of cards.
@@ -579,7 +579,7 @@ export function DashboardPage() {
 
   const money = (n: number) => (hidden ? '••••••' : formatCurrency(n));
 
-  // ---- Page-gating states (D22) ----
+  // ---- Page-gating states ----
   // The accounts bar stands in for the whole page. Never "Welcome" while the accounts are on
   // their way, a Retry's wait included.
   const welcome = !accountsProblem && !accountsWaiting && accounts.length === 0;

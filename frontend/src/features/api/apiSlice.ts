@@ -132,7 +132,7 @@ export interface IdempotentArg<TBody> {
 
 /**
  * Money-mutation results carry replay detection read from the `Idempotency-Replayed`
- * response header in the SUCCESS path (D4) — a replayed 2xx means "this intent was
+ * response header in the SUCCESS path (ADR-0009) — a replayed 2xx means "this intent was
  * already processed", surfaced as a polite inline note, never an error.
  */
 export type WithReplay<T> = T & { replayed: boolean };
@@ -152,7 +152,7 @@ export interface TransactionsQuery {
 /** T1 filters — paging belongs to the infinite machinery, never to the caller. */
 export type TransactionHistoryFilters = Omit<TransactionsQuery, 'page' | 'pageSize'>;
 
-/** One page per request; small enough to bound the accepted refetch-all-pages cost (D7). */
+/** One page per request; small enough to bound the accepted refetch-all-pages cost. */
 export const HISTORY_PAGE_SIZE = 20;
 
 /**
@@ -160,7 +160,7 @@ export const HISTORY_PAGE_SIZE = 20;
  * generated schema (types-only, CI drift gate); success envelopes unwrap in
  * `transformResponse`; errors normalize to ApiProblem in problemBaseQuery.
  *
- * Cache tag ledger (D7) — every provides/invalidates below implements it:
+ * Cache tag ledger (CONVENTIONS.md, "Data layer") — every provides/invalidates below implements it:
  *   provides:    accounts list -> [LIST + one per row]; account/balance -> {Account,id}
  *                (balance only for CURRENT balance — historical snapshots are immutable,
  *                tag-less); transactions list -> [{Transaction,LIST}]; detail -> {Transaction,id}
@@ -248,8 +248,8 @@ export const apiSlice = createApi({
           // Spread rather than a `?? undefined` value — see `transfer` below: an explicit
           // `undefined` still serialises as an EMPTY header on some transports, and
           // `[FromHeader] Guid?` binds an empty value to null, so the API would answer 401
-          // AUTHORIZATION_REQUIRED as though nothing had been sent. Measured on THIS endpoint:
-          // rows D2/D3, 2026-09-06T19:16Z on main 19742ff ('' and '   ' -> 401).
+          // AUTHORIZATION_REQUIRED as though nothing had been sent. Measured on THIS endpoint,
+          // 2026-09-06T19:16Z on main 19742ff ('' and '   ' -> 401).
           ...(stepUpAuthorizationId ? { 'Step-Up-Authorization': stepUpAuthorizationId } : {}),
         },
       }),
@@ -323,7 +323,7 @@ export const apiSlice = createApi({
     /**
      * T1 — the history feed. An INFINITE query: pages accumulate client-side and the
      * whole family carries {Transaction,'LIST'}, so any money mutation refetches every
-     * loaded page (the accepted D7 cost — HISTORY_PAGE_SIZE bounds it) rather than
+     * loaded page (the accepted cost — HISTORY_PAGE_SIZE bounds it) rather than
      * hand-patching the cache.
      */
     getTransactionHistory: builder.infiniteQuery<
@@ -488,7 +488,7 @@ export const apiSlice = createApi({
     /*
       The closure's mint (ADR-0049 D4): operation in the path segment, the PIN in the JSON body and
       nowhere else — never a query string, never a header. The API runs ownership -> the two 422
-      guards -> the PIN, so a wrong PIN on a funded or primary account costs no attempt (row M2,
+      guards -> the PIN, so a wrong PIN on a funded or primary account costs no attempt (ADR-0049 Row 2,
       measured 2026-09-06 on main 19742ff). Same StepUpAuthorizationResponse as the transfer
       mints, so the STRICT unwrap is one schema.
     */

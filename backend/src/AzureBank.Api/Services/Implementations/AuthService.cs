@@ -809,8 +809,8 @@ public class AuthService : IAuthService
               A failed UpdateAsync now discards this row together with the PIN change, which is
               exactly D1: no enrolment, and no evidence claiming one.
 
-              Detail records that the password was proved, because that is the fact B3's evidence
-              pack needs and the fact the log line will not outlive. Nothing about the PIN itself is
+              Detail records that the password was proved, because that is the fact the evidence
+              pack (ADR-0044 D8) needs and the fact the log line will not outlive. Nothing about the PIN itself is
               recorded — not its hash, not its length.
             */
             var enrolmentEvidence = _audit.Record(

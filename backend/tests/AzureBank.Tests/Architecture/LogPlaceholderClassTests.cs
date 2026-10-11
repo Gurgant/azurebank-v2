@@ -23,7 +23,7 @@ namespace AzureBank.Tests.Architecture;
 /// <para>
 /// MEASURED BEFORE IT WAS WRITTEN, not assumed. The first run of this scan over the four projects
 /// found amounts and balances on the deposit and withdrawal lines (ADR-0017 D5 had banned them from
-/// the start, and its Consequences said "no amounts"), handles on three lines, and an account's
+/// the start, and its Consequences say no template carries "an amount"), handles on three lines, and an account's
 /// chosen name on another. All six were fixed in the same change.
 /// </para>
 /// <para>

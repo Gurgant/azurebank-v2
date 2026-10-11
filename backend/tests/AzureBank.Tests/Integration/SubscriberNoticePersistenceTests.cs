@@ -81,7 +81,7 @@ public class SubscriberNoticePersistenceTests : IntegrationTestBase
 
           A change costs the CURRENT PIN and never the password (ADR-0040), which is why it is a
           different event with different words: it is what an attacker who watched a PIN entered —
-          and never learned the password — leaves behind. ADR-0047 reverses D8; ASVS 4.0.3 2.5.5
+          and never learned the password — leaves behind. ADR-0047 reverses ADR-0045 D8; ASVS 4.0.3 2.5.5
           ("changed or replaced") is the clause it answers where the enrolment answers NIST
           SP 800-63B-4 §4.1.2.1 ("added").
         */

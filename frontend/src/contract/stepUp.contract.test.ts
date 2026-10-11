@@ -104,7 +104,7 @@ describe('contract: step-up authorisations', () => {
       moment an assertion goes configuration-agnostic to survive both targets it has branched on the
       target in disguise, which is the one thing this directory exists to prevent.
 
-      WHAT THIS ROW CANNOT SHOW, in the M4 idiom: the ORDER — a mint has no balance rung at all
+      WHAT THIS ROW CANNOT SHOW: the ORDER — a mint has no balance rung at all
       (D4 item 1) — and the transfer-side rung, because being refused at the transfer needs
       used + requested > 5,000 with `requested` bounded by the authorisation the mint already vetted,
       so the cheapest transfer-path refusal costs just under 5,000 EUR of completed external
@@ -528,9 +528,9 @@ describe('contract: step-up authorisations', () => {
  * rules: a correct-PIN mint and the closure of a spare the test creates itself move no money and
  * spend no attempt. Every probe here creates its own non-primary, zero-balance account — the
  * seeded admin's first account is the primary, and a headerless DELETE on it answers 422
- * PRIMARY_ACCOUNT_DELETE (D8), not the 401 the presence pin wants — and closes it in `finally`.
+ * PRIMARY_ACCOUNT_DELETE, not the 401 the presence pin wants — and closes it in `finally`.
  *
- * Every expected value is quoted from one transcript,
+ * Every expected value is quoted from one run,
  * measured 2026-09-06T19:16Z on main 19742ff through
  * the BFF (:5000 -> :7215, AzureBankDev).
  *
@@ -548,11 +548,11 @@ describe('contract: deletion authorisations', () => {
   }
 
   it('answers 404 ACCOUNT_NOT_FOUND on a deletion mint for an unknown id — M4', async () => {
-    // Measured M4 (correct pin 123456, 2026-09-06T19:16Z, main 19742ff) on an unknown id:
+    // Measured (correct pin 123456, 2026-09-06T19:16Z, main 19742ff) on an unknown id:
     //   404 ACCOUNT_NOT_FOUND "Account with identifier '<id>' was not found."
     // Sent with a CORRECT pin so it spends nothing on either target. Whether the lookup precedes
     // the PIN check is NOT observable here (a wrong PIN is off-limits on the real target, see the
-    // file header) and was not measured for M4 — only M2 measured a guard ahead of the PIN.
+    // file header) and was not measured here — ADR-0049's Row 2 measured a guard ahead of the PIN.
     const { status, body } = await call(
       `/api/accounts/${UNKNOWN_AUTHORIZATION}/deletion-authorizations`,
       { method: 'POST', body: JSON.stringify({ pin: FIXTURES.pin }) },
@@ -564,7 +564,7 @@ describe('contract: deletion authorisations', () => {
 
   it('refuses a deletion that presents no authorisation, and names why', async () => {
     /*
-      The row the closure's second factor exists for. Measured D1 on a fresh empty spare:
+      The row the closure's second factor exists for. Measured on a fresh empty spare:
         401 AUTHORIZATION_REQUIRED "This account closure has not been authorised."
       and GET /bff/auth/me straight after -> 200, authLevel 1 — the errorCode survives the BFF,
       which is what lets sessionMiddleware keep the session. On the real target this appends one
@@ -587,8 +587,8 @@ describe('contract: deletion authorisations', () => {
 
   it('a minted deletion authorisation closes the account once', async () => {
     /*
-      Measured M5 (201 "Account closure authorised", expiresAt = mint + 2m), D9 (200 "Account
-      deleted successfully"), then D10 (the same header again -> 404 ACCOUNT_NOT_FOUND: the account
+      Measured: mint (201 "Account closure authorised", expiresAt = mint + 2m), DELETE (200 "Account
+      deleted successfully"), then a repeat (the same header -> 404 ACCOUNT_NOT_FOUND: the account
       is gone first, so a spent header is 404, not AUTHORIZATION_INVALID). The TTL is asserted as
       a RANGE for the same reason the transfer mint's is: expiresAt is the server's clock.
     */

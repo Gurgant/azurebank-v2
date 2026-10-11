@@ -386,8 +386,8 @@ public class AccountService : IAccountService
           An EMPTY Step-Up-Authorization header binds to null exactly like an absent one, so both
           land here; a header that is present but not a UUID never reaches this method — MVC model
           binding refuses it upstream with a 400 keyed on the header name (measured on the transfer
-          endpoints, ADR-0042, and on this one 2026-09-06T10:44Z — row D4 of the run ADR-0049
-          quotes under "After": 400 model-state keyed "Step-Up-Authorization").
+          endpoints, ADR-0042, and on this one 2026-09-06T10:44Z — the last row of ADR-0049's
+          error-code table: "header present but not a UUID, keyed `Step-Up-Authorization`").
         */
         if (stepUpAuthorizationId is not { } authorizationId)
         {
@@ -632,7 +632,7 @@ public class AccountService : IAccountService
           audit record to identify the objects associated with the event, PCI DSS v4 10.2.2 the
           identity of the affected resource, and OWASP's Logging Cheat Sheet gives "user database
           table primary key-value" as its first example of a correct identity field. Masking is
-          scoped to secrets, PAN and descriptive PII. See ADR-0017 ("log the opaque id, not PII");
+          scoped to secrets, PAN and descriptive PII. ADR-0017: "the opaque id is the correlation key";
           pseudonymising one site while the others log ids in clear was an open question until
           2026-09-11, when ADR-0017's log-identifier rule closed it: surrogate keys in clear,
           everywhere, for the reason above — there is no trust boundary to buy anything with.

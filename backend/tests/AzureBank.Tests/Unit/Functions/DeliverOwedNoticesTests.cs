@@ -30,7 +30,7 @@ namespace AzureBank.Tests.Unit.Functions;
 /// <see cref="DeliverOwedNotices.RunAsync"/> exercises exactly the code a tick exercises. What this
 /// CANNOT prove is the wiring — that the trigger binds, that <c>%Notices:Schedule%</c> resolves,
 /// that the host starts at all — and nothing here pretends otherwise: that is what
-/// <c>func start</c> against Azurite showed, and the ADR carries the transcript.
+/// <c>func start</c> against Azurite showed (ADR-0051, Consequences: it "rehearses the shape").
 /// </para>
 /// <para>
 /// The InMemory context is <c>NoticeRelayServiceTests</c>' idiom, and inherits its limit: the claim
@@ -325,10 +325,10 @@ public sealed class DeliverOwedNoticesTests : IDisposable
         /*
           `(int)gap.TotalSeconds` truncates toward zero, so a real gap of 19.6 s prints as 19. The
           COMPARISON uses the exact TimeSpan and is unaffected — only the number the operator reads
-          is wrong, and that number is the entire point of the warning. It also mattered to the
-          record: ADR-0051 D5 quoted "19s then 20s" from a 20-second schedule as evidence that the
-          host's real cadence differs from its configured one, when part of that gap was the
-          truncation.
+          is wrong, and that number is the entire point of the warning. It also misleads:
+          "19s then 20s" from a 20-second schedule reads as evidence that the
+          host's real cadence differs from its configured one, when part of that gap is the
+          truncation. ADR-0051 D5: "rounded, not truncated".
         */
         var owner = await OwnerAsync();
         await OwedAsync(owner);

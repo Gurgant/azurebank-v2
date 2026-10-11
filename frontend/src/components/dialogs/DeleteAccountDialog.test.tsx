@@ -35,11 +35,11 @@ afterEach(() => {
 
 /**
  * ADR-0049 from the client's side: the sixth digit mints a deletion authorisation and the DELETE
- * presents it in the header. Where a case pins the MOCK (the guards, M0, the happy path) the real
+ * presents it in the header. Where a case pins the MOCK (the guards, no PIN, the happy path) the real
  * handlers answer; where it pins the DIALOG's own branch (INVALID_PIN, PIN_LOCKED, EXPIRED,
  * NETWORK, ACCOUNT_NOT_FOUND) a `server.use` override does, and the test's comment quotes the
- * measured row the branch exists for, where there is one: M1 and D10/D11 from the re-measurement on
- * main (2026-09-06T19:16Z, main 19742ff), E2 from the first "after" run that day.
+ * measured row the branch exists for, where there is one: those of the re-measurement on
+ * main (2026-09-06T19:16Z, main 19742ff), and the expiry from the earlier run that day.
  */
 
 const TEMP_FUND = { id: '019f7b3f-0000-7000-8000-0000000000a3', name: 'Temp Fund' };
@@ -185,11 +185,11 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
 
   it('closes the account against the real mock: one authorisation, spent once, list tag invalidated', async () => {
     /*
-      M5 -> D9 on the real handlers: 201 then 200 "Account deleted successfully", authorisation
+      On the real handlers: 201 then 200 "Account deleted successfully", authorisation
       Consumed. "List tag invalidated" is OBSERVED, not assumed: an accounts query is subscribed
       before the flow and a second GET /api/accounts must follow the 200 — remove the mutation's
       invalidatesTags and `lists` stays 0. (`mockState.accounts` no longer holding the row is the
-      mock modelling the API's soft-delete filter — D9 records the 200, the IsDeleted flag and the
+      mock modelling the API's soft-delete filter — measured: the 200, the IsDeleted flag and the
       Consumed row, not a GET of the listing.)
     */
     seedTempFund();
@@ -228,7 +228,7 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
 
   it('wrong PIN reddens and clears the boxes, and keeps the session', async () => {
     /*
-      Measured M1: 401 INVALID_PIN "Invalid PIN." on the mint — the mint's ONLY 401. Reading the
+      Measured: 401 INVALID_PIN "Invalid PIN." on the mint — the mint's ONLY 401. Reading the
       boxes rather than a banner is deliberate: emptying them is something ONLY the INVALID_PIN
       branch does. The store is BOOTED to 'authenticated' first, or the session half cannot fail:
       sessionMiddleware only reacts at that status, and this is the assertion that turns red when
@@ -257,7 +257,7 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
 
   it('PIN_LOCKED disables the boxes and shows the server horizon', async () => {
     // 429 with retryAfterSeconds 120 — NOT provoked on the deletion mint in the after-run (one
-    // wrong PIN, M1, counter back to 0); the shape is checkPinInBand's, measured on the transfer
+    // wrong PIN, counter back to 0); the shape is checkPinInBand's, measured on the transfer
     // mints 2026-08-16. 120 s from the server, not the 15-minute client default.
     seedTempFund();
     server.use(
@@ -312,7 +312,7 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
 
   it('AUTHORIZATION_EXPIRED on the DELETE re-prompts without red and keeps the session, and the next completion mints again', async () => {
     /*
-      Measured E2: 401 AUTHORIZATION_EXPIRED "This authorisation has expired. Enter your PIN again
+      Measured: 401 AUTHORIZATION_EXPIRED "This authorisation has expired. Enter your PIN again
       to confirm.", PinAccessFailedCount 0/0, /bff/auth/me 200 after. The detail is rendered
       verbatim (no transfer-worded sentence), the boxes are cleared WITHOUT aria-invalid, and —
       because the minted id was a local — the next six digits go down the mint branch again: two
@@ -320,7 +320,7 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
       the second DELETE reaches the real handler and actually closes the account. The store is
       booted to 'authenticated' so the session assertion can fail: this is the shape that pins
       AUTHORIZATION_EXPIRED's place in IN_FLOW_401_CODES from this surface (it is the DELETE's
-      code — the mint never emits it, M1 is the mint's only 401).
+      code — the mint never emits it, INVALID_PIN is the mint's only 401).
     */
     seedTempFund();
     const store = makeTestStore();
@@ -369,7 +369,7 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
 
   it('PIN_REQUIRED navigates to /pin-setup?returnTo=/accounts', async () => {
     /*
-      Measured M0: 422 PIN_REQUIRED before anything is spent. The returnTo carries a PATH and the
+      Measured: 422 PIN_REQUIRED before anything is spent. The returnTo carries a PATH and the
       query string carries NOTHING else — asserted on the router's location and on the probe's raw
       `search` with an exact match (`toBe`, not jest-dom's substring `toHaveTextContent`), so a
       dropped returnTo, a wrong one, or PIN digits riding along all fail.
@@ -398,7 +398,7 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
 
   it('PIN_REQUIRED from the real mock (no PIN enrolled) navigates the same way — M0', async () => {
     // The mock's checkPinInBand reads mockState.session.hasPin (seeded true by test/setup.ts);
-    // flipping it is what the real M0 row looks like from here.
+    // flipping it is what a user with no PIN looks like from here.
     seedTempFund();
     mockState.session!.hasPin = false;
     const { router } = renderDialog();
@@ -415,7 +415,7 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
 
   it('NON_ZERO_BALANCE from the mint keeps the dialog open with the mapped sentence and spends no attempt', async () => {
     /*
-      Measured M2, sent with a WRONG pin on purpose: 422 NON_ZERO_BALANCE, PinAccessFailedCount
+      Measured, sent with a WRONG pin on purpose: 422 NON_ZERO_BALANCE, PinAccessFailedCount
       unchanged — the guard answers before the PIN is consulted. The PIN here is deliberately
       WRONG for the same reason: with the correct one, checkPinInBand resets the counter to 0 on
       a match and `pinAttempts === 0` holds in EITHER order. With '000000' a mock that consulted
@@ -441,9 +441,9 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
 
   it('PRIMARY_ACCOUNT_DELETE from the mint keeps the dialog open with its own sentence — M3', async () => {
     /*
-      Measured M3 with the CORRECT pin: 422 PRIMARY_ACCOUNT_DELETE. The pin sent here is WRONG so
+      Measured with the CORRECT pin: 422 PRIMARY_ACCOUNT_DELETE. The pin sent here is WRONG so
       the `pinAttempts === 0` line can fail: it pins the mock's shared refuseIfNotClosable-before-
-      checkPinInBand order (handlers.ts authoriseAccountDeletion, the order M2 measured on the
+      checkPinInBand order (handlers.ts authoriseAccountDeletion, the order measured on the
       balance guard) — a mock that consulted the PIN first would answer 401 INVALID_PIN and the
       counter would read 1. The wrong-pin-on-primary combination itself is NOT a measured row.
     */
@@ -468,7 +468,7 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
 
   it('ACCOUNT_NOT_FOUND on the DELETE closes and refetches the list', async () => {
     /*
-      Measured D10/D11: 404 ACCOUNT_NOT_FOUND once the account is gone. The dialog treats it as
+      Measured: 404 ACCOUNT_NOT_FOUND once the account is gone. The dialog treats it as
       already closed — and because the mutation invalidates nothing on error, it invalidates the
       LIST tag by hand. Observed through a subscribed accounts query: a second GET goes out.
     */
@@ -548,7 +548,7 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
       at 'unknown' (transfer-step-up.test.tsx records the version of this test that pinned
       nothing). Falsified by adding 'HTTP_401' to IN_FLOW_401_CODES or by the fallback swallowing
       the rejection. The in-flow codes the rail does emit are pinned above, on the rows they
-      belong to: INVALID_PIN on the mint (M1), AUTHORIZATION_EXPIRED on the DELETE (E2).
+      belong to: INVALID_PIN on the mint, AUTHORIZATION_EXPIRED on the DELETE.
     */
     seedTempFund();
     const store = makeTestStore();
@@ -568,7 +568,7 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
 
   it('a refusal the ladder has no branch for clears the boxes, so the next keystroke is not a submit', async () => {
     /*
-      The fallback branch (5xx, 403 ACCESS_DENIED per D14/D15, the BFF limiter's 429). Canned
+      The fallback branch (5xx, 403 ACCESS_DENIED, the BFF limiter's 429). Canned
       500 'boom': after the banner every box must be EMPTY and ENABLED, and a change on box 1 must
       be an append into an empty PinInput — NOT a second mint. Before the fix the six boxes kept
       the PIN with the dialog idle, and PinInput.handleChange's overwrite path (index <

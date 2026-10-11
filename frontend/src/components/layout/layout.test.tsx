@@ -28,7 +28,7 @@ async function bootAuthenticated(): Promise<TestStore> {
 function Harness() {
   return (
     <>
-      {/* The toast outlet — logout failures surface here (D22 pipeline). */}
+      {/* The toast outlet — logout failures surface here (the useProblemToast pipeline). */}
       <AppToaster />
       <Routes>
         <Route path="/login" element={<div>LOGIN_PAGE</div>} />

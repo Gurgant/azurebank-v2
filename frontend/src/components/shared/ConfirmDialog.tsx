@@ -27,7 +27,7 @@ export interface ConfirmDialogProps {
   /** Loading state for confirm button */
   isLoading?: boolean;
   /**
-   * Inline error shown under the message (D17: business-rule failures render at the
+   * Inline error shown under the message (business-rule failures render at the
    * owning surface — the dialog stays open so the user reads WHY it was refused).
    */
   errorText?: string | null;

@@ -22,7 +22,7 @@ using Xunit.Abstractions;
 namespace AzureBank.Tests.Integration;
 
 /// <summary>
-/// Regression proof for the EF transient-retry defect on transfers (R2):
+/// Regression proof for the EF transient-retry defect on transfers:
 /// with EnableRetryOnFailure active (production wiring), a transient fault
 /// inside <c>strategy.ExecuteAsync</c> re-runs the transfer delegate against
 /// the SAME DbContext. Before the fix, the leftover Added transactions +

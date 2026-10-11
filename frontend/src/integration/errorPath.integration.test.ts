@@ -33,7 +33,7 @@ const problem = (error: unknown) => error as ApiProblem;
 describe('integration: problemBaseQuery normalises real backend errors', () => {
   it('synthesises VALIDATION_ERROR for a 400 that carries an errors dict', async () => {
     /*
-      The API sends a 400 with `errors` and NO `errorCode` member; D5 synthesises one so consumers
+      The API sends a 400 with `errors` and NO `errorCode` member; one is synthesised so consumers
       always have something to branch on. Inverted date pair — the drift PR #64 found, where the
       mock answered 422 and the real API answers 400. Measured:
 

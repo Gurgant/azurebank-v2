@@ -177,7 +177,7 @@ interface MockState {
   sessionCreatedAt: number;
   sessionLastActivity: number;
   /**
-   * The session user's PIN — the value withdraw (PIN-in-body, D1) verifies against. Set-pin
+   * The session user's PIN — the value withdraw (PIN-in-body) verifies against. Set-pin
    * overwrites it and flips session.hasPin; it defaults to MOCK_PIN so the seeded MOCK_USER
    * (hasPin:true) can withdraw with '123456'.
    */
@@ -215,7 +215,7 @@ interface MockState {
   /** ISO instant the PIN lock lifts, or null. A withdraw while locked is a 429 PIN_LOCKED. */
   pinLockedUntil: string | null;
   /**
-   * The ceiling on the day's completed outgoing EXTERNAL transfers (ADR-0050 D1).
+   * The ceiling on the day's completed outgoing EXTERNAL transfers (ADR-0050 D6).
    *
    * A field rather than a module const, the exact shape `sessionInactivityWindowMs` has, and for the
    * same reason: it is the mock's `SetDailyLimit(500)`. A tripwire lowers the ceiling instead of
@@ -490,9 +490,9 @@ export const MOCK_INACTIVITY_WINDOW_MS = 15 * 60_000;
 export const MOCK_ABSOLUTE_WINDOW_MS = 60 * 60_000;
 
 /**
- * The shipped `DailyLimit:Amount` default (ADR-0050 D1).
+ * The shipped `DailyLimit:Amount` default (ADR-0050 D6).
  *
- * MEASURED `"limit": 5000` on EVERY A-row of the transcript — 2026-09-07T14:17:53Z (and the
+ * MEASURED `"limit": 5000` in the rows of ADR-0050's "After" table — 2026-09-07T14:17:53Z (and the
  * 14:46:26Z A4 re-run), PR #156's working tree on 3c30122, merged as fda7ff7, BFF :5000 -> API
  * :7215, AzureBankDev, DailyLimit:Amount default. `backend/src/AzureBank.Api/appsettings.json:52`
  * also says 5000, but that is a document and the house rule takes the measurement.

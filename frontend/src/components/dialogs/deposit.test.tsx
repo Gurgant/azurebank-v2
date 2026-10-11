@@ -12,9 +12,9 @@ import { DepositDialog } from './DepositDialog';
 
 /**
  * T3 (PR-9) — the first production idempotent mutation. Pins the useIdempotentMutation
- * contract end-to-end: replay note (D4), KEEP-on-IN_FLIGHT with the SAME key on retry,
+ * contract end-to-end: replay note, KEEP-on-IN_FLIGHT with the SAME key on retry,
  * verify-first on a body edit while a key is held, RESULT_UNKNOWN verify-first flow, and the
- * generic (never-raw) message for a client-protocol KEY_REUSE bug (§2.3 / D17).
+ * generic (never-raw) message for a client-protocol KEY_REUSE bug (ADR-0022).
  */
 
 const MAIN = mockState.accounts[0]; // seed: id a1, balance 1250.5

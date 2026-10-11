@@ -20,8 +20,8 @@ namespace AzureBank.Bff.Tests;
 /// only the cache was wrong.
 /// </para>
 /// <para>
-/// That is why the mitigation ADR-0015 recorded — "the frontend should re-fetch /me after a rename"
-/// — could not work, and why <c>apiSlice.ts</c> claiming the refetch "picks up the new tag (same
+/// That is why a re-fetch of <c>/bff/auth/me</c> "could not correct it" (ADR-0015, Consequences),
+/// and why <c>apiSlice.ts</c> claiming the refetch "picks up the new tag (same
 /// pattern as setPin)" was false: set-pin is BFF-owned and writes the cache back, the proxied rename
 /// ran no BFF code at all.
 /// </para>

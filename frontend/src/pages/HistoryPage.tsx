@@ -140,7 +140,7 @@ const useStyles = makeStyles({
     color: colors.neutral[500],
   },
 
-  // ========== STATES (D22) ==========
+  // ========== STATES ==========
   // A column, so that a slow load's words sit under the spinner rather than beside it.
   stateContainer: {
     flex: 1,
@@ -246,7 +246,7 @@ export function HistoryPage() {
   const [activeFilter, setActiveFilter] = useState<FilterType>('all');
 
   // T1 — the infinite feed. Pages accumulate; every money mutation invalidates
-  // {Transaction,'LIST'} and refetches all loaded pages (accepted D7 cost).
+  // {Transaction,'LIST'} and refetches all loaded pages (accepted cost).
   const {
     data,
     isLoading,

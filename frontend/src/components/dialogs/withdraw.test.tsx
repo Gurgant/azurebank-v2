@@ -27,7 +27,7 @@ afterEach(() => {
 });
 
 /**
- * PR-10 — withdraw is the deposit protocol PLUS the PIN-in-body gate (D1). Pins: the two-step
+ * PR-10 — withdraw is the deposit protocol PLUS the PIN-in-body gate. Pins: the two-step
  * amount→PIN flow, a wrong PIN (401 INVALID_PIN) staying IN the dialog (never a logout), the
  * PIN_LOCKED countdown, the hasPin gate routing to /pin-setup, the mid-flight dismiss guard,
  * plus the shared idempotency seams (IN_FLIGHT keeps the key, a PIN edit rotates it,

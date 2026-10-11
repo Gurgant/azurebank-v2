@@ -12,7 +12,7 @@ import { HistoryPage } from './HistoryPage';
 /**
  * T1 — the infinite history feed. Pins: the signed-mock trap is dead (amounts are
  * UNSIGNED, direction comes from the TYPE), summary math excludes Failed/Reversed,
- * pages accumulate through Load more, and D22 states are first-class.
+ * pages accumulate through Load more, and loading/error/empty states are first-class.
  */
 describe('history feed (T1)', () => {
   it('renders rows with type-driven signs, counterparties, and status text', async () => {
@@ -144,7 +144,7 @@ describe('history feed (T1)', () => {
   it('a FAILED Load more leaves no "Show less" that hides nothing', async () => {
     // `fetchNextPage` resolves whether or not the request succeeded — RTK Query reports failure in
     // the result rather than throwing — so incrementing the cap unconditionally put the view state
-    // ahead of the pages that actually loaded. The failure itself replaces the feed with the D22
+    // ahead of the pages that actually loaded. The failure itself replaces the feed with the
     // error state, so nothing looks wrong until Retry recovers: then one page is on screen and
     // "Show less" is offered anyway, pointing at a page that was never fetched.
     renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });

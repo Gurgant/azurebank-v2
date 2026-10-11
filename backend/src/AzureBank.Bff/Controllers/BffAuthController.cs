@@ -867,8 +867,8 @@ public class BffAuthController : ControllerBase
     /// of the session, because it serves <c>session.UserInfo</c> verbatim.
     /// </para>
     /// <para>
-    /// That also defeated the mitigation ADR-0015 recorded — "the frontend should re-fetch /me after
-    /// a rename" — since the re-fetch returns the same cached value. The fix has to be server-side.
+    /// That also defeated a re-fetch of <c>/bff/auth/me</c> after a rename (ADR-0015, Consequences: it
+    /// "could not correct it"), since the re-fetch returns the same cached value. The fix has to be server-side.
     /// </para>
     /// <para>
     /// Shaped exactly like <c>set-pin</c> above, which solved the identical problem for the other

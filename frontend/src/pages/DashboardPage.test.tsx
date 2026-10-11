@@ -246,7 +246,7 @@ describe('a partial failure', () => {
     );
     renderDashboard();
 
-    // D22: accounts gate the page, everything else fails alone.
+    // Accounts gate the page, everything else fails alone.
     expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent('€2,080.50');
     expect(await screen.findByText(/Could not load this month/)).toBeInTheDocument();
     expect(screen.getByText('Salary')).toBeInTheDocument();

@@ -146,7 +146,7 @@ public sealed class TransactionNumberCollisionRecoverySqlServerTests : IDisposab
     public async Task ADepositThatRetries_WritesExactlyOneAuditRow()
     {
         /*
-          THE ONE PROPERTY B1 CANNOT GET FOR FREE FROM B2's MACHINERY.
+          THE ONE PROPERTY B1 CANNOT GET FOR FREE FROM THE CHAIN'S MACHINERY.
 
           A money audit row has to be written INSIDE the retry loop, because the transaction Id it
           takes as its subject is minted inside that loop. So a failed attempt leaves an AuditEvent

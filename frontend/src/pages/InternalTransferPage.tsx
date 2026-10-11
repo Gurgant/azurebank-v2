@@ -596,7 +596,7 @@ export function InternalTransferPage() {
       />
 
       <div className={styles.body}>
-        {/* Loading/error/empty are first-class states (D22) — the convention AccountsPage and
+        {/* Loading/error/empty are first-class states — the convention AccountsPage and
             DashboardPage already follow and both transfer wizards did not. Without this a failed
             accounts load left the page standing with empty pickers and no explanation, so a
             transient network fault silently blocked transfers. */}

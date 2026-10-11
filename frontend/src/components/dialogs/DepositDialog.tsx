@@ -80,7 +80,7 @@ const QUICK_AMOUNTS = [50, 100, 200, 500];
  * (IN_FLIGHT / network / 5xx) so Retry re-sends the SAME key + body, and a body edit rotates it
  * while NO key is held (an edited body with the old key is a 422 KEY_REUSE); with one RETAINED,
  * the edit latches verify-first instead, as WithdrawDialog's does. A replayed 2xx surfaces
- * a polite note (D4); RESULT_UNKNOWN latches a verify-first flow (§2.3), or, when the answer
+ * a polite note; RESULT_UNKNOWN latches a verify-first flow, or, when the answer
  * says `applied: true`, the went-through view, which offers the history and nothing that sends
  * (ADR-0009). No step-up —
  * deposit is auth level 1. The shell is a Fluent Dialog now: focus trap, Escape and
@@ -211,7 +211,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
       onSuccess?.();
     } catch (caught) {
       const problem = caught as ApiProblem;
-      // D17 / §2.3: route on errorCode, never a blanket toast. RESULT_UNKNOWN is
+      // ADR-0022 decision 5: route on errorCode, never a blanket toast. RESULT_UNKNOWN is
       // handled by the hook (latches verifyRequired) — we just render that view. So are a
       // rejection with no HTTP status (an answer whose body failed its schema) and a 409 that
       // named no code: the deposit may have landed, and "Deposit failed" under the verify view
@@ -230,7 +230,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
         problem.errorCode === 'IDEMPOTENCY_KEY_MISSING' ||
         problem.errorCode === 'IDEMPOTENCY_KEY_INVALID'
       ) {
-        // Client protocol bug — never surface the raw code (D17).
+        // Client protocol bug — never surface the raw code.
         setError('Something went wrong. Please try again.');
       } else if (isServiceOutage(problem)) {
         // A 503 or no answer in 65 s — before the NETWORK branch, which the abort would otherwise
@@ -241,7 +241,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
           problem.applied === false ? SERVICE_UNAVAILABLE_NOTHING_CHANGED : DEPOSIT_OUTCOME_UNKNOWN,
         );
       } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
-        // Transport failure — a raw "TypeError: Failed to fetch" would leak (D17). The
+        // Transport failure — a raw "TypeError: Failed to fetch" would leak. The
         // key is KEPT (shouldKeepKey) so tapping Deposit again is a safe same-key retry.
         setError(CONNECTION_FAILED);
       } else {
@@ -335,7 +335,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
         </div>
       )}
 
-      {/* RESULT_UNKNOWN — verify-first (§2.3) */}
+      {/* RESULT_UNKNOWN — verify-first (ADR-0022 decision 4) */}
       {!success && verifyRequired && !wentThrough && (
         <div className={styles.centeredView}>
           <div className={styles.warningIcon}>

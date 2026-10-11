@@ -25,12 +25,12 @@ namespace AzureBank.Tests.Integration;
 /// Every case goes straight to the API through <c>CustomWebApplicationFactory</c>, which runs
 /// <c>Program.cs</c> verbatim — so model binding, the exception handler and the validators are the
 /// real ones. Status and error codes below are quoted beside the assertion with their provenance,
-/// and only what one of the two filed transcripts shows is called measured: the closure guards,
+/// and only what one of the two runs on the stack shows is called measured: the closure guards,
 /// the ownership refusals and the success message were MEASURED on the running stack on 2026-09-06
-/// at 09:24Z (main d93ba10, before this change — the "before" transcript, rows D1-D10/R1);
+/// at 09:24Z (main d93ba10, before this change);
 /// what the change introduces was MEASURED on the same stack at 10:44Z on this working tree
-/// (the "after" transcript, rows M0-M5, D1-D16, E1-E2) and cites its row. Anything neither
-/// transcript contains is marked as expected from the code, and says which code.
+/// (the run after it). Anything neither
+/// run contains is marked as expected from the code, and says which code.
 /// </para>
 ///
 /// <para>
@@ -191,7 +191,7 @@ public class AccountDeletionAuthorizationTests : IntegrationTestBase
         var mintedAt = DateTime.UtcNow;
         var minted = await MintOkAsync(spare);
 
-        // Measured 2026-09-06T10:44Z on the running stack (row M5 of the "after" transcript): 201
+        // Measured 2026-09-06T10:44Z on the running stack: 201
         // "Account closure authorised", {authorizationId, expiresAt = mint + 2m}, row
         // "AccountDeletion Pending NULL".
         minted.AuthorizationId.Should().NotBeEmpty();
@@ -215,7 +215,7 @@ public class AccountDeletionAuthorizationTests : IntegrationTestBase
 
         var response = await MintAsync(spare, WrongPin);
 
-        // Measured 2026-09-06T10:44Z (M1): 401 INVALID_PIN "Invalid PIN.", PinAccessFailedCount
+        // Measured 2026-09-06T10:44Z: 401 INVALID_PIN "Invalid PIN.", PinAccessFailedCount
         // 0 -> 1 — the same answer the transfer mint gives; this endpoint must not be a cheaper PIN
         // oracle than any other.
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -239,9 +239,9 @@ public class AccountDeletionAuthorizationTests : IntegrationTestBase
         // and would cost an attempt.
         var response = await MintAsync(spare, WrongPin);
 
-        // Measured 2026-09-06 on the DELETE itself before this change (D1, 09:24Z): 422
+        // Measured 2026-09-06 on the DELETE itself before this change (09:24Z): 422
         // NON_ZERO_BALANCE, detail "Cannot delete an account with a non-zero balance." The mint
-        // shares the guard — measured on the mint itself at 10:44Z (M2, wrong PIN): 422
+        // shares the guard — measured on the mint itself at 10:44Z (wrong PIN): 422
         // NON_ZERO_BALANCE, PinAccessFailedCount unchanged.
         response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
         (await ErrorCodeOf(response)).Should().Be(ErrorCodes.NonZeroBalance);
@@ -257,8 +257,8 @@ public class AccountDeletionAuthorizationTests : IntegrationTestBase
 
         var response = await MintAsync(primary, WrongPin);
 
-        // Measured 2026-09-06 on the DELETE itself before this change (D2, 09:24Z) and on the mint
-        // at 10:44Z (M3, correct PIN — the after-run did not send a wrong one here): 422
+        // Measured 2026-09-06 on the DELETE itself before this change (09:24Z) and on the mint
+        // at 10:44Z (correct PIN — the after-run did not send a wrong one here): 422
         // PRIMARY_ACCOUNT_DELETE, detail "Cannot delete primary account. Set another account as
         // primary first."
         response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
@@ -276,15 +276,15 @@ public class AccountDeletionAuthorizationTests : IntegrationTestBase
 
         var response = await MintAsync(victimsSpare, WrongPin);
 
-        // Measured 2026-09-06 on the DELETE itself before this change (D8/D9, 09:24Z) and on the
-        // mint at 10:44Z (D15): 403 ACCESS_DENIED, detail "You do not have access to this
+        // Measured 2026-09-06 on the DELETE itself before this change (09:24Z) and on the
+        // mint at 10:44Z: 403 ACCESS_DENIED, detail "You do not have access to this
         // account." Ownership is the first rung on the mint too, so the PIN is never consulted.
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         (await ErrorCodeOf(response)).Should().Be(ErrorCodes.AccessDenied);
         (await PinFailedCountAsync(attackerId)).Should().Be(0, "a probe of someone else's account costs nothing");
 
-        // And an unknown account is a 404 for the same reason (measured 2026-09-06: D3 on the
-        // DELETE at 09:24Z, M4 on the mint at 10:44Z — ACCOUNT_NOT_FOUND).
+        // And an unknown account is a 404 for the same reason (measured 2026-09-06: on the
+        // DELETE at 09:24Z, on the mint at 10:44Z — ACCOUNT_NOT_FOUND).
         var unknown = await MintAsync(Guid.NewGuid(), CorrectPin);
         unknown.StatusCode.Should().Be(HttpStatusCode.NotFound);
         (await ErrorCodeOf(unknown)).Should().Be(ErrorCodes.AccountNotFound);
@@ -297,7 +297,7 @@ public class AccountDeletionAuthorizationTests : IntegrationTestBase
 
         var response = await MintAsync(spare, CorrectPin);
 
-        // Measured 2026-09-06T10:44Z (M0): 422 PIN_REQUIRED "PIN must be set before authorising
+        // Measured 2026-09-06T10:44Z: 422 PIN_REQUIRED "PIN must be set before authorising
         // this operation." The sentence used to say "a transfer"; since ADR-0049 the rail carries
         // a closure too. The SPA mock (handlers.ts) pins the old sentence and aligns to this
         // measured one in the frontend follow-up.
@@ -314,23 +314,23 @@ public class AccountDeletionAuthorizationTests : IntegrationTestBase
     public async Task Delete_PresentingNoAuthorisation_IsRefused_AndLeavesARefusalRow()
     {
         /*
-          THE POINT OF THE WHOLE CHANGE. Measured 2026-09-06 on main d93ba10, before it (row D4 of
-          the "before" transcript, 09:24Z): a DELETE of this shape — empty non-primary
+          THE POINT OF THE WHOLE CHANGE. Measured 2026-09-06 on main d93ba10, before it
+          (09:24Z): a DELETE of this shape — empty non-primary
           account — CARRYING a Step-Up-Authorization header answered 200 "Account deleted
-          successfully". The transcript records only that D4 carried a header; the probe script
+          successfully". The run records only that the request carried a header; the probe script
           sent a random well-formed GUID. The header was never consulted. A
-          HEADERLESS DELETE on a spare was NOT measured in that run — the probe's D5 was gated on
-          the account surviving D4, and D4 had closed it — and no headerless 200 is claimed from it;
+          HEADERLESS DELETE on a spare was NOT measured in that run — the next probe was gated on
+          the account surviving, and it did not — and no headerless 200 is claimed from it;
           at d93ba10 AccountController/AccountService read no header at all, so the two took the
-          same path (inferred from the code), and ADR-0008's 2026-08-18 correction records a
-          headerless DELETE on a spare answering 200 on c146fe9. ADR-0008's table had promised
+          same path (inferred from the code), and ADR-0049's Context says the DELETE
+          "was `[Authorize]` and no more". ADR-0008's table had promised
           level 2 for this row since day one.
         */
         var (_, userId, _, spare) = await ScenarioAsync();
 
         var response = await DeleteAsync(spare, authorizationId: null);
 
-        // Measured 2026-09-06T10:44Z through the BFF (D1): 401 AUTHORIZATION_REQUIRED "This account
+        // Measured 2026-09-06T10:44Z through the BFF: 401 AUTHORIZATION_REQUIRED "This account
         // closure has not been authorised." — the errorCode survived the BFF, /bff/auth/me straight
         // after answered 200 at level 1, the refusal row was committed and the spare stayed listed.
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -355,7 +355,7 @@ public class AccountDeletionAuthorizationTests : IntegrationTestBase
     {
         // [FromHeader] Guid? binds an EMPTY value to null (measured on POST /api/transfers,
         // ADR-0042), and on this bodyless DELETE too — measured 2026-09-06T10:44Z: an empty header
-        // (D2) and a whitespace one (D3) both answered 401 AUTHORIZATION_REQUIRED.
+        // and a whitespace one both answered 401 AUTHORIZATION_REQUIRED.
         //
         // Sent as the whitespace one since 2026-09-24: the in-memory test server drops a header
         // whose only value is empty, so the empty value this test used to send tested no header
@@ -379,7 +379,7 @@ public class AccountDeletionAuthorizationTests : IntegrationTestBase
         request.Headers.Add(StepUpConstants.HeaderName, "not-a-guid");
         var response = await Client.SendAsync(request);
 
-        // Measured 2026-09-06T10:44Z (D4): 400 from MVC model binding before the action runs,
+        // Measured 2026-09-06T10:44Z: 400 from MVC model binding before the action runs,
         // model-state {"Step-Up-Authorization": ["The value 'not-a-guid' is not valid."]} and no
         // errorCode — the 400 the DELETE contract always declared and could not reach until it had
         // a header.
@@ -405,22 +405,22 @@ public class AccountDeletionAuthorizationTests : IntegrationTestBase
 
         var response = await DeleteAsync(spare, minted.AuthorizationId);
 
-        // Measured 2026-09-06 before this change (D4, 09:24Z, main d93ba10): a DELETE on an empty
+        // Measured 2026-09-06 before this change (09:24Z, main d93ba10): a DELETE on an empty
         // spare carrying a random-GUID Step-Up-Authorization header answered 200 "Account deleted
         // successfully" — the header was never read; the headerless case was NOT measured before
-        // the change (the probe's D5 was gated on the account surviving D4). Measured after it
-        // (D9, 10:44Z): the same 200 with the minted authorisation. The message is unchanged; what
+        // the change (the next probe was gated on the account surviving). Measured after it
+        // (10:44Z): the same 200 with the minted authorisation. The message is unchanged; what
         // changed is what it takes to get it.
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         (await response.Content.ReadFromJsonAsync<ApiResponse>(JsonOptions))!.Message
             .Should().Be("Account deleted successfully");
 
-        // Gone from the owner's view. NOT in either transcript: the before-run did not GET the
-        // closed account (D7 not run) and the after-run has no GET-by-id probe either. Expected
+        // Gone from the account owner's view. NOT in either run: the before-run did not GET the
+        // closed account and the after-run has no GET-by-id probe either. Expected
         // from the code — AzureBankDbContext's global query filter (!IsDeleted) hides the row from
-        // the ownership rung — and the 404 ACCOUNT_NOT_FOUND shape for a hidden id is what D10/D11
-        // (a second DELETE, 10:44Z) answered. ADR-0008's 2026-08-18 correction records the owner's
-        // GET by id after a delete as 404 ACCOUNT_NOT_FOUND on c146fe9.
+        // the ownership rung — and the 404 ACCOUNT_NOT_FOUND shape for a hidden id is what a repeat
+        // (a second DELETE, 10:44Z) answered. ADR-0008's Consequences say it of a closed account:
+        // "the account answers 404 `ACCOUNT_NOT_FOUND`".
         var get = await Client.GetAsync($"/api/accounts/{spare}");
         get.StatusCode.Should().Be(HttpStatusCode.NotFound);
         (await ErrorCodeOf(get)).Should().Be(ErrorCodes.AccountNotFound);
@@ -473,8 +473,8 @@ public class AccountDeletionAuthorizationTests : IntegrationTestBase
 
         var response = await DeleteAsync(spare, Guid.NewGuid());
 
-        // Measured 2026-09-06 before this change (D4, 09:24Z): a random unknown GUID in the header
-        // answered 200 — the header was ignored. Measured after it (D5, 10:44Z): 401
+        // Measured 2026-09-06 before this change (09:24Z): a random unknown GUID in the header
+        // answered 200 — the header was ignored. Measured after it (10:44Z): 401
         // AUTHORIZATION_INVALID "This authorisation cannot be used."
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
         (await ErrorCodeOf(response)).Should().Be(ErrorCodes.AuthorizationInvalid);
@@ -516,7 +516,7 @@ public class AccountDeletionAuthorizationTests : IntegrationTestBase
 
         var response = await DeleteAsync(spare, transferAuthorization);
 
-        // Measured 2026-09-06T10:44Z (D6, a transfer authorisation minted from the same spare): 401
+        // Measured 2026-09-06T10:44Z (a transfer authorisation minted from the same spare): 401
         // AUTHORIZATION_INVALID "This authorisation cannot be used." That nothing is spent is
         // expected from the code (ValidateAsync is read-only); the after-run did not read that row.
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -535,7 +535,7 @@ public class AccountDeletionAuthorizationTests : IntegrationTestBase
 
         var response = await DeleteAsync(spare, minted.AuthorizationId);
 
-        // Measured 2026-09-06 (E2: a DELETE at 10:47:03Z with an authorisation minted at 10:44:53Z,
+        // Measured 2026-09-06 (a DELETE at 10:47:03Z with an authorisation minted at 10:44:53Z,
         // window 2m): 401 AUTHORIZATION_EXPIRED "This authorisation has expired. Enter your PIN
         // again to confirm." — distinct from INVALID, because the user holds a real authorisation
         // of their own and deserves the sentence that says so; row still Pending,
@@ -562,7 +562,7 @@ public class AccountDeletionAuthorizationTests : IntegrationTestBase
 
         // Expected from the code: 401 AUTHORIZATION_INVALID — the SAME answer an unknown reference
         // gets, so the endpoint is not an oracle for which references are live. Not in either
-        // transcript in this shape: the after-run's D14 presented the owner's authorisation on the
+        // run in this shape: the after-run presented the account owner's authorisation on the
         // OWNER's account and was refused 403 at the ownership rung; here it is presented on the
         // attacker's own account, so the rung passes and the authorisation itself is read.
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -587,7 +587,7 @@ public class AccountDeletionAuthorizationTests : IntegrationTestBase
 
         var response = await DeleteAsync(spare, minted.AuthorizationId);
 
-        // Measured 2026-09-06T10:44Z (D12: mint, deposit, DELETE with the valid authorisation): 422
+        // Measured 2026-09-06T10:44Z (mint, deposit, DELETE with the valid authorisation): 422
         // NON_ZERO_BALANCE, authorisation still Pending. The guard answers before the
         // authorisation is SPENT, so it is still Pending afterwards; this does not distinguish
         // validate-then-guard from guard-then-validate (validation is read-only) — the ORDER is
@@ -609,7 +609,7 @@ public class AccountDeletionAuthorizationTests : IntegrationTestBase
           account = 422 NON_ZERO_BALANCE against the real stack (measured 2026-09-03), and stays
           green across the interim main only because this order holds. Presence-first would answer
           401 here and turn that suite red from a backend-only change (observed 2026-09-06 by
-          mutation: 401 instead of 422). Measured after this change, 2026-09-06T10:44Z (D7): 422
+          mutation: 401 instead of 422). Measured after this change, 2026-09-06T10:44Z: 422
           NON_ZERO_BALANCE. Do not reorder.
         */
         var (token, userId, _, spare) = await ScenarioAsync();
@@ -634,9 +634,9 @@ public class AccountDeletionAuthorizationTests : IntegrationTestBase
         // a second refusal row would name an account that no longer stands.
         var again = await DeleteAsync(spare, authorizationId: null);
 
-        // NOT measured before this change: the "before" transcript has no repeat DELETE of
-        // the closed account (its only 404 is D3, a random id). Measured after it,
-        // 2026-09-06T10:44Z (D10 with the spent header, D11 with none): 404 ACCOUNT_NOT_FOUND both,
+        // NOT measured before this change: the before-run has no repeat DELETE of
+        // the closed account (its only 404 is for a random id). Measured after it,
+        // 2026-09-06T10:44Z (with the spent header, then with none): 404 ACCOUNT_NOT_FOUND both,
         // refusal rows for the user unchanged — the ownership rung reads through the global query
         // filter (AzureBankDbContext, !IsDeleted) and never reaches the presence check.
         again.StatusCode.Should().Be(HttpStatusCode.NotFound);

@@ -65,8 +65,8 @@ public sealed class RetiredChainKey
     /// newer key has written above the real boundary; while that range is still empty nothing names
     /// the newer key inside it, the walk returns intact, and nothing is reported — which is exactly
     /// the window a retired key needs to mint into, and exactly the state a deployment is in
-    /// between the rotation and the next write. Measured, and the transcript is in the runbook's
-    /// triage table. Take the number from the rotation record; do not lean either way. Expect the
+    /// between the rotation and the next write. Measured: the runbook, "When the key ring is
+    /// wrong". Take the number from the rotation record; do not lean either way. Expect the
     /// noise, when there is any, in TWO epochs rather than one.
     /// </para>
     /// </remarks>
