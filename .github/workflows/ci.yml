@@ -22,10 +22,10 @@ env:
 # image too (20260927.320.1, read in the jobs' logs on 2026-10-03), and GitHub moves the label
 # to Ubuntu 26.04 run by run from 2026-10-19 (actions/runner-images#14748), with no commit
 # here. Jobs take tools from the image and install none of them: python3, PowerShell 7 and
-# Bicep in the infrastructure job, python3 and git in the commit-messages job, python3, az and
-# docker in the deploy workflow, the shared libraries Chromium needs in the real-stack job. A
-# new image is a change like any other: the label moves on a branch whose run on that image is
-# green, and deploy.yml, which no branch can run, moves last.
+# Bicep in the infrastructure job, python3, az and docker in the deploy workflow, the shared
+# libraries Chromium needs in the real-stack job. A new image is a change like any other: the
+# label moves on a branch whose run on that image is green, and deploy.yml, which no branch can
+# run, moves last.
 jobs:
   backend:
     name: Backend build + tests
@@ -919,7 +919,8 @@ jobs:
       # one commit deep, and the script refuses a shallow history, where git cannot tell which
       # commits are on the head and not on the base. What is checked out is the merge commit
       # GitHub builds, as in every other job; that commit is not read, because the range below
-      # ends at the head of the pull request, which is its second parent.
+      # ends at the head of the pull request, which is its second parent. The job takes python3
+      # and git from the image and installs nothing.
       - name: Checkout with the whole history
         uses: actions/checkout@v6
         with:
