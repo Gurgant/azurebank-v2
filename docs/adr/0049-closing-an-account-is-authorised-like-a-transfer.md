@@ -1,7 +1,8 @@
 # ADR-0049: Closing an account is authorised like a transfer
 
 **Status:** Accepted · **Date:** 2026-09-06 · **Amended:** 2026-09-07 (ADR-0050),
-2026-09-11 (ADR-0044), 2026-09-14 (ADR-0044), 2026-09-21 (ADR-0056), 2026-10-10 (D9)
+2026-09-11 (ADR-0044), 2026-09-14 (ADR-0044), 2026-09-21 (ADR-0056), 2026-10-10 (D9),
+2026-10-11 (D8, D9)
 
 ## Context
 
@@ -49,9 +50,9 @@ balance before primary, is code (`RefuseIfNotClosable`), held by a unit test and
   `DeleteAccountAsync` runs the soft delete, the `AccountDeleted` row, the save, then
   `ConsumeAsync`, then the commit, because two autocommits would leave the account closed with
   nothing spent: a consume that matches no row throws and rolls the soft delete back. Each attempt
-  reloads the account, answers 404 if it is closed and runs the guards again, so a deposit that
-  raced the closure ends in 422. An outer loop retries a `DbUpdateConcurrencyException`; without it
-  eight DELETEs at once answered `500,500,500,500,500,200,500,500`.
+  reloads the account, answers 404 if it is closed or gone and runs the guards again: a deposit
+  that raced the closure ends in 422. An outer loop retries a `DbUpdateConcurrencyException`;
+  without it eight DELETEs at once answered `500,500,500,500,500,200,500,500`.
 - **D9: A money write whose account closed while it ran is refused as a request on a closed
   account**: 404 `ACCOUNT_NOT_FOUND` for the caller's own account, with nothing written and nothing
   spent. A deposit, a withdrawal and both transfers look at their accounts again after every
@@ -66,7 +67,12 @@ balance before primary, is code (`RefuseIfNotClosable`), held by a unit test and
   while the transfer ran is still paid. The transfer answers 422 `RECIPIENT_NO_ACCOUNT` only when
   none is open. A withdrawal or a transfer that committed and lost its acknowledgement answers
   from its idempotency claim, also when its account closed in between: proven for a withdrawal
-  and for the source of an external transfer.
+  and for the source of an external transfer. A closure whose row is gone answers the same 404,
+  with no audit row and nothing spent: proven for a row that goes at the closure's save and for
+  one that goes before its first reload. A change of the primary account reads both rows from the
+  store on every attempt: a target that goes at its save answers the same 404 and the primary
+  stays; an old primary that goes at its save holds no primary to clear, and the target becomes
+  the user's one primary account.
 
 ```sql
 SELECT s.Id, s.Operation, s.Status, s.CreatedAt, s.ConsumedAt, s.ConsumedByTransactionId,
@@ -134,11 +140,12 @@ too; `PIN_REQUIRED` (422), `INVALID_PIN` (401) and `PIN_LOCKED` (429) come only 
 
 ## Verified by
 
-- `AccountDeletionSqlServerTests` (D8), `AccountDeletionAuthorizationTests`, `AccountServiceTests`,
-  `StepUpAuthorizationServiceTests` (the operation name in the hash).
+- `AccountDeletionSqlServerTests` (D8, and D9 for a row that is gone),
+  `AccountDeletionAuthorizationTests`, `AccountServiceTests`, `StepUpAuthorizationServiceTests`
+  (the operation name in the hash).
 - D9, on SQL Server: `DepositIntoClosedAccountSqlServerTests`,
   `TransferOrWithdrawalOnClosedAccountSqlServerTests`, `PayeeAccountClosedMeanwhileSqlServerTests`,
-  `ClosureAfterALostAcknowledgementSqlServerTests`.
+  `ClosureAfterALostAcknowledgementSqlServerTests`, `SetPrimarySqlServerTests` (the primary account).
 - The SPA: `stepUp.contract.test.ts`, `money.contract.test.ts` and `deleteAccount.spec.ts`.
 
 ## Related

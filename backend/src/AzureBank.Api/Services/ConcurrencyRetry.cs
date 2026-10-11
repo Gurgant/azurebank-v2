@@ -289,9 +289,9 @@ internal static class ConcurrencyRetry
     }
 
     /// <summary>
-    /// Refuses a money write when one of the caller's own accounts came back closed from a reload,
-    /// or did not come back at all, with the 404 the ownership check gives an account that was
-    /// closed before the request.
+    /// Refuses a write when one of the caller's own accounts came back closed from a reload, or did
+    /// not come back at all, with the 404 the ownership check gives an account that was closed
+    /// before the request. The money writes, the rename and the closure call it.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -303,7 +303,8 @@ internal static class ConcurrencyRetry
     /// <para>
     /// A ROW THAT IS GONE IS NOT IN THE FLAG. A reload that finds no row detaches the entry and
     /// leaves the entity as it was, <c>IsDeleted</c> false and the old balance in it. A write that
-    /// adds a ledger row naming that entity then inserts the account again. So the entry's state is
+    /// adds a ledger row naming that entity then inserts the account again, and a rename or a
+    /// closure sets its value on an entity that is saved nowhere. So the entry's state is
     /// read too, which is why this takes the context: an account the request holds is tracked from
     /// the ownership check on, and only a reload that found nothing detaches it.
     /// </para>
@@ -332,8 +333,8 @@ internal static class ConcurrencyRetry
     }
 
     /// <summary>
-    /// True when the account, as the last reload left it, cannot take a money write: the row is
-    /// closed, or the reload found no row and detached the entry.
+    /// True when the account, as the last reload left it, cannot take a write: the row is closed,
+    /// or the reload found no row and detached the entry.
     /// </summary>
     public static bool IsClosedOrGone(AzureBankDbContext context, Account account) =>
         account.IsDeleted || context.Entry(account).State == EntityState.Detached;

@@ -19,7 +19,7 @@ using Xunit.Abstractions;
 namespace AzureBank.Tests.Integration;
 
 /// <summary>
-/// The four properties of an authorised closure (ADR-0049) that only real SQL Server can prove.
+/// The five properties of an authorised closure (ADR-0049) that only real SQL Server can prove.
 /// </summary>
 /// <remarks>
 /// <list type="number">
@@ -41,6 +41,10 @@ namespace AzureBank.Tests.Integration;
 /// ever goes round the retry loop; only the real provider can exhibit the race, and without this
 /// test the guards-again call in the delegate could be deleted with every other test still
 /// green (added 2026-09-06 after a review mutated exactly that).</item>
+/// <item>A ROW THAT IS GONE IS A CLOSED ACCOUNT: a closure whose account row is deleted under it
+/// answers 404, writes no <c>AccountDeleted</c> row and spends nothing, whether the row goes at
+/// the closure's save or before its first reload. The reload detaches the entry and leaves the
+/// entity as it was, which only a real DELETE brings about.</item>
 /// </list>
 /// <para>
 /// Gated by AZUREBANK_TEST_SQLSERVER and serialised with the other SQL proofs, like every file in
@@ -293,7 +297,135 @@ public sealed class AccountDeletionSqlServerTests : IDisposable
             + $"chain intact over {verification.Verified} rows");
     }
 
+    [SqlServerFact]
+    public async Task ARemovalOfTheRowAtTheClosuresSave_AnswersNotFound_AndWritesAndSpendsNothing()
+    {
+        /*
+          The removal rides the closure's own UPDATE [Accounts]. That save matches no row, the
+          reload finds none and detaches the entry, and the entity keeps the flag the attempt that
+          lost had set on it.
+        */
+        var (race, sent) = await CloseWhileTheRowIsRemovedAsync("delgone", OutOfBandClosureInterceptor.AccountUpdate);
+
+        ClosedAccountSqlServerProofs.ShouldHaveClosedAtTheSave(race, sent, savesAfterwards: 0);
+    }
+
+    [SqlServerFact]
+    public async Task ARemovalOfTheRowBeforeTheClosureReloadsIt_AnswersNotFound_AndWritesAndSpendsNothing()
+    {
+        /*
+          The removal rides the read of the authorisation, after the closure looked at its account
+          and before it reloads it. No save is lost and no attempt has set a flag: the reload
+          detaches the entry and leaves an entity that says an open, empty account, so only the
+          tracker knows the row is gone.
+        */
+        var (race, sent) = await CloseWhileTheRowIsRemovedAsync("delgonerd", AuthorisationRead);
+
+        race.Fired.Should().BeTrue("the removal must actually have run");
+        race.OutOfBandRowsAffected.Should().Be(1, "and it must have taken the row the closure is about to reload");
+        sent.RodeAnAccountUpdate.Should().BeFalse("the removal rides a read, not a save");
+        sent.AccountReadsBefore.Should().BeGreaterThan(0, "the closure looks at its account before the removal");
+        sent.AccountUpdatesBefore.Should().Be(0, "and saves nothing before it");
+        sent.AccountReadsAfter.Should().Be(1, "the one reload, which finds no row");
+        sent.AccountUpdatesAfter.Should().Be(0);
+    }
+
+    /// <summary>The read of the authorisation: after the closure looked at its account, before it reloads it.</summary>
+    private const string AuthorisationRead = "FROM [StepUpAuthorizations]";
+
+    /// <summary>
+    /// One authorised closure of an empty spare account whose row is deleted from a second
+    /// connection on the first command of the closure that holds <paramref name="trigger"/>. The
+    /// demo pool's recycler is the writer that deletes an account row where every other writer
+    /// closes it, and a spare has no ledger row to hold its row back. Asserts the answer and what
+    /// the database holds; the caller asserts where the removal landed.
+    /// </summary>
+    private async Task<(OutOfBandClosureInterceptor Race, OutOfBandClosureInterceptor.Sent Sent)>
+        CloseWhileTheRowIsRemovedAsync(string prefix, string trigger)
+    {
+        var client = CreateSqlClient();
+        var user = await RegisterWithPinAsync(client, prefix);
+        var spare = await CreateSpareAsync(client, user);
+        var authorizationId = await MintAsync(client, user, spare);
+        var before = await ReadAsync(user, spare, authorizationId);
+
+        var race = new OutOfBandClosureInterceptor(
+            SqlServerFactAttribute.ConnectionString!, spare, trigger, remove: true);
+        _factory!.AddInterceptor(race);
+        race.Arm();
+
+        var response = await DeleteAsync(client, user, spare, authorizationId);
+        var body = await response.Content.ReadAsStringAsync();
+        var sent = race.Seen;
+        var after = await ReadAsync(user, spare, authorizationId);
+
+        var later = await DeleteAsync(client, user, spare, authorizationId);
+        var laterBody = await later.Content.ReadAsStringAsync();
+
+        _output.WriteLine(
+            $"row removed on \"{trigger}\" -> {(int)response.StatusCode}, body: {body}, "
+            + $"race.Fired: {race.Fired}, race.OutOfBandRowsAffected: {race.OutOfBandRowsAffected}, {sent}, "
+            + $"before: {before}, after: {after}, the same DELETE again: {(int)later.StatusCode}, body: {laterBody}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound,
+            "a closure whose row is gone gets the answer of an account closed before the request");
+        ErrorCodeOf(body).Should().Be(ErrorCodes.AccountNotFound);
+        later.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        ErrorCodeOf(laterBody).Should().Be(ErrorCodes.AccountNotFound,
+            "the race answers what a DELETE of an account already gone answers");
+
+        after.Should().Be(
+            before with { AccountRows = 0 },
+            "the closure writes no audit row, spends no authorisation and touches no other account");
+        before.Authorization.Should().Be(StepUpAuthorizationStatus.Pending);
+        before.ChainIntact.Should().BeTrue();
+
+        return (race, sent);
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// What the database holds around one closure, as a fresh scope reads it: the account's rows,
+    /// the actor's audit rows, the authorisation, and the row version of the primary account.
+    /// </summary>
+    private sealed record Rows(
+        int AccountRows, int AccountDeletedRows, int AuditRowsOfTheActor,
+        StepUpAuthorizationStatus Authorization, DateTime? ConsumedAt, string PrimaryRowVersion, bool ChainIntact)
+    {
+        public override string ToString() =>
+            $"account rows: {AccountRows}, AccountDeleted rows: {AccountDeletedRows}, "
+            + $"audit rows of the actor: {AuditRowsOfTheActor}, authorisation: {Authorization}, "
+            + $"consumed at: {ConsumedAt?.ToString("O") ?? "never"}, primary row version: {PrimaryRowVersion}, "
+            + $"chain intact: {ChainIntact}";
+    }
+
+    private async Task<Rows> ReadAsync(TestUser user, Guid accountId, Guid authorizationId)
+    {
+        using var scope = _factory!.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        var chain = scope.ServiceProvider.GetRequiredService<IAuditChain>();
+
+        var authorization = await db.StepUpAuthorizations.AsNoTracking().SingleAsync(a => a.Id == authorizationId);
+        var primary = await db.Accounts.IgnoreQueryFilters().AsNoTracking()
+            .SingleAsync(a => a.Id == user.PrimaryAccountId);
+
+        return new Rows(
+            await db.Accounts.IgnoreQueryFilters().CountAsync(a => a.Id == accountId),
+            await db.AuditEvents.AsNoTracking()
+                .CountAsync(e => e.ActorUserId == user.UserId && e.Event == SecurityEvents.AccountDeleted),
+            await db.AuditEvents.AsNoTracking().CountAsync(e => e.ActorUserId == user.UserId),
+            authorization.Status, authorization.ConsumedAt, Convert.ToHexString(primary.RowVersion),
+            (await chain.VerifyAsync(db)).IsIntact);
+    }
+
+    private static string? ErrorCodeOf(string body)
+    {
+        var json = JsonSerializer.Deserialize<JsonElement>(body);
+        return json.ValueKind == JsonValueKind.Object && json.TryGetProperty("errorCode", out var code)
+            ? code.GetString()
+            : null;
+    }
 
     private sealed record TestUser(string Token, Guid UserId, Guid PrimaryAccountId);
 
