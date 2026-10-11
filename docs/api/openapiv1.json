@@ -2240,7 +2240,7 @@
             }
           },
           "503": {
-            "description": "Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (its Cache-Control includes no-store). Send the request again after that many seconds. applied: false means this request changed nothing; without applied the outcome is unknown. Keep the same Idempotency-Key either way: it is what lets the money move at most once.",
+            "description": "Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. A deposit also answers it when the account is busy: every attempt the deposit is given lost the account to another write. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (its Cache-Control includes no-store). Send the request again after that many seconds. applied: false means this request changed nothing; without applied the outcome is unknown. Keep the same Idempotency-Key either way: it is what lets the money move at most once.",
             "content": {
               "application/json": {
                 "schema": {

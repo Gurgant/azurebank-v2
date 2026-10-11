@@ -141,8 +141,10 @@ public sealed class CommitGateInterceptor : DbTransactionInterceptor
     /// <summary>
     /// The deadline of the request whose scope built <paramref name="context"/>, or null: the scope
     /// is the application service provider EF was given when it built the context's options.
+    /// Internal for <c>ConcurrencyRetry</c>, which asks the same deadline whether a commit was let
+    /// start before it calls an account busy.
     /// </summary>
-    private static IRequestDeadline? DeadlineOf(DbContext? context) =>
+    internal static IRequestDeadline? DeadlineOf(DbContext? context) =>
         context?.GetService<IDbContextOptions>()
             .FindExtension<CoreOptionsExtension>()?
             .ApplicationServiceProvider?

@@ -1,8 +1,13 @@
+using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AzureBank.Api.Handlers;
+using AzureBank.Api.Services;
+using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Account;
 using AzureBank.Shared.DTOs.Auth;
@@ -12,6 +17,9 @@ using AzureBank.Shared.DTOs.Transfer;
 using AzureBank.Shared.Enums;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Serilog.Events;
 using Xunit.Abstractions;
 
 namespace AzureBank.Tests.Integration;
@@ -23,6 +31,7 @@ namespace AzureBank.Tests.Integration;
 /// concurrency token + ConcurrencyRetry must yield:
 /// - no lost updates (final balance == amount × successful requests)
 /// - no 500s (conflicts are retried, not surfaced)
+/// - past the retry's bound, a deposit is answered the 503 a client can retry, and is not applied
 ///
 /// Requires a real database: the InMemory test path downgrades rowversion
 /// tokens, so conflicts never occur there.
@@ -81,6 +90,351 @@ public sealed class BalanceConcurrencySqlServerTests : IDisposable
         // Correctness: NO lost updates
         (await GetBalanceAsync(client, token, accountId)).Should().Be(
             amount * successes, "every successful deposit must be reflected in the balance");
+    }
+
+    /// <summary>
+    /// More parallel deposits to one account than the retry carries: each is answered 201 and
+    /// applied once, or answered the busy 503 and not applied, and at least one is answered busy.
+    /// None is a 500. Each key holds what its answer says: one record after a 201, none after a 503.
+    /// </summary>
+    [SqlServerFact]
+    public async Task MoreParallelDepositsThanTheRetryCarries_AreAppliedOnce_OrAnsweredTheBusy503()
+    {
+        const int parallelism = 24;
+
+        var client = CreateSqlClient(factory => factory.CaptureLog(LogEventLevel.Information));
+        var (token, accountId) = await RegisterAsync(client);
+        var start = await GetBalanceAsync(client, token, accountId);
+
+        // An amount and a description of its own for each request, so that the balance and the
+        // ledger say WHICH deposits were applied, not only how many.
+        var clock = Stopwatch.StartNew();
+        var answers = await Task.WhenAll(
+            Enumerable.Range(0, parallelism).Select(i => SendDepositAsync(
+                client, token, accountId, 10m + i, $"Busy deposit {i}", Guid.NewGuid())));
+        clock.Stop();
+
+        var applied = answers.Where(a => a.Status == HttpStatusCode.Created).ToArray();
+        var refused = answers.Where(a => a.Status != HttpStatusCode.Created).ToArray();
+        var conflicts = _factory!.CapturedEvents
+            .Where(e => e.MessageTemplate.Text.StartsWith("Concurrency conflict on deposit", StringComparison.Ordinal))
+            .Select(e => int.Parse(e.Properties["Attempt"].ToString(), CultureInfo.InvariantCulture))
+            .ToArray();
+        var gaveUp = _factory.CapturedLog.Count(l => l.Contains("lost the account to another write", StringComparison.Ordinal));
+        var balance = await GetBalanceAsync(client, token, accountId);
+        var ledger = await ReadDepositsAsync(client, token, accountId);
+        var auditRows = await CountDepositAuditRowsAsync(accountId);
+        var recordsByKey = new Dictionary<Guid, List<IdempotencyStatus>>();
+        foreach (var answer in answers)
+        {
+            recordsByKey[answer.Key] = await ReadIdempotencyRecordsAsync(answer.Key);
+        }
+
+        _output.WriteLine(
+            $"{parallelism} parallel deposits at {ConcurrencyRetry.MaxAttempts} attempts in {clock.ElapsedMilliseconds} ms: "
+            + string.Join(", ", answers.GroupBy(a => (int)a.Status).OrderBy(g => g.Key).Select(g => $"{g.Count()} x {g.Key}"))
+            + $"; busy with applied false: {refused.Count(a => a.AppliedIsFalse)}; gave up in the log: {gaveUp}; "
+            + $"balance {start} -> {balance}, the 201s sum to {applied.Sum(a => a.Amount)}; "
+            + $"ledger rows {ledger.Length}, audit rows {auditRows}; "
+            + $"records under the keys answered 201: {Tally(applied)}; under the keys answered 503: {Tally(refused)}; "
+            + $"{conflicts.Length} conflicts retried, by attempt: "
+            + string.Join(", ", conflicts.GroupBy(a => a).OrderBy(g => g.Key).Select(g => $"{g.Key}: {g.Count()}")));
+
+        answers.Where(a => a.Status == HttpStatusCode.InternalServerError).Should().BeEmpty(
+            "a deposit that cannot be made now is a deposit to send again, not a fault of the API; got: "
+            + string.Join(" | ", answers.Where(a => a.Status == HttpStatusCode.InternalServerError)
+                .Select(a => $"{(int)a.Status}: {a.Body[..Math.Min(150, a.Body.Length)]}")));
+
+        refused.Should().NotBeEmpty(
+            "the proof is void unless at least one deposit spent its attempts and was answered busy");
+
+        foreach (var answer in refused)
+        {
+            AssertBusy503(answer);
+            recordsByKey[answer.Key].Should().BeEmpty(
+                "the claim of a deposit answered 503 is released, so its key holds no record");
+        }
+
+        foreach (var answer in applied)
+        {
+            recordsByKey[answer.Key].Should().HaveCount(1, "a key answered 201 holds exactly one record");
+        }
+
+        gaveUp.Should().Be(refused.Length, "each busy answer is one deposit that spent its attempts");
+
+        balance.Should().Be(
+            start + applied.Sum(a => a.Amount),
+            "the balance holds every deposit answered 201 and none answered 503");
+
+        ledger.Should().BeEquivalentTo(
+            applied.Select(a => (a.Description, a.Amount)),
+            "each deposit answered 201 is in the ledger once, and no other deposit is");
+
+        auditRows.Should().Be(
+            applied.Length, "the audit trail records each deposit made once, and no attempt that lost");
+
+        string Tally(DepositAnswer[] group) =>
+            group.Length == 0
+                ? "no such key"
+                : string.Join(", ", group
+                    .GroupBy(a => recordsByKey[a.Key].Count == 0 ? "none" : string.Join("+", recordsByKey[a.Key]))
+                    .OrderBy(g => g.Key, StringComparer.Ordinal)
+                    .Select(g => $"{g.Count()} x {g.Key}"));
+    }
+
+    /// <summary>
+    /// A deposit that loses the race for its account on every attempt is answered the busy 503,
+    /// changes nothing, and leaves its key free: the same request sent again is made.
+    /// </summary>
+    [SqlServerFact]
+    public async Task ADepositThatLosesEveryAttempt_AnswersTheBusy503_ChangesNothing_AndIsMadeWhenSentAgain()
+    {
+        const decimal amount = 40m;
+        const string description = "Outrun deposit";
+
+        var race = new LostRowVersionRaceInterceptor(SqlServerFactAttribute.ConnectionString!);
+        var client = CreateSqlClient(factory =>
+        {
+            factory.AddInterceptor(race);
+            factory.CaptureLog();
+        });
+        var (token, accountId) = await RegisterAsync(client);
+        var start = await GetBalanceAsync(client, token, accountId);
+        var key = Guid.NewGuid();
+
+        race.Arm(accountId);
+        var refused = await SendDepositAsync(client, token, accountId, amount, description, key);
+        race.Disarm();
+
+        var balance = await GetBalanceAsync(client, token, accountId);
+        var ledger = await ReadDepositsAsync(client, token, accountId);
+        var auditRows = await CountDepositAuditRowsAsync(accountId);
+        var records = await ReadIdempotencyRecordsAsync(key);
+
+        // The 503 says to send the request again. The same key and the same bytes, sent again.
+        var again = await SendDepositAsync(client, token, accountId, amount, description, key);
+
+        _output.WriteLine(
+            $"every attempt lost: fired {race.Fired} of {ConcurrencyRetry.MaxAttempts} attempts; "
+            + $"{(int)refused.Status}, Retry-After {refused.RetryAfter}, body {refused.Body}; "
+            + $"balance {start} -> {balance}, ledger rows {ledger.Length}, audit rows {auditRows}, "
+            + $"idempotency records [{string.Join(",", records)}]; "
+            + $"same key again: {(int)again.Status}, replayed: {again.Replayed}");
+        foreach (var line in _factory!.CapturedLog)
+        {
+            _output.WriteLine("  log " + line[..Math.Min(300, line.Length)]);
+        }
+
+        race.Fired.Should().Be(
+            ConcurrencyRetry.MaxAttempts, "the proof is void unless the deposit lost every attempt it is given");
+        AssertBusy503(refused);
+        balance.Should().Be(start, "a deposit answered 503 moved nothing");
+        ledger.Should().BeEmpty("a deposit answered 503 left no ledger row");
+        auditRows.Should().Be(0, "no attempt that lost left an audit row");
+        records.Should().BeEmpty("the claim of a deposit answered 503 is released, so its key is free");
+
+        again.Status.Should().Be(HttpStatusCode.Created, $"the key of a deposit answered 503 is free; the body was: {again.Body}");
+        again.Replayed.Should().BeFalse("no earlier answer exists to replay");
+        (await GetBalanceAsync(client, token, accountId)).Should().Be(start + amount);
+        (await ReadDepositsAsync(client, token, accountId)).Should().Equal((description, amount));
+        (await CountDepositAuditRowsAsync(accountId)).Should().Be(1, "the deposit that was made has its one audit row");
+    }
+
+    /// <summary>
+    /// A deposit whose idempotency claim is taken away at its save did not lose a race for its
+    /// account: it is not answered the busy 503, and it is not tried again. The count of its
+    /// saves is what shows the second: a deposit that was tried again would end in the same 500.
+    /// </summary>
+    [SqlServerFact]
+    public async Task ADepositWhoseClaimIsTakenAwayAtItsSave_IsNotToldToSendItAgain()
+    {
+        var fence = new FencedOutClaimInterceptor(SqlServerFactAttribute.ConnectionString!);
+        var client = CreateSqlClient(factory =>
+        {
+            factory.AddInterceptor(fence);
+            factory.CaptureLog();
+        });
+        var (token, accountId) = await RegisterAsync(client);
+        var start = await GetBalanceAsync(client, token, accountId);
+        var key = Guid.NewGuid();
+
+        fence.Arm(key);
+        var answer = await SendDepositAsync(client, token, accountId, 40m, "Fenced deposit", key);
+        fence.Disarm();
+
+        var balance = await GetBalanceAsync(client, token, accountId);
+        var ledger = await ReadDepositsAsync(client, token, accountId);
+        var auditRows = await CountDepositAuditRowsAsync(accountId);
+
+        _output.WriteLine(
+            $"claim taken away at the save: fired {fence.Fired}, saves sent {fence.Saves}; {(int)answer.Status}, "
+            + $"Retry-After {answer.RetryAfter?.ToString() ?? "none"}, body {answer.Body}; "
+            + $"balance {start} -> {balance}, ledger rows {ledger.Length}, audit rows {auditRows}");
+        foreach (var line in _factory!.CapturedLog)
+        {
+            _output.WriteLine("  log " + line[..Math.Min(300, line.Length)]);
+        }
+
+        fence.Fired.Should().Be(1, "the proof is void unless the claim was taken away");
+        fence.Saves.Should().Be(1, "the deposit sends one save and is not tried again");
+        answer.Status.Should().Be(
+            HttpStatusCode.InternalServerError,
+            "a claim that is no longer the request's own is not a busy account: another request may hold the key");
+        answer.RetryAfter.Should().BeNull("nothing invites the caller to send it again");
+        var body = JsonSerializer.Deserialize<JsonElement>(answer.Body);
+        body.TryGetProperty("retryAfterSeconds", out _).Should().BeFalse();
+        body.TryGetProperty("applied", out _).Should().BeFalse("a request without its claim knows nothing about the key");
+        balance.Should().Be(start);
+        ledger.Should().BeEmpty();
+        auditRows.Should().Be(0);
+    }
+
+    /// <summary>
+    /// A deposit that loses its account on every attempt, and whose claim is taken over before the
+    /// last one, is not answered as a busy account: the key is another request's by then.
+    /// </summary>
+    [SqlServerFact]
+    public async Task ADepositThatLosesItsLastAttempt_AndWhoseClaimWasTakenOver_IsNotAnsweredBusy()
+    {
+        var race = new LostRowVersionRaceInterceptor(SqlServerFactAttribute.ConnectionString!);
+        var fence = new FencedOutClaimInterceptor(SqlServerFactAttribute.ConnectionString!);
+        var refused = new RefusedEntriesInterceptor();
+        var client = CreateSqlClient(factory =>
+        {
+            factory.AddInterceptor(race);
+            factory.AddInterceptor(fence);
+            factory.AddInterceptor(refused);
+            factory.CaptureLog();
+        });
+        var (token, accountId) = await RegisterAsync(client);
+        var start = await GetBalanceAsync(client, token, accountId);
+        var key = Guid.NewGuid();
+
+        // One save loses both rows: the account's, as every save of this deposit does, and on the
+        // last attempt the record's too, taken over from a second connection before the batch runs.
+        race.Arm(accountId);
+        fence.Arm(key, onSave: ConcurrencyRetry.MaxAttempts);
+        var answer = await SendDepositAsync(client, token, accountId, 40m, "Taken over deposit", key);
+        race.Disarm();
+        fence.Disarm();
+
+        var balance = await GetBalanceAsync(client, token, accountId);
+        var ledger = await ReadDepositsAsync(client, token, accountId);
+        var auditRows = await CountDepositAuditRowsAsync(accountId);
+        var claims = await ReadIdempotencyClaimsAsync(key);
+
+        _output.WriteLine(
+            $"account lost on {race.Fired} saves, claim taken over {fence.Fired} time(s) before save {fence.Saves}; "
+            + $"the conflicts name: [{string.Join(", ", refused.Conflicts)}]; "
+            + $"{(int)answer.Status}, Retry-After {answer.RetryAfter?.ToString() ?? "none"}, body {answer.Body}; "
+            + $"balance {start} -> {balance}, ledger rows {ledger.Length}, audit rows {auditRows}; "
+            + $"records under the key: [{string.Join(", ", claims.Select(c => $"{c.Status} held by {(c.ClaimId == fence.TakenBy ? "the other request" : "another claim")}"))}]");
+        foreach (var line in _factory!.CapturedLog)
+        {
+            _output.WriteLine("  log " + line[..Math.Min(300, line.Length)]);
+        }
+
+        race.Fired.Should().Be(ConcurrencyRetry.MaxAttempts, "the proof is void unless the deposit lost every attempt it is given");
+        fence.Fired.Should().Be(1, "and unless its claim was taken over");
+        fence.Saves.Should().Be(ConcurrencyRetry.MaxAttempts, "before its last save, and no save followed");
+        refused.Conflicts.Should().Equal(
+            Enumerable.Repeat("Account", ConcurrencyRetry.MaxAttempts),
+            "and unless every conflict names the account alone: only then does the last one reach the read of the record");
+
+        answer.Status.Should().Be(
+            HttpStatusCode.InternalServerError,
+            $"a key that another request holds is not to be sent again as if the account were busy; the body was: {answer.Body}");
+        answer.RetryAfter.Should().BeNull("nothing invites the caller to send it again");
+        var body = JsonSerializer.Deserialize<JsonElement>(answer.Body);
+        body.TryGetProperty("retryAfterSeconds", out _).Should().BeFalse();
+        body.TryGetProperty("applied", out _).Should().BeFalse("a request without its claim knows nothing about the key");
+        balance.Should().Be(start);
+        ledger.Should().BeEmpty();
+        auditRows.Should().Be(0);
+        claims.Should().Equal(
+            [(IdempotencyStatus.Processing, fence.TakenBy)],
+            "the other request's record stays as it was: the release leaves a claim that is not its own");
+    }
+
+    /// <summary>
+    /// A deposit whose attempt commits, loses the commit's acknowledgement, and is run again
+    /// because the check for its audit row missed it: the second run loses the account to the
+    /// deposit's own commit. That is not a busy account, since the deposit is made. On the last
+    /// attempt no save follows, and the request's commit mark is what refuses the busy answer (the
+    /// record, <c>Executed</c> by then, would refuse it too); on an earlier one the next attempt's
+    /// save meets the record's fence.
+    /// </summary>
+    [SqlServerTheory]
+    [InlineData(ConcurrencyRetry.MaxAttempts, "Account")]
+    [InlineData(1, "IdempotencyRecord")]
+    public async Task ADepositWhoseAttemptLanded_AndWhoseSaveRanAgain_IsNotAnsweredBusy(
+        int landingOn, string lastConflictNames)
+    {
+        const decimal amount = 40m;
+
+        var race = new LostRowVersionRaceInterceptor(SqlServerFactAttribute.ConnectionString!);
+        var lostAnswer = new LostCommitAnswerInterceptor("INSERT INTO [Transactions]");
+        var missedCheck = new MissedCommitCheckInterceptor();
+        var refused = new RefusedEntriesInterceptor();
+        var client = CreateSqlClient(factory =>
+        {
+            factory.EnableSqlRetryOnFailure();
+            factory.AddInterceptor(race);
+            factory.AddInterceptor(lostAnswer);
+            factory.AddInterceptor(missedCheck);
+            factory.AddInterceptor(refused);
+            factory.CaptureLog();
+        });
+        var (token, accountId) = await RegisterAsync(client);
+        var start = await GetBalanceAsync(client, token, accountId);
+        var key = Guid.NewGuid();
+
+        // Every attempt before the one named loses the account. That one commits, its
+        // acknowledgement is lost, the save's check is told no audit row is there, and the save is
+        // sent again.
+        race.Arm(accountId, saves: landingOn - 1);
+        missedCheck.Arm();
+        var answer = await SendDepositAsync(client, token, accountId, amount, "Landed deposit", key);
+        race.Disarm();
+
+        var balance = await GetBalanceAsync(client, token, accountId);
+        var ledger = await ReadDepositsAsync(client, token, accountId);
+        var auditRows = await CountDepositAuditRowsAsync(accountId);
+        var records = await ReadIdempotencyRecordsAsync(key);
+
+        _output.WriteLine(
+            $"commit on attempt {landingOn}: account lost on {race.Fired} saves before it; "
+            + $"acknowledgement lost: {lostAnswer.Fired}; check answered no: {missedCheck.Fired}; "
+            + $"the conflicts name: [{string.Join(", ", refused.Conflicts)}]; "
+            + $"{(int)answer.Status}, Retry-After {answer.RetryAfter?.ToString() ?? "none"}, body {answer.Body}; "
+            + $"balance {start} -> {balance}, ledger rows {ledger.Length}, audit rows {auditRows}, "
+            + $"idempotency records [{string.Join(",", records)}]");
+        foreach (var line in _factory!.CapturedLog)
+        {
+            _output.WriteLine("  log " + line[..Math.Min(300, line.Length)]);
+        }
+
+        race.Fired.Should().Be(landingOn - 1, "the proof is void unless the commit is the named attempt's");
+        lostAnswer.Fired.Should().BeTrue("and unless its acknowledgement was lost");
+        missedCheck.Fired.Should().BeTrue("and unless the save was run again");
+        refused.Conflicts.ElementAt(landingOn - 1).Should().Be(
+            "Account", "the second run of the save that landed is refused by the deposit's own commit, and names the account");
+        refused.Conflicts.Last().Should().Be(
+            lastConflictNames,
+            "on the last attempt that conflict is the last; before it, one more save follows and meets the record's fence");
+
+        balance.Should().Be(start + amount, "the deposit is made");
+        ledger.Should().Equal(("Landed deposit", amount));
+        auditRows.Should().Be(1);
+        records.Should().Equal([IdempotencyStatus.Executed], "the record rode the commit that landed, and is kept");
+
+        answer.Status.Should().Be(
+            HttpStatusCode.InternalServerError,
+            $"a deposit that is made is not to be sent again as if the account were busy; the body was: {answer.Body}");
+        answer.RetryAfter.Should().BeNull("nothing invites the caller to send it again");
+        var body = JsonSerializer.Deserialize<JsonElement>(answer.Body);
+        body.TryGetProperty("retryAfterSeconds", out _).Should().BeFalse();
+        body.TryGetProperty("applied", out _).Should().BeFalse();
     }
 
     [SqlServerFact]
@@ -217,10 +571,121 @@ public sealed class BalanceConcurrencySqlServerTests : IDisposable
         return result!.Data.Count(t => t.Type == TransactionType.Withdrawal);
     }
 
-    private HttpClient CreateSqlClient()
+    /// <summary>One deposit's answer, with what the request asked for.</summary>
+    private sealed record DepositAnswer(
+        Guid Key, decimal Amount, string Description, HttpStatusCode Status, TimeSpan? RetryAfter, bool NoStore,
+        bool Replayed, string Body)
+    {
+        /// <summary>True when the body carries <c>applied</c> and it is <c>false</c>.</summary>
+        public bool AppliedIsFalse =>
+            JsonSerializer.Deserialize<JsonElement>(Body) is { ValueKind: JsonValueKind.Object } body
+            && body.TryGetProperty("applied", out var applied)
+            && applied.ValueKind == JsonValueKind.False;
+    }
+
+    private static async Task<DepositAnswer> SendDepositAsync(
+        HttpClient client, string token, Guid accountId, decimal amount, string description, Guid key)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/transactions/deposit")
+        {
+            Content = JsonContent.Create(new DepositRequest
+            {
+                AccountId = accountId,
+                Amount = amount,
+                Description = description
+            }, options: Json)
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Add(IdempotencyConstants.HeaderName, key.ToString());
+        using var response = await client.SendAsync(request);
+        return new DepositAnswer(
+            key,
+            amount,
+            description,
+            response.StatusCode,
+            response.Headers.RetryAfter?.Delta,
+            response.Headers.CacheControl?.NoStore == true,
+            response.Headers.Contains(IdempotencyConstants.ReplayedHeaderName),
+            await response.Content.ReadAsStringAsync());
+    }
+
+    /// <summary>
+    /// The answer of a deposit whose account stayed busy: 503 <c>SERVICE_UNAVAILABLE</c>, never
+    /// cached, a wait of one second in the body and in the <c>Retry-After</c> header, and
+    /// <c>applied: false</c> with the sentence that says nothing was changed.
+    /// </summary>
+    private static void AssertBusy503(DepositAnswer answer)
+    {
+        answer.Status.Should().Be(
+            HttpStatusCode.ServiceUnavailable,
+            $"a deposit that was not made is answered the 503 a client can retry; the body was: {answer.Body}");
+        answer.NoStore.Should().BeTrue("a 503 describes a moment and must not be cached");
+
+        var body = JsonSerializer.Deserialize<JsonElement>(answer.Body);
+        body.GetProperty("status").GetInt32().Should().Be(503);
+        body.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.ServiceUnavailable);
+        body.GetProperty("retryAfterSeconds").GetInt32().Should().Be(
+            1, "a busy account names its own wait, not the ten seconds of an outage");
+        answer.RetryAfter.Should().Be(
+            TimeSpan.FromSeconds(1), "the Retry-After header carries the wait the body names");
+        answer.AppliedIsFalse.Should().BeTrue($"nothing was written, and the answer says so; the body was: {answer.Body}");
+        body.GetProperty("detail").GetString().Should().Be(ServiceUnavailableExceptionHandler.BusyNothingAppliedDetail);
+    }
+
+    /// <summary>The account's deposits as the ledger holds them: description and amount.</summary>
+    private static async Task<(string Description, decimal Amount)[]> ReadDepositsAsync(
+        HttpClient client, string token, Guid accountId)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get, $"/api/transactions?accountId={accountId}&pageSize=100");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var response = await client.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<PaginatedResponse<TransactionResponse>>(Json);
+        return result!.Data
+            .Where(t => t.Type == TransactionType.Deposit)
+            .Select(t => (t.Description!, t.Amount))
+            .ToArray();
+    }
+
+    /// <summary>How many deposits the audit trail records for the user who holds the account.</summary>
+    private async Task<int> CountDepositAuditRowsAsync(Guid accountId)
+    {
+        using var scope = _factory!.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        var userId = (await db.Accounts.AsNoTracking().SingleAsync(a => a.Id == accountId)).UserId;
+        return await db.AuditEvents.AsNoTracking()
+            .CountAsync(e => e.Event == SecurityEvents.MoneyDeposited && e.ActorUserId == userId);
+    }
+
+    /// <summary>The status of every idempotency record under the key, read in a scope of its own.</summary>
+    private async Task<List<IdempotencyStatus>> ReadIdempotencyRecordsAsync(Guid key)
+    {
+        using var scope = _factory!.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        return await db.IdempotencyRecords.AsNoTracking()
+            .Where(r => r.Key == key)
+            .Select(r => r.Status)
+            .ToListAsync();
+    }
+
+    /// <summary>Every idempotency record under the key: its status and the claim that holds it.</summary>
+    private async Task<List<(IdempotencyStatus Status, Guid ClaimId)>> ReadIdempotencyClaimsAsync(Guid key)
+    {
+        using var scope = _factory!.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        return (await db.IdempotencyRecords.AsNoTracking()
+            .Where(r => r.Key == key)
+            .Select(r => new { r.Status, r.ClaimId })
+            .ToListAsync())
+            .ConvertAll(r => (r.Status, r.ClaimId));
+    }
+
+    private HttpClient CreateSqlClient(Action<CustomWebApplicationFactory>? configure = null)
     {
         _factory = new CustomWebApplicationFactory();
         _factory.SetConnectionString(SqlServerFactAttribute.ConnectionString!);
+        configure?.Invoke(_factory);
         return _factory.CreateClient();
     }
 
