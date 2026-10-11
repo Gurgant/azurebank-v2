@@ -45,7 +45,8 @@ locally, try running Node.js with --use-system-ca`, which is the other way out, 
 keeps verification on.
 
 `--reporter-junit results.xml` writes the report into `tests/api-collection/`, and `.gitignore`
-covers that name there and no other: keep a report under another name out of a commit.
+covers that name there. A report under another name may not be covered: `git check-ignore`
+says whether it is.
 
 The desktop app is `choco install bruno` on Windows, `brew install bruno` on macOS, or a download
 from https://www.usebruno.com/downloads. In it: **Open Collection**, choose `tests/api-collection/`,

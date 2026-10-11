@@ -69,8 +69,8 @@ AzuriteConfig
 schemathesis-report/
 test-results.xml
 
-# Bruno writes its JUnit report where --reporter-junit says: the collection README's command into
-# the collection, the Contract tests workflow's into the repository root.
+# Bruno writes its JUnit report where --reporter-junit says: `results.xml`, run from the
+# collection, lands in the collection; the Contract tests workflow's path lands in the root.
 tests/api-collection/results.xml
 /bruno-results.xml
 

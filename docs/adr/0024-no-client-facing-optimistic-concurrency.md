@@ -27,7 +27,8 @@ builds a feature that was researched and rejected.
    is rejected.
 3. **Concurrency is resolved server-side**, through `Account.RowVersion` and `ConcurrencyRetry`:
    a deposit, a withdrawal, a transfer, a rename, a change of primary and a closure each retry a
-   save that lost its row. It is never delegated to clients through conditional requests.
+   save refused because the row's version had moved. It is never delegated to clients through
+   conditional requests.
 4. **Non-money resources are last-write-wins by design.** Account rename, set-primary and delete
    carry no version token and no 412 handling. It is recorded so that the absence reads as a choice,
    not as an omission to fix.
