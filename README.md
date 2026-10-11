@@ -25,8 +25,9 @@ when it was asleep.
 Accounts, deposits, withdrawals and transfers. Both halves are real and wired to each other.
 
 The interesting part is not the CRUD. It is everything that has to be true **because it moves
-money**: an operation that executes exactly once across retries, crashes and concurrent duplicates;
-a browser that never sees the JWT; a second factor that survives a replayed request byte for byte.
+money**: an operation that executes at most once per key across retries, crashes and concurrent
+duplicates; a browser that never sees the JWT; a second factor that survives a replayed request
+byte for byte.
 
 Designed and built by me, Vladislav Aleshaev, alone.
 
