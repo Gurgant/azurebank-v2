@@ -12,14 +12,17 @@ using Microsoft.Extensions.Time.Testing;
 namespace AzureBank.Tests.Unit.Services;
 
 /// <summary>
-/// What a write past its attempts must be able to show before it answers a busy account
-/// (<see cref="ConcurrencyRetry.ClaimIsOwnAndNothingCommittedAsync"/>): the record under its key is
-/// still its own claim and still <c>Processing</c>, and the request has let no commit start.
+/// What a write past its attempts must be able to show before it answers a busy account. A write
+/// that holds an idempotency key (<see cref="ConcurrencyRetry.ClaimIsOwnAndNothingCommittedAsync"/>):
+/// the record under its key is still its own claim and still <c>Processing</c>, and the request
+/// has let no commit start. A write that holds none (<see cref="ConcurrencyRetry.NoCommitWasLetStart"/>):
+/// the request has let no commit start.
 /// </summary>
 /// <remarks>
-/// One case per test the method makes. Where the record is what differs, another context changed
-/// it, as another request would. <c>BalanceConcurrencySqlServerTests</c> makes two of them on SQL
-/// Server through the API: a claim taken over, and a commit that landed.
+/// One case per test each method makes. Where the record is what differs, another context changed
+/// it, as another request would. <c>BalanceConcurrencySqlServerTests</c> and
+/// <c>BusyMoneyWriteSqlServerTests</c> make two of them on SQL Server through the API: a claim
+/// taken over, and a commit that landed.
 /// </remarks>
 public sealed class ConcurrencyRetryBusyAnswerTests : IDisposable
 {
@@ -109,6 +112,40 @@ public sealed class ConcurrencyRetryBusyAnswerTests : IDisposable
     public async Task AWriteThatHoldsNoRecord_IsNotABusyAccount()
     {
         (await AskAsync()).Should().BeFalse("no claim shows that the same key can be sent again");
+    }
+
+    [Fact]
+    public void AWriteWithNoKey_ThatLetNoCommitStart_MayBeAnsweredBusy()
+    {
+        ConcurrencyRetry.NoCommitWasLetStart(_context).Should().BeTrue(
+            "the mark is the proof of a write that holds no claim, and no record is asked for");
+    }
+
+    [Fact]
+    public void AWriteWithNoKey_ThatLetACommitStart_IsNotABusyAccount()
+    {
+        _deadline.TryEnterCommit().Should().BeTrue();
+        _deadline.CommitFailed();
+
+        ConcurrencyRetry.NoCommitWasLetStart(_context).Should().BeFalse(
+            "a commit that started may have landed, also when it failed");
+    }
+
+    [Fact]
+    public void AWriteWithNoKey_ThatLetACommitLand_IsNotABusyAccount()
+    {
+        _deadline.TryEnterCommit().Should().BeTrue();
+        _deadline.Committed();
+
+        ConcurrencyRetry.NoCommitWasLetStart(_context).Should().BeFalse();
+    }
+
+    [Fact]
+    public void AWriteWithNoKey_AndNoDeadline_IsNotABusyAccount()
+    {
+        _request.ServiceProvider.GetRequiredService<RequestDeadlineScope>().Deadline = null;
+
+        ConcurrencyRetry.NoCommitWasLetStart(_context).Should().BeFalse("nothing says whether a commit started");
     }
 
     private Task<bool> AskAsync() =>

@@ -156,11 +156,13 @@ public sealed class ClientAbortedExceptionHandler : IExceptionHandler
 /// </para>
 /// <para>
 /// A BUSY ACCOUNT IS ANSWERED HERE TOO, and it is not an outage: an <see cref="AccountBusyException"/>
-/// is a write that lost its account's row to other writes on every attempt, which only a
-/// deposit raises. Same code and same shape, with a wait of its own
-/// (<see cref="AccountBusyException.RetryAfterSeconds"/>) and a sentence of its own. It comes here,
-/// and not to the domain handler, so that <c>applied</c> is decided by the one rule below. Any other
-/// concurrency conflict stays a 500: the bare exception names no cause a caller can act on.
+/// is a write that lost an account's row to other writes on every attempt. A deposit, a withdrawal,
+/// both transfers, a closure and a change of the primary account raise it. Same code and same
+/// shape, with a wait of its own (<see cref="AccountBusyException.RetryAfterSeconds"/>) and a
+/// sentence of its own. It comes here, and not to the domain handler, so that <c>applied</c> is
+/// decided by the one rule below: the four keyed money writes can say it, and a closure or a change
+/// of the primary account, which holds no claim, says nothing of it. Any other concurrency conflict
+/// stays a 500: the bare exception names no cause a caller can act on.
 /// LOGGED AT INFORMATION, where an outage is a Warning: nothing is wrong with the service, and the
 /// write that raised it has already written its own Warning, which names the account.
 /// </para>

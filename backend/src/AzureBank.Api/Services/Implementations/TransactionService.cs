@@ -133,8 +133,7 @@ public class TransactionService : ITransactionService
                   the key, or flipped by this request's own commit, when it landed, its
                   acknowledgement was lost and the save ran again. Neither is a busy account. So
                   the record is read, and the request's deadline is asked whether a commit was let
-                  start; without both proofs the conflict propagates as it does for every other
-                  write.
+                  start; without both proofs the conflict propagates.
 
                   THE ACCOUNT IS READ ONCE MORE, AFTER THE RECORD. The write that won the last
                   attempt may be a closure, and a closed account is not a busy one: it answers the
@@ -326,8 +325,8 @@ public class TransactionService : ITransactionService
           execution strategy re-runs the delegate on a TRANSIENT fault; the loop around it re-runs
           the attempt when the account's RowVersion refuses a stale write -- a deposit that landed
           between the guard and the save, or a second withdrawal presenting this same authorisation
-          that committed first. Bounded by ConcurrencyRetry.MaxAttempts, jittered between attempts,
-          and the last failure propagates.
+          that committed first. Bounded by ConcurrencyRetry.MaxAttempts and jittered between
+          attempts; past the last, the account is busy or the conflict propagates (below).
         */
         for (var attempt = 1; ; attempt++)
         {
@@ -460,6 +459,38 @@ public class TransactionService : ITransactionService
                     "Concurrency conflict on withdrawal from account {AccountId} (attempt {Attempt}); retrying",
                     account.Id, attempt);
                 await ConcurrencyRetry.PrepareNextAttemptAsync(_context, [account], cancellationToken);
+            }
+            catch (DbUpdateConcurrencyException ex) when (ConcurrencyRetry.IsAccountRace(ex))
+            {
+                /*
+                  THE LAST ATTEMPT LOST THE ACCOUNT TOO, and the answer is the deposit's, by the
+                  deposit's rule (DepositAsync says why each step is there): the busy 503 only when
+                  the record, read now, is still this request's own claim with no commit let start;
+                  then the account once more, since the write that won may be a closure, which is
+                  the 404 of every other attempt.
+
+                  HERE, WHERE THE LOOP GIVES UP, and not inside the delegate: the conflict has left
+                  the execution strategy, the attempt's transaction is rolled back, and nothing
+                  runs the delegate again.
+
+                  THE AUTHORISATION IS STILL PENDING. It is spent inside the transaction, after the
+                  save, and every save of this request lost: the consume was never sent. So the
+                  same request, with the same key and the same authorisation, is made when it comes
+                  back within the authorisation's life. BusyMoneyWriteSqlServerTests holds it.
+                */
+                if (!await ConcurrencyRetry.ClaimIsOwnAndNothingCommittedAsync(_context, cancellationToken))
+                {
+                    throw;
+                }
+
+                await ConcurrencyRetry.ResetToStoreAsync(_context, [account], cancellationToken);
+                ConcurrencyRetry.RefuseIfClosed(_context, account);
+
+                _logger.LogWarning(
+                    "Withdrawal from account {AccountId} lost the account to another write on attempt "
+                        + "{Attempt}, its last; answering 503",
+                    account.Id, attempt);
+                throw new AccountBusyException(ex);
             }
             catch (DbUpdateException ex) when (ConcurrencyRetry.IsTransactionNumberCollision(ex, attempt))
             {

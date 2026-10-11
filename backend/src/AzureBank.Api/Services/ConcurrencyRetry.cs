@@ -28,9 +28,12 @@ internal static class ConcurrencyRetry
     /// EIGHT, AND NOT MORE, BY MEASUREMENT (ADR-0058): of 24 parallel deposits to one account on
     /// SQL Server, 11 to 15 spend their attempts at 8 and 8 to 10 at 12. Half as many attempts
     /// again does not halve them, and each attempt is a turn at the audit chain's lock, which
-    /// every audited write of every user waits on. A deposit that spends its attempts answers
-    /// <see cref="AccountBusyException"/> when <see cref="ClaimIsOwnAndNothingCommittedAsync"/>
-    /// allows; every other write lets its last conflict propagate.
+    /// every audited write of every user waits on. A write that spends its attempts answers
+    /// <see cref="AccountBusyException"/> when the store shows that nothing of the request was
+    /// written: a deposit, a withdrawal and both transfers ask
+    /// <see cref="ClaimIsOwnAndNothingCommittedAsync"/>, and a closure and a change of the primary
+    /// account, which hold no idempotency key, ask <see cref="NoCommitWasLetStart"/>. A rename lets
+    /// its last conflict propagate.
     /// </remarks>
     public const int MaxAttempts = 8;
 
@@ -41,20 +44,48 @@ internal static class ConcurrencyRetry
     /// run again nor be told to send it again.
     /// </summary>
     /// <remarks>
-    /// WHAT THE CONFLICT NAMES IS NOT ALL THE SAVE LOST. A deposit's save that loses its account's
-    /// row and its idempotency record's together names the Account alone, on SQL Server
-    /// (<c>BalanceConcurrencySqlServerTests</c> prints it). So this is enough to try again, since
-    /// the next attempt's save meets the record's fence, and it is not enough to answer a busy
-    /// account, which no save follows: <see cref="ClaimIsOwnAndNothingCommittedAsync"/> reads the
-    /// record for that.
+    /// WHAT THE CONFLICT NAMES IS NOT ALL THE SAVE LOST. A money write's save that loses an
+    /// account's row and its idempotency record's together names the Account alone, on SQL Server
+    /// (<c>BalanceConcurrencySqlServerTests</c> prints it for a deposit,
+    /// <c>BusyMoneyWriteSqlServerTests</c> for a withdrawal and both transfers). So this is enough
+    /// to try again, since the next attempt's save meets the record's fence, and it is not enough
+    /// to answer a busy account, which no save follows:
+    /// <see cref="ClaimIsOwnAndNothingCommittedAsync"/> reads the record for that.
     /// </remarks>
     public static bool IsAccountRace(DbUpdateConcurrencyException ex) =>
         ex.Entries.Count > 0 && ex.Entries.All(e => e.Entity is Account);
 
     /// <summary>
-    /// What a write past its attempts asks before it answers a busy account: true when the store
-    /// shows that the request's idempotency claim is still its own and still <c>Processing</c>, and
-    /// the request has let no commit start.
+    /// What a write that holds no idempotency key asks, past its attempts, before it answers a
+    /// busy account: true when the request has let no commit start.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// THE MARK IS THE WHOLE PROOF, so it is one only for a write whose every save lands at a
+    /// commit the gate marks before it starts (<c>CommitGateInterceptor</c>). A closure and a
+    /// change of the primary account save inside one transaction of their own, and each save that
+    /// lost was rolled back with it: no mark, nothing of the request in the store.
+    /// <c>BusyAccountWriteSqlServerTests</c> holds, for each of the two, that no save lands any
+    /// other way.
+    /// </para>
+    /// <para>
+    /// NOT FOR A RENAME. Its save is one statement, which commits by itself, outside any
+    /// transaction, and passes no gate: a rename that is made leaves the mark unset, which the
+    /// same proofs hold. So a rename does not ask this, and its last conflict propagates.
+    /// </para>
+    /// <para>
+    /// As for an outage's <c>applied</c>, no deadline is no answer: without one the request cannot
+    /// tell whether a commit started.
+    /// </para>
+    /// </remarks>
+    public static bool NoCommitWasLetStart(AzureBankDbContext context) =>
+        CommitGateInterceptor.DeadlineOf(context) is { CommitEntered: false };
+
+    /// <summary>
+    /// What a write that holds an idempotency key asks, past its attempts, before it answers a
+    /// busy account: true when the store shows that the request's idempotency claim is still its
+    /// own and still <c>Processing</c>, and the request has let no commit start
+    /// (<see cref="NoCommitWasLetStart"/>).
     /// </summary>
     /// <remarks>
     /// <para>
@@ -69,14 +100,21 @@ internal static class ConcurrencyRetry
     /// </para>
     /// <para>
     /// THE CLAIM IT COMPARES WITH is the record's tracked original <c>ClaimId</c>, the value the
-    /// store held when the request claimed the key: <c>MarkExecutedPending</c> rotates only the
-    /// current one, and no save after the claim's own has been accepted.
+    /// store held when the request last read the record: at its claim for a deposit, and at the
+    /// top of its last attempt for a withdrawal or a transfer, whose every attempt reloads the
+    /// record (<see cref="PrepareIdempotentAttemptAsync"/>). <c>MarkExecutedPending</c> and that
+    /// preparation rotate only the current one, and no save after the read has been accepted. A
+    /// record taken over before that reload, by a request with the same bytes, is the one the
+    /// attempt read and armed again, and is compared as the request's own (ADR-0058, residual
+    /// risk 8).
     /// </para>
     /// <para>
     /// A COMMIT THAT WAS LET START may have landed or may still land, whatever the record says at
-    /// this instant, so the request's deadline is asked too: the mark is the one the 503's
+    /// this instant, so the request's deadline is asked first: the mark is the one the 503's
     /// <c>applied</c> is decided on (<c>ServiceUnavailableExceptionHandler.NothingApplied</c>), and
-    /// as there, no deadline is no answer.
+    /// as there, no deadline is no answer. Every commit of a money write passes the gate: a
+    /// deposit's audited save opens a transaction of its own, and a withdrawal and a transfer open
+    /// theirs.
     /// </para>
     /// <para>
     /// NO RECORD IS NO PROOF. Every money write the API serves holds a claim
@@ -94,7 +132,7 @@ internal static class ConcurrencyRetry
     public static async Task<bool> ClaimIsOwnAndNothingCommittedAsync(
         AzureBankDbContext context, CancellationToken cancellationToken)
     {
-        if (CommitGateInterceptor.DeadlineOf(context) is not { CommitEntered: false })
+        if (!NoCommitWasLetStart(context))
         {
             return false;
         }

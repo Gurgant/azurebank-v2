@@ -20,9 +20,9 @@ using Xunit.Abstractions;
 namespace AzureBank.Tests.Integration;
 
 /// <summary>
-/// What the proofs about a money write on an account closed meanwhile share: the users and
-/// accounts they set up through the API, the out-of-band closure, and one reading of the answer
-/// and of the database, written to the test output before anything is asserted.
+/// What the proofs about a write on an account closed meanwhile, or busy on every attempt, share:
+/// the users and accounts they set up through the API, the out-of-band closure, and one reading of
+/// the answer and of the database, written to the test output before anything is asserted.
 /// </summary>
 /// <remarks>
 /// The audit chain is verified over the whole shared database, not over a proof's own rows: a
@@ -127,6 +127,44 @@ public abstract class ClosedAccountSqlServerProofs(ITestOutputHelper output) : I
     }
 
     /// <summary>
+    /// The answer of a write whose account stayed busy: 503 <c>SERVICE_UNAVAILABLE</c>, never
+    /// cached, a wait of one second in the body and in the <c>Retry-After</c> header. A write that
+    /// holds an idempotency key also says <c>applied: false</c>, with the sentence that says
+    /// nothing was changed; a write that holds none says nothing of <c>applied</c>.
+    /// </summary>
+    internal static void ShouldBeTheBusy503(HttpResponseMessage response, string body, bool saysNothingWasApplied)
+    {
+        response.StatusCode.Should().Be(
+            HttpStatusCode.ServiceUnavailable,
+            $"a write that was not made is answered the 503 a client can retry; the body was: {body}");
+        response.Headers.CacheControl?.NoStore.Should().BeTrue("a 503 describes a moment and must not be cached");
+        response.Headers.RetryAfter?.Delta.Should().Be(
+            TimeSpan.FromSeconds(1), "the Retry-After header carries the wait the body names");
+
+        var problem = JsonSerializer.Deserialize<JsonElement>(body);
+        problem.GetProperty("status").GetInt32().Should().Be(503);
+        problem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.ServiceUnavailable);
+        problem.GetProperty("retryAfterSeconds").GetInt32().Should().Be(
+            1, "a busy account names its own wait, not the ten seconds of an outage");
+
+        if (saysNothingWasApplied)
+        {
+            problem.TryGetProperty("applied", out var applied).Should().BeTrue(
+                $"nothing was written, and the answer says so; the body was: {body}");
+            applied.ValueKind.Should().Be(JsonValueKind.False);
+            problem.GetProperty("detail").GetString().Should().Be(
+                AzureBank.Api.Handlers.ServiceUnavailableExceptionHandler.BusyNothingAppliedDetail);
+        }
+        else
+        {
+            problem.TryGetProperty("applied", out _).Should().BeFalse(
+                $"a write with no idempotency claim has nothing to say applied on; the body was: {body}");
+            problem.GetProperty("detail").GetString().Should().Be(
+                AzureBank.Api.Handlers.ServiceUnavailableExceptionHandler.BusyDetail);
+        }
+    }
+
+    /// <summary>
     /// Reads the answer and then the database, in a scope of its own so nothing comes from a
     /// tracker, and writes both to the test output before anything is asserted.
     /// </summary>
@@ -216,6 +254,18 @@ public abstract class ClosedAccountSqlServerProofs(ITestOutputHelper output) : I
 
         return _factory.CreateClient();
     }
+
+    /// <summary>A host on the test database, set up by the proof before it starts.</summary>
+    protected HttpClient CreateSqlClient(Action<CustomWebApplicationFactory> configure)
+    {
+        _factory = new CustomWebApplicationFactory();
+        _factory.SetConnectionString(SqlServerFactAttribute.ConnectionString!);
+        configure(_factory);
+        return _factory.CreateClient();
+    }
+
+    /// <summary>The host the proof runs on, for what a proof reads from it: its services and its log.</summary>
+    protected CustomWebApplicationFactory Host => _factory!;
 
     /// <summary>One more interceptor on every context the host builds from now on.</summary>
     protected void AddInterceptor(Microsoft.EntityFrameworkCore.Diagnostics.IInterceptor interceptor) =>
@@ -319,7 +369,7 @@ public abstract class ClosedAccountSqlServerProofs(ITestOutputHelper output) : I
         MintAsync(client, user, "/api/transactions/withdraw/authorizations",
             new WithdrawalAuthorizationRequest { AccountId = accountId, Amount = amount, Pin = Pin });
 
-    private static async Task<Guid> MintAsync<T>(HttpClient client, TestUser user, string url, T payload)
+    protected static async Task<Guid> MintAsync<T>(HttpClient client, TestUser user, string url, T payload)
     {
         var response = await SendAsync(client, user, HttpMethod.Post, url, payload);
         response.EnsureSuccessStatusCode();
@@ -359,7 +409,7 @@ public abstract class ClosedAccountSqlServerProofs(ITestOutputHelper output) : I
             Description = "closed account proof"
         }, authorizationId, idempotencyKey);
 
-    private static async Task<HttpResponseMessage> SendAsync<T>(
+    protected static async Task<HttpResponseMessage> SendAsync<T>(
         HttpClient client, TestUser user, HttpMethod method, string url, T payload,
         Guid? authorizationId = null, Guid? idempotencyKey = null)
     {

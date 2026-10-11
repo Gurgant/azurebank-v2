@@ -749,6 +749,46 @@ public class TransferService : ITransferService
                 await ConcurrencyRetry.PrepareNextAttemptAsync(
                     _context, [fromAccount, recipientAccount], cancellationToken);
             }
+            catch (DbUpdateConcurrencyException ex) when (ConcurrencyRetry.IsAccountRace(ex))
+            {
+                /*
+                  THE LAST ATTEMPT LOST AN ACCOUNT TOO, the sender's or the payee's: the save
+                  carries both rows. The answer is the deposit's, by the deposit's rule
+                  (TransactionService.DepositAsync says why each step is there): the busy 503 only
+                  when the record, read now, is still this request's own claim with no commit let
+                  start.
+
+                  HERE, WHERE THE LOOP GIVES UP, and not inside the delegate: the conflict has left
+                  the execution strategy, the attempt's transaction is rolled back with the daily
+                  limit's lock it held, and nothing runs the delegate again.
+
+                  THEN THE ACCOUNTS ONCE MORE, with the look every other attempt takes. The
+                  sender's account closed or gone is the 404. The payee's account closed or gone
+                  is chosen again: with another account of the payee open the transfer is busy,
+                  since the same request sent again pays that one, and with none open it is the
+                  422 of a payee with no account.
+
+                  THE AUTHORISATION IS STILL PENDING. It is spent inside the transaction, after
+                  both saves, and an attempt whose save lost never reaches it: the consume was
+                  never sent. BusyMoneyWriteSqlServerTests holds it, with the day's ceiling
+                  untouched.
+                */
+                if (!await ConcurrencyRetry.ClaimIsOwnAndNothingCommittedAsync(_context, cancellationToken))
+                {
+                    throw;
+                }
+
+                await ConcurrencyRetry.ResetToStoreAsync(
+                    _context, [fromAccount, recipientAccount], cancellationToken);
+                await RefuseOrChooseThePayeeAccountAgainAsync(
+                    fromAccount, recipient, recipientAccount, cancellationToken);
+
+                _logger.LogWarning(
+                    "Transfer from account {AccountId} lost the account to another write on attempt "
+                        + "{Attempt}, its last; answering 503",
+                    fromAccount.Id, attempt);
+                throw new AccountBusyException(ex);
+            }
             catch (DbUpdateException ex) when (ConcurrencyRetry.IsTransactionNumberCollision(ex, attempt))
             {
                 // A regenerable clash on the transaction number: the next attempt mints a fresh
@@ -991,6 +1031,25 @@ public class TransferService : ITransferService
                     fromAccount.Id, attempt);
                 await ConcurrencyRetry.PrepareNextAttemptAsync(
                     _context, [fromAccount, toAccount], cancellationToken);
+            }
+            catch (DbUpdateConcurrencyException ex) when (ConcurrencyRetry.IsAccountRace(ex))
+            {
+                // The last attempt lost an account too: the external transfer's answer at the same
+                // place, by the same rule. Both accounts are the caller's own, so one that closed
+                // or went as the last attempt lost is the 404 of every other attempt.
+                if (!await ConcurrencyRetry.ClaimIsOwnAndNothingCommittedAsync(_context, cancellationToken))
+                {
+                    throw;
+                }
+
+                await ConcurrencyRetry.ResetToStoreAsync(_context, [fromAccount, toAccount], cancellationToken);
+                ConcurrencyRetry.RefuseIfClosed(_context, fromAccount, toAccount);
+
+                _logger.LogWarning(
+                    "Internal transfer from account {AccountId} lost the account to another write on "
+                        + "attempt {Attempt}, its last; answering 503",
+                    fromAccount.Id, attempt);
+                throw new AccountBusyException(ex);
             }
             catch (DbUpdateException ex) when (ConcurrencyRetry.IsTransactionNumberCollision(ex, attempt))
             {

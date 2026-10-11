@@ -118,6 +118,7 @@ public class TransactionController : ControllerBase
     /// <returns>Transaction details and new balance</returns>
     [HttpPost("deposit")]
     [RequireIdempotency]
+    [AnswersBusyAccount]
     [EndpointRequestSizeLimit(32_768)] // routing caps hash/buffer work before idempotency reads (ADR-0009)
     [ProducesResponseType(typeof(ApiResponse<DepositResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
@@ -205,6 +206,7 @@ public class TransactionController : ControllerBase
     */
     [HttpPost("withdraw")]
     [RequireIdempotency]
+    [AnswersBusyAccount]
     [RequireStepUpAuthorization]
     [EndpointRequestSizeLimit(32_768)] // routing caps hash/buffer work before idempotency reads (ADR-0009)
     [ProducesResponseType(typeof(ApiResponse<WithdrawResponse>), StatusCodes.Status201Created)]

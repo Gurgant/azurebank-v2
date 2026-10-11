@@ -129,6 +129,7 @@ public class TransferController : ControllerBase
     /// <returns>Transfer result with new balance</returns>
     [HttpPost]
     [RequireIdempotency]
+    [AnswersBusyAccount]
     [RequireStepUpAuthorization]
     [EndpointRequestSizeLimit(32_768)] // routing caps hash/buffer work before idempotency reads (ADR-0009)
     [ProducesResponseType(typeof(ApiResponse<TransferResponse>), StatusCodes.Status201Created)]
@@ -169,6 +170,7 @@ public class TransferController : ControllerBase
     /// <returns>Transfer result with both account balances</returns>
     [HttpPost("internal")]
     [RequireIdempotency]
+    [AnswersBusyAccount]
     [RequireStepUpAuthorization]
     [EndpointRequestSizeLimit(32_768)] // routing caps hash/buffer work before idempotency reads (ADR-0009)
     [ProducesResponseType(typeof(ApiResponse<InternalTransferResponse>), StatusCodes.Status201Created)]

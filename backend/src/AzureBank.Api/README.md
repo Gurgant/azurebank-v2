@@ -200,12 +200,15 @@ Every error is a ProblemDetails body that carries a `traceId`.
   `Pragma: no-cache` and `Expires: -1`). On the four money endpoints it adds `applied: false`
   when the request is known to have changed nothing. Revoke answers 503 when its database write
   fails: send it again after `retryAfterSeconds`.
-- **A busy account** is the same 503 from the same handler, with `retryAfterSeconds` 1: a deposit
-  that lost its account's row to another write on each of its 8 attempts
-  (`AccountBusyException`), and whose idempotency record still shows its own claim with nothing
-  committed. It wrote nothing, and `applied: false` says so under the rule of an outage. A
-  deposit whose claim was taken over, or whose commit landed, answers 500 there, as every other
-  account write past its attempts does.
+- **A busy account** is the same 503 from the same handler, with `retryAfterSeconds` 1: a write
+  that lost an account's row to another write on each of its 8 attempts
+  (`AccountBusyException`) and wrote nothing. A deposit, a withdrawal and both transfers answer
+  it when their idempotency record still shows their own claim with nothing committed, and
+  `applied: false` says so under the rule of an outage; with the claim taken over they answer
+  500. A closure and a change of the primary account hold no key: they answer it when the
+  request let no commit start, and say nothing of `applied`. A step-up authorisation is unspent
+  after it. A rename past its attempts answers 500, and an account that closed meanwhile is the
+  404 or 422 it is on every other attempt.
 - **A client that hung up** gets no body at all.
 - **Anything else unexpected** is the 500, with no `errorCode`.
 
