@@ -23,21 +23,21 @@ a change takes from a plan to the live demo, and what stands between an agent an
 
 | Number | What it counts |
 |--:|---|
-| **[261](https://github.com/Gurgant/azurebank-v2/pulls?q=is%3Apr+is%3Amerged)** | pull requests merged: each one by me, each one through the automated tests |
+| **[268](https://github.com/Gurgant/azurebank-v2/pulls?q=is%3Apr+is%3Amerged)** | pull requests merged: each one by me, each one through the automated tests |
 | **[9](https://github.com/Gurgant/azurebank-v2/rules/18930321)** | checks now required before `main` takes a pull request, plus a security scan |
-| **[2,874](https://github.com/Gurgant/azurebank-v2/actions/runs/38123051492/job/114421569889)** | backend tests that run with no database |
-| **[379](https://github.com/Gurgant/azurebank-v2/actions/runs/38123051492/job/114421569588)** | backend proofs on a real SQL Server, in a job of their own |
-| **[1,412](https://github.com/Gurgant/azurebank-v2/actions/runs/38123051492/job/114421569856)** | frontend tests |
-| **[89](https://github.com/Gurgant/azurebank-v2/actions/runs/38123051492/job/114421569814)** | browser tests on the real stack |
+| **[2,889](https://github.com/Gurgant/azurebank-v2/actions/runs/38179782267/job/114589695348)** | backend tests that run with no database |
+| **[428](https://github.com/Gurgant/azurebank-v2/actions/runs/38179782267/job/114589695223)** | backend proofs on a real SQL Server, in a job of their own |
+| **[1,415](https://github.com/Gurgant/azurebank-v2/actions/runs/38179782267/job/114589695448)** | frontend tests |
+| **[89](https://github.com/Gurgant/azurebank-v2/actions/runs/38179782267/job/114589695443)** | browser tests on the real stack |
 | **[64](adr/README.md)** | decisions written down as architecture decision records |
 | **4** | agents coordinated: one orchestrator and three working in parallel |
 | **0** | merges made by an agent |
 
 Counted on 11 October 2026. The four test numbers are those of one CI run on `main`,
-[run 38123051492](https://github.com/Gurgant/azurebank-v2/actions/runs/38123051492), each linked to its job: three are shown on the job's page, the
-count of the SQL Server proofs is in that job's log. The other linked numbers lead to where they
-can be counted again. The two without a link, 4 and 0, are my own statement: on GitHub every
-merge shows one account, mine.
+[run 38179782267](https://github.com/Gurgant/azurebank-v2/actions/runs/38179782267), each linked to
+its job, whose page shows it; the other linked numbers lead to where they can be counted again.
+The two without a link, 4 and 0, are my own statement: on GitHub every merge shows one account,
+mine.
 
 ## The path of a change
 
