@@ -23,8 +23,8 @@ compile time, must be open to a debugger, and must need little configuration.
 
 ## Rejected
 
-- Rejected: AutoMapper, because it maps by reflection at runtime (about 3 to 5 times slower than
-  hand-written code in the benchmarks of [Mapperly's documentation](https://mapperly.riok.app/)),
+- Rejected: AutoMapper, because it maps by reflection at runtime (slower than hand-written code
+  and than Mapperly in the benchmarks of [Mapperly's documentation](https://mapperly.riok.app/)),
   its conventions are harder to refactor, a configuration mistake shows only at runtime, its
   profiles add configuration, and it is not compatible with Native AOT.
 - Rejected: Mapster's runtime mapping (`Adapt`), because it is about 1.7 times slower than Mapperly

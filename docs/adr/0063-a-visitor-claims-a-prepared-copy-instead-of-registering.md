@@ -90,8 +90,6 @@ gives an audit row back, so what one visitor, one address and one copy can write
 - The API is reached over a network: the claim's caps are worth nothing until that is answered.
 - An endpoint that writes on a safe method is added: it carries `[CountedAsDemoWrite]`.
 
-<a id="what-the-browser-keeps-in-demo-mode-added-2026-10-05"></a>
-
 ## What the browser keeps in demo mode
 
 1. **One key, one shape**: `localStorage["azurebank.demoCopy"]` holds `{ v: 1, email, password,

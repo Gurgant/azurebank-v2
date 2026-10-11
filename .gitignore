@@ -69,6 +69,11 @@ AzuriteConfig
 schemathesis-report/
 test-results.xml
 
+# Bruno writes its JUnit report where --reporter-junit says: the collection README's command into
+# the collection, the Contract tests workflow's into the repository root.
+tests/api-collection/results.xml
+/bruno-results.xml
+
 # The documentation site: the copy of the pages it is built from, and its build cache.
 docs-site/src/
 docs-site/.vitepress/cache/
