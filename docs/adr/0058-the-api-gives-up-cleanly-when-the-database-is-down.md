@@ -1,7 +1,7 @@
 # ADR-0058: The API gives up cleanly when the database is down
 
 **Status:** Accepted · **Date:** 2026-09-29 · **Amended:** 2026-10-01 (ADR-0059, ADR-0060),
-2026-10-05 (ADR-0064) · **Decision Makers:** Vladislav Aleshaev
+2026-10-05 (ADR-0064), 2026-10-11 (D6, D7) · **Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
@@ -38,11 +38,16 @@ back. A token cannot interrupt a commit, so a late cancel can lose the answer to
   for a fired deadline, EF's spent retries, a pool-wait or bare timeout, and a `SqlException` EF
   calls transient, or numbered −2, 35, 11001, 18401, 17197 or 17142, or of class 20 or more.
   Anything else stays a 500; a gone client is answered 499 with no body. A deadline that cuts EF
-  short leaves the SQL numbers in EF's retry Warnings for the same request.
+  short leaves the SQL numbers in EF's retry Warnings for the same request. **A busy account is
+  the same 503, and not an outage**: a deposit that lost its account's row to another write on each
+  of its 8 attempts wrote nothing and names a wait of 1 s, because a 500 tells a client to stop.
+  A closed account answers 404 there and a claim that was taken over 500; any other account
+  write past its attempts stays a 500.
 - **D7: `applied: false` only when the answer knows it**: on a money 503, for a request that owns
   the idempotency claim it made, has let no commit start and is younger than `ProcessingStaleAfter`
-  less 10 s, because money moves only in a gated commit. **A client never drops the key on
-  `applied: false`**, because one told so wrongly would pay again under a new key.
+  less 10 s, because money moves only in a gated commit. A busy account is under this rule and has
+  none of its own. **A client never drops the key on `applied: false`**, because one told so
+  wrongly would pay again under a new key.
 - **D8: The idempotency bookkeeping has budgets of its own**: 3 s each to store an answer and to
   release a claim, because each writes one row. An empty 2xx is never stored: it is a lost answer.
 - **D9: A stuck claim is stale after 2 minutes, not 10** (ADR-0009), because a claim whose release
@@ -62,7 +67,8 @@ back. A token cannot interrupt a commit, so a late cancel can lose the answer to
 | EF retries, back-off cap | 4, 10 s | 12.1 s of waiting, and 32.1 s on Azure's throttling numbers, 40613 (a failover's error) among them: a reconfiguration [generally finishes within 30 seconds](https://learn.microsoft.com/en-us/azure/azure-sql/database/planned-maintenance). The budget ADR-0021, ADR-0034 and ADR-0036 quote |
 | Request deadline | 40 s | Above the 35 s at which a hung command answers −2 (30 s, plus up to 5 s for SQL Server to acknowledge the cancel). 40 + 5 + 3 (the claim's release) + 5 = 53 < 55: every answer before a commit, `applied: false` included, reaches the visitor from the API. At 45 the sum is 58. `ProcessingStaleAfter` is at least a minute above it, checked at start |
 | Max pool size | API 12, seeder 5 | 2 × 12 + 5 = 29 of the [30 logins of the Basic tier](https://learn.microsoft.com/en-us/azure/azure-sql/database/resource-limits-dtu-single-databases): two API processes while a revision replaces one, and one job at 5 (precondition 1). A second steady replica makes it 41 |
-| `retryAfterSeconds`, `Retry-After` | 10 | EF's cap: a client that comes back after it meets a database EF would have tried again by then. For machines: a visitor is told no time |
+| `retryAfterSeconds`, `Retry-After` | 10; 1 for a busy account | EF's cap: a client that comes back after it meets a database EF would have tried again by then. A busy account names the shortest wait the header can say: the writes it lost to are short. For machines: a visitor is told no time |
+| A write's attempts on its account | 8 | `ConcurrencyRetry.MaxAttempts`, shared by every account write. 24 parallel deposits to one account, five runs each on 2026-10-11: 11 to 14 answered busy at 8, and 8 to 10 at 12. Half as many attempts again does not halve them, and each attempt is a turn at the audit chain's lock |
 | BFF client and proxy timeout | 55 s | `BackendApi:TimeoutSeconds`, above the 53 (the wait ADR-0039 and ADR-0057 §8 quote). A proxied request takes 5 + 55 = 60 s at worst, since the session's renewal can spend 5 s first, under the [240 s of Azure Container Apps' ingress](https://learn.microsoft.com/en-us/azure/container-apps/ingress-overview) |
 | The BFF's shorter waits | 30, 5 and 3 s | The renewal (30 s), revoke, the session-stamp poll and `/me`'s read-through (5 s each) and the health probe (3 s) stay as ADR-0057 and ADR-0039 set them: none writes anything a late answer could lose |
 
@@ -113,7 +119,8 @@ back. A token cannot interrupt a commit, so a late cancel can lose the answer to
 
 `TimeoutChainTests`, `CancellationFlowTests`, `CommitGateInterceptorTests`, `BackendTimeoutTests`,
 `ServiceUnavailableExceptionHandlerTests`, `DatabaseUnavailableSqlServerTests`,
-`RequestDeadlineSqlServerTests`, `DepositCommitFaultSqlServerTests`, `ConnectionDefaultsTests`.
+`RequestDeadlineSqlServerTests`, `DepositCommitFaultSqlServerTests`, `ConnectionDefaultsTests`,
+`BalanceConcurrencySqlServerTests`, `ConcurrencyRetryAccountRaceTests`.
 
 ## Related
 

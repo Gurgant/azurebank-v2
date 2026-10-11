@@ -119,6 +119,33 @@ public class TransactionService : ITransactionService
                 await ConcurrencyRetry.PrepareNextAttemptAsync(_context, [account], cancellationToken);
                 continue;
             }
+            catch (DbUpdateConcurrencyException ex) when (ConcurrencyRetry.IsAccountRace(ex))
+            {
+                /*
+                  THE LAST ATTEMPT LOST THE ACCOUNT TOO, AND NOTHING IS WRITTEN: each attempt's save
+                  was refused on the account's RowVersion and rolled back whole, the ledger row, the
+                  audit row and the idempotency record's flip together. The deposit only has to be
+                  sent again, so the answer is the 503 a client retries, where the conflict left to
+                  propagate is a 500. IdempotencyMiddleware releases the claim on the way out, and
+                  the same key executes when it comes back.
+
+                  THE ACCOUNT IS READ ONCE MORE FIRST. The write that won the last attempt may be a
+                  closure, and a closed account is not a busy one: it answers the 404 it answers
+                  after any other attempt, not an invitation to send the deposit again.
+
+                  NO LOCK AND NO QUEUE PER ACCOUNT. The database lets one write to an account
+                  through at a time, and this loop is the wait for a turn. It is bounded, and what
+                  does not fit in it goes back to the caller with a time to come back.
+                */
+                await ConcurrencyRetry.ResetToStoreAsync(_context, [account], cancellationToken);
+                ConcurrencyRetry.RefuseIfClosed(_context, account);
+
+                _logger.LogWarning(
+                    "Deposit to account {AccountId} lost the account to another write on attempt "
+                        + "{Attempt}, its last; answering 503",
+                    account.Id, attempt);
+                throw new AccountBusyException(ex);
+            }
             catch (DbUpdateException ex) when (ConcurrencyRetry.IsTransactionNumberCollision(ex, attempt))
             {
                 // A regenerable clash on the transaction number: the next attempt mints a fresh

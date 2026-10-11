@@ -18,17 +18,35 @@ namespace AzureBank.Api.Services;
 /// </summary>
 internal static class ConcurrencyRetry
 {
+    /// <summary>
+    /// How many times one request tries a write that can lose a race for an account, shared by
+    /// every account write. Writes to one account take turns and each turn has one winner, so a
+    /// burst of parallel writes gets about one through per attempt while the rest spend theirs.
+    /// </summary>
+    /// <remarks>
+    /// EIGHT, AND NOT MORE, BY MEASUREMENT (ADR-0058): of 24 parallel deposits to one account on
+    /// SQL Server, 11 to 14 spend their attempts at 8 and 8 to 10 at 12. Half as many attempts
+    /// again does not halve them, and each attempt is a turn at the audit chain's lock, which
+    /// every audited write of every user waits on. A deposit that spends its attempts answers
+    /// <see cref="AccountBusyException"/>; every other write lets its last conflict propagate.
+    /// </remarks>
     public const int MaxAttempts = 8;
 
     /// <summary>
-    /// Retries only genuine Account RowVersion races. A conflict involving
-    /// an IdempotencyRecord means our claim was fenced out (a stale-claim
-    /// takeover happened): retrying would DOUBLE-EXECUTE — always rethrow.
+    /// True for a genuine Account RowVersion race: the save refused at least one entry, and every
+    /// entry it refused is an Account. A conflict that involves an IdempotencyRecord is not one:
+    /// the claim was fenced out (a stale-claim takeover happened), so the request may neither run
+    /// again nor be told to send it again.
+    /// </summary>
+    public static bool IsAccountRace(DbUpdateConcurrencyException ex) =>
+        ex.Entries.Count > 0 && ex.Entries.All(e => e.Entity is Account);
+
+    /// <summary>
+    /// Retries only genuine Account RowVersion races (<see cref="IsAccountRace"/>): retrying a
+    /// fenced-out claim would DOUBLE-EXECUTE — always rethrow.
     /// </summary>
     public static bool ShouldRetry(DbUpdateConcurrencyException ex, int attempt) =>
-        attempt < MaxAttempts
-        && ex.Entries.Count > 0
-        && ex.Entries.All(e => e.Entity is Account);
+        attempt < MaxAttempts && IsAccountRace(ex);
 
     /// <summary>
     /// SQL Server unique-violation numbers: 2627 = PRIMARY KEY / UNIQUE

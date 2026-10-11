@@ -200,6 +200,10 @@ Every error is a ProblemDetails body that carries a `traceId`.
   `Pragma: no-cache` and `Expires: -1`). On the four money endpoints it adds `applied: false`
   when the request is known to have changed nothing. Revoke answers 503 when its database write
   fails: send it again after `retryAfterSeconds`.
+- **A busy account** is the same 503 from the same handler, with `retryAfterSeconds` 1: a deposit
+  that lost its account's row to another write on each of its 8 attempts
+  (`AccountBusyException`). Nothing is written, and `applied: false` says so under the rule of
+  an outage. Every other account write still answers 500 there.
 - **A client that hung up** gets no body at all.
 - **Anything else unexpected** is the 500, with no `errorCode`.
 

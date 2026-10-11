@@ -213,6 +213,53 @@ public class ServiceUnavailableExceptionHandlerTests
     }
 
     [Fact]
+    public void ABusyAccount_IsAnswered503_AndTheConflictItWrapsIsNot()
+    {
+        var conflict = new DbUpdateConcurrencyException("stale");
+
+        ServiceUnavailableExceptionHandler.ReasonFor(new AccountBusyException(conflict), firedByDeadline: false)
+            .Should().Be(ServiceUnavailableExceptionHandler.AccountBusy);
+        ServiceUnavailableExceptionHandler.ReasonFor(conflict, firedByDeadline: false)
+            .Should().BeNull("a conflict nobody called a busy account names no cause a caller can act on");
+    }
+
+    [Fact]
+    public async Task ABusyAccount_NamesItsOwnWait_AndSaysNothingWasApplied_UnderTheRuleOfAnOutage()
+    {
+        var context = NewContext();
+        using var deadline = Deadline(context, moneyEndpoint: true, ownsClaim: true, commitStarted: false);
+
+        (await Handler().TryHandleAsync(context, Busy(), CancellationToken.None)).Should().BeTrue();
+
+        context.Response.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
+        context.Response.Headers.RetryAfter.ToString().Should().Be("1");
+        context.Response.Headers.CacheControl.ToString().Should().Be("no-store");
+        var body = Body(context);
+        body.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.ServiceUnavailable);
+        body.GetProperty("retryAfterSeconds").GetInt32().Should().Be(AccountBusyException.RetryAfterSeconds);
+        body.GetProperty("applied").GetBoolean().Should().BeFalse();
+        body.GetProperty("detail").GetString().Should().Be(ServiceUnavailableExceptionHandler.BusyNothingAppliedDetail);
+    }
+
+    [Theory]
+    [InlineData(false, true, false)] // not a money endpoint
+    [InlineData(true, false, false)] // no claim of its own
+    [InlineData(true, true, true)] // a commit started
+    public async Task ABusyAccount_SaysNothingAboutWhatWasApplied_WhereAnOutageWouldNot(
+        bool moneyEndpoint, bool ownsClaim, bool commitStarted)
+    {
+        var context = NewContext();
+        using var deadline = Deadline(context, moneyEndpoint, ownsClaim, commitStarted);
+
+        (await Handler().TryHandleAsync(context, Busy(), CancellationToken.None)).Should().BeTrue();
+
+        var body = Body(context);
+        body.TryGetProperty("applied", out _).Should().BeFalse("a busy account has no rule of its own for applied");
+        body.GetProperty("detail").GetString().Should().Be(ServiceUnavailableExceptionHandler.BusyDetail);
+        body.GetProperty("retryAfterSeconds").GetInt32().Should().Be(AccountBusyException.RetryAfterSeconds);
+    }
+
+    [Fact]
     public async Task ADefect_IsLeftToTheGlobalHandler()
     {
         var context = NewContext();
@@ -376,6 +423,8 @@ public class ServiceUnavailableExceptionHandlerTests
         (await ClientAborted(new RecordingLoggerProvider())
             .TryHandleAsync(context, Sql(4060, 11), CancellationToken.None)).Should().BeFalse();
     }
+
+    private static AccountBusyException Busy() => new(new DbUpdateConcurrencyException("stale"));
 
     private static ServiceUnavailableExceptionHandler Handler() =>
         new(
