@@ -157,8 +157,8 @@ public sealed class RequestLogRouteTests : IDisposable
 /// an unknown recipient handle on the transfer mint.
 /// </summary>
 /// <remarks>
-/// Confirmed by two independent refuters on 2026-09-14: of the ten <c>NotFoundException</c> sites,
-/// only <c>TransferService</c>'s recipient lookup interpolates a client string, and
+/// Confirmed by two independent refuters on 2026-09-14: of the ten sites that throw a 404, only
+/// <c>TransferService</c>'s recipient lookup interpolates a client string, and
 /// <c>AppExceptionHandler</c> logged that message as <c>{Message}</c> with the exception attached —
 /// "Recipient with identifier 'nobody_here_at_all' was not found." in every sink. The handler logs
 /// the code and the type now. The response is the control: the value was in play, and the client
@@ -203,7 +203,7 @@ public sealed class DomainRefusalLogTests : IntegrationTestBase, IDisposable
         var events = Factory.CapturedEvents.ToList();
         var handled = events.Single(e =>
             e.MessageTemplate.Text.StartsWith("Domain exception: {ErrorCode}", StringComparison.Ordinal));
-        handled.Properties["ErrorCode"].Should().Be(new ScalarValue(ErrorCodes.AccountNotFound));
+        handled.Properties["ErrorCode"].Should().Be(new ScalarValue(ErrorCodes.RecipientNotFound));
         handled.Properties.Should().NotContainKey("Message");
         handled.Exception.Should().BeNull();
         foreach (var e in events)

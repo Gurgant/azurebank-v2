@@ -343,9 +343,103 @@ public class TransferEndpointTests : IntegrationTestBase
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
 
         var problem = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
-        problem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.AccountNotFound);
+        problem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.RecipientNotFound);
         problem.GetProperty("detail").GetString()
             .Should().Be($"Recipient with identifier '{unknownHandle}' was not found.");
+    }
+
+    /*
+      THE TWO 404s OF AN EXTERNAL TRANSFER, each on the mint and on the transfer. Both endpoints
+      look for the payer's source account first and for the payee second, and each of the two
+      answers under a code of its own, so a client can say which is missing without reading the
+      sentence.
+
+      OBSERVED on this host, the same movement sent to both endpoints:
+        an open account of the caller, handle "nobody_here_at_all"
+          -> 404 "Not Found", errorCode RECIPIENT_NOT_FOUND,
+             detail "Recipient with identifier 'nobody_here_at_all' was not found."
+        an account id nobody holds, a handle a user holds
+          -> 404 "Not Found", errorCode ACCOUNT_NOT_FOUND,
+             detail "Account with identifier '<the id>' was not found."
+        an account id nobody holds, handle "nobody_here_at_all"
+          -> the same ACCOUNT_NOT_FOUND: the account is looked for first.
+    */
+
+    private const string MintUrl = "/api/transfers/authorizations";
+    private const string TransferUrl = "/api/transfers";
+
+    /// <summary>The same movement sent to the mint and to the transfer, each with its answer.</summary>
+    private async Task<List<(string Endpoint, HttpResponseMessage Response)>> MintAndSendAsync(
+        Guid fromAccountId, string recipientAzureTag)
+    {
+        var minted = await Client.PostAsJsonAsync(
+            MintUrl,
+            new TransferAuthorizationRequest
+            {
+                FromAccountId = fromAccountId,
+                RecipientAzureTag = recipientAzureTag,
+                Amount = 100m,
+                Pin = TestPin
+            },
+            JsonOptions);
+        var sent = await PostMonetaryAsync(
+            TransferUrl,
+            new TransferRequest
+            {
+                FromAccountId = fromAccountId,
+                RecipientAzureTag = recipientAzureTag,
+                Amount = 100m
+            },
+            stepUpAuthorizationId: PresentedAuthorization());
+
+        return [(MintUrl, minted), (TransferUrl, sent)];
+    }
+
+    [Fact]
+    public async Task AMissingRecipient_AnswersRecipientNotFound_OnTheMintAndOnTheTransfer()
+    {
+        var (token, _, accountId) = await RegisterTestUserAsync();
+        await SetPinAsync(token);
+        await DepositAsync(token, accountId, 1000m);
+        SetAuthHeader(token);
+
+        const string unknownHandle = "nobody_here_at_all";
+        foreach (var (endpoint, response) in await MintAndSendAsync(accountId, unknownHandle))
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.NotFound, endpoint);
+
+            var problem = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+            problem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.RecipientNotFound, endpoint);
+            problem.GetProperty("title").GetString().Should().Be("Not Found", endpoint);
+            problem.GetProperty("status").GetInt32().Should().Be(404, endpoint);
+            problem.GetProperty("detail").GetString()
+                .Should().Be($"Recipient with identifier '{unknownHandle}' was not found.", endpoint);
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheCallersMissingAccount_AnswersAccountNotFound_OnTheMintAndOnTheTransfer(
+        bool theRecipientExists)
+    {
+        var (token, _, _) = await RegisterTestUserAsync();
+        await SetPinAsync(token);
+        var recipient = theRecipientExists
+            ? (await RegisterRecipientAsync()).AzureTag
+            : "nobody_here_at_all";
+        SetAuthHeader(token);
+
+        var missingAccount = Guid.NewGuid();
+        foreach (var (endpoint, response) in await MintAndSendAsync(missingAccount, recipient))
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.NotFound, endpoint);
+
+            var problem = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+            problem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.AccountNotFound, endpoint);
+            problem.GetProperty("detail").GetString()
+                .Should().Be($"Account with identifier '{missingAccount}' was not found.", endpoint);
+        }
     }
 
     #endregion

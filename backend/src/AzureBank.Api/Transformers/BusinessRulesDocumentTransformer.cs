@@ -27,6 +27,11 @@ namespace AzureBank.Api.Transformers;
 /// IDEMPOTENCY_KEY_REUSE clause, so ONE table names the rules.
 /// </para>
 ///
+/// <para>
+/// It also names the two codes of the 404 an external transfer and its mint answer
+/// (<see cref="NotFoundEndpoints"/>).
+/// </para>
+///
 /// Reference: project-docs/30-business-rule-validation-implementation-plan.md
 /// </summary>
 public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransformer
@@ -42,7 +47,7 @@ public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransform
         // The three money moves name their codes rather than examples, each one measured on the
         // real API on 2026-09-11. Two of the examples they replaced could not happen: the same
         // account on both sides is refused by the validator as a 400 before the service is
-        // reached, and an unknown recipient is a 404 (ACCOUNT_NOT_FOUND), never this 422.
+        // reached, and an unknown recipient is a 404 (RECIPIENT_NOT_FOUND), never this 422.
         ["POST /api/transfers/internal"] =
             "Business Rule Violation - the source account cannot cover the amount (errorCode INSUFFICIENT_FUNDS).",
         ["POST /api/transfers"] =
@@ -88,6 +93,32 @@ public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransform
             "Business Rule Violation - the proof this change needs is missing: the password when enrolling a PIN (errorCode PASSWORD_REQUIRED), or the current PIN when changing one (errorCode PIN_REQUIRED).",
         ["GET /api/transactions/summary"] =
             "Business Rule Violation - The resolved date window is invalid, e.g. a lone future FromDate against the defaulted ToDate (errorCode: INVALID_DATE_RANGE)."
+    };
+
+    /// <summary>
+    /// The 404 of an external transfer and of its mint, which answers two codes.
+    /// </summary>
+    /// <remarks>
+    /// Two things these operations resolve can be missing: the payer's source account
+    /// (<c>AccountAccessService</c>, first) and the payee
+    /// (<c>TransferService.ResolveExternalPayeeAsync</c>). Each answers 404 under its own code, and
+    /// a client chooses what to say from the code, so the document names both. The actions declare
+    /// the 404 by attribute, which publishes the bare reason phrase: this sentence takes the place
+    /// of that phrase and of nothing else.
+    /// </remarks>
+    private const string ExternalTransferNotFound =
+        "Not Found - the source account does not exist or is not visible to the caller (errorCode "
+        + ErrorCodes.AccountNotFound
+        + "), or no user the caller can pay holds the recipient's handle (errorCode "
+        + ErrorCodes.RecipientNotFound + ").";
+
+    /// <summary>
+    /// The operations whose 404 names its codes. Format: "METHOD /path" → 404 description.
+    /// </summary>
+    private static readonly Dictionary<string, string> NotFoundEndpoints = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["POST /api/transfers"] = ExternalTransferNotFound,
+        ["POST /api/transfers/authorizations"] = ExternalTransferNotFound,
     };
 
     /// <summary>
@@ -164,6 +195,12 @@ public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransform
                 if (RefusalsWithMembers.TryGetValue(operationKey, out var codes))
                 {
                     DeclareRefusalMembers(operation, codes);
+                }
+
+                if (NotFoundEndpoints.TryGetValue(operationKey, out var notFound))
+                {
+                    ProblemDetailsResponses.Declare(
+                        operation.Responses ??= new OpenApiResponses(), "404", "Not Found", notFound);
                 }
             }
         }

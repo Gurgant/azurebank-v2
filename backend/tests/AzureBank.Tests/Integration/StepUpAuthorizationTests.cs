@@ -199,9 +199,11 @@ public class StepUpAuthorizationTests : IntegrationTestBase
 
         var response = await MintAsync(account, "nobody_at_all", Amount, CorrectPin);
 
-        // OBSERVED: 404 NotFound. An authorisation must never name a payee the transfer would
-        // then refuse — that is why the mint resolves the recipient instead of trusting the handle.
+        // OBSERVED: 404 NotFound / errorCode RECIPIENT_NOT_FOUND. An authorisation must never name
+        // a payee the transfer would then refuse — that is why the mint resolves the recipient
+        // instead of trusting the handle.
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        (await ErrorCodeOf(response)).Should().Be(ErrorCodes.RecipientNotFound);
     }
 
     // ─────────────────────────────────────────────────────────────────────────

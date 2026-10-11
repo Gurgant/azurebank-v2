@@ -26,7 +26,7 @@ public interface ITransferService
 
     /// <summary>
     /// Transfers money to another user's primary account.
-    /// Throws NotFoundException if recipient doesn't exist.
+    /// Throws RecipientNotFoundException if recipient doesn't exist.
     /// Throws BusinessRuleException if transferring to self.
     /// Throws InsufficientFundsException if balance is insufficient.
     /// </summary>

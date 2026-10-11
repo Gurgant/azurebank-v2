@@ -150,18 +150,16 @@ describe('contract: step-up authorisations', () => {
     expect(problem.resetsAt).toMatch(/^\d{4}-\d{2}-\d{2}T00:00:00(\.0+)?Z$/);
   });
 
-  it('answers an unknown payee with ACCOUNT_NOT_FOUND, not a code of its own', async () => {
+  it('answers an unknown payee with RECIPIENT_NOT_FOUND, a code of its own', async () => {
     /*
-      Worth pinning because the obvious guess is wrong twice over: the exception is
-      `NotFoundException("Recipient", tag)`, but that constructor emits `ACCOUNT_NOT_FOUND` for
-      every resource — so the RESOURCE in the sentence and the CODE on the wire disagree, and the
-      client keys off the code.
+      Worth pinning because the mint answers 404 for two different things, and the client keys off
+      the code: the caller's own source account (ACCOUNT_NOT_FOUND, the next test) and the payee.
+      `TransferPage` says "That recipient could not be found. Please re-check the handle." for this
+      one, which is untrue of the other.
 
-      It matters beyond tidiness: `TransferPage` already maps ACCOUNT_NOT_FOUND to "That recipient
-      could not be found. Please re-check the handle.", so a dedicated code would have needed new
-      copy for a case that already had some.
-
-      Observed: 404 detail "Recipient with identifier 'nosuchuser' was not found."
+      Observed through the API's test host, the same request with another handle:
+        404 errorCode RECIPIENT_NOT_FOUND,
+            detail "Recipient with identifier 'nobody_here_at_all' was not found."
     */
     const id = await firstAccountId();
 
@@ -176,7 +174,8 @@ describe('contract: step-up authorisations', () => {
     });
 
     expect(status).toBe(404);
-    expect(asProblem(body).errorCode).toBe('ACCOUNT_NOT_FOUND');
+    expect(asProblem(body).errorCode).toBe('RECIPIENT_NOT_FOUND');
+    expect(asProblem(body).detail).toBe("Recipient with identifier 'nosuchuser' was not found.");
   });
 
   it('checks the source account before the PIN, so a probe costs no attempt', async () => {
@@ -267,7 +266,8 @@ describe('contract: step-up authorisations', () => {
       — answers 404, not 401. The mock validated first and turned that into "your confirmation can
       no longer be used", which is both untrue and unactionable for someone who simply mistyped.
 
-      Measured on the real stack, exactly this request: 404 ACCOUNT_NOT_FOUND.
+      Observed through the API's test host, this request with another handle: 404
+      RECIPIENT_NOT_FOUND.
     */
     const id = await firstAccountId();
 
@@ -285,7 +285,7 @@ describe('contract: step-up authorisations', () => {
     });
 
     expect(status).toBe(404);
-    expect(asProblem(body).errorCode).toBe('ACCOUNT_NOT_FOUND');
+    expect(asProblem(body).errorCode).toBe('RECIPIENT_NOT_FOUND');
   });
 
   it('refuses a transfer that presents NO authorisation, and names why', async () => {

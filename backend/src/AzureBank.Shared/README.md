@@ -41,6 +41,7 @@ the body, so is every entry of `Details`, and a `retryAfterSeconds` detail is al
 | `AuthorizationException` | 403 | `ACCESS_DENIED` |
 | `RegistrationClosedException` | 403 | `REGISTRATION_CLOSED` |
 | `NotFoundException` | 404 | `ACCOUNT_NOT_FOUND`, whatever the resource: the frontend mirrors it, and `NotFoundExceptionTests` pins it |
+| `RecipientNotFoundException` | 404 | `RECIPIENT_NOT_FOUND`: no user the payer can pay holds the handle an external transfer names |
 | `ConflictException` | 409 | `CONFLICT`, or the one passed |
 | `IdempotencyException` | 400, 409, 413 or 422 | One of the `IDEMPOTENCY_*` codes (ADR-0009) |
 | `PayloadTooLargeException` | 413 | `PAYLOAD_TOO_LARGE` |

@@ -871,23 +871,41 @@ function rejectBadAccountName(name: unknown, requiredMessage: string): string[] 
  *
  *  - The message is `"{resource} with identifier '{id}' was not found."` — the resource name leads.
  *    Three handlers had invented "No account was found with identifier '…'." instead.
- *  - The code is `ErrorCodes.AccountNotFound` — **for every resource**, Account, User, Transaction
- *    and Recipient alike. The two-argument constructor hard-codes it and never looks at
+ *  - The code is `ErrorCodes.AccountNotFound` — **for every resource**, Account, User and
+ *    Transaction alike. The two-argument constructor hard-codes it and never looks at
  *    `TransactionNotFound` or `UserNotFound`, which exist but are unreachable from this path. Five
  *    handlers had guessed a plausible `NOT_FOUND` that the API cannot emit.
  *
  * Mirroring the quirk is the point. A mock that "corrects" the server teaches a client to expect a
  * code it will never receive, and the bug then belongs to production rather than to this file.
+ *
+ * A missing recipient is not one of these: see `recipientNotFound` below.
  */
-function notFound(
-  resource: 'Account' | 'Transaction' | 'Recipient',
-  identifier: unknown,
-  request: Request,
-) {
+function notFound(resource: 'Account' | 'Transaction', identifier: unknown, request: Request) {
   return problem({
     status: 404,
     errorCode: 'ACCOUNT_NOT_FOUND',
     detail: `${resource} with identifier '${String(identifier)}' was not found.`,
+    instance: pathOf(request),
+  });
+}
+
+/**
+ * The 404 of an external transfer, and of its mint, to a handle no user holds — the API's
+ * `RecipientNotFoundException`. The sentence has the form of every other 404; the code is its own,
+ * so a client tells a missing recipient from the caller's own missing account by the code.
+ *
+ * MEASURED through the API's test host, the same on `POST /api/transfers/authorizations` and on
+ * `POST /api/transfers`, handle "nobody_here_at_all":
+ *   404 {"title":"Not Found","status":404,
+ *        "detail":"Recipient with identifier 'nobody_here_at_all' was not found.",
+ *        "errorCode":"RECIPIENT_NOT_FOUND"}
+ */
+function recipientNotFound(azureTag: unknown, request: Request) {
+  return problem({
+    status: 404,
+    errorCode: 'RECIPIENT_NOT_FOUND',
+    detail: `Recipient with identifier '${String(azureTag)}' was not found.`,
     instance: pathOf(request),
   });
 }
@@ -2309,7 +2327,7 @@ function checkPinInBand(
 
   Two off-by-ones the mock must NOT invent, both measured:
     - the lock lands ON the third wrong PIN, not after it (checkPinInBand already does this);
-    - an unknown recipient is ACCOUNT_NOT_FOUND, not a dedicated recipient code.
+    - an unknown recipient is RECIPIENT_NOT_FOUND, a code of its own (`recipientNotFound`).
 
   No Idempotency-Key on any of the three mints (the two transfer ones here and the account
   closure's, ADR-0049), deliberately (apiSlice.ts): minting moves no money, so there is nothing to
@@ -2776,8 +2794,8 @@ const authoriseTransfer = api.post(
       (r) => r.azureTag.toLowerCase() === body.recipientAzureTag?.toLowerCase(),
     );
     if (!recipient) {
-      // MEASURED: 404 / ACCOUNT_NOT_FOUND — the real code, not a dedicated recipient one.
-      return response.untyped(notFound('Recipient', body.recipientAzureTag, request));
+      // MEASURED: 404 / RECIPIENT_NOT_FOUND.
+      return response.untyped(recipientNotFound(body.recipientAzureTag, request));
     }
 
     /*
@@ -3164,8 +3182,8 @@ const authoriseAccountDeletion = api.post(
  * The level-2 step-up gate that used to open this handler is GONE (ADR-0041): the BFF no longer
  * answers 403 for a transfer; the PIN is presented to the mint and the transfer carries the
  * authorisation it produced. Failure order mirrors the real path: idempotency →
- * AUTHORIZATION_REQUIRED → SELF_TRANSFER_NOT_ALLOWED → recipient not found (ACCOUNT_NOT_FOUND, the
- * real code) → INSUFFICIENT_FUNDS → success (debit sender, push a TransferOut row; the recipient
+ * AUTHORIZATION_REQUIRED → SELF_TRANSFER_NOT_ALLOWED → recipient not found (RECIPIENT_NOT_FOUND)
+ * → INSUFFICIENT_FUNDS → success (debit sender, push a TransferOut row; the recipient
  * is off-ledger). A missing fromAccount is tolerated (debit only if found).
  */
 const transfer = api.post('/api/transfers', async ({ request, response }) => {
@@ -3323,9 +3341,8 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   }
   const recipient = mockState.recipients.find((r) => r.azureTag === tag);
   if (!recipient) {
-    // `TransferService` throws NotFoundException("Recipient", tag) here — hence the resource name
-    // and the ACCOUNT_NOT_FOUND code, which that constructor uses for every resource.
-    return response.untyped(notFound('Recipient', tag, request));
+    // `TransferService` throws RecipientNotFoundException(tag) here.
+    return response.untyped(recipientNotFound(tag, request));
   }
 
   /*
@@ -3333,7 +3350,7 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
 
     POSITION IS THE CONTRACT, and it is not where the first draft put it. `TransferAsync` runs
     ownership → PIN → `ResolveExternalPayeeAsync` → `ValidateAsync` → funds, so the payee is
-    resolved BEFORE the authorisation is examined: an unknown handle answers 404 ACCOUNT_NOT_FOUND
+    resolved BEFORE the authorisation is examined: an unknown handle answers 404 RECIPIENT_NOT_FOUND
     even when the presented authorisation is also wrong. The mock validated first, which turned that
     404 into a 401 — a client debugging a typo'd handle would have been told its confirmation was
     invalid. Still after the PIN and before any money moves: a refusal costs nothing and moves

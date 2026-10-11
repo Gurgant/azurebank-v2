@@ -172,7 +172,7 @@ public class PublishedRefusalCodesTests
         /*
           Measured 2026-09-11, one real request each:
             internal transfer, the same account on both sides   -> 400, a validation error
-            external transfer to an unknown tag                 -> 404 ACCOUNT_NOT_FOUND
+            external transfer to an unknown tag                 -> 404 RECIPIENT_NOT_FOUND
             external transfer to yourself                       -> 422 SELF_TRANSFER_NOT_ALLOWED
             external transfer, recipient's accounts soft-deleted -> 422 RECIPIENT_NO_ACCOUNT
             withdrawal by a user with no PIN enrolled           -> 422 PIN_REQUIRED
@@ -201,7 +201,7 @@ public class PublishedRefusalCodesTests
         }
 
         transfer.Should().NotContainEquivalentOf(
-            "not found", $"an unknown recipient is a 404, {ErrorCodes.AccountNotFound}");
+            "not found", $"an unknown recipient is a 404, {ErrorCodes.RecipientNotFound}");
 
         var withdraw = Description422("/api/transactions/withdraw");
         withdraw.Should().Contain(ErrorCodes.InsufficientFunds);
@@ -217,6 +217,58 @@ public class PublishedRefusalCodesTests
             ErrorCodes.InsufficientFunds,
             "a mint does not check funds (ADR-0050 D4): an authorisation can be minted for more "
             + "than the account holds, and the withdrawal is what refuses it");
+    }
+
+    [Fact]
+    public void TheExternalTransferAndItsMint_NameTheTwoCodesOfTheir404_AndNoOtherOperationNamesARecipient()
+    {
+        /*
+          Observed through the API's test host, the same movement sent to POST /api/transfers and
+          to POST /api/transfers/authorizations:
+            an open account of the caller, a handle nobody holds -> 404 RECIPIENT_NOT_FOUND
+            an account id nobody holds, a handle a user holds    -> 404 ACCOUNT_NOT_FOUND
+          The 404 is one status with two codes, and a client chooses what to say from the code, so
+          the document names both. No other operation resolves a payee: the scan reads every
+          response of every operation, so the code cannot appear where nothing sends it.
+        */
+        var named = new List<string>();
+        foreach (var path in Document().GetProperty("paths").EnumerateObject())
+        {
+            foreach (var operation in path.Value.EnumerateObject())
+            {
+                if (operation.Value.ValueKind != JsonValueKind.Object
+                    || !operation.Value.TryGetProperty("responses", out var responses))
+                {
+                    continue;
+                }
+
+                foreach (var response in responses.EnumerateObject())
+                {
+                    if (response.Value.GetRawText().Contains(ErrorCodes.RecipientNotFound, StringComparison.Ordinal))
+                    {
+                        named.Add($"{operation.Name.ToUpperInvariant()} {path.Name} {response.Name}");
+                    }
+                }
+            }
+        }
+
+        named.Should().BeEquivalentTo(
+            ["POST /api/transfers 404", "POST /api/transfers/authorizations 404"],
+            "the payee is resolved by the external transfer and by its mint, and by nothing else");
+
+        foreach (var path in new[] { "/api/transfers", "/api/transfers/authorizations" })
+        {
+            var notFound = Document().GetProperty("paths").GetProperty(path).GetProperty("post")
+                .GetProperty("responses").GetProperty("404");
+            var description = notFound.GetProperty("description").GetString()!;
+
+            description.Should().Contain(ErrorCodes.RecipientNotFound, $"{path} answered it for a missing payee");
+            description.Should().Contain(
+                ErrorCodes.AccountNotFound, $"{path} answered it for the caller's own missing account");
+            notFound.GetProperty("content").GetProperty("application/json").GetProperty("schema")
+                .GetProperty("$ref").GetString().Should().Be(
+                    "#/components/schemas/ProblemDetails", "the body is the one every 404 has");
+        }
     }
 
     [Fact]

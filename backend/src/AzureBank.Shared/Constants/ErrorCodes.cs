@@ -99,6 +99,10 @@ public static class ErrorCodes
     // currently unhandled by the frontend, which falls through to the generic message — tracked for
     // the U6 frontend work rather than papered over here.
     public const string RecipientNoAccount = "RECIPIENT_NO_ACCOUNT";
+    // No user the payer can pay holds the handle an external transfer names: the 404 of the mint
+    // and of the transfer. A code of its own, so a client tells this answer from the 404 of the
+    // payer's own account (ACCOUNT_NOT_FOUND) by the code and not by the sentence.
+    public const string RecipientNotFound = "RECIPIENT_NOT_FOUND";
     // The day's ceiling on a user's outgoing external transfers would be exceeded (ADR-0050).
     // Thrown from ONE helper, DailyOutflowLimitService.AssertCanMoveAsync, at three sites in
     // TransferService: the external mint before the PIN is consulted, the transfer's pre-check

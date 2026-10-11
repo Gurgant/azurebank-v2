@@ -2849,7 +2849,7 @@
             }
           },
           "404": {
-            "description": "Not Found",
+            "description": "Not Found - the source account does not exist or is not visible to the caller (errorCode ACCOUNT_NOT_FOUND), or no user the caller can pay holds the recipient's handle (errorCode RECIPIENT_NOT_FOUND).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3191,7 +3191,7 @@
             }
           },
           "404": {
-            "description": "Not Found",
+            "description": "Not Found - the source account does not exist or is not visible to the caller (errorCode ACCOUNT_NOT_FOUND), or no user the caller can pay holds the recipient's handle (errorCode RECIPIENT_NOT_FOUND).",
             "content": {
               "application/json": {
                 "schema": {

@@ -311,6 +311,37 @@ describe('external transfer (PR-11)', () => {
     expect(words.closest('[role="alert"]')).not.toBeNull();
   });
 
+  it('a recipient the mint does not find reads "re-check the handle", not the server sentence', async () => {
+    /*
+      The Verify step found the handle; the mint, a moment later, does not. Observed on the API for
+      a handle no user holds: 404 errorCode RECIPIENT_NOT_FOUND, detail "Recipient with identifier
+      '<the handle>' was not found."
+    */
+    server.use(
+      http.post('*/api/transfers/authorizations', () =>
+        problem({
+          status: 404,
+          errorCode: 'RECIPIENT_NOT_FOUND',
+          detail: "Recipient with identifier 'friend' was not found.",
+        }),
+      ),
+    );
+    renderTransfer();
+    await screen.findByText('Main Account');
+    await verifyRecipient('friend');
+    await screen.findByText('A. Friend');
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+    await confirmWithPin();
+
+    expect(
+      await screen.findByText('That recipient could not be found. Please re-check the handle.', {
+        exact: false,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Recipient with identifier/)).not.toBeInTheDocument();
+  });
+
   it('disables Review when the amount exceeds the balance', async () => {
     renderTransfer();
     await screen.findByText('Main Account');

@@ -2,7 +2,8 @@ namespace AzureBank.Shared.Exceptions;
 
 
 /// <summary>
-/// The 404 every missing resource produces.
+/// The 404 a missing account, user or transaction produces, always <c>ACCOUNT_NOT_FOUND</c>. A
+/// missing recipient has its own: <see cref="RecipientNotFoundException"/>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -24,13 +25,14 @@ namespace AzureBank.Shared.Exceptions;
 /// <para>
 /// No call site ever wanted the second overload; it existed only to be selected by accident. It is
 /// deleted rather than fixed at the one call site, because deleting it makes the mistake
-/// unrepresentable — a future <c>NotFoundException("Recipient", tag)</c> now binds here and is
-/// correct. Anything needing a different code should throw the exception that owns that code.
+/// unrepresentable — a <c>NotFoundException("User", someString)</c> binds here and is correct.
+/// Anything needing a different code throws the exception that owns that code, as the recipient
+/// lookup does with <see cref="RecipientNotFoundException"/>.
 /// </para>
 /// </remarks>
 public class NotFoundException : AppException
 {
-    /// <param name="resource">The resource NAME ("Account", "User", "Transaction", "Recipient").</param>
+    /// <param name="resource">The resource NAME ("Account", "User", "Transaction").</param>
     /// <param name="identifier">
     /// The identifier that was not found. Deliberately <see cref="object"/>: it accepts a
     /// <see cref="Guid"/> and a <see cref="string"/> alike, and with the second constructor gone

@@ -243,9 +243,11 @@ export function TransferPage() {
     // is the wizard's, and the type of this table makes naming one of those here a compile error.
     // ACCOUNT_NOT_FOUND lives here rather than in the shared tail because its wording is
     // flow-specific: "re-check the handle" is meaningless on a page with no handle.
+    // RECIPIENT_NOT_FOUND is the API's code for a handle no user holds, and reads the same.
     messages: {
       SELF_TRANSFER_NOT_ALLOWED: "You can't send money to yourself.",
       ACCOUNT_NOT_FOUND: 'That recipient could not be found. Please re-check the handle.',
+      RECIPIENT_NOT_FOUND: 'That recipient could not be found. Please re-check the handle.',
     },
     fallback: 'Transfer failed. Please try again.',
   });
