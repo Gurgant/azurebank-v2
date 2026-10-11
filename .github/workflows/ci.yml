@@ -719,7 +719,7 @@ jobs:
         run: |
           url="$E2E_DEMO_BASE_URL/health/ready"
           answer=""
-          for i in $(seq 1 120); do
+          for _ in $(seq 1 120); do
             answer="$(curl -sS --max-time 3 "$url" 2> /dev/null || true)"
             if [ "$answer" = "Healthy" ]; then
               echo "The stack is whole after ${SECONDS}s"
