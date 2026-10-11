@@ -246,8 +246,8 @@ public class AccountService : IAccountService
                 /*
                   THE LAST ATTEMPT LOST AN ACCOUNT TOO, the old primary's row or the new one's, to
                   a write that takes no part in the swaps' lock: a deposit, a transfer. Both saves
-                  of an attempt ride one transaction, and a save that lost rolled it back, so the
-                  swap has written nothing and only has to be sent again: the busy 503, where the
+                  of an attempt ride one transaction, and a save that lost rolled it back, so
+                  nothing of the swap is written: the answer can be the busy 503, where the
                   conflict left to propagate is a 500.
 
                   ONLY WHEN THE REQUEST LET NO COMMIT START. A swap holds no idempotency claim to
@@ -256,8 +256,9 @@ public class AccountService : IAccountService
 
                   THE TARGET ONCE MORE, as every attempt begins and by the method the attempt
                   calls: each tracked account from the store, then the ownership check. A target
-                  that closed as the last attempt lost is the 404 of every other attempt. A swap
-                  presents no authorisation, so there is nothing else to look at.
+                  that closed, or whose row went, as the last attempt lost is the 404 of every
+                  other attempt. A swap presents no authorisation, so there is nothing else to
+                  look at. BusyAccountWriteSqlServerTests holds each answer.
                 */
                 if (!ConcurrencyRetry.NoCommitWasLetStart(_context))
                 {
@@ -546,28 +547,31 @@ public class AccountService : IAccountService
                 /*
                   THE LAST ATTEMPT LOST THE ACCOUNT TOO. The soft delete, its audit row and the
                   spend ride one transaction, and a save that lost rolled it back before the spend
-                  was sent: the closure has written nothing and only has to be sent again. The
-                  answer is the busy 503, where the conflict left to propagate is a 500.
+                  was sent: nothing of the closure is written. The answer can be the busy 503,
+                  where the conflict left to propagate is a 500.
 
                   ONLY WHEN THE REQUEST LET NO COMMIT START. A closure holds no idempotency claim
                   to read, so the commit mark is the whole proof, and the 503 says nothing of
                   "applied". With the mark set the conflict propagates.
 
-                  THEN EVERYTHING AN ATTEMPT LOOKS AT, ONCE MORE, AND THE ANSWER AN ATTEMPT GIVES.
-                  The account from the store and the looks every attempt begins with, by the
-                  method the attempt calls. The write that won may be another closure, which is
-                  the 404, or a deposit, which is the 422 of a funded account: neither is an
-                  account to come back to.
+                  THEN THE LOOKS AN ATTEMPT TAKES BEFORE ITS SAVE, ONCE MORE, WITH THE ATTEMPT'S
+                  ANSWER. The account from the store and the looks every attempt begins with, by
+                  the method the attempt calls. The write that won may be another closure or a
+                  delete of the row, which is the 404, a deposit, which is the 422 of a funded
+                  account, or a change of the primary account to this one, which is the 422 of the
+                  primary guard: none is an account to come back to.
 
                   AND THE AUTHORISATION. An attempt looks at it when it spends it, after its save,
                   and here no save follows; so the validation that ran before the first attempt
-                  runs again, reading and writing nothing. This request has not spent it. Another
-                  request can have, which is the 401 an attempt's spend gives, and it can have
-                  expired, which is the 401 of the validation.
+                  runs again, reading and writing nothing. This request has not spent it: no
+                  transaction that sent the spend was let commit. Another request can have, which
+                  is the 401 an attempt's spend gives, and it can have expired, which is the 401
+                  of the validation: AUTHORIZATION_EXPIRED, where an attempt's spend gives
+                  AUTHORIZATION_INVALID.
 
-                  ONLY WHEN ALL OF THEM STAND IS THE ACCOUNT BUSY: the same DELETE with the same
-                  authorisation closes the account when it comes back within the authorisation's
-                  life. BusyAccountWriteSqlServerTests holds it.
+                  ONLY WHEN NONE OF THEM REFUSES IS THE ACCOUNT BUSY. BusyAccountWriteSqlServerTests
+                  holds each answer but the expired authorisation's, and the same DELETE, with the
+                  same authorisation, closing the account when it is sent again.
                 */
                 if (!ConcurrencyRetry.NoCommitWasLetStart(_context))
                 {

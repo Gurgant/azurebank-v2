@@ -1,9 +1,9 @@
 namespace AzureBank.Shared.Exceptions;
 
 /// <summary>
-/// A write lost the race for an account's row on every attempt it is given, the store shows that
-/// nothing of the request was written, and everything an attempt looks at before its save still
-/// stands: the request only has to be sent again. Answered 503 <c>SERVICE_UNAVAILABLE</c> with
+/// A write lost the race for an account's row on every attempt it is given, the request can show
+/// that nothing of the write was committed, and nothing an attempt looks at refuses the write at
+/// that moment: the request can be sent again. Answered 503 <c>SERVICE_UNAVAILABLE</c> with
 /// <see cref="RetryAfterSeconds"/>, where the conflict left to propagate is a 500.
 /// </summary>
 /// <remarks>
@@ -31,11 +31,16 @@ namespace AzureBank.Shared.Exceptions;
 /// commits outside any transaction, so no mark covers it, and its last conflict propagates.
 /// </para>
 /// <para>
-/// AND AFTER THE SECOND PROOF, THE LOOKS OF AN ATTEMPT. "Send it again" is true only of a request
-/// that would be made when it comes back, so each write first takes once more the looks one of
-/// its attempts takes before its save, by the method the attempt calls, and then validates its
-/// step-up authorisation where it presents one. What an attempt refuses is refused there, with
-/// the attempt's answer, and this is not raised.
+/// AND AFTER THE SECOND PROOF, THE LOOKS OF AN ATTEMPT. Each write first takes once more the
+/// looks one of its attempts takes before its save, by the method the attempt calls: what an
+/// attempt refuses there is refused with the attempt's answer, and this is not raised. Where the
+/// write presents a step-up authorisation, the validation that runs before the first attempt
+/// then reads it again and refuses with its own 401: <c>AUTHORIZATION_INVALID</c> for one another
+/// request spent, the code an attempt's spend gives, and <c>AUTHORIZATION_EXPIRED</c> for one that
+/// expired, where an attempt's spend gives <c>AUTHORIZATION_INVALID</c>. So this says that
+/// nothing an attempt looks at refused the write at that moment, and no more: what a request
+/// resolves once, before its first attempt, as a transfer does its payee's handle, is not looked
+/// at again.
 /// </para>
 /// </remarks>
 public sealed class AccountBusyException : Exception

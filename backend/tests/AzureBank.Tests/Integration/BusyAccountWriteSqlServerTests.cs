@@ -21,17 +21,29 @@ namespace AzureBank.Tests.Integration;
 /// </summary>
 /// <remarks>
 /// <para>
-/// With no claim to read, what shows that nothing of the request was written is the request's
-/// commit mark alone. So the first proofs here are about the mark: each save of a closure and of a
-/// change of the primary account lands at a commit that sets it. Those two answer the busy 503,
-/// which says nothing of <c>applied</c>, leave everything as it was, and are made when the same
-/// request is sent again. They answer what an attempt answers, and not the busy 503, when what an
-/// attempt looks at changed as the last one lost: the account closed or was credited, or the
-/// closure's authorisation was spent.
+/// With no claim to read, what shows that nothing of the write was committed is the request's
+/// commit mark alone. So three proofs are about the mark: each save of a closure and of a change
+/// of the primary account lands at a commit that has set it, and a rename's save commits by
+/// itself, outside any transaction, and sets none.
 /// </para>
 /// <para>
-/// A rename's save commits by itself, outside any transaction, and sets no mark. So a rename is
-/// not answered busy: its last conflict propagates, a 500, and the last two proofs hold both.
+/// Seven are about a closure past its attempts. One answers the busy 503, which says nothing of
+/// <c>applied</c>, leaves everything as it was, and closes the account when the same request is
+/// sent again. Five change, as the last attempt loses, something the closure looks at, and are
+/// answered that refusal and not the busy 503: the account closes (404), its row is deleted
+/// (404), it is credited (422), it becomes the primary one (422), the authorisation is spent by
+/// another request (401). One lets a commit start and fail first, and is answered 500.
+/// </para>
+/// <para>
+/// Four are about a change of the primary account past its attempts: one is busy and made when
+/// sent again, losing the old primary's row or the new one's; one has a target that closes (404);
+/// one a target whose row is deleted (404); one lets a commit start and fail first (500). The
+/// last proof is a rename past its attempts: no mark covers its save, so it is not answered busy
+/// and its last conflict propagates, a 500.
+/// </para>
+/// <para>
+/// Not held here: a closure whose authorisation expires as its last attempt loses, and a change
+/// of the primary account whose old primary closes then.
 /// </para>
 /// <para>
 /// Each proof writes what it measured to the test output before it asserts, asserts that its
@@ -181,6 +193,42 @@ public sealed class BusyAccountWriteSqlServerTests(ITestOutputHelper output) : C
         ChainShouldBeIntact(after);
     }
 
+    /// <summary>
+    /// The account's row is deleted, not closed, as the closure loses its last attempt: the answer
+    /// is the 404 of an account that is gone, and the request wrote nothing and spent nothing.
+    /// </summary>
+    [SqlServerFact]
+    public async Task AClosureWhoseRowIsDeletedAsItLosesItsLastAttempt_AnswersNotFound_NotBusy()
+    {
+        var race = new LostRowVersionRaceInterceptor(SqlServerFactAttribute.ConnectionString!);
+        var client = CreateSqlClient(host => host.AddInterceptor(race));
+        var user = await RegisterWithPinAsync(client, "kr");
+        var spare = await CreateSpareAsync(client, user);
+        var authorizationId = await MintDeletionAsync(client, user, spare);
+        var before = await ReadAsync(user, authorizationId, spare);
+
+        race.Arm(spare, removingOn: ConcurrencyRetry.MaxAttempts);
+        using var response = await DeleteAsync(client, user, spare, authorizationId);
+        race.Disarm();
+        var body = await response.Content.ReadAsStringAsync();
+        var after = await ReadAsync(user, authorizationId, spare);
+
+        _output.WriteLine(
+            $"closure: fired {race.Fired} of {ConcurrencyRetry.MaxAttempts} attempts, the last a delete of the row: {race.Removed}; "
+            + $"{Describe(response, body)}; before: {before}; after: {after}");
+
+        using var scope = new AssertionScope();
+        race.Fired.Should().Be(ConcurrencyRetry.MaxAttempts, "the proof is void unless the closure lost every attempt it is given");
+        race.Removed.Should().BeTrue("and unless the write that won the last one deleted the account's row");
+        before.Accounts.Should().Equal([new AccountState("Spare", false, false, 0m)], "and unless the row was there, open, before");
+        before.Authorization.Should().Be(StepUpAuthorizationStatus.Pending);
+        ShouldBeRefused(response, body, HttpStatusCode.NotFound, ErrorCodes.AccountNotFound);
+        after.Should().Be(
+            before with { Accounts = [null] },
+            "the row is gone, and a closure that closed nothing writes no audit row and spends nothing");
+        ChainShouldBeIntact(after);
+    }
+
     [SqlServerFact]
     public async Task AClosureWhoseAccountIsCreditedAsItLosesItsLastAttempt_AnswersNonZeroBalance_NotBusy()
     {
@@ -208,6 +256,54 @@ public sealed class BusyAccountWriteSqlServerTests(ITestOutputHelper output) : C
         after.Should().Be(
             before with { Accounts = [before.Accounts[0]! with { Balance = LostRowVersionRaceInterceptor.Credit }] },
             "a funded account is not closed, and a closure the guards refuse spends nothing");
+        ChainShouldBeIntact(after);
+    }
+
+    /// <summary>
+    /// The account becomes the user's primary one as the closure loses its last attempt: another
+    /// connection clears the old primary and sets this one in one transaction, the order the
+    /// unique index on the primary allows. The answer is the primary guard's 422.
+    /// </summary>
+    [SqlServerFact]
+    public async Task AClosureWhoseAccountBecomesThePrimaryOneAsItLosesItsLastAttempt_AnswersThePrimaryGuard_NotBusy()
+    {
+        var race = new LostRowVersionRaceInterceptor(SqlServerFactAttribute.ConnectionString!);
+        var client = CreateSqlClient(host => host.AddInterceptor(race));
+        var user = await RegisterWithPinAsync(client, "kp");
+        var spare = await CreateSpareAsync(client, user);
+        var authorizationId = await MintDeletionAsync(client, user, spare);
+        var before = await ReadAsync(user, authorizationId, spare, user.PrimaryAccountId);
+        var rows = 0;
+
+        race.Arm(
+            spare, meanwhileOn: ConcurrencyRetry.MaxAttempts,
+            meanwhile: async ct => rows = await OutOfBandClosureInterceptor.CloseAsync(
+                SqlServerFactAttribute.ConnectionString!, user.PrimaryAccountId, newPrimaryId: spare,
+                keepOpen: true, cancellationToken: ct));
+        using var response = await DeleteAsync(client, user, spare, authorizationId);
+        race.Disarm();
+        var body = await response.Content.ReadAsStringAsync();
+        var after = await ReadAsync(user, authorizationId, spare, user.PrimaryAccountId);
+
+        _output.WriteLine(
+            $"closure: fired {race.Fired} of {ConcurrencyRetry.MaxAttempts} attempts; on the last, the primary was moved "
+            + $"to the account from another connection: {rows} row(s); {Describe(response, body)}; "
+            + $"before: {before}; after: {after}");
+
+        using var scope = new AssertionScope();
+        race.Fired.Should().Be(ConcurrencyRetry.MaxAttempts, "the proof is void unless the closure lost every attempt it is given");
+        race.MeanwhileRan.Should().BeTrue("and unless the primary was moved as the last attempt lost");
+        rows.Should().Be(2, "one row for the old primary cleared and one for the account made primary");
+        before.Accounts.Select(a => a?.IsPrimary).Should().Equal(
+            [false, true], "and unless the account was not the primary one before");
+        before.Authorization.Should().Be(StepUpAuthorizationStatus.Pending);
+        ShouldBeRefused(response, body, HttpStatusCode.UnprocessableEntity, ErrorCodes.PrimaryAccountDelete);
+        after.Should().Be(
+            before with
+            {
+                Accounts = [before.Accounts[0]! with { IsPrimary = true }, before.Accounts[1]! with { IsPrimary = false }],
+            },
+            "the primary account is not closed, and a closure the guards refuse writes no audit row and spends nothing");
         ChainShouldBeIntact(after);
     }
 
@@ -391,6 +487,41 @@ public sealed class BusyAccountWriteSqlServerTests(ITestOutputHelper output) : C
         ChainShouldBeIntact(after);
     }
 
+    /// <summary>
+    /// The target's row is deleted, not closed, as the change loses its last attempt: the answer
+    /// is the 404 of an account that is gone, and the primary stays where it was.
+    /// </summary>
+    [SqlServerFact]
+    public async Task AChangeOfPrimaryWhoseTargetRowIsDeletedAsItLosesItsLastAttempt_AnswersNotFound_NotBusy()
+    {
+        var race = new LostRowVersionRaceInterceptor(SqlServerFactAttribute.ConnectionString!);
+        var client = CreateSqlClient(host => host.AddInterceptor(race));
+        var user = await RegisterAsync(client, "pr");
+        var second = await CreateSpareAsync(client, user);
+        var before = await ReadAsync(user, null, user.PrimaryAccountId, second);
+
+        race.Arm(second, removingOn: ConcurrencyRetry.MaxAttempts);
+        using var response = await SetPrimaryAsync(client, user, second);
+        race.Disarm();
+        var body = await response.Content.ReadAsStringAsync();
+        var after = await ReadAsync(user, null, user.PrimaryAccountId, second);
+
+        _output.WriteLine(
+            $"change of primary: fired {race.Fired} of {ConcurrencyRetry.MaxAttempts} attempts, the last a delete of the "
+            + $"target's row: {race.Removed}; {Describe(response, body)}; before: {before}; after: {after}");
+
+        using var scope = new AssertionScope();
+        race.Fired.Should().Be(ConcurrencyRetry.MaxAttempts, "the proof is void unless the change lost every attempt it is given");
+        race.Removed.Should().BeTrue("and unless the write that won the last one deleted the target's row");
+        before.Accounts.Select(a => a?.IsPrimary).Should().Equal(
+            [true, false], "and unless the target was there before, and not primary");
+        ShouldBeRefused(response, body, HttpStatusCode.NotFound, ErrorCodes.AccountNotFound);
+        after.Should().Be(
+            before with { Accounts = [before.Accounts[0], null] },
+            "the primary stays where it was, and the target's row is gone");
+        ChainShouldBeIntact(after);
+    }
+
     // The rename.
 
     /// <summary>
@@ -544,13 +675,21 @@ public sealed class BusyAccountWriteSqlServerTests(ITestOutputHelper output) : C
 
     /// <summary>
     /// Every row the request wrote landed at a commit the gate marked: the commits counted all
-    /// carry the mark, and no save wrote rows outside a transaction, where no gate is passed.
+    /// carry the mark when they have landed, which is when the probe reads it, and no save wrote
+    /// rows outside a transaction, where no gate is passed. That the mark is set before a commit
+    /// starts is held elsewhere:
+    /// <see cref="AClosureThatLetACommitStart_AndThenLosesEveryAttempt_IsNotAnsweredBusy"/> and
+    /// <see cref="AChangeOfPrimaryThatLetACommitStart_AndThenLosesEveryAttempt_IsNotAnsweredBusy"/>
+    /// answer 500 after a commit that failed.
     /// </summary>
     private static void ShouldHaveLandedOnlyAtMarkedCommits(
         HttpResponseMessage response, CommitMarkProbeInterceptor probe, int commits)
     {
         response.StatusCode.Should().Be(HttpStatusCode.OK, "the proof is void unless the write was made");
-        probe.Commits.Should().Equal(Enumerable.Repeat(true, commits), "each commit of the write sets the mark before it starts");
+        probe.Commits.Should().Equal(
+            Enumerable.Repeat(true, commits),
+            "each commit of the write has set the mark by the time it lands; that the mark is set before the commit "
+            + "starts is held by the two proofs of a commit let start that then failed");
         probe.SavesOutsideATransaction.Should().BeEmpty("a save outside a transaction commits by itself and sets no mark");
     }
 

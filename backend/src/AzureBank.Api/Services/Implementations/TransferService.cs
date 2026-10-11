@@ -819,25 +819,32 @@ public class TransferService : ITransferService
                   the execution strategy, the attempt's transaction is rolled back with the daily
                   limit's lock it held, and nothing runs the delegate again.
 
-                  THEN EVERYTHING AN ATTEMPT LOOKS AT, ONCE MORE, AND THE ANSWER AN ATTEMPT GIVES.
-                  The busy 503 says "send it again", so it is given only when the request sent
-                  again would be made. The accounts from the store, and the looks of an attempt in
-                  their order, by the method the attempt calls. The sender's account closed is
-                  the 404. The payee's account closed is chosen again: with another account of
-                  the payee open the transfer can still be busy, since the same request sent again
-                  pays that one, and with none open it is the 422 of a payee with no account. A
-                  debit that left too little is the 422 of the funds, and a day that another
-                  transfer filled is the 422 of the ceiling, read without the lock: nothing is
-                  saved after it.
+                  THEN THE LOOKS AN ATTEMPT TAKES BEFORE ITS SAVE, ONCE MORE, WITH THE ATTEMPT'S
+                  ANSWER. The busy 503 says "send it again", so it is given only when nothing an
+                  attempt looks at refuses the write at that moment. The accounts from the store,
+                  and the looks of an attempt in their order, by the method the attempt calls. The
+                  sender's account closed is the 404. The payee's account closed is chosen again:
+                  with another account of the payee open the transfer can still be busy, and sent
+                  again it has that one to pay; with none open it is the 422 of a payee with no
+                  account. A debit that left too little is the 422 of the funds, and a day that
+                  another transfer filled is the 422 of the ceiling, read without the lock:
+                  nothing is saved after it.
+
+                  NOT THE PAYEE'S HANDLE. It is resolved once per request, before the first
+                  attempt, and no attempt looks at it again, so neither does this: a payee who
+                  gave the handle up during the attempts is still the payee here, and the
+                  transfer can be answered busy.
 
                   AND THE AUTHORISATION. An attempt looks at it when it spends it, after both
                   saves, and here no save follows; so the validation that ran before the first
                   attempt runs again, reading and writing nothing. This request has not spent it:
-                  an attempt whose save lost never reaches the spend. But another request can have
-                  spent it meanwhile, which is the 401 an attempt's spend gives, and it can have
-                  expired, which is the 401 of the validation.
+                  the spend is sent inside the transaction, and no transaction that sent it was
+                  let commit. But another request can have spent it meanwhile, which is the 401
+                  an attempt's spend gives, and it can have expired, which is the 401 of the
+                  validation: AUTHORIZATION_EXPIRED, where an attempt's spend gives
+                  AUTHORIZATION_INVALID.
 
-                  ONLY WHEN ALL OF THEM STAND ARE THE ACCOUNTS BUSY. BusyMoneyWriteSqlServerTests
+                  ONLY WHEN NONE OF THEM REFUSES ARE THE ACCOUNTS BUSY. BusyMoneyWriteSqlServerTests
                   holds each answer, and the day's ceiling untouched by a transfer answered busy.
                 */
                 if (!await ConcurrencyRetry.ClaimIsOwnAndNothingCommittedAsync(_context, cancellationToken))
@@ -1088,13 +1095,13 @@ public class TransferService : ITransferService
             catch (DbUpdateConcurrencyException ex) when (ConcurrencyRetry.IsAccountRace(ex))
             {
                 // The last attempt lost an account too: the external transfer's answer at the same
-                // place, by the same rule. After the proof that nothing committed, everything an
-                // attempt looks at, once more, by the method the attempt calls: both accounts are
-                // the caller's own, so one that closed as the last attempt lost is the 404 of
-                // every other attempt, as is a destination whose row went, and a debit that left
-                // too little is the 422. Then the authorisation, by the validation that ran before the first
-                // attempt: spent by another request or expired meanwhile, it is the 401. Only when
-                // all of them stand are the accounts busy.
+                // place, by the same rule. After the proof that nothing committed, the looks an
+                // attempt takes before its save, once more, by the method the attempt calls: both
+                // accounts are the caller's own, so one that closed as the last attempt lost is
+                // the 404 of every other attempt, as is a destination whose row went, and a debit
+                // that left too little is the 422. Then the authorisation, by the validation that
+                // ran before the first attempt: spent by another request or expired meanwhile, it
+                // is that validation's 401. Only when none of them refuses are the accounts busy.
                 if (!await ConcurrencyRetry.ClaimIsOwnAndNothingCommittedAsync(_context, cancellationToken))
                 {
                     throw;

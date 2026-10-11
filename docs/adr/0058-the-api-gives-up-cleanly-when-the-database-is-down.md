@@ -52,10 +52,15 @@ back. A token cannot interrupt a commit, so a late cancel can lose the answer to
   proof the write takes once more every look one of its attempts takes before its save, by the
   code the attempt runs, and gives the answer an attempt gives: an account closed meanwhile (404,
   or 422 for a payee with no account left), funds another write took (422), the day's ceiling of
-  an external transfer (422), and the step-up authorisation, read by the validation that runs
-  before the first attempt (401 when another request spent it or it expired). Only when all of
-  them stand is the account busy. The request spends no authorisation before a busy 503, so the
-  same request, sent again while its authorisation is still good, is made. The SPA words a busy
+  an external transfer (422). Then the validation that runs before the first attempt reads the
+  step-up authorisation again and gives its own 401: `AUTHORIZATION_INVALID` when another request
+  spent it, the code an attempt's spend gives, and `AUTHORIZATION_EXPIRED` when it expired, where
+  an attempt's spend gives `AUTHORIZATION_INVALID`. Only when none of them refuses is the account
+  busy. So busy says that nothing an attempt looks at refused the write at that moment, and no
+  more: a payee's handle is resolved once per request and not looked at again. The request spends
+  no authorisation before a busy 503, so it can be sent again with the same one while that is
+  still good. On the public demo the request was counted against its copy before the endpoint ran
+  (ADR-0063), and a busy answer gives nothing back, like any refused request. The SPA words a busy
   account as it words an outage, and leaves sending the request again to the visitor.
 - **D7: `applied: false` only when the answer knows it**: on a money 503, for a request that owns
   the idempotency claim it made, has let no commit start and is younger than `ProcessingStaleAfter`

@@ -458,22 +458,24 @@ public class TransactionService : ITransactionService
                   the execution strategy, the attempt's transaction is rolled back, and nothing
                   runs the delegate again.
 
-                  THEN EVERYTHING AN ATTEMPT LOOKS AT, ONCE MORE, AND THE ANSWER AN ATTEMPT GIVES.
-                  The busy 503 says "send it again", so it is given only when the request sent
-                  again would be made. The account from the store, and the looks of an attempt in
-                  their order, by the method the attempt calls: a closure that won is the 404, a
-                  debit that left too little is the 422.
+                  THEN THE LOOKS AN ATTEMPT TAKES BEFORE ITS SAVE, ONCE MORE, WITH THE ATTEMPT'S
+                  ANSWER. The busy 503 says "send it again", so it is given only when nothing an
+                  attempt looks at refuses the write at that moment. The account from the store,
+                  and the looks of an attempt in their order, by the method the attempt calls: a
+                  closure that won is the 404, a debit that left too little is the 422.
 
                   AND THE AUTHORISATION. An attempt looks at it when it spends it, after its save,
                   and here no save follows; so the validation that ran before the first attempt
                   runs again, reading and writing nothing. This request has not spent it: the
-                  spend is sent inside the transaction, after the save, and every save lost. But
-                  another request can have spent it meanwhile, which is the 401 an attempt's spend
-                  gives, and it can have expired, which is the 401 of the validation.
+                  spend is sent inside the transaction, after the save, and no transaction that
+                  sent it was let commit. But another request can have spent it meanwhile, which
+                  is the 401 an attempt's spend gives, and it can have expired, which is the 401
+                  of the validation: AUTHORIZATION_EXPIRED, where an attempt's spend gives
+                  AUTHORIZATION_INVALID.
 
-                  ONLY WHEN ALL OF THEM STAND IS THE ACCOUNT BUSY. Then the same request, with the
-                  same key and the same authorisation, is made when it comes back within the
-                  authorisation's life. BusyMoneyWriteSqlServerTests holds each answer.
+                  ONLY WHEN NONE OF THEM REFUSES IS THE ACCOUNT BUSY. BusyMoneyWriteSqlServerTests
+                  holds each answer, and the same request, with the same key and the same
+                  authorisation, made when it is sent again.
                 */
                 if (!await ConcurrencyRetry.ClaimIsOwnAndNothingCommittedAsync(_context, cancellationToken))
                 {

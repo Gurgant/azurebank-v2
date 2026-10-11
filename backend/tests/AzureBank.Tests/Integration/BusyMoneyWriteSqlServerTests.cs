@@ -27,10 +27,24 @@ namespace AzureBank.Tests.Integration;
 /// </summary>
 /// <remarks>
 /// <para>
-/// BUSY ONLY WHEN THE REQUEST SENT AGAIN WOULD BE MADE. The other proofs change, as the last
-/// attempt loses, one of the things an attempt looks at before its save: an account closes or its
-/// row goes, another write takes the funds, another transfer fills the day, the authorisation is
-/// spent or expires. Each then answers what an attempt answers, and not the busy 503.
+/// BUSY ONLY WHEN NOTHING AN ATTEMPT LOOKS AT REFUSES THE WRITE. Six proofs change one of those
+/// things as the last attempt loses, and none is answered the busy 503. Five change what an
+/// attempt looks at before its save, and are answered what an attempt answers: the caller's own
+/// account closes, the payee's only account closes, a destination's row goes, another write takes
+/// the funds, another transfer fills the day. The sixth changes the authorisation, which the
+/// validation that runs before the first attempt reads again, and is answered that validation's
+/// 401: <c>AUTHORIZATION_INVALID</c> for one another request spent, the code an attempt's spend
+/// gives, and <c>AUTHORIZATION_EXPIRED</c> for one that expired, where an attempt's spend gives
+/// <c>AUTHORIZATION_INVALID</c>.
+/// </para>
+/// <para>
+/// The other proofs, counted. One closes the payee's account while the payee holds another open
+/// one: the transfer is still busy, and pays the other account when it is sent again. Three are
+/// about the claim and the commit: a claim taken over and a commit let start that failed are
+/// answered 500, and a commit that landed and lost its acknowledgement is answered the 409 of a
+/// write that was applied, before the busy question is asked. Two send 24 writes at once to one
+/// account. Not held: a payee's handle renamed during the attempts, since a handle is resolved
+/// once per request and not looked at again.
 /// </para>
 /// <para>
 /// A transfer saves two accounts, so each of its proofs says which of the two is lost
@@ -196,7 +210,9 @@ public sealed class BusyMoneyWriteSqlServerTests(ITestOutputHelper output) : Clo
     /// <summary>
     /// A write that loses its account on every attempt but the last, commits on the last and loses
     /// the commit's acknowledgement: the attempt that runs again reads its record as committed and
-    /// answers that the write was applied. It is not a busy account, and the money moved once.
+    /// answers that the write was applied, answered before the busy question is asked. No conflict
+    /// reaches the last attempt, so the code that answers a busy account does not run: it is not a
+    /// busy account, and the money moved once.
     /// </summary>
     [SqlServerTheory]
     [InlineData(Write.Withdrawal)]
@@ -231,6 +247,9 @@ public sealed class BusyMoneyWriteSqlServerTests(ITestOutputHelper output) : Clo
         race.Fired.Should().Be(
             ConcurrencyRetry.MaxAttempts - 1, "the proof is void unless the commit is the last attempt's");
         fault.Fired.Should().BeTrue("and unless its acknowledgement was lost");
+        refused.Conflicts.Should().Equal(
+            Enumerable.Repeat("Account", ConcurrencyRetry.MaxAttempts - 1),
+            "and unless each save before it lost the account alone, and the save that landed lost nothing");
 
         seen.Status.Should().Be(
             HttpStatusCode.Conflict, $"a write that is made is not to be sent again as if the account were busy; the body was: {seen.Body}");

@@ -29,13 +29,13 @@ internal static class ConcurrencyRetry
     /// SQL Server, 11 to 15 spend their attempts at 8 and 8 to 10 at 12. Half as many attempts
     /// again does not halve them, and each attempt is a turn at the audit chain's lock, which
     /// every audited write of every user waits on. A write that spends its attempts answers
-    /// <see cref="AccountBusyException"/> when the store shows that nothing of the request was
-    /// written, and when everything one of its attempts looks at before its save still stands: a
-    /// deposit, a withdrawal and both transfers ask
-    /// <see cref="ClaimIsOwnAndNothingCommittedAsync"/>, and a closure and a change of the primary
-    /// account, which hold no idempotency key, ask <see cref="NoCommitWasLetStart"/>; each then
-    /// takes its attempt's looks once more and gives the answer an attempt gives. A rename lets its
-    /// last conflict propagate.
+    /// <see cref="AccountBusyException"/> when it can show that nothing of the write was committed,
+    /// and when nothing one of its attempts looks at refuses the write then: a deposit, a
+    /// withdrawal and both transfers ask <see cref="ClaimIsOwnAndNothingCommittedAsync"/>, and a
+    /// closure and a change of the primary account, which hold no idempotency key, ask
+    /// <see cref="NoCommitWasLetStart"/>; each then takes once more the looks its attempt takes
+    /// before its save, with the attempt's answer, and validates again the step-up authorisation
+    /// it presents, with the validation's. A rename lets its last conflict propagate.
     /// </remarks>
     public const int MaxAttempts = 8;
 
@@ -66,7 +66,7 @@ internal static class ConcurrencyRetry
     /// THE MARK IS THE WHOLE PROOF, so it is one only for a write whose every save lands at a
     /// commit the gate marks before it starts (<c>CommitGateInterceptor</c>). A closure and a
     /// change of the primary account save inside one transaction of their own, and each save that
-    /// lost was rolled back with it: no mark, nothing of the request in the store.
+    /// lost was rolled back with it: no mark, nothing of the write in the store.
     /// <c>BusyAccountWriteSqlServerTests</c> holds, for each of the two, that no save lands any
     /// other way.
     /// </para>
