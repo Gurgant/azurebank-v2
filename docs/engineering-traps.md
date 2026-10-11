@@ -183,7 +183,9 @@ be configured`. When adding a required option:
 3. The recipe in [`engineering-practices.md`](engineering-practices.md#local-setup) and the table
    of variables in `backend/src/AzureBank.Api/README.md`.
 4. `.github/workflows/*.yml`: the variable, and every "Start API" step. `ci.yml` has two (the
-   `real-stack` and the `conformance` jobs), `contract-tests.yml` one.
+   `real-stack` and the `conformance` jobs), `contract-tests.yml` one. The `demo-stack` job
+   starts the stack with compose: its `env` block gives every variable `compose.yaml` requires,
+   under compose's names.
 5. `CustomWebApplicationFactory`: `UseSetting`, the one that makes the tests pass while the rest
    is still missing.
 

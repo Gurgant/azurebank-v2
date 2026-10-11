@@ -23,7 +23,8 @@ env:
 # to Ubuntu 26.04 run by run from 2026-10-19 (actions/runner-images#14748), with no commit
 # here. Jobs take tools from the image and install none of them: python3, PowerShell 7 and
 # Bicep in the infrastructure job, python3, az and docker in the deploy workflow, the shared
-# libraries Chromium needs in the real-stack job. A new image is a change like any other: the
+# libraries Chromium needs in the real-stack job, and those libraries with docker, its compose
+# plugin and curl in the demo-stack job. A new image is a change like any other: the
 # label moves on a branch whose run on that image is green, and deploy.yml, which no branch can
 # run, moves last.
 jobs:
@@ -657,8 +658,9 @@ jobs:
   # session is gone, and shows that the copy the browser keeps still signs in. The stack is this
   # job's alone, as a run that stops part of it asks.
   #
-  # The volume is new with the job: the pool holds its free copies, nobody has claimed from it,
-  # and the run's two claims are the first of the day's ten.
+  # The engine is new with the job, so no volume of an earlier run exists: the pool holds its
+  # free copies, nobody has claimed from it, and the run's two claims are the first of the
+  # day's ten.
   # ---------------------------------------------------------------------------------------
   demo-stack:
     name: Demo suite (compose stack, two restarts)
@@ -715,12 +717,12 @@ jobs:
         # 200 Degraded while the API is still starting (frontend/e2e-demo/restart.setup.ts), and
         # a suite started then would meet a stack that is not whole.
         run: |
-          url="${{ env.E2E_DEMO_BASE_URL }}/health/ready"
+          url="$E2E_DEMO_BASE_URL/health/ready"
           answer=""
           for i in $(seq 1 120); do
             answer="$(curl -sS --max-time 3 "$url" 2> /dev/null || true)"
             if [ "$answer" = "Healthy" ]; then
-              echo "The stack is whole after ${i}s"
+              echo "The stack is whole after ${SECONDS}s"
               exit 0
             fi
             sleep 1
@@ -795,7 +797,7 @@ jobs:
           retention-days: 7
 
       - name: Container logs on failure
-        if: failure()
+        if: ${{ failure() || cancelled() }}
         run: |
           docker compose -f compose.yaml -f compose.demo.yaml ps --all || true
           docker compose -f compose.yaml -f compose.demo.yaml logs --no-color --tail 300 || true

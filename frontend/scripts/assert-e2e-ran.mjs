@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Fail the real-stack e2e job when any spec was SKIPPED, or when nothing passed.
+ * Fail an e2e job when any spec was SKIPPED, or when nothing passed. Two jobs call it: the
+ * real-stack one, and the demo's, which hands it its own report.
  *
  * Until 2026-09-11 the two specs that prove the balance guard and the PIN-lock countdown against the
  * real stack — `balanceGuard.spec.ts` and `pinLockExpiry.spec.ts` — skipped on every CI run, because
