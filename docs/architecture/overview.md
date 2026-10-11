@@ -46,7 +46,7 @@ constructs an `Authorization` header, and web storage holds no token, no session
 nothing of a real user's for a script to steal. Where the public demo is on, `localStorage` holds
 one thing a script could use: what signs in to the throwaway demo copy a visitor claimed, its
 password included.
-[ADR-0063](../adr/0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md#what-the-browser-keeps-in-demo-mode-added-2026-10-05)
+[ADR-0063](../adr/0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md#what-the-browser-keeps-in-demo-mode)
 says what that is worth to a script and when the browser removes it. With the demo off there is
 nothing in web storage for a script to steal.
 

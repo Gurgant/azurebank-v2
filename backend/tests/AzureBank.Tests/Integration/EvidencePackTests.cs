@@ -6,9 +6,11 @@ using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Transfer;
+using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -268,6 +270,76 @@ public class EvidencePackTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task AChainNobodyAnchored_HasEVERYRowUncovered_AndThePackDoesNotBlameTheAnchorChain()
+    {
+        var (_, _, account, recipient) = await ScenarioAsync();
+        var number = await TransferAsync(account, recipient);
+
+        using (var scope = Factory.Services.CreateScope())
+        {
+            (await Store(scope).AuditAnchors.CountAsync()).Should().Be(
+                0,
+                "ARRANGE: no test of this class records an anchor; the ones that do are in "
+                + "EvidencePackUncoveredWindowTests, on a store of their own");
+        }
+
+        var (exitCode, lines) = await EvidenceAsync(number);
+        var text = string.Join("\n", lines);
+
+        exitCode.Should().Be(VerifyCommand.Intact);
+        text.Should().Contain("UNCOVERED WINDOW: EVERY row. No anchor has ever been recorded.");
+        text.Should().NotContain(
+            "the anchor chain did not verify",
+            "an anchor table with no record in it verifies: there is nothing in it to fail");
+    }
+
+    /// <summary>An anchor chain whose table cannot be read.</summary>
+    private sealed class UnreadableAnchors : IAuditAnchorChain
+    {
+        private static InvalidOperationException Unreadable() =>
+            new("Invalid object name 'AuditAnchors'.");
+
+        public Task<AuditAnchor?> ReadTailAsync(
+            DbContext context, CancellationToken cancellationToken = default)
+            => throw Unreadable();
+
+        public AuditAnchorCheck Check(AuditAnchor anchor) => throw Unreadable();
+
+        public AuditAnchor Build(
+            AuditChainVerification verification, AuditAnchor? tail, DateTime createdAtUtc)
+            => throw Unreadable();
+
+        public Task<AuditAnchorChainVerification> VerifyChainAsync(
+            DbContext context, CancellationToken cancellationToken = default)
+            => throw Unreadable();
+    }
+
+    [Fact]
+    public async Task AnAnchorTableThatCannotBeRead_IsNoVerdict_AndNoPackIsPrinted()
+    {
+        var (_, _, account, recipient) = await ScenarioAsync();
+        var number = await TransferAsync(account, recipient);
+
+        // The same store, read through services whose anchor chain throws on every call.
+        using var unreadable = Factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(
+            services => services.AddScoped<IAuditAnchorChain, UnreadableAnchors>()));
+
+        var (exitCode, lines) = await EvidenceCommand.RunAsync(
+            unreadable.Services, number, CancellationToken.None);
+        var verify = await VerifyCommand.RunAsync(unreadable.Services, CancellationToken.None);
+
+        exitCode.Should().Be(
+            VerifyCommand.Misconfigured,
+            "the anchor table is part of the store, and an unreadable store has no verdict");
+        exitCode.Should().Be(
+            verify.ExitCode, "which is the answer `verify` gives over the same store");
+        lines[0].Should().Be(
+            "CANNOT ASSEMBLE: the store could not be read, so there is no evidence and no");
+        string.Join("\n", lines).Should().NotContain(
+            "EVIDENCE PACK", "a pack whose chain verdict has no window is not printed instead");
+    }
+
+    [Fact]
     public async Task ANumberTheStoreDoesNotHold_IsAUsageError_AndTheChainIsNotWalked()
     {
         await ScenarioAsync();
@@ -436,4 +508,194 @@ public class EvidencePackBrokenChainTests : IntegrationTestBase
         text.Should().NotContain("BOUND IN THE CHAIN");
     }
 
+}
+
+/// <summary>
+/// The uncovered window under the pack's chain verdict, over a store that has anchors: the pack
+/// prints the verdict <c>verify</c> prints, and <c>verify</c> ends its verdict with the window.
+/// </summary>
+/// <remarks>
+/// A class of its own, which is a store of its own: every test here records an anchor, and
+/// <c>EvidencePackTests</c> holds the case that needs a store nobody anchored. Each test anchors
+/// for itself and asserts only what follows from its own steps, so the order they run in does not
+/// matter.
+/// </remarks>
+public class EvidencePackUncoveredWindowTests : IntegrationTestBase
+{
+    public EvidencePackUncoveredWindowTests(CustomWebApplicationFactory factory) : base(factory) { }
+
+    private const decimal Amount = 40m;
+
+    /// <summary>A payer with a PIN and 500 on the account, and a payee to send to.</summary>
+    private async Task<(Guid Account, string RecipientTag)> ScenarioAsync()
+    {
+        var (token, _, account) = await RegisterTestUserAsync();
+        var unique = Guid.NewGuid().ToString("N")[..8];
+        var recipientTag = $"payee_{unique}";
+        var registered = await Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
+        {
+            AzureTag = recipientTag,
+            Email = $"payee{unique}@example.com",
+            Password = TestUserPassword,
+            FirstName = "Payee",
+            LastName = "User",
+        }, JsonOptions);
+        registered.EnsureSuccessStatusCode();
+        await DepositAsync(token, account, 500m);
+        await SetPinAsync(token);
+        SetAuthHeader(token);
+        return (account, recipientTag);
+    }
+
+    /// <summary>A real transfer, which writes one audit row; the number the API returned.</summary>
+    private async Task<string> TransferAsync(Guid from, string recipientTag)
+    {
+        var authorisation = await AuthoriseTransferAsync(from, recipientTag, Amount);
+        var response = await PostMonetaryAsync(
+            "/api/transfers",
+            new TransferRequest
+            {
+                FromAccountId = from,
+                RecipientAzureTag = recipientTag,
+                Amount = Amount,
+                Description = "evidence pack, uncovered window",
+            },
+            stepUpAuthorizationId: authorisation);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var body = await response.Content.ReadFromJsonAsync<ApiResponse<TransferResponse>>(JsonOptions);
+        return body!.Data!.TransactionNumber;
+    }
+
+    /// <summary>
+    /// Runs <c>anchor</c> over the store, through the services the pack reads through.
+    /// </summary>
+    private async Task AnchorAsync()
+    {
+        var (exitCode, lines) = await AnchorCommand.RunAsync(
+            Factory.Services, CancellationToken.None);
+        exitCode.Should().Be(
+            VerifyCommand.Intact,
+            "ARRANGE: an anchor is recorded over an intact chain. {0}",
+            string.Join(" ", lines));
+    }
+
+    private Task<(int ExitCode, string[] Lines)> EvidenceAsync(string number) =>
+        EvidenceCommand.RunAsync(Factory.Services, number, CancellationToken.None);
+
+    /// <summary>
+    /// Asserts that the chain verdict in <paramref name="pack"/> is, line for line, what
+    /// <c>verify</c> prints over the same store through the same services. The verdict is read
+    /// from under the heading that introduces it to the empty line that ends it, and the pack
+    /// indents each of its lines by two spaces.
+    /// </summary>
+    private static async Task ShouldCarryWhatVerifyPrintsAsync(
+        string[] pack, IServiceProvider services)
+    {
+        var (_, verify) = await VerifyCommand.RunAsync(services, CancellationToken.None);
+
+        pack.SkipWhile(line => !line.EndsWith("rendered by `verify`:", StringComparison.Ordinal))
+            .Skip(1)
+            .TakeWhile(line => line.Length > 0)
+            .Should().Equal(
+                verify.Select(line => "  " + line),
+                "the pack prints the chain verdict `verify` prints, and no other");
+    }
+
+    [Fact]
+    public async Task AChainAnchoredToItsTail_HasAWindowOfZeroUnderThePack()
+    {
+        var (account, recipient) = await ScenarioAsync();
+        var number = await TransferAsync(account, recipient);
+        await AnchorAsync();
+
+        var (exitCode, lines) = await EvidenceAsync(number);
+
+        exitCode.Should().Be(VerifyCommand.Intact);
+        string.Join("\n", lines).Should().Contain(
+            "UNCOVERED WINDOW: at least 0 rows -- the deepest anchor reaches the current tail.",
+            "the anchor recorded a moment ago covers every row this walk read");
+        await ShouldCarryWhatVerifyPrintsAsync(lines, Factory.Services);
+    }
+
+    [Fact]
+    public async Task RowsWrittenAfterTheDeepestAnchor_AreCountedUnderThePack()
+    {
+        var (account, recipient) = await ScenarioAsync();
+        var number = await TransferAsync(account, recipient);
+        await AnchorAsync();
+        await TransferAsync(account, recipient);
+        await TransferAsync(account, recipient);
+
+        var (exitCode, lines) = await EvidenceAsync(number);
+
+        exitCode.Should().Be(VerifyCommand.Intact);
+        string.Join("\n", lines).Should().Contain(
+            "UNCOVERED WINDOW: at least 2 rows are outside every anchor.",
+            "two transfers followed the anchor, and each wrote one audit row");
+        await ShouldCarryWhatVerifyPrintsAsync(lines, Factory.Services);
+    }
+
+    [Fact]
+    public async Task ATailRowRemovedAfterAnAnchorSawIt_IsANEGATIVEWindowUnderThePack()
+    {
+        var (account, recipient) = await ScenarioAsync();
+        var number = await TransferAsync(account, recipient);
+        await AnchorAsync();
+
+        long removed;
+        using (var scope = Factory.Services.CreateScope())
+        {
+            var store = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+            var movement = await store.Transactions.AsNoTracking()
+                .SingleAsync(t => t.TransactionNumber == number);
+            var tail = await store.AuditEvents.OrderByDescending(e => e.Sequence).FirstAsync();
+            tail.SubjectId.Should().Be(
+                movement.Id,
+                "ARRANGE: the transfer's row is the newest, so removing it cuts the chain at "
+                + "its end");
+            removed = tail.Sequence;
+            store.AuditEvents.Remove(tail);
+            await store.SaveChangesAsync();
+        }
+
+        var (exitCode, lines) = await EvidenceAsync(number);
+        var text = string.Join("\n", lines);
+
+        exitCode.Should().Be(
+            VerifyCommand.Intact,
+            "the rows that remain still hash and link, so only the anchors can show one is gone");
+        text.Should().Contain("NO AUDIT ROW names this transaction.");
+        text.Should().Contain(
+            $"UNCOVERED WINDOW: NEGATIVE. The anchors claim coverage through sequence {removed:N0},"
+            + $" and the chain ends at {removed - 1:N0}.");
+        await ShouldCarryWhatVerifyPrintsAsync(lines, Factory.Services);
+    }
+
+    [Fact]
+    public async Task OnlyARunThatCannotVerifyTheAnchorChain_PrintsThatTheWindowWasNotComputed()
+    {
+        var (account, recipient) = await ScenarioAsync();
+        var number = await TransferAsync(account, recipient);
+        await AnchorAsync();
+
+        // The same store under another Audit:AnchorKey, as after a rotation or on a machine holding
+        // the wrong key: no record authenticates under it, so the anchor chain does not verify.
+        using var stranger = Factory.WithWebHostBuilder(builder => builder.UseSetting(
+            "Audit:AnchorKey", "test-only-anchor-key-that-wrote-none-of-these-records-0123"));
+
+        var (exitCode, underAnotherKey) = await EvidenceCommand.RunAsync(
+            stranger.Services, number, CancellationToken.None);
+        var (_, underTheKeyThatWroteThem) = await EvidenceAsync(number);
+
+        const string notComputed =
+            "UNCOVERED WINDOW: not computed -- the anchor chain did not verify.";
+        exitCode.Should().Be(
+            VerifyCommand.Intact, "the exit code is the row chain's, and the rows are untouched");
+        string.Join("\n", underAnotherKey).Should().Contain(notComputed);
+        await ShouldCarryWhatVerifyPrintsAsync(underAnotherKey, stranger.Services);
+        string.Join("\n", underTheKeyThatWroteThem).Should().NotContain(
+            notComputed,
+            "under the key that wrote the anchors the chain verifies, and the window is a number");
+    }
 }

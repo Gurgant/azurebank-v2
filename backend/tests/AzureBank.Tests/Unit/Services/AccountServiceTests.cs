@@ -654,6 +654,47 @@ public class AccountServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task DeleteAccountAsync_WhenTheRowGoesBeforeTheReload_AnswersNotFound_AndWritesNothing()
+    {
+        /*
+          The row is deleted while the authorisation is validated: after the closure looked at
+          its account, before the delegate reloads it. No save is lost and no attempt has set
+          the flag. The reload finds no row, detaches the entry and leaves the entity as it was,
+          open and empty, so only the entry's state says the row is gone. This needs no row
+          version, so this store shows it; AccountDeletionSqlServerTests shows it on SQL Server,
+          where the audit rows and the authorisation are read from the store.
+        */
+        var userId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, isPrimary: false);
+        _context.Accounts.Add(account);
+        await _context.SaveChangesAsync();
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
+            .ReturnsAsync(account);
+        var removed = 0;
+        _stepUpMock
+            .Setup(s => s.ValidateAsync(
+                It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<StepUpOperation>(),
+                It.IsAny<StepUpBinding>(), It.IsAny<CancellationToken>()))
+            .Returns(async () => removed = await RemoveTheRowAsync(account.Id));
+
+        var act = () => _sut.DeleteAccountAsync(account.Id, userId, Presented());
+
+        (await act.Should().ThrowAsync<NotFoundException>())
+            .Which.ErrorCode.Should().Be(ErrorCodes.AccountNotFound);
+
+        removed.Should().Be(1, "the removal must have taken the row the closure is about to reload");
+        account.IsDeleted.Should().BeFalse("no attempt set the flag: the entity still says an open account");
+        _context.Entry(account).State.Should().Be(EntityState.Detached, "the reload found no row");
+        _auditMock.Verify(a => a.Record(
+            It.IsAny<string>(), It.IsAny<AuditOutcome>(), It.IsAny<Guid?>(), It.IsAny<string?>(),
+            It.IsAny<Guid?>(), It.IsAny<string?>()), Times.Never);
+        _stepUpMock.Verify(s => s.ConsumeAsync(
+            It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<Guid?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
     public async Task DeleteAccountAsync_ConsumesAfterTheSave_WithNoTransactionId()
     {
         /*
@@ -867,6 +908,21 @@ public class AccountServiceTests : IDisposable
             It.IsAny<string?>(),
             It.IsAny<Guid?>(),
             It.IsAny<string?>()), Times.Never);
+    }
+
+    /// <summary>
+    /// Deletes the account's row on a SECOND context over the same store, as a writer outside the
+    /// request does, and returns how many rows it took.
+    /// </summary>
+    private async Task<int> RemoveTheRowAsync(Guid accountId)
+    {
+        await using var other = new AzureBankDbContext(
+            new DbContextOptionsBuilder<AzureBankDbContext>()
+                .UseInMemoryDatabase(_databaseName, _databaseRoot)
+                .ReplaceService<IModelCustomizer, InMemoryTestModelCustomizer>()
+                .Options);
+        other.Accounts.Remove(await other.Accounts.SingleAsync(a => a.Id == accountId));
+        return await other.SaveChangesAsync();
     }
 
     /// <summary>

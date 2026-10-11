@@ -30,9 +30,9 @@ and the log of every workflow run are public. Runbook: [`infra/README.md`](../..
 7. **One workflow, started by hand from `main`, deploys a commit: the migration, then the app, then
    a check, and a failed check puts the app back.** The schema is never put back. The check ends
    with a sign-in the API must refuse: that answer needs both hosts, the schema and the database.
-8. **The deployment identity can move images and start a job, and nothing else**: nine actions, no
-   listing of secrets, and GitHub signs in as it only from the environment `demo`. It has no role on
-   the database identities, because it could then attach the schema-changing one to the app.
+8. **The deployment identity can write the app and each job, and start a job**: nine actions, no
+   listing of secrets, sign-in only from the GitHub environment `demo`. A write can run any image
+   with the secrets and database identity already there. No role on an identity: it attaches none.
 9. **The eight application secrets are secrets of the app, and the PIN pepper also of the pool job**
    (ADR-0064, decisions 2, 3 and 6). The connection strings are secrets too, because that keeps the
    server's name out of the `bff` container, which faces the internet.

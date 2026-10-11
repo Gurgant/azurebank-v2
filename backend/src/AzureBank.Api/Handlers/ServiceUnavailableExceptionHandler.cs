@@ -155,6 +155,16 @@ public sealed class ClientAbortedExceptionHandler : IExceptionHandler
 /// conflict, the application lock's <c>THROW 50000</c>.
 /// </para>
 /// <para>
+/// A BUSY ACCOUNT IS ANSWERED HERE TOO, and it is not an outage: an <see cref="AccountBusyException"/>
+/// is a write that lost its account's row to other writes on every attempt, which only a
+/// deposit raises. Same code and same shape, with a wait of its own
+/// (<see cref="AccountBusyException.RetryAfterSeconds"/>) and a sentence of its own. It comes here,
+/// and not to the domain handler, so that <c>applied</c> is decided by the one rule below. Any other
+/// concurrency conflict stays a 500: the bare exception names no cause a caller can act on.
+/// LOGGED AT INFORMATION, where an outage is a Warning: nothing is wrong with the service, and the
+/// write that raised it has already written its own Warning, which names the account.
+/// </para>
+/// <para>
 /// -2, A COMMAND TIMEOUT, IS A 503 TOO: the database did not answer in time. That includes the audit
 /// chain's bounded tail read (ADR-0044), which answered 500 before; the application lock's own
 /// timeout is a raised error, 50000, and stays 500.
@@ -197,12 +207,22 @@ public sealed class ServiceUnavailableExceptionHandler : IExceptionHandler
     /// <summary>A bare timeout, not a SQL error.</summary>
     public const string Timeout = "Timeout";
 
+    /// <summary>A write lost its account's row to other writes on every attempt it is given.</summary>
+    public const string AccountBusy = "AccountBusy";
+
     /// <summary>The answer's detail: no time, no cause, nothing the visitor can act on but a retry.</summary>
     internal const string Detail = "The service is temporarily unavailable. Try again shortly.";
 
     /// <summary>The detail of an answer that knows nothing was applied (<c>applied: false</c>).</summary>
     internal const string NothingAppliedDetail =
         "The service is temporarily unavailable, and nothing was changed. Try again shortly.";
+
+    /// <summary>The detail of a busy account's answer.</summary>
+    internal const string BusyDetail = "The account is busy with other requests. Send the request again shortly.";
+
+    /// <summary>The detail of a busy account's answer that knows nothing was applied.</summary>
+    internal const string BusyNothingAppliedDetail =
+        "The account is busy with other requests, and nothing was changed. Send the request again shortly.";
 
     /// <summary>SQL errors that mean the database cannot be reached, beyond EF's transient list.</summary>
     private static readonly HashSet<int> UnreachableNumbers = [35, 11001, 18401, 17197, 17142];
@@ -252,7 +272,9 @@ public sealed class ServiceUnavailableExceptionHandler : IExceptionHandler
         }
 
         var age = httpContext.Features.Get<ReceivedAtFeature>()?.Value is { } at ? _clock.Now - at : (TimeSpan?)null;
-        _logger.LogWarning(
+        var busy = reason == AccountBusy;
+        _logger.Log(
+            busy ? LogLevel.Information : LogLevel.Warning,
             exception,
             "Service unavailable ({Reason}) on {RoutePattern} after {ElapsedMs} ms; "
             + "SQL errors {SqlErrorNumbers}; chain {ExceptionTypes}",
@@ -268,7 +290,9 @@ public sealed class ServiceUnavailableExceptionHandler : IExceptionHandler
 
         var details = new Dictionary<string, object>
         {
-            ["retryAfterSeconds"] = ServiceUnavailableException.OutageRetryAfterSeconds,
+            ["retryAfterSeconds"] = busy
+                ? AccountBusyException.RetryAfterSeconds
+                : ServiceUnavailableException.OutageRetryAfterSeconds,
         };
         var nothingApplied = NothingApplied(httpContext, deadline, age, _claimStaleAfter);
         if (nothingApplied)
@@ -280,7 +304,13 @@ public sealed class ServiceUnavailableExceptionHandler : IExceptionHandler
             httpContext,
             StatusCodes.Status503ServiceUnavailable,
             ErrorCodes.ServiceUnavailable,
-            nothingApplied ? NothingAppliedDetail : Detail,
+            (busy, nothingApplied) switch
+            {
+                (true, true) => BusyNothingAppliedDetail,
+                (true, false) => BusyDetail,
+                (false, true) => NothingAppliedDetail,
+                (false, false) => Detail,
+            },
             details,
             cancellationToken);
 
@@ -317,7 +347,7 @@ public sealed class ServiceUnavailableExceptionHandler : IExceptionHandler
         && age is { } elapsed && elapsed < claimStaleAfter - ClaimTakeoverMargin;
 
     /// <summary>
-    /// Why <paramref name="exception"/> is the outage 503, or null when it is not one.
+    /// Why <paramref name="exception"/> is answered 503, or null when it is not.
     /// </summary>
     /// <param name="exception">What reached the handlers.</param>
     /// <param name="firedByDeadline">
@@ -335,6 +365,9 @@ public sealed class ServiceUnavailableExceptionHandler : IExceptionHandler
         {
             switch (current)
             {
+                case AccountBusyException:
+                    return AccountBusy;
+
                 case RetryLimitExceededException:
                     return RetryLimitExceeded;
 

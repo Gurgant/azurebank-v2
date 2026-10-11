@@ -205,6 +205,23 @@ public class PublishedErrorContractTests
     }
 
     [Fact]
+    public void Only_the_deposit_503_names_the_busy_account()
+    {
+        // A deposit answers the 503 for a cause no other operation has: every attempt it is given
+        // lost its account to another write (BalanceConcurrencySqlServerTests makes one). The
+        // sentence is on that operation only: on another it would promise an answer the code does
+        // not send, and missing from the deposit it would leave a cause of its 503 unnamed.
+        var naming = Operations(Document())
+            .Where(o => o.Value.GetProperty("responses").TryGetProperty("503", out var outage)
+                && outage.GetProperty("description").GetString()!
+                    .Contains("lost the account to another write", StringComparison.Ordinal))
+            .Select(o => o.Operation)
+            .ToList();
+
+        naming.Should().Equal("POST /api/transactions/deposit");
+    }
+
+    [Fact]
     public void The_demo_claim_declares_the_404_of_a_deployment_that_is_not_the_demo()
     {
         // The document is the same for every deployment, and on one with the demo off this

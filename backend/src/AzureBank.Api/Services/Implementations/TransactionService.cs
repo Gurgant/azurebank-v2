@@ -119,6 +119,51 @@ public class TransactionService : ITransactionService
                 await ConcurrencyRetry.PrepareNextAttemptAsync(_context, [account], cancellationToken);
                 continue;
             }
+            catch (DbUpdateConcurrencyException ex) when (ConcurrencyRetry.IsAccountRace(ex))
+            {
+                /*
+                  THE LAST ATTEMPT LOST THE ACCOUNT TOO. Each save that is refused on the account's
+                  RowVersion is rolled back whole, the ledger row, the audit row and the idempotency
+                  record's flip together, so a deposit that only lost has written nothing and only
+                  has to be sent again: the answer is the 503 a client retries, where the conflict
+                  left to propagate is a 500.
+
+                  ONLY WHEN THE STORE SAYS SO. The conflict names the account and says nothing of
+                  the record, which the same save can have lost: taken over by another request with
+                  the key, or flipped by this request's own commit, when it landed, its
+                  acknowledgement was lost and the save ran again. Neither is a busy account. So
+                  the record is read, and the request's deadline is asked whether a commit was let
+                  start; without both proofs the conflict propagates as it does for every other
+                  write.
+
+                  THE ACCOUNT IS READ ONCE MORE, AFTER THE RECORD. The write that won the last
+                  attempt may be a closure, and a closed account is not a busy one: it answers the
+                  404 it answers after any other attempt, not an invitation to send the deposit
+                  again.
+
+                  WHAT FOLLOWS THE 503. IdempotencyMiddleware releases the claim on the way out,
+                  under a budget of 3 s. When the release lands, the key is free and the same
+                  request executes when it comes back; when it does not, the key answers 409
+                  IDEMPOTENCY_IN_FLIGHT until the claim is stale (ADR-0058 D9), and executes then.
+
+                  NO LOCK AND NO QUEUE PER ACCOUNT. The database lets one write to an account
+                  through at a time, and this loop is the wait for a turn. It is bounded, and what
+                  does not fit in it goes back to the caller with a time to come back.
+                */
+                if (!await ConcurrencyRetry.ClaimIsOwnAndNothingCommittedAsync(_context, cancellationToken))
+                {
+                    throw;
+                }
+
+                await ConcurrencyRetry.ResetToStoreAsync(_context, [account], cancellationToken);
+                ConcurrencyRetry.RefuseIfClosed(_context, account);
+
+                _logger.LogWarning(
+                    "Deposit to account {AccountId} lost the account to another write on attempt "
+                        + "{Attempt}, its last; answering 503",
+                    account.Id, attempt);
+                throw new AccountBusyException(ex);
+            }
             catch (DbUpdateException ex) when (ConcurrencyRetry.IsTransactionNumberCollision(ex, attempt))
             {
                 // A regenerable clash on the transaction number: the next attempt mints a fresh

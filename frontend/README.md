@@ -46,7 +46,7 @@ npm run test:contract:mock  # the contract suite against the mock ...
 npm run test:contract:real  # ... and against the running BFF and API (ADR-0029)
 npm run test:integration    # the data layer against the running stack
 npm run test:e2e            # Playwright; starts vite itself, needs the BFF and the API
-npm run test:e2e:demo       # the public demo in a browser: by hand, on the compose demo stack
+npm run test:e2e:demo       # the public demo in a browser, on the compose demo stack
 ```
 
 - **`npm test` is not the whole suite.** It runs neither the contract suite nor the integration
@@ -54,11 +54,12 @@ npm run test:e2e:demo       # the public demo in a browser: by hand, on the comp
   [`CONVENTIONS.md`](CONVENTIONS.md) has what that stack must be.
 - **`npm run build` is the type check that counts.** `tsc --noEmit` skips the project references
   this tsconfig is built from.
-- **`npm run test:e2e:demo` is part of no other run and of no CI job.** It wants the stack of
-  `compose.yaml` with `compose.demo.yaml` and nobody else using it: it claims two demo copies and
-  restarts the BFF's and the API's containers.
-  [`playwright.demo.config.ts`](playwright.demo.config.ts) says how to run it, why it keeps no
-  trace, and what it leaves on disk to be deleted.
+- **`npm run test:e2e:demo` is part of no other run.** It wants the stack of `compose.yaml`
+  with `compose.demo.yaml` and nobody else using it: it claims two demo copies and restarts the
+  BFF's and the API's containers. CI runs it on every pull request, in the job `demo-stack`, on
+  a stack that job builds and takes down.
+  [`playwright.demo.config.ts`](playwright.demo.config.ts) says how to run it by hand, why it
+  keeps no trace, and what it leaves on disk to be deleted.
 
 ## Accessibility
 
@@ -75,9 +76,10 @@ The same run holds more by measuring it, each with its note in
 be read in both themes, a visible focus on each amount field, focus given back by seven dialogs,
 and the layout of the money tiles and of a transaction's row at 375 px.
 
-The public demo's screens are scanned by the same gate only in `npm run test:e2e:demo`, which is
-run by hand: no CI job catches a finding on a demo screen. The sign-in page of a browser that
-keeps a copy is under no scan.
+The public demo's screens are scanned by the same gate only in `npm run test:e2e:demo`, which
+CI's `demo-stack` job runs on every pull request: a finding on a demo screen fails that job, and
+the report of each scan is its artifact. The sign-in page of a browser that keeps a copy is
+under no scan.
 
 ## Screenshots
 

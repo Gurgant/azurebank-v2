@@ -10,7 +10,8 @@ namespace AzureBank.Api.Transformers;
 /// Declares the outage 503 on every operation (ADR-0058): any request can meet a database that
 /// cannot be reached or, outside the three exempt token endpoints, its own deadline, and both answer
 /// 503 <c>SERVICE_UNAVAILABLE</c>. On the four keyed money operations the body is the
-/// <c>MoneyServiceUnavailable</c> component, which adds <c>applied</c>.
+/// <c>MoneyServiceUnavailable</c> component, which adds <c>applied</c>. The deposit's 503 also names
+/// a busy account, which it answers with the same code and the same body.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -36,6 +37,17 @@ public sealed class ServiceUnavailableResponseTransformer : IOpenApiOperationTra
     private const string Database =
         "Service Unavailable - the database could not be reached or did not answer in time";
 
+    /// <summary>
+    /// The one operation with a cause of its own: a deposit also gives up when every attempt it is
+    /// given lost its account to another write (<c>TransactionService.DepositAsync</c>). Named on
+    /// that operation only, since no other answers a busy account this way.
+    /// </summary>
+    private const string DepositPath = "api/transactions/deposit";
+
+    private const string BusyAccount =
+        " A deposit also answers it when the account is busy: every attempt the deposit is given "
+        + "lost the account to another write.";
+
     private const string Retry =
         " The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After "
         + "header carries the same value, and the answer is never cached (its Cache-Control includes no-store). "
@@ -54,6 +66,12 @@ public sealed class ServiceUnavailableResponseTransformer : IOpenApiOperationTra
         var cause = metadata?.OfType<NoRequestDeadlineAttribute>().Any() == true
             ? Database + "."
             : Database + ", or the request ran past its deadline.";
+
+        if (string.Equals(context.Description.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(context.Description.RelativePath, DepositPath, StringComparison.OrdinalIgnoreCase))
+        {
+            cause += BusyAccount;
+        }
 
         operation.Responses ??= [];
 

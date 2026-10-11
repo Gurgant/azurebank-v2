@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AzureBank.Api.Services;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Account;
@@ -166,6 +167,45 @@ public sealed class DepositIntoClosedAccountSqlServerTests : IDisposable
                 AccountRows: 0, IsDeleted: null, Balance: null, TransactionRows: 0, DepositAuditRows: 0,
                 IdempotencyRecords: string.Empty, ChainIntact: true),
             "the deposit does not write the account back, and writes nothing else");
+    }
+
+    [SqlServerFact]
+    public async Task Collision_DepositLosingItsLastAttemptToAClosure_IsRefused_NotToldToSendItAgain()
+    {
+        var client = CreateSqlClient();
+        var user = await RegisterWithPinAsync(client, "deplast");
+        var spare = await CreateSpareAsync(client, user);
+
+        /*
+          Every save of the deposit loses the account, and the write that takes the last one is a
+          closure. No attempt is left to go round the retry, where a closed account is refused, so
+          this is the one place a closure could be answered as a busy account.
+        */
+        var race = new LostRowVersionRaceInterceptor(SqlServerFactAttribute.ConnectionString!);
+        _factory!.AddInterceptor(race);
+        race.Arm(spare, closingOn: ConcurrencyRetry.MaxAttempts);
+
+        var key = Guid.NewGuid();
+        var response = await SendDepositAsync(client, user.Token, spare, 5m, key.ToString());
+        race.Disarm();
+        var body = await response.Content.ReadAsStringAsync();
+        var seen = await ReadAsync(user, spare, key);
+
+        _output.WriteLine(
+            $"status: {(int)response.StatusCode}, body: {body}, race.Fired: {race.Fired} of "
+            + $"{ConcurrencyRetry.MaxAttempts} attempts, race.Closed: {race.Closed}, {seen}");
+
+        using var assertions = new AssertionScope();
+        race.Fired.Should().Be(ConcurrencyRetry.MaxAttempts, "the deposit must have lost every attempt it is given");
+        race.Closed.Should().BeTrue("and the last of them to a closure of an account that was still open");
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound,
+            "a closed account is not a busy one: sending the deposit again cannot make it");
+        ErrorCodeOf(body).Should().Be(ErrorCodes.AccountNotFound);
+        response.Headers.RetryAfter.Should().BeNull();
+        seen.Should().Be(new Rows(
+            AccountRows: 1, IsDeleted: true, Balance: 0m, TransactionRows: 0, DepositAuditRows: 0,
+            IdempotencyRecords: string.Empty, ChainIntact: true));
     }
 
     /// <summary>

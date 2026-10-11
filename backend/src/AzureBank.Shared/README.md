@@ -54,6 +54,10 @@ the body, so is every entry of `Details`, and a `retryAfterSeconds` detail is al
 The sentence of a money refusal carries no figure: the amounts travel in `Details`, and the client
 formats them.
 
+`AccountBusyException` is not an `AppException`: the API's outage handler answers it, 503
+`SERVICE_UNAVAILABLE` with `retryAfterSeconds` 1, so that the one rule for `applied: false`
+(ADR-0058 D7) covers a busy account too.
+
 An error code is written once, in `ErrorCodes`: `ErrorCodeConstantTests` fails a code written as a
 string literal in the API's services or in `Exceptions/`. A security event's name is written once,
 in `SecurityEvents`, which is here because both the API and the BFF log them:

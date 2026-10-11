@@ -136,13 +136,14 @@ docker compose up --build -d   # after exporting the eight variables compose.yam
   that loads the file needs it, `down` included.
 
 **The public demo on that stack, and in the dev loop.** `npm run test:e2e:demo`, from
-`frontend/`, drives the demo in Chromium on `http://localhost:5000`. Run it by hand, on a stack
-nobody else is using: it **restarts the BFF's container and then the API's**, and no CI job runs
-it. [`frontend/playwright.demo.config.ts`](../frontend/playwright.demo.config.ts) has how to run
-it, the caps a repeated run meets (five runs fit in a day on one volume) and what a run leaves on
-disk to delete. In the dev loop the demo's screens need `AZUREBANK_DEMO=true` in the dev server's
-environment ([`frontend/README.md`](../frontend/README.md#run-it)). That sets the page and not
-the backend: a BFF with the demo off answers the claim 404.
+`frontend/`, drives the demo in Chromium on `http://localhost:5000`. CI runs it on every pull
+request, in the job `demo-stack`, on a stack the job builds from the two compose files and takes
+down. By hand, run it on a stack nobody else is using: it **restarts the BFF's container and
+then the API's**. [`frontend/playwright.demo.config.ts`](../frontend/playwright.demo.config.ts)
+has how to run it, the caps a repeated run meets (five runs fit in a day on one volume) and what
+a run leaves on disk to delete. In the dev loop the demo's screens need `AZUREBANK_DEMO=true` in
+the dev server's environment ([`frontend/README.md`](../frontend/README.md#run-it)). That sets
+the page and not the backend: a BFF with the demo off answers the claim 404.
 
 The default suite, `npm run test:e2e`, expects the demo off. On the compose stack one of its
 tests, `e2e/pinLockExpiry.spec.ts`, failed in two of four whole runs on 2026-10-05 with its own
@@ -207,9 +208,18 @@ the frontend's artefacts to regenerate, and the other route, against a running A
 
 ## Commit and pull-request titles
 
-This repository squash-merges, so **only the pull-request title lands on `main`**: the commits on
-the branch are discarded. The title is plain, imperative, at most 72 characters, and names the
-concrete outcome, not a category:
+This repository squash-merges, so one commit lands on `main`, and **its title and text are the
+pull request's**, put there by hand at the merge. The commits of the branch do not land, but
+they stay public, on the pull request's page and on the branch. They follow the same rules as
+any text here: a subject that says what the commit does, no line that credits a second author,
+no at-sign before a name, no secret. CI reads the commits of a pull request and fails on two
+things: a line that begins with a key ending in `-by:`, the form in which git names a signer, a
+reviewer or a second author, and an at-sign before a name outside backticks. Any other closing
+line, such as `Gate: 12 passed`, passes. A pushed commit is not rewritten, so a branch with a
+message that fails is replaced by a new one.
+
+The title is plain, imperative, at most 72 characters, and names the concrete outcome, not a
+category:
 
 ```text
 Reject negative balances on concurrent withdrawals
