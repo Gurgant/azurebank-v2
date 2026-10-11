@@ -47,8 +47,8 @@ python -m unittest discover -s infra -p 'test_*.py'
 ```
 
 Build in Release: warnings are errors there, as in CI. Name the solution and do not filter: a
-filtered run drops the BFF's suite and still reports success. The type gate is `npm run build`,
-not `tsc --noEmit`.
+filter on `AzureBank.Tests` drops the BFF's suite and still reports success. The type gate is
+`npm run build`, not `tsc --noEmit`.
 
 These run without a stack. The tests that need a SQL Server skip themselves unless
 `AZUREBANK_TEST_SQLSERVER` holds a connection string, and three frontend suites need the real

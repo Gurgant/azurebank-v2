@@ -90,8 +90,8 @@ dotnet test backend/AzureBank.slnx    # name the solution
 cd frontend && npm run build && npx vitest run
 ```
 
-A filtered `dotnet test` drops the BFF's tests and still reports success, and `tsc --noEmit`
-skips this tsconfig's project references
+A `dotnet test` filtered on `AzureBank.Tests` drops the BFF's tests and still reports success,
+and `tsc --noEmit` skips this tsconfig's project references
 ([engineering traps](engineering-traps.md#frontend-test-infrastructure)). The concurrency proofs
 need a real SQL Server and skip without one:
 
@@ -150,7 +150,7 @@ expectations met: the browser's context did not close within the test's 30 s. Wh
 
 ## Quality gates
 
-Run all of these before opening a pull request, from `backend/`:
+Run these before opening a pull request, for every part the change touches. From `backend/`:
 
 ```bash
 dotnet build AzureBank.slnx --configuration Release
@@ -158,10 +158,16 @@ dotnet test AzureBank.slnx --configuration Release --no-build
 dotnet format AzureBank.slnx --verify-no-changes
 ```
 
-Frontend changes also need, from `frontend/`:
+From `frontend/`:
 
 ```bash
 npm run format:check && npm run lint && npm run build && npm test && npm run test:contract:mock
+```
+
+For the deployment scripts, the templates and the workflows, from the root:
+
+```bash
+python -m unittest discover -s infra -p 'test_*.py'
 ```
 
 - **Build in Release.** Warnings are errors there, as in CI: a Debug build passes with a warning
@@ -180,7 +186,7 @@ npm run format:check && npm run lint && npm run build && npm test && npm run tes
 
 ## Merging
 
-- **Every pull request is merged by hand after review.** The repository requires a pull request,
+- **Every pull request is merged by hand after review.** `main` requires a pull request,
   permits squash only, and has no bypass.
 - **Branches are not deleted after merge.** A squash leaves one commit on `main`, and the branch
   is where the commits behind it stay.
