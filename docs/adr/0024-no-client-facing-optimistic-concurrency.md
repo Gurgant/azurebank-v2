@@ -25,8 +25,10 @@ builds a feature that was researched and rejected.
    pattern (GitHub, Cosmos DB, Microsoft Graph, Google Cloud Storage), where independent editors
    mutate shared objects. A future write-safety proposal is expressed as an idempotency key, or it
    is rejected.
-3. **Concurrency is resolved server-side**, through `Account.RowVersion` and `ConcurrencyRetry`. It
-   is never delegated to clients through conditional requests.
+3. **Concurrency is resolved server-side**, through `Account.RowVersion` and `ConcurrencyRetry`:
+   a deposit, a withdrawal, a transfer, a rename, a change of primary and a closure each retry a
+   save refused because the row's version had moved. It is never delegated to clients through
+   conditional requests.
 4. **Non-money resources are last-write-wins by design.** Account rename, set-primary and delete
    carry no version token and no 412 handling. It is recorded so that the absence reads as a choice,
    not as an omission to fix.
@@ -69,6 +71,8 @@ cache in the frontend; "consistency" clean-ups that expose `RowVersion` in a res
 ## Verified by
 
 - `grep -rn "If-Match" backend/src frontend/src` finds nothing.
+- `AccountRenameSqlServerTests`: a rename keeps the deposit that raced it and saves its name, and
+  answers 404 when a closure or a removal took the row first.
 
 ## Related
 

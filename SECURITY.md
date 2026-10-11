@@ -165,7 +165,7 @@ them in a minute.
   end, and one that somebody is still signed in to until 48 hours past it, from when a run deletes
   it whoever is signed in. With the demo off the key is never read, and no screen sends the claim
   that writes it.
-  [ADR-0063](docs/adr/0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md#what-the-browser-keeps-in-demo-mode-added-2026-10-05)
+  [ADR-0063](docs/adr/0063-a-visitor-claims-a-prepared-copy-instead-of-registering.md#what-the-browser-keeps-in-demo-mode)
   has the key's shape, when it is removed, and what a script that read it would gain.
 - **The SPA never constructs an `Authorization` header.** Access tokens live server-side in the BFF
   and are attached by its proxy transform (ADR-0001, ADR-0021). Frontend code that builds a bearer
