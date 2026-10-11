@@ -23,18 +23,18 @@ a change takes from a plan to the live demo, and what stands between an agent an
 
 | Number | What it counts |
 |--:|---|
-| **[248](https://github.com/Gurgant/azurebank-v2/pulls?q=is%3Apr+is%3Amerged)** | pull requests merged: each one by me, each one through the automated tests |
+| **[255](https://github.com/Gurgant/azurebank-v2/pulls?q=is%3Apr+is%3Amerged)** | pull requests merged: each one by me, each one through the automated tests |
 | **[9](https://github.com/Gurgant/azurebank-v2/rules/18930321)** | checks now required before `main` takes a pull request, plus a security scan |
-| **[2,846](https://github.com/Gurgant/azurebank-v2/actions/runs/38012335372/job/114094891302)** | backend tests that run with no database |
-| **[330](https://github.com/Gurgant/azurebank-v2/actions/runs/38012335372/job/114094891484)** | backend proofs on a real SQL Server, in a job of their own |
-| **[1,412](https://github.com/Gurgant/azurebank-v2/actions/runs/38012335372/job/114094891394)** | frontend tests |
-| **[89](https://github.com/Gurgant/azurebank-v2/actions/runs/38012335372/job/114094891435)** | browser tests on the real stack |
+| **[2,846](https://github.com/Gurgant/azurebank-v2/actions/runs/38094831735/job/114338497975)** | backend tests that run with no database |
+| **[368](https://github.com/Gurgant/azurebank-v2/actions/runs/38094831735/job/114338497920)** | backend proofs on a real SQL Server, in a job of their own |
+| **[1,412](https://github.com/Gurgant/azurebank-v2/actions/runs/38094831735/job/114338497955)** | frontend tests |
+| **[89](https://github.com/Gurgant/azurebank-v2/actions/runs/38094831735/job/114338497869)** | browser tests on the real stack |
 | **[64](adr/README.md)** | decisions written down as architecture decision records |
 | **4** | agents coordinated: one orchestrator and three working in parallel |
 | **0** | merges made by an agent |
 
-Counted on 10 October 2026. The four test numbers are those of one CI run on `main`,
-[run 38012335372](https://github.com/Gurgant/azurebank-v2/actions/runs/38012335372), each linked to its job; the other linked numbers lead to where they
+Counted on 11 October 2026. The four test numbers are those of one CI run on `main`,
+[run 38094831735](https://github.com/Gurgant/azurebank-v2/actions/runs/38094831735), each linked to its job; the other linked numbers lead to where they
 can be counted again. The two without a link, 4 and 0, are my own statement: on GitHub every
 merge shows one account, mine.
 
@@ -91,8 +91,8 @@ through an MCP server and reports what it read.
 - **No agent merges: I do.** The orchestrator is stopped by a permission rule and a hook that
   refuse the merge command before it runs. The other three are held one step earlier: their
   folders refuse a push, and their brief ends at the local commit.
-- **Nothing reaches Azure without me.** A deployment is a run started by hand, and the live
-  environment has a required reviewer and no admin bypass.
+- **Nothing reaches Azure without my approval.** A merge deploys nothing: a deployment is a
+  separate run, started by hand, that stops until I approve it.
 
 An instruction in a prompt is not a permission boundary: that is why each of these is a
 mechanism. Each has its limit. The hook and the folders that refuse a push run on my machine:

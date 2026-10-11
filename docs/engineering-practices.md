@@ -153,17 +153,19 @@ expectations met: the browser's context did not close within the test's 30 s. Wh
 Run all of these before opening a pull request, from `backend/`:
 
 ```bash
-dotnet build
-dotnet test AzureBank.slnx
-dotnet format --verify-no-changes
+dotnet build AzureBank.slnx --configuration Release
+dotnet test AzureBank.slnx --configuration Release --no-build
+dotnet format AzureBank.slnx --verify-no-changes
 ```
 
 Frontend changes also need, from `frontend/`:
 
 ```bash
-npm run format:check && npm run lint && npm run build && npx vitest run
+npm run format:check && npm run lint && npm run build && npm test && npm run test:contract:mock
 ```
 
+- **Build in Release.** Warnings are errors there, as in CI: a Debug build passes with a warning
+  that CI refuses.
 - **Name the solution**, and take `npm run build` as the type gate, not `tsc --noEmit`
   ([traps](engineering-traps.md#frontend-test-infrastructure)).
 - **A gate is a delta against `main`, never an absolute count.** "This change introduces no new
