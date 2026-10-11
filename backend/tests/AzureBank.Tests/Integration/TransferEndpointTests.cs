@@ -363,6 +363,13 @@ public class TransferEndpointTests : IntegrationTestBase
              detail "Account with identifier '<the id>' was not found."
         an account id nobody holds, handle "nobody_here_at_all"
           -> the same ACCOUNT_NOT_FOUND: the account is looked for first.
+        an account of the caller that is closed, either handle
+          -> the same ACCOUNT_NOT_FOUND, with the closed account's id in the detail.
+        an open account of another user, either handle
+          -> 403 "Forbidden", errorCode ACCESS_DENIED,
+             detail "You do not have access to this account."
+      So the 404 of a source account means that the id names no account or that the account is
+      closed, and never that the account is somebody else's.
     */
 
     private const string MintUrl = "/api/transfers/authorizations";
@@ -442,9 +449,89 @@ public class TransferEndpointTests : IntegrationTestBase
         }
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheCallersClosedAccount_AnswersAccountNotFound_OnTheMintAndOnTheTransfer(
+        bool theRecipientExists)
+    {
+        var (token, _, _) = await RegisterTestUserAsync();
+        await SetPinAsync(token);
+        var recipient = theRecipientExists
+            ? (await RegisterRecipientAsync()).AzureTag
+            : "nobody_here_at_all";
+        SetAuthHeader(token);
+        var closedAccount = await OpenAndCloseAnAccountAsync();
+
+        foreach (var (endpoint, response) in await MintAndSendAsync(closedAccount, recipient))
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.NotFound, endpoint);
+
+            var problem = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+            problem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.AccountNotFound, endpoint);
+            problem.GetProperty("detail").GetString()
+                .Should().Be($"Account with identifier '{closedAccount}' was not found.", endpoint);
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AnotherUsersOpenAccount_AnswersAccessDenied_OnTheMintAndOnTheTransfer(
+        bool theRecipientExists)
+    {
+        var (_, _, anotherUsersAccount) = await RegisterTestUserAsync();
+        var (token, _, _) = await RegisterTestUserAsync();
+        await SetPinAsync(token);
+        var recipient = theRecipientExists
+            ? (await RegisterRecipientAsync()).AzureTag
+            : "nobody_here_at_all";
+        SetAuthHeader(token);
+
+        foreach (var (endpoint, response) in await MintAndSendAsync(anotherUsersAccount, recipient))
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.Forbidden, endpoint);
+
+            var problem = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+            problem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.AccessDenied, endpoint);
+            problem.GetProperty("detail").GetString()
+                .Should().Be("You do not have access to this account.", endpoint);
+        }
+    }
+
     #endregion
 
     #region Helper Methods
+
+    /// <summary>
+    /// Opens a second account for the signed-in caller and closes it: empty and not primary, the
+    /// only kind a closure succeeds on. The caller has a PIN, which the closure's mint spends.
+    /// </summary>
+    private async Task<Guid> OpenAndCloseAnAccountAsync()
+    {
+        var opened = await Client.PostAsJsonAsync(
+            "/api/accounts",
+            new CreateAccountRequest { Name = "Spare", Type = AccountType.Savings },
+            JsonOptions);
+        opened.EnsureSuccessStatusCode();
+        var accountId = (await opened.Content.ReadFromJsonAsync<ApiResponse<AccountResponse>>(JsonOptions))!
+            .Data!.Id;
+
+        var minted = await Client.PostAsJsonAsync(
+            $"/api/accounts/{accountId}/deletion-authorizations",
+            new AccountDeletionAuthorizationRequest { Pin = TestPin },
+            JsonOptions);
+        minted.EnsureSuccessStatusCode();
+        var authorization = (await minted.Content
+            .ReadFromJsonAsync<ApiResponse<StepUpAuthorizationResponse>>(JsonOptions))!.Data!;
+
+        var closure = new HttpRequestMessage(HttpMethod.Delete, $"/api/accounts/{accountId}");
+        closure.Headers.Add(StepUpConstants.HeaderName, authorization.AuthorizationId.ToString());
+        var closed = await Client.SendAsync(closure);
+        closed.StatusCode.Should().Be(HttpStatusCode.OK, "the account under test has to be closed");
+
+        return accountId;
+    }
 
     private async Task<(string AzureTag, Guid UserId, Guid AccountId)> RegisterRecipientAsync()
     {

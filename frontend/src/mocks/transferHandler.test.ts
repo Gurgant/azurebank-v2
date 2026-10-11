@@ -197,16 +197,16 @@ describe('transfer handler (in-band PIN + failure order + idempotency)', () => {
   it('404 RECIPIENT_NOT_FOUND for an unknown recipient', async () => {
     const res = await transfer(crypto.randomUUID(), {
       fromAccountId: acct(),
-      recipientAzureTag: 'ghost',
+      recipientAzureTag: 'nobody_here_at_all',
       amount: 10,
       pin: MOCK_PIN,
     });
-    // OBSERVED on the API: 404 RECIPIENT_NOT_FOUND, detail "Recipient with identifier '<the
-    // handle>' was not found."
+    // OBSERVED through the API's test host for this handle: 404 RECIPIENT_NOT_FOUND, detail
+    // "Recipient with identifier 'nobody_here_at_all' was not found."
     expect(res.status).toBe(404);
     const body = await res.json();
     expect(body.errorCode).toBe('RECIPIENT_NOT_FOUND');
-    expect(body.detail).toBe("Recipient with identifier 'ghost' was not found.");
+    expect(body.detail).toBe("Recipient with identifier 'nobody_here_at_all' was not found.");
   });
 
   it('422 INSUFFICIENT_FUNDS when the amount exceeds the balance', async () => {
@@ -929,16 +929,17 @@ describe('step-up authorisations (ADR-0042)', () => {
     seedMockSession();
     const res = await mint(AUTH_URL, {
       fromAccountId: acct(),
-      recipientAzureTag: 'nosuchuser',
+      recipientAzureTag: 'nobody_here_at_all',
       amount: 10,
       pin: MOCK_PIN,
     });
-    // OBSERVED: 404 RECIPIENT_NOT_FOUND, detail "Recipient with identifier '<the handle>' was not
-    // found." — a code of its own, not the account's.
+    // OBSERVED through the API's test host for this handle: 404 RECIPIENT_NOT_FOUND, detail
+    // "Recipient with identifier 'nobody_here_at_all' was not found." — a code of its own, not
+    // the account's.
     expect(res.status).toBe(404);
     const body = await res.json();
     expect(body.errorCode).toBe('RECIPIENT_NOT_FOUND');
-    expect(body.detail).toBe("Recipient with identifier 'nosuchuser' was not found.");
+    expect(body.detail).toBe("Recipient with identifier 'nobody_here_at_all' was not found.");
     expect(mockState.stepUpAuthorizations.size).toBe(0);
   });
 

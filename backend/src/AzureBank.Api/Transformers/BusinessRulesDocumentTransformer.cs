@@ -47,7 +47,9 @@ public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransform
         // The three money moves name their codes rather than examples, each one measured on the
         // real API on 2026-09-11. Two of the examples they replaced could not happen: the same
         // account on both sides is refused by the validator as a 400 before the service is
-        // reached, and an unknown recipient is a 404 (RECIPIENT_NOT_FOUND), never this 422.
+        // reached, and an unknown recipient is a 404 (ACCOUNT_NOT_FOUND), never this 422.
+        // The code of that 404 is RECIPIENT_NOT_FOUND, as observed through the API's test host:
+        // ACCOUNT_NOT_FOUND is what the measurement of that date read.
         ["POST /api/transfers/internal"] =
             "Business Rule Violation - the source account cannot cover the amount (errorCode INSUFFICIENT_FUNDS).",
         ["POST /api/transfers"] =
@@ -102,12 +104,14 @@ public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransform
     /// Two things these operations resolve can be missing: the payer's source account
     /// (<c>AccountAccessService</c>, first) and the payee
     /// (<c>TransferService.ResolveExternalPayeeAsync</c>). Each answers 404 under its own code, and
-    /// a client chooses what to say from the code, so the document names both. The actions declare
-    /// the 404 by attribute, which publishes the bare reason phrase: this sentence takes the place
-    /// of that phrase and of nothing else.
+    /// a client chooses what to say from the code, so the document names both. A source account is
+    /// missing when no account has the id or when the account is closed; an open account of
+    /// another user is the 403 <c>ACCESS_DENIED</c> these operations publish, not this 404. The
+    /// actions declare the 404 by attribute, which publishes the bare reason phrase: this sentence
+    /// takes the place of that phrase and of nothing else.
     /// </remarks>
     private const string ExternalTransferNotFound =
-        "Not Found - the source account does not exist or is not visible to the caller (errorCode "
+        "Not Found - the source account does not exist or is closed (errorCode "
         + ErrorCodes.AccountNotFound
         + "), or no user the caller can pay holds the recipient's handle (errorCode "
         + ErrorCodes.RecipientNotFound + ").";

@@ -25,9 +25,9 @@ public class NotFoundExceptionTests
     [Fact]
     public void StringIdentifier_BindsToTheResourceConstructor_NotAMessageAndCode()
     {
-        // The regression. Before the second constructor was deleted this produced
-        // Message = "Recipient" and ErrorCode = "mikejohnson" — verified on the wire against the
-        // running API, not inferred.
+        // The regression. Before the second constructor was deleted, a call of this shape for a
+        // recipient produced Message = "Recipient" and ErrorCode = "mikejohnson" — verified on the
+        // wire against the running API, not inferred.
         var exception = new NotFoundException("User", "mikejohnson");
 
         exception.Message.Should().Be("User with identifier 'mikejohnson' was not found.");

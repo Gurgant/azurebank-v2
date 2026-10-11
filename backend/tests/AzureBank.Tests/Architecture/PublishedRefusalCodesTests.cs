@@ -172,12 +172,15 @@ public class PublishedRefusalCodesTests
         /*
           Measured 2026-09-11, one real request each:
             internal transfer, the same account on both sides   -> 400, a validation error
-            external transfer to an unknown tag                 -> 404 RECIPIENT_NOT_FOUND
+            external transfer to an unknown tag                 -> 404 ACCOUNT_NOT_FOUND
             external transfer to yourself                       -> 422 SELF_TRANSFER_NOT_ALLOWED
             external transfer, recipient's accounts soft-deleted -> 422 RECIPIENT_NO_ACCOUNT
             withdrawal by a user with no PIN enrolled           -> 422 PIN_REQUIRED
           The first two were named as 422 examples until then ("same account transfer", "recipient
           not found"): refusals the server sends with another status.
+
+          An external transfer to an unknown tag answers 404 RECIPIENT_NOT_FOUND, observed through
+          the API's test host: the code in the list above is the one read on its date.
 
           THE LAST LINE MOVED ON 2026-09-21 (ADR-0056). A withdrawal no longer consults a PIN, so
           PIN_REQUIRED is not among its 422s any more -- it is the withdrawal MINT's, and the
@@ -225,11 +228,15 @@ public class PublishedRefusalCodesTests
         /*
           Observed through the API's test host, the same movement sent to POST /api/transfers and
           to POST /api/transfers/authorizations:
-            an open account of the caller, a handle nobody holds -> 404 RECIPIENT_NOT_FOUND
-            an account id nobody holds, a handle a user holds    -> 404 ACCOUNT_NOT_FOUND
+            an open account of the caller, a handle nobody holds   -> 404 RECIPIENT_NOT_FOUND
+            an account id nobody holds, a handle a user holds      -> 404 ACCOUNT_NOT_FOUND
+            a closed account of the caller, a handle a user holds  -> 404 ACCOUNT_NOT_FOUND
+            an open account of another user, a handle a user holds -> 403 ACCESS_DENIED
           The 404 is one status with two codes, and a client chooses what to say from the code, so
-          the document names both. No other operation resolves a payee: the scan reads every
-          response of every operation, so the code cannot appear where nothing sends it.
+          the document names both. An account of another user is not among the cases of the 404,
+          so its sentence does not say "not visible". No other operation resolves a payee: the
+          scan reads every response of every operation, so the code cannot appear where nothing
+          sends it.
         */
         var named = new List<string>();
         foreach (var path in Document().GetProperty("paths").EnumerateObject())
@@ -265,6 +272,10 @@ public class PublishedRefusalCodesTests
             description.Should().Contain(ErrorCodes.RecipientNotFound, $"{path} answered it for a missing payee");
             description.Should().Contain(
                 ErrorCodes.AccountNotFound, $"{path} answered it for the caller's own missing account");
+            description.Should().Contain(
+                "does not exist or is closed", $"{path} answered it for an unknown id and for a closed account");
+            description.Should().NotContainEquivalentOf(
+                "not visible", $"{path} answered 403 {ErrorCodes.AccessDenied} for another user's open account");
             notFound.GetProperty("content").GetProperty("application/json").GetProperty("schema")
                 .GetProperty("$ref").GetString().Should().Be(
                     "#/components/schemas/ProblemDetails", "the body is the one every 404 has");

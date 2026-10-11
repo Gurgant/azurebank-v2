@@ -157,12 +157,11 @@ public sealed class RequestLogRouteTests : IDisposable
 /// an unknown recipient handle on the transfer mint.
 /// </summary>
 /// <remarks>
-/// Confirmed by two independent refuters on 2026-09-14: of the ten sites that throw a 404, only
-/// <c>TransferService</c>'s recipient lookup interpolates a client string, and
-/// <c>AppExceptionHandler</c> logged that message as <c>{Message}</c> with the exception attached —
-/// "Recipient with identifier 'nobody_here_at_all' was not found." in every sink. The handler logs
-/// the code and the type now. The response is the control: the value was in play, and the client
-/// is still told what was not found.
+/// Of the ten sites that throw a 404, only <c>TransferService</c>'s recipient lookup interpolates
+/// a client string: "Recipient with identifier 'nobody_here_at_all' was not found." is the message
+/// of that refusal. <c>AppExceptionHandler</c> logs the code and the type of a refusal, and neither
+/// its message nor the exception, so the handle is in no log event. The response is the control:
+/// the value is in play, and the client is still told what was not found.
 /// </remarks>
 public sealed class DomainRefusalLogTests : IntegrationTestBase, IDisposable
 {

@@ -2325,9 +2325,11 @@ function checkPinInBand(
   beside the branch that produces it. The full transcript, with bodies, is the measured step-up
   contract whose rows transferHandler.test.ts quotes at its assertions.
 
-  Two off-by-ones the mock must NOT invent, both measured:
-    - the lock lands ON the third wrong PIN, not after it (checkPinInBand already does this);
-    - an unknown recipient is RECIPIENT_NOT_FOUND, a code of its own (`recipientNotFound`).
+  One off-by-one the mock must NOT invent, measured:
+    - the lock lands ON the third wrong PIN, not after it (checkPinInBand already does this).
+
+  An unknown recipient answers 404 RECIPIENT_NOT_FOUND, a code of its own (`recipientNotFound`).
+  That answer is not of the dated run above: it is observed through the API's test host.
 
   No Idempotency-Key on any of the three mints (the two transfer ones here and the account
   closure's, ADR-0049), deliberately (apiSlice.ts): minting moves no money, so there is nothing to
@@ -2794,7 +2796,7 @@ const authoriseTransfer = api.post(
       (r) => r.azureTag.toLowerCase() === body.recipientAzureTag?.toLowerCase(),
     );
     if (!recipient) {
-      // MEASURED: 404 / RECIPIENT_NOT_FOUND.
+      // Observed through the API's test host: 404 / RECIPIENT_NOT_FOUND.
       return response.untyped(recipientNotFound(body.recipientAzureTag, request));
     }
 
@@ -3181,10 +3183,10 @@ const authoriseAccountDeletion = api.post(
  *
  * The level-2 step-up gate that used to open this handler is GONE (ADR-0041): the BFF no longer
  * answers 403 for a transfer; the PIN is presented to the mint and the transfer carries the
- * authorisation it produced. Failure order mirrors the real path: idempotency →
- * AUTHORIZATION_REQUIRED → SELF_TRANSFER_NOT_ALLOWED → recipient not found (RECIPIENT_NOT_FOUND)
- * → INSUFFICIENT_FUNDS → success (debit sender, push a TransferOut row; the recipient
- * is off-ledger). A missing fromAccount is tolerated (debit only if found).
+ * authorisation it produced. Failure order mirrors the real path: idempotency → a fromAccount
+ * that names no account (404 ACCOUNT_NOT_FOUND) → AUTHORIZATION_REQUIRED →
+ * SELF_TRANSFER_NOT_ALLOWED → recipient not found (RECIPIENT_NOT_FOUND) → INSUFFICIENT_FUNDS →
+ * success (debit sender, push a TransferOut row; the recipient is off-ledger).
  */
 const transfer = api.post('/api/transfers', async ({ request, response }) => {
   // Middleware, so it precedes the key checks below. See `payloadTooLarge`.
