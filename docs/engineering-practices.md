@@ -199,9 +199,18 @@ the frontend's artefacts to regenerate, and the other route, against a running A
 
 ## Commit and pull-request titles
 
-This repository squash-merges, so **only the pull-request title lands on `main`**: the commits on
-the branch are discarded. The title is plain, imperative, at most 72 characters, and names the
-concrete outcome, not a category:
+This repository squash-merges, so one commit lands on `main`, and **its title and text are the
+pull request's**, put there by hand at the merge. The commits of the branch do not land, but
+they stay public, on the pull request's page and on the branch. They follow the same rules as
+any text here: a subject that says what the commit does, no line that credits a second author,
+no at-sign before a name, no secret. CI reads the commits of a pull request and fails on two
+things: a line that begins with a key ending in `-by:`, the form in which git names a signer, a
+reviewer or a second author, and an at-sign before a name outside backticks. Any other closing
+line, such as `Gate: 12 passed`, passes. A pushed commit is not rewritten, so a branch with a
+message that fails is replaced by a new one.
+
+The title is plain, imperative, at most 72 characters, and names the concrete outcome, not a
+category:
 
 ```text
 Reject negative balances on concurrent withdrawals

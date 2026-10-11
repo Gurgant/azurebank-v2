@@ -22,10 +22,10 @@ env:
 # image too (20260927.320.1, read in the jobs' logs on 2026-10-03), and GitHub moves the label
 # to Ubuntu 26.04 run by run from 2026-10-19 (actions/runner-images#14748), with no commit
 # here. Jobs take tools from the image and install none of them: python3, PowerShell 7 and
-# Bicep in the infrastructure job, python3, az and docker in the deploy workflow, the shared
-# libraries Chromium needs in the real-stack job. A new image is a change like any other: the
-# label moves on a branch whose run on that image is green, and deploy.yml, which no branch can
-# run, moves last.
+# Bicep in the infrastructure job, python3 and git in the commit-messages job, python3, az and
+# docker in the deploy workflow, the shared libraries Chromium needs in the real-stack job. A
+# new image is a change like any other: the label moves on a branch whose run on that image is
+# green, and deploy.yml, which no branch can run, moves last.
 jobs:
   backend:
     name: Backend build + tests
@@ -39,8 +39,9 @@ jobs:
           # under $RUNNER_TEMP that the git config points at; before, in .git/config), and every job
           # here then runs third-party code that could read it — NuGet restore, `dotnet run` on the
           # app itself, `npm ci` with its postinstall scripts. No job performs an authenticated git
-          # operation (the only git use is a local `git diff --exit-code` drift check), so the
-          # credential is pure blast radius. zizmor flags this as `artipacked`.
+          # operation (every git use is local: a `git diff --exit-code` drift check and the
+          # reading of commit messages), so the credential is pure blast radius. zizmor flags this
+          # as `artipacked`.
           persist-credentials: false
 
       - name: Setup .NET
@@ -901,3 +902,41 @@ jobs:
       - name: Build and check every link
         working-directory: docs-site
         run: npm run build
+
+  # The commits of a pull request stay public after the squash, on the pull request's page and on
+  # the branch, and there GitHub links a name that follows an at-sign to its account and shows
+  # a second author for a line that credits one (docs/engineering-practices.md, "Commit and
+  # pull-request titles"). On a push to main there is nothing to read: the one commit a squash
+  # writes carries the title and the text of the pull request, which this job does not read
+  # either.
+  commit-messages:
+    name: Commit messages (no credit line, no mention)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # The whole history, and every branch of the repository with it: the default checkout is
+      # one commit deep, and the script refuses a shallow history, where git cannot tell which
+      # commits are on the head and not on the base. What is checked out is the merge commit
+      # GitHub builds, as in every other job; that commit is not read, because the range below
+      # ends at the head of the pull request, which is its second parent.
+      - name: Checkout with the whole history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Every commit that is on the head of the pull request and not on the base branch as it is
+      # now, merges included: a commit that a merge of the base brings in is on the base, and is
+      # not read. It proves that none of those messages has a line that begins with a key ending
+      # in "-by" and a colon, the form in which git names a signer, a reviewer or a second
+      # author, or an at-sign before a letter or a digit outside backticks. A commit whose
+      # author's name ends in "[bot]" is left out and counted. It cannot see the title and the
+      # text of the pull request, a comment, the name of the branch, or the e-mail address a
+      # commit is signed with; and a commit pushed and then replaced is not on the head any
+      # more, though GitHub may still show it.
+      - name: Read the message of every commit of the pull request
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 infra/check_commit_messages.py "origin/$BASE_REF" "$HEAD_SHA"
