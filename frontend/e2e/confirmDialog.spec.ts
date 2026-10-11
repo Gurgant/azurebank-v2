@@ -26,7 +26,7 @@ import { focusOf } from './focusOf';
  *
  * The open dialog is also scanned here, through the gate of the accessibility sweep
  * (`./axeScan.ts`). This is the one place the default run has it open: the sweep scans /transfer
- * with the dialog closed, and the demo's run, which scans it open, is made by hand.
+ * with the dialog closed, and the demo's run, which scans it open, is another job's.
  */
 
 /**

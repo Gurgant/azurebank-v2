@@ -115,7 +115,7 @@ gives an audit row back, so what one visitor, one address and one copy can write
 ## Verified by
 
 - `DemoClaimSqlServerTests`, `AuthServiceTests`, `DemoWriteBudgetSqlServerTests`, `DemoClaimTests`.
-- The browser: `demoCopyStorage.test.ts`, `demoContract.test.ts`; by hand, `npm run test:e2e:demo`.
+- The browser: `demoCopyStorage.test.ts`, `demoContract.test.ts`; in CI, `npm run test:e2e:demo`.
 
 ## Related
 
