@@ -20,7 +20,7 @@ namespace AzureBank.AuditVerifier.Commands;
 /// <para>
 /// THE PSD2 ART. 72 READ, BY SUBJECT AND BY TIME. ADR-0044 D8 names what it assembles: "its
 /// ledger row, the consumed <c>StepUpAuthorization</c>, its audit rows and the chain verdict".
-/// This is that join, with the one thing a join alone cannot say added
+/// This is the join of those rows, with the one thing a join alone cannot say added
 /// underneath it: whether the audit rows it found are inside a chain that still verifies.
 /// </para>
 /// <para>

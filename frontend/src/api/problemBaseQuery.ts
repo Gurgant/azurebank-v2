@@ -55,7 +55,7 @@ export interface ApiProblem {
    * a 503 keeps it and that 409 drops it, whatever this member says.
    */
   applied?: boolean;
-  /** Step-up 403s (D2): the level the endpoint demands, read from the header. */
+  /** Step-up 403s (ADR-0019 decision 1): the level the endpoint demands, read from the header. */
   requiredAuthLevel?: number;
   /*
     The daily outgoing-transfer bound (ADR-0050). All four ride DAILY_LIMIT_EXCEEDED on

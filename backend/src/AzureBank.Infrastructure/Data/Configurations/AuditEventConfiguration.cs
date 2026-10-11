@@ -104,7 +104,7 @@ public class AuditEventConfiguration : IEntityTypeConfiguration<AuditEvent>
           Read paths this table is expected to serve, and nothing else:
             - "what happened to this account/user"      -> (SubjectId), (ActorUserId)
             - "every occurrence of this event, in time" -> (Event, OccurredAt)
-          ADR-0044 D8's evidence pack (PSD2 Art. 72) reads by subject and by time, which is why those two
+          The evidence pack (ADR-0044 D8, PSD2 Art. 72) reads by subject, and an operator by time: those two
           exist before anyone asks for them. No index on Outcome: it has four values, so it filters
           almost nothing on its own.
         */

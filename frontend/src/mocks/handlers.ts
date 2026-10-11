@@ -1170,8 +1170,8 @@ function refuseIfNotClosable(account: MockAccount, request: Request): Response |
       // No figure since 3769dc9 — the caller already holds the balance from GET /api/accounts
       // (AccountService.DeleteAccountAsync). Measured 2026-09-03, balance 16:
       //   422 NON_ZERO_BALANCE "Cannot delete an account with a non-zero balance."
-      // Re-measured 2026-09-06T19:16Z on main 19742ff: on the mint, with a WRONG pin (
-      // PinAccessFailedCount unchanged, so this guard is ahead of the PIN) and on the DELETE,
+      // Re-measured 2026-09-06T19:16Z on main 19742ff: on the mint, with a WRONG pin
+      // (PinAccessFailedCount unchanged, so this guard is ahead of the PIN) and on the DELETE,
       // no header / a valid header (the authorisation stays Pending, nothing spent).
       detail: 'Cannot delete an account with a non-zero balance.',
     });
@@ -1216,7 +1216,7 @@ function refuseIfNotClosable(account: MockAccount, request: Request): Response |
  * pins the ledger cascade. The
  * `AccountDeleted` / `AccountDeletionRefused` audit rows are not modelled — the mock has no audit.
  *
- * ACCESS_DENIED (a stranger presenting the owner's authorisation, or minting on the
+ * ACCESS_DENIED (a stranger presenting the account owner's authorisation, or minting on the
  * owner's account -> 403) is NOT modelled either: the mock has one user and `MockAccount` carries
  * no owner (state.ts), so a foreign account is 404 here and the 403 rows live in the real-stack
  * contract suite only. Do not extend the transactions handler's not-listed->403 idiom to

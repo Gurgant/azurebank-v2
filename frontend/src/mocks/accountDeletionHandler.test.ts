@@ -8,7 +8,8 @@ import { MOCK_PIN, mockState, resetMockState, seedMockSession } from './state';
  * one run, measured
  * 2026-09-06T19:16Z on main 19742ff through the BFF (:5000 -> :7215, AzureBankDev). The
  * expiry values are from
- * the first run after the change, 2026-09-06 (d93ba10 working tree, merged as 19742ff).
+ * the first run after the change, 2026-09-06 (d93ba10 working tree, merged as 19742ff). The
+ * letters that end some test names (M, D and E with a number) are the row labels of those runs.
  *
  * What the mock does NOT model, so nothing below claims it: the 403 ACCESS_DENIED rows (a stranger:
  * `MockAccount` has no owner) and the audit rows (a refusal's AccountDeletionRefused, a closure's

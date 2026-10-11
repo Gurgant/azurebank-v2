@@ -415,7 +415,7 @@ public class AccountDeletionAuthorizationTests : IntegrationTestBase
         (await response.Content.ReadFromJsonAsync<ApiResponse>(JsonOptions))!.Message
             .Should().Be("Account deleted successfully");
 
-        // Gone from the owner's view. NOT in either run: the before-run did not GET the
+        // Gone from the account owner's view. NOT in either run: the before-run did not GET the
         // closed account and the after-run has no GET-by-id probe either. Expected
         // from the code — AzureBankDbContext's global query filter (!IsDeleted) hides the row from
         // the ownership rung — and the 404 ACCOUNT_NOT_FOUND shape for a hidden id is what a repeat
@@ -562,7 +562,7 @@ public class AccountDeletionAuthorizationTests : IntegrationTestBase
 
         // Expected from the code: 401 AUTHORIZATION_INVALID — the SAME answer an unknown reference
         // gets, so the endpoint is not an oracle for which references are live. Not in either
-        // run in this shape: the after-run presented the owner's authorisation on the
+        // run in this shape: the after-run presented the account owner's authorisation on the
         // OWNER's account and was refused 403 at the ownership rung; here it is presented on the
         // attacker's own account, so the rung passes and the authorisation itself is read.
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);

@@ -111,8 +111,8 @@ describe('integration: the step-up interceptor against a real 403', () => {
     often as it likes.
 
     Measured at level 1: 403 with `X-Auth-Level-Required: 2`, which problemBaseQuery turns into
-    STEP_UP_REQUIRED by reading the HEADER before touching the body (D2 — the 403 body is a bare
-    shape, not ProblemDetails).
+    STEP_UP_REQUIRED by reading the HEADER before touching the body (ADR-0019 decision 1 — the
+    403 body is a bare shape, not ProblemDetails).
   */
 
   it('surfaces STEP_UP_CANCELLED, and asks exactly once, when the user declines', async () => {

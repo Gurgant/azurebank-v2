@@ -386,8 +386,8 @@ export function AccountsPage() {
   const styles = useStyles();
   const navigate = useNavigate();
 
-  // A1 — the first page on REAL data. Loading/error/empty are first-class states
-  // (CONVENTIONS.md, "Region discipline"); the list refreshes through tag invalidation, never hand-patching.
+  // A1 — the first page on REAL data. Loading/error/empty are first-class states;
+  // the list refreshes through tag invalidation, never hand-patching.
   const {
     data: accounts = [],
     isLoading,

@@ -1063,7 +1063,7 @@ describe('a session that DIED answers exactly like one that never was', () => {
     expect((await reveal.json()).errorCode).toBe('AUTH_TOKEN_MISSING');
     // A 403 here would open the PIN modal for a session that no longer exists; production signs
     // the user out. The headers are asserted absent because the client reads step-up from THEM
-    // before it reads any body (problemBaseQuery, decision D2).
+    // before it reads any body (problemBaseQuery, ADR-0019 decision 1).
     expect(reveal.headers.get('X-Auth-Level-Required')).toBeNull();
     expect(reveal.headers.get('X-Auth-Level-Current')).toBeNull();
   });

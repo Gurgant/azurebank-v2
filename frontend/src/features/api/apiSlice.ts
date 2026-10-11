@@ -160,7 +160,7 @@ export const HISTORY_PAGE_SIZE = 20;
  * generated schema (types-only, CI drift gate); success envelopes unwrap in
  * `transformResponse`; errors normalize to ApiProblem in problemBaseQuery.
  *
- * Cache tag ledger (CONVENTIONS.md, "Cache tags") — every provides/invalidates below implements it:
+ * Cache tag ledger (CONVENTIONS.md, "Data layer") — every provides/invalidates below implements it:
  *   provides:    accounts list -> [LIST + one per row]; account/balance -> {Account,id}
  *                (balance only for CURRENT balance — historical snapshots are immutable,
  *                tag-less); transactions list -> [{Transaction,LIST}]; detail -> {Transaction,id}
@@ -248,8 +248,8 @@ export const apiSlice = createApi({
           // Spread rather than a `?? undefined` value — see `transfer` below: an explicit
           // `undefined` still serialises as an EMPTY header on some transports, and
           // `[FromHeader] Guid?` binds an empty value to null, so the API would answer 401
-          // AUTHORIZATION_REQUIRED as though nothing had been sent. Measured on THIS endpoint:
-          // rows D2/D3, 2026-09-06T19:16Z on main 19742ff ('' and '   ' -> 401).
+          // AUTHORIZATION_REQUIRED as though nothing had been sent. Measured on THIS endpoint,
+          // 2026-09-06T19:16Z on main 19742ff ('' and '   ' -> 401).
           ...(stepUpAuthorizationId ? { 'Step-Up-Authorization': stepUpAuthorizationId } : {}),
         },
       }),

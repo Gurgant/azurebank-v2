@@ -529,7 +529,7 @@ public class AccountServiceTests : IDisposable
 
           The third row settles the order BETWEEN the guards — balance before primary — which no
           running-stack probe has measured: neither 2026-09-06 run deletes a funded primary
-          (the before-run has D1 funded non-primary and D2 empty primary only).
+          (the before-run has a funded non-primary and an empty primary only).
         */
         var userId = Guid.NewGuid();
         var account = CreateTestAccount(userId, isPrimary: isPrimary);

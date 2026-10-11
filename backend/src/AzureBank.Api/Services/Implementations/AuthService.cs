@@ -810,7 +810,7 @@ public class AuthService : IAuthService
               exactly D1: no enrolment, and no evidence claiming one.
 
               Detail records that the password was proved, because that is the fact the evidence
-              pack (D8) needs and the fact the log line will not outlive. Nothing about the PIN itself is
+              pack (ADR-0044 D8) needs and the fact the log line will not outlive. Nothing about the PIN itself is
               recorded — not its hash, not its length.
             */
             var enrolmentEvidence = _audit.Record(
