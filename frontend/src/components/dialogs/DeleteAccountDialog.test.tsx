@@ -469,8 +469,8 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
   it('ACCOUNT_NOT_FOUND on the DELETE closes and refetches the list', async () => {
     /*
       Measured: 404 ACCOUNT_NOT_FOUND once the account is gone. The dialog treats it as
-      already closed — and because the mutation invalidates nothing on error, it invalidates the
-      LIST tag by hand. Observed through a subscribed accounts query: a second GET goes out.
+      already closed, and the mutation invalidates the LIST tag on that answer. Observed through
+      a subscribed accounts query: a second GET goes out.
     */
     seedTempFund();
     const store = makeTestStore();
@@ -492,7 +492,7 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
     await enterPin();
 
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(gets.lists).toBe(1)); // the by-hand invalidateTags refetch
+    await waitFor(() => expect(gets.lists).toBe(1)); // the refetch of the refusal's own tag
   });
 
   it('a transport failure on the mint shows the connection sentence and clears the boxes', async () => {

@@ -155,7 +155,7 @@ describe('contract: step-up authorisations', () => {
       Worth pinning because the mint answers 404 for two different things, and the client keys off
       the code: the caller's own source account (ACCOUNT_NOT_FOUND, the next test) and the payee.
       `TransferPage` says "That recipient could not be found. Please re-check the handle." for this
-      one, which is untrue of the other.
+      one, and that the account is closed for the other.
 
       Observed through the API's test host for this handle, and the same on the real stack, where
       this test runs in its real mode:

@@ -6,14 +6,21 @@ import { availableBalanceOf } from '../utils/availableBalance';
  * What a fresh look at the server says about an amount this form is about to commit to.
  *
  * `unknown` is not a failure to handle later — it is the deliberate FAIL-OPEN branch. If the
- * balance cannot be re-read (offline, 5xx, the account no longer in the list), the operation must
- * still be allowed to proceed: this gate is a courtesy that saves the user a doomed round trip, and
- * the server's own `InsufficientFundsException` is the actual control. A gate that blocked on its
- * own network trouble would turn a nicety into an outage.
+ * balance cannot be re-read (offline, 5xx), the operation must still be allowed to proceed: this
+ * gate is a courtesy that saves the user a doomed round trip, and the server's own
+ * `InsufficientFundsException` is the actual control. A gate that blocked on its own network
+ * trouble would turn a nicety into an outage.
+ *
+ * `closed` is the list read afresh and the account not in it: closed in another tab or session.
+ * It does not fail open. The server would answer 404 to anything done on that account, and a
+ * caller that went on would ask for a PIN over an account the visitor no longer has. The same
+ * verdict when an account in `alsoListed` is not in it: the destination of a move between the
+ * visitor's own accounts.
  */
 export type FundsVerdict =
   | { status: 'ok' }
   | { status: 'insufficient'; available: number }
+  | { status: 'closed' }
   | { status: 'unknown' };
 
 /**
@@ -42,12 +49,12 @@ export function useFundsGate() {
   const { refetch } = useGetAccountsQuery();
 
   return useCallback(
-    async (accountId: string, amount: number): Promise<FundsVerdict> => {
+    async (accountId: string, amount: number, alsoListed: string[] = []): Promise<FundsVerdict> => {
       try {
         const fresh = await refetch().unwrap();
         const account = fresh.find((candidate) => candidate.id === accountId);
-        if (!account) {
-          return { status: 'unknown' };
+        if (!account || alsoListed.some((id) => !fresh.some((candidate) => candidate.id === id))) {
+          return { status: 'closed' };
         }
         const available = availableBalanceOf(account);
         return amount <= available ? { status: 'ok' } : { status: 'insufficient', available };

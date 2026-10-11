@@ -77,6 +77,23 @@ function outcomeUnknown(error: unknown): boolean {
   return (error as ApiProblem | undefined)?.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN';
 }
 
+/**
+ * The failure that makes the accounts LIST stale: 404 `ACCOUNT_NOT_FOUND`.
+ *
+ * The API answers it to anything done on an account that is closed or gone, and an account
+ * closed in another tab or session is still in the list held here: on screen, and selectable.
+ * The LIST tag has the list read again, so the account leaves every picker and every card. The
+ * per-row tag would not do: the answer says the row is no more, and the list is what shows it.
+ *
+ * Returned for a mint too, which invalidates nothing else: the mint is where a closed account
+ * is met first, before any send.
+ */
+function closedAccountTags(error: unknown) {
+  return (error as ApiProblem | undefined)?.errorCode === 'ACCOUNT_NOT_FOUND'
+    ? [{ type: 'Account' as const, id: 'LIST' as const }]
+    : [];
+}
+
 export type LoginRequest = Schemas['LoginRequest'];
 export type RegisterRequest = Schemas['RegisterRequest'];
 export type VerifyPinRequest = Schemas['VerifyPinRequest'];
@@ -171,8 +188,10 @@ export const HISTORY_PAGE_SIZE = 20;
  * Invalidation happens on SUCCESS (`error ? [] : ...`): a failed mutation changed nothing
  * server-side. Three failures are not that, and invalidate: a money send answered
  * IDEMPOTENCY_RESULT_UNKNOWN, in the mutation itself, with its success tags (`outcomeUnknown`
- * above); INSUFFICIENT_FUNDS, the account it names (`staleBalanceTags`); and the delete dialog's
- * ACCOUNT_NOT_FOUND branch, by hand (the account is already gone; the LIST is stale).
+ * above); INSUFFICIENT_FUNDS, the account it names (`staleBalanceTags`); and ACCOUNT_NOT_FOUND,
+ * the LIST (`closedAccountTags`), in the mutation itself: on rename, setPrimary, delete, the
+ * reveal of the full number, deposit, withdraw, transfer, internal and the four mints of an
+ * authorisation. The account is already gone; the LIST is stale.
  */
 export const apiSlice = createApi({
   reducerPath: 'api',
@@ -224,14 +243,14 @@ export const apiSlice = createApi({
       transformResponse: (response: Schemas['ApiResponseOfAccountResponse']) =>
         unwrap(response, devOnly(accountResponseSchema)),
       invalidatesTags: (_result, error, { id }) =>
-        error ? [] : [{ type: 'Account' as const, id }],
+        error ? closedAccountTags(error) : [{ type: 'Account' as const, id }],
     }),
 
     setPrimaryAccount: builder.mutation<void, string>({
       query: (id) => ({ url: `/api/accounts/${id}/set-primary`, method: 'PATCH' }),
       // Message-only ApiResponse — nothing to unwrap.
       transformResponse: () => undefined,
-      invalidatesTags: (_result, error) => (error ? [] : ['Account']),
+      invalidatesTags: (_result, error) => (error ? closedAccountTags(error) : ['Account']),
     }),
 
     /*
@@ -255,11 +274,11 @@ export const apiSlice = createApi({
       }),
       transformResponse: () => undefined,
       // Destructured: the argument is an object now, and a bare third parameter would tag the
-      // whole object. Invalidation is success-only, so the dialog's ACCOUNT_NOT_FOUND branch
-      // ("already closed") invalidates the LIST tag by hand (DeleteAccountDialog.tsx).
+      // whole object. One refusal invalidates too: ACCOUNT_NOT_FOUND, the account already
+      // closed, which the dialog treats as done (`closedAccountTags`).
       invalidatesTags: (_result, error, { id }) =>
         error
-          ? []
+          ? closedAccountTags(error)
           : [
               { type: 'Account' as const, id: 'LIST' },
               { type: 'Account' as const, id },
@@ -270,11 +289,15 @@ export const apiSlice = createApi({
     // be cached and never auto-retried — it fires only on explicit user intent and the value lives
     // in transient component state, never the query cache. The path suffix `/full-number` is
     // level-2 gated, so an un-elevated call 403s and rides baseQueryWithStepUp into the PIN modal,
-    // which replays the GET automatically. GET verb, no idempotency key, no cache tags.
+    // which replays the GET automatically. GET verb, no idempotency key, and no cache tag on
+    // success: the number changes nothing a query holds. One refusal invalidates:
+    // ACCOUNT_NOT_FOUND, which an elevated session gets for an account closed elsewhere, and
+    // which says the accounts list held here is stale (`closedAccountTags`).
     revealAccountNumber: builder.mutation<AccountNumberResponse, string>({
       query: (id) => ({ url: `/api/accounts/${id}/full-number`, method: 'GET' }),
       transformResponse: (response: Schemas['ApiResponseOfAccountNumberResponse']) =>
         unwrap(response, devOnly(accountNumberResponseSchema)),
+      invalidatesTags: (_result, error) => closedAccountTags(error),
     }),
 
     // ========== USER (self) ==========
@@ -400,7 +423,7 @@ export const apiSlice = createApi({
         withReplay(unwrap(response, depositResponseSchema), meta),
       invalidatesTags: (_result, error, { body }) =>
         error && !outcomeUnknown(error)
-          ? []
+          ? closedAccountTags(error)
           : [
               { type: 'Account' as const, id: body.accountId },
               { type: 'Transaction' as const, id: 'LIST' },
@@ -432,7 +455,7 @@ export const apiSlice = createApi({
         withReplay(unwrap(response, withdrawResponseSchema), meta),
       invalidatesTags: (_result, error, { body }) =>
         error && !outcomeUnknown(error)
-          ? staleBalanceTags(error, [body.accountId])
+          ? [...staleBalanceTags(error, [body.accountId]), ...closedAccountTags(error)]
           : [
               { type: 'Account' as const, id: body.accountId },
               { type: 'Transaction' as const, id: 'LIST' },
@@ -450,8 +473,9 @@ export const apiSlice = createApi({
     }),
 
     /*
-      MINTING (ADR-0042). Three endpoints — the two transfer mints and the account closure's
-      (ADR-0049, `authoriseAccountDeletion` below) — no Idempotency-Key on any, and that is
+      MINTING (ADR-0042). Four endpoints — the two transfer mints, the account closure's
+      (ADR-0049, `authoriseAccountDeletion` below) and the withdrawal's (ADR-0056,
+      `authoriseWithdrawal`) — no Idempotency-Key on any, and that is
       deliberate: minting moves no money, so there is nothing to deduplicate, and a repeat simply
       produces a second authorisation of which only one can ever be spent. Requiring a key would
       add a failure mode to the one call whose whole job is to be easy to make again after a wrong
@@ -462,7 +486,9 @@ export const apiSlice = createApi({
       transfer does (401 INVALID_PIN, 429 PIN_LOCKED, 422 PIN_REQUIRED) and the pages route all
       three through the branch that already handles them.
 
-      No cache invalidation: nothing a query can observe has changed.
+      No cache invalidation on success: nothing a query can observe has changed. One refusal
+      invalidates, on all four: ACCOUNT_NOT_FOUND, which says the accounts list held here is
+      stale (`closedAccountTags`).
     */
     authoriseTransfer: builder.mutation<StepUpAuthorizationResponse, TransferAuthorizationRequest>({
       query: (body) => ({ url: '/api/transfers/authorizations', method: 'POST', body }),
@@ -470,6 +496,7 @@ export const apiSlice = createApi({
       // way for the user to tell why.
       transformResponse: (response: Schemas['ApiResponseOfStepUpAuthorizationResponse']) =>
         unwrap(response, stepUpAuthorizationResponseSchema),
+      invalidatesTags: (_result, error) => closedAccountTags(error),
     }),
 
     authoriseInternalTransfer: builder.mutation<
@@ -483,6 +510,7 @@ export const apiSlice = createApi({
       }),
       transformResponse: (response: Schemas['ApiResponseOfStepUpAuthorizationResponse']) =>
         unwrap(response, stepUpAuthorizationResponseSchema),
+      invalidatesTags: (_result, error) => closedAccountTags(error),
     }),
 
     /*
@@ -503,6 +531,7 @@ export const apiSlice = createApi({
       }),
       transformResponse: (response: Schemas['ApiResponseOfStepUpAuthorizationResponse']) =>
         unwrap(response, stepUpAuthorizationResponseSchema),
+      invalidatesTags: (_result, error) => closedAccountTags(error),
     }),
 
     /*
@@ -525,6 +554,7 @@ export const apiSlice = createApi({
       }),
       transformResponse: (response: Schemas['ApiResponseOfStepUpAuthorizationResponse']) =>
         unwrap(response, stepUpAuthorizationResponseSchema),
+      invalidatesTags: (_result, error) => closedAccountTags(error),
     }),
 
     transfer: builder.mutation<WithReplay<TransferResponse>, IdempotentArg<TransferRequest>>({
@@ -553,7 +583,7 @@ export const apiSlice = createApi({
         withReplay(unwrap(response, transferResponseSchema), meta),
       invalidatesTags: (_result, error, { body }) =>
         error && !outcomeUnknown(error)
-          ? staleBalanceTags(error, [body.fromAccountId])
+          ? [...staleBalanceTags(error, [body.fromAccountId]), ...closedAccountTags(error)]
           : [
               { type: 'Account' as const, id: body.fromAccountId },
               { type: 'Transaction' as const, id: 'LIST' },
@@ -697,7 +727,10 @@ export const apiSlice = createApi({
         withReplay(unwrap(response, internalTransferResponseSchema), meta),
       invalidatesTags: (_result, error, { body }) =>
         error && !outcomeUnknown(error)
-          ? staleBalanceTags(error, [body.fromAccountId, body.toAccountId])
+          ? [
+              ...staleBalanceTags(error, [body.fromAccountId, body.toAccountId]),
+              ...closedAccountTags(error),
+            ]
           : [
               { type: 'Account' as const, id: body.fromAccountId },
               { type: 'Account' as const, id: body.toAccountId },

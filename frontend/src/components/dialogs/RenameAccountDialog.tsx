@@ -19,7 +19,7 @@ import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
 import { SAVE_OUTCOME_UNKNOWN } from '../../api/problemMessages';
 import { useRenameAccountMutation } from '../../features/api/apiSlice';
 import { useReturnFocus } from '../../hooks/useReturnFocus';
-import { WaitHint } from '../feedback';
+import { useAccountClosedToast, WaitHint } from '../feedback';
 
 // Mirrors the backend contract: rename touches the name ONLY, 2-100 chars.
 const renameAccountSchema = z.object({
@@ -41,9 +41,14 @@ export interface RenameAccountDialogProps {
  * A5 — rename an account. Mounted ON open by the page (fresh form state seeded with
  * the current name; unmount clears everything). The list refreshes through the
  * {Account,id} invalidation — the row's tag is provided by the list query.
+ *
+ * The dialog does not outlive its account. When the save answers ACCOUNT_NOT_FOUND the account
+ * was closed elsewhere: the dialog closes, as the delete dialog does, the visitor is told in
+ * the app's toast outlet, and the list is read again by the mutation's own tags (apiSlice).
  */
 export function RenameAccountDialog({ account, onClose }: RenameAccountDialogProps) {
   useReturnFocus();
+  const sayAccountClosed = useAccountClosedToast();
   const [renameAccount, { isLoading, error }] = useRenameAccountMutation();
   const problem = error as ApiProblem | undefined;
 
@@ -57,9 +62,11 @@ export function RenameAccountDialog({ account, onClose }: RenameAccountDialogPro
     defaultValues: { name: account.name },
   });
 
-  // A VALIDATION_ERROR lands on the field; anything else renders from the bar below.
+  // A VALIDATION_ERROR lands on the field; anything else renders from the bar below, but
+  // ACCOUNT_NOT_FOUND, which closes the dialog: its server sentence is never drawn.
   const showProblemBar =
     problem &&
+    problem.errorCode !== 'ACCOUNT_NOT_FOUND' &&
     (problem.errorCode !== 'VALIDATION_ERROR' ||
       !Object.keys(problem.errors ?? {}).some((key) => key.toLowerCase() === 'name'));
 
@@ -69,6 +76,11 @@ export function RenameAccountDialog({ account, onClose }: RenameAccountDialogPro
       onClose();
     } catch (caught) {
       const rejected = caught as ApiProblem;
+      if (rejected.errorCode === 'ACCOUNT_NOT_FOUND') {
+        sayAccountClosed();
+        onClose();
+        return;
+      }
       if (rejected.errorCode === 'VALIDATION_ERROR' && rejected.errors) {
         for (const [key, messages] of Object.entries(rejected.errors)) {
           if (key.toLowerCase() === 'name' && messages.length > 0) {

@@ -11,9 +11,27 @@ Traps that cut across the stack are in [`docs/engineering-traps.md`](../docs/eng
 
 ## Data layer
 
-**Cache tags are the invalidation contract.** Two clauses are not obvious: `set-primary`
+**Cache tags are the invalidation contract.** Three clauses are not obvious: `set-primary`
 invalidates the blanket `Account` tag, because changing the primary account moves state on two
-rows; and a historical balance (`?at=`) carries no tag, because a past balance cannot go stale.
+rows; a historical balance (`?at=`) carries no tag, because a past balance cannot go stale; and a
+mutation refused with `ACCOUNT_NOT_FOUND` invalidates the accounts list, the mint of an
+authorisation, the deletion and the reveal of the full number included, because that answer says
+an account still on screen is closed.
+
+**A closed account is said in one sentence, and never chosen around.** "This account is closed.
+Choose another account." (`ACCOUNT_CLOSED` in `src/api/problemMessages.ts`) is what a visitor
+reads when their own account is closed under a screen; the server's sentence carries the
+account's identifier and is not shown. A page clears the choice and waits for another: no default
+account takes the place of one that is gone. A dialog opened for the account closes, and the
+sentence is said in the root `<Toaster>`. When the mint of a new authorisation under a held
+idempotency key answers `ACCOUNT_NOT_FOUND`, the check view comes first, and lets the key go
+(ADR-0022, decision 6). A transfer page shows it on that answer, and says the sentence once the
+visitor is back on the form. The withdrawal dialog shows it on that answer and on its check on
+Continue under a held key, and closes with the sentence from the view's "try again" or its X;
+"Check recent transactions" leaves for the history on either, with nothing more said. A send
+that answers `ACCOUNT_NOT_FOUND` holds no key: the page or the dialog says the sentence at once.
+The move between the visitor's own accounts has three sentences of its own beside it, for which
+of its two accounts is closed.
 
 **An endpoint that answers with data in an envelope unwraps it through
 `unwrap(envelope, schema?)`, and typing is not validation.** Two endpoints answer with no
@@ -52,7 +70,8 @@ demo mode", item 5).
 **An error with no surface of its own goes to one root `<Toaster>`.** An error toast persists and
 carries a copyable `traceId` when the problem has one, the only bridge between what a user saw
 and the server's trace (ADR-0016). One toast is a success, "You have a new copy."
-(`src/features/demo/useNewCopyToast.tsx`): it leaves by itself and carries no `traceId`.
+(`src/features/demo/useNewCopyToast.tsx`): it leaves by itself and carries no `traceId`. One
+error toast carries none either: the closed account's, which is the app's sentence alone.
 
 **Region discipline for async state.** A first load renders a skeleton shaped like the content;
 a background refetch keeps the stale data and shows a small inline indicator; a failed region

@@ -1,5 +1,4 @@
 import { useId, useState } from 'react';
-import { useDispatch } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import {
   Button,
@@ -14,7 +13,6 @@ import { colors } from '../../theme/tokens';
 import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
 import { CONNECTION_FAILED, SERVICE_UNAVAILABLE } from '../../api/problemMessages';
 import {
-  apiSlice,
   useAuthoriseAccountDeletionMutation,
   useDeleteAccountMutation,
 } from '../../features/api/apiSlice';
@@ -92,7 +90,6 @@ export function DeleteAccountDialog({ account, onClose }: DeleteAccountDialogPro
   const styles = useMoneyDialogStyles();
   const pinStyles = usePinStyles();
   const navigate = useNavigate();
-  const dispatch = useDispatch();
   const errorId = useId();
 
   const [authoriseAccountDeletion, { isLoading: isMinting }] =
@@ -169,10 +166,10 @@ export function DeleteAccountDialog({ account, onClose }: DeleteAccountDialogPro
     } else if (code === 'ACCOUNT_NOT_FOUND') {
       /*
         Already closed (on the mint, and on the DELETE: 404 once the account is gone,
-        spent header or none alike). Treat it as done — but this mutation invalidates NOTHING on
-        error (apiSlice.ts), so the list is refreshed by hand, or the card would stay on screen.
+        spent header or none alike). Treat it as done. The list is read again by the mutation's
+        own tags on this answer, the mint's and the DELETE's alike (apiSlice.ts), so the card
+        leaves the page behind the dialog.
       */
-      dispatch(apiSlice.util.invalidateTags([{ type: 'Account', id: 'LIST' }]));
       onClose();
     } else if (isServiceOutage(problem)) {
       /*

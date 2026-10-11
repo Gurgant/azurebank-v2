@@ -25,7 +25,7 @@ import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
 import { useFocusWhenLost } from '../../hooks/useFocusWhenLost';
 import { selectCurrentUser } from '../../features/auth/authSlice';
 import { formatCurrency } from '../../utils/format';
-import { RetryCountdown, WaitHint, retryDeadline } from '../feedback';
+import { RetryCountdown, WaitHint, retryDeadline, useAccountClosedToast } from '../feedback';
 import { MoneyDialogShell } from './MoneyDialogShell';
 import { useMoneyDialogStyles } from './moneyDialogStyles';
 import {
@@ -136,11 +136,17 @@ type Step = 'form' | 'pin';
  * withdrawal is never sent. A user with no PIN is sent to /pin-setup first. The dialog cannot be
  * dismissed while an idempotency key is still live — the Fluent shell's Esc/backdrop
  * dismissal funnels through the SAME keyLive guard as the X button.
+ *
+ * The dialog does not outlive its account: when the account turns out to be closed (the check
+ * on Continue, the mint or the send) it closes and the visitor is told in the app's toast
+ * outlet, as the rename dialog does. Under a held key the check view comes first: see
+ * `accountIsClosed`.
  */
 export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: WithdrawDialogProps) {
   const styles = useMoneyDialogStyles();
   const pinStyles = usePinStyles();
   const navigate = useNavigate();
+  const sayAccountClosed = useAccountClosedToast();
   const errorId = useId();
   const user = useSelector(selectCurrentUser);
   // Gate only when we KNOW the user has no PIN; if unknown, let the server decide
@@ -189,6 +195,9 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   */
   const [lockDeadline, setLockDeadline] = useState<number | null>(null);
   const [success, setSuccess] = useState<SuccessData | null>(null);
+  // The account is closed and the check view is up over the key that was held: see
+  // `accountIsClosed`. From then on every way the dialog closes says the sentence.
+  const [closedUnderKey, setClosedUnderKey] = useState(false);
 
   const defaultAccountId = accounts.length > 0 ? accounts[0].id : '';
   const [resolvedBalanceOf, setResolvedBalanceOf] = useState(defaultAccountId);
@@ -306,6 +315,46 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   };
 
   /**
+   * The account was closed elsewhere: the list read on Continue no longer has it, or the mint or
+   * the send answered ACCOUNT_NOT_FOUND. Nothing was withdrawn by that answer, and the list is
+   * read again by the mutation's own tags (apiSlice). The dialog closes and the sentence is said
+   * where the visitor lands.
+   *
+   * Unless a key is held: one kept from an earlier send whose outcome is unknown, or whose
+   * authorisation was refused. Closing at once would lose it unsaid, and the next withdrawal
+   * would be a new intent beside one that may have landed. The dialog then shows its check
+   * view, through the latch an edit under a held key sets (`requireVerify`): the key is let go
+   * behind the view that says to check the transactions first, and nothing is sent from this
+   * dialog again. The account is gone, so the view's ways out do not lead back to the form:
+   * "try again" and the X close the dialog with the sentence, and "Check recent transactions"
+   * leaves for the history. The send's own ACCOUNT_NOT_FOUND never holds a key: a 404 is a
+   * refusal, and the hook has dropped it.
+   *
+   * A mint is made under a held key only after the send before it answered
+   * AUTHORIZATION_EXPIRED or AUTHORIZATION_INVALID: every other kept key presents the
+   * authorisation it has. The check on Continue can meet any kept key, and latches as an edit
+   * of the form there does.
+   */
+  const accountIsClosed = (keyHeld: boolean) => {
+    if (keyHeld) {
+      requireVerify();
+      setClosedUnderKey(true);
+      // The words the failed attempt left go with it: the check view has no Withdraw to press.
+      setError(null);
+      setInFlight(false);
+      return;
+    }
+    sayAccountClosed();
+    onClose();
+  };
+
+  /** The check view's way back, and the X beside it, once the account is known to be closed. */
+  const closeOverClosedAccount = () => {
+    sayAccountClosed();
+    onClose();
+  };
+
+  /**
    * Continue → PIN, but only once the SERVER has confirmed the amount still fits.
    *
    * ADR-0056 D4 puts the funds check ABOVE the authorisation and takes the PIN off the endpoint,
@@ -322,6 +371,10 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
       const verdict = await confirmFunds(selectedAccount.id, amountNumber);
       if (verdict.status === 'insufficient') {
         setError(insufficientFundsMessage(verdict.available));
+        return;
+      }
+      if (verdict.status === 'closed') {
+        accountIsClosed(keyRetained);
         return;
       }
       // 'unknown' advances on purpose — see useFundsGate. A courtesy check that became a blocker
@@ -504,6 +557,10 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
     } else if (problem.errorCode === 'PIN_LOCKED') {
       setPin('');
       setLockDeadline(retryDeadline(problem.retryAfterSeconds ?? DEFAULT_PIN_LOCK_SECONDS));
+    } else if (problem.errorCode === 'ACCOUNT_NOT_FOUND') {
+      // The mint goes through no idempotency hook, so a key held before it is still held; the
+      // send's was dropped on this very answer, whatever this render still believes.
+      accountIsClosed(phase === 'mint' && keyRetained);
     } else if (problem.errorCode === 'PIN_REQUIRED') {
       // Defensive: the hasPin gate should have caught this. Send them to set a PIN.
       navigate('/pin-setup?returnTo=/accounts');
@@ -557,10 +614,11 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   // dismissal. While a key is RETAINED, `onBodyEdit` latches verify-first (`requireVerify`)
   // rather than rotating — which also drops the key, so dismissal does come back, but by way of
   // a view that says the request may or may not have gone through. The only explicit release
-  // left is the verify branch's "It didn't go through — try again". That branch is not drawn
-  // when the answer said `applied: true`: the went-through view takes its place, with the key
-  // dropped and dismissal back all the same, and it offers no release at all — `resetIntent`
-  // does nothing there.
+  // left is the verify branch's "It didn't go through — try again"; for a closed account the
+  // release is `accountIsClosed`, whose check view has no way back to the form. The verify
+  // branch is not drawn when the answer said `applied: true`: the went-through view takes its
+  // place, with the key dropped and dismissal back all the same, and it offers no release at
+  // all — `resetIntent` does nothing there.
   /*
     Every exit, held for BOTH phases of the submit.
 
@@ -572,9 +630,12 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   */
   const keyLive = isSubmitting || isMinting || keyRetained;
   const requestClose = () => {
-    if (!keyLive) {
-      onClose();
+    if (keyLive) return;
+    if (closedUnderKey) {
+      closeOverClosedAccount();
+      return;
     }
+    onClose();
   };
 
   const goToPinSetup = () => navigate('/pin-setup?returnTo=/accounts');
@@ -590,8 +651,8 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
       // As in DepositDialog: a press outside the dialog takes away neither the went-through
       // sentence nor the check view's words unread. `verifyRequired` is true under both views,
       // and under nothing else. The hook latches it on the answer and in `requireVerify`, which
-      // this dialog calls when the body is edited while a key is retained: that check view is
-      // kept too.
+      // this dialog calls when the body is edited while a key is retained, or the account
+      // turns out closed under one: that check view is kept too.
       keepOnOutsidePress={verifyRequired}
     >
       {/* Success */}
@@ -899,6 +960,12 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
               size="large"
               style={{ width: '100%', height: '48px' }}
               onClick={() => {
+                // No form to go back to when the account is closed: the dialog closes, and
+                // the sentence is said where the visitor lands.
+                if (closedUnderKey) {
+                  closeOverClosedAccount();
+                  return;
+                }
                 resetIntent();
                 setPin('');
                 goToStep('form');

@@ -12,7 +12,14 @@ import { useForm, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import { isProvenCommit, type MoneyPhase } from '../api/moneyProblem';
-import { NO_DOUBLE_MOVE, TRANSFER_WENT_THROUGH, TRY_AGAIN } from '../api/problemMessages';
+import {
+  MOVE_ACCOUNT_CLOSED,
+  MOVE_DESTINATION_CLOSED,
+  MOVE_SOURCE_CLOSED,
+  NO_DOUBLE_MOVE,
+  TRANSFER_WENT_THROUGH,
+  TRY_AGAIN,
+} from '../api/problemMessages';
 import { useTransferWizardStyles } from './transferWizardStyles';
 import { ConfirmDialog } from '../components/shared/ConfirmDialog';
 import { ResultUnknownView } from '../components/shared/ResultUnknownView';
@@ -69,7 +76,7 @@ export function InternalTransferPage() {
   const styles = useTransferWizardStyles();
 
   const {
-    data: accounts = [],
+    data: accountsData,
     isSuccess: accountsLoaded,
     isLoading: accountsLoading,
     isFetching: accountsFetching,
@@ -77,6 +84,7 @@ export function InternalTransferPage() {
     refetch: refetchAccounts,
     requestId: accountsRequestId,
   } = useGetAccountsQuery();
+  const accounts = accountsData ?? [];
   // The accounts bar follows the wait, as on TransferPage and the reading pages: a Retry keeps the
   // old error while it runs, so the bar goes away and comes back, announced, only on a new failure.
   const accountsRead = readWait({
@@ -112,9 +120,13 @@ export function InternalTransferPage() {
     // HTTP — the validator rejects from == to during model binding, so the wire answer is a 400 with
     // an errors dictionary (measured against the running API in U6.1). It costs one line and covers
     // any caller that reaches the service without that validator.
+    //
+    // ACCOUNT_NOT_FOUND is one code for both accounts of the move, each the visitor's own, closed
+    // or gone. The code does not say which, so this is what is said when the answer lands; the
+    // page says which once the accounts list has been read again (below).
     messages: {
       SAME_ACCOUNT_TRANSFER: 'Choose two different accounts.',
-      ACCOUNT_NOT_FOUND: 'One of the accounts could not be found. Please re-check.',
+      ACCOUNT_NOT_FOUND: MOVE_ACCOUNT_CLOSED,
     },
     fallback: 'Transfer failed. Please try again.',
   });
@@ -225,13 +237,34 @@ export function InternalTransferPage() {
   const watchedToId = watch('toAccountId');
   const amountNumber = parseAmountInput(watch('amount'));
 
+  /*
+    The source is the account the form names. The default, primary or first, stands in for it
+    only while the form has never named one: once a choice has been cleared because its account
+    is gone (`mustChooseSource`), nothing stands in, and the visitor chooses. The destination
+    never had a default.
+  */
+  const [mustChooseSource, setMustChooseSource] = useState(false);
   const fromAccount =
     accounts.find((a) => a.id === watchedFromId) ??
-    accounts.find((a) => a.isPrimary) ??
-    accounts[0] ??
+    (watchedFromId === '' && !mustChooseSource
+      ? (accounts.find((a) => a.isPrimary) ?? accounts[0])
+      : undefined) ??
     null;
   const toAccount = accounts.find((a) => a.id === watchedToId) ?? null;
   const availableBalance = fromAccount ? availableBalanceOf(fromAccount) : 0;
+
+  /*
+    An account the form names is gone when the accounts list, read again, comes back without it.
+    Only a list that was received counts: one that failed to load keeps the last one received.
+    `moveRefused` is the other way to know: the server answered ACCOUNT_NOT_FOUND for this move,
+    and the list read after it still shows both accounts, or could not be read. Then one of the
+    two is closed and nothing says which.
+  */
+  const listed = (id: string) =>
+    accountsData === undefined || accountsData.some((a) => a.id === id);
+  const fromGone = watchedFromId !== '' && !listed(watchedFromId);
+  const toGone = watchedToId !== '' && !listed(watchedToId);
+  const [moveRefused, setMoveRefused] = useState(false);
 
   // See `useFundsGate`: the Zod bound is built from a CACHED balance, and reaching the PIN step
   // with a stale one costs a PIN attempt on a request that cannot succeed.
@@ -249,14 +282,67 @@ export function InternalTransferPage() {
       setValue('fromAccountId', fromAccount.id, { shouldValidate: true });
     }
   }, [fromAccount, watchedFromId, setValue]);
+  // With no source the bound stays where it was, as on TransferPage: an amount is not judged
+  // against the balance of no account.
   useEffect(() => {
-    setBalanceBound(availableBalance);
-  }, [availableBalance]);
+    if (fromAccount) setBalanceBound(availableBalance);
+  }, [fromAccount, availableBalance]);
   // Re-run amount validation once the bound has actually updated (see TransferPage —
   // an account switch alone must not leave canReview on the previous balance).
   useEffect(() => {
     void trigger('amount');
   }, [balanceBound, trigger]);
+
+  /*
+    NO SILENT SWITCH. A choice whose account is gone is cleared, the page goes back to the form
+    and says which account is closed, and nothing can be sent until the visitor chooses again:
+    no default stands in for the source, so money never leaves an account the visitor did not
+    pick, nor arrives in one. When the answer alone is known, both choices are cleared and the
+    page says only that an account of the transfer is closed. The PIN typed for the move, and an
+    authorisation minted for it, go with it.
+
+    Not while a key is live or a mint is running, nor under the receipt or the check view: see
+    TransferPage. `wizard` is a new object on every render, so this runs after each one, and
+    has nothing to do once it has run: the form no longer names an account that is gone.
+  */
+  useEffect(() => {
+    if (!(fromGone || toGone || moveRefused) || exitLocked || success || verifyRequired) return;
+    const both = moveRefused && !fromGone && !toGone;
+    if (fromGone || both) {
+      setValue('fromAccountId', '', { shouldValidate: true });
+      setMustChooseSource(true);
+    }
+    if (toGone || both) {
+      setValue('toAccountId', '', { shouldValidate: true });
+    }
+    setMoveRefused(false);
+    setPin('');
+    enteredPin.current = '';
+    lastAuthorization.current = null;
+    setAuthorizationHeld(false);
+    wizard.toForm();
+    wizard.fail(
+      fromGone === toGone
+        ? MOVE_ACCOUNT_CLOSED
+        : fromGone
+          ? MOVE_SOURCE_CLOSED
+          : MOVE_DESTINATION_CLOSED,
+    );
+  }, [fromGone, toGone, moveRefused, exitLocked, success, verifyRequired, setValue, wizard]);
+
+  /*
+    The server answered ACCOUNT_NOT_FOUND for this move. That answer has the accounts list read
+    again (apiSlice), and a list without one of the two accounts says which is closed: the page
+    acts on that by itself. This waits for the same reading and covers what is left, a list
+    that still shows both or that could not be read.
+  */
+  const afterAccountNotFound = async () => {
+    const fresh = await refetchAccounts()
+      .unwrap()
+      .catch(() => undefined);
+    const stillListed = (id: string) => fresh === undefined || fresh.some((a) => a.id === id);
+    if (stillListed(watchedFromId) && stillListed(watchedToId)) setMoveRefused(true);
+  };
 
   const selectFrom = (account: AccountResponse) => {
     if (keyLive) return;
@@ -298,12 +384,15 @@ export function InternalTransferPage() {
     if (!fromAccount || !toAccount || fromAccount.id === toAccount.id) return;
     setCheckingFunds(true);
     try {
-      const verdict = await confirmFunds(fromAccount.id, amountNumber);
+      const verdict = await confirmFunds(fromAccount.id, amountNumber, [toAccount.id]);
       if (verdict.status === 'insufficient') {
         wizard.toForm();
         wizard.fail(insufficientFundsMessage(verdict.available));
         return;
       }
+      // The list just read lacks the source or the destination. No PIN step for the move: the
+      // page, which reads the same list, clears that choice and says so (`fromGone`, `toGone`).
+      if (verdict.status === 'closed') return;
       // 'unknown' proceeds on purpose — see useFundsGate. The server is still the control.
       setPin('');
       setPinError(false);
@@ -463,6 +552,14 @@ export function InternalTransferPage() {
       setPin('');
       enteredPin.current = '';
       setPinLockDeadline(retryDeadline(refusal.retryAfterSeconds ?? DEFAULT_PIN_LOCK_SECONDS));
+    } else if (refusal?.errorCode === 'ACCOUNT_NOT_FOUND') {
+      // One of the two accounts is closed or gone, on the mint or on the send. A 404 is a
+      // refusal: nothing moved, and the idempotency hook has dropped the key of a send.
+      void afterAccountNotFound();
+      // A mint made under a held key: the check view, which lets the key go and whose "start
+      // over" comes back to the form, where the choice is cleared and the sentence said.
+      // TransferPage has the reasoning, and why no payment is abandoned with the key.
+      if (phase === 'mint' && keyLive) wizard.requireVerify();
     } else if (refusal?.errorCode === 'PIN_REQUIRED') {
       // `requestLeave`, not a bare navigate: this page deliberately owns no destinations of
       // its own, and the wizard refuses any exit while an idempotency key is live. A 422 is

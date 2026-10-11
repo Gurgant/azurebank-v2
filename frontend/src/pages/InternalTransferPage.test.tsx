@@ -1,7 +1,7 @@
 import { Route, Routes } from 'react-router-dom';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { confirmWithPin } from '../test/pinFlow';
+import { confirmWithPin, enterPin } from '../test/pinFlow';
 import { describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
@@ -9,7 +9,12 @@ import { problem } from '../mocks/problem';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { StepUpModal } from '../features/auth';
 import { InternalTransferPage } from './InternalTransferPage';
-import { mockState, seedMockSession } from '../mocks/state';
+import { MAIN_ACCOUNT_ID, SAVINGS_ACCOUNT_ID, mockState, seedMockSession } from '../mocks/state';
+import {
+  MOVE_ACCOUNT_CLOSED,
+  MOVE_DESTINATION_CLOSED,
+  MOVE_SOURCE_CLOSED,
+} from '../api/problemMessages';
 
 /**
  * PR-11b — internal transfer between the caller's OWN accounts, PIN collected in the page
@@ -260,5 +265,273 @@ describe('internal transfer (PR-11b)', () => {
     expect(await screen.findByText('Transfer Complete!')).toBeInTheDocument();
     expect(keys).toHaveLength(2);
     expect(keys[0]).toBe(keys[1]); // SAME key across the retry
+  });
+});
+
+/*
+  One of the two accounts of a move, closed in another tab or session while this page shows it.
+  Measured through the BFF on a spare account closed after the page's requests were prepared,
+  as the source and as the destination, on the mint and on the send: each answers 404 errorCode
+  ACCOUNT_NOT_FOUND, detail "Account with identifier '<the id>' was not found.", and
+  GET /api/accounts no longer lists the account. One code for both accounts: which of the two
+  is gone is read from the list. The mock answers the same once the account is out of its
+  state, so these tests close the account there.
+*/
+describe('an account of the move is closed under the page', () => {
+  const HOLIDAY_ID = '019f7b3f-0000-7000-8000-0000000000a3';
+
+  /** A third account, so that there is another one to choose. */
+  beforeEach(() => {
+    mockState.accounts.push({
+      id: HOLIDAY_ID,
+      accountNumber: 'AB-****-****-07',
+      name: 'Holiday',
+      type: 'Savings',
+      balance: 300,
+      isPrimary: false,
+      createdAt: '2026-07-09T09:00:00.0000000Z',
+    });
+  });
+
+  /** As another session closes it: the account leaves the server's state, the page is not told. */
+  function closeElsewhere(id: string) {
+    mockState.accounts = mockState.accounts.filter((account) => account.id !== id);
+  }
+
+  /** Counts what the page asks, and lets the mock answer. */
+  function watchRequests() {
+    const seen = {
+      lists: 0,
+      mints: 0,
+      sends: [] as { fromAccountId: string; toAccountId: string }[],
+    };
+    server.use(
+      http.get('*/api/accounts', () => {
+        seen.lists += 1;
+      }),
+      http.post('*/api/transfers/internal/authorizations', () => {
+        seen.mints += 1;
+      }),
+      http.post('*/api/transfers/internal', async ({ request }) => {
+        seen.sends.push(
+          (await request.clone().json()) as { fromAccountId: string; toAccountId: string },
+        );
+      }),
+    );
+    return seen;
+  }
+
+  async function fill(from: string, to: string) {
+    renderInternal();
+    await screen.findByRole('button', { name: 'From Main Account' });
+    await userEvent.click(screen.getByRole('button', { name: `From ${from}` }));
+    await userEvent.click(screen.getByRole('button', { name: `To ${to}` }));
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+  }
+
+  const pressed = (name: string) =>
+    screen.getByRole('button', { name }).getAttribute('aria-pressed');
+
+  function expectNothingOfTheServers() {
+    expect(screen.queryByText(/Account with identifier/)).not.toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(SAVINGS_ACCOUNT_ID);
+  }
+
+  it('names the source when the list comes back without it, and puts no account in its place', async () => {
+    const seen = watchRequests();
+    await fill('Rainy Day', 'Main Account');
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByLabelText('Digit 1 of 6');
+
+    closeElsewhere(SAVINGS_ACCOUNT_ID);
+    const listsBefore = seen.lists;
+    await enterPin();
+
+    const words = await screen.findByText(MOVE_SOURCE_CLOSED);
+    expect(words.closest('[role="alert"]')).not.toBeNull();
+    expect(MOVE_SOURCE_CLOSED).toBe(
+      'The account you are moving money from is closed. Choose another account.',
+    );
+    expect(seen.lists).toBeGreaterThan(listsBefore);
+    expectNothingOfTheServers();
+    expect(screen.queryByRole('button', { name: 'From Rainy Day' })).not.toBeInTheDocument();
+    // No silent switch: neither the primary account nor the first is made the source.
+    expect(pressed('From Main Account')).toBe('false');
+    expect(pressed('From Holiday')).toBe('false');
+    // The destination the visitor chose is still the visitor's choice.
+    expect(pressed('To Main Account')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Review Transfer' })).toBeDisabled();
+    // The amount typed is kept, and is not judged against the balance of no account.
+    expect(screen.queryByText(/Exceeds available balance/)).not.toBeInTheDocument();
+    expect(seen.mints).toBe(1);
+    expect(seen.sends).toEqual([]);
+
+    // The visitor chooses, and only then can the money move: from the account they picked.
+    await userEvent.click(screen.getByRole('button', { name: 'From Holiday' }));
+    expect(screen.queryByText(MOVE_SOURCE_CLOSED)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+    await confirmWithPin();
+    expect(await screen.findByText('Transfer Complete!')).toBeInTheDocument();
+    expect(seen.sends).toEqual([
+      expect.objectContaining({ fromAccountId: HOLIDAY_ID, toAccountId: MAIN_ACCOUNT_ID }),
+    ]);
+  });
+
+  it('names the destination when the send meets it closed', async () => {
+    const seen = watchRequests();
+    // The mint finds both accounts; the destination is closed before the send arrives.
+    server.use(
+      http.post('*/api/transfers/internal', () => {
+        closeElsewhere(SAVINGS_ACCOUNT_ID);
+      }),
+    );
+    await fill('Main Account', 'Rainy Day');
+    await confirmWithPin();
+
+    const words = await screen.findByText(MOVE_DESTINATION_CLOSED);
+    expect(words.closest('[role="alert"]')).not.toBeNull();
+    expect(MOVE_DESTINATION_CLOSED).toBe(
+      'The account you are moving money to is closed. Choose another account.',
+    );
+    expectNothingOfTheServers();
+    expect(screen.queryByRole('button', { name: 'To Rainy Day' })).not.toBeInTheDocument();
+    expect(pressed('From Main Account')).toBe('true');
+    expect(pressed('To Holiday')).toBe('false');
+    expect(screen.getByRole('button', { name: 'Review Transfer' })).toBeDisabled();
+    expect(seen.sends).toEqual([
+      expect.objectContaining({ fromAccountId: MAIN_ACCOUNT_ID, toAccountId: SAVINGS_ACCOUNT_ID }),
+    ]);
+    // A refusal: nothing moved, and the key of that send is not kept.
+    expect(mockState.accounts.find((a) => a.id === MAIN_ACCOUNT_ID)?.balance).toBe(1250.5);
+    expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
+  });
+
+  it('is on the form with the sentence, no PIN asked and no mint, when the list read on Continue lacks the source', async () => {
+    const seen = watchRequests();
+    await fill('Rainy Day', 'Main Account');
+
+    closeElsewhere(SAVINGS_ACCOUNT_ID);
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    expect(await screen.findByText(MOVE_SOURCE_CLOSED)).toBeInTheDocument();
+    expect(pressed('From Main Account')).toBe('false');
+    expect(pressed('From Holiday')).toBe('false');
+    expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
+    expect(seen.mints).toBe(0);
+  });
+
+  it('is on the form with the sentence, no PIN asked and no mint, when the list read on Continue lacks the destination', async () => {
+    const seen = watchRequests();
+    await fill('Main Account', 'Rainy Day');
+
+    closeElsewhere(SAVINGS_ACCOUNT_ID);
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    expect(await screen.findByText(MOVE_DESTINATION_CLOSED)).toBeInTheDocument();
+    expect(pressed('From Main Account')).toBe('true');
+    expect(pressed('To Holiday')).toBe('false');
+    expect(screen.getByRole('button', { name: 'Review Transfer' })).toBeDisabled();
+    expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
+    expect(seen.mints).toBe(0);
+  });
+
+  it('says only that an account is closed, and clears both, when the list still shows both', async () => {
+    /*
+      The answer, and a list that does not say which account it means: here the list, read
+      again, still has both. Only "one of them" is true, so both are chosen again.
+    */
+    const seen = watchRequests();
+    await fill('Rainy Day', 'Main Account');
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByLabelText('Digit 1 of 6');
+    server.use(
+      http.post('*/api/transfers/internal/authorizations', () =>
+        problem({
+          status: 404,
+          errorCode: 'ACCOUNT_NOT_FOUND',
+          detail: `Account with identifier '${SAVINGS_ACCOUNT_ID}' was not found.`,
+        }),
+      ),
+    );
+    const listsBefore = seen.lists;
+    await enterPin();
+
+    const words = await screen.findByText(MOVE_ACCOUNT_CLOSED);
+    expect(words.closest('[role="alert"]')).not.toBeNull();
+    expect(MOVE_ACCOUNT_CLOSED).toBe(
+      'An account of this transfer is closed. Choose the accounts again.',
+    );
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Review Transfer' })).toBeDisabled(),
+    );
+    expect(seen.lists).toBeGreaterThan(listsBefore);
+    expectNothingOfTheServers();
+    for (const name of ['From Main Account', 'From Rainy Day', 'From Holiday']) {
+      expect(pressed(name)).toBe('false');
+    }
+    for (const name of ['To Main Account', 'To Rainy Day', 'To Holiday']) {
+      expect(pressed(name)).toBe('false');
+    }
+    expect(seen.sends).toEqual([]);
+  });
+
+  it('shows the check view when a PIN typed again under a kept key meets the closed account, and starts over under a new key', async () => {
+    /*
+      A send answered AUTHORIZATION_EXPIRED keeps its key for the same move with a new
+      authorisation (ADR-0022, ADR-0042), and the visitor stays on the PIN step. The source is
+      closed before the PIN is typed again, so the mint answers ACCOUNT_NOT_FOUND. The page does
+      not stay on a PIN step with its exits locked: it shows the check view, whose two buttons
+      are the ways on, and the next move is a new one under a new key.
+    */
+    const seen = watchRequests();
+    const keys: (string | null)[] = [];
+    server.use(
+      http.post('*/api/transfers/internal', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        if (keys.length === 1) {
+          return problem({
+            status: 401,
+            errorCode: 'AUTHORIZATION_EXPIRED',
+            detail: 'This authorisation has expired. Enter your PIN again to confirm.',
+          });
+        }
+      }),
+    );
+    await fill('Rainy Day', 'Main Account');
+    await confirmWithPin();
+    await screen.findByText(/your confirmation expired/);
+    expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled();
+
+    closeElsewhere(SAVINGS_ACCOUNT_ID);
+    await enterPin();
+
+    expect(await screen.findByText("We couldn't confirm your transfer")).toBeInTheDocument();
+    expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
+    expectNothingOfTheServers();
+    expect(seen.mints).toBe(2);
+    expect(keys).toHaveLength(1);
+
+    await userEvent.click(
+      screen.getByRole('button', { name: "It didn't go through — start over" }),
+    );
+    const words = await screen.findByText(MOVE_SOURCE_CLOSED);
+    expect(words.closest('[role="alert"]')).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'From Rainy Day' })).not.toBeInTheDocument();
+    expect(pressed('From Main Account')).toBe('false');
+    expect(pressed('From Holiday')).toBe('false');
+    expect(screen.getByRole('button', { name: 'Review Transfer' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
+
+    // The move made next is another one: it does not carry the key that was let go.
+    await userEvent.click(screen.getByRole('button', { name: 'From Holiday' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+    await confirmWithPin();
+    expect(await screen.findByText('Transfer Complete!')).toBeInTheDocument();
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).not.toBe(keys[0]);
+    expect(seen.sends).toEqual([
+      expect.objectContaining({ fromAccountId: HOLIDAY_ID, toAccountId: MAIN_ACCOUNT_ID }),
+    ]);
   });
 });
