@@ -38,8 +38,9 @@ and no change invalidated it (d).
 7. **Expiry is two minutes, not refreshable**: a policy, because the RTS prescribes no lifetime for
    an authentication code (EBA Q&A 2018_4141; Art. 4(3)(d)'s five minutes limit inactivity on
    account access). The client mints and sends on the sixth PIN digit, one user action, so only a
-   retry after a lost response reaches the expiry: it has its own code, costs no PIN attempt, and
-   the re-prompt keeps amount and payee (WCAG 2.2 SC 3.3.7, Level A).
+   request sent again reaches the expiry, after a lost response or after a busy 503 (ADR-0058 D6):
+   it has its own code, costs no PIN attempt, and the re-prompt keeps amount and payee (WCAG 2.2
+   SC 3.3.7, Level A).
 8. **The header is required, and no transfer body carries a PIN** (the flip, this record's second
    half: `TransferRequest.Pin` and `InternalTransferRequest.Pin` are gone), because while two proofs
    are accepted the weaker one decides. A transfer presenting none is refused at the rung the PIN

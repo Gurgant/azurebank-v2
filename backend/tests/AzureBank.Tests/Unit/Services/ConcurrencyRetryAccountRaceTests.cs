@@ -17,10 +17,11 @@ namespace AzureBank.Tests.Unit.Services;
 /// </summary>
 /// <remarks>
 /// The exceptions are built by hand, from entries of a context, so they hold what the test gives
-/// them. What SQL Server and EF name is printed by <c>BalanceConcurrencySqlServerTests</c>: the
-/// Account alone for a save that lost its account, also when the same save lost its record, and the
-/// record for a save that lost only its claim. Whether a deposit past its attempts answers a busy
-/// account is another question, asked of the store: <c>ConcurrencyRetryBusyAnswerTests</c>.
+/// them. What SQL Server and EF name is printed by <c>BalanceConcurrencySqlServerTests</c> and
+/// <c>BusyMoneyWriteSqlServerTests</c>: the Account alone for a save that lost its account, also
+/// when the same save lost its record, and the record for a save that lost only its claim. Whether
+/// a write past its attempts answers a busy account is another question, asked of the store:
+/// <c>ConcurrencyRetryBusyAnswerTests</c>.
 /// </remarks>
 public sealed class ConcurrencyRetryAccountRaceTests : IDisposable
 {
@@ -79,7 +80,7 @@ public sealed class ConcurrencyRetryAccountRaceTests : IDisposable
     [Fact]
     public void AConflictThatNamesTheIdempotencyRecord_IsClassifiedAsNoAccountRace_AndBareItIsNo503()
     {
-        // A classification, of one conflict: the deposit raises AccountBusyException only on a
+        // A classification, of one conflict: a write raises AccountBusyException only on a
         // conflict this calls an account race, so one that names the record reaches the handlers
         // bare, and bare it has no reason to be a 503.
         var fencedOut = Conflict(Record());

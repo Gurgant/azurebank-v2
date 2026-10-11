@@ -200,12 +200,25 @@ Every error is a ProblemDetails body that carries a `traceId`.
   `Pragma: no-cache` and `Expires: -1`). On the four money endpoints it adds `applied: false`
   when the request is known to have changed nothing. Revoke answers 503 when its database write
   fails: send it again after `retryAfterSeconds`.
-- **A busy account** is the same 503 from the same handler, with `retryAfterSeconds` 1: a deposit
-  that lost its account's row to another write on each of its 8 attempts
-  (`AccountBusyException`), and whose idempotency record still shows its own claim with nothing
-  committed. It wrote nothing, and `applied: false` says so under the rule of an outage. A
-  deposit whose claim was taken over, or whose commit landed, answers 500 there, as every other
-  account write past its attempts does.
+- **A busy account** is the same 503 from the same handler, with `retryAfterSeconds` 1: a write
+  that lost an account's row to another write on each of its 8 attempts
+  (`AccountBusyException`), with nothing of the write committed. A deposit, a withdrawal and both
+  transfers answer it when their idempotency record still shows their own claim with nothing
+  committed, and `applied: false` says so under the rule of an outage; with the claim taken over
+  they answer 500. A closure and a change of the primary account hold no key: they answer it when
+  the request let no commit start, and say nothing of `applied`. Before a write answers it, it
+  takes once more every look one of its attempts takes before its save, and gives the answer an
+  attempt gives: 404 or 422 for an account that closed meanwhile, 422 for funds another write
+  took or for the day's ceiling. Then the validation that runs before the first attempt reads
+  the step-up authorisation again and gives its own 401: `AUTHORIZATION_INVALID` for one another
+  request spent, the code an attempt's spend gives, and `AUTHORIZATION_EXPIRED` for one that
+  expired, where an attempt's spend gives `AUTHORIZATION_INVALID`. So a busy answer says that
+  nothing an attempt looks at refused the write at that moment, and no more: a payee's handle is
+  resolved once per request and not looked at again. The request spends no authorisation before
+  a busy 503, so it can be sent again with the same one while that is still good. On the public
+  demo the request was counted against its copy before the endpoint ran (ADR-0063), and a busy
+  answer gives nothing back, like any refused request. A rename past its attempts answers 500:
+  its one statement commits by itself, so nothing shows that nothing of it was committed.
 - **A client that hung up** gets no body at all.
 - **Anything else unexpected** is the 500, with no `errorCode`.
 

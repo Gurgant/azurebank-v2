@@ -1,10 +1,10 @@
 namespace AzureBank.Shared.Exceptions;
 
 /// <summary>
-/// A write lost the race for its account's row on every attempt it is given, and the store shows
-/// that nothing of the request was written: the request only has to be sent again. Answered 503
-/// <c>SERVICE_UNAVAILABLE</c> with <see cref="RetryAfterSeconds"/>, where the conflict left to
-/// propagate is a 500.
+/// A write lost the race for an account's row on every attempt it is given, the request can show
+/// that nothing of the write was committed, and nothing an attempt looks at refuses the write at
+/// that moment: the request can be sent again. Answered 503 <c>SERVICE_UNAVAILABLE</c> with
+/// <see cref="RetryAfterSeconds"/>, where the conflict left to propagate is a 500.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -15,12 +15,32 @@ namespace AzureBank.Shared.Exceptions;
 /// conditions as an outage and under no rule of its own.
 /// </para>
 /// <para>
-/// RAISED ON TWO PROOFS, and a deposit is the one write that raises it. The last conflict names
-/// accounts only (<c>ConcurrencyRetry.IsAccountRace</c>), and the idempotency record, read then,
-/// is still the request's own claim and still <c>Processing</c>, with no commit let start
-/// (<c>ConcurrencyRetry.ClaimIsOwnAndNothingCommittedAsync</c>). The first is not enough: a save
-/// that lost the account's row and the record's names the account alone. Without the second the
-/// conflict propagates, as it does when another request holds the key or the deposit is made.
+/// RAISED ON TWO PROOFS, by six writes. The first is the same for all: the last conflict names
+/// accounts only (<c>ConcurrencyRetry.IsAccountRace</c>). The second depends on what the write
+/// holds. A deposit, a withdrawal and both transfers hold an idempotency key: the record, read
+/// then, is still the request's own claim and still <c>Processing</c>, with no commit let start
+/// (<c>ConcurrencyRetry.ClaimIsOwnAndNothingCommittedAsync</c>). A closure and a change of the
+/// primary account hold none: the request has let no commit start
+/// (<c>ConcurrencyRetry.NoCommitWasLetStart</c>), which is a proof for them because each of their
+/// saves lands at a gated commit, and their 503 says nothing of <c>applied</c>.
+/// </para>
+/// <para>
+/// The first proof is not enough: a save that lost an account's row and the record's names the
+/// account alone. Without the second the conflict propagates, as it does when another request
+/// holds the key or the write is made. A rename of an account raises nothing: its one statement
+/// commits outside any transaction, so no mark covers it, and its last conflict propagates.
+/// </para>
+/// <para>
+/// AND AFTER THE SECOND PROOF, THE LOOKS OF AN ATTEMPT. Each write first takes once more the
+/// looks one of its attempts takes before its save, by the method the attempt calls: what an
+/// attempt refuses there is refused with the attempt's answer, and this is not raised. Where the
+/// write presents a step-up authorisation, the validation that runs before the first attempt
+/// then reads it again and refuses with its own 401: <c>AUTHORIZATION_INVALID</c> for one another
+/// request spent, the code an attempt's spend gives, and <c>AUTHORIZATION_EXPIRED</c> for one that
+/// expired, where an attempt's spend gives <c>AUTHORIZATION_INVALID</c>. So this says that
+/// nothing an attempt looks at refused the write at that moment, and no more: what a request
+/// resolves once, before its first attempt, as a transfer does its payee's handle, is not looked
+/// at again.
 /// </para>
 /// </remarks>
 public sealed class AccountBusyException : Exception

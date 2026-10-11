@@ -52,7 +52,13 @@ balance before primary, is code (`RefuseIfNotClosable`), held by a unit test and
   nothing spent: a consume that matches no row throws and rolls the soft delete back. Each attempt
   reloads the account, answers 404 if it is closed or gone and runs the guards again: a deposit
   that raced the closure ends in 422. An outer loop retries a `DbUpdateConcurrencyException`;
-  without it eight DELETEs at once answered `500,500,500,500,500,200,500,500`.
+  without it eight DELETEs at once answered `500,500,500,500,500,200,500,500`. A closure that
+  loses its account's row on each of its 8 attempts answers the busy 503 of ADR-0058 D6, with no
+  `applied`, when the request let no commit start: nothing is closed, no audit row is written and
+  the request spends no authorisation, so the same DELETE can be sent again with the same one.
+  It first looks at what an attempt looks at before its save, the account: closed or gone by
+  then it is the 404, credited by then the 422, the primary one by then the guard's 422. Then the
+  validation reads the authorisation again: spent by another request by then it is the 401.
 - **D9: A write whose account closed or went while it ran is refused as a request on a closed
   account**: 404 `ACCOUNT_NOT_FOUND` for the caller's own account, with nothing written and nothing
   spent. A deposit, a withdrawal and both transfers look at their accounts again after every
@@ -72,7 +78,8 @@ balance before primary, is code (`RefuseIfNotClosable`), held by a unit test and
   one that goes before its first reload. A change of the primary account reads both rows from the
   store on every attempt: a target that goes at its save answers the same 404 and the primary
   stays; an old primary that goes at its save holds no primary to clear, and the target becomes
-  the user's one primary account.
+  the user's one primary account. Past its 8 attempts a change of the primary account answers the
+  same busy 503, and the 404 when its target closed or went as the last attempt lost.
 
 ```sql
 SELECT s.Id, s.Operation, s.Status, s.CreatedAt, s.ConsumedAt, s.ConsumedByTransactionId,
@@ -142,7 +149,9 @@ too; `PIN_REQUIRED` (422), `INVALID_PIN` (401) and `PIN_LOCKED` (429) come only 
 
 - `AccountDeletionSqlServerTests` (D8, and D9 for a row that is gone),
   `AccountDeletionAuthorizationTests`, `AccountServiceTests` (also D9, a row gone before the
-  reload), `StepUpAuthorizationServiceTests` (the operation name in the hash).
+  reload), `StepUpAuthorizationServiceTests` (the operation name in the hash),
+  `BusyAccountWriteSqlServerTests` (a closure and a change of the primary account past their
+  attempts).
 - D9, on SQL Server: `DepositIntoClosedAccountSqlServerTests`,
   `TransferOrWithdrawalOnClosedAccountSqlServerTests`, `PayeeAccountClosedMeanwhileSqlServerTests`,
   `ClosureAfterALostAcknowledgementSqlServerTests`, `SetPrimarySqlServerTests` (the primary account).

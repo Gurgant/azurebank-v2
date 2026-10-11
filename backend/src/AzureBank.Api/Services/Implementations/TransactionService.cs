@@ -133,8 +133,7 @@ public class TransactionService : ITransactionService
                   the key, or flipped by this request's own commit, when it landed, its
                   acknowledgement was lost and the save ran again. Neither is a busy account. So
                   the record is read, and the request's deadline is asked whether a commit was let
-                  start; without both proofs the conflict propagates as it does for every other
-                  write.
+                  start; without both proofs the conflict propagates.
 
                   THE ACCOUNT IS READ ONCE MORE, AFTER THE RECORD. The write that won the last
                   attempt may be a closure, and a closed account is not a busy one: it answers the
@@ -292,11 +291,11 @@ public class TransactionService : ITransactionService
         // Before any write, so an expired or mismatched authorisation costs nothing. The binding is
         // the same factory the mint used: a TRANSFER authorisation minted from this very account for
         // this very amount hashes differently -- the operation name is in the payload -- and is
-        // refused as INVALID rather than quietly accepted.
+        // refused as INVALID rather than quietly accepted. One binding for the request: the look a
+        // withdrawal past its attempts takes at its authorisation validates against the same one.
+        var binding = StepUpBinding.ForWithdrawal(account.Id, request.Amount);
         await _stepUp.ValidateAsync(
-            userId, authorizationId, StepUpOperation.Withdrawal,
-            StepUpBinding.ForWithdrawal(account.Id, request.Amount),
-            cancellationToken);
+            userId, authorizationId, StepUpOperation.Withdrawal, binding, cancellationToken);
 
         /*
           AN EXPLICIT TRANSACTION, WHERE THIS METHOD USED TO HAVE NONE (ADR-0050 reserved the
@@ -326,8 +325,8 @@ public class TransactionService : ITransactionService
           execution strategy re-runs the delegate on a TRANSIENT fault; the loop around it re-runs
           the attempt when the account's RowVersion refuses a stale write -- a deposit that landed
           between the guard and the save, or a second withdrawal presenting this same authorisation
-          that committed first. Bounded by ConcurrencyRetry.MaxAttempts, jittered between attempts,
-          and the last failure propagates.
+          that committed first. Bounded by ConcurrencyRetry.MaxAttempts and jittered between
+          attempts; past the last, the account is busy or the conflict propagates (below).
         */
         for (var attempt = 1; ; attempt++)
         {
@@ -352,11 +351,9 @@ public class TransactionService : ITransactionService
                     await ConcurrencyRetry.PrepareIdempotentAttemptAsync(_context, [account], ct);
 
                     /*
-                      THE ACCOUNT ITSELF, BEFORE ITS BALANCE, in the order the top of this method
-                      keeps: a closed account is a 404 whatever it holds. The reload above reads the
-                      row by its key, without the filter that hides closed accounts, so an account
-                      closed since the ownership check is here as an ordinary row with IsDeleted
-                      set, and the guard below would let a withdrawal out of it.
+                      THE ACCOUNT AND ITS BALANCE, AS THE RELOAD LEFT THEM
+                      (RefuseWhatTheReloadedAccountRefuses says why each look is there, and in that
+                      order).
 
                       AFTER the preparation, and not inside it between its reload and its read of
                       the claim: a withdrawal that committed and lost its acknowledgement is
@@ -364,18 +361,7 @@ public class TransactionService : ITransactionService
                       TransferOrWithdrawalOnClosedAccountSqlServerTests holds the refusal, and
                       ClosureAfterALostAcknowledgementSqlServerTests the answer from the claim.
                     */
-                    ConcurrencyRetry.RefuseIfClosed(_context, account);
-
-                    /*
-                      AND THE GUARD AGAIN, against the balance this attempt actually reloaded. The
-                      check above ran on the pre-retry read; a withdrawal that raced this one may
-                      have taken the money in between, and committing on the strength of the old
-                      balance is exactly the overdraft the RowVersion exists to prevent.
-                    */
-                    if (account.Balance < request.Amount)
-                    {
-                        throw new InsufficientFundsException(account.Balance, request.Amount);
-                    }
+                    RefuseWhatTheReloadedAccountRefuses(account, request.Amount);
 
                     var balanceBefore = account.Balance;
                     var balanceAfter = balanceBefore - request.Amount;
@@ -461,6 +447,52 @@ public class TransactionService : ITransactionService
                     account.Id, attempt);
                 await ConcurrencyRetry.PrepareNextAttemptAsync(_context, [account], cancellationToken);
             }
+            catch (DbUpdateConcurrencyException ex) when (ConcurrencyRetry.IsAccountRace(ex))
+            {
+                /*
+                  THE LAST ATTEMPT LOST THE ACCOUNT TOO, and the answer is the deposit's, by the
+                  deposit's rule (DepositAsync says why each step is there): the busy 503 only when
+                  the record, read now, is still this request's own claim with no commit let start.
+
+                  HERE, WHERE THE LOOP GIVES UP, and not inside the delegate: the conflict has left
+                  the execution strategy, the attempt's transaction is rolled back, and nothing
+                  runs the delegate again.
+
+                  THEN THE LOOKS AN ATTEMPT TAKES BEFORE ITS SAVE, ONCE MORE, WITH THE ATTEMPT'S
+                  ANSWER. The busy 503 says "send it again", so it is given only when nothing an
+                  attempt looks at refuses the write at that moment. The account from the store,
+                  and the looks of an attempt in their order, by the method the attempt calls: a
+                  closure that won is the 404, a debit that left too little is the 422.
+
+                  AND THE AUTHORISATION. An attempt looks at it when it spends it, after its save,
+                  and here no save follows; so the validation that ran before the first attempt
+                  runs again, reading and writing nothing. This request has not spent it: the
+                  spend is sent inside the transaction, after the save, and no transaction that
+                  sent it was let commit. But another request can have spent it meanwhile, which
+                  is the 401 an attempt's spend gives, and it can have expired, which is the 401
+                  of the validation: AUTHORIZATION_EXPIRED, where an attempt's spend gives
+                  AUTHORIZATION_INVALID.
+
+                  ONLY WHEN NONE OF THEM REFUSES IS THE ACCOUNT BUSY. BusyMoneyWriteSqlServerTests
+                  holds each answer, and the same request, with the same key and the same
+                  authorisation, made when it is sent again.
+                */
+                if (!await ConcurrencyRetry.ClaimIsOwnAndNothingCommittedAsync(_context, cancellationToken))
+                {
+                    throw;
+                }
+
+                await ConcurrencyRetry.ResetToStoreAsync(_context, [account], cancellationToken);
+                RefuseWhatTheReloadedAccountRefuses(account, request.Amount);
+                await _stepUp.ValidateAsync(
+                    userId, authorizationId, StepUpOperation.Withdrawal, binding, cancellationToken);
+
+                _logger.LogWarning(
+                    "Withdrawal from account {AccountId} lost the account to another write on attempt "
+                        + "{Attempt}, its last; answering 503",
+                    account.Id, attempt);
+                throw new AccountBusyException(ex);
+            }
             catch (DbUpdateException ex) when (ConcurrencyRetry.IsTransactionNumberCollision(ex, attempt))
             {
                 // A regenerable clash on the transaction number: the next attempt mints a fresh one.
@@ -480,6 +512,38 @@ public class TransactionService : ITransactionService
         // Non-null on every path that reaches here: the loop only breaks after the delegate ran to
         // completion, and every other exit throws.
         return response!;
+    }
+
+    /// <summary>
+    /// What a withdrawal looks at between the reload of its account and its save, in the order it
+    /// answers: the account itself, then its balance.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ONE COPY FOR TWO CALLERS: each attempt, and the withdrawal that lost its last one and has to
+    /// say whether the account is only busy (<see cref="WithdrawAsync"/>). A look added here is
+    /// taken by both, so the busy answer cannot hide what an attempt refuses.
+    /// </para>
+    /// <para>
+    /// THE ACCOUNT BEFORE ITS BALANCE, the order the top of the withdrawal keeps: a closed account
+    /// is a 404 whatever it holds. A reload reads the row by its key, without the filter that hides
+    /// closed accounts, so an account closed since the ownership check is here as an ordinary row
+    /// with <c>IsDeleted</c> set, and the balance alone would let a withdrawal out of it.
+    /// </para>
+    /// <para>
+    /// THE BALANCE THE RELOAD READ, not the one the ownership check read: a withdrawal that won the
+    /// race may have taken the money in between, and a save on the strength of the old balance is
+    /// the overdraft the <c>RowVersion</c> exists to prevent.
+    /// </para>
+    /// </remarks>
+    private void RefuseWhatTheReloadedAccountRefuses(Account account, decimal amount)
+    {
+        ConcurrencyRetry.RefuseIfClosed(_context, account);
+
+        if (account.Balance < amount)
+        {
+            throw new InsufficientFundsException(account.Balance, amount);
+        }
     }
 
     /// <inheritdoc />

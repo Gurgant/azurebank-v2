@@ -186,6 +186,7 @@ public class AccountController(
     /// <param name="id">Account ID to set as primary</param>
     /// <returns>Success message</returns>
     [HttpPatch("{id:guid}/set-primary")]
+    [AnswersBusyAccount]
     [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
@@ -258,6 +259,7 @@ public class AccountController(
     /// <returns>Success message</returns>
     [HttpDelete("{id:guid}")]
     [RequireStepUpAuthorization]
+    [AnswersBusyAccount]
     [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status200OK)]
     // 400 was declared before ADR-0049 and unreachable then (a DELETE has no body to validate);
     // it is reachable now, through a Step-Up-Authorization header that is not a UUID — MVC model
