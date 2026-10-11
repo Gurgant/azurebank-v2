@@ -19,7 +19,8 @@ using Xunit.Abstractions;
 namespace AzureBank.Tests.Integration;
 
 /// <summary>
-/// The five properties of an authorised closure (ADR-0049) that only real SQL Server can prove.
+/// Five properties of an authorised closure (ADR-0049), proven on real SQL Server. The first
+/// four need it; the fifth needs it for one of its two moments.
 /// </summary>
 /// <remarks>
 /// <list type="number">
@@ -44,7 +45,12 @@ namespace AzureBank.Tests.Integration;
 /// <item>A ROW THAT IS GONE IS A CLOSED ACCOUNT: a closure whose account row is deleted under it
 /// answers 404, writes no <c>AccountDeleted</c> row and spends nothing, whether the row goes at
 /// the closure's save or before its first reload. The reload detaches the entry and leaves the
-/// entity as it was, which only a real DELETE brings about.</item>
+/// entity as it was. The two moments hold different lines. At the save the attempt that lost
+/// had already set the flag, so the look at the flag alone refuses it: that proof holds the
+/// refusal as a whole, and needs a save that loses, which InMemory cannot show. Before the
+/// first reload nothing has set the flag, so that proof is the one that needs the entry's
+/// state; <c>AccountServiceTests</c> holds the same line with no database, and here the audit
+/// rows and the authorisation are read from the store as well.</item>
 /// </list>
 /// <para>
 /// Gated by AZUREBANK_TEST_SQLSERVER and serialised with the other SQL proofs, like every file in
@@ -303,7 +309,9 @@ public sealed class AccountDeletionSqlServerTests : IDisposable
         /*
           The removal rides the closure's own UPDATE [Accounts]. That save matches no row, the
           reload finds none and detaches the entry, and the entity keeps the flag the attempt that
-          lost had set on it.
+          lost had set on it. So a look at the flag alone refuses this one too: the proof holds
+          the refusal as a whole (with the call deleted the retry writes the audit row, spends
+          and answers 200), not the look at the entry's state. The proof below holds that.
         */
         var (race, sent) = await CloseWhileTheRowIsRemovedAsync("delgone", OutOfBandClosureInterceptor.AccountUpdate);
 

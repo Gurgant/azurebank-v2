@@ -53,7 +53,7 @@ balance before primary, is code (`RefuseIfNotClosable`), held by a unit test and
   reloads the account, answers 404 if it is closed or gone and runs the guards again: a deposit
   that raced the closure ends in 422. An outer loop retries a `DbUpdateConcurrencyException`;
   without it eight DELETEs at once answered `500,500,500,500,500,200,500,500`.
-- **D9: A money write whose account closed while it ran is refused as a request on a closed
+- **D9: A write whose account closed or went while it ran is refused as a request on a closed
   account**: 404 `ACCOUNT_NOT_FOUND` for the caller's own account, with nothing written and nothing
   spent. A deposit, a withdrawal and both transfers look at their accounts again after every
   reload, because a reload returns a closed row with a current `RowVersion`. A row that is gone is
@@ -141,8 +141,8 @@ too; `PIN_REQUIRED` (422), `INVALID_PIN` (401) and `PIN_LOCKED` (429) come only 
 ## Verified by
 
 - `AccountDeletionSqlServerTests` (D8, and D9 for a row that is gone),
-  `AccountDeletionAuthorizationTests`, `AccountServiceTests`, `StepUpAuthorizationServiceTests`
-  (the operation name in the hash).
+  `AccountDeletionAuthorizationTests`, `AccountServiceTests` (also D9, a row gone before the
+  reload), `StepUpAuthorizationServiceTests` (the operation name in the hash).
 - D9, on SQL Server: `DepositIntoClosedAccountSqlServerTests`,
   `TransferOrWithdrawalOnClosedAccountSqlServerTests`, `PayeeAccountClosedMeanwhileSqlServerTests`,
   `ClosureAfterALostAcknowledgementSqlServerTests`, `SetPrimarySqlServerTests` (the primary account).

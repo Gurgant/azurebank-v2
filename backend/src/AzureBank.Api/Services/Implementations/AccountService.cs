@@ -391,7 +391,7 @@ public class AccountService : IAccountService
                       two rows. ResetToStoreAsync is the discard TransferService's
                       PrepareTransferAttemptAsync performs (its Case A): it detaches every tracked
                       AuditEvent and reloads the account, which resets IsDeleted, DeletedAt and
-                      UpdatedAt to what the database holds.
+                      UpdatedAt to what the database holds when the row is there.
 
                       A CLOSURE THAT ALREADY HAPPENED ANSWERS AS ANY LATER DELETE DOES: 404. If the
                       reload comes back deleted, either an earlier attempt of this same request
