@@ -229,9 +229,17 @@ public static class EvidenceCommand
                     .FirstOrDefaultAsync(a => a.Id == named, cancellationToken)
                 : null;
 
+            // The anchors are read before the walk, as `verify` reads them: an anchor recorded
+            // while the walk runs is then missed, which can only make the uncovered window read
+            // larger than it is.
+            var anchors = scope.ServiceProvider.GetRequiredService<IAuditAnchorChain>();
+            var anchorState = await anchors.VerifyChainAsync(context, cancellationToken);
+            var coverage = new VerifyCommand.AnchorCoverage(
+                anchorState.IsIntact, anchorState.DeepestCovered, anchorState.Records);
+
             var verification = await chain.VerifyAsync(context, cancellationToken);
             var (chainCode, chainLines) = VerifyCommand.Report(
-                verification, verification.LowestSequence, verification.HighestSequence);
+                verification, verification.LowestSequence, verification.HighestSequence, coverage);
 
             var lines = new List<string>
             {
