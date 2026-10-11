@@ -207,6 +207,9 @@ jobs:
             echo "::error::SQL proofs did not run (executed=$executed passed=$passed) — the suite skipped instead of proving anything"
             exit 1
           fi
+          # The total as a notice on the run's own page, as the two test jobs print theirs: a
+          # page that quotes the number of proofs can then be checked by anyone, with no sign-in.
+          echo "::notice title=SQL Server proofs::$passed passed"
 
       - name: Upload test results
         uses: actions/upload-artifact@v7
