@@ -262,7 +262,7 @@ Default;Encrypt=True;TrustServerCertificate=False;Connect Timeout=60`.
 
 | Identity | Who acts as it | It can | It cannot |
 | --- | --- | --- | --- |
-| `azurebank-deploy` | A job of the GitHub environment `demo` | Read and write the app and each job it is assigned on, start such a job, read executions, revisions and replicas. Writing the app is more than moving an image: it can run any image with the app's secrets in its environment, as the app's database identity | List secrets, delete or stop anything, attach an identity, read the logs, touch the environment, the database server, the workspace or a role. It has no user in the database |
+| `azurebank-deploy` | A job of the GitHub environment `demo` | Read and write the app and each job it is assigned on, start such a job, read executions, revisions and replicas. Writing the app or a job is more than moving an image: it can run any image with the secrets in its environment and as the database identity attached to it, which on the migrate job is the one that changes the schema | List secrets, delete or stop anything, attach an identity, read the logs, touch the environment, the database server, the workspace or a role. It has no user in the database |
 | `azurebank-app` | Both containers of the app, and the pool job | Read and write every row | Change the schema. It holds no role on any Azure resource |
 | `azurebank-migrate` | The migrate job | The same, and change the schema; it can create a trigger, which is why the users file is guarded | Create a user or make itself an owner of the database. It holds no role on any Azure resource |
 
