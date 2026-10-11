@@ -154,8 +154,8 @@ jobs:
           cases=$(grep -o '<testcase' bruno-results.xml | wc -l)
           echo "bruno: $cases test case(s) in the report"
           if [ "$cases" -lt 100 ]; then
-            echo "the run reported $cases test cases; the junit reporter wrote 135 from 27"
-            echo 'requests on 2026-09-21, so this is a run that did not happen rather than a'
+            echo "the run reported $cases test cases; the junit reporter wrote 145 from 29"
+            echo 'requests on 2026-10-11, so this is a run that did not happen rather than a'
             echo 'collection that shrank'
             exit 1
           fi
