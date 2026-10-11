@@ -115,6 +115,11 @@ class MentionTests(unittest.TestCase):
         line = 'The parameter `@id` is typed, and @someone said so.'
         self.assertEqual(check.offences(message(line, 'The end.')), [(MENTION, line)])
 
+    def test_a_span_keeps_what_stands_on_either_side_of_it_apart(self):
+        line = 'Text`code`@someone is a mention still.'
+        self.assertEqual(check.offences(message(line, 'The end.')), [(MENTION, line)])
+        self.assertEqual(check.offences(message('The at-sign in @`code`someone names nobody.', 'The end.')), [])
+
     def test_doubled_backticks_hide_nothing(self):
         line = 'The parameter ``@id`` is typed.'
         self.assertEqual(check.offences(message(line, 'The end.')), [(MENTION, line)])

@@ -63,13 +63,14 @@ def git(*arguments):
 
 
 def outside_backticks(message):
-    """The lines of a message without the backtick spans that open and close on one line.
+    """The lines of a message with a space in place of each backtick span that opens and closes
+    on one line, so that what stands on either side of a span stays apart.
 
     Backticks pair over a paragraph, in the order a reader meets them. A span that crosses a line
     break uses up its two backticks and hides nothing: what stands in it is read, and so is what
     follows it. A backtick with no pair in its paragraph hides nothing either."""
     parts = BLANK_LINE.split(message)
-    parts[::2] = [SPAN.sub(lambda span: span.group(0) if '\n' in span.group(0) else '', part)
+    parts[::2] = [SPAN.sub(lambda span: span.group(0) if '\n' in span.group(0) else ' ', part)
                   for part in parts[::2]]
     return ''.join(parts).splitlines()
 
