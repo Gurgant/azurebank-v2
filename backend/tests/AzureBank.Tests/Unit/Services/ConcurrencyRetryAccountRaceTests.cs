@@ -11,14 +11,16 @@ using Microsoft.EntityFrameworkCore.Update;
 namespace AzureBank.Tests.Unit.Services;
 
 /// <summary>
-/// What counts as a race for an account (<see cref="ConcurrencyRetry.IsAccountRace"/>): the one
-/// conflict a write may try again, and the one a deposit past its attempts answers as a busy
-/// account. A conflict that involves the idempotency record is neither.
+/// How a conflict is classified by the entries it names (<see cref="ConcurrencyRetry.IsAccountRace"/>):
+/// one that names accounts and nothing else may be tried again, and one that names the idempotency
+/// record may not.
 /// </summary>
 /// <remarks>
-/// The exceptions are built as EF builds them, from the entries a save refused. SQL Server makes
-/// the real ones in <c>BalanceConcurrencySqlServerTests</c>: an account's row lost on every
-/// attempt, and a claim taken away at the save.
+/// The exceptions are built by hand, from entries of a context, so they hold what the test gives
+/// them. What SQL Server and EF name is printed by <c>BalanceConcurrencySqlServerTests</c>: the
+/// Account alone for a save that lost its account, also when the same save lost its record, and the
+/// record for a save that lost only its claim. Whether a deposit past its attempts answers a busy
+/// account is another question, asked of the store: <c>ConcurrencyRetryBusyAnswerTests</c>.
 /// </remarks>
 public sealed class ConcurrencyRetryAccountRaceTests : IDisposable
 {
@@ -38,12 +40,20 @@ public sealed class ConcurrencyRetryAccountRaceTests : IDisposable
     }
 
     [Fact]
-    public void AConflictThatInvolvesTheIdempotencyRecord_IsNotAnAccountRace()
+    public void AConflictThatNamesTheIdempotencyRecord_IsNotAnAccountRace()
     {
         ConcurrencyRetry.IsAccountRace(Conflict(Record())).Should().BeFalse(
             "the claim was taken over: another request may hold the key");
+    }
+
+    [Fact]
+    public void AConflictBuiltByHandToNameAnAccountAndTheRecord_IsNotAnAccountRace()
+    {
+        // No save measured on SQL Server names both: a deposit's save that loses both rows names
+        // the Account alone. The case holds the rule as it is written, every entry an Account, for
+        // a conflict that would name more.
         ConcurrencyRetry.IsAccountRace(Conflict(Account(), Record())).Should().BeFalse(
-            "one refused record is enough, whatever else the save lost");
+            "one named record is enough, whatever else is named");
     }
 
     [Fact]
@@ -57,7 +67,7 @@ public sealed class ConcurrencyRetryAccountRaceTests : IDisposable
     public void OnlyAnAccountRaceIsTriedAgain_AndOnlyWhileAnAttemptIsLeft()
     {
         var race = Conflict(Account());
-        var fencedOut = Conflict(Account(), Record());
+        var fencedOut = Conflict(Record());
 
         ConcurrencyRetry.ShouldRetry(race, attempt: 1).Should().BeTrue();
         ConcurrencyRetry.ShouldRetry(race, ConcurrencyRetry.MaxAttempts - 1).Should().BeTrue();
@@ -67,12 +77,12 @@ public sealed class ConcurrencyRetryAccountRaceTests : IDisposable
     }
 
     [Fact]
-    public void AConflictThatInvolvesTheIdempotencyRecord_IsNeverAnsweredSendItAgain()
+    public void AConflictThatNamesTheIdempotencyRecord_IsClassifiedAsNoAccountRace_AndBareItIsNo503()
     {
-        // The deposit raises AccountBusyException only for an account race, so the conflict of a
-        // request whose claim was taken over reaches the handlers bare. Bare, it is no 503: no
-        // Retry-After and no applied, at the first attempt as at the last.
-        var fencedOut = Conflict(Account(), Record());
+        // A classification, of one conflict: the deposit raises AccountBusyException only on a
+        // conflict this calls an account race, so one that names the record reaches the handlers
+        // bare, and bare it has no reason to be a 503.
+        var fencedOut = Conflict(Record());
 
         ConcurrencyRetry.IsAccountRace(fencedOut).Should().BeFalse();
         ServiceUnavailableExceptionHandler.ReasonFor(fencedOut, firedByDeadline: false).Should().BeNull();

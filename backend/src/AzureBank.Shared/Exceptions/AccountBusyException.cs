@@ -1,9 +1,10 @@
 namespace AzureBank.Shared.Exceptions;
 
 /// <summary>
-/// A write lost the race for its account's row on every attempt it is given, and wrote nothing:
-/// the request only has to be sent again. Answered 503 <c>SERVICE_UNAVAILABLE</c> with
-/// <see cref="RetryAfterSeconds"/>, where the conflict left to propagate is a 500.
+/// A write lost the race for its account's row on every attempt it is given, and the store shows
+/// that nothing of the request was written: the request only has to be sent again. Answered 503
+/// <c>SERVICE_UNAVAILABLE</c> with <see cref="RetryAfterSeconds"/>, where the conflict left to
+/// propagate is a 500.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -14,17 +15,21 @@ namespace AzureBank.Shared.Exceptions;
 /// conditions as an outage and under no rule of its own.
 /// </para>
 /// <para>
-/// Raised only for an account race: a conflict that involves the idempotency record means the
-/// claim was taken over, and that request must never be told to send it again
-/// (<c>ConcurrencyRetry.IsAccountRace</c>).
+/// RAISED ON TWO PROOFS, and a deposit is the one write that raises it. The last conflict names
+/// accounts only (<c>ConcurrencyRetry.IsAccountRace</c>), and the idempotency record, read then,
+/// is still the request's own claim and still <c>Processing</c>, with no commit let start
+/// (<c>ConcurrencyRetry.ClaimIsOwnAndNothingCommittedAsync</c>). The first is not enough: a save
+/// that lost the account's row and the record's names the account alone. Without the second the
+/// conflict propagates, as it does when another request holds the key or the deposit is made.
 /// </para>
 /// </remarks>
 public sealed class AccountBusyException : Exception
 {
     /// <summary>
     /// The wait a busy account names, as <c>retryAfterSeconds</c> and <c>Retry-After</c>: one
-    /// second, the shortest the header can say. The writes it lost to are short, and a caller that
-    /// comes back to an account still busy is answered the same way.
+    /// second. The header counts whole seconds, and 0 would send the caller straight back into the
+    /// writes it lost to, so 1 is the least wait it can name. It does not say the account is free
+    /// by then: a caller that comes back to an account still busy is answered the same way.
     /// </summary>
     public const int RetryAfterSeconds = 1;
 

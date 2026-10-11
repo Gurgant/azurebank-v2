@@ -25,6 +25,10 @@ namespace AzureBank.Tests.Fixtures;
 /// names, the last one included.
 /// </para>
 /// <para>
+/// WITH <c>saves</c>, ONLY THAT MANY SAVES LOSE: the next one meets the RowVersion it read, so a
+/// proof can let the write through on the attempt it names.
+/// </para>
+/// <para>
 /// A raw connection, because every context the factory builds carries this interceptor. It cannot
 /// deadlock with the save it intercepts: a deposit's transaction holds the audit tail's lock and
 /// has not touched the account row when its UPDATE is sent, and this statement commits by itself
@@ -35,15 +39,18 @@ public sealed class LostRowVersionRaceInterceptor(string connectionString) : DbC
 {
     private Guid? _accountId;
     private int? _closingOn;
+    private int? _saves;
     private int _fired;
 
     /// <summary>
     /// Starts losing the race for <paramref name="accountId"/>. With <paramref name="closingOn"/>,
-    /// the write of that number, counted from one, closes the account.
+    /// the write of that number, counted from one, closes the account. With
+    /// <paramref name="saves"/>, only that many saves lose.
     /// </summary>
-    public void Arm(Guid accountId, int? closingOn = null)
+    public void Arm(Guid accountId, int? closingOn = null, int? saves = null)
     {
         _closingOn = closingOn;
+        _saves = saves;
         _accountId = accountId;
     }
 
@@ -75,7 +82,8 @@ public sealed class LostRowVersionRaceInterceptor(string connectionString) : DbC
     private async Task MoveTheRowVersionAsync(DbCommand command, CancellationToken cancellationToken)
     {
         if (_accountId is not { } accountId
-            || !command.CommandText.Contains("UPDATE [Accounts]", StringComparison.Ordinal))
+            || !command.CommandText.Contains("UPDATE [Accounts]", StringComparison.Ordinal)
+            || Fired >= _saves)
         {
             return;
         }

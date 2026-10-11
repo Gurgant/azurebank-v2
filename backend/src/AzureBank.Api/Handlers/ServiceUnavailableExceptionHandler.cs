@@ -161,6 +161,8 @@ public sealed class ClientAbortedExceptionHandler : IExceptionHandler
 /// (<see cref="AccountBusyException.RetryAfterSeconds"/>) and a sentence of its own. It comes here,
 /// and not to the domain handler, so that <c>applied</c> is decided by the one rule below. Any other
 /// concurrency conflict stays a 500: the bare exception names no cause a caller can act on.
+/// LOGGED AT INFORMATION, where an outage is a Warning: nothing is wrong with the service, and the
+/// write that raised it has already written its own Warning, which names the account.
 /// </para>
 /// <para>
 /// -2, A COMMAND TIMEOUT, IS A 503 TOO: the database did not answer in time. That includes the audit
@@ -270,7 +272,9 @@ public sealed class ServiceUnavailableExceptionHandler : IExceptionHandler
         }
 
         var age = httpContext.Features.Get<ReceivedAtFeature>()?.Value is { } at ? _clock.Now - at : (TimeSpan?)null;
-        _logger.LogWarning(
+        var busy = reason == AccountBusy;
+        _logger.Log(
+            busy ? LogLevel.Information : LogLevel.Warning,
             exception,
             "Service unavailable ({Reason}) on {RoutePattern} after {ElapsedMs} ms; "
             + "SQL errors {SqlErrorNumbers}; chain {ExceptionTypes}",
@@ -284,7 +288,6 @@ public sealed class ServiceUnavailableExceptionHandler : IExceptionHandler
         // handled, so the instrumentation would otherwise leave the span without it.
         Activity.Current?.AddException(exception);
 
-        var busy = reason == AccountBusy;
         var details = new Dictionary<string, object>
         {
             ["retryAfterSeconds"] = busy

@@ -1,3 +1,4 @@
+using AzureBank.Api.Data;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.Entities;
@@ -25,21 +26,88 @@ internal static class ConcurrencyRetry
     /// </summary>
     /// <remarks>
     /// EIGHT, AND NOT MORE, BY MEASUREMENT (ADR-0058): of 24 parallel deposits to one account on
-    /// SQL Server, 11 to 14 spend their attempts at 8 and 8 to 10 at 12. Half as many attempts
+    /// SQL Server, 11 to 15 spend their attempts at 8 and 8 to 10 at 12. Half as many attempts
     /// again does not halve them, and each attempt is a turn at the audit chain's lock, which
     /// every audited write of every user waits on. A deposit that spends its attempts answers
-    /// <see cref="AccountBusyException"/>; every other write lets its last conflict propagate.
+    /// <see cref="AccountBusyException"/> when <see cref="ClaimIsOwnAndNothingCommittedAsync"/>
+    /// allows; every other write lets its last conflict propagate.
     /// </remarks>
     public const int MaxAttempts = 8;
 
     /// <summary>
-    /// True for a genuine Account RowVersion race: the save refused at least one entry, and every
-    /// entry it refused is an Account. A conflict that involves an IdempotencyRecord is not one:
-    /// the claim was fenced out (a stale-claim takeover happened), so the request may neither run
-    /// again nor be told to send it again.
+    /// True when the conflict names accounts and nothing else: the save refused at least one entry,
+    /// and every entry it names is an Account. A conflict that names an IdempotencyRecord is not
+    /// one: the claim was fenced out (a stale-claim takeover happened), so the request may neither
+    /// run again nor be told to send it again.
     /// </summary>
+    /// <remarks>
+    /// WHAT THE CONFLICT NAMES IS NOT ALL THE SAVE LOST. A deposit's save that loses its account's
+    /// row and its idempotency record's together names the Account alone, on SQL Server
+    /// (<c>BalanceConcurrencySqlServerTests</c> prints it). So this is enough to try again, since
+    /// the next attempt's save meets the record's fence, and it is not enough to answer a busy
+    /// account, which no save follows: <see cref="ClaimIsOwnAndNothingCommittedAsync"/> reads the
+    /// record for that.
+    /// </remarks>
     public static bool IsAccountRace(DbUpdateConcurrencyException ex) =>
         ex.Entries.Count > 0 && ex.Entries.All(e => e.Entity is Account);
+
+    /// <summary>
+    /// What a write past its attempts asks before it answers a busy account: true when the store
+    /// shows that the request's idempotency claim is still its own and still <c>Processing</c>, and
+    /// the request has let no commit start.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// THE SAME THREE TESTS THE CLAIM'S RELEASE MAKES
+    /// (<c>IdempotencyService.ReleaseIfNotExecutedAsync</c>), on a read of the record made now. A
+    /// record that is gone was taken over or cleaned. One that is <c>Executed</c> or
+    /// <c>Completed</c> rode a commit that landed: this request's own, when the acknowledgement was
+    /// lost and the save ran again (ADR-0058, residual risk 6), or another request's. One that
+    /// carries another <c>ClaimId</c> than the one this request claimed with belongs to the request
+    /// that took it over. None of them is an account to come back to: the caller lets its conflict
+    /// propagate.
+    /// </para>
+    /// <para>
+    /// THE CLAIM IT COMPARES WITH is the record's tracked original <c>ClaimId</c>, the value the
+    /// store held when the request claimed the key: <c>MarkExecutedPending</c> rotates only the
+    /// current one, and no save after the claim's own has been accepted.
+    /// </para>
+    /// <para>
+    /// A COMMIT THAT WAS LET START may have landed or may still land, whatever the record says at
+    /// this instant, so the request's deadline is asked too: the mark is the one the 503's
+    /// <c>applied</c> is decided on (<c>ServiceUnavailableExceptionHandler.NothingApplied</c>), and
+    /// as there, no deadline is no answer.
+    /// </para>
+    /// <para>
+    /// NO RECORD IS NO PROOF. Every money write the API serves holds a claim
+    /// (<c>[RequireIdempotency]</c>), so a context that tracks none is not a request that can be
+    /// told to send the same key again.
+    /// </para>
+    /// </remarks>
+    public static async Task<bool> ClaimIsOwnAndNothingCommittedAsync(
+        AzureBankDbContext context, CancellationToken cancellationToken)
+    {
+        if (CommitGateInterceptor.DeadlineOf(context) is not { CommitEntered: false })
+        {
+            return false;
+        }
+
+        var entry = context.ChangeTracker.Entries<IdempotencyRecord>().FirstOrDefault();
+        if (entry is null)
+        {
+            return false;
+        }
+
+        var claimedWith = entry.Property(r => r.ClaimId).OriginalValue;
+        var (userId, endpoint, key) = (entry.Entity.UserId, entry.Entity.Endpoint, entry.Entity.Key);
+        var truth = await context.IdempotencyRecords
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                r => r.UserId == userId && r.Endpoint == endpoint && r.Key == key,
+                cancellationToken);
+
+        return truth is { Status: IdempotencyStatus.Processing } && truth.ClaimId == claimedWith;
+    }
 
     /// <summary>
     /// Retries only genuine Account RowVersion races (<see cref="IsAccountRace"/>): retrying a

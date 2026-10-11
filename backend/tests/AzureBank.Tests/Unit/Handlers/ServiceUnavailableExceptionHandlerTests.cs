@@ -260,6 +260,23 @@ public class ServiceUnavailableExceptionHandlerTests
     }
 
     [Fact]
+    public async Task ABusyAccount_IsLoggedAtInformation_AndAnOutageAtWarning()
+    {
+        // The deposit that raises a busy account has already written its own Warning, with the
+        // account: a second one here would count each refused deposit twice.
+        var busy = new RecordingLoggerProvider();
+        (await Handler(busy).TryHandleAsync(NewContext(), Busy(), CancellationToken.None)).Should().BeTrue();
+
+        var outage = new RecordingLoggerProvider();
+        (await Handler(outage).TryHandleAsync(NewContext(), new TimeoutException(), CancellationToken.None))
+            .Should().BeTrue();
+
+        busy.Lines.Should().ContainSingle().Which.Level.Should().Be(LogLevel.Information);
+        busy.Lines[0].Message.Should().Contain(ServiceUnavailableExceptionHandler.AccountBusy);
+        outage.Lines.Should().ContainSingle().Which.Level.Should().Be(LogLevel.Warning);
+    }
+
+    [Fact]
     public async Task ADefect_IsLeftToTheGlobalHandler()
     {
         var context = NewContext();
@@ -426,9 +443,11 @@ public class ServiceUnavailableExceptionHandlerTests
 
     private static AccountBusyException Busy() => new(new DbUpdateConcurrencyException("stale"));
 
-    private static ServiceUnavailableExceptionHandler Handler() =>
+    private static ServiceUnavailableExceptionHandler Handler(RecordingLoggerProvider? log = null) =>
         new(
-            NullLogger<ServiceUnavailableExceptionHandler>.Instance,
+            log is null
+                ? NullLogger<ServiceUnavailableExceptionHandler>.Instance
+                : new LoggerFactory([log]).CreateLogger<ServiceUnavailableExceptionHandler>(),
             ReceivedAtClock.ForThisProcess,
             Options.Create(new IdempotencyOptions()));
 
