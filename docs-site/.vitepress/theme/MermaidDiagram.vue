@@ -22,6 +22,9 @@ let asked = 0
 async function draw(): Promise<void> {
   const mine = ++asked
   try {
+    // package.json overrides KaTeX, which Mermaid brings and loads only for a label with maths;
+    // no diagram here has one. Mermaid 12.1.0 asks for a version with a known defect
+    // (GHSA-238p-pmpm-9mq7). The override goes when Mermaid asks for 0.18.2 or later.
     const { default: mermaid } = await import('mermaid')
     mermaid.initialize({
       startOnLoad: false,
