@@ -13,6 +13,7 @@ using AzureBank.Shared.DTOs.Transfer;
 using AzureBank.Shared.Enums;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit.Abstractions;
@@ -137,8 +138,8 @@ public abstract class ClosedAccountSqlServerProofs(ITestOutputHelper output) : I
         response.StatusCode.Should().Be(
             HttpStatusCode.ServiceUnavailable,
             $"a write that was not made is answered the 503 a client can retry; the body was: {body}");
-        response.Headers.CacheControl?.NoStore.Should().BeTrue("a 503 describes a moment and must not be cached");
-        response.Headers.RetryAfter?.Delta.Should().Be(
+        (response.Headers.CacheControl?.NoStore).Should().BeTrue("a 503 describes a moment and must not be cached");
+        (response.Headers.RetryAfter?.Delta).Should().Be(
             TimeSpan.FromSeconds(1), "the Retry-After header carries the wait the body names");
 
         var problem = JsonSerializer.Deserialize<JsonElement>(body);
@@ -162,6 +163,24 @@ public abstract class ClosedAccountSqlServerProofs(ITestOutputHelper output) : I
             problem.GetProperty("detail").GetString().Should().Be(
                 AzureBank.Api.Handlers.ServiceUnavailableExceptionHandler.BusyDetail);
         }
+    }
+
+    /// <summary>
+    /// What another request does to an authorisation: spends it, or, for one that expires, moves
+    /// its expiry into the past. On a connection of its own; returns the rows it matched.
+    /// </summary>
+    protected static async Task<int> SpendOrExpireAsync(Guid authorizationId, bool expires, CancellationToken cancellationToken)
+    {
+        await using var connection = new SqlConnection(SqlServerFactAttribute.ConnectionString!);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = expires
+            ? "UPDATE [StepUpAuthorizations] SET [ExpiresAt] = DATEADD(second, -1, SYSUTCDATETIME()) "
+                + "WHERE [Id] = @id AND [Status] = 'Pending'"
+            : "UPDATE [StepUpAuthorizations] SET [Status] = 'Consumed', [ConsumedAt] = SYSUTCDATETIME() "
+                + "WHERE [Id] = @id AND [Status] = 'Pending'";
+        command.Parameters.Add(new SqlParameter("@id", authorizationId));
+        return await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     /// <summary>

@@ -321,6 +321,143 @@ public class TransferService : ITransferService
         throw RecipientHasNoActiveAccount();
     }
 
+    /// <summary>
+    /// What an external transfer looks at between the reload of its accounts and its save, in the
+    /// order it answers: the sender's account and the payee's, the sender's balance, the day's
+    /// ceiling. Returns the payee account to pay.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ONE COPY FOR TWO CALLERS: each attempt, inside its transaction, and the transfer that lost
+    /// its last attempt and has to say whether its accounts are only busy
+    /// (<see cref="TransferAsync"/>). A look added here is taken by both, so the busy answer cannot
+    /// hide what an attempt refuses.
+    /// </para>
+    /// <para>
+    /// <paramref name="underTheDaysLock"/> IS THE ONE DIFFERENCE. An attempt reads the day's sum
+    /// under the per-user lock its transaction holds, because a save follows the read. Past the
+    /// last attempt nothing is saved and no transaction is open: the sum is read as it stands, the
+    /// way the pre-check before the first attempt reads it.
+    /// </para>
+    /// </remarks>
+    private async Task<Account> RefuseWhatAnAttemptRefusesAsync(
+        Guid userId, decimal amount, Account fromAccount, ApplicationUser recipient, Account recipientAccount,
+        bool underTheDaysLock, CancellationToken cancellationToken)
+    {
+        /*
+          THE ACCOUNTS FIRST, because the preparation reloads them on EVERY attempt, the first one
+          included. An account that closes between the first look and that reload loses no save
+          and goes round no retry: it is simply here, closed, with a current RowVersion, and the
+          transfer would commit on it at the first attempt.
+
+          THIS PLACE HOLDS THE PAYEE'S ACCOUNT, and the sender's when it closes before the first
+          reload. TransferOrWithdrawalOnClosedAccountSqlServerTests holds the refusals, and
+          PayeeAccountClosedMeanwhileSqlServerTests the payee paid on another account.
+
+          THE PAYEE BEFORE THE FUNDS, the order of the first look: a transfer whose payee has no
+          open account left answers that, whatever the sender's account holds by now.
+        */
+        recipientAccount = await RefuseOrChooseThePayeeAccountAgainAsync(
+            fromAccount, recipient, recipientAccount, cancellationToken);
+
+        // The funds, against the balance the reload read: a debit that won the race, or one that
+        // landed before a transient retry, may have moved it.
+        if (fromAccount.Balance < amount)
+        {
+            throw new InsufficientFundsException(fromAccount.Balance, amount);
+        }
+
+        /*
+          THE AUTHORITATIVE DAILY CHECK, under a per-user application lock (ADR-0050
+          D5). Nothing else in this system serialises money movement across two
+          accounts of one user TO DIFFERENT PAYEES: Account.RowVersion and
+          ConcurrencyRetry protect one account row, so two such transfers touch no
+          shared row and both pass a sum taken outside a lock. (Two transfers to the
+          SAME payee are serialised by the payee's row — its RowVersion moves under
+          the loser, which retries, runs the attempt again and re-sums after the
+          winner's commit. Measured while writing the reproduction: the panel's
+          two-account, one-payee shape stayed green with this lock removed, every
+          run; DailyLimitConcurrencySqlServerTests says so.) The lock is what turns
+          the pre-check before the first attempt into a control for every shape.
+
+          WHY NOT THE AUDIT TAIL. Every audited save reads the AuditEvents tail
+          under UPDLOCK, HOLDLOCK (AuditChain.TailSql), so a re-sum after the first
+          SaveChangesAsync would be serialised for free — but ADR-0044 lists
+          partitioning that chain as an open question, and a business invariant must
+          not silently depend on an audit lock a later change may split. This lock
+          is independent of the chain: partition it and nothing here moves.
+
+          WHY NOT UPDLOCK ON AspNetUsers OR Accounts. Verified in code, not argued:
+          UserService.RenameAzureTagAsync and AuthService's PIN enrol/change modify
+          the user row in an AUDITED save, and AzureBankDbContext.SaveChangesAsync
+          applies the chain (tail lock) BEFORE base.SaveChangesAsync — so those paths
+          lock tail → user row, and a transfer locking the user row first and then
+          waiting on the tail is a 1205 cycle. A deposit is the same shape on the
+          Accounts row: tail → account row. EnableRetryOnFailure would retry the
+          victim (1205 is in the shipped detector), but a design that deadlocks by
+          construction and relies on the retry is not the design to record.
+
+          An application lock participates in no table-lock order. The only other
+          one in backend/src is AccountService's per-user primary-swap lock
+          (2026-09-16), on a different resource and held by a path that takes no
+          tail lock, so the only order this adds is applock → tail, and no cycle can
+          form. It holds under READ COMMITTED and under RCSI (measured ON for
+          AzureBankDev and AzureBankTests, 2026-09-07);
+          it would not hold under transaction-level SNAPSHOT, which nothing sets.
+          Owner = Transaction, so a rollback or commit releases it without a
+          matching sp_releaseapplock.
+
+          BEFORE ANY ROW IS BUILT, so the sum is over committed rows plus nothing of
+          this request's own — `used + amount > limit`, the same comparison as the
+          pre-check (the helper's comment says what changes if this ever moves after
+          the save). A loser therefore writes nothing at all: no ledger rows, no
+          audit row, no consumed authorisation. And a RowVersion retry runs the
+          attempt again and re-takes lock + sum, so the same-account race is covered
+          by the same statement.
+
+          InMemory has no locks and no transactions: it skips the statement and
+          proves only that the check exists. The concurrency property is proven only
+          by DailyLimitConcurrencySqlServerTests, written as a reproduction first —
+          the exact posture ConsumeAsync takes for its own single-statement
+          guarantee.
+        */
+        if (underTheDaysLock && _context.Database.IsRelational())
+        {
+            // The values as a collection, then the token: appended to the params overload, the
+            // token would be bound as a third SQL parameter, which compiles and fails at run time,
+            // on SQL Server only (ADR-0058).
+            await _context.Database.ExecuteSqlRawAsync(
+                DailyLimitLockSql,
+                new object[] { DailyLimitLockResource(userId), _dailyLimitOptions.LockTimeoutMilliseconds },
+                cancellationToken);
+        }
+
+        await _dailyLimit.AssertCanMoveAsync(userId, amount, cancellationToken);
+
+        return recipientAccount;
+    }
+
+    /// <summary>
+    /// What an internal transfer looks at between the reload of its accounts and its save, in the
+    /// order it answers: both accounts, then the source's balance.
+    /// </summary>
+    /// <remarks>
+    /// ONE COPY FOR THREE CALLERS: the top of each turn of the loop, each attempt after its reload,
+    /// and the transfer that lost its last attempt and has to say whether its accounts are only
+    /// busy (<see cref="InternalTransferAsync"/>). Both accounts are the caller's own, so a closed
+    /// one is the ownership check's 404, and it comes before the balance for the reason
+    /// <see cref="TransferAsync"/> gives: the API closes only an empty account.
+    /// </remarks>
+    private void RefuseWhatTheReloadedAccountsRefuse(Account fromAccount, Account toAccount, decimal amount)
+    {
+        ConcurrencyRetry.RefuseIfClosed(_context, fromAccount, toAccount);
+
+        if (fromAccount.Balance < amount)
+        {
+            throw new InsufficientFundsException(fromAccount.Balance, amount);
+        }
+    }
+
     /// <inheritdoc />
     public async Task<StepUpAuthorizationResponse> AuthoriseTransferAsync(
         Guid userId, TransferAuthorizationRequest request, CancellationToken cancellationToken = default)
@@ -493,105 +630,25 @@ public class TransferService : ITransferService
                     // transfer (Case B). See PrepareTransferAttemptAsync.
                     await PrepareTransferAttemptAsync([fromAccount, recipientAccount], ct);
 
-                    /*
-                      AND HERE, because the line above reloads on EVERY attempt, the first one
-                      included. An account that closes between the first look and this reload loses
-                      no save and goes round no retry: it is simply here, closed, with a current
-                      RowVersion, and the transfer below would commit on it at the first attempt.
-                      After the preparation, and not inside it between its reload and its read of
-                      the claim: a transfer that committed and lost its acknowledgement is answered
-                      from its claim, also when an account closed in between
-                      (ClosureAfterALostAcknowledgementSqlServerTests).
-
-                      THIS PLACE HOLDS THE PAYEE'S ACCOUNT, and the sender's when it closes before
-                      the first reload. TransferOrWithdrawalOnClosedAccountSqlServerTests holds the
-                      refusals, and PayeeAccountClosedMeanwhileSqlServerTests the payee paid on
-                      another account.
-
-                      THE PAYEE BEFORE THE FUNDS, the order of the first look: a transfer whose
-                      payee has no open account left answers that, whatever the sender's account
-                      holds by now.
-                    */
-                    recipientAccount = await RefuseOrChooseThePayeeAccountAgainAsync(
-                        fromAccount, recipient, recipientAccount, ct);
-
-                    // Funds re-check against the reloaded balance: a transient
-                    // retry may run after a concurrent debit moved the balance.
-                    if (fromAccount.Balance < request.Amount)
-                    {
-                        throw new InsufficientFundsException(fromAccount.Balance, request.Amount);
-                    }
-
                     await using var dbTransaction = await _context.Database.BeginTransactionAsync(ct);
 
                     try
                     {
                         /*
-                          THE AUTHORITATIVE DAILY CHECK, under a per-user application lock (ADR-0050
-                          D5). Nothing else in this system serialises money movement across two
-                          accounts of one user TO DIFFERENT PAYEES: Account.RowVersion and
-                          ConcurrencyRetry protect one account row, so two such transfers touch no
-                          shared row and both pass a sum taken outside a lock. (Two transfers to the
-                          SAME payee are serialised by the payee's row — its RowVersion moves under
-                          the loser, which retries, re-enters this delegate and re-sums after the
-                          winner's commit. Measured while writing the reproduction: the panel's
-                          two-account, one-payee shape stayed green with this lock removed, every
-                          run; DailyLimitConcurrencySqlServerTests says so.) The lock is what turns
-                          the pre-check above into a control for every shape.
+                          THE ACCOUNTS, THE FUNDS AND THE DAY'S CEILING, AS THE RELOAD LEFT THEM
+                          (RefuseWhatAnAttemptRefusesAsync says why each look is there, and in that
+                          order). Inside the transaction, because the day's sum is read under a
+                          lock the transaction holds; a refusal rolls back a transaction that has
+                          written nothing.
 
-                          WHY NOT THE AUDIT TAIL. Every audited save reads the AuditEvents tail
-                          under UPDLOCK, HOLDLOCK (AuditChain.TailSql), so a re-sum after the first
-                          SaveChangesAsync would be serialised for free — but ADR-0044 lists
-                          partitioning that chain as an open question, and a business invariant must
-                          not silently depend on an audit lock a later change may split. This lock
-                          is independent of the chain: partition it and nothing here moves.
-
-                          WHY NOT UPDLOCK ON AspNetUsers OR Accounts. Verified in code, not argued:
-                          UserService.RenameAzureTagAsync and AuthService's PIN enrol/change modify
-                          the user row in an AUDITED save, and AzureBankDbContext.SaveChangesAsync
-                          applies the chain (tail lock) BEFORE base.SaveChangesAsync — so those paths
-                          lock tail → user row, and a transfer locking the user row first and then
-                          waiting on the tail is a 1205 cycle. A deposit is the same shape on the
-                          Accounts row: tail → account row. EnableRetryOnFailure would retry the
-                          victim (1205 is in the shipped detector), but a design that deadlocks by
-                          construction and relies on the retry is not the design to record.
-
-                          An application lock participates in no table-lock order. The only other
-                          one in backend/src is AccountService's per-user primary-swap lock
-                          (2026-09-16), on a different resource and held by a path that takes no
-                          tail lock, so the only order this adds is applock → tail, and no cycle can
-                          form. It holds under READ COMMITTED and under RCSI (measured ON for
-                          AzureBankDev and AzureBankTests, 2026-09-07);
-                          it would not hold under transaction-level SNAPSHOT, which nothing sets.
-                          Owner = Transaction, so a rollback or commit releases it without a
-                          matching sp_releaseapplock.
-
-                          BEFORE ANY ROW IS BUILT, so the sum is over committed rows plus nothing of
-                          this request's own — `used + amount > limit`, the same comparison as the
-                          pre-check (the helper's comment says what changes if this ever moves after
-                          the save). A loser therefore writes nothing at all: no ledger rows, no
-                          audit row, no consumed authorisation. And a RowVersion retry re-enters
-                          this delegate and re-takes lock + sum, so the same-account race is covered
-                          by the same statement.
-
-                          InMemory has no locks and no transactions: it skips the statement and
-                          proves only that the check exists. The concurrency property is proven only
-                          by DailyLimitConcurrencySqlServerTests, written as a reproduction first —
-                          the exact posture ConsumeAsync takes for its own single-statement
-                          guarantee.
+                          AFTER the preparation, and not inside it between its reload and its read
+                          of the claim: a transfer that committed and lost its acknowledgement is
+                          answered from its claim, also when an account closed in between
+                          (ClosureAfterALostAcknowledgementSqlServerTests).
                         */
-                        if (_context.Database.IsRelational())
-                        {
-                            // The values as a collection, then the token: appended to the params
-                            // overload, the token would be bound as a third SQL parameter, which
-                            // compiles and fails at run time, on SQL Server only (ADR-0058).
-                            await _context.Database.ExecuteSqlRawAsync(
-                                DailyLimitLockSql,
-                                new object[] { DailyLimitLockResource(userId), _dailyLimitOptions.LockTimeoutMilliseconds },
-                                ct);
-                        }
-
-                        await _dailyLimit.AssertCanMoveAsync(userId, request.Amount, ct);
+                        recipientAccount = await RefuseWhatAnAttemptRefusesAsync(
+                            userId, request.Amount, fromAccount, recipient, recipientAccount,
+                            underTheDaysLock: true, ct);
 
                         var transactionNumber = IdGenerator.GenerateTransactionNumber();
 
@@ -762,16 +819,26 @@ public class TransferService : ITransferService
                   the execution strategy, the attempt's transaction is rolled back with the daily
                   limit's lock it held, and nothing runs the delegate again.
 
-                  THEN THE ACCOUNTS ONCE MORE, with the look every other attempt takes. The
-                  sender's account closed or gone is the 404. The payee's account closed or gone
-                  is chosen again: with another account of the payee open the transfer is busy,
-                  since the same request sent again pays that one, and with none open it is the
-                  422 of a payee with no account.
+                  THEN EVERYTHING AN ATTEMPT LOOKS AT, ONCE MORE, AND THE ANSWER AN ATTEMPT GIVES.
+                  The busy 503 says "send it again", so it is given only when the request sent
+                  again would be made. The accounts from the store, and the looks of an attempt in
+                  their order, by the method the attempt calls. The sender's account closed is
+                  the 404. The payee's account closed is chosen again: with another account of
+                  the payee open the transfer can still be busy, since the same request sent again
+                  pays that one, and with none open it is the 422 of a payee with no account. A
+                  debit that left too little is the 422 of the funds, and a day that another
+                  transfer filled is the 422 of the ceiling, read without the lock: nothing is
+                  saved after it.
 
-                  THE AUTHORISATION IS STILL PENDING. It is spent inside the transaction, after
-                  both saves, and an attempt whose save lost never reaches it: the consume was
-                  never sent. BusyMoneyWriteSqlServerTests holds it, with the day's ceiling
-                  untouched.
+                  AND THE AUTHORISATION. An attempt looks at it when it spends it, after both
+                  saves, and here no save follows; so the validation that ran before the first
+                  attempt runs again, reading and writing nothing. This request has not spent it:
+                  an attempt whose save lost never reaches the spend. But another request can have
+                  spent it meanwhile, which is the 401 an attempt's spend gives, and it can have
+                  expired, which is the 401 of the validation.
+
+                  ONLY WHEN ALL OF THEM STAND ARE THE ACCOUNTS BUSY. BusyMoneyWriteSqlServerTests
+                  holds each answer, and the day's ceiling untouched by a transfer answered busy.
                 */
                 if (!await ConcurrencyRetry.ClaimIsOwnAndNothingCommittedAsync(_context, cancellationToken))
                 {
@@ -780,8 +847,11 @@ public class TransferService : ITransferService
 
                 await ConcurrencyRetry.ResetToStoreAsync(
                     _context, [fromAccount, recipientAccount], cancellationToken);
-                await RefuseOrChooseThePayeeAccountAgainAsync(
-                    fromAccount, recipient, recipientAccount, cancellationToken);
+                await RefuseWhatAnAttemptRefusesAsync(
+                    userId, request.Amount, fromAccount, recipient, recipientAccount,
+                    underTheDaysLock: false, cancellationToken);
+                await _stepUp.ValidateAsync(
+                    userId, authorizationId, StepUpOperation.Transfer, binding, cancellationToken);
 
                 _logger.LogWarning(
                     "Transfer from account {AccountId} lost the account to another write on attempt "
@@ -864,13 +934,11 @@ public class TransferService : ITransferService
         }
 
         // The payee is the payer, so the binding names the destination ACCOUNT instead of a
-        // recipient user. Same hash definition, different populated fields.
+        // recipient user. Same hash definition, different populated fields. One binding for the
+        // request: the look a transfer past its attempts takes at its authorisation uses it too.
+        var binding = new StepUpBinding(request.FromAccountId, request.ToAccountId, null, request.Amount);
         await _stepUp.ValidateAsync(
-            userId,
-            authorizationId,
-            StepUpOperation.InternalTransfer,
-            new StepUpBinding(request.FromAccountId, request.ToAccountId, null, request.Amount),
-            cancellationToken);
+            userId, authorizationId, StepUpOperation.InternalTransfer, binding, cancellationToken);
 
         // No daily-limit check on this rail, and no application lock below: internal moves are not
         // counted (ADR-0050 D2). The row this path writes carries no RecipientAzureTag, which is
@@ -883,16 +951,8 @@ public class TransferService : ITransferService
         for (var attempt = 1; ; attempt++)
         {
             // Both accounts again before the balance, here and after the reload inside the attempt,
-            // for the reasons TransferAsync gives at the same two places. Both accounts are the
-            // caller's own, so a closed one is the ownership check's 404.
-            ConcurrencyRetry.RefuseIfClosed(_context, fromAccount, toAccount);
-
-            // Check sufficient funds (inside the loop: a reloaded balance
-            // may no longer cover the transfer)
-            if (fromAccount.Balance < request.Amount)
-            {
-                throw new InsufficientFundsException(fromAccount.Balance, request.Amount);
-            }
+            // for the reasons TransferAsync gives at the same two places.
+            RefuseWhatTheReloadedAccountsRefuse(fromAccount, toAccount, request.Amount);
 
             try
             {
@@ -906,14 +966,7 @@ public class TransferService : ITransferService
                     await PrepareTransferAttemptAsync([fromAccount, toAccount], ct);
 
                     // The second place: the line above reloads on every attempt, the first included.
-                    ConcurrencyRetry.RefuseIfClosed(_context, fromAccount, toAccount);
-
-                    // Funds re-check against the reloaded balance: a transient
-                    // retry may run after a concurrent debit moved the balance.
-                    if (fromAccount.Balance < request.Amount)
-                    {
-                        throw new InsufficientFundsException(fromAccount.Balance, request.Amount);
-                    }
+                    RefuseWhatTheReloadedAccountsRefuse(fromAccount, toAccount, request.Amount);
 
                     await using var dbTransaction = await _context.Database.BeginTransactionAsync(ct);
 
@@ -1035,15 +1088,22 @@ public class TransferService : ITransferService
             catch (DbUpdateConcurrencyException ex) when (ConcurrencyRetry.IsAccountRace(ex))
             {
                 // The last attempt lost an account too: the external transfer's answer at the same
-                // place, by the same rule. Both accounts are the caller's own, so one that closed
-                // or went as the last attempt lost is the 404 of every other attempt.
+                // place, by the same rule. After the proof that nothing committed, everything an
+                // attempt looks at, once more, by the method the attempt calls: both accounts are
+                // the caller's own, so one that closed as the last attempt lost is the 404 of
+                // every other attempt, as is a destination whose row went, and a debit that left
+                // too little is the 422. Then the authorisation, by the validation that ran before the first
+                // attempt: spent by another request or expired meanwhile, it is the 401. Only when
+                // all of them stand are the accounts busy.
                 if (!await ConcurrencyRetry.ClaimIsOwnAndNothingCommittedAsync(_context, cancellationToken))
                 {
                     throw;
                 }
 
                 await ConcurrencyRetry.ResetToStoreAsync(_context, [fromAccount, toAccount], cancellationToken);
-                ConcurrencyRetry.RefuseIfClosed(_context, fromAccount, toAccount);
+                RefuseWhatTheReloadedAccountsRefuse(fromAccount, toAccount, request.Amount);
+                await _stepUp.ValidateAsync(
+                    userId, authorizationId, StepUpOperation.InternalTransfer, binding, cancellationToken);
 
                 _logger.LogWarning(
                     "Internal transfer from account {AccountId} lost the account to another write on "

@@ -48,10 +48,15 @@ back. A token cannot interrupt a commit, so a late cancel can lose the answer to
   a 500 for a deposit and the 409 with `applied: true` for the other three. A closure and a change
   of the primary account hold no key: they answer so when no commit started, since each of their
   saves lands at a gated commit, and say nothing of `applied`. A rename's one statement passes no
-  gate, so past its attempts it stays a 500. An account that closed meanwhile is not a busy one:
-  after that proof it answers what it answers on any other attempt. A step-up authorisation is
-  unspent after a busy 503: the same request, sent again, is made. The SPA words a busy account
-  as it words an outage, and leaves sending the request again to the visitor.
+  gate, so past its attempts it stays a 500. A busy answer says "send it again", so after that
+  proof the write takes once more every look one of its attempts takes before its save, by the
+  code the attempt runs, and gives the answer an attempt gives: an account closed meanwhile (404,
+  or 422 for a payee with no account left), funds another write took (422), the day's ceiling of
+  an external transfer (422), and the step-up authorisation, read by the validation that runs
+  before the first attempt (401 when another request spent it or it expired). Only when all of
+  them stand is the account busy. The request spends no authorisation before a busy 503, so the
+  same request, sent again while its authorisation is still good, is made. The SPA words a busy
+  account as it words an outage, and leaves sending the request again to the visitor.
 - **D7: `applied: false` only when the answer knows it**: on a money 503, for a request that owns
   the idempotency claim it made, has let no commit start and is younger than `ProcessingStaleAfter`
   less 10 s, because money moves only in a gated commit. A busy account is under this rule and has
@@ -78,7 +83,7 @@ back. A token cannot interrupt a commit, so a late cancel can lose the answer to
 | Request deadline | 40 s | Above the 35 s at which a hung command answers −2 (30 s, plus up to 5 s for SQL Server to acknowledge the cancel). 40 + 5 + 3 (the claim's release) + 5 = 53 < 55: every answer before a commit, `applied: false` included, reaches the visitor from the API. At 45 the sum is 58. `ProcessingStaleAfter` is at least a minute above it, checked at start |
 | Max pool size | API 12, seeder 5 | 2 × 12 + 5 = 29 of the [30 logins of the Basic tier](https://learn.microsoft.com/en-us/azure/azure-sql/database/resource-limits-dtu-single-databases): two API processes while a revision replaces one, and one job at 5 (precondition 1). A second steady replica makes it 41 |
 | `retryAfterSeconds`, `Retry-After` | 10; 1 for a busy account | EF's cap: a client that comes back after it meets a database EF would have tried again by then. A busy account names 1: the header counts whole seconds and 0 would send the caller straight back into the writes it lost to, so 1 is the least wait it can name. In ten runs, 24 parallel deposits were all answered within 0.9 to 2.3 s, and a caller that comes back to an account still busy is answered the same way. For machines: a visitor is told no time |
-| A write's attempts on its account | 8 | `ConcurrencyRetry.MaxAttempts`, shared by every account write. 24 parallel deposits to one account on 2026-10-11: at 8, 13 to 15 answered busy over ten runs and 11 to 14 over five earlier ones; at 12, 8 to 10 over five. Half as many attempts again does not halve them, and each attempt is a turn at the audit chain's lock. At 8, over ten runs each, 7 to 10 of 24 parallel withdrawals answered busy, and 9 to 12 of 24 parallel internal transfers |
+| A write's attempts on its account | 8 | `ConcurrencyRetry.MaxAttempts`, shared by every account write. 24 parallel deposits to one account on 2026-10-11: at 8, 13 to 15 answered busy over ten runs and 11 to 14 over five earlier ones; at 12, 8 to 10 over five. Half as many attempts again does not halve them, and each attempt is a turn at the audit chain's lock. At 8, over ten runs each, 9 to 12 of 24 parallel internal transfers answered busy; of 24 parallel withdrawals from an account that covers the 21 small ones and one of the three large ones, 4 to 9 answered busy and 1 or 2 were refused for funds |
 | BFF client and proxy timeout | 55 s | `BackendApi:TimeoutSeconds`, above the 53 (the wait ADR-0039 and ADR-0057 §8 quote). A proxied request takes 5 + 55 = 60 s at worst, since the session's renewal can spend 5 s first, under the [240 s of Azure Container Apps' ingress](https://learn.microsoft.com/en-us/azure/container-apps/ingress-overview) |
 | The BFF's shorter waits | 30, 5 and 3 s | The renewal (30 s), revoke, the session-stamp poll and `/me`'s read-through (5 s each) and the health probe (3 s) stay as ADR-0057 and ADR-0039 set them: none writes anything a late answer could lose |
 

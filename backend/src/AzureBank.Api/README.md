@@ -206,9 +206,13 @@ Every error is a ProblemDetails body that carries a `traceId`.
   it when their idempotency record still shows their own claim with nothing committed, and
   `applied: false` says so under the rule of an outage; with the claim taken over they answer
   500. A closure and a change of the primary account hold no key: they answer it when the
-  request let no commit start, and say nothing of `applied`. A step-up authorisation is unspent
-  after it. A rename past its attempts answers 500, and an account that closed meanwhile is the
-  404 or 422 it is on every other attempt.
+  request let no commit start, and say nothing of `applied`. Before a write answers it,
+  it takes once more every look one of its attempts takes before its save, and gives the
+  answer an attempt gives: 404 or 422 for an account that closed meanwhile, 422 for funds
+  another write took or for the day's ceiling, 401 for a step-up authorisation another request
+  spent or that expired. The request spends no authorisation before a busy 503, so the same
+  request, sent again while its authorisation is still good, is made. A rename past its attempts
+  answers 500: its one statement commits by itself, so nothing shows that it wrote nothing.
 - **A client that hung up** gets no body at all.
 - **Anything else unexpected** is the 500, with no `errorCode`.
 

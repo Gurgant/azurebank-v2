@@ -30,10 +30,12 @@ internal static class ConcurrencyRetry
     /// again does not halve them, and each attempt is a turn at the audit chain's lock, which
     /// every audited write of every user waits on. A write that spends its attempts answers
     /// <see cref="AccountBusyException"/> when the store shows that nothing of the request was
-    /// written: a deposit, a withdrawal and both transfers ask
+    /// written, and when everything one of its attempts looks at before its save still stands: a
+    /// deposit, a withdrawal and both transfers ask
     /// <see cref="ClaimIsOwnAndNothingCommittedAsync"/>, and a closure and a change of the primary
-    /// account, which hold no idempotency key, ask <see cref="NoCommitWasLetStart"/>. A rename lets
-    /// its last conflict propagate.
+    /// account, which hold no idempotency key, ask <see cref="NoCommitWasLetStart"/>; each then
+    /// takes its attempt's looks once more and gives the answer an attempt gives. A rename lets its
+    /// last conflict propagate.
     /// </remarks>
     public const int MaxAttempts = 8;
 
@@ -74,12 +76,19 @@ internal static class ConcurrencyRetry
     /// same proofs hold. So a rename does not ask this, and its last conflict propagates.
     /// </para>
     /// <para>
+    /// ONLY ON A PROVIDER WITH TRANSACTIONS. The gate marks commits, and a provider that is not
+    /// relational has none: each save lands at once and leaves the mark unset. There the answer is
+    /// no, as the spend of an authorisation and the application locks ask the provider before they
+    /// rely on a statement only a relational one runs.
+    /// </para>
+    /// <para>
     /// As for an outage's <c>applied</c>, no deadline is no answer: without one the request cannot
     /// tell whether a commit started.
     /// </para>
     /// </remarks>
     public static bool NoCommitWasLetStart(AzureBankDbContext context) =>
-        CommitGateInterceptor.DeadlineOf(context) is { CommitEntered: false };
+        context.Database.IsRelational()
+        && CommitGateInterceptor.DeadlineOf(context) is { CommitEntered: false };
 
     /// <summary>
     /// What a write that holds an idempotency key asks, past its attempts, before it answers a
@@ -130,13 +139,18 @@ internal static class ConcurrencyRetry
     /// </para>
     /// </remarks>
     public static async Task<bool> ClaimIsOwnAndNothingCommittedAsync(
+        AzureBankDbContext context, CancellationToken cancellationToken) =>
+        NoCommitWasLetStart(context) && await ClaimIsStillOwnAsync(context, cancellationToken);
+
+    /// <summary>
+    /// The record's half of <see cref="ClaimIsOwnAndNothingCommittedAsync"/>, whose remarks say
+    /// what it compares: true when the record under the request's key, read now, is still
+    /// <c>Processing</c> under the <c>ClaimId</c> the request last read. It reads and asks nothing
+    /// of the request's commits, so by itself it is no proof that nothing was written.
+    /// </summary>
+    internal static async Task<bool> ClaimIsStillOwnAsync(
         AzureBankDbContext context, CancellationToken cancellationToken)
     {
-        if (!NoCommitWasLetStart(context))
-        {
-            return false;
-        }
-
         var entry = context.ChangeTracker.Entries<IdempotencyRecord>().FirstOrDefault();
         if (entry is null)
         {

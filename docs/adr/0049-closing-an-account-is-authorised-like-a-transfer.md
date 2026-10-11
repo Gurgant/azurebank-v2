@@ -55,9 +55,10 @@ balance before primary, is code (`RefuseIfNotClosable`), held by a unit test and
   without it eight DELETEs at once answered `500,500,500,500,500,200,500,500`. A closure that
   loses its account's row on each of its 8 attempts answers the busy 503 of ADR-0058 D6, with no
   `applied`, when the request let no commit start: nothing is closed, no audit row is written and
-  the authorisation stays `Pending`, so the same DELETE with the same authorisation closes the
-  account. It first looks at the account as every attempt does: closed by then it is the 404, and
-  credited by then the 422.
+  the request spends nothing, so the same DELETE with the same authorisation closes the account.
+  It first looks at what every attempt looks at. The account: closed by then it is the 404, and
+  credited by then the 422. Then the authorisation: spent by another request by then it is the
+  401.
 - **D9: A write whose account closed or went while it ran is refused as a request on a closed
   account**: 404 `ACCOUNT_NOT_FOUND` for the caller's own account, with nothing written and nothing
   spent. A deposit, a withdrawal and both transfers look at their accounts again after every

@@ -213,12 +213,7 @@ public class AccountService : IAccountService
                             ct);
                     }
 
-                    foreach (var entry in _context.ChangeTracker.Entries<Account>().ToList())
-                    {
-                        await entry.ReloadAsync(ct);
-                    }
-
-                    var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(accountId, userId, ct);
+                    var account = await ReloadAndFindTheNewPrimaryAsync(accountId, userId, ct);
                     var currentPrimary = await _context.Accounts
                         .FirstOrDefaultAsync(a => a.UserId == userId && a.IsPrimary && !a.IsDeleted, ct);
 
@@ -259,21 +254,17 @@ public class AccountService : IAccountService
                   read, so the commit mark is the whole proof, and the 503 says nothing of
                   "applied". With the mark set the conflict propagates.
 
-                  THE TARGET ONCE MORE, as every attempt begins: each tracked account from the
-                  store, then the ownership check. A target that closed or went as the last
-                  attempt lost is the 404 of every other attempt.
+                  THE TARGET ONCE MORE, as every attempt begins and by the method the attempt
+                  calls: each tracked account from the store, then the ownership check. A target
+                  that closed as the last attempt lost is the 404 of every other attempt. A swap
+                  presents no authorisation, so there is nothing else to look at.
                 */
                 if (!ConcurrencyRetry.NoCommitWasLetStart(_context))
                 {
                     throw;
                 }
 
-                foreach (var entry in _context.ChangeTracker.Entries<Account>().ToList())
-                {
-                    await entry.ReloadAsync(cancellationToken);
-                }
-
-                await _accountAccess.GetAccountWithOwnershipCheckAsync(accountId, userId, cancellationToken);
+                await ReloadAndFindTheNewPrimaryAsync(accountId, userId, cancellationToken);
 
                 _logger.LogWarning(
                     "Setting account {AccountId} as primary lost the account to another write on attempt "
@@ -284,6 +275,35 @@ public class AccountService : IAccountService
         }
 
         _logger.LogInformation("Set account {AccountId} as primary for user {UserId}", accountId, userId);
+    }
+
+    /// <summary>
+    /// What a change of the primary account looks at before it saves: every account the request
+    /// tracks, read again from the store, then the ownership check on the account to make primary,
+    /// which answers 404 for one that closed. One copy for each attempt and for the swap that lost
+    /// its last attempt and has to say whether its accounts are only busy.
+    /// </summary>
+    private async Task<Account> ReloadAndFindTheNewPrimaryAsync(
+        Guid accountId, Guid userId, CancellationToken cancellationToken)
+    {
+        foreach (var entry in _context.ChangeTracker.Entries<Account>().ToList())
+        {
+            await entry.ReloadAsync(cancellationToken);
+        }
+
+        return await _accountAccess.GetAccountWithOwnershipCheckAsync(accountId, userId, cancellationToken);
+    }
+
+    /// <summary>
+    /// What a closure looks at between the reload of its account and its save, in the order it
+    /// answers: the account itself, 404 when it is closed or its row is gone, then the two guards.
+    /// One copy for each attempt and for the closure that lost its last attempt and has to say
+    /// whether the account is only busy (<see cref="DeleteAccountAsync"/>).
+    /// </summary>
+    private void RefuseWhatTheReloadedAccountRefuses(Account account)
+    {
+        ConcurrencyRetry.RefuseIfClosed(_context, account);
+        RefuseIfNotClosable(account);
     }
 
     /// <summary>
@@ -383,10 +403,9 @@ public class AccountService : IAccountService
         // Before any write, so an expired or mismatched authorisation costs nothing. The binding
         // is the same factory the mint used: a transfer authorisation minted from this very account
         // hashes differently (the operation name is in the payload) and is refused as INVALID.
+        var binding = StepUpBinding.ForAccountDeletion(accountId);
         await _stepUp.ValidateAsync(
-            userId, authorizationId, StepUpOperation.AccountDeletion,
-            StepUpBinding.ForAccountDeletion(accountId),
-            cancellationToken);
+            userId, authorizationId, StepUpOperation.AccountDeletion, binding, cancellationToken);
 
         /*
           AN EXPLICIT TRANSACTION, WHERE THIS METHOD USED TO HAVE NONE. The soft delete and its
@@ -467,9 +486,7 @@ public class AccountService : IAccountService
                       NON_ZERO_BALANCE, IsDeleted=False, Balance=5, authorisation Pending).
                     */
                     await ConcurrencyRetry.ResetToStoreAsync(_context, [account], ct);
-                    ConcurrencyRetry.RefuseIfClosed(_context, account);
-
-                    RefuseIfNotClosable(account);
+                    RefuseWhatTheReloadedAccountRefuses(account);
 
                     await using var dbTransaction = await _context.Database.BeginTransactionAsync(ct);
 
@@ -536,11 +553,19 @@ public class AccountService : IAccountService
                   to read, so the commit mark is the whole proof, and the 503 says nothing of
                   "applied". With the mark set the conflict propagates.
 
-                  THE ACCOUNT ONCE MORE, with the look every attempt begins with. The write that
-                  won may be another closure, which is the 404, or a deposit, which is the 422 of
-                  a funded account: neither is an account to come back to.
+                  THEN EVERYTHING AN ATTEMPT LOOKS AT, ONCE MORE, AND THE ANSWER AN ATTEMPT GIVES.
+                  The account from the store and the looks every attempt begins with, by the
+                  method the attempt calls. The write that won may be another closure, which is
+                  the 404, or a deposit, which is the 422 of a funded account: neither is an
+                  account to come back to.
 
-                  THE AUTHORISATION IS STILL PENDING, so the same DELETE with the same
+                  AND THE AUTHORISATION. An attempt looks at it when it spends it, after its save,
+                  and here no save follows; so the validation that ran before the first attempt
+                  runs again, reading and writing nothing. This request has not spent it. Another
+                  request can have, which is the 401 an attempt's spend gives, and it can have
+                  expired, which is the 401 of the validation.
+
+                  ONLY WHEN ALL OF THEM STAND IS THE ACCOUNT BUSY: the same DELETE with the same
                   authorisation closes the account when it comes back within the authorisation's
                   life. BusyAccountWriteSqlServerTests holds it.
                 */
@@ -550,8 +575,9 @@ public class AccountService : IAccountService
                 }
 
                 await ConcurrencyRetry.ResetToStoreAsync(_context, [account], cancellationToken);
-                ConcurrencyRetry.RefuseIfClosed(_context, account);
-                RefuseIfNotClosable(account);
+                RefuseWhatTheReloadedAccountRefuses(account);
+                await _stepUp.ValidateAsync(
+                    userId, authorizationId, StepUpOperation.AccountDeletion, binding, cancellationToken);
 
                 _logger.LogWarning(
                     "Closure of account {AccountId} lost the account to another write on attempt "

@@ -1,10 +1,10 @@
 namespace AzureBank.Shared.Exceptions;
 
 /// <summary>
-/// A write lost the race for an account's row on every attempt it is given, and the store shows
-/// that nothing of the request was written: the request only has to be sent again. Answered 503
-/// <c>SERVICE_UNAVAILABLE</c> with <see cref="RetryAfterSeconds"/>, where the conflict left to
-/// propagate is a 500.
+/// A write lost the race for an account's row on every attempt it is given, the store shows that
+/// nothing of the request was written, and everything an attempt looks at before its save still
+/// stands: the request only has to be sent again. Answered 503 <c>SERVICE_UNAVAILABLE</c> with
+/// <see cref="RetryAfterSeconds"/>, where the conflict left to propagate is a 500.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -29,6 +29,13 @@ namespace AzureBank.Shared.Exceptions;
 /// account alone. Without the second the conflict propagates, as it does when another request
 /// holds the key or the write is made. A rename of an account raises nothing: its one statement
 /// commits outside any transaction, so no mark covers it, and its last conflict propagates.
+/// </para>
+/// <para>
+/// AND AFTER THE SECOND PROOF, THE LOOKS OF AN ATTEMPT. "Send it again" is true only of a request
+/// that would be made when it comes back, so each write first takes once more the looks one of
+/// its attempts takes before its save, by the method the attempt calls, and then validates its
+/// step-up authorisation where it presents one. What an attempt refuses is refused there, with
+/// the attempt's answer, and this is not raised.
 /// </para>
 /// </remarks>
 public sealed class AccountBusyException : Exception

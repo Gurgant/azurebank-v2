@@ -25,15 +25,17 @@ namespace AzureBank.Tests.Integration;
 /// commit mark alone. So the first proofs here are about the mark: each save of a closure and of a
 /// change of the primary account lands at a commit that sets it. Those two answer the busy 503,
 /// which says nothing of <c>applied</c>, leave everything as it was, and are made when the same
-/// request is sent again.
+/// request is sent again. They answer what an attempt answers, and not the busy 503, when what an
+/// attempt looks at changed as the last one lost: the account closed or was credited, or the
+/// closure's authorisation was spent.
 /// </para>
 /// <para>
 /// A rename's save commits by itself, outside any transaction, and sets no mark. So a rename is
 /// not answered busy: its last conflict propagates, a 500, and the last two proofs hold both.
 /// </para>
 /// <para>
-/// Each proof writes what it measured to the test output before it asserts, and asserts that its
-/// fixtures fired.
+/// Each proof writes what it measured to the test output before it asserts, asserts that its
+/// fixtures fired, and asserts that the audit chain verifies after its request.
 /// </para>
 /// </remarks>
 [Trait("Category", "SqlServer")]
@@ -61,6 +63,7 @@ public sealed class BusyAccountWriteSqlServerTests(ITestOutputHelper output) : C
 
         WriteTheMark("closure", response, probe);
         ShouldHaveLandedOnlyAtMarkedCommits(response, probe, commits: 1);
+        ChainShouldBeIntact(await ReadAsync(user, authorizationId, spare));
     }
 
     [SqlServerFact]
@@ -78,6 +81,7 @@ public sealed class BusyAccountWriteSqlServerTests(ITestOutputHelper output) : C
 
         WriteTheMark("change of primary", response, probe);
         ShouldHaveLandedOnlyAtMarkedCommits(response, probe, commits: 1);
+        ChainShouldBeIntact(await ReadAsync(user, null, user.PrimaryAccountId, second));
     }
 
     [SqlServerFact]
@@ -96,6 +100,7 @@ public sealed class BusyAccountWriteSqlServerTests(ITestOutputHelper output) : C
         probe.Commits.Should().BeEmpty("the rename's one statement rides no transaction, so no commit passes the gate");
         probe.SavesOutsideATransaction.Should().Equal(
             [false], "the save landed with the mark unset: for a rename the mark does not show that nothing was written");
+        ChainShouldBeIntact(await ReadAsync(user, null, user.PrimaryAccountId));
     }
 
     // The closure.
@@ -135,7 +140,7 @@ public sealed class BusyAccountWriteSqlServerTests(ITestOutputHelper output) : C
         ShouldBeTheBusy503(response, body, saysNothingWasApplied: false);
         after.Should().Be(before, "a closure answered 503 closed nothing, wrote no audit row and spent nothing");
         before.Authorization.Should().Be(StepUpAuthorizationStatus.Pending);
-        before.ChainIntact.Should().BeTrue();
+        ChainShouldBeIntact(before, after, closed);
 
         again.StatusCode.Should().Be(HttpStatusCode.OK, $"the authorisation is still good for the same closure; the body was: {againBody}");
         closed.Should().Be(before with
@@ -173,6 +178,7 @@ public sealed class BusyAccountWriteSqlServerTests(ITestOutputHelper output) : C
         after.Should().Be(
             before with { Accounts = [before.Accounts[0]! with { IsDeleted = true }] },
             "the request wrote no audit row and spent nothing: the account is closed by the other write alone");
+        ChainShouldBeIntact(after);
     }
 
     [SqlServerFact]
@@ -202,6 +208,44 @@ public sealed class BusyAccountWriteSqlServerTests(ITestOutputHelper output) : C
         after.Should().Be(
             before with { Accounts = [before.Accounts[0]! with { Balance = LostRowVersionRaceInterceptor.Credit }] },
             "a funded account is not closed, and a closure the guards refuse spends nothing");
+        ChainShouldBeIntact(after);
+    }
+
+    /// <summary>
+    /// Another request spends the closure's authorisation as the closure loses its last attempt:
+    /// the answer is the 401 a spent authorisation gets, not the busy 503.
+    /// </summary>
+    [SqlServerFact]
+    public async Task AClosureWhoseAuthorisationIsSpentAsItLosesItsLastAttempt_AnswersThe401_NotBusy()
+    {
+        var race = new LostRowVersionRaceInterceptor(SqlServerFactAttribute.ConnectionString!);
+        var client = CreateSqlClient(host => host.AddInterceptor(race));
+        var user = await RegisterWithPinAsync(client, "ks");
+        var spare = await CreateSpareAsync(client, user);
+        var authorizationId = await MintDeletionAsync(client, user, spare);
+        var before = await ReadAsync(user, authorizationId, spare);
+        var rows = 0;
+
+        race.Arm(
+            spare, meanwhileOn: ConcurrencyRetry.MaxAttempts,
+            meanwhile: async ct => rows = await SpendOrExpireAsync(authorizationId, expires: false, ct));
+        using var response = await DeleteAsync(client, user, spare, authorizationId);
+        race.Disarm();
+        var body = await response.Content.ReadAsStringAsync();
+        var after = await ReadAsync(user, authorizationId, spare);
+
+        _output.WriteLine(
+            $"closure: fired {race.Fired} of {ConcurrencyRetry.MaxAttempts} attempts; on the last, the authorisation was "
+            + $"spent by another request: {rows} row(s); {Describe(response, body)}; before: {before}; after: {after}");
+
+        using var scope = new AssertionScope();
+        race.Fired.Should().Be(ConcurrencyRetry.MaxAttempts, "the proof is void unless the closure lost every attempt it is given");
+        rows.Should().Be(1, "and unless the authorisation was spent as the last attempt lost");
+        ShouldBeRefused(response, body, HttpStatusCode.Unauthorized, ErrorCodes.AuthorizationInvalid);
+        after.Should().Be(
+            before with { Authorization = StepUpAuthorizationStatus.Consumed },
+            "the account stays open and the request wrote no audit row: the authorisation is spent by the other request alone");
+        ChainShouldBeIntact(after);
     }
 
     /// <summary>
@@ -239,6 +283,7 @@ public sealed class BusyAccountWriteSqlServerTests(ITestOutputHelper output) : C
         using var scope = new AssertionScope();
         ShouldNotBeBusyAfterACommitStarted(fault, race, response, body);
         after.Should().Be(before, "the commit that failed landed nothing, and no later attempt wrote");
+        ChainShouldBeIntact(after);
     }
 
     // The change of the primary account.
@@ -271,6 +316,7 @@ public sealed class BusyAccountWriteSqlServerTests(ITestOutputHelper output) : C
         using var scope = new AssertionScope();
         ShouldNotBeBusyAfterACommitStarted(fault, race, response, body);
         after.Should().Be(before, "the commit that failed landed nothing, and no later attempt wrote");
+        ChainShouldBeIntact(after);
     }
 
     [SqlServerTheory]
@@ -313,6 +359,7 @@ public sealed class BusyAccountWriteSqlServerTests(ITestOutputHelper output) : C
 
         again.StatusCode.Should().Be(HttpStatusCode.OK, $"the same request is made when it is sent again; the body was: {againBody}");
         swapped.Accounts.Select(a => a!.IsPrimary).Should().Equal(false, true);
+        ChainShouldBeIntact(after, swapped);
     }
 
     [SqlServerFact]
@@ -341,6 +388,7 @@ public sealed class BusyAccountWriteSqlServerTests(ITestOutputHelper output) : C
         after.Should().Be(
             before with { Accounts = [before.Accounts[0], before.Accounts[1]! with { IsDeleted = true }] },
             "the primary stays where it was");
+        ChainShouldBeIntact(after);
     }
 
     // The rename.
@@ -386,6 +434,7 @@ public sealed class BusyAccountWriteSqlServerTests(ITestOutputHelper output) : C
 
         again.StatusCode.Should().Be(HttpStatusCode.OK, $"a rename sent again is made; the body was: {againBody}");
         renamed.Accounts[0]!.Name.Should().Be(NewName);
+        ChainShouldBeIntact(after, renamed);
     }
 
     // What the proofs share.
@@ -442,6 +491,18 @@ public sealed class BusyAccountWriteSqlServerTests(ITestOutputHelper output) : C
         var verification = await chain.VerifyAsync(db);
 
         return new Rows(accounts, deletedRows, authorization, verification.IsIntact);
+    }
+
+    /// <summary>
+    /// The audit chain verifies at each of the reads. Two reads that are equal say only that the
+    /// chain did not change between them, so each proof asks this of what it read after its request.
+    /// </summary>
+    private static void ChainShouldBeIntact(params Rows[] reads)
+    {
+        foreach (var read in reads)
+        {
+            read.ChainIntact.Should().BeTrue($"the audit chain verifies after the request; the read was: {read}");
+        }
     }
 
     private static string Describe(HttpResponseMessage response, string body) =>
