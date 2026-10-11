@@ -95,10 +95,7 @@ public class AccountService : IAccountService
         {
             // A reload brings back a closed row and detaches a row that is gone. Either way there is
             // no account to rename, and a name set on a detached entity would be saved nowhere.
-            if (account.IsDeleted || _context.Entry(account).State == EntityState.Detached)
-            {
-                throw new NotFoundException("Account", accountId);
-            }
+            ConcurrencyRetry.RefuseIfClosed(_context, account);
 
             account.Name = request.Name;
             account.UpdatedAt = DateTime.UtcNow;
@@ -394,7 +391,7 @@ public class AccountService : IAccountService
                       two rows. ResetToStoreAsync is the discard TransferService's
                       PrepareTransferAttemptAsync performs (its Case A): it detaches every tracked
                       AuditEvent and reloads the account, which resets IsDeleted, DeletedAt and
-                      UpdatedAt to what the database holds.
+                      UpdatedAt to what the database holds when the row is there.
 
                       A CLOSURE THAT ALREADY HAPPENED ANSWERS AS ANY LATER DELETE DOES: 404. If the
                       reload comes back deleted, either an earlier attempt of this same request
@@ -408,10 +405,15 @@ public class AccountService : IAccountService
                       queries the store without the global query filter, so the entry comes back
                       Unchanged with IsDeleted = true rather than detached (measured 2026-09-06 on
                       SQL Server LocalDB and InMemory, EF Core 10.0.1, both for a first-pass loser
-                      whose flag was never set and for a retry whose own attempt had set it). There
-                      is no "no row" branch; the check below reads the store's flag. An earlier
-                      version of this note described a detached-entry branch the provider does not
-                      take.
+                      whose flag was never set and for a retry whose own attempt had set it).
+
+                      A ROW THAT IS GONE ANSWERS THE SAME 404, AND IT IS NOT IN THE FLAG. The demo
+                      pool's recycler deletes account rows. A reload that finds no row detaches the
+                      entry and leaves the entity as it was: open and empty when the row went
+                      before this first reload, so the guards pass, the flag set further down is
+                      saved nowhere, and the AccountDeleted row and the spend would commit for a
+                      closure that closed nothing. RefuseIfClosed reads the entry's state as well
+                      as the flag (ADR-0049 D9).
 
                       AND THE GUARDS AGAIN. A reload that shows the account open but funded — the
                       deposit that raced the first attempt — must not be closed on the strength of a
@@ -422,10 +424,7 @@ public class AccountService : IAccountService
                       NON_ZERO_BALANCE, IsDeleted=False, Balance=5, authorisation Pending).
                     */
                     await ConcurrencyRetry.ResetToStoreAsync(_context, [account], ct);
-                    if (account.IsDeleted)
-                    {
-                        throw new NotFoundException("Account", accountId);
-                    }
+                    ConcurrencyRetry.RefuseIfClosed(_context, account);
 
                     RefuseIfNotClosable(account);
 
