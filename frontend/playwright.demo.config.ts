@@ -8,9 +8,10 @@ import { defineConfig, devices } from '@playwright/test';
  * `npm run test:e2e` reads `playwright.config.ts`, whose `testDir` is `./e2e`, so it never sees
  * `./e2e-demo`; and that run's stack has the demo off, which one of its own tests holds
  * (`e2e/auth.spec.ts`, the anonymous visitors). This one needs the opposite stack, and it does
- * three things the default run never does. It runs only when asked.
+ * three things the default run never does. CI runs it on every pull request, in a job of its
+ * own that builds that stack and takes it down (`demo-stack` in `.github/workflows/ci.yml`).
  *
- * HOW TO RUN IT, from the repository's root and then from `frontend/`:
+ * HOW TO RUN IT BY HAND, from the repository's root and then from `frontend/`:
  *
  *   1. docker compose -f compose.yaml -f compose.demo.yaml up --build
  *      on a volume that has held nothing else (`docker compose down -v` first: compose.demo.yaml's
@@ -52,7 +53,9 @@ import { defineConfig, devices } from '@playwright/test';
  * screenshot of a red test (`playwright.config.ts`, `use`). Here a trace would hold the claim's
  * answer, with the password and the PIN, and the session's cookie; a screenshot could be of the
  * dashboard with the sign-in details open. So: no trace, no screenshot, no video, and the `list`
- * reporter alone, as the capture's config (`playwright.screenshots.config.ts`). The run's first
+ * reporter alone, as the capture's config (`playwright.screenshots.config.ts`). CI's job adds
+ * the JSON reporter on the command line, for the counts of passed and skipped tests: its report
+ * holds what `list` prints, and stays on the runner. The run's first
  * test holds the three settings, for each project and against the command line's `--trace`
  * (`e2e-demo/demo.spec.ts`): a run started otherwise stops there, before it claims a copy.
  *
@@ -105,8 +108,8 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: 0,
-  // Always, and not only in CI: no CI job runs this, and a run by hand that an `.only` had
-  // narrowed would read as the whole proof.
+  // Always, and not only in CI: a run by hand that an `.only` had narrowed would read as the
+  // whole proof, as CI's would.
   forbidOnly: true,
   reporter: [['list']],
 

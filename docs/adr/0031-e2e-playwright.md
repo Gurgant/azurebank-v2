@@ -64,7 +64,7 @@ which the integration harness stands in for, is never rendered against the real 
 - Not covered: a transfer or a withdrawal completed through the page against the real stack:
   `e2e/wentThrough.spec.ts` drives both to the send with a real PIN, and `page.route` answers the
   send in the browser, so no money moves. The demo's own run, `npm run test:e2e:demo`
-  (ADR-0063), sends one transfer and restarts two containers; it is started by hand, in no CI job.
+  (ADR-0063), sends one transfer and restarts two containers, in a CI job of its own.
 - Not covered: Firefox and WebKit (the one browser project is Chromium), and session expiry in
   the UI, which needs a clock the suite controls.
 - Not covered: a clean room: each run deposits €1.00 into the shared dev database, and every

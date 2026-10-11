@@ -8,7 +8,8 @@ import { note } from './demoRun';
  *
  * THIS STOPS PART OF THE STACK. No spec of the default run does: that run owns no part of the
  * backend (`playwright.config.ts`, above its `webServer`). It is why the demo has a run of its
- * own, by hand, on a stack nobody else is using (`playwright.demo.config.ts`).
+ * own, on a stack nobody else is using: the one CI's job builds for it, or one started by hand
+ * (`playwright.demo.config.ts`).
  *
  * WHY A RESTART. The BFF keeps its sessions in memory (`backend/src/AzureBank.Bff/README.md`,
  * "Storage"), so a restarted BFF knows none of them. The project after this one starts from the

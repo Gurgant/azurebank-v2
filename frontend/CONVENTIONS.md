@@ -197,8 +197,8 @@ The traps of jsdom's missing layout are in
 The suite is five commands: `npm test`, `test:contract:mock`, `test:contract:real`,
 `test:integration` and `test:e2e` ([`README.md`](README.md#check-it)). `vitest run`, which is
 `npm test`, covers the unit and component tests only: a green `vitest run` is not a green suite.
-A sixth command, `npm run test:e2e:demo`, is no part of it: it is run by hand, against the
-compose stack with the demo on.
+A sixth command, `npm run test:e2e:demo`, is no part of it: it runs against the compose stack
+with the demo on, in CI's `demo-stack` job on every pull request and by hand.
 
 The last three need the real stack: a seeded `AzureBankE2E`, the API on
 **`https://localhost:7215`**, and the BFF on `:5000` through
