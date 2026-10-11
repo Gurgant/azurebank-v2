@@ -23,18 +23,19 @@ a change takes from a plan to the live demo, and what stands between an agent an
 
 | Number | What it counts |
 |--:|---|
-| **[255](https://github.com/Gurgant/azurebank-v2/pulls?q=is%3Apr+is%3Amerged)** | pull requests merged: each one by me, each one through the automated tests |
+| **[261](https://github.com/Gurgant/azurebank-v2/pulls?q=is%3Apr+is%3Amerged)** | pull requests merged: each one by me, each one through the automated tests |
 | **[9](https://github.com/Gurgant/azurebank-v2/rules/18930321)** | checks now required before `main` takes a pull request, plus a security scan |
-| **[2,846](https://github.com/Gurgant/azurebank-v2/actions/runs/38094831735/job/114338497975)** | backend tests that run with no database |
-| **[368](https://github.com/Gurgant/azurebank-v2/actions/runs/38094831735/job/114338497920)** | backend proofs on a real SQL Server, in a job of their own |
-| **[1,412](https://github.com/Gurgant/azurebank-v2/actions/runs/38094831735/job/114338497955)** | frontend tests |
-| **[89](https://github.com/Gurgant/azurebank-v2/actions/runs/38094831735/job/114338497869)** | browser tests on the real stack |
+| **[2,874](https://github.com/Gurgant/azurebank-v2/actions/runs/38123051492/job/114421569889)** | backend tests that run with no database |
+| **[379](https://github.com/Gurgant/azurebank-v2/actions/runs/38123051492/job/114421569588)** | backend proofs on a real SQL Server, in a job of their own |
+| **[1,412](https://github.com/Gurgant/azurebank-v2/actions/runs/38123051492/job/114421569856)** | frontend tests |
+| **[89](https://github.com/Gurgant/azurebank-v2/actions/runs/38123051492/job/114421569814)** | browser tests on the real stack |
 | **[64](adr/README.md)** | decisions written down as architecture decision records |
 | **4** | agents coordinated: one orchestrator and three working in parallel |
 | **0** | merges made by an agent |
 
 Counted on 11 October 2026. The four test numbers are those of one CI run on `main`,
-[run 38094831735](https://github.com/Gurgant/azurebank-v2/actions/runs/38094831735), each linked to its job; the other linked numbers lead to where they
+[run 38123051492](https://github.com/Gurgant/azurebank-v2/actions/runs/38123051492), each linked to its job: three are shown on the job's page, the
+count of the SQL Server proofs is in that job's log. The other linked numbers lead to where they
 can be counted again. The two without a link, 4 and 0, are my own statement: on GitHub every
 merge shows one account, mine.
 
@@ -56,11 +57,11 @@ merge shows one account, mine.
    for every agent: report what was measured, never what was expected. A new or changed check
    must be seen to fail on the defect it is meant to detect.
 5. **Pull request.** One topic, fewer than 100 files, and a title that says the outcome. CI then
-   runs the suites, including those that need a real SQL Server, the running stack and a
-   browser. One suite is run by hand: the demo's, which restarts two containers of the stack.
-6. **Review.** Every pull request goes through CI, a security scan and an AI review before I
-   merge it. Each finding is checked against the code, then fixed or declined with the reason
-   written in its thread.
+   runs every suite, including those that need a real SQL Server, the running stack and a
+   browser, and the demo's, which restarts two containers of the stack.
+6. **Review.** Every pull request goes through CI and a security scan, and an AI review is
+   asked for on each, before I merge it. Each finding is checked against the code, then fixed
+   or declined with the reason written in its thread.
 7. **Merge.** I merge: a green pipeline is necessary, but it does not replace my reading of the
    change. When several pull requests go in together, their combination is built and tested
    first.
@@ -91,8 +92,8 @@ through an MCP server and reports what it read.
 - **No agent merges: I do.** The orchestrator is stopped by a permission rule and a hook that
   refuse the merge command before it runs. The other three are held one step earlier: their
   folders refuse a push, and their brief ends at the local commit.
-- **Nothing reaches Azure without my approval.** A merge deploys nothing: a deployment is a
-  separate run, started by hand, that stops until I approve it.
+- **Nothing reaches Azure without my approval.** A merge does not deploy the application: a
+  deployment is a separate run, started by hand, that stops until I approve it.
 
 An instruction in a prompt is not a permission boundary: that is why each of these is a
 mechanism. Each has its limit. The hook and the folders that refuse a push run on my machine:
@@ -110,8 +111,8 @@ same file. The backend's test, which compares the committed contract with what t
 generates, is what catches it
 ([ADR-0053](adr/0053-the-committed-contract-is-what-the-api-generates.md)). The mock is held to
 the real API: one suite of contract assertions runs against both, and
-the client's data layer and the browser suite run against the real stack. A contract change ships
-first; the screen that uses it follows in a second pull request.
+the client's data layer and the browser suite run against the real stack. The rule for a contract
+change: it ships first, and the screen that uses it follows in a second pull request.
 
 ## Where to check
 

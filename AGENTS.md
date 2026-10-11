@@ -40,10 +40,11 @@ Frontend, from `frontend/`:
 npm run format:check && npm run lint && npm run build && npm test && npm run test:contract:mock
 ```
 
-Deployment scripts and templates, from the root:
+Deployment scripts, templates and workflows, from the root:
 
 ```bash
 python -m unittest discover -s infra -p 'test_*.py'
+actionlint        # for a change to a workflow; with ShellCheck installed, as in CI
 ```
 
 Build in Release: warnings are errors there, as in CI. Name the solution and do not filter: a
@@ -53,7 +54,10 @@ filter on `AzureBank.Tests` drops the BFF's suite and still reports success. The
 These run without a stack. The tests that need a SQL Server skip themselves unless
 `AZUREBANK_TEST_SQLSERVER` holds a connection string, and three frontend suites need the real
 stack up: `npm run test:contract:real`, `npm run test:integration` and `npm run test:e2e`
-(`frontend/CONVENTIONS.md` says how to start it). CI runs all of them on every pull request.
+(`frontend/CONVENTIONS.md` says what that stack must be, and
+[Local setup](docs/engineering-practices.md#local-setup) has the commands). A fourth,
+`npm run test:e2e:demo`, needs the stack in containers with the demo on. CI runs all of them on
+every pull request.
 
 ## Before a change is called done
 
@@ -99,9 +103,10 @@ stack up: `npm run test:contract:real`, `npm run test:integration` and `npm run 
   no note about what it used to say.
 - A comment explains a constraint the code cannot show. It does not restate the next line and it
   does not argue that the change is right.
-- No at-sign in front of a name in any text bound for GitHub: it notifies a real account. The one
-  exception is the review bot's own handle in a request for review.
-- A commit message ends with its last sentence, with no trailer of any kind: one author answers
+- No at-sign in front of a name in a commit message, a pull request, a comment or a review:
+  GitHub links it to the real account of that name, and outside a commit message notifies it.
+  The one exception is the review bot's own handle in a request for review.
+- A commit message has no line that credits a second author or a signer: one author answers
   for `main`, and the tools are named in the Engineering Playbook.
 - No real secret, subscription or tenant identifier, database server name, mailbox or public IP
   address in a file, a message or a command line. Secrets come from user-secrets or from the
