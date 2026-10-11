@@ -17,9 +17,9 @@ namespace AzureBank.Tests.Unit.Services;
 /// still its own claim and still <c>Processing</c>, and the request has let no commit start.
 /// </summary>
 /// <remarks>
-/// One case per test the method makes, each on a record another context changed, as another
-/// request would. <c>BalanceConcurrencySqlServerTests</c> makes two of them on SQL Server through
-/// the API: a claim taken over, and a commit that landed.
+/// One case per test the method makes. Where the record is what differs, another context changed
+/// it, as another request would. <c>BalanceConcurrencySqlServerTests</c> makes two of them on SQL
+/// Server through the API: a claim taken over, and a commit that landed.
 /// </remarks>
 public sealed class ConcurrencyRetryBusyAnswerTests : IDisposable
 {

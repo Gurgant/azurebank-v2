@@ -242,7 +242,8 @@ public sealed class BalanceConcurrencySqlServerTests : IDisposable
 
     /// <summary>
     /// A deposit whose idempotency claim is taken away at its save did not lose a race for its
-    /// account: it is not answered the busy 503, and it is not tried again.
+    /// account: it is not answered the busy 503, and it is not tried again. The count of its
+    /// saves is what shows the second: a deposit that was tried again would end in the same 500.
     /// </summary>
     [SqlServerFact]
     public async Task ADepositWhoseClaimIsTakenAwayAtItsSave_IsNotToldToSendItAgain()
@@ -266,7 +267,7 @@ public sealed class BalanceConcurrencySqlServerTests : IDisposable
         var auditRows = await CountDepositAuditRowsAsync(accountId);
 
         _output.WriteLine(
-            $"claim taken away at the save: fired {fence.Fired}; {(int)answer.Status}, "
+            $"claim taken away at the save: fired {fence.Fired}, saves sent {fence.Saves}; {(int)answer.Status}, "
             + $"Retry-After {answer.RetryAfter?.ToString() ?? "none"}, body {answer.Body}; "
             + $"balance {start} -> {balance}, ledger rows {ledger.Length}, audit rows {auditRows}");
         foreach (var line in _factory!.CapturedLog)
@@ -274,7 +275,8 @@ public sealed class BalanceConcurrencySqlServerTests : IDisposable
             _output.WriteLine("  log " + line[..Math.Min(300, line.Length)]);
         }
 
-        fence.Fired.Should().Be(1, "the claim is taken away at the one save the deposit sends, and no second save follows");
+        fence.Fired.Should().Be(1, "the proof is void unless the claim was taken away");
+        fence.Saves.Should().Be(1, "the deposit sends one save and is not tried again");
         answer.Status.Should().Be(
             HttpStatusCode.InternalServerError,
             "a claim that is no longer the request's own is not a busy account: another request may hold the key");
@@ -335,6 +337,9 @@ public sealed class BalanceConcurrencySqlServerTests : IDisposable
         race.Fired.Should().Be(ConcurrencyRetry.MaxAttempts, "the proof is void unless the deposit lost every attempt it is given");
         fence.Fired.Should().Be(1, "and unless its claim was taken over");
         fence.Saves.Should().Be(ConcurrencyRetry.MaxAttempts, "before its last save, and no save followed");
+        refused.Conflicts.Should().Equal(
+            Enumerable.Repeat("Account", ConcurrencyRetry.MaxAttempts),
+            "and unless every conflict names the account alone: only then does the last one reach the read of the record");
 
         answer.Status.Should().Be(
             HttpStatusCode.InternalServerError,
@@ -355,8 +360,9 @@ public sealed class BalanceConcurrencySqlServerTests : IDisposable
     /// A deposit whose attempt commits, loses the commit's acknowledgement, and is run again
     /// because the check for its audit row missed it: the second run loses the account to the
     /// deposit's own commit. That is not a busy account, since the deposit is made. On the last
-    /// attempt no save follows, and the read of the record is what refuses the busy answer; on an
-    /// earlier one the next attempt's save meets the record's fence.
+    /// attempt no save follows, and the request's commit mark is what refuses the busy answer (the
+    /// record, <c>Executed</c> by then, would refuse it too); on an earlier one the next attempt's
+    /// save meets the record's fence.
     /// </summary>
     [SqlServerTheory]
     [InlineData(ConcurrencyRetry.MaxAttempts, "Account")]

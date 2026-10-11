@@ -83,6 +83,13 @@ internal static class ConcurrencyRetry
     /// (<c>[RequireIdempotency]</c>), so a context that tracks none is not a request that can be
     /// told to send the same key again.
     /// </para>
+    /// <para>
+    /// IT IS THE STORE AT THE INSTANT OF THE READ. A claim old enough to be taken over can be taken
+    /// between this read and the answer: the release deletes only a claim that is still its own,
+    /// <c>applied</c> is not said for a claim of that age, and the same key then meets the other
+    /// request's record. A read that fails is answered under the outage's rules, where the
+    /// conflict left alone is a 500.
+    /// </para>
     /// </remarks>
     public static async Task<bool> ClaimIsOwnAndNothingCommittedAsync(
         AzureBankDbContext context, CancellationToken cancellationToken)

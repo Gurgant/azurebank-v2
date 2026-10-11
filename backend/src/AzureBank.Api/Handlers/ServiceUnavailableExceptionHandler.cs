@@ -156,7 +156,7 @@ public sealed class ClientAbortedExceptionHandler : IExceptionHandler
 /// </para>
 /// <para>
 /// A BUSY ACCOUNT IS ANSWERED HERE TOO, and it is not an outage: an <see cref="AccountBusyException"/>
-/// is a write that lost its account's row to other writes on every attempt, which today only a
+/// is a write that lost its account's row to other writes on every attempt, which only a
 /// deposit raises. Same code and same shape, with a wait of its own
 /// (<see cref="AccountBusyException.RetryAfterSeconds"/>) and a sentence of its own. It comes here,
 /// and not to the domain handler, so that <c>applied</c> is decided by the one rule below. Any other

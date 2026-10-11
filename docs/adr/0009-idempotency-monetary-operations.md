@@ -50,7 +50,7 @@ before the commit and a commit whose response was lost demand opposite recoverie
 | It committed and the answer was lost | `Executed` past the same age | 409 `IDEMPOTENCY_RESULT_UNKNOWN` with `applied: true`: not to be sent again under a new key. At 24 h the row is swept with a Warning, for reconciliation |
 | Inside one request, a retried attempt re-reads its record and finds it gone, or replaced by one claimed with another body | none, or another hash | that request gets 409 `IDEMPOTENCY_RESULT_UNKNOWN` without `applied`; the detail says which |
 | The database is unreachable, or the deadline passed | as it was | 503 `SERVICE_UNAVAILABLE`, with `applied: false` only when the request owns its claim and started no commit (ADR-0058) |
-| A deposit lost its account's row to another write on each of its 8 attempts, and its record is still its own claim | `Processing`, deleted under the fence when the release lands within its 3 s | that 503 with a wait of 1 s, and `applied: false` under the same rule. When the release lands, the same key is a new execution, which is the deposit, not a replay; otherwise 409 `IDEMPOTENCY_IN_FLIGHT` until the claim is stale (ADR-0058 D9) |
+| A deposit lost its account's row to another write on each of its 8 attempts, and its record is still its own claim | `Processing`, deleted under the fence when the release lands within its 3 s | that 503 with a wait of 1 s, and `applied: false` under the same rule. When the release lands, the same key is a new execution, which is the deposit, not a replay; otherwise the key stays claimed until the claim is stale (ADR-0058 D9) |
 
 ## Rejected
 
@@ -76,7 +76,9 @@ before the commit and a commit whose response was lost demand opposite recoverie
 
 `IdempotencyConcurrencyTests`, `IdempotencySqlServerConcurrencyTests`, `IdempotencyEndpointTests`,
 `IdempotencyServiceTests`, `TransferTransientRetrySqlServerTests`, `ProvenCommitSourceTests`,
-`KestrelRequestSizeLimitTests`, `OversizedBodyDrainTests`, `MintOversizedBodyDrainTests`.
+`KestrelRequestSizeLimitTests`, `OversizedBodyDrainTests`, `MintOversizedBodyDrainTests`,
+`BalanceConcurrencySqlServerTests` (the busy deposit: its record is released, and the same key is
+a new execution).
 
 ## Related
 
