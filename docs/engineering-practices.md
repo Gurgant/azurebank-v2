@@ -237,6 +237,11 @@ Every document here says what is true now. A sentence that turns out wrong, or t
 moved away from, is corrected in place, with no line about what it used to claim: git keeps what
 it said. A date stays where it is a fact about the system, such as the day something was measured.
 
+Prose is in British spelling, and CI reads every page for the American forms that
+`infra/british_spelling_words.txt` lists: run `python infra/check_british_spelling.py` from the
+root, and put a name that keeps its own spelling in backticks, or in
+`infra/british_spelling_allowed.txt` with its reason.
+
 ## Code style
 
 Follow the [Microsoft C# conventions][csharp]: PascalCase for classes and methods, `I` +

@@ -1,9 +1,11 @@
 # The American forms that stay, for infra/check_british_spelling.py.
 #
 # A line is "word | file | text on the line | reason".
-#   word              the word as it is written, in its exact letter case
+#   word              the word as it is written, in its exact letter case; or * for every
+#                     word on a line with that text, as for a quoted title of several words
 #   file              the path from the root of the repository; * stands for any run of characters
-#   text on the line  a text that the same line of the file holds, or * for any line
+#   text on the line  a text that the same line of the file holds, or * for any line; never
+#                     * here and for the word together
 #   reason            why the word is not mine to respell, in one line
 #
 # A name inside backticks, a fenced block, a link's address or an HTML attribute needs no line
@@ -12,5 +14,3 @@
 
 Organization | docs/adr/README.md | [ADR GitHub Organization] | the title of someone else's page, as that page writes it
 initialized | docs/engineering-traps.md | initialized" | the words of an error message of Entity Framework's tools, quoted as they print it
-artifact | frontend/README.md | CI artifact | GitHub Actions' own name for a file that a run keeps
-artifact | frontend/README.md | is its artifact | GitHub Actions' own name for a file that a run keeps
