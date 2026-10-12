@@ -34,7 +34,7 @@ namespace AzureBank.Tests.Integration;
 /// Server refuses on <c>IX_Transactions_TransactionNumber</c>, and a source row another write moved,
 /// which the save loses on its <c>RowVersion</c>. Neither exists on the in-memory provider.
 /// <c>TransactionNumberCollisionRecoverySqlServerTests</c> holds the collision for a deposit, and
-/// <c>PayeeAccountClosedMeanwhileSqlServerTests</c> the lost save for an external transfer.
+/// <c>BusyMoneyWriteSqlServerTests</c> what each money write answers when it loses every attempt.
 /// </para>
 /// </remarks>
 [Trait("Category", "SqlServer")]
