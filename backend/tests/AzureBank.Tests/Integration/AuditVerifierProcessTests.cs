@@ -204,18 +204,23 @@ public sealed class AuditVerifierProcessSqlServerTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_directory))
+        // The database goes whatever becomes of the directory: a file that cannot be deleted
+        // still fails the test, and must not leave a database of this run on the server.
+        try
         {
-            Directory.Delete(_directory, recursive: true);
+            if (Directory.Exists(_directory))
+            {
+                Directory.Delete(_directory, recursive: true);
+            }
         }
-
-        if (string.IsNullOrWhiteSpace(SqlServerFactAttribute.ConnectionString))
+        finally
         {
-            return;
+            if (!string.IsNullOrWhiteSpace(SqlServerFactAttribute.ConnectionString))
+            {
+                using var db = Context();
+                db.Database.EnsureDeleted();
+            }
         }
-
-        using var db = Context();
-        db.Database.EnsureDeleted();
     }
 
     private AzureBankDbContext Context() =>

@@ -105,6 +105,10 @@ public sealed class RefreshTokenCleanupSqlServerTests : IDisposable
             // The link is set once both rows exist: the predecessor lives and names a successor
             // that has expired, which is what a shortened token lifetime leaves behind.
             livePredecessor.ReplacedByTokenId = expiredSuccessor.Id;
+
+            // And one link between two rows that both live: a sweep that cleared every link
+            // would pass without it.
+            live.ReplacedByTokenId = registrationGrant;
             await db.SaveChangesAsync();
         }
 
@@ -139,7 +143,10 @@ public sealed class RefreshTokenCleanupSqlServerTests : IDisposable
         left.Where(t => t.Id != registrationGrant).Select(t => t.TokenHash).Should().Equal(
             [$"live-{unique}", $"live-predecessor-{unique}"], "what has expired goes, and what lives stays");
         left.Should().Contain(t => t.Id == registrationGrant, "the grant the registration issued is an hour from its expiry");
-        left.Should().OnlyContain(t => t.ReplacedByTokenId == null, "the row that stays no longer names the row that went");
+        left.Single(t => t.TokenHash == $"live-predecessor-{unique}").ReplacedByTokenId
+            .Should().BeNull("the row that stays no longer names the row that went");
+        left.Single(t => t.TokenHash == $"live-{unique}").ReplacedByTokenId
+            .Should().Be(registrationGrant, "a link to a row that lives is left alone");
         _factory.CapturedLog.Should().NotContain(
             line => line.Contains("Refresh-token cleanup sweep failed", StringComparison.Ordinal),
             "the foreign key did not refuse the delete");
