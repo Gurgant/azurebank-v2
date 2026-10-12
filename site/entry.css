@@ -1058,6 +1058,9 @@ strong {
 
 /* ---------- C. How it is built: the path of a request ---------- */
 
+/* The sheet is its own container. It is capped at 42rem only while the path stands upright:
+   from a viewport of 56em the cap is lifted (the block marked 900, near the end of this file),
+   the sheet is wider than 50rem, and the rules of the wide sheet below apply. */
 .route {
   container-type: inline-size;
   max-width: 42rem;
@@ -1104,15 +1107,17 @@ strong {
   margin-bottom: 12px;
   text-align: right;
 }
-/* Under the dashed line the path goes on, past the name of the side, down to the first box. */
+/* Under the dashed line the path goes on, past the name of the side, down to the first box. It is
+   a border, as the line beside each stop is: a browser draws a border and a filled strip of the
+   same width differently when the page is zoomed, and the path would change thickness there. */
 .node--server .node__zone::before {
   content: '';
   position: absolute;
   left: 20px;
   top: -18px;
   bottom: -12px;
-  width: 2px;
-  background: var(--stop);
+  width: 0;
+  border-left: 2px solid var(--stop);
 }
 .node__box {
   position: relative;
@@ -1130,12 +1135,13 @@ strong {
   background: var(--blue);
   color: var(--white);
 }
-/* The point of the arrow, on the box the path arrives at. */
+/* The point of the arrow, above the box the path arrives at: its tip touches the box's edge and
+   none of it lies on the box, where the key's blue would hide it. */
 .node + .node .node__box::before {
   content: '';
   position: absolute;
   left: 15.5px;
-  top: -8px;
+  top: -12px;
   width: 9px;
   height: 9px;
   border-right: 2px solid var(--stop);
