@@ -414,10 +414,10 @@ jobs:
   #
   # The backend's two test projects run again here with a collector, and the first of them
   # whole, against a SQL Server as in the job of the concurrency proofs: without one those
-  # proofs skip themselves and four points of the application's lines go unrun (91.1 % against
-  # 95.0 %, measured 2026-10-12). The two jobs that gate a merge are left as they are: a
-  # collector in them would slow the runs every pull request waits for and put the figure's
-  # failures in the test jobs. The price is a second run of the tests.
+  # proofs skip themselves and the figure is 84.6 % where it is 93.0 % with them (measured
+  # 2026-10-12; for the application alone, 91.1 % against 95.0 %). The two test jobs are left
+  # as they are: a collector in them would slow the runs every pull request waits for and
+  # put the figure's failures in the test jobs. The price is a second run of the tests.
   #
   # infra/coverage_summary.py says what is counted. It joins the two Cobertura files line by
   # line, keeps apart what the build writes under obj/ and the EF migrations, and fails where
@@ -431,7 +431,7 @@ jobs:
   # from two files by the best count of each, which is a lower bound and not a count.
   #
   # 25 minutes: the job has run on no runner yet. Its steps, without a collector, took about
-  # 12 minutes in the other jobs of the run of 2026-10-12 on main (container 29 s, restore and
+  # 13 minutes in the other jobs of the run of 2026-10-12 on main (container 29 s, restore and
   # build 59 s, the two backend suites 71 s and 41 s, the SQL proofs 439 s, npm ci 11 s, the
   # frontend suite 126 s).
   # ---------------------------------------------------------------------------------------
@@ -494,9 +494,10 @@ jobs:
           --results-directory "$RUNNER_TEMP/coverage/api"
           --logger "trx;LogFileName=coverage-test-results.trx"
 
-      # A proof that skipped ran no line, and a run of skips exits 0: the figure would fall
-      # by four points with every step green, or sit just above its floor. So the count is
-      # asserted, as in the job of the proofs: nothing in this run may be skipped.
+      # A proof that skipped ran no line, and a run of skips exits 0. With every proof skipped
+      # the floor fails the job, 84.6 % against 91, and does not say why; with a few skipped
+      # the figure falls and stays above it. So the count is asserted, as in the job of the
+      # proofs: nothing in this run may be skipped.
       - name: Assert no backend test was skipped
         run: |
           trx="$RUNNER_TEMP/coverage/api/coverage-test-results.trx"
