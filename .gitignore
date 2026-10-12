@@ -40,6 +40,8 @@ frontend/e2e-demo/.auth/
 frontend/playwright-report/
 frontend/test-results/
 frontend/blob-report/
+# What `npm run test:coverage` writes: the report of one run, regenerated on demand.
+frontend/coverage/
 # The screenshot capture (frontend/screenshots): its raw output is regenerated on demand, and its
 # saved sign-in holds a LIVE session, like e2e/.auth. What the README shows lives in docs/images/.
 frontend/screenshots/output/
