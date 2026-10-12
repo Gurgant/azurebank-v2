@@ -707,6 +707,18 @@ describe('withdraw (the idempotent mutation; its PIN moved to the mint, ADR-0056
     expect(screen.getByRole('button', { name: /^Continue/ })).toBeDisabled();
   });
 
+  it('a quick amount can be pressed up to the whole balance, and not past it', async () => {
+    // The account holds exactly €100: the server accepts an amount up to the balance, so €100 stays.
+    renderWithProviders(
+      <WithdrawDialog isOpen onClose={() => {}} accounts={[{ ...seedAccount(), balance: 100 }]} />,
+    );
+    await screen.findByRole('button', { name: 'Use maximum, €100.00' });
+
+    expect(screen.getByRole('button', { name: '€50' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '€100' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '€200' })).toBeDisabled();
+  });
+
   it('gates the Withdraw CTA until a full 6-digit PIN is entered', async () => {
     renderWithdraw();
     await goToPinStep();
@@ -1158,5 +1170,191 @@ describe('withdraw — the authorisation is answered in a way that cannot be rea
     await expectAPlainFailure(sent);
     expect(logged).toHaveBeenCalledTimes(1);
     expect(String(logged.mock.calls[0][0])).toMatch(/An unhandled error occurred processing/);
+  });
+});
+
+/*
+  The dialog with more than one account to choose from, and three answers and one button that
+  no test had met. Every other suite here opens the dialog with one account, so choosing an
+  account, which decides whose money leaves, was never done by a test.
+*/
+describe('withdraw — choosing the account, and what the dialog does with the rarer answers', () => {
+  const SAVINGS = mockState.accounts[1]; // seed: id a2, "Rainy Day", balance 830
+
+  function renderWithTwoAccounts() {
+    return renderWithProviders(
+      <Routes>
+        <Route
+          path="/"
+          element={
+            <WithdrawDialog
+              isOpen
+              onClose={() => {}}
+              accounts={[
+                seedAccount(),
+                {
+                  id: SAVINGS.id,
+                  name: 'Rainy Day',
+                  accountNumber: 'AB-••••-••••-34',
+                  balance: 830,
+                },
+              ]}
+            />
+          }
+        />
+      </Routes>,
+      { routerEntries: ['/'] },
+    );
+  }
+
+  const card = (name: RegExp) => screen.getByRole('button', { name });
+  const chosen = (name: RegExp) => card(name).getAttribute('aria-pressed');
+
+  it('keeps the amount when a smaller account is chosen, and says why it no longer fits', async () => {
+    renderWithTwoAccounts();
+    // 900 fits Main Account (1,250.50) and is more than Rainy Day holds (830).
+    await userEvent.type(screen.getByLabelText('Withdraw amount'), '900');
+    expect(screen.getByRole('button', { name: /^Continue/ })).toBeEnabled();
+    expect(chosen(/Main Account/)).toBe('true');
+
+    await userEvent.click(card(/Rainy Day/));
+
+    expect(chosen(/Rainy Day/)).toBe('true');
+    expect(chosen(/Main Account/)).toBe('false');
+    expect(await screen.findByText('Exceeds available balance of €830.00.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Continue/ })).toBeDisabled();
+
+    // And back: the same amount fits the first account again.
+    await userEvent.click(card(/Main Account/));
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Continue/ })).toBeEnabled());
+    expect(screen.queryByText(/Exceeds available balance/)).not.toBeInTheDocument();
+  });
+
+  it('chooses an account from the keyboard, with Enter and with Space', async () => {
+    renderWithTwoAccounts();
+
+    card(/Rainy Day/).focus();
+    await userEvent.keyboard('{Enter}');
+    expect(chosen(/Rainy Day/)).toBe('true');
+    expect(screen.getByText('Available: €830.00')).toBeInTheDocument();
+
+    card(/Main Account/).focus();
+    await userEvent.keyboard(' ');
+    expect(chosen(/Main Account/)).toBe('true');
+    expect(screen.getByText('Available: €1,250.50')).toBeInTheDocument();
+
+    // Any other key on a card chooses nothing.
+    card(/Rainy Day/).focus();
+    await userEvent.keyboard('a');
+    expect(chosen(/Main Account/)).toBe('true');
+  });
+
+  it('withdraws from the account that was chosen, not from the first one', async () => {
+    let mintBody: Record<string, unknown> | null = null;
+    let sentBody: Record<string, unknown> | null = null;
+    server.use(
+      http.post('*/api/transactions/withdraw/authorizations', async ({ request }) => {
+        mintBody = (await request.clone().json()) as Record<string, unknown>;
+      }),
+      http.post('*/api/transactions/withdraw', async ({ request }) => {
+        sentBody = (await request.clone().json()) as Record<string, unknown>;
+      }),
+    );
+    renderWithTwoAccounts();
+    await userEvent.click(card(/Rainy Day/));
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+
+    expect(await screen.findByText('Withdrawal Successful!')).toBeInTheDocument();
+    expect(mintBody).toEqual({ accountId: SAVINGS.id, amount: 100, pin: '123456' });
+    expect(sentBody).toMatchObject({ accountId: SAVINGS.id, amount: 100 });
+    // The mock moved the money of that account and of no other.
+    expect(mockState.accounts.find((a) => a.id === SAVINGS.id)?.balance).toBe(730);
+    expect(mockState.accounts.find((a) => a.id === MAIN.id)?.balance).toBe(1250.5);
+  });
+
+  it('the receipt\'s "View Transaction" opens that transaction', async () => {
+    server.use(http.post('*/api/transactions/withdraw', () => withdrawSuccessBody(1150.5)));
+    const { router } = renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    await screen.findByText('Withdrawal Successful!');
+
+    await userEvent.click(screen.getByRole('button', { name: 'View Transaction' }));
+
+    expect(await screen.findByText('TX DETAIL PAGE')).toBeInTheDocument();
+    // The id of the transaction the server answered with (`withdrawSuccessBody`).
+    expect(router.state.location.pathname).toBe(
+      '/transactions/019f7b3f-0000-7000-8000-000000000e99',
+    );
+  });
+
+  /*
+    The dialog opens its form only for a user the session says has a PIN. The server is the one
+    that knows: with no PIN enrolled the mint answers 422 PIN_REQUIRED, "PIN must be set before
+    authorising this operation." (the row the mock's own handler quotes as measured). The visitor
+    is then sent to set one, and comes back to the accounts.
+  */
+  it('sends a visitor the server says has no PIN to set one, and no withdrawal', async () => {
+    let withdrawals = 0;
+    server.use(
+      http.post('*/api/transactions/withdraw/authorizations', () =>
+        problem({
+          status: 422,
+          errorCode: 'PIN_REQUIRED',
+          detail: 'PIN must be set before authorising this operation.',
+        }),
+      ),
+      http.post('*/api/transactions/withdraw', () => {
+        withdrawals += 1;
+      }),
+    );
+    const { router } = renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+
+    expect(await screen.findByText('PIN SETUP PAGE')).toBeInTheDocument();
+    expect(router.state.location.search).toBe('?returnTo=/accounts');
+    expect(withdrawals).toBe(0);
+  });
+
+  /*
+    A rule of the server's that the form does not have. The form's own bounds are the contract's,
+    so no amount typed here reaches it today; a rule added on the server tomorrow would. The
+    visitor reads the server's sentence, and with none to read, one of the dialog's own.
+  */
+  it("shows the server's own sentence when the server refuses a field", async () => {
+    server.use(
+      http.post('*/api/transactions/withdraw', () =>
+        problem({
+          status: 400,
+          errors: { Amount: ['Amount must be between 0.01 EUR and 100000.00 EUR'] },
+        }),
+      ),
+    );
+    renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+
+    const words = await screen.findByText('Amount must be between 0.01 EUR and 100000.00 EUR');
+    expect(words.closest('[role="alert"]')).not.toBeNull();
+    expect(screen.queryByText('Withdrawal Successful!')).not.toBeInTheDocument();
+  });
+
+  it('says to check the details when a refused field comes with no sentence', async () => {
+    server.use(
+      http.post('*/api/transactions/withdraw', () => problem({ status: 400, errors: {} })),
+    );
+    renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+
+    const words = await screen.findByText('Please check the details and try again.');
+    expect(words.closest('[role="alert"]')).not.toBeNull();
   });
 });

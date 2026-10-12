@@ -380,6 +380,154 @@ describe('SessionExpiryWarning', () => {
   });
 
   /*
+    Two refusals of the password that had no test, and the tab that comes back.
+
+    The lock's body is the one measured on the sign-in route on 2026-08-06 and quoted in the
+    mock (src/mocks/handlers.ts): 429, errorCode ACCOUNT_LOCKED, retryAfterSeconds 900, no
+    Retry-After header. The mock keeps no lockout of its own, so the answer is given here, with
+    300 seconds in place of the 900: the default the dialog falls back on is fifteen minutes,
+    and a body that said the same would not show which of the two was read.
+  */
+  it('a locked account says for how long, from the body, and does not end the session', async () => {
+    const store = await bootAbsolute();
+    server.use(
+      http.post('*/bff/auth/reauthenticate', () =>
+        HttpResponse.json(
+          {
+            type: 'https://httpstatuses.com/429',
+            title: 'Too Many Requests',
+            status: 429,
+            detail:
+              'Too many failed login attempts. Your account is temporarily locked; try again later.',
+            instance: '/api/auth/login',
+            errorCode: 'ACCOUNT_LOCKED',
+            retryAfterSeconds: 300,
+          },
+          { status: 429, headers: { 'Content-Type': 'application/problem+json' } },
+        ),
+      ),
+    );
+    await reachTheWarning(store);
+
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    fireEvent.change(password(), { target: { value: MOCK_PASSWORD } });
+    await user.click(screen.getByRole('button', { name: /sign in again/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Too many failed attempts. Try again in about 5 minutes.',
+    );
+    expect(dialog()).toBeInTheDocument();
+    expect(store.getState().auth.status).toBe('authenticated');
+  });
+
+  it('a lock that names no time says fifteen minutes', async () => {
+    const store = await bootAbsolute();
+    server.use(
+      http.post('*/bff/auth/reauthenticate', () =>
+        HttpResponse.json(
+          { title: 'Too Many Requests', status: 429, errorCode: 'ACCOUNT_LOCKED' },
+          { status: 429, headers: { 'Content-Type': 'application/problem+json' } },
+        ),
+      ),
+    );
+    await reachTheWarning(store);
+
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    fireEvent.change(password(), { target: { value: MOCK_PASSWORD } });
+    await user.click(screen.getByRole('button', { name: /sign in again/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Too many failed attempts. Try again in about 15 minutes.',
+    );
+  });
+
+  it('a failure it has no words for says it could not sign in, and blames nothing', async () => {
+    const store = await bootAbsolute();
+    server.use(
+      http.post('*/bff/auth/reauthenticate', () =>
+        HttpResponse.json(
+          { title: 'Internal Server Error', status: 500, errorCode: 'INTERNAL_ERROR' },
+          { status: 500, headers: { 'Content-Type': 'application/problem+json' } },
+        ),
+      ),
+    );
+    await reachTheWarning(store);
+
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    fireEvent.change(password(), { target: { value: MOCK_PASSWORD } });
+    await user.click(screen.getByRole('button', { name: /sign in again/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent("Couldn't sign you in right now. Please try again.");
+    // Not the password's sentence and not the connection's: neither was the problem.
+    expect(alert).not.toHaveTextContent(/didn't match/i);
+    expect(alert).not.toHaveTextContent(/couldn't reach the server/i);
+    expect(dialog()).toBeInTheDocument();
+  });
+
+  describe('coming back to the tab', () => {
+    /** Counts the session checks from now on; the mock still answers them. */
+    function watchSessionChecks() {
+      const seen = { checks: 0 };
+      server.use(
+        http.get('*/bff/auth/session-status', () => {
+          seen.checks += 1;
+        }),
+      );
+      return seen;
+    }
+
+    function tabBecomes(state: 'visible' | 'hidden') {
+      vi.spyOn(document, 'visibilityState', 'get').mockReturnValue(state);
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+    }
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('asks the server at once, and takes the warning down when another tab kept the session alive', async () => {
+      const store = await boot();
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      renderWithProviders(<SessionExpiryWarning />, { store });
+      await advance(61_000);
+      await waitFor(() => expect(dialog()).toBeInTheDocument());
+      const seen = watchSessionChecks();
+
+      // Another tab makes a request: the server's clock slides, this tab's does not.
+      mockState.sessionLastActivity = Date.now();
+      tabBecomes('visible');
+
+      // No clock is advanced: the check is made because the tab came back, not at the deadline.
+      await waitFor(() => expect(dialog()).not.toBeInTheDocument());
+      expect(seen.checks).toBe(1);
+      expect(store.getState().auth.status).toBe('authenticated');
+    });
+
+    it('asks nothing when the tab is hidden', async () => {
+      const store = await boot();
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      renderWithProviders(<SessionExpiryWarning />, { store });
+      await advance(61_000);
+      await waitFor(() => expect(dialog()).toBeInTheDocument());
+      const seen = watchSessionChecks();
+
+      tabBecomes('hidden');
+      // A request made after the event, and waited for: had the hidden tab asked, its check
+      // would have reached the server before this one was answered.
+      await store.dispatch(apiSlice.endpoints.getMe.initiate(undefined, { forceRefetch: true }));
+      const whileHidden = seen.checks;
+      // The same event with the tab in view, so that the zero is a count of something that is made.
+      tabBecomes('visible');
+
+      await waitFor(() => expect(seen.checks).toBe(1));
+      expect(whileHidden).toBe(0);
+    });
+  });
+
+  /*
     On the demo, at the cap.
 
     Nobody chose a demo copy's password: the claim drew it, and the browser that claimed the copy
