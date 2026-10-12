@@ -2165,9 +2165,14 @@ strong {
     display: none;
   }
 }
-/* Under 1280 the column is narrower and the paragraph a line longer: it gives the room away
-   sooner still. */
-@media (min-width: 64em) and (max-width: 79.99em) and (max-height: 57.99em) {
+/* Under 1600 the column is narrower and the paragraph a line longer: it gives the room away
+   sooner, and under 1280 sooner still. */
+@media (min-width: 64em) and (max-width: 99.99em) and (max-height: 58.99em) {
+  .lede__more {
+    display: none;
+  }
+}
+@media (min-width: 64em) and (max-width: 79.99em) and (max-height: 60.99em) {
   .lede__more {
     display: none;
   }

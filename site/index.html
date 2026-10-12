@@ -133,9 +133,9 @@
               live on Azure. I designed it, wrote part of the code and direct the AI coding agents
               that write the rest.
               <span class="lede__more"
-                >The same payment is not applied twice (the same request sent again, by a retry or
-                a double click), the access token stays on the server, and security events are
-                written to a hash&#8209;chained log.</span
+                >The same payment is not applied twice (the same request arriving again after a
+                network error, not a second payment made on purpose), the access token stays on
+                the server, and security events are written to a hash&#8209;chained log.</span
               >
             </p>
             <p class="lede" lang="it" data-lang="it">
@@ -143,9 +143,10 @@
               Server, online su Azure. L'ho progettata io: una parte del codice l'ho scritta, il
               resto lo scrivono agenti AI che dirigo.
               <span class="lede__more"
-                >Lo stesso pagamento non viene eseguito due volte (la stessa richiesta inviata di
-                nuovo, per un nuovo tentativo o un doppio clic), il token di accesso resta sul
-                server e gli eventi di sicurezza finiscono in un registro concatenato con hash.</span
+                >Lo stesso pagamento non viene eseguito due volte (la stessa richiesta arrivata di
+                nuovo per un errore di rete, non un secondo pagamento voluto), il token di accesso
+                resta sul server e gli eventi di sicurezza finiscono in un registro concatenato
+                con hash.</span
               >
             </p>
 
@@ -350,17 +351,21 @@
                 <p lang="en" data-lang="en">
                   Every money operation carries a key the server recognises, and is applied at most
                   once per key: when the same request arrives again with the same key, after a
-                  retry, a network error or a double send, the money does not move a second time.
-                  It held under 24&nbsp;identical parallel requests on a real SQL Server. A key is
-                  kept for 24&nbsp;hours: the same request sent after that is a new payment.
+                  retry or a network error, the money does not move a second time. That held under
+                  24&nbsp;identical parallel requests on a real SQL Server. A key is kept for
+                  24&nbsp;hours: the same request sent after that is a new payment. The screen has
+                  its own guard as well: it sends no second request while the first is in flight,
+                  so a double click sends one.
                 </p>
                 <p lang="it" data-lang="it">
                   Ogni operazione che muove denaro porta con sé una chiave che il server riconosce,
                   ed è eseguita al massimo una volta per chiave: se la stessa richiesta arriva di
-                  nuovo con la stessa chiave, per un nuovo tentativo, un errore di rete o un doppio
-                  invio, il denaro non si muove una seconda volta. Ha retto a 24&nbsp;richieste
-                  identiche in parallelo su un vero SQL Server. Una chiave è conservata per
-                  24&nbsp;ore: la stessa richiesta inviata dopo è un nuovo pagamento.
+                  nuovo con la stessa chiave, per un nuovo tentativo o un errore di rete, il denaro
+                  non si muove una seconda volta. Ha retto a 24&nbsp;richieste identiche in
+                  parallelo su un vero SQL Server. Una chiave è conservata per 24&nbsp;ore: la
+                  stessa richiesta inviata dopo è un nuovo pagamento. Anche la schermata ha la sua
+                  protezione: non invia una seconda richiesta mentre la prima è in corso, quindi un
+                  doppio clic ne invia una sola.
                 </p>
                 <p class="claim__src">
                   <a href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/adr/0009-idempotency-monetary-operations.md">
@@ -372,6 +377,12 @@
                   >
                     <span lang="en" data-lang="en">Test: 24 in parallel</span>
                     <span lang="it" data-lang="it">Test: 24 in parallelo</span>
+                  </a>
+                  <a
+                    href="https://github.com/Gurgant/azurebank-v2/blob/main/frontend/src/components/dialogs/deposit.test.tsx"
+                  >
+                    <span lang="en" data-lang="en">Test: a double click</span>
+                    <span lang="it" data-lang="it">Test: un doppio clic</span>
                   </a>
                 </p>
               </li>
