@@ -19,8 +19,8 @@ const lightColors = {
    * for its own token generator; this one is indexed by the original Figma export and its shades are
    * consumed as literal values. Swapping one for the other by index is destructive, and measurably
    * so: the Fluent ramp's index 120 is #81B3E4 at luminance 0.425, where this palette's 120 is a
-   * near-white #E6F0FC at 0.862 — a drop of 0.44 under the dark text that sits on it at nine call
-   * sites (the active sidebar item, Avatar, IconContainer, QuickActionButton, ConfirmDialog).
+   * near-white #E6F0FC at 0.862 — a drop of 0.44 under the dark text that sits on it wherever it
+   * is a background (the active sidebar item, Avatar, QuickActionButton, ConfirmDialog among them).
    *
    * Only the three shades that mean "the brand" and its hover and pressed states have been recoloured
    * onto #0077b6, so the app does not show two different blues at once. The pale end keeps its

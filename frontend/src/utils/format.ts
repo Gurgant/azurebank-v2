@@ -35,12 +35,6 @@ export function isIncomeType(type: TransactionType): boolean {
   return type === 'Deposit' || type === 'TransferIn';
 }
 
-/** Signed display amount for a transaction row: +€50.00 / -€50.00. */
-export function formatTransactionAmount(amount: number, type: TransactionType): string {
-  const sign = isIncomeType(type) ? '+' : '-';
-  return `${sign}${formatCurrency(Math.abs(amount))}`;
-}
-
 /** "January 5, 2026" — date-group headings. */
 export function formatDateHeading(isoDate: string): string {
   return format(new Date(isoDate), 'MMMM d, yyyy');
