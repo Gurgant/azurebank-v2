@@ -1,6 +1,7 @@
 """Say how much of the hand-written code the tests ran, and fail under a floor.
 
     python infra/coverage_summary.py backend --floor 90 FOLDER [FOLDER ...]
+    python infra/coverage_summary.py backend --floor 90 --floor-application 95 FOLDER [FOLDER ...]
     python infra/coverage_summary.py frontend --floor 80 coverage/coverage-summary.json
 
 It prints a short Markdown summary and, where GITHUB_STEP_SUMMARY names a file, appends the same
@@ -18,7 +19,12 @@ backend reads every coverage.cobertura.xml under the folders, the files that
     under a `Migrations/` folder by the EF tool. Both are printed apart and are in no figure:
     together they are larger than the code they sit beside;
   - what is left is hand-written: the application under `backend/src` and the command-line
-    tools under `backend/tools`. The floor is held against the two together.
+    tools under `backend/tools`. The floor is held against the two together;
+  - `--floor-application N` holds a second floor, on the application alone: the row "All of
+    the application (backend/src)". It is for the figure a page shows of the application,
+    which the floor on the two together does not defend: the tools can carry it, and the
+    other way round. Each floor fails the run on its own. Without the argument nothing is
+    held on that row. frontend refuses the argument: it has one figure and one floor.
 The branches of a line are joined by the best count any file saw, which is exact where one run
 took every branch the other took and too low elsewhere: it is printed as "at least".
 
@@ -28,9 +34,11 @@ decided there, in frontend/vitest.config.ts.
 What the figure does not say: a line that ran is not a line that was checked. And an assembly
 that no test project loads is in no coverage file, so its lines are not counted at all.
 
-Exit code 0: the figure is at the floor or above it. Exit code 1: it is under the floor, or
-nothing could be counted: no coverage file, a file that cannot be read, a source outside
-`backend/`, or no line at all. A run that counted nothing never passes.
+Exit code 0: every figure that holds a floor is at it or above it. Exit code 1: one is under
+its floor, with a line for each that says which figure fell under which floor; or nothing
+could be counted: no coverage file, a file that cannot be read, a source outside `backend/`,
+no line at all, or a floor on the application and no line of it. A run that counted nothing
+never passes. Exit code 2: the arguments are refused.
 """
 
 import argparse
@@ -167,7 +175,7 @@ def under(part, total, floor):
     return 100 * part < floor * total
 
 
-def backend(folders, floor):
+def backend(folders, floor, floor_application=None):
     reports = reports_under(folders)
     if not reports:
         raise Uncountable(f'no {REPORT} under: ' + ', '.join(str(folder) for folder in folders))
@@ -177,6 +185,14 @@ def backend(folders, floor):
     if not total[0]:
         raise Uncountable(f'{len(reports)} coverage file(s) and no line of hand-written code '
                           'in them')
+    application = kinds.get(APPLICATION, [0, 0, 0, 0])
+    if floor_application is not None and not application[0]:
+        raise Uncountable(f'a floor is held on {APPLICATION} and no line of it is in the '
+                          f'{len(reports)} coverage file(s)')
+    floors = f'Floor on lines: {floor:g} %.'
+    if floor_application is not None:
+        floors = (f'Floors on lines: {floor:g} % on all hand-written code, '
+                  f'{floor_application:g} % on {APPLICATION}.')
 
     def cells(name, row):
         return (f'| {name} | {row[0]:,} | {row[1]:,} | {percent(row[1], row[0])} '
@@ -186,7 +202,7 @@ def backend(folders, floor):
             '',
             f'**{percent(total[1], total[0])} of lines** ({total[1]:,} of {total[0]:,}); '
             f'branches at least {percent(total[3], total[2])} ({total[3]:,} of {total[2]:,}). '
-            f'Floor on lines: {floor:g} %. {len(reports)} coverage file(s), joined line by line.',
+            f'{floors} {len(reports)} coverage file(s), joined line by line.',
             '',
             '| Assembly | Lines | Ran | Lines ran | Branches | Taken, at least |',
             '|---|---:|---:|---:|---:|---:|']
@@ -198,7 +214,15 @@ def backend(folders, floor):
     text += ['', 'A line that ran is not a line that was checked.']
     notice = (f'Backend coverage::{percent(total[1], total[0])} of the lines of hand-written '
               f'code ({total[1]:,} of {total[0]:,})')
-    return text, notice, under(total[1], total[0], floor), percent(total[1], total[0])
+    fell = []
+    if under(total[1], total[0], floor):
+        fell.append(f'{percent(total[1], total[0])} of the lines of hand-written backend code '
+                    f'ran, under the floor of {floor:g} %')
+    if floor_application is not None and under(application[1], application[0],
+                                               floor_application):
+        fell.append(f'{percent(application[1], application[0])} of the lines of {APPLICATION} '
+                    f'ran, under its floor of {floor_application:g} %')
+    return text, notice, fell, percent(total[1], total[0])
 
 
 def frontend(summary, floor):
@@ -228,7 +252,11 @@ def frontend(summary, floor):
     text += ['', 'A line that ran is not a line that was checked.']
     notice = (f'Frontend coverage::{percent(ran, lines)} of the lines of hand-written code '
               f'({ran:,} of {lines:,})')
-    return text, notice, under(ran, lines, floor), percent(ran, lines)
+    fell = []
+    if under(ran, lines, floor):
+        fell.append(f'{percent(ran, lines)} of the lines of hand-written frontend code ran, '
+                    f'under the floor of {floor:g} %')
+    return text, notice, fell, percent(ran, lines)
 
 
 def main(arguments=None):
@@ -236,17 +264,24 @@ def main(arguments=None):
     parser.add_argument('side', choices=('backend', 'frontend'))
     parser.add_argument('--floor', type=float, required=True,
                         help='the share of lines, in percent, under which the run fails')
+    parser.add_argument('--floor-application', type=float, metavar='N',
+                        help='backend only: a second floor, on the lines of the application '
+                             'alone (backend/src)')
     parser.add_argument('paths', nargs='+',
                         help='backend: folders that hold the Cobertura files; frontend: the '
                              'json-summary file')
     options = parser.parse_args(arguments)
+    if options.side == 'frontend' and options.floor_application is not None:
+        parser.error('--floor-application is held on the backend only: the frontend has one '
+                     'figure, and --floor holds it')
     try:
         if options.side == 'backend':
-            text, notice, failed, figure = backend(options.paths, options.floor)
+            text, notice, fell, _ = backend(options.paths, options.floor,
+                                            options.floor_application)
         elif len(options.paths) != 1:
             raise Uncountable('frontend reads exactly one json-summary file')
         else:
-            text, notice, failed, figure = frontend(options.paths[0], options.floor)
+            text, notice, fell, _ = frontend(options.paths[0], options.floor)
     except Uncountable as error:
         print(f'::error::coverage of the {options.side} could not be counted: {error}')
         return 1
@@ -256,11 +291,9 @@ def main(arguments=None):
         with open(step_summary, 'a', encoding='utf-8', newline='\n') as handle:
             handle.write('\n'.join(text) + '\n\n')
         print(f'::notice title={notice}')
-    if failed:
-        print(f'::error::{figure} of the lines of hand-written {options.side} code ran, under '
-              f'the floor of {options.floor:g} %')
-        return 1
-    return 0
+    for figure in fell:
+        print(f'::error::{figure}')
+    return 1 if fell else 0
 
 
 if __name__ == '__main__':

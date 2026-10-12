@@ -253,6 +253,73 @@ class BackendRuns(Folder):
         self.assertNotIn('::notice', said)
 
 
+class TheFloorOnTheApplication(Folder):
+    """The application 3 of 4 lines, the tools 4 of 4: 75.0 % and, together, 87.5 %."""
+
+    def setUp(self):
+        super().setUp()
+        self.report('api', LINUX, {
+            'AzureBank.Api': {'src/AzureBank.Api/A.cs': {1: 1, 2: 1, 3: 1, 4: 0}},
+            'AzureBank.Seeder': {'tools/AzureBank.Seeder/Program.cs': {1: 1, 2: 1, 3: 1, 4: 1}}})
+
+    def test_at_its_floor_it_passes_and_the_summary_names_both_floors(self):
+        code, said = self.run_main('backend', '--floor', '87.5', '--floor-application', '75',
+                                   str(self.folder))
+        self.assertEqual(code, 0)
+        self.assertIn('| **All of the application (backend/src)** | 4 | 3 | 75.0 % |', said)
+        self.assertIn('Floors on lines: 87.5 % on all hand-written code, 75 % on the application '
+                      '(backend/src). 1 coverage file(s)', said)
+        self.assertNotIn('::error::', said)
+
+    def test_under_its_floor_it_fails_and_says_which_figure_under_which_floor(self):
+        code, said = self.run_main('backend', '--floor', '0', '--floor-application', '75.1',
+                                   str(self.folder))
+        self.assertEqual(code, 1)
+        self.assertIn('::error::75.0 % of the lines of the application (backend/src) ran, under '
+                      'its floor of 75.1 %', said)
+
+    def test_the_whole_above_its_floor_does_not_carry_the_application_under_its_own(self):
+        code, said = self.run_main('backend', '--floor', '87.5', '--floor-application', '80',
+                                   str(self.folder))
+        self.assertEqual(code, 1)
+        self.assertIn('**87.5 % of lines** (7 of 8)', said)
+        self.assertEqual(said.count('::error::'), 1)
+        self.assertIn('of the application (backend/src) ran, under its floor of 80 %', said)
+
+    def test_the_application_above_its_floor_does_not_carry_the_whole_under_its_own(self):
+        code, said = self.run_main('backend', '--floor', '90', '--floor-application', '75',
+                                   str(self.folder))
+        self.assertEqual(code, 1)
+        self.assertEqual(said.count('::error::'), 1)
+        self.assertIn('::error::87.5 % of the lines of hand-written backend code ran, under '
+                      'the floor of 90 %', said)
+
+    def test_both_under_their_floors_give_a_line_each(self):
+        code, said = self.run_main('backend', '--floor', '90', '--floor-application', '80',
+                                   str(self.folder))
+        self.assertEqual(code, 1)
+        self.assertEqual(said.count('::error::'), 2)
+
+    def test_without_the_argument_no_floor_is_held_on_the_application(self):
+        code, said = self.run_main('backend', '--floor', '87.5', str(self.folder))
+        self.assertEqual(code, 0)
+        self.assertIn('Floor on lines: 87.5 %. 1 coverage file(s), joined line by line.', said)
+        self.assertNotIn('Floors on lines', said)
+
+    def test_a_floor_on_an_application_with_no_line_fails_even_at_zero(self):
+        other = self.folder / 'only-the-tools'
+        target = other / summary.REPORT
+        target.parent.mkdir(parents=True)
+        target.write_text(cobertura(LINUX, {'AzureBank.Seeder': {
+            'tools/AzureBank.Seeder/Program.cs': {1: 1, 2: 1}}}), encoding='utf-8')
+        code, _ = self.run_main('backend', '--floor', '0', str(other))
+        self.assertEqual(code, 0)
+        code, said = self.run_main('backend', '--floor', '0', '--floor-application', '0',
+                                   str(other))
+        self.assertEqual(code, 1)
+        self.assertIn('a floor is held on the application (backend/src) and no line of it', said)
+
+
 class FrontendRuns(Folder):
     def report_of(self, lines=(90, 100), **others):
         total = {'lines': lines, 'statements': (180, 200), 'functions': (30, 40),
@@ -315,6 +382,28 @@ class AsTheJobStartsIt(Folder):
 
     def test_a_run_without_a_floor_is_refused(self):
         self.assertNotEqual(self.start('backend', str(self.folder)).returncode, 0)
+
+    def test_the_floor_on_the_application_decides_the_exit_code(self):
+        self.report('api', LINUX, {
+            'AzureBank.Api': {'src/AzureBank.Api/A.cs': {1: 1, 2: 0}},
+            'AzureBank.Seeder': {'tools/AzureBank.Seeder/Program.cs': {1: 1, 2: 1}}})
+        held = ('backend', '--floor', '75', '--floor-application')
+        self.assertEqual(self.start(*held, '50', str(self.folder)).returncode, 0)
+        fell = self.start(*held, '51', str(self.folder))
+        self.assertEqual(fell.returncode, 1)
+        self.assertIn('under its floor of 51 %', fell.stdout)
+
+    def test_the_frontend_refuses_a_floor_on_the_application(self):
+        report = self.folder / 'coverage-summary.json'
+        pair = {'total': 100, 'covered': 100}
+        report.write_text(json.dumps({'total': {name: pair for name in summary.MEASURES},
+                                      '/repo/frontend/src/App.tsx': {}}), encoding='utf-8')
+        self.assertEqual(self.start('frontend', '--floor', '90', str(report)).returncode, 0)
+        refused = self.start('frontend', '--floor', '90', '--floor-application', '90',
+                             str(report))
+        self.assertEqual(refused.returncode, 2)
+        self.assertIn('--floor-application is held on the backend only', refused.stderr)
+        self.assertNotIn('Frontend coverage', refused.stdout)
 
 
 if __name__ == '__main__':
