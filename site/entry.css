@@ -2155,24 +2155,24 @@ strong {
 /* ----- A shorter one still: the last sentence under the headline gives its room away, so that
    the two sentences always shown and the four figures stay on the first screen. In Italian,
    where the headline is a line longer, it does so sooner. ----- */
-@media (min-width: 64em) and (max-height: 51.99em) {
+@media (min-width: 64em) and (max-height: 55.99em) {
   .lede__more {
     display: none;
   }
 }
-@media (min-width: 64em) and (max-height: 59.99em) {
+@media (min-width: 64em) and (max-height: 61.99em) {
   html[lang='it'] .lede__more {
     display: none;
   }
 }
 /* Under 1280 the column is narrower and the paragraph a line longer: it gives the room away
    sooner still. */
-@media (min-width: 64em) and (max-width: 79.99em) and (max-height: 55.99em) {
+@media (min-width: 64em) and (max-width: 79.99em) and (max-height: 57.99em) {
   .lede__more {
     display: none;
   }
 }
-@media (min-width: 64em) and (max-width: 79.99em) and (max-height: 63.99em) {
+@media (min-width: 64em) and (max-width: 79.99em) and (max-height: 65.99em) {
   html[lang='it'] .lede__more {
     display: none;
   }
