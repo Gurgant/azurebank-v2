@@ -328,6 +328,21 @@ describe('internal transfer: the shortcuts of the form and the ways off the page
     expect(screen.getByRole('button', { name: '€50' })).toBeEnabled();
   });
 
+  it('a quick amount equal to the whole balance can still be pressed', async () => {
+    // The source holds exactly €50: the server accepts an amount up to the balance, so €50 stays.
+    server.use(
+      http.get('*/api/accounts', () => {
+        const [main, ...rest] = mockState.accounts;
+        return HttpResponse.json({ data: [{ ...main, balance: 50 }, ...rest], message: null });
+      }),
+    );
+    renderInternal();
+    await screen.findByRole('button', { name: 'From Main Account' });
+
+    expect(screen.getByRole('button', { name: '€50' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '€100' })).toBeDisabled();
+  });
+
   it('"Use max" fills in the whole available balance, to the cent', async () => {
     const sends = watchSends();
     renderInternal();

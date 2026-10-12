@@ -726,6 +726,22 @@ describe('external transfer: the shortcuts of the form and the ways off the page
   /** The review card's rows, as label and value. */
   const reviewed = (label: string) => screen.getByText(label).parentElement;
 
+  it('a quick amount can be pressed up to the whole balance, and not past it', async () => {
+    // The source holds exactly €50: the server accepts an amount up to the balance, so €50 stays.
+    server.use(
+      http.get('*/api/accounts', () => {
+        const [main, ...rest] = mockState.accounts;
+        return HttpResponse.json({ data: [{ ...main, balance: 50 }, ...rest], message: null });
+      }),
+    );
+    renderTransfer();
+    await screen.findByRole('button', { name: 'Use maximum, €50.00' });
+
+    expect(screen.getByRole('button', { name: '€25' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '€50' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '€100' })).toBeDisabled();
+  });
+
   it('"Use max" fills in the whole available balance, to the cent', async () => {
     const sends = watchSends();
     renderTransfer();

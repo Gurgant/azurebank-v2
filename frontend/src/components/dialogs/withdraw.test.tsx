@@ -707,6 +707,18 @@ describe('withdraw (the idempotent mutation; its PIN moved to the mint, ADR-0056
     expect(screen.getByRole('button', { name: /^Continue/ })).toBeDisabled();
   });
 
+  it('a quick amount can be pressed up to the whole balance, and not past it', async () => {
+    // The account holds exactly €100: the server accepts an amount up to the balance, so €100 stays.
+    renderWithProviders(
+      <WithdrawDialog isOpen onClose={() => {}} accounts={[{ ...seedAccount(), balance: 100 }]} />,
+    );
+    await screen.findByRole('button', { name: 'Use maximum, €100.00' });
+
+    expect(screen.getByRole('button', { name: '€50' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '€100' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '€200' })).toBeDisabled();
+  });
+
   it('gates the Withdraw CTA until a full 6-digit PIN is entered', async () => {
     renderWithdraw();
     await goToPinStep();
