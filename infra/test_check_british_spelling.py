@@ -4,11 +4,12 @@ Each kind of text has a line that fails and the nearest lines that pass: a word 
 same word where it is a name. The last tests start the script as the CI step does, on files in
 a temporary directory.
 
-No test of this file depends on how a page of the repository is spelt or on which words it
-writes: every one reads a fixed text, the two lists, or which files git tracks. The Infrastructure
-job of CI runs this file, the rule set of main requires that job, and a word must not block a
-merge. The tests that read the pages as they are stand in prose_test_british_spelling.py, which
-the job "Prose spelling (British)" runs and the rule set does not require.
+No test of this file depends on how a page of the repository is spelt: every one reads a fixed
+text, the two lists, or which files git tracks, and one reads the entry page for its skip link in
+English, to prove that the Italian half is left out. The Infrastructure job of CI runs this file,
+the rule set of main requires that job, and a spelling must not block a merge. The tests that
+read the pages as they are stand in prose_test_british_spelling.py, which the job "Prose
+spelling (British)" runs and the rule set does not require.
 """
 
 import contextlib

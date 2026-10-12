@@ -244,7 +244,7 @@ pull request, and the job is not among the required checks, so a word does not b
 When it is red, correct the word; a name that keeps its own spelling goes in backticks, or in
 `infra/british_spelling_allowed.txt` with its reason. The job also runs
 `python -m unittest discover -s infra -p 'prose_test_*.py'`, which fails when a page writes a
-word in -ise whose American twin the list does not hold yet, and says where to add it.
+word in -ise or -yse whose American twin the list does not hold yet, and says where to add it.
 
 ## Code style
 
