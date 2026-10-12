@@ -142,6 +142,55 @@ describe('PinInput (PR-10)', () => {
 
     expect(screen.getByTestId('value')).toHaveTextContent('987654');
   });
+
+  /*
+    Correcting one digit of a PIN that is already in the boxes. The value stays six digits long
+    and only the box that was typed into changes: appended instead, the seventh digit would be
+    dropped and the mistake would stay.
+  */
+  it('a digit typed into a filled box replaces that digit and moves on', async () => {
+    renderWithProviders(<Harness />);
+    await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
+    await userEvent.paste('123456');
+
+    // One digit in one change event, as a key press delivers it (`fireEvent`, as the autofill
+    // test above: the box holds one character and is selected on focus).
+    fireEvent.change(screen.getByLabelText('Digit 2 of 6'), { target: { value: '9' } });
+
+    // The whole text, not a part of it: '1934567' would hold '193456' too.
+    expect(screen.getByTestId('value').textContent).toBe('193456');
+    expect(screen.getByLabelText('Digit 3 of 6')).toHaveFocus();
+  });
+
+  it('backspace in an empty box removes the digit before it and steps back', async () => {
+    renderWithProviders(<Harness />);
+    await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
+    await userEvent.paste('123');
+    // The paste leaves focus on the first empty box.
+    expect(screen.getByLabelText('Digit 4 of 6')).toHaveFocus();
+
+    await userEvent.keyboard('{Backspace}');
+
+    expect(screen.getByTestId('value').textContent).toBe('12');
+    expect(screen.getByLabelText('Digit 3 of 6')).toHaveFocus();
+  });
+
+  it('the arrow keys move between the boxes and stop at both ends', async () => {
+    renderWithProviders(<Harness />);
+    await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
+
+    await userEvent.keyboard('{ArrowRight}');
+    expect(screen.getByLabelText('Digit 2 of 6')).toHaveFocus();
+
+    await userEvent.keyboard('{ArrowLeft}{ArrowLeft}');
+    expect(screen.getByLabelText('Digit 1 of 6')).toHaveFocus();
+
+    await userEvent.click(screen.getByLabelText('Digit 6 of 6'));
+    await userEvent.keyboard('{ArrowRight}');
+    expect(screen.getByLabelText('Digit 6 of 6')).toHaveFocus();
+    // Moving between the boxes types nothing.
+    expect(screen.getByTestId('value')).toHaveTextContent('');
+  });
 });
 
 /*

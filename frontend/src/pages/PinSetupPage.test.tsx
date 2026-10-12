@@ -1,7 +1,7 @@
 import { Route, Routes } from 'react-router-dom';
 import { cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { http } from 'msw';
+import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PinInput } from '../components/PinInput';
 import { enableDemoMode } from '../test/demoMode';
@@ -9,7 +9,7 @@ import { makeTestStore, renderWithProviders, type TestStore } from '../test/rend
 import { PinSetupPage } from './PinSetupPage';
 import { MOCK_PASSWORD, MOCK_USER, seedMockSession } from '../mocks/state';
 import { server } from '../mocks/server';
-import { serviceUnavailable } from '../mocks/problem';
+import { problem, serviceUnavailable } from '../mocks/problem';
 import {
   COPY,
   advanceUntil,
@@ -284,5 +284,183 @@ describe('PIN setup during an outage', () => {
     expect(screen.queryByRole('button', { name: COPY.stopWaiting })).not.toBeInTheDocument();
     const boxes = screen.getByRole('group', { name: 'Confirm your PIN' });
     expect(boxes.compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+/*
+  What the page says for each refusal of the save, and the two buttons under the boxes. One
+  refusal had a test, the wrong password; the others were sentences no test had read, and a
+  mapping that sent "your account is locked" to the wrong code would have shipped green.
+
+  Where the mock answers a case by itself the test lets it. The others are answered here in the
+  API's own envelope (`problem`), with the status and code of the row quoted beside each.
+*/
+describe('PIN setup: what each refusal says, and the buttons under the boxes', () => {
+  /** The confirm step with the first PIN chosen: what is left is the password and the PIN again. */
+  async function toTheConfirmation() {
+    const view = renderPinSetup();
+    await pasteDigits('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByText('Confirm your PIN');
+    return view;
+  }
+
+  async function typePassword(value = MOCK_PASSWORD) {
+    await userEvent.click(screen.getByLabelText('Account password'));
+    await userEvent.paste(value);
+  }
+
+  /** Every save sent from now on, as its body; the handler that answers is left alone. */
+  function watchSaves() {
+    const bodies: unknown[] = [];
+    server.use(
+      http.post('*/bff/auth/set-pin', async ({ request }) => {
+        bodies.push(await request.clone().json());
+      }),
+    );
+    return bodies;
+  }
+
+  /** The save is refused as `refusal` answers, and the page's one alert is returned. */
+  async function refusedWith(refusal: () => Response) {
+    server.use(http.post('*/bff/auth/set-pin', refusal));
+    await toTheConfirmation();
+    await typePassword();
+    await pasteDigits('123456');
+    return screen.findByRole('alert');
+  }
+
+  it('"Set PIN" saves when the password is typed after the PIN, and sends both', async () => {
+    const saves = watchSaves();
+    await toTheConfirmation();
+    // The PIN first: with no password yet, the sixth digit sends nothing.
+    await pasteDigits('123456');
+    await typePassword();
+    expect(saves).toEqual([]);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Set PIN' }));
+
+    expect(await screen.findByText('PIN Setup Complete!')).toBeInTheDocument();
+    expect(saves).toEqual([{ pin: '123456', password: MOCK_PASSWORD }]);
+  });
+
+  it('"Back" on the confirmation returns to choosing the PIN, and takes the refusal with it', async () => {
+    const saves = watchSaves();
+    await toTheConfirmation();
+    await typePassword();
+    // Five digits: on the confirmation, with nothing sent.
+    await pasteDigits('12345');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(await screen.findByText('Create your PIN')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Account password')).not.toBeInTheDocument();
+
+    // The confirmation starts empty the next time: the five digits did not wait there.
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByText('Confirm your PIN');
+    expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue('');
+
+    // A refusal on the confirmation does not follow the visitor back to the first step.
+    await pasteDigits('654321');
+    await screen.findByText('PINs do not match. Please try again.');
+    await userEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(await screen.findByText('Create your PIN')).toBeInTheDocument();
+    expect(screen.queryByText('PINs do not match. Please try again.')).not.toBeInTheDocument();
+    expect(saves).toEqual([]);
+  });
+
+  it("shows the server's own sentence when it refuses the PIN itself", async () => {
+    // The row the mock's handler quotes as measured: {"pin":"abc"} -> 400, errors
+    // {"Pin":["PIN must be exactly 6 digits."]}, with no errorCode. These boxes cannot send that
+    // PIN; the sentence stands for any rule of the server's about a PIN that they can send.
+    const alert = await refusedWith(() =>
+      problem({ status: 400, errors: { Pin: ['PIN must be exactly 6 digits.'] } }),
+    );
+
+    expect(alert).toHaveTextContent('PIN must be exactly 6 digits.');
+    expect(screen.queryByText('PIN Setup Complete!')).not.toBeInTheDocument();
+  });
+
+  it('says the PIN is not allowed when the refusal of the PIN has no sentence', async () => {
+    const alert = await refusedWith(() => problem({ status: 400, errors: {} }));
+
+    expect(alert).toHaveTextContent('That PIN is not allowed. Please choose another.');
+  });
+
+  it('asks for the password when the server says it is missing', async () => {
+    // Measured row, quoted in the mock: enrol, no password -> 422 PASSWORD_REQUIRED.
+    const alert = await refusedWith(() =>
+      problem({
+        instance: '/api/auth/pin',
+        status: 422,
+        errorCode: 'PASSWORD_REQUIRED',
+        detail: 'Your password is required to set a PIN.',
+      }),
+    );
+
+    expect(alert).toHaveTextContent('Enter your account password to set a PIN.');
+  });
+
+  it('says the account is locked after too many wrong passwords', async () => {
+    // A wrong password here counts toward the sign-in lockout, and the lock answers as it does
+    // on the sign-in route: the body measured there on 2026-08-06 and quoted in the mock
+    // (src/mocks/handlers.ts) is 429, ACCOUNT_LOCKED, retryAfterSeconds 900. It was not measured
+    // on this route for this change. The mock keeps no lockout, so the answer is given here.
+    const alert = await refusedWith(() =>
+      problem({
+        status: 429,
+        errorCode: 'ACCOUNT_LOCKED',
+        detail:
+          'Too many failed login attempts. Your account is temporarily locked; try again later.',
+        extensions: { retryAfterSeconds: 900 },
+      }),
+    );
+
+    expect(alert).toHaveTextContent(
+      'Too many incorrect passwords. Your account is locked; try again later.',
+    );
+  });
+
+  it('says to check the connection when the request never reaches the server', async () => {
+    const alert = await refusedWith(() => HttpResponse.error());
+
+    expect(alert).toHaveTextContent(CONNECTION_FAILED);
+    expect(alert).not.toHaveTextContent(COPY.saveUnknown);
+  });
+
+  it("shows the server's sentence for any other refusal, and one of its own when there is none", async () => {
+    const withASentence = await refusedWith(() =>
+      problem({ status: 409, errorCode: 'CONFLICT', detail: 'A PIN change is already running.' }),
+    );
+    expect(withASentence).toHaveTextContent('A PIN change is already running.');
+    cleanup();
+
+    const withNone = await refusedWith(() => problem({ status: 409, errorCode: 'CONFLICT' }));
+    expect(withNone).toHaveTextContent('Could not set your PIN. Please try again.');
+  });
+
+  it('after a refusal the boxes are empty again and the password is kept', async () => {
+    const saves: unknown[] = [];
+    server.use(
+      http.post('*/bff/auth/set-pin', async ({ request }) => {
+        saves.push(await request.clone().json());
+        // The first save is refused; the second goes on to the mock's own answer.
+        if (saves.length === 1) return HttpResponse.error();
+      }),
+    );
+    await toTheConfirmation();
+    await typePassword();
+    await pasteDigits('123456');
+    await screen.findByText(CONNECTION_FAILED);
+
+    expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue('');
+    // The PIN typed again is enough: the password did not have to be.
+    await pasteDigits('123456');
+
+    expect(await screen.findByText('PIN Setup Complete!')).toBeInTheDocument();
+    expect(saves).toEqual([
+      { pin: '123456', password: MOCK_PASSWORD },
+      { pin: '123456', password: MOCK_PASSWORD },
+    ]);
   });
 });

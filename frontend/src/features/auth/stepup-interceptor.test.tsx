@@ -347,3 +347,81 @@ describe('step-up interceptor (PR-11)', () => {
     expect(screen.queryByText(/^err:/)).not.toBeInTheDocument();
   });
 });
+
+/*
+  Two answers to the PIN check that no test had given the modal, and the key that closes it. A
+  connection that drops must not lose what the PIN was asked for; a session that has ended must
+  not leave a PIN prompt open over a page that is signing out; and a modal closed with Escape
+  must not leave the request that opened it waiting for ever.
+*/
+describe('step-up modal: a lost connection, an ended session, and Escape', () => {
+  it('keeps the modal open when the check never reaches the server, and a second PIN goes through', async () => {
+    const keys: (string | null)[] = [];
+    let checks = 0;
+    server.use(
+      spyTransfer(keys),
+      http.post('*/bff/auth/verify-pin', () => {
+        checks += 1;
+        // The first check is lost on the way; the second goes on to the mock's own answer.
+        if (checks === 1) return HttpResponse.error();
+      }),
+    );
+    renderWithProviders(<Harness />);
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText("Verify it's you");
+
+    await enterPin('123456');
+
+    const words = await screen.findByText(
+      "Couldn't verify right now — check your connection and try again.",
+    );
+    expect(words.closest('[role="alert"]')).not.toBeNull();
+    // Still asking, with empty boxes, and what was waiting for the PIN was neither sent again
+    // nor given up.
+    expect(screen.getByText("Verify it's you")).toBeInTheDocument();
+    expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue('');
+    expect(screen.getByTestId('out')).toHaveTextContent('pending');
+    expect(keys).toHaveLength(1);
+
+    await enterPin('123456');
+    expect(await screen.findByText('ok:TXN-STEPUP-1')).toBeInTheDocument();
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).toBe(keys[0]);
+  });
+
+  it('gives up the step-up when the session has ended, and replays nothing', async () => {
+    /*
+      The session ends while the modal is open. The mock then answers the check as the BFF does
+      for a caller with no session: 401 (see the note on `beforeEach` above). No PIN can help, so
+      the modal closes and what was waiting is told it was cancelled.
+    */
+    const keys: (string | null)[] = [];
+    server.use(spyTransfer(keys));
+    renderWithProviders(<Harness />);
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText("Verify it's you");
+
+    mockState.session = null;
+    await enterPin('123456');
+
+    expect(await screen.findByText('err:STEP_UP_CANCELLED')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("Verify it's you")).not.toBeInTheDocument());
+    expect(keys).toHaveLength(1);
+  });
+
+  it('Escape gives the step-up up, as Cancel does, and replays nothing', async () => {
+    const keys: (string | null)[] = [];
+    server.use(spyTransfer(keys));
+    renderWithProviders(<Harness />);
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText("Verify it's you");
+    await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
+
+    await userEvent.keyboard('{Escape}');
+
+    // Not left pending behind a modal that is gone: what was waiting is told it was cancelled.
+    expect(await screen.findByText('err:STEP_UP_CANCELLED')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("Verify it's you")).not.toBeInTheDocument());
+    expect(keys).toHaveLength(1);
+  });
+});
