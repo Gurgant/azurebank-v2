@@ -187,8 +187,8 @@ public class SourceHygieneTests
             + "than two hundred members");
 
         offenders.Should().BeEmpty(
-            "two <summary> blocks on one member drop one of them from the generated XML, and the "
-            + "compiler is silent about it while documentation generation is off");
+            "two <summary> blocks on one member both reach the generated XML under it, and the "
+            + "compiler is silent about it with documentation generation on");
     }
 
     [Theory]
