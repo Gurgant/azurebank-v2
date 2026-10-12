@@ -186,6 +186,29 @@ actionlint        # for a change to a workflow; with ShellCheck installed, as in
 - **No green without runnable proof.** "Should work" is not a test result. A change that can be
   seen in a browser is verified in a browser.
 
+**CI also counts what the tests run.** On every pull request the job `coverage` runs the
+backend's two test projects with a collector, the API's whole and against a SQL Server so that
+the concurrency proofs run too, and then the frontend's unit and component tests
+(`npm run test:coverage`). Its summary gives the share of the lines of hand-written code that
+ran, for each backend assembly and in total, and the job fails under a floor set a little under
+the last figure measured: a tripwire, not a target.
+[`infra/coverage_summary.py`](../infra/coverage_summary.py) does the counting. Two test
+projects run the same assemblies, so their files are joined line by line: a line ran when
+either saw it run.
+
+- **Left out of the backend's figure:** what the build writes under `obj/`, which is the output
+  of the source generators, and the EF migrations. Nobody writes either by hand, and together
+  they are larger than the code they sit beside: counted, they move an assembly's figure by tens
+  of points. They are printed under the table, apart.
+- **Left out of the frontend's figure:** the tests and the helpers under `src/test`, the mock
+  backend under `src/mocks`, the contract and integration suites, and the generated types and
+  validators ([`vitest.config.ts`](../frontend/vitest.config.ts)). A source file that no test
+  loads counts with all its lines unrun.
+- **Not seen at all:** a backend assembly that no test project loads is in no coverage file, and
+  what only the suites against the running stack reach counts as not run.
+- **A line that ran is not a line that was checked.** The figure says where no test goes. It
+  says nothing about what the tests assert.
+
 ## Merging
 
 - **Every pull request is merged by hand after review.** `main` requires a pull request,
