@@ -80,9 +80,10 @@ mine.
 
 Models are chosen per task: the most capable one orchestrates and verifies, a cheaper one does the
 mechanical work. One [`AGENTS.md`](../AGENTS.md) gives every agent the same commands, checks and
-rules. Two agent skills hold the repeatable procedures: the gate before a pull request and the
-review round. Where a check needs a real browser outside the test suite, an agent drives Chrome
-through an MCP server and reports what it read.
+rules. Two agent skills, each a file of numbered steps, hold the repeatable procedures:
+[the gate before a pull request](../.agents/skills/pre-pr-gate/SKILL.md) and
+[the review round](../.agents/skills/review-round/SKILL.md). Where a check needs a real browser
+outside the test suite, an agent drives Chrome through an MCP server and reports what it read.
 
 ## What stands between an agent and `main`
 

@@ -93,6 +93,9 @@ every pull request.
   fixed.
 - When several pull requests are proposed together, their combination is checked first: merged
   in the proposed order on a scratch tree, then built and tested.
+- The steps in full are in two files:
+  [the gate before a pull request](.agents/skills/pre-pr-gate/SKILL.md) and
+  [one review round](.agents/skills/review-round/SKILL.md).
 
 ## Writing
 
