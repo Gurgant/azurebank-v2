@@ -509,7 +509,7 @@ strong {
   color: var(--on-field-soft);
   text-wrap: pretty;
 }
-/* The second sentence waits for a screen with room for it. */
+/* The last sentence waits for a screen with room for it. */
 .lede__more {
   display: none;
 }
@@ -2152,14 +2152,27 @@ strong {
   }
 }
 
-/* ----- A shorter one still: the second sentence under the headline gives its room away. In
-   Italian, where the headline is a line longer, it does so sooner. ----- */
-@media (min-width: 64em) and (max-height: 46em) {
+/* ----- A shorter one still: the last sentence under the headline gives its room away, so that
+   the two sentences always shown and the four figures stay on the first screen. In Italian,
+   where the headline is a line longer, it does so sooner. ----- */
+@media (min-width: 64em) and (max-height: 51.99em) {
   .lede__more {
     display: none;
   }
 }
-@media (min-width: 64em) and (max-height: 54.99em) {
+@media (min-width: 64em) and (max-height: 59.99em) {
+  html[lang='it'] .lede__more {
+    display: none;
+  }
+}
+/* Under 1280 the column is narrower and the paragraph a line longer: it gives the room away
+   sooner still. */
+@media (min-width: 64em) and (max-width: 79.99em) and (max-height: 55.99em) {
+  .lede__more {
+    display: none;
+  }
+}
+@media (min-width: 64em) and (max-width: 79.99em) and (max-height: 63.99em) {
   html[lang='it'] .lede__more {
     display: none;
   }
