@@ -18,8 +18,8 @@ namespace AzureBank.Bff.Tests;
 /// <summary>
 /// A renewal the API answers with something that is not its contract: a 200 whose body is not
 /// JSON or carries no token; and a call that fails in a way nobody listed. Each is
-/// the service failing and not the session: 503 with <c>Retry-After</c>, the session kept, and no
-/// token sent on, least of all an empty one.
+/// the service failing and not the session: 503 with the <c>Retry-After</c> of a failed renewal's
+/// cooldown, the session kept, and no token sent on, least of all an empty one.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -134,6 +134,14 @@ public sealed class RenewalOutsideTheContractTests : IClassFixture<WebApplicatio
             ["/api/auth/refresh"], "the renewal was asked for once, and the PIN was sent nowhere");
         response.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable, "the service is failing, not the session");
         response.Headers.RetryAfter.Should().NotBeNull("the SPA retries a 503 and reads a 401 as signed out");
+
+        // WHICH 503. A renewal still running answers "come back in 5 s", the length of the wait; a
+        // renewal that FAILED answers with what is left of its 15 s cooldown, during which no
+        // other starts. The presence of the header does not tell them apart, and a failure that
+        // left the renewal unrecorded would answer the first. Measured 2026-10-12 with the catch
+        // narrowed to network failures: "a failure nobody listed" is still a 503, with 5.
+        response.Headers.RetryAfter?.Delta.Should().BeGreaterThan(
+            TimeSpan.FromSeconds(5), "the failure was recorded on the session, and its cooldown is what the caller is told");
         held.Should().NotBeNull("a fault of the API's signs nobody out");
         held!.AccessToken.Should().Be("jwt-0", "nothing the answer carried was stored as a token");
     }

@@ -32,6 +32,14 @@ namespace AzureBank.Tests.Integration;
 /// refused too and says nothing: counted with the others, a browser closing a tab would raise the
 /// alert that exists for an audit store that is down.
 /// </para>
+/// <para>
+/// THE DATABASE IS SHARED, AND AN UNREADABLE ROW IS UNREADABLE TO EVERYBODY. The classes of this
+/// collection that count audit rows empty the table first; the ones that only read it do not, and
+/// a row left with an outcome the code cannot name fails their read. So every test here hands the
+/// two audit tables back empty, as it took them. Measured 2026-10-12 before the removal was
+/// there: this class alone, then <c>WithdrawalStepUpSqlServerTests</c> alone, and 2 of its 7
+/// failed on "Cannot convert string value 'Vanished'".
+/// </para>
 /// </remarks>
 [Trait("Category", "SqlServer")]
 [Collection(SqlServerProofsCollection.Name)]
@@ -39,7 +47,27 @@ public sealed class AuditChainUnreadableRowAndTailSqlServerTests : IDisposable
 {
     private CustomWebApplicationFactory? _factory;
 
-    public void Dispose() => _factory?.Dispose();
+    public void Dispose()
+    {
+        if (_factory is null)
+        {
+            return; // no host was built, so nothing was written
+        }
+
+        try
+        {
+            // Through the host's own context, while the host is still there. Every test of this
+            // class emptied both tables before it wrote, so what is in them now is its own.
+            using var scope = _factory.Services.CreateScope();
+            var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+            context.Database.ExecuteSqlRaw("DELETE FROM [AuditAnchors]");
+            context.Database.ExecuteSqlRaw("DELETE FROM [AuditEvents]");
+        }
+        finally
+        {
+            _factory.Dispose();
+        }
+    }
 
     private IServiceProvider CreateSqlServices(Action<CustomWebApplicationFactory>? configure = null)
     {

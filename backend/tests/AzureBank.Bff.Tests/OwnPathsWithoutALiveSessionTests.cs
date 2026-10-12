@@ -1,3 +1,4 @@
+using System.Buffers.Text;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
@@ -31,7 +32,8 @@ namespace AzureBank.Bff.Tests;
 /// <para>
 /// The API is faked at the "BackendApi" client and every path it is asked is recorded, so "the
 /// API was not sent the PIN" is read from the record. The record is not empty in the dead-grant
-/// case: the renewal that was refused is in it.
+/// case: the renewal that was refused is in it, once, and after it the revoke of the grant, which
+/// ending the session queues.
 /// </para>
 /// </remarks>
 public sealed class OwnPathsWithoutALiveSessionTests : IClassFixture<WebApplicationFactory<Program>>, IDisposable
@@ -131,15 +133,24 @@ public sealed class OwnPathsWithoutALiveSessionTests : IClassFixture<WebApplicat
     [InlineData("/bff/auth/azuretag")]
     public async Task WithADeadGrant_TheBffsOwnCallsAnswer401_EndTheSession_AndSendTheApiNothingElse(string path)
     {
-        // The held token has expired, so the call needs a renewal first, and the API answers that
-        // renewal with the one refusal that says the grant is dead (ADR-0057 §4.5). The 401 is the
-        // SPA's sign-out; the 503 of a renewal that merely failed is another test's.
+        // The held token still has half a minute of a quarter of an hour: alive, and so close to
+        // its end that the call waits for a renewal first. The API answers that renewal with the
+        // one refusal that says the grant is dead (ADR-0057 §4.5). The 401 is the SPA's sign-out;
+        // the 503 of a renewal that merely failed is another test's.
+        //
+        // WHY A LIVE TOKEN. With an expired one this test stayed green without the statement that
+        // ends the session: the refusal stops the renewals, a session that cannot renew and holds
+        // an expired token answers 401 by itself, and the test's own read of the session expired
+        // it. A token with life left is sent on unless the session was ended, so here only the
+        // ending gives the 401, keeps the PIN from the API and empties the store. Measured
+        // 2026-10-12 without that statement: 200 on all three paths.
         var (host, api) = NewHost();
         var sessions = host.Services.GetRequiredService<ISessionService>();
         var cookieName = host.Services.GetRequiredService<IOptions<BffSessionOptions>>().Value.CookieName;
+        var expiresAt = DateTime.UtcNow.AddSeconds(30);
         var sessionId = sessions.CreateSession(
-            "jwt-0",
-            DateTime.UtcNow.AddSeconds(-1),
+            Jwt(issuedAt: expiresAt.AddSeconds(-900), expiresAt),
+            expiresAt,
             "rt-0",
             DateTime.UtcNow.AddMinutes(60),
             new UserLoginInfo
@@ -156,12 +167,44 @@ public sealed class OwnPathsWithoutALiveSessionTests : IClassFixture<WebApplicat
         request.Headers.Add("Cookie", $"{cookieName}={sessionId}");
         var response = await host.CreateClient().SendAsync(request);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var held = sessions.GetSession(sessionId);
+
+        var again = Call(path);
+        again.Headers.Add("Cookie", $"{cookieName}={sessionId}");
+        var next = await host.CreateClient().SendAsync(again);
+
+        // Ending a session queues the revoke of its grant, sent to the API in the background: it
+        // is waited for, so that the record is read whole.
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!api.Paths.Contains("/api/auth/revoke") && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(25);
+        }
 
         using var all = new AssertionScope();
-        api.Paths.Should().Contain("/api/auth/refresh", "ARRANGE: the renewal was asked for, and refused");
+        DateTime.UtcNow.Should().BeBefore(
+            expiresAt.AddSeconds(-10), "ARRANGE: the token was alive throughout, so no expiry ended anything");
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
         body.GetProperty("detail").GetString().Should().Be("Session expired or invalid");
-        api.Paths.Should().NotContain(ApiPathOf(path), "nothing is sent to the API for a session that has ended");
-        sessions.GetSession(sessionId).Should().BeNull("a dead grant ends the session");
+        held.Should().BeNull("a dead grant ends the session, whatever is left of its token");
+        next.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "the cookie of an ended session opens nothing");
+        api.Paths.Should().Equal(
+            ["/api/auth/refresh", "/api/auth/revoke"],
+            "the renewal was asked for once and refused, and the ended session's grant was revoked; "
+            + $"neither call sent the API a PIN or a handle, so {ApiPathOf(path)} is not in the record");
+    }
+
+    /// <summary>
+    /// A JWT-shaped token that carries its own issue time and expiry, so the BFF reads how much of
+    /// its lifetime is left. Unsigned: the BFF reads a token, it never verifies one.
+    /// </summary>
+    private static string Jwt(DateTime issuedAt, DateTime expiresAt)
+    {
+        static string Part(string json) => Base64Url.EncodeToString(Encoding.UTF8.GetBytes(json));
+        var iat = new DateTimeOffset(issuedAt).ToUnixTimeSeconds();
+        var exp = new DateTimeOffset(expiresAt).ToUnixTimeSeconds();
+        return Part("""{"alg":"none","typ":"JWT"}""")
+            + "." + Part($$"""{"sub":"held","iat":{{iat}},"exp":{{exp}}}""")
+            + ".test-signature";
     }
 }

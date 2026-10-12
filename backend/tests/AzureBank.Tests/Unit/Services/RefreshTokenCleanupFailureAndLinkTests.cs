@@ -15,7 +15,7 @@ namespace AzureBank.Tests.Unit.Services;
 
 /// <summary>
 /// The refresh-token sweep when a run of it fails, and when a row it keeps points at a row it
-/// deletes.
+/// deletes (the outcome only: the second test says what this provider cannot hold).
 /// </summary>
 /// <remarks>
 /// On InMemory and a <see cref="FakeTimeProvider"/>, with the loop run directly, for the reasons
@@ -151,11 +151,20 @@ public sealed class RefreshTokenCleanupFailureAndLinkTests : IDisposable
     }
 
     [Fact]
-    public async Task ALiveTokenThatPointsAtAnExpiredOne_IsKept_AndItsLinkIsCleared()
+    public async Task ALiveTokenThatPointsAtAnExpiredOne_IsKept_AndNamesNoRowThatIsGone()
     {
         // A row of the old rotation chain: the predecessor still lives and names a successor that
         // has expired, which is what a shortened lifetime leaves behind. The sweep deletes by the
-        // row's own expiry, never by what points at it, and takes the link away first.
+        // row's own expiry, never by what points at it.
+        //
+        // WHAT THIS HOLDS, AND WHAT IT DOES NOT. On this provider: that the sweep's in-memory
+        // branch reads the rows that point at an expiring one, live ones included, keeps the live
+        // row, ends with no link to a row that is gone and says nothing at Warning. It does NOT
+        // hold the assignment that clears the link: the referrers are tracked when the expired
+        // rows are removed, and EF then sets the key of a tracked dependent to null by itself.
+        // Measured 2026-10-12: green with that assignment taken out.
+        // The statement that clears the link in a real database, where nothing does it for the
+        // sweep, is held by RefreshTokenCleanupSqlServerTests.
         var expired = Token("expired-successor", Start.AddMinutes(-1));
         var live = Token("live-predecessor", Start.AddDays(7));
         live.ReplacedByTokenId = expired.Id;
