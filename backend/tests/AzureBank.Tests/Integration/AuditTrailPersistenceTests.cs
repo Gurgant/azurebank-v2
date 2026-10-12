@@ -397,6 +397,7 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
         response.IsSuccessStatusCode.Should().BeTrue(await response.Content.ReadAsStringAsync());
 
         var row = await SingleRowForActorAsync(userId, SecurityEvents.MoneyTransferredInternally);
+        row.SubjectType.Should().Be("Transaction");
         // Observed on the running API, 2026-09-14, internal transfer, sequence 3:
         // Detail = {"authorizationId":"01a0a08b-f7ba-71f7-86a2-ef383a9f00aa"}, the id the mint returned.
         AuditDetails.ConsumedAuthorisationOf(row.Detail).Should().Be(
@@ -818,6 +819,7 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
         response.IsSuccessStatusCode.Should().BeFalse("an internal transfer without a step-up is refused");
 
         var row = await SingleRowForActorAsync(userId, SecurityEvents.MoneyTransferRefused);
+        row.SubjectType.Should().Be("Account");
         row.Detail.Should().Be(ErrorCodes.AuthorizationRequired);
         row.SubjectId.Should().Be(
             firstAccountId,

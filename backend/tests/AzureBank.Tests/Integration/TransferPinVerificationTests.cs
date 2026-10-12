@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Net;
 using System.Net.Http.Json;
+using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Account;
 using AzureBank.Shared.DTOs.Auth;
@@ -8,6 +9,8 @@ using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.Transfer;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace AzureBank.Tests.Integration;
 
@@ -386,6 +389,46 @@ public class TransferPinVerificationTests : IntegrationTestBase
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
         (await ErrorCodeOf(response)).Should().Be(ErrorCodes.InvalidPin);
         (await BalanceOfAsync(token, primaryAccount)).Should().Be(before);
+    }
+
+    [Fact]
+    public async Task AuthorisingAnInternalTransfer_OutOfAnotherUsersAccount_IsRefusedBeforeThePin()
+    {
+        /*
+          The source account is checked for ownership before the PIN, as the destination is and as
+          the external mint's source is. A WRONG pin, on purpose: it is what makes the order
+          visible. Were the PIN consulted first, or the source not checked at all, this would be
+          401 INVALID_PIN, an attempt spent and an audit row about an account that is not the
+          caller's; with the right PIN it would be an authorisation naming that account.
+
+          OBSERVED: 403 Forbidden / errorCode ACCESS_DENIED
+        */
+        var (victimToken, _, victimsAccount) = await RegisterTestUserAsync();
+        await DepositAsync(victimToken, victimsAccount, 500m);
+        var (token, userId, ownAccount) = await RegisterTestUserAsync();
+        await SetPinAsync(token, CorrectPin);
+
+        SetAuthHeader(token);
+        var response = await Client.PostAsJsonAsync(
+            "/api/transfers/internal/authorizations",
+            new InternalTransferAuthorizationRequest
+            {
+                FromAccountId = victimsAccount,
+                ToAccountId = ownAccount,
+                Amount = 25m,
+                Pin = WrongPin
+            },
+            JsonOptions);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await ErrorCodeOf(response)).Should().Be(ErrorCodes.AccessDenied);
+
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        (await db.Users.AsNoTracking().SingleAsync(u => u.Id == userId)).PinAccessFailedCount
+            .Should().Be(0, "a probe of someone else's account costs no attempt");
+        (await db.StepUpAuthorizations.CountAsync(a => a.UserId == userId))
+            .Should().Be(0, "and leaves no authorisation behind");
     }
 
     [Fact]
