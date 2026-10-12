@@ -189,7 +189,7 @@ actionlint        # for a change to a workflow; with ShellCheck installed, as in
 ## Merging
 
 - **Every pull request is merged by hand after review.** `main` requires a pull request,
-  permits squash only, and has no bypass.
+  permits squash only, and has no bypass list.
 - **Branches are not deleted after merge.** A squash leaves one commit on `main`, and the branch
   is where the commits behind it stay.
 - **Contract changes ship as two pull requests.** The endpoint, the regenerated OpenAPI document

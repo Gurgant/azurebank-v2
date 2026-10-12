@@ -149,6 +149,7 @@ request's commit messages for a credit line or a mention.
 | [Engineering traps](docs/engineering-traps.md) | The things that fail silently; each one cost real time to find |
 | [SECURITY.md](SECURITY.md) | The security posture in one place, including what is not done |
 | [Engineering Playbook](docs/engineering-playbook.md) | How I lead the work: what I decide, the path of a change, and what stands between an agent and `main` |
+| [Harness engineering](docs/harness-engineering.md) | What I build around the agents: instructions, checks and limits, and one pull request followed from start to finish |
 
 ## Status and known limits
 
