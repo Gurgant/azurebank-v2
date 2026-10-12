@@ -15,8 +15,8 @@ stop after step 2 and hand back what each finding needs.
 
 ```bash
 gh pr view <number> --json headRefOid,statusCheckRollup,reviews,comments
-gh api graphql -f query='query($n:Int!){repository(owner:"Gurgant",name:"azurebank-v2"){pullRequest(number:$n){reviewThreads(first:100){pageInfo{hasNextPage} nodes{id isResolved isOutdated comments(first:20){nodes{databaseId author{login} path body createdAt}}}}}}}' -F n=<number>
-gh api "repos/Gurgant/azurebank-v2/code-scanning/alerts?state=open&pr=<number>"
+gh api graphql -f query='query($n:Int!){repository(owner:"Gurgant",name:"azurebank-v2"){pullRequest(number:$n){reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{id isResolved isOutdated comments(first:100){nodes{databaseId author{login} path body createdAt}}}}}}}' -F n=<number>
+gh api --paginate "repos/Gurgant/azurebank-v2/code-scanning/alerts?state=open&pr=<number>&per_page=100"
 ```
 
 - A verdict counts only when it is about the last head: the commit the review names
@@ -25,7 +25,9 @@ gh api "repos/Gurgant/azurebank-v2/code-scanning/alerts?state=open&pr=<number>"
   skipped, or a green tick on the reviewer's check.
 - Read the summary, every thread of the round, the failed checks and the open alerts. A finding
   outside the diff has no thread: it is only in the text of the review. Note the severity the
-  reviewer gave each finding. `hasNextPage` true means threads were cut: page on.
+  reviewer gave each finding. `hasNextPage` true means threads were cut: ask again with
+  `reviewThreads(first:100, after:"<endCursor>")` until it is false. A thread that shows 100
+  comments was cut too: read it on the pull request's page before judging it.
 
 ## 2. Judge each finding against the code
 
@@ -46,7 +48,8 @@ commit already fixed it, the reply names that commit.
 All fixes of the round go in one commit whose message says the outcome: the reviewer then reads
 one new head, and each reply can name one commit. The order is: fix, run the pre-pr-gate skill's
 step 2 for what changed and read the numbers, commit, push, reply. A round with nothing true to
-fix has no commit: go to step 4. A branch that is behind takes `git merge origin/main`.
+fix has no commit: go to step 4. A branch that is behind takes `git fetch origin`, then
+`git merge origin/main`: without the fetch the merge takes main as this machine last saw it.
 
 ## 4. One reply in each thread
 
