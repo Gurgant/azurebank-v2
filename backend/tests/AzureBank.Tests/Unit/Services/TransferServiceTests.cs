@@ -716,6 +716,23 @@ public class TransferServiceTests : IDisposable
 
     #endregion
 
+    #region DailyLimitLockResource
+
+    [Fact]
+    public void DailyLimitLockResource_IsOneNameForEachPayer()
+    {
+        // ADR-0050 D5: the lock is per user. One name for everyone would keep every sum right and
+        // make every payer wait behind every other, and the SQL Server proofs would not see it:
+        // they take the lock's name from this same method.
+        var one = Guid.NewGuid();
+        var another = Guid.NewGuid();
+
+        TransferService.DailyLimitLockResource(one).Should().Be("daily-limit:" + one.ToString("D"));
+        TransferService.DailyLimitLockResource(another).Should().NotBe(TransferService.DailyLimitLockResource(one));
+    }
+
+    #endregion
+
     #region InternalTransferAsync - Same Account Tests
 
     [Fact]

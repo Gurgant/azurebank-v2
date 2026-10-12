@@ -59,9 +59,9 @@
     <link rel="apple-touch-icon" href="apple-touch-icon.png" />
     <!-- The number after the name changes when the page and its two files change together, so
          that a browser never pairs this page with an older copy of them. -->
-    <link rel="stylesheet" href="entry.css?v=4" />
+    <link rel="stylesheet" href="entry.css?v=5" />
     <!-- A blocking script in the head, so that the language is chosen before the first paint. -->
-    <script src="entry.js?v=4"></script>
+    <script src="entry.js?v=5"></script>
   </head>
   <body>
     <a class="skip" href="#content">
@@ -127,21 +127,26 @@
               </span>
             </h1>
 
-            <!-- One sentence on a phone; the second one is added where there is room for it. -->
+            <!-- Two sentences on a phone; the third one is added where there is room for it. -->
             <p class="lede" lang="en" data-lang="en">
               A banking demo with invented money: a .NET&nbsp;10 API, a React app and SQL Server,
-              live on Azure.
+              live on Azure. I designed it, wrote part of the code and direct the AI coding agents
+              that write the rest.
               <span class="lede__more"
-                >A payment is applied once, the access token stays on the server, and security
-                events are written to a hash&#8209;chained log.</span
+                >The same payment is not applied twice (the same request arriving again after a
+                network error, not a second payment made on purpose), the access token stays on
+                the server, and security events are written to a hash&#8209;chained log.</span
               >
             </p>
             <p class="lede" lang="it" data-lang="it">
               Una demo bancaria con denaro inventato: un'API .NET&nbsp;10, un'app React e SQL
-              Server, online su Azure.
+              Server, online su Azure. L'ho progettata io: una parte del codice l'ho scritta, il
+              resto lo scrivono agenti AI che dirigo.
               <span class="lede__more"
-                >Un pagamento viene eseguito una sola volta, il token di accesso resta sul server e
-                gli eventi di sicurezza finiscono in un registro concatenato con hash.</span
+                >Lo stesso pagamento non viene eseguito due volte (la stessa richiesta arrivata di
+                nuovo per un errore di rete, non un secondo pagamento voluto), il token di accesso
+                resta sul server e gli eventi di sicurezza finiscono in un registro concatenato
+                con hash.</span
               >
             </p>
 
@@ -220,24 +225,24 @@
             >
               <li>
                 <a href="https://github.com/Gurgant/azurebank-v2/pulls?q=is%3Apr+is%3Amerged">
-                  <span class="fig" lang="en" data-lang="en"><b>269</b><span>pull requests merged</span></span>
-                  <span class="fig" lang="it" data-lang="it"><b>269</b><span>merge di pull request</span></span>
+                  <span class="fig" lang="en" data-lang="en"><b>269</b><span>pull requests merged, each one by me</span></span>
+                  <span class="fig" lang="it" data-lang="it"><b>269</b><span>merge di pull request, tutti fatti da me</span></span>
                 </a>
               </li>
               <li>
-                <a href="https://github.com/Gurgant/azurebank-v2/actions/workflows/ci.yml?query=branch%3Amain">
+                <a href="https://github.com/Gurgant/azurebank-v2/actions/runs/38182217230">
                   <span class="fig" lang="en" data-lang="en"
                     ><b>4,436</b
                     ><span
                       >automated tests
-                      <small>2,889 backend, 1,457 frontend, 90 in a real browser on the real stack</small></span
+                      <small>2,889 backend + 1,457 frontend + 90 in a real browser on the real stack</small></span
                     ></span
                   >
                   <span class="fig" lang="it" data-lang="it"
                     ><b>4.436</b
                     ><span
                       >test automatici
-                      <small>2.889 di backend, 1.457 di frontend, 90 in un browser vero sullo stack reale</small></span
+                      <small>2.889 di backend + 1.457 di frontend + 90 in un browser vero sullo stack reale</small></span
                     ></span
                   >
                 </a>
@@ -249,12 +254,12 @@
                 </a>
               </li>
               <li>
-                <a href="https://github.com/Gurgant/azurebank-v2/rules">
+                <a href="https://github.com/Gurgant/azurebank-v2/rules/18930321">
                   <span class="fig" lang="en" data-lang="en"
-                    ><b>9</b><span>required checks and a security scan before any merge</span></span
+                    ><b>9</b><span>required checks and a security scan: today, before any merge</span></span
                   >
                   <span class="fig" lang="it" data-lang="it"
-                    ><b>9</b><span>controlli obbligatori e una scansione di sicurezza prima di ogni merge</span></span
+                    ><b>9</b><span>controlli obbligatori e una scansione di sicurezza: oggi, prima di ogni merge</span></span
                   >
                 </a>
               </li>
@@ -340,18 +345,27 @@
             <ul role="list">
               <li class="claim">
                 <h3>
-                  <span lang="en" data-lang="en">A payment is applied once.</span>
-                  <span lang="it" data-lang="it">Un pagamento viene eseguito una sola volta.</span>
+                  <span lang="en" data-lang="en">The same payment is not applied twice.</span>
+                  <span lang="it" data-lang="it">Lo stesso pagamento non viene eseguito due volte.</span>
                 </h3>
                 <p lang="en" data-lang="en">
-                  Every money operation carries a key the server recognises: retries, network
-                  errors and duplicate requests do not create a second charge. It held under
-                  24&nbsp;identical parallel requests on a real SQL Server.
+                  Every money operation carries a key the server recognises, and is applied at most
+                  once per key: when the same request arrives again with the same key, after a
+                  retry or a network error, the money does not move a second time. That held under
+                  24&nbsp;identical parallel requests on a real SQL Server. A key is kept for
+                  24&nbsp;hours: the same request sent after that is a new payment. The screen has
+                  its own guard as well: it sends no second request while the first is in flight,
+                  so a double click sends one.
                 </p>
                 <p lang="it" data-lang="it">
-                  Ogni operazione che muove denaro porta con sé una chiave che il server riconosce:
-                  nuovi tentativi, errori di rete e richieste doppie non creano un secondo addebito.
-                  Ha retto a 24&nbsp;richieste identiche in parallelo su un vero SQL Server.
+                  Ogni operazione che muove denaro porta con sé una chiave che il server riconosce,
+                  ed è eseguita al massimo una volta per chiave: se la stessa richiesta arriva di
+                  nuovo con la stessa chiave, per un nuovo tentativo o un errore di rete, il denaro
+                  non si muove una seconda volta. Ha retto a 24&nbsp;richieste identiche in
+                  parallelo su un vero SQL Server. Una chiave è conservata per 24&nbsp;ore: la
+                  stessa richiesta inviata dopo è un nuovo pagamento. Anche la schermata ha la sua
+                  protezione: non invia una seconda richiesta mentre la prima è in corso, quindi un
+                  doppio clic ne invia una sola.
                 </p>
                 <p class="claim__src">
                   <a href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/adr/0009-idempotency-monetary-operations.md">
@@ -363,6 +377,12 @@
                   >
                     <span lang="en" data-lang="en">Test: 24 in parallel</span>
                     <span lang="it" data-lang="it">Test: 24 in parallelo</span>
+                  </a>
+                  <a
+                    href="https://github.com/Gurgant/azurebank-v2/blob/main/frontend/src/components/dialogs/deposit.test.tsx"
+                  >
+                    <span lang="en" data-lang="en">Test: a double click</span>
+                    <span lang="it" data-lang="it">Test: un doppio clic</span>
                   </a>
                 </p>
               </li>
@@ -395,13 +415,14 @@
                   <span lang="it" data-lang="it">Un inserimento del PIN autorizza un solo pagamento.</span>
                 </h3>
                 <p lang="en" data-lang="en">
-                  Bound to that account, that amount and that payee, valid two minutes, usable
-                  once. Three wrong PINs lock the PIN for 15&nbsp;minutes.
+                  Bound to the account, the amount and, for a transfer, the payee; valid two
+                  minutes and spent once. Three wrong PINs in a row lock the PIN for
+                  15&nbsp;minutes.
                 </p>
                 <p lang="it" data-lang="it">
-                  Legato a quel conto, a quell'importo e a quel beneficiario, valido due minuti,
-                  utilizzabile una sola volta. Tre PIN sbagliati bloccano il PIN per
-                  15&nbsp;minuti.
+                  Legato al conto, all'importo e, per un bonifico, al beneficiario; valido due
+                  minuti e utilizzabile una sola volta. Tre PIN sbagliati di fila bloccano il PIN
+                  per 15&nbsp;minuti.
                 </p>
                 <p class="claim__src">
                   <a
@@ -425,15 +446,16 @@
                 </h3>
                 <p lang="en" data-lang="en">
                   Append-only, each row chained to the one before by a keyed hash. A tool in the
-                  repository, AzureBank.AuditVerifier, walks the chain; it is run by hand against
-                  the database, so a visitor cannot run it. It does not detect rows cut from the
-                  end of the table.
+                  repository, AzureBank.AuditVerifier, walks the chain. It needs the database and
+                  the chain's two keys, so a visitor can run it on a local copy of the project, not on
+                  the live demo. It does not detect rows cut from the end of the table.
                 </p>
                 <p lang="it" data-lang="it">
-                  Le righe si possono solo aggiungere, ognuna legata alla precedente da un hash con
-                  chiave. Uno strumento del repository, AzureBank.AuditVerifier, percorre la catena:
-                  si lancia a mano sul database, quindi un visitatore non può usarlo. Non rileva le
-                  righe tagliate dalla fine della tabella.
+                  Il registro riceve solo righe nuove, ognuna legata alla precedente da un hash con
+                  chiave. Uno strumento del repository, AzureBank.AuditVerifier, percorre la catena.
+                  Gli servono il database e le due chiavi della catena, quindi un visitatore non può usarlo
+                  sulla demo online; su una copia locale del progetto sì. Non rileva le righe
+                  tagliate dalla fine della tabella.
                 </p>
                 <p class="claim__src">
                   <a
@@ -447,6 +469,34 @@
                   >
                     <span lang="en" data-lang="en">Test: the chain</span>
                     <span lang="it" data-lang="it">Test: la catena</span>
+                  </a>
+                </p>
+              </li>
+              <li class="claim">
+                <h3>
+                  <span lang="en" data-lang="en">The frontend is held to the API's contract.</span>
+                  <span lang="it" data-lang="it">Il frontend è verificato sul contratto dell'API.</span>
+                </h3>
+                <p lang="en" data-lang="en">
+                  The API generates the contract. The same contract tests run against the mock and
+                  against the real BFF, API and SQL Server, and the browser tests run on the built
+                  app as the BFF serves it.
+                </p>
+                <p lang="it" data-lang="it">
+                  Il contratto lo genera l'API. Gli stessi test di contratto girano contro il mock e
+                  contro BFF, API e SQL Server reali, e i test nel browser girano sull'app
+                  compilata, così come la serve il BFF.
+                </p>
+                <p class="claim__src">
+                  <a
+                    href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/adr/0053-the-committed-contract-is-what-the-api-generates.md"
+                  >
+                    <span lang="en" data-lang="en">Decision 0053</span>
+                    <span lang="it" data-lang="it">Decisione 0053</span>
+                  </a>
+                  <a href="https://github.com/Gurgant/azurebank-v2/tree/main/frontend/src/contract">
+                    <span lang="en" data-lang="en">Test: the contract</span>
+                    <span lang="it" data-lang="it">Test: il contratto</span>
                   </a>
                 </p>
               </li>
@@ -598,15 +648,16 @@
 
           <div class="try__foot">
             <p class="smallprint" lang="en" data-lang="en">
-              Invented money, no sign-up, each copy lasts 24&nbsp;hours, don't enter real personal
-              data.
+              Invented money, no sign-up. You can come back to your copy for 24&nbsp;hours; it is
+              deleted later, by a job that runs every four hours. Don't enter real personal data.
               <a href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/testing/try-the-demo.md#things-worth-trying"
                 >More things to try</a
               >
             </p>
             <p class="smallprint" lang="it" data-lang="it">
-              Denaro inventato, nessuna registrazione, ogni copia dura 24&nbsp;ore: non inserire
-              dati personali veri. L'interfaccia della demo è in inglese.
+              Denaro inventato, nessuna registrazione. In ogni copia si può entrare per
+              24&nbsp;ore; viene cancellata più tardi, da un processo che parte ogni quattro ore.
+              Non inserire dati personali veri. L'interfaccia della demo è in inglese.
               <a href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/testing/try-the-demo.md#things-worth-trying"
                 >Altre prove da fare (in inglese)</a
               >
@@ -735,8 +786,8 @@
                         href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/adr/0009-idempotency-monetary-operations.md"
                       >
                         <span class="flag__say">
-                          <span lang="en" data-lang="en">Applied once</span>
-                          <span lang="it" data-lang="it">Eseguito una sola volta</span>
+                          <span lang="en" data-lang="en">At most once per key</span>
+                          <span lang="it" data-lang="it">Al massimo una volta per chiave</span>
                         </span>
                         <span class="flag__src">
                           <span lang="en" data-lang="en">Decision 0009</span>
@@ -822,21 +873,25 @@
               gets built. I have written part of the code myself, and I direct the AI coding agents
               that write the rest under rules I set. I read the code I merge. Every merge is my
               decision and my responsibility.
+              The agents are made by others. What I build around them is the harness: what they
+              read, what runs on their changes and what limits them.
             </p>
             <p class="work__lead" lang="it" data-lang="it">
               Sono l'architetto del progetto e il suo unico ingegnere. Ho progettato il sistema e
               decido che cosa si costruisce. Una parte del codice l'ho scritta io, e dirigo gli
               agenti AI che scrivono il resto, secondo regole fissate da me. Leggo il codice di cui
               faccio il merge. Ogni merge è una mia decisione e una mia responsabilità.
+              Attorno a questi agenti, sviluppati da altri, costruisco io l'harness: che cosa
+              leggono, quali controlli girano sulle loro modifiche, che cosa li limita.
             </p>
           </div>
 
           <div class="tally">
             <p class="fig" lang="en" data-lang="en">
-              <b>0</b><span>merges made by an agent, out of more than 260</span>
+              <b>0</b><span>merges made by an agent: my own statement. On GitHub every merge shows my account.</span>
             </p>
             <p class="fig" lang="it" data-lang="it">
-              <b>0</b><span>merge fatti da un agente, su più di 260</span>
+              <b>0</b><span>merge fatti da un agente: lo dichiaro io. Su GitHub ogni merge risulta dal mio account.</span>
             </p>
             <ul class="tally__links" role="list">
               <li>
@@ -847,7 +902,7 @@
                 </a>
               </li>
               <li>
-                <a href="https://github.com/Gurgant/azurebank-v2/rules">
+                <a href="https://github.com/Gurgant/azurebank-v2/rules/18930321">
                   <span lang="en" data-lang="en">The rules a merge must pass</span>
                   <span lang="it" data-lang="it">Le regole che un merge deve superare</span>
                   <svg class="i" aria-hidden="true" focusable="false"><use href="#i-out" /></svg>
@@ -855,8 +910,15 @@
               </li>
               <li>
                 <a href="docs/engineering-playbook">
-                  <span lang="en" data-lang="en">The Engineering Playbook: how the work is led</span>
+                  <span lang="en" data-lang="en">The Engineering Playbook: how I lead the work</span>
                   <span lang="it" data-lang="it">L'Engineering Playbook: come conduco il lavoro (in inglese)</span>
+                  <svg class="i" aria-hidden="true" focusable="false"><use href="#i-out" /></svg>
+                </a>
+              </li>
+              <li>
+                <a href="docs/harness-engineering">
+                  <span lang="en" data-lang="en">Harness engineering on AzureBank</span>
+                  <span lang="it" data-lang="it">Harness engineering su AzureBank (in inglese)</span>
                   <svg class="i" aria-hidden="true" focusable="false"><use href="#i-out" /></svg>
                 </a>
               </li>
@@ -881,18 +943,15 @@
               </h3>
               <ul class="limits" role="list" lang="en" data-lang="en">
                 <li>
-                  The first load after a quiet spell takes about 25&nbsp;seconds; once awake, the app
-                  answers in under a second. It is a demo: invented data, one small instance, no
+                  The first load after a quiet spell takes about 25&nbsp;seconds, and the first
+                  sign-in after it can take a few seconds. With the app awake, a sign-in took under
+                  a second when I measured it. It is a demo: invented data, one small instance, no
                   availability guarantee.
                 </li>
                 <li>
-                  The security log detects a change made by someone who holds the database but not
-                  its key. It does not detect rows cut from the end of the table, and no schedule
-                  runs the verifier.
-                </li>
-                <li>
-                  A payment's key is kept for 24&nbsp;hours: the same request sent again later than
-                  that is a new payment.
+                  The check of the security log shows a change made by someone who holds the
+                  database but not the chain's key; it does not show rows cut from the end of
+                  the table. It is run by hand: nothing runs it on a schedule.
                 </li>
                 <li>
                   The PIN is a second secret, not a one-time code: that needs a second channel,
@@ -904,24 +963,21 @@
                   read them; they open invented money only.
                 </li>
                 <li>
-                  One person merges, and no second person reviews a pull request: the
+                  I merge every pull request, and no second person reviews one: the
                   9 required checks, the code scan and an AI review are automated.
                 </li>
               </ul>
               <ul class="limits" role="list" lang="it" data-lang="it">
                 <li>
-                  Il primo caricamento dopo una pausa richiede circa 25&nbsp;secondi; una volta
-                  sveglia, l'app risponde in meno di un secondo. È una demo: dati inventati, una sola
-                  piccola istanza, nessuna garanzia di disponibilità.
+                  Il primo caricamento dopo una pausa richiede circa 25&nbsp;secondi, e il primo
+                  accesso che segue può richiederne ancora qualcuno. Con l'app sveglia, nelle mie
+                  misure un accesso ha richiesto meno di un secondo. È una demo: dati inventati, una
+                  sola piccola istanza, nessuna garanzia di disponibilità.
                 </li>
                 <li>
-                  Il registro di sicurezza rileva una modifica fatta da chi ha il database ma non la
-                  sua chiave. Non rileva le righe tagliate dalla fine della tabella, e la verifica
-                  non gira a scadenze fisse.
-                </li>
-                <li>
-                  La chiave di un pagamento è conservata per 24&nbsp;ore: la stessa richiesta inviata
-                  più tardi è un nuovo pagamento.
+                  La verifica del registro di sicurezza rivela una modifica fatta da chi ha il
+                  database ma non la chiave della catena; non rivela le righe tagliate dalla
+                  fine della tabella. Si lancia a mano: non è programmata.
                 </li>
                 <li>
                   Il PIN è un secondo segreto, non un codice usa e getta: servirebbe un secondo
@@ -933,7 +989,7 @@
                   leggerli; aprono solo denaro inventato.
                 </li>
                 <li>
-                  Il merge lo fa una sola persona, e nessun'altra rivede una pull request: i
+                  Il merge di ogni pull request lo faccio io, e nessun'altra persona la rivede: i
                   9 controlli obbligatori, la scansione del codice e una revisione AI sono automatici.
                 </li>
               </ul>
@@ -1049,8 +1105,8 @@
           </button>
         </div>
         <p class="foot__date">
-          <span lang="en" data-lang="en">Updated <time datetime="2026-10-11">11 October 2026</time></span>
-          <span lang="it" data-lang="it">Aggiornata l'<time datetime="2026-10-11">11 ottobre 2026</time></span>
+          <span lang="en" data-lang="en">Updated <time datetime="2026-10-12">12 October 2026</time></span>
+          <span lang="it" data-lang="it">Aggiornata il <time datetime="2026-10-12">12 ottobre 2026</time></span>
         </p>
       </div>
     </footer>
