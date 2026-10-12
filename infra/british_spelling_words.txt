@@ -1,0 +1,257 @@
+# The American forms that infra/check_british_spelling.py looks for, and the British form of each.
+#
+# A line is "american -> british". Under a line "endings: ...", each pair is a stem, and the
+# check reads the stem with each of those endings; "-" is the stem with no ending. A pair of
+# several words is a phrase, read on one line.
+#
+# A word that is not here is not looked for. That is on purpose: "size", "prize", "seize" and
+# "capsize" end like "organize" and are right as they are, so no rule guesses from an ending.
+# To hold one more word, add its line.
+#
+# Left out on purpose, because British writing has both forms or keeps the American one in
+# computing: program, disk, dialog (the window), meter (the device), focused, learned, toward,
+# inquiry. "Judgment" is listed because this repository writes "judgement".
+
+# Verbs in -ize and what is built on them.
+endings: e es ed ing er ers ation ations able
+actualiz -> actualis
+anonymiz -> anonymis
+apologiz -> apologis
+authoriz -> authoris
+reauthoriz -> reauthoris
+unauthoriz -> unauthoris
+capitaliz -> capitalis
+categoriz -> categoris
+centraliz -> centralis
+decentraliz -> decentralis
+characteriz -> characteris
+containeriz -> containeris
+criticiz -> criticis
+customiz -> customis
+digitiz -> digitis
+economiz -> economis
+emphasiz -> emphasis
+equaliz -> equalis
+externaliz -> externalis
+familiariz -> familiaris
+finaliz -> finalis
+formaliz -> formalis
+generaliz -> generalis
+globaliz -> globalis
+harmoniz -> harmonis
+initializ -> initialis
+reinitializ -> reinitialis
+uninitializ -> uninitialis
+internaliz -> internalis
+internationaliz -> internationalis
+italiciz -> italicis
+itemiz -> itemis
+legaliz -> legalis
+localiz -> localis
+materializ -> materialis
+maximiz -> maximis
+memoiz -> memois
+memoriz -> memoris
+minimiz -> minimis
+mobiliz -> mobilis
+moderniz -> modernis
+modulariz -> modularis
+monetiz -> monetis
+neutraliz -> neutralis
+normaliz -> normalis
+denormaliz -> denormalis
+optimiz -> optimis
+organiz -> organis
+reorganiz -> reorganis
+disorganiz -> disorganis
+parameteriz -> parameteris
+parametriz -> parametris
+penaliz -> penalis
+personaliz -> personalis
+polariz -> polaris
+populariz -> popularis
+prioritiz -> prioritis
+deprioritiz -> deprioritis
+privatiz -> privatis
+publiciz -> publicis
+randomiz -> randomis
+rationaliz -> rationalis
+realiz -> realis
+recogniz -> recognis
+unrecogniz -> unrecognis
+sanitiz -> sanitis
+scrutiniz -> scrutinis
+serializ -> serialis
+deserializ -> deserialis
+specializ -> specialis
+stabiliz -> stabilis
+standardiz -> standardis
+summariz -> summaris
+symboliz -> symbolis
+synchroniz -> synchronis
+resynchroniz -> resynchronis
+synthesiz -> synthesis
+systematiz -> systematis
+tokeniz -> tokenis
+utiliz -> utilis
+vectoriz -> vectoris
+virtualiz -> virtualis
+visualiz -> visualis
+
+# Verbs in -yze.
+endings: e es ed ing er ers
+analyz -> analys
+paralyz -> paralys
+catalyz -> catalys
+
+# Nouns in -or, and the verbs that some of them are.
+endings: - s ed ing
+behavior -> behaviour
+color -> colour
+favor -> favour
+flavor -> flavour
+harbor -> harbour
+honor -> honour
+humor -> humour
+labor -> labour
+neighbor -> neighbour
+rumor -> rumour
+savor -> savour
+endeavor -> endeavour
+armor -> armour
+clamor -> clamour
+endings: - s
+candor -> candour
+demeanor -> demeanour
+fervor -> fervour
+odor -> odour
+parlor -> parlour
+rigor -> rigour
+savior -> saviour
+splendor -> splendour
+tumor -> tumour
+valor -> valour
+vapor -> vapour
+vigor -> vigour
+endings: -
+behavioral -> behavioural
+colorful -> colourful
+colorless -> colourless
+favorable -> favourable
+favorably -> favourably
+unfavorable -> unfavourable
+favorite -> favourite
+favorites -> favourites
+honorable -> honourable
+neighborhood -> neighbourhood
+neighborhoods -> neighbourhoods
+neighboring -> neighbouring
+
+# Words in -er that are -re.
+endings: -
+center -> centre
+centers -> centres
+centered -> centred
+centering -> centring
+fiber -> fibre
+fibers -> fibres
+liter -> litre
+liters -> litres
+theater -> theatre
+theaters -> theatres
+caliber -> calibre
+somber -> sombre
+specter -> spectre
+meager -> meagre
+
+# Words in -og that are -ogue.
+endings: - s
+catalog -> catalogue
+analog -> analogue
+monolog -> monologue
+endings: -
+cataloged -> catalogued
+cataloging -> cataloguing
+
+# One l where British writing has two, and two where it has one.
+endings: -
+canceled -> cancelled
+canceling -> cancelling
+labeled -> labelled
+labeling -> labelling
+modeled -> modelled
+modeling -> modelling
+traveled -> travelled
+traveling -> travelling
+traveler -> traveller
+travelers -> travellers
+signaled -> signalled
+signaling -> signalling
+leveled -> levelled
+leveling -> levelling
+totaled -> totalled
+totaling -> totalling
+fueled -> fuelled
+fueling -> fuelling
+dialed -> dialled
+dialing -> dialling
+initialed -> initialled
+channeled -> channelled
+channeling -> channelling
+tunneled -> tunnelled
+tunneling -> tunnelling
+counselor -> counsellor
+counselors -> counsellors
+jewelry -> jewellery
+marvelous -> marvellous
+fulfill -> fulfil
+fulfills -> fulfils
+fulfillment -> fulfilment
+enroll -> enrol
+enrolls -> enrols
+enrollment -> enrolment
+enrollments -> enrolments
+installment -> instalment
+installments -> instalments
+skillful -> skilful
+skillfully -> skilfully
+willful -> wilful
+willfully -> wilfully
+
+# Nouns in -ense that are -ence. "License" is the verb in British writing and "licence" the
+# noun, so the noun is looked for only in the phrases below, and the two verb forms that are
+# wrong in either spelling are named.
+endings: - s
+defense -> defence
+offense -> offence
+pretense -> pretence
+endings: -
+a license -> a licence
+the license -> the licence
+this license -> this licence
+that license -> that licence
+its license -> its licence
+no license -> no licence
+licenced -> licensed
+licencing -> licensing
+to practice -> to practise
+practiced -> practised
+practicing -> practising
+
+# The rest.
+endings: - s
+artifact -> artefact
+judgment -> judgement
+acknowledgment -> acknowledgement
+maneuver -> manoeuvre
+plow -> plough
+skeptic -> sceptic
+mold -> mould
+endings: -
+gray -> grey
+aluminum -> aluminium
+skeptical -> sceptical
+skepticism -> scepticism
+cozy -> cosy
+pajamas -> pyjamas
+gotten -> got

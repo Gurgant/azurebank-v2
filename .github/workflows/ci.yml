@@ -1023,6 +1023,14 @@ jobs:
       - name: Test the deployment script, the PowerShell scripts and the templates
         run: python3 -m unittest discover -s infra -p 'test_*.py' -v
 
+      # The prose of the repository is in British spelling. This reads every Markdown file that
+      # git tracks and the English half of site/index.html, outside code, addresses and
+      # attributes, and fails on an American form of infra/british_spelling_words.txt that
+      # infra/british_spelling_allowed.txt does not name. It cannot see a form that the list
+      # does not hold, a code comment, or the text of a pull request.
+      - name: Read the prose for American spellings
+        run: python3 infra/check_british_spelling.py
+
       # The release is pinned by the SHA-256 of its archive, as published with it.
       - name: Lint the workflows
         shell: bash

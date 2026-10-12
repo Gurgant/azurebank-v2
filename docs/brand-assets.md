@@ -89,7 +89,7 @@ That writes eight files into `frontend/public/`:
 is not a devDependency: `--no-save` installs it and leaves `package.json` and the lockfile
 untouched. The script exits with this exact command if the module is missing.
 
-**The version is pinned.** The committed PNGs and ICO are artifacts of one rasteriser: a release
+**The version is pinned.** The committed PNGs and ICO are artefacts of one rasteriser: a release
 that changes antialiasing by a hair would rewrite every icon, with no change to `logo.svg` to
 explain the diff. To upgrade it, change `RASTERISER` in `frontend/scripts/generate-icons.js`, the
 version `favicon-contrast.js` names beside it and the command above, regenerate, and look at the
@@ -99,7 +99,7 @@ result.
 
 `frontend/scripts/generate-icons.js` also writes `icons.lock.json` beside itself: the
 rasteriser's version and the sha256 of the master, of the script itself and of all eight
-artifacts. `iconProvenance.test.ts` recomputes those hashes on every test run, with nothing
+artefacts. `iconProvenance.test.ts` recomputes those hashes on every test run, with nothing
 installed: CI cannot regenerate and diff, because it does not have the rasteriser. The test fails
 when:
 
