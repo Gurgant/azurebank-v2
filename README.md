@@ -134,10 +134,11 @@ passed and CodeQL reports no error and no security alert rated high or critical.
 
 CodeQL analyses the C#, the TypeScript and the workflows on every pull request as well.
 
-Three more jobs run on every pull request and are not among the checks a merge requires: the
+Four more jobs run on every pull request and are not among the checks a merge requires: the
 documentation site, built with every link checked, the demo's browser suite on the stack a
-deployment runs, with the two restarts of containers it makes, and a reading of the pull
-request's commit messages for a credit line or a mention.
+deployment runs, with the two restarts of containers it makes, a reading of the pull
+request's commit messages for a credit line or a mention, and a count of how much of the
+hand-written code the tests run, which fails under a floor.
 
 ## Read deeper
 
@@ -149,6 +150,7 @@ request's commit messages for a credit line or a mention.
 | [Engineering traps](docs/engineering-traps.md) | The things that fail silently; each one cost real time to find |
 | [SECURITY.md](SECURITY.md) | The security posture in one place, including what is not done |
 | [Engineering Playbook](docs/engineering-playbook.md) | How I lead the work: what I decide, the path of a change, and what stands between an agent and `main` |
+| [Harness engineering](docs/harness-engineering.md) | What I build around the agents: instructions, checks and limits, and one pull request followed from start to finish |
 
 ## Status and known limits
 
