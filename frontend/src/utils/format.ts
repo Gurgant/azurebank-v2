@@ -21,13 +21,6 @@ export function formatCurrency(amount: number): string {
 }
 
 /**
- * Display masking for account numbers (AB-XXXX-XXXX-XX): keep the scheme prefix and the
- * last group, mask the middle. The API already masks SERVER-SIDE (AccountMapper emits
- * `AB-****-****-90`; the full number never leaves the backend) — here that normalizes to
- * display bullets, and doubles as defense-in-depth: if a full number ever reached the
- * client, it still would not reach the screen.
- */
-/**
  * Money direction comes from the TYPE, never from the amount's sign: the API sends
  * UNSIGNED amounts (the old mock carried signed ones — the summary-math trap).
  */
@@ -59,6 +52,13 @@ export function formatLockHorizon(seconds: number): string {
   return `${seconds} second${seconds === 1 ? '' : 's'}`;
 }
 
+/**
+ * Display masking for account numbers (AB-XXXX-XXXX-XX): keep the scheme prefix and the
+ * last group, mask the middle. The API already masks SERVER-SIDE (AccountMapper emits
+ * `AB-****-****-90`; the full number never leaves the backend) — here that normalizes to
+ * display bullets, and doubles as defense-in-depth: if a full number ever reached the
+ * client, it still would not reach the screen.
+ */
 export function maskAccountNumber(accountNumber: string): string {
   const parts = accountNumber.split('-');
   if (parts.length < 3) {

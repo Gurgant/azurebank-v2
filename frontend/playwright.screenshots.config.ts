@@ -38,8 +38,9 @@ export default defineConfig({
     // locale is pinned too, for anything that falls back to it.
     locale: 'en-GB',
     timezoneId: 'Europe/Rome',
-    // The app reads prefers-reduced-motion (hooks/useReducedMotion.ts); each picture also freezes
-    // CSS animations as it is taken (app.capture.ts), so nothing is caught half-way through.
+    // The browser reports a preference for reduced motion, which Fluent's own styles follow; each
+    // picture also freezes CSS animations as it is taken (app.capture.ts), so nothing is caught
+    // half-way through.
     contextOptions: { reducedMotion: 'reduce' },
     trace: 'off',
     video: 'off',

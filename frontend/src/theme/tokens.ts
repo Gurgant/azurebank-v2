@@ -238,13 +238,6 @@ export const componentSizes = {
     '2xl': { size: '72px', fontSize: '28px' },
   },
 
-  // Icon containers (for transaction types, etc.)
-  iconContainer: {
-    sm: { size: '40px', iconSize: '20px', radius: '10px' },
-    md: { size: '44px', iconSize: '22px', radius: '11px' },
-    lg: { size: '72px', iconSize: '36px', radius: '50%' },
-  },
-
   // Navigation
   header: {
     height: '56px',
