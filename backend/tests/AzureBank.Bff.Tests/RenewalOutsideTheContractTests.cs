@@ -155,11 +155,16 @@ public sealed class RenewalOutsideTheContractTests : IClassFixture<WebApplicatio
         // seconds of it left: an opaque one would be dated from the moment the BFF got it, and
         // four seconds out of four is "more than half left", which never comes this far.
         var (host, api) = NewHost(() => throw new InvalidOperationException("no renewal is due"));
+
+        // The host starts here, before the clock is read: a start that took the four seconds
+        // would expire the token before the call. Measured 2026-10-12 with 4.5 s spent between
+        // the clock and the call: 401, and no fault of the BFF's.
+        var client = host.CreateClient();
         var expiresAt = DateTime.UtcNow.AddSeconds(4);
         var token = Jwt(issuedAt: expiresAt.AddSeconds(-900), expiresAt);
         var (_, verifyPin) = ASessionAndItsCall(host, expiresAt, grant: null, token);
 
-        var response = await host.CreateClient().SendAsync(verifyPin);
+        var response = await client.SendAsync(verifyPin);
 
         using var all = new AssertionScope();
         response.StatusCode.Should().Be(HttpStatusCode.OK);
