@@ -426,7 +426,8 @@ jobs:
   # The floors are tripwires, not targets: each is a little under what was measured on
   # 2026-10-12 on commit 4163925b, so that a change that leaves a large part untested is seen.
   #   backend,  floor 91: 93.0 % measured, 12,405 of 13,334 lines, on Windows with LocalDB;
-  #   frontend, floor 91: 92.9 % measured, 2,730 of 2,937 lines, on Windows.
+  #   frontend, floor 95: 98.0 % measured, 2,837 of 2,892 lines, on Windows, the same day
+  #     on a later commit: more tests, and without the code that nothing imported.
   # The floor is on lines. Branches are printed and hold no floor: the backend's are joined
   # from two files by the best count of each, which is a lower bound and not a count.
   #
@@ -541,7 +542,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: >
           python3 infra/coverage_summary.py frontend
-          --floor 91 frontend/coverage/coverage-summary.json
+          --floor 95 frontend/coverage/coverage-summary.json
 
   # ---------------------------------------------------------------------------------------
   # Phase 4 (ADR-0032): the three REAL-BACKEND layers, against a stack this job owns.
