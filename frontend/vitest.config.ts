@@ -46,5 +46,37 @@ export default defineConfig({
       would silently drop node_modules and dist from the exclusions.
     */
     exclude: [...configDefaults.exclude, 'src/contract/**', 'src/integration/**'],
+    /*
+      Off unless asked for: `npm test` measures nothing, and `npm run test:coverage` is the same
+      run with `--coverage`.
+
+      The figure is for the hand-written product code. `include` names every source file, so a
+      file that no test loads counts with all its lines unrun and is not left out. What is
+      excluded is what a test of the product cannot be asked to run:
+        - the tests, and the helpers under `src/test` that only tests import;
+        - the mock backend under `src/mocks`, which is a test tool (CONVENTIONS.md);
+        - `src/contract` and `src/integration`, the two suites this run excludes above, with
+          their clients and harnesses;
+        - what a generator writes: `src/api/generated` (`npm run generate:zod`) and every
+          `.d.ts`, of which `src/api/schema.d.ts` is `npm run generate:api`.
+
+      `json-summary` is what `infra/coverage_summary.py` reads in CI, where the floor is held.
+      No threshold is set here, so that there is one floor in one place.
+    */
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: [
+        'src/**/*.test.{ts,tsx}',
+        'src/test/**',
+        'src/mocks/**',
+        'src/contract/**',
+        'src/integration/**',
+        'src/api/generated/**',
+        'src/**/*.d.ts',
+      ],
+      reporter: ['text-summary', 'json-summary'],
+      reportsDirectory: './coverage',
+    },
   },
 });

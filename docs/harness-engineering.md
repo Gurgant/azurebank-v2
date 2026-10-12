@@ -122,12 +122,12 @@ inferential when an AI model judges the result.
 
 - **Instructions.** `AGENTS.md` holds the commands, what "done" means and [what an agent never
   does][never]. The file gives instructions; nothing automatic checks that they were followed.
-- **Checks a program runs.** A green job does not show that any test passed. So 8 steps in
+- **Checks a program runs.** A green job does not show that any test passed. So 9 steps in
   [`ci.yml`][ci] and [`contract-tests.yml`][bru] count what ran and fail their job when the
-  suite beside them passed nothing, skipped a test or fell under a minimum. Four jobs run on a
+  suite beside them passed nothing, skipped a test or fell under a minimum. Five jobs run on a
   pull request and are not required: the demo suite, the documentation site, the check on
-  commit messages and the check on spelling. Two of the counting steps are in the first of
-  them.
+  commit messages, the check on spelling and the test coverage. Two of the counting steps are
+  in the first of them and one in the last.
 - **Checks a model judges.** The second reader is another agent with one task, to find what is
   wrong, and only where a mistake is expensive: money, access, a database migration. Its
   findings are not in the pull requests: that it ran is my own statement.
@@ -223,12 +223,12 @@ elsewhere. I keep the merge decision because these changes can affect rules abou
 | 9 | The required checks listed on the [rule set][rs] page |
 | 64 | The numbered files in [`docs/adr/`][adrdir]: 65, one of which is the template |
 | 24 | The files in the [architecture tests' folder][arch]: 25, one of which holds no test |
-| 8 | Seven steps of [`ci.yml`][ci] and one of [`contract-tests.yml`][bru], named below |
+| 9 | Eight steps of [`ci.yml`][ci] and one of [`contract-tests.yml`][bru], named below |
 | 17 | The results on the last commit of [#283][p283]: 16 check runs and one status |
 | 273, of which 202 before 25 September | GitHub's list of [merged pull requests][merged] up to #283; [the same list before that day][early] |
 | 1 | The checks on the last commit of each merged pull request; the one is on [#7][p7] |
 
-The eight: in `ci.yml`, the two "Test totals", "Report the total" and the four steps whose name
+The nine: in `ci.yml`, the two "Test totals", "Report the total" and the five steps whose name
 starts with "Assert", other than "Assert the zone reached Node"; in `contract-tests.yml`, "Fail
 if the run sent no requests".
 

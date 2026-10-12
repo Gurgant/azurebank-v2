@@ -42,6 +42,7 @@ npm run format:check
 npm run lint
 npm run build               # the type gate: tsc -b, then the bundle
 npm test                    # unit and component tests, against MSW
+npm run test:coverage       # the same run, and how much of the hand-written source it ran
 npm run test:contract:mock  # the contract suite against the mock ...
 npm run test:contract:real  # ... and against the running BFF and API (ADR-0029)
 npm run test:integration    # the data layer against the running stack

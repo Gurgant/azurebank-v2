@@ -134,10 +134,11 @@ passed and CodeQL reports no error and no security alert rated high or critical.
 
 CodeQL analyses the C#, the TypeScript and the workflows on every pull request as well.
 
-Four more jobs run on every pull request and are not among the checks a merge requires: the
+Five more jobs run on every pull request and are not among the checks a merge requires: the
 documentation site, built with every link checked, the demo's browser suite on the stack a
 deployment runs, with the two restarts of containers it makes, a reading of the pull
-request's commit messages for a credit line or a mention, and a reading of the prose for
+request's commit messages for a credit line or a mention, a count of how much of the
+hand-written code the tests run, which fails under a floor, and a reading of the prose for
 American spellings.
 
 ## Read deeper
