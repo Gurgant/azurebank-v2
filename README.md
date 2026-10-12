@@ -38,7 +38,8 @@ Designed and built by me, Vladislav Aleshaev, alone.
 - **A payment is applied once.** Every money move carries an idempotency key; the server
   fingerprints the raw request with a keyed HMAC and claims the key before it acts, and the client
   keeps the key after any failure the server might have seen, spending it only on a definitive
-  answer. Held under 24 concurrent duplicates on a real SQL Server.
+  answer. A key is kept for 24 hours: the same request sent again later than that is a new
+  payment. Held under 24 concurrent duplicates on a real SQL Server.
   [ADR-0009](docs/adr/0009-idempotency-monetary-operations.md) ·
   [ADR-0022](docs/adr/0022-client-money-mutation-protocol.md) ·
   [the proof](backend/tests/AzureBank.Tests/Integration/IdempotencySqlServerConcurrencyTests.cs)
