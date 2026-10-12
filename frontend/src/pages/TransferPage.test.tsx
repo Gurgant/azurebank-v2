@@ -1,5 +1,5 @@
 import { Route, Routes } from 'react-router-dom';
-import { screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { confirmWithPin, enterPin } from '../test/pinFlow';
 import { describe, expect, it } from 'vitest';
@@ -19,7 +19,8 @@ import { ACCOUNT_CLOSED } from '../api/problemMessages';
  * StepUpModal collected the PIN; it stays mounted below to prove it no longer appears.
  */
 
-function renderTransfer() {
+/** The entries end on the page: one before it is where the browser's Back leads. */
+function renderTransfer(routerEntries: string[] = ['/']) {
   return renderWithProviders(
     <Routes>
       <Route
@@ -33,8 +34,9 @@ function renderTransfer() {
       />
       <Route path="/dashboard" element={<div>DASHBOARD</div>} />
       <Route path="/history" element={<div>HISTORY</div>} />
+      <Route path="/transfer/internal" element={<div>BETWEEN MY ACCOUNTS</div>} />
     </Routes>,
-    { routerEntries: ['/'] },
+    { routerEntries },
   );
 }
 
@@ -644,5 +646,185 @@ describe('external transfer (PR-11)', () => {
     await userEvent.click(screen.getByRole('button', { name: /Rainy Day/ }));
     expect(await screen.findByText('Exceeds available balance of €830.00.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Review Transfer' })).toBeDisabled();
+  });
+});
+
+/*
+  The wiring of the balance guard on this page. `balance-guard.test.tsx` proves the shared pieces
+  against the withdraw dialog and `InternalTransferPage.test.tsx` holds the same wiring on the
+  move between own accounts; this page had none, and it is the one where the money leaves.
+*/
+describe('the balance guard on a transfer to another person', () => {
+  it('does not reach the PIN step when the server says the balance has moved', async () => {
+    let reads = 0;
+    let mints = 0;
+    server.use(
+      http.get('*/api/accounts', () => {
+        reads += 1;
+        // Read 1 draws the form with the seeded €1,250.50; from the gate's read onward the
+        // account holds €10, so the €50 under review can no longer be sent.
+        const balance = reads === 1 ? 1250.5 : 10;
+        const [main, ...rest] = mockState.accounts;
+        return HttpResponse.json({ data: [{ ...main, balance }, ...rest], message: null });
+      }),
+      http.post('*/api/transfers/authorizations', () => {
+        mints += 1;
+      }),
+    );
+    renderTransfer();
+    await screen.findByText('Main Account');
+    await verifyRecipient('friend');
+    await screen.findByText('A. Friend');
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    const words = await screen.findByText(
+      'Insufficient balance for this operation — €10.00 available.',
+    );
+    expect(words.closest('[role="alert"]')).not.toBeNull();
+    // Back on the form, where the amount can be changed, and no PIN was asked for.
+    expect(screen.getByLabelText('Transfer amount')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
+    expect(mints).toBe(0);
+  });
+});
+
+/*
+  What the form offers besides typing, and every way off the page. No test pressed any of these:
+  a header button that skipped the review, or a shortcut that filled in another amount than it
+  says, would have shipped green.
+*/
+describe('external transfer: the shortcuts of the form and the ways off the page', () => {
+  /** What the send asked the server to move, read from the request and not from the screen. */
+  function watchSends() {
+    const sends: { amount: number; recipientAzureTag: string }[] = [];
+    server.use(
+      http.post('*/api/transfers', async ({ request }) => {
+        const body = (await request.clone().json()) as {
+          amount: number;
+          recipientAzureTag: string;
+        };
+        sends.push({ amount: body.amount, recipientAzureTag: body.recipientAzureTag });
+      }),
+    );
+    return sends;
+  }
+
+  /** The form filled in for the handle "friend", on the review step. */
+  async function toReview(amount = '50', routerEntries?: string[]) {
+    const view = renderTransfer(routerEntries);
+    await screen.findByText('Main Account');
+    await verifyRecipient('friend');
+    await screen.findByText('A. Friend');
+    await userEvent.type(screen.getByLabelText('Transfer amount'), amount);
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+    return view;
+  }
+
+  /** The review card's rows, as label and value. */
+  const reviewed = (label: string) => screen.getByText(label).parentElement;
+
+  it('"Use max" fills in the whole available balance, to the cent', async () => {
+    const sends = watchSends();
+    renderTransfer();
+    await screen.findByText('Main Account');
+    await verifyRecipient('friend');
+    await screen.findByText('A. Friend');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Use maximum, €1,250.50' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+
+    expect(reviewed('Amount')).toHaveTextContent('€1,250.50');
+    expect(reviewed('New balance')).toHaveTextContent('€0.00');
+    await confirmWithPin();
+    expect(await screen.findByText('Transfer Sent!')).toBeInTheDocument();
+    expect(sends).toEqual([{ amount: 1250.5, recipientAzureTag: 'friend' }]);
+  });
+
+  it('the receipt offers the history', async () => {
+    await toReview();
+    await confirmWithPin();
+    await screen.findByText('Transfer Sent!');
+
+    await userEvent.click(await screen.findByRole('button', { name: 'View History' }));
+
+    expect(await screen.findByText('HISTORY')).toBeInTheDocument();
+  });
+
+  it("the header's Back goes one step at a time, and from the form it leaves for the dashboard", async () => {
+    const sends = watchSends();
+    await toReview();
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByLabelText('Digit 1 of 6');
+    // The header's button is the first "Back" on the page; each step has its own below it.
+    const headerBack = () => screen.getAllByRole('button', { name: 'Back' })[0];
+
+    await userEvent.click(headerBack());
+    expect(await screen.findByRole('heading', { name: 'Review Transfer' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled();
+
+    await userEvent.click(headerBack());
+    expect(await screen.findByRole('heading', { name: 'Send Money' })).toBeInTheDocument();
+    // The form comes back as it was left: the recipient is still the one that was checked.
+    expect(screen.getByText('A. Friend')).toBeInTheDocument();
+
+    await userEvent.click(headerBack());
+    expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
+    expect(sends).toEqual([]);
+  });
+
+  it("the header's Close leaves for the dashboard and sends nothing", async () => {
+    const sends = watchSends();
+    await toReview();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+
+    expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
+    expect(sends).toEqual([]);
+  });
+
+  it('"Between your own accounts" leaves for the move between own accounts', async () => {
+    renderTransfer();
+    await screen.findByText('Main Account');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Between your own accounts' }));
+
+    expect(await screen.findByText('BETWEEN MY ACCOUNTS')).toBeInTheDocument();
+  });
+
+  /*
+    The browser's own Back while a send's outcome is not known. Every button of the page is
+    disabled then; the browser's is not the page's to disable, so the page asks (ADR-0028). The
+    hook's own suite holds the blocker; this holds that the page draws the question and that
+    each answer does what it says.
+  */
+  it("asks before the browser's Back leaves a transfer whose outcome is not known", async () => {
+    server.use(
+      http.post('*/api/transfers', () =>
+        problem({ status: 409, errorCode: 'IDEMPOTENCY_IN_FLIGHT', detail: 'Still processing.' }),
+      ),
+    );
+    const { router } = await toReview('50', ['/dashboard', '/']);
+    await confirmWithPin();
+    await screen.findByText(/Still processing/);
+    const question = () => screen.findByRole('alertdialog', { name: 'Leave without finishing?' });
+
+    await act(() => router.navigate(-1));
+    expect(await question()).toHaveTextContent('check your history before sending it again');
+    await userEvent.click(
+      within(await question()).getByRole('button', { name: 'Stay on this page' }),
+    );
+
+    // Still on the page, with the way to check the same transfer again.
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    expect(screen.queryByText('DASHBOARD')).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Check again' })).toBeEnabled();
+
+    await act(() => router.navigate(-1));
+    await userEvent.click(within(await question()).getByRole('button', { name: 'Leave anyway' }));
+    expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
   });
 });

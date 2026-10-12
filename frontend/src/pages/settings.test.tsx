@@ -1,6 +1,9 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
+import { http } from 'msw';
+import { server } from '../mocks/server';
+import { problem } from '../mocks/problem';
 import { MOCK_USER, seedMockSession } from '../mocks/state';
 import { makeTestStore, renderWithProviders } from '../test/renderWithProviders';
 import { apiSlice } from '../features/api/apiSlice';
@@ -152,5 +155,87 @@ describe('settings page', () => {
       // conservative branch a browser without the query would take.
       expect(document.documentElement.getAttribute('data-theme')).toBe('light');
     });
+  });
+});
+
+/*
+  The handle dialog, past the two answers above. A handle the form accepts and the server
+  refuses comes back as a 400 with an `errors` dictionary keyed `AzureTag`, in PascalCase: the
+  one shape this route can emit (measured 2026-08-04, quoted in
+  src/components/dialogs/server-validation.test.tsx). The rule below is made up, in that
+  envelope: what is held is where its sentence lands.
+*/
+describe('settings page: the handle dialog and what the server refuses', () => {
+  /** Every rename sent from now on, as its body; the handler that answers is left alone. */
+  function watchRenames() {
+    const bodies: unknown[] = [];
+    server.use(
+      http.patch('*/bff/auth/azuretag', async ({ request }) => {
+        bodies.push(await request.clone().json());
+      }),
+    );
+    return bodies;
+  }
+
+  async function openAndType(user: ReturnType<typeof userEvent.setup>, handle: string) {
+    await user.click(screen.getByRole('button', { name: 'Change' }));
+    const input = await screen.findByRole('textbox');
+    await user.click(input); // focus first, as above
+    fireEvent.change(input, { target: { value: handle } });
+    return input;
+  }
+
+  it("puts the server's rule about the handle under the field, and says it once", async () => {
+    server.use(
+      http.patch('*/bff/auth/azuretag', () =>
+        problem({ status: 400, errors: { AzureTag: ['This handle is reserved.'] } }),
+      ),
+    );
+    const user = userEvent.setup();
+    await renderSettings();
+    await openAndType(user, 'support');
+    await user.click(await screen.findByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByText('This handle is reserved.')).toBeVisible();
+    // On the field, and in no bar above it: the envelope's own "One or more validation errors
+    // occurred." would say the same thing a second time, and less. One alert, the field's.
+    expect(screen.getAllByRole('alert').map((alert) => alert.textContent)).toEqual([
+      'This handle is reserved.',
+    ]);
+    expect(screen.queryByText(/One or more validation errors occurred/)).not.toBeInTheDocument();
+    // The dialog is still open on what was typed, and the handle is unchanged.
+    expect(screen.getByRole('textbox')).toBeInTheDocument();
+    expect(screen.getByText(`@${MOCK_USER.azureTag}`)).toBeInTheDocument();
+  });
+
+  it('says a refusal that is not about the handle in the bar, where it is announced', async () => {
+    server.use(
+      http.patch('*/bff/auth/azuretag', () =>
+        problem({ status: 400, errors: { Request: ['The request could not be read.'] } }),
+      ),
+    );
+    const user = userEvent.setup();
+    await renderSettings();
+    await openAndType(user, 'newtag');
+    await user.click(await screen.findByRole('button', { name: 'Save' }));
+
+    // No field of this form owns it, so the visitor is not left looking at a form that did nothing.
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'One or more validation errors occurred.',
+    );
+    expect(screen.getByRole('textbox')).toBeInTheDocument();
+  });
+
+  it('Escape closes the dialog and saves nothing', async () => {
+    const renames = watchRenames();
+    const user = userEvent.setup();
+    await renderSettings();
+    await openAndType(user, 'newtag');
+
+    await user.keyboard('{Escape}');
+
+    await waitFor(() => expect(screen.queryByRole('textbox')).not.toBeInTheDocument());
+    expect(renames).toEqual([]);
+    expect(screen.getByText(`@${MOCK_USER.azureTag}`)).toBeInTheDocument();
   });
 });

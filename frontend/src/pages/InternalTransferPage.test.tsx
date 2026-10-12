@@ -1,5 +1,5 @@
 import { Route, Routes } from 'react-router-dom';
-import { screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { confirmWithPin, enterPin } from '../test/pinFlow';
 import { describe, expect, it } from 'vitest';
@@ -23,7 +23,8 @@ import {
  * the root StepUpModal collected the PIN; it stays mounted below to prove it no longer appears.
  */
 
-function renderInternal() {
+/** The entries end on the page: one before it is where the browser's Back leads. */
+function renderInternal(routerEntries: string[] = ['/']) {
   return renderWithProviders(
     <Routes>
       <Route
@@ -37,8 +38,9 @@ function renderInternal() {
       />
       <Route path="/dashboard" element={<div>DASHBOARD</div>} />
       <Route path="/history" element={<div>HISTORY</div>} />
+      <Route path="/transfer" element={<div>SEND TO SOMEONE ELSE</div>} />
     </Routes>,
-    { routerEntries: ['/'] },
+    { routerEntries },
   );
 }
 
@@ -269,6 +271,221 @@ describe('internal transfer (PR-11b)', () => {
 });
 
 /*
+  What the form offers besides typing, and every way off the page. Each of these was drawn and
+  pressed by no test: a shortcut that fills in another amount than it says, or a header button
+  that skips a step, would have shipped green.
+*/
+describe('internal transfer: the shortcuts of the form and the ways off the page', () => {
+  /** What the send asked the server to move, read from the request and not from the screen. */
+  function watchSends() {
+    const sends: { fromAccountId: string; toAccountId: string; amount: number }[] = [];
+    server.use(
+      http.post('*/api/transfers/internal', async ({ request }) => {
+        sends.push(
+          (await request.clone().json()) as {
+            fromAccountId: string;
+            toAccountId: string;
+            amount: number;
+          },
+        );
+      }),
+    );
+    return sends;
+  }
+
+  /** The review card's rows, as label and value. */
+  const reviewed = (label: string) => screen.getByText(label).parentElement;
+
+  it('a quick amount is the amount that is reviewed and sent', async () => {
+    const sends = watchSends();
+    renderInternal();
+    await screen.findByRole('button', { name: 'From Main Account' });
+    await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
+
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+
+    expect(reviewed('Amount')).toHaveTextContent('€100.00');
+    await confirmWithPin();
+    expect(await screen.findByText('Transfer Complete!')).toBeInTheDocument();
+    expect(sends).toEqual([
+      { fromAccountId: MAIN_ACCOUNT_ID, toAccountId: SAVINGS_ACCOUNT_ID, amount: 100 },
+    ]);
+  });
+
+  it('a quick amount the source cannot cover cannot be pressed', async () => {
+    // The source holds €60: €100 is more than it has, €50 is not.
+    server.use(
+      http.get('*/api/accounts', () => {
+        const [main, ...rest] = mockState.accounts;
+        return HttpResponse.json({ data: [{ ...main, balance: 60 }, ...rest], message: null });
+      }),
+    );
+    renderInternal();
+    await screen.findByRole('button', { name: 'From Main Account' });
+
+    expect(screen.getByRole('button', { name: '€100' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '€50' })).toBeEnabled();
+  });
+
+  it('"Use max" fills in the whole available balance, to the cent', async () => {
+    const sends = watchSends();
+    renderInternal();
+    await screen.findByRole('button', { name: 'From Main Account' });
+    await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Use maximum, €1,250.50' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+
+    expect(reviewed('Amount')).toHaveTextContent('€1,250.50');
+    expect(reviewed('Main Account balance')).toHaveTextContent('€0.00');
+    await confirmWithPin();
+    expect(await screen.findByText('Transfer Complete!')).toBeInTheDocument();
+    expect(sends).toEqual([
+      { fromAccountId: MAIN_ACCOUNT_ID, toAccountId: SAVINGS_ACCOUNT_ID, amount: 1250.5 },
+    ]);
+  });
+
+  it('choosing the destination as the source clears the destination', async () => {
+    const pressed = (name: string) =>
+      screen.getByRole('button', { name }).getAttribute('aria-pressed');
+    renderInternal();
+    await screen.findByRole('button', { name: 'From Main Account' });
+    await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+    expect(screen.getByRole('button', { name: 'Review Transfer' })).toBeEnabled();
+
+    await userEvent.click(screen.getByRole('button', { name: 'From Rainy Day' }));
+
+    // One account cannot be both ends of a move: the visitor chooses where the money goes again.
+    expect(pressed('From Rainy Day')).toBe('true');
+    expect(pressed('To Rainy Day')).toBe('false');
+    expect(pressed('To Main Account')).toBe('false');
+    expect(screen.getByRole('button', { name: 'Review Transfer' })).toBeDisabled();
+  });
+
+  it("the header's Back goes one step at a time, and from the form it leaves for the dashboard", async () => {
+    const sends = watchSends();
+    renderInternal();
+    await screen.findByRole('button', { name: 'From Main Account' });
+    await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByLabelText('Digit 1 of 6');
+    // The header's button is the first "Back" on the page; each step has its own below it.
+    const headerBack = () => screen.getAllByRole('button', { name: 'Back' })[0];
+
+    await userEvent.click(headerBack());
+    expect(await screen.findByRole('heading', { name: 'Review Transfer' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled();
+
+    await userEvent.click(headerBack());
+    expect(await screen.findByRole('heading', { name: 'Move Money' })).toBeInTheDocument();
+    // The form comes back as it was left.
+    expect(screen.getByRole('button', { name: 'To Rainy Day' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+
+    await userEvent.click(headerBack());
+    expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
+    expect(sends).toEqual([]);
+  });
+
+  it("the header's Close leaves for the dashboard and sends nothing", async () => {
+    const sends = watchSends();
+    renderInternal();
+    await screen.findByRole('button', { name: 'From Main Account' });
+    await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+
+    expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
+    expect(sends).toEqual([]);
+  });
+
+  it('"Send to someone else" leaves for the transfer to another person', async () => {
+    renderInternal();
+    await screen.findByRole('button', { name: 'From Main Account' });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Send to someone else' }));
+
+    expect(await screen.findByText('SEND TO SOMEONE ELSE')).toBeInTheDocument();
+  });
+
+  it('the check view\'s "Check recent transactions" leaves for the history', async () => {
+    // The server cannot tell whether the money moved (ADR-0022): the page shows the check view.
+    server.use(
+      http.post('*/api/transfers/internal', () =>
+        problem({
+          status: 409,
+          errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN',
+          detail: 'The result could not be confirmed.',
+        }),
+      ),
+    );
+    renderInternal();
+    await screen.findByRole('button', { name: 'From Main Account' });
+    await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+    await confirmWithPin();
+    await screen.findByText("We couldn't confirm your transfer");
+
+    await userEvent.click(screen.getByRole('button', { name: 'Check recent transactions' }));
+
+    expect(await screen.findByText('HISTORY')).toBeInTheDocument();
+  });
+
+  /*
+    The browser's own Back while a send's outcome is not known. Every button of the page is
+    disabled then; the browser's is not the page's to disable, so the page asks (ADR-0028). The
+    hook's own suite holds the blocker; this holds that the page draws the question and that
+    each answer does what it says.
+  */
+  it("asks before the browser's Back leaves a transfer whose outcome is not known", async () => {
+    server.use(
+      http.post('*/api/transfers/internal', () =>
+        problem({ status: 409, errorCode: 'IDEMPOTENCY_IN_FLIGHT', detail: 'Still processing.' }),
+      ),
+    );
+    const { router } = renderInternal(['/dashboard', '/']);
+    await screen.findByRole('button', { name: 'From Main Account' });
+    await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+    await confirmWithPin();
+    await screen.findByText(/Still processing/);
+
+    await act(() => router.navigate(-1));
+    const question = await screen.findByRole('alertdialog', { name: 'Leave without finishing?' });
+    expect(question).toHaveTextContent('check your history before sending it again');
+    await userEvent.click(within(question).getByRole('button', { name: 'Stay on this page' }));
+
+    // Still on the page, with the way to check the same transfer again.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('alertdialog', { name: 'Leave without finishing?' }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByText('DASHBOARD')).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Check again' })).toBeEnabled();
+
+    await act(() => router.navigate(-1));
+    await userEvent.click(
+      within(
+        await screen.findByRole('alertdialog', { name: 'Leave without finishing?' }),
+      ).getByRole('button', { name: 'Leave anyway' }),
+    );
+    expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
+  });
+});
+
+/*
   One of the two accounts of a move, closed in another tab or session while this page shows it.
   Measured through the BFF on a spare account closed after the page's requests were prepared,
   as the source and as the destination, on the mint and on the send: each answers 404 errorCode
@@ -474,6 +691,46 @@ describe('an account of the move is closed under the page', () => {
       expect(pressed(name)).toBe('false');
     }
     expect(seen.sends).toEqual([]);
+  });
+
+  it('says only that an account is closed, and clears both, when the list cannot be read again', async () => {
+    /*
+      The answer, and no list to say which account it means: the read that follows fails. The
+      page does not wait for a list it may never get, and does not keep two accounts chosen of
+      which one is closed.
+    */
+    await fill('Rainy Day', 'Main Account');
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByLabelText('Digit 1 of 6');
+    const sends: unknown[] = [];
+    server.use(
+      http.post('*/api/transfers/internal/authorizations', () =>
+        problem({
+          status: 404,
+          errorCode: 'ACCOUNT_NOT_FOUND',
+          detail: `Account with identifier '${SAVINGS_ACCOUNT_ID}' was not found.`,
+        }),
+      ),
+      http.get('*/api/accounts', () => problem({ status: 500, errorCode: 'INTERNAL_ERROR' })),
+      http.post('*/api/transfers/internal', () => {
+        sends.push(1);
+      }),
+    );
+    await enterPin();
+
+    const words = await screen.findByText(MOVE_ACCOUNT_CLOSED);
+    expect(words.closest('[role="alert"]')).not.toBeNull();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Review Transfer' })).toBeDisabled(),
+    );
+    expectNothingOfTheServers();
+    for (const name of ['From Main Account', 'From Rainy Day', 'From Holiday']) {
+      expect(pressed(name)).toBe('false');
+    }
+    for (const name of ['To Main Account', 'To Rainy Day', 'To Holiday']) {
+      expect(pressed(name)).toBe('false');
+    }
+    expect(sends).toEqual([]);
   });
 
   it('shows the check view when a PIN typed again under a kept key meets the closed account, and starts over under a new key', async () => {
