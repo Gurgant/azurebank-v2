@@ -1058,6 +1058,9 @@ strong {
 
 /* ---------- C. How it is built: the path of a request ---------- */
 
+/* The sheet is its own container. It is capped at 42rem only while the path stands upright:
+   from a viewport of 56em the cap is lifted (the block marked 900, near the end of this file),
+   the sheet is wider than 50rem, and the rules of the wide sheet below apply. */
 .route {
   container-type: inline-size;
   max-width: 42rem;
