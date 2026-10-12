@@ -122,14 +122,16 @@ public class SourceHygieneTests
     /// once on <c>TransferService.PrepareTransferAttemptAsync</c>, when a body became a delegation
     /// and picked up a second block, and once here in <c>SecurityEventConstantTests</c>, when a
     /// helper was inserted BETWEEN a doc comment and the method it described — which left the
-    /// helper holding both and the test holding none. Only one reaches the generated XML, so the
-    /// explanation that is dropped is the one a reader was sent to find.
+    /// helper holding both and the test holding none. Both blocks reach the generated XML under
+    /// that one member: a reader finds two explanations on it, and none where the second belonged.
     /// </para>
     /// <para>
-    /// The compiler does not say so here. <c>CS1710</c> fires only when documentation generation
-    /// is on, and it is off in this solution: both instances built with zero warnings and were
-    /// caught by a reviewer reading the diff. That is the same shape as the control-character rule
-    /// above — a defect every normal instrument is blind to — which is why it lives in this file.
+    /// The compiler does not say so. Documentation generation is on for every project here
+    /// (<c>backend/Directory.Build.props</c>), and a member with two <c>&lt;summary&gt;</c> blocks
+    /// still builds in Release with zero warnings (measured on 2026-10-12 on a member of
+    /// <c>AzureBank.Shared</c>). Both instances on PR #198 built clean and were caught by a
+    /// reviewer reading the diff. That is the same shape as the control-character rule above — a
+    /// defect every normal instrument is blind to — which is why it lives in this file.
     /// </para>
     /// <para>
     /// A documentation comment is a contiguous run of <c>///</c> lines; two <c>&lt;summary&gt;</c>
@@ -185,8 +187,8 @@ public class SourceHygieneTests
             + "than two hundred members");
 
         offenders.Should().BeEmpty(
-            "two <summary> blocks on one member drop one of them from the generated XML, and the "
-            + "compiler is silent about it while documentation generation is off");
+            "two <summary> blocks on one member both reach the generated XML under it, and the "
+            + "compiler is silent about it with documentation generation on");
     }
 
     [Theory]
