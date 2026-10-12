@@ -87,6 +87,42 @@ public class TransferLedgerTests : IntegrationTestBase
         incoming.Amount.Should().Be(100m);
         (outgoing.BalanceBefore - outgoing.BalanceAfter).Should().Be(100m, "the sender is debited");
         (incoming.BalanceAfter - incoming.BalanceBefore).Should().Be(100m, "the recipient is credited");
+
+        // The payer's own words, on both rows: each side reads its own row.
+        outgoing.Description.Should().Be("Ledger shape");
+        incoming.Description.Should().Be("Ledger shape");
+    }
+
+    [Fact]
+    public async Task ExternalTransfer_SentWithNoDescription_NamesTheOtherPartyOnEachRow()
+    {
+        // The text a statement shows when the payer wrote none: the payee's handle on the payer's
+        // row, the payer's handle on the payee's. Only the seeder's rows were checked for it.
+        var (senderToken, senderId, senderAccountId) = await RegisterTestUserAsync();
+        await SetPinAsync(senderToken);
+        var recipient = await RegisterRecipientAsync();
+        await DepositAsync(senderToken, senderAccountId, 1000m);
+
+        SetAuthHeader(senderToken);
+        var response = await PostMonetaryAsync("/api/transfers", new TransferRequest
+        {
+            FromAccountId = senderAccountId,
+            RecipientAzureTag = recipient.AzureTag,
+            Amount = 100m
+        }, stepUpAuthorizationId: await AuthoriseTransferAsync(senderAccountId, recipient.AzureTag, 100m));
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        var senderTag = (await db.Users.AsNoTracking().SingleAsync(u => u.Id == senderId)).AzureTag;
+
+        var outgoing = await db.Transactions.SingleAsync(
+            t => t.AccountId == senderAccountId && t.Type == TransactionType.TransferOut);
+        var incoming = await db.Transactions.SingleAsync(
+            t => t.AccountId == recipient.AccountId && t.Type == TransactionType.TransferIn);
+
+        outgoing.Description.Should().Be($"Transfer to @{recipient.AzureTag}");
+        incoming.Description.Should().Be($"Transfer from @{senderTag}");
     }
 
     [Fact]
@@ -138,6 +174,47 @@ public class TransferLedgerTests : IntegrationTestBase
         outgoing.RecipientAzureTag.Should().BeNull();
         incoming.SenderAzureTag.Should().BeNull();
         incoming.RecipientAzureTag.Should().BeNull();
+
+        // The user's own words, on both rows.
+        outgoing.Description.Should().Be("Ledger shape");
+        incoming.Description.Should().Be("Ledger shape");
+    }
+
+    [Fact]
+    public async Task InternalTransfer_SentWithNoDescription_NamesTheOtherAccountOnEachRow()
+    {
+        // The text a statement shows when the user wrote none: the destination's name on the row
+        // of the account the money left, the source's name on the row of the one it reached.
+        var (token, _, primaryAccountId) = await RegisterTestUserAsync();
+        await SetPinAsync(token);
+        SetAuthHeader(token);
+
+        var created = await Client.PostAsJsonAsync("/api/accounts",
+            new CreateAccountRequest { Name = "Savings", Type = AccountType.Savings }, JsonOptions);
+        var savings = (await created.Content.ReadFromJsonAsync<ApiResponse<AccountResponse>>(JsonOptions))!.Data!;
+
+        await DepositAsync(token, primaryAccountId, 1000m);
+
+        var response = await PostMonetaryAsync("/api/transfers/internal", new InternalTransferRequest
+        {
+            FromAccountId = primaryAccountId,
+            ToAccountId = savings.Id,
+            Amount = 300m
+        }, stepUpAuthorizationId: await AuthoriseInternalTransferAsync(primaryAccountId, savings.Id, 300m));
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        var primaryName = (await db.Accounts.AsNoTracking().SingleAsync(a => a.Id == primaryAccountId)).Name;
+        primaryName.Should().NotBeNullOrWhiteSpace().And.NotBe("Savings", "the two names must tell the rows apart");
+
+        var outgoing = await db.Transactions.SingleAsync(
+            t => t.AccountId == primaryAccountId && t.Type == TransactionType.TransferOut);
+        var incoming = await db.Transactions.SingleAsync(
+            t => t.AccountId == savings.Id && t.Type == TransactionType.TransferIn);
+
+        outgoing.Description.Should().Be("Internal transfer to Savings");
+        incoming.Description.Should().Be($"Internal transfer from {primaryName}");
     }
 
     [Fact]
