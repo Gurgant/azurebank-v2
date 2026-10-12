@@ -214,6 +214,11 @@ def backend(folders, floor, floor_application=None):
     text += ['', 'A line that ran is not a line that was checked.']
     notice = (f'Backend coverage::{percent(total[1], total[0])} of the lines of hand-written '
               f'code ({total[1]:,} of {total[0]:,})')
+    if floor_application is not None:
+        # The run's page shows the notice to everybody and the table only to who is signed in:
+        # the figure a second floor is held on is said where everybody reads it.
+        notice += (f'; {APPLICATION} {percent(application[1], application[0])} '
+                   f'({application[1]:,} of {application[0]:,})')
     fell = []
     if under(total[1], total[0], floor):
         fell.append(f'{percent(total[1], total[0])} of the lines of hand-written backend code '

@@ -306,6 +306,24 @@ class TheFloorOnTheApplication(Folder):
         self.assertIn('Floor on lines: 87.5 %. 1 coverage file(s), joined line by line.', said)
         self.assertNotIn('Floors on lines', said)
 
+    def test_with_a_floor_on_it_the_notice_names_the_application_too(self):
+        # A page that shows the application's figure links the run: a visitor who is not signed
+        # in sees the notice and not the table, so the notice carries both figures.
+        step_summary = self.folder / 'step-summary.md'
+        code, said = self.run_main('backend', '--floor', '87.5', '--floor-application', '75',
+                                   str(self.folder),
+                                   environment={'GITHUB_STEP_SUMMARY': str(step_summary)})
+        self.assertEqual(code, 0)
+        self.assertIn('::notice title=Backend coverage::87.5 % of the lines of hand-written '
+                      'code (7 of 8); the application (backend/src) 75.0 % (3 of 4)', said)
+
+    def test_without_a_floor_on_it_the_notice_is_the_one_line_it_was(self):
+        step_summary = self.folder / 'step-summary.md'
+        _, said = self.run_main('backend', '--floor', '87.5', str(self.folder),
+                                environment={'GITHUB_STEP_SUMMARY': str(step_summary)})
+        self.assertIn('::notice title=Backend coverage::87.5 % of the lines of hand-written '
+                      'code (7 of 8)\n', said)
+
     def test_a_floor_on_an_application_with_no_line_fails_even_at_zero(self):
         other = self.folder / 'only-the-tools'
         target = other / summary.REPORT
