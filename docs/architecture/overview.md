@@ -69,7 +69,7 @@ Everything downstream is a consequence:
 *Depth: ADR-0001 (BFF), ADR-0018 (origin hardening), ADR-0021 (silent re-mint), ADR-0057 (one
 grant per session), ADR-0019 (SPA/BFF contract).*
 
-## Moving money exactly once
+## Moving money once
 
 The hard problem in a bank is not writing a row; it is guaranteeing you wrote it **once** when the
 network, the browser and the process are all free to fail halfway.
