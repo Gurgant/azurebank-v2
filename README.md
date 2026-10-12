@@ -149,6 +149,7 @@ hand-written code the tests run, which fails under a floor.
 
 | Document | What it gives you |
 |---|---|
+| [The wiki](https://github.com/Gurgant/azurebank-v2/wiki) | The short way in: a tour of the live demo, the design on one page, the decisions to read first, and the questions an interviewer asks |
 | [How AzureBank works](docs/architecture/overview.md) | One document, complete on its own: how the money guarantee works and why the JWT never reaches the browser |
 | [ADR-0009](docs/adr/0009-idempotency-monetary-operations.md) and [ADR-0022](docs/adr/0022-client-money-mutation-protocol.md) | The money protocol, server and client halves: when the client keeps the key and when it spends it |
 | [Decisions](docs/adr/README.md) | The decisions and their reasons, with the alternatives rejected and what is left open where a record has them; the index names four to start with |
