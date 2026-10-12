@@ -409,6 +409,140 @@ jobs:
         run: npm test
 
   # ---------------------------------------------------------------------------------------
+  # How much of the hand-written code the tests run, backend and frontend, on the job's summary
+  # and as two notices on the run's page, where it is read without a sign-in.
+  #
+  # The backend's two test projects run again here with a collector, and the first of them
+  # whole, against a SQL Server as in the job of the concurrency proofs: without one those
+  # proofs skip themselves and four points of the application's lines go unrun (91.1 % against
+  # 95.0 %, measured 2026-10-12). The two jobs that gate a merge are left as they are: a
+  # collector in them would slow the runs every pull request waits for and put the figure's
+  # failures in the test jobs. The price is a second run of the tests.
+  #
+  # infra/coverage_summary.py says what is counted. It joins the two Cobertura files line by
+  # line, keeps apart what the build writes under obj/ and the EF migrations, and fails where
+  # it finds no coverage file or no line: a job that counted nothing is not green.
+  #
+  # The floors are tripwires, not targets: each is a little under what was measured on
+  # 2026-10-12 on commit 4163925b, so that a change that leaves a large part untested is seen.
+  #   backend,  floor 91: 93.0 % measured, 12,405 of 13,334 lines, on Windows with LocalDB;
+  #   frontend, floor 91: 92.9 % measured, 2,730 of 2,937 lines, on Windows.
+  # The floor is on lines. Branches are printed and hold no floor: the backend's are joined
+  # from two files by the best count of each, which is a lower bound and not a count.
+  #
+  # 25 minutes: the job has run on no runner yet. Its steps, without a collector, took about
+  # 12 minutes in the other jobs of the run of 2026-10-12 on main (container 29 s, restore and
+  # build 59 s, the two backend suites 71 s and 41 s, the SQL proofs 439 s, npm ci 11 s, the
+  # frontend suite 126 s).
+  # ---------------------------------------------------------------------------------------
+  coverage:
+    name: Test coverage (hand-written code)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          # CI-only throwaway credentials; the database lives only for this job.
+          SA_PASSWORD: YourStrong@Passw0rd123
+          ACCEPT_EULA: Y
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P YourStrong@Passw0rd123 -C -Q 'SELECT 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Restore
+        working-directory: backend
+        run: dotnet restore AzureBank.slnx
+
+      - name: Build
+        working-directory: backend
+        run: dotnet build AzureBank.slnx --no-restore --configuration Release
+
+      # No filter: the suite whole, the SQL Server proofs with it. coverlet.collector is a
+      # package of both test projects, so nothing is installed.
+      - name: Backend tests with a collector (the API's suite, on SQL Server)
+        working-directory: backend
+        env:
+          AZUREBANK_TEST_SQLSERVER: "Server=localhost,1433;Database=AzureBankCoverage;User Id=sa;Password=YourStrong@Passw0rd123;TrustServerCertificate=true"
+        run: >
+          dotnet test tests/AzureBank.Tests/AzureBank.Tests.csproj
+          --no-build --configuration Release
+          --collect:"XPlat Code Coverage"
+          --results-directory "$RUNNER_TEMP/coverage/api"
+          --logger "trx;LogFileName=coverage-test-results.trx"
+
+      # A proof that skipped ran no line, and a run of skips exits 0: the figure would fall
+      # by four points with every step green, or sit just above its floor. So the count is
+      # asserted, as in the job of the proofs: nothing in this run may be skipped.
+      - name: Assert no backend test was skipped
+        run: |
+          trx="$RUNNER_TEMP/coverage/api/coverage-test-results.trx"
+          if [ ! -f "$trx" ]; then echo "::error::no result file at $trx"; exit 1; fi
+          counters=$(grep -o '<Counters [^>]*' "$trx" | head -1)
+          total=$(echo "$counters" | grep -o ' total="[0-9]*"' | grep -o '[0-9]*')
+          passed=$(echo "$counters" | grep -o ' passed="[0-9]*"' | grep -o '[0-9]*')
+          echo "The API's suite: total=$total passed=$passed"
+          if [ "${total:-0}" -eq 0 ] || [ "$total" != "$passed" ]; then
+            echo "::error::$passed of $total tests passed: a test that was skipped ran no line"
+            exit 1
+          fi
+
+      - name: Backend tests with a collector (the BFF's suite)
+        working-directory: backend
+        run: >
+          dotnet test tests/AzureBank.Bff.Tests/AzureBank.Bff.Tests.csproj
+          --no-build --configuration Release
+          --collect:"XPlat Code Coverage"
+          --results-directory "$RUNNER_TEMP/coverage/bff"
+
+      - name: Backend coverage
+        run: >
+          python3 infra/coverage_summary.py backend
+          --floor 91 "$RUNNER_TEMP/coverage"
+
+      # The frontend's figure is printed whatever the backend's was: a run under one floor
+      # still shows both numbers.
+      - name: Install frontend dependencies
+        if: ${{ !cancelled() }}
+        working-directory: frontend
+        run: npm ci
+
+      # `npm test` with --coverage: the unit and component tests, and no other suite.
+      - name: Frontend tests with coverage
+        if: ${{ !cancelled() }}
+        working-directory: frontend
+        run: npm run test:coverage
+
+      - name: Frontend coverage
+        if: ${{ !cancelled() }}
+        run: >
+          python3 infra/coverage_summary.py frontend
+          --floor 91 frontend/coverage/coverage-summary.json
+
+  # ---------------------------------------------------------------------------------------
   # Phase 4 (ADR-0032): the three REAL-BACKEND layers, against a stack this job owns.
   #
   # ADR-0029/0030/0031 each shipped with the same two caveats — money accumulates in a shared
