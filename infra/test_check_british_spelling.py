@@ -2,23 +2,24 @@
 
 Each kind of text has a line that fails and the nearest lines that pass: a word in prose, the
 same word where it is a name. The last tests start the script as the CI step does, on files in
-a temporary directory and on the repository as it is. One test only, the first of RepositoryTests,
-fails when a page of the repository holds an American form: the CI step that runs the check is
-where that is reported.
+a temporary directory.
+
+No test of this file depends on how a page of the repository is spelt or on which words it
+writes: every one reads a fixed text, the two lists, or which files git tracks. The Infrastructure
+job of CI runs this file, the rule set of main requires that job, and a word must not block a
+merge. The tests that read the pages as they are stand in prose_test_british_spelling.py, which
+the job "Prose spelling (British)" runs and the rule set does not require.
 """
 
 import contextlib
 import io
 import pathlib
 import re
-import subprocess
-import sys
 import tempfile
 import unittest
 
 import check_british_spelling as check
 
-SCRIPT = pathlib.Path(__file__).resolve().parent / 'check_british_spelling.py'
 WORDS, PHRASES = check.read_words(check.WORDS.read_text(encoding='utf-8'))
 
 PAGE = '''<!doctype html>
@@ -40,13 +41,17 @@ PAGE = '''<!doctype html>
 
 
 # Words that are spelt with an s on both sides of the Atlantic, or that only happen to end in
-# the same letters as a verb in -ise. The test of the list against the prose passes them by
-# name: a new word of this kind is added here, and any other new word in -ise or -yse needs its
-# American twin in british_spelling_words.txt.
-ONLY_END_ALIKE = ('advertise', 'advise', 'arise', 'compromise', 'comprise', 'concise', 'devise',
-                  'disable', 'disguise', 'enterprise', 'exercise', 'expertise', 'improvise',
-                  'likewise', 'noise', 'otherwise', 'pairwise', 'praise', 'precise', 'premise',
-                  'promise', 'raise', 'revise', 'rise', 'supervise', 'surprise', 'wise')
+# the same letters as a verb in -ise. The test of the list against the prose, in
+# prose_test_british_spelling.py, passes them by name, and passes every word that ends in "wise"
+# by rule. A new word of this kind is added here, and any other new word in -ise or -yse needs
+# its American twin in british_spelling_words.txt.
+ONLY_END_ALIKE = ('advertise', 'advise', 'appraise', 'apprise', 'arise', 'bruise', 'chastise',
+                  'compromise', 'comprise', 'concise', 'crises', 'cruise', 'demise', 'despise',
+                  'devise', 'disable', 'disguise', 'enterprise', 'excise', 'exercise', 'expertise',
+                  'franchise', 'fundraise', 'guise', 'improvise', 'liaise', 'merchandise', 'noise',
+                  'paradise', 'poise', 'praise', 'precise', 'premise', 'promise', 'raise',
+                  'reprise', 'revise', 'rise', 'sunrise', 'supervise', 'surprise', 'televise',
+                  'treatise')
 ENDS_IN_ISE = re.compile(r'^([a-z]+?[iy])s(e|es|ed|ing|er|ers|ation|ations|able|ational|ationally)$')
 
 
@@ -55,6 +60,16 @@ def twin(word):
     (None, None) for any other word."""
     found = ENDS_IN_ISE.match(word)
     return (found.group(1) + 'z' + found.group(2), found.group(1)) if found else (None, None)
+
+
+def without_a_twin(written):
+    """Of the words given, in small letters, those that end like a verb in -ise or -yse, do not
+    end in "wise", are not known to only end alike, and have no American twin in the list of
+    forms."""
+    alike = {twin(word)[1] for word in ONLY_END_ALIKE}
+    return sorted(word for word in written
+                  if twin(word)[0] and not word.endswith('wise')
+                  and twin(word)[1] not in alike and twin(word)[0] not in WORDS)
 
 
 def markdown(text):
@@ -142,6 +157,7 @@ class ProseTests(unittest.TestCase):
     def test_the_noun_license_is_found_only_in_a_phrase_of_the_list(self):
         self.assertEqual(markdown('Read the license first.\n'), [('the license', 'the licence')])
         self.assertEqual(markdown('I license the code, and they license theirs.\n'), [])
+        self.assertEqual(markdown('Companies that license software pay.\n'), [])
 
     def test_the_noun_license_is_found_after_the_other_words_that_can_only_stand_before_a_noun(self):
         self.assertEqual(
@@ -401,6 +417,26 @@ class ScriptTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn('::error::The spelling was not checked:', said)
 
+    def test_a_line_of_the_allow_list_that_allows_nothing_fails_the_whole_run(self):
+        self.write('a.md', 'The Authorization header.\n')
+        self.write('index.html', PAGE.replace('organized', 'organised').replace('behavior.', 'it.')
+                   .replace('center', 'centre'))
+        for name, value in (('ROOT', self.folder), ('ENTRY_PAGE', 'index.html'),
+                            ('tracked', lambda: ['a.md', 'index.html'])):
+            self.addCleanup(setattr, check, name, getattr(check, name))
+            setattr(check, name, value)
+        used = 'Authorization | a.md | * | the name of an HTTP header\n'
+        self.allowed.write_text(used, encoding='utf-8')
+        code, said = run()
+        self.assertEqual(code, 0, said)
+        self.assertIn('Read the prose of 2 file(s)', said)
+        self.allowed.write_text(used + 'flavor | a.md | * | a name that is gone\n', encoding='utf-8')
+        code, said = run()
+        self.assertEqual(code, 1)
+        self.assertIn('allows "flavor" in a.md', said)
+        self.assertIn('0 American spelling(s) in 2 file(s), and 1 line(s) of allowed.txt that '
+                      'allow nothing.', said)
+
     def test_a_summary_with_no_finding_in_a_page_does_not_speak_of_names(self):
         code, said = run(self.write('a.md', 'It is recognised.\n'))
         self.assertEqual(code, 0)
@@ -421,12 +457,6 @@ class ScriptTests(unittest.TestCase):
 
 
 class RepositoryTests(unittest.TestCase):
-    def test_the_repository_as_it_is_passes_started_as_the_ci_step_starts_it(self):
-        done = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, check=False)
-        said = done.stdout.decode('utf-8', 'replace')
-        self.assertEqual(done.returncode, 0, said + done.stderr.decode('utf-8', 'replace'))
-        self.assertIn('no American spelling', said)
-
     def test_it_reads_the_entry_page_and_more_than_a_handful_of_markdown_files(self):
         paths = check.tracked()
         self.assertIn(check.ENTRY_PAGE, paths)
@@ -439,32 +469,21 @@ class RepositoryTests(unittest.TestCase):
         self.assertNotIn('Vai al contenuto', kept)
         self.assertGreater(len(kept.split()), 500)
 
-    def test_a_line_of_the_allow_list_that_allows_nothing_fails_the_whole_run(self):
-        kept = check.ALLOWED
-        self.addCleanup(setattr, check, 'ALLOWED', kept)
-        with tempfile.TemporaryDirectory() as scratch:
-            check.ALLOWED = pathlib.Path(scratch) / 'allowed.txt'
-            check.ALLOWED.write_text(kept.read_text(encoding='utf-8')
-                                     + 'flavor | README.md | * | a name that is gone\n',
-                                     encoding='utf-8')
-            code, said = run()
-        self.assertEqual(code, 1)
-        self.assertIn('allows "flavor" in README.md', said)
-        self.assertIn('1 line(s) of allowed.txt that allow nothing.', said)
 
-    def test_every_word_in_ise_that_the_prose_writes_has_its_american_twin_in_the_list(self):
-        written = set()
-        for path in check.tracked():
-            text = (check.ROOT / path).read_text(encoding='utf-8').replace('\r\n', '\n')
-            lines = check.prose_of_page(text) if path.endswith('.html') \
-                else check.prose_of_markdown(text)
-            written.update(word.lower() for line in lines for word in re.findall('[A-Za-z]+', line))
-        alike = {twin(word)[1] for word in ONLY_END_ALIKE}
-        self.assertNotIn(None, alike)
-        asked = {word: twin(word)[0] for word in written
-                 if twin(word)[0] and twin(word)[1] not in alike}
-        self.assertGreater(len(asked), 20)
-        self.assertEqual(sorted(word for word, american in asked.items() if american not in WORDS), [])
+class TwinTests(unittest.TestCase):
+    def test_a_verb_in_ise_with_no_twin_in_the_list_is_named_and_one_with_its_twin_is_not(self):
+        self.assertEqual(without_a_twin({'organise', 'organisation', 'analysed', 'size', 'this',
+                                         'glamourise', 'glamourising'}),
+                         ['glamourise', 'glamourising'])
+
+    def test_a_word_that_only_ends_alike_is_not_asked_for_a_twin(self):
+        self.assertEqual(without_a_twin({'otherwise', 'advised', 'promising', 'raises'}), [])
+        self.assertEqual(without_a_twin({'bitwise', 'clockwise', 'stepwise', 'unwise', 'crises',
+                                         'franchise', 'demise', 'fundraising', 'despised',
+                                         'cruises', 'liaising'}), [])
+
+    def test_every_word_that_only_ends_alike_has_the_shape_the_test_looks_for(self):
+        self.assertEqual([word for word in ONLY_END_ALIKE if twin(word)[0] is None], [])
 
     def test_no_word_that_only_ends_alike_has_a_twin_in_the_list(self):
         self.assertEqual([word for word in ONLY_END_ALIKE if twin(word)[0] in WORDS], [])

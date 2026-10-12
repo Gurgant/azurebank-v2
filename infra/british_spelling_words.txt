@@ -13,7 +13,8 @@
 # inquiry. "Judgment" is listed because this repository writes "judgement".
 #
 # The verbs in -ise that the pages of this repository write each have their American twin
-# here: a test reads the prose and fails on a word in -ise or -yse whose twin is missing.
+# here: a test of prose_test_british_spelling.py reads the prose and fails on a word in -ise or
+# -yse whose twin is missing.
 
 # Verbs in -ize and what is built on them.
 endings: e es ed ing er ers ation ations ational ationally able
@@ -281,7 +282,6 @@ defenseless -> defenceless
 a license -> a licence
 the license -> the licence
 this license -> this licence
-that license -> that licence
 its license -> its licence
 no license -> no licence
 our license -> our licence

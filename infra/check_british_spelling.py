@@ -2,6 +2,9 @@
 
     python infra/check_british_spelling.py [FILE ...]
 
+In CI the job "Prose spelling (British)" runs it. The rule set of main does not require that
+job: a finding is a red mark on the pull request and blocks no merge.
+
 With no argument it reads every Markdown file that git tracks and the English half of
 site/index.html. With arguments it reads those files instead: a name that ends in ".html" is
 read as the entry page is, anything else as Markdown.
@@ -28,7 +31,8 @@ letters: "the LICENSE file" and "the License" of a title pass.
 
 What is not a name, and is read: a word in underscore emphasis, "_color_"; a word before
 "(s)"; a word after a slash that joins two words, "request/behavior"; a word before a dot and
-a capital letter, where a space is missing after a full stop.
+a capital letter, where a space is missing after a full stop. That last rule has a cost: a bare
+name of two parts, such as "Color.Red", is read too, and needs backticks.
 
 A name that is none of those and must stay goes in backticks. Where backticks cannot be used,
 as for "Organization" in the title of someone else's page, the name is in
@@ -51,10 +55,12 @@ or a part of a page that names no language or a language other than English.
 What it lets through: every American form that the list does not name; the noun "license"
 anywhere but after one of the words listed with it ("the license" is found, "licenses are
 listed" is not), and the verb "to practice", because the same two words are right in "from
-theory to practice"; a phrase of the list that is broken over two lines; a word that is split
-over a line end with a hyphen, or by a mark of emphasis inside it; a word that stands after a
-"<" and a letter in the same paragraph, up to the next ">"; an indented code block with no
-fence around it, which is read as prose.
+theory to practice"; "The License" where it is a title or a heading, because its last word
+has a capital letter; a word after a slash whose left side is a code span, because the code
+span is blanked first and the word then looks like the start of a path; a phrase of the list
+that is broken over two lines; a word that is split over a line end with a hyphen, or by a
+mark of emphasis inside it; a word that stands after a "<" and a letter in the same paragraph,
+up to the next ">"; an indented code block with no fence around it, which is read as prose.
 """
 
 import fnmatch

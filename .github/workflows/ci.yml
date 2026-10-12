@@ -985,8 +985,7 @@ jobs:
         run: cat "$RUNNER_TEMP/api.log"
 
   # The infrastructure: the three Bicep templates, the deployment script, the PowerShell scripts
-  # and the workflows themselves, and the spelling of the prose. Nothing here signs in to Azure
-  # or reads a secret.
+  # and the workflows themselves. Nothing here signs in to Azure or reads a secret.
   infra:
     name: Infrastructure (templates, scripts, workflows)
     runs-on: ubuntu-24.04
@@ -1019,18 +1018,11 @@ jobs:
             clean bicep lint "$template"
           done
 
-      # The prose of the repository is in British spelling. This reads every Markdown file that
-      # git tracks and the English half of site/index.html, outside code, addresses and
-      # attributes, and fails on an American form of infra/british_spelling_words.txt that
-      # infra/british_spelling_allowed.txt does not name. It cannot see a form that the list
-      # does not hold, a code comment, or the text of a pull request. It stands before the
-      # tests, one of which runs the same check, so that this is the step that fails, with the
-      # file and the line of each word.
-      - name: Read the prose for American spellings
-        run: python3 infra/check_british_spelling.py
-
       # Offline: every Azure and HTTP answer is a stand-in. The tests start PowerShell 7 and the
-      # Bicep CLI; here a missing tool is an error, not a skip (infra/test_scripts.py).
+      # Bicep CLI; here a missing tool is an error, not a skip (infra/test_scripts.py). None of
+      # them depends on how a page is spelt: the tests that read the pages for their spelling are
+      # in infra/prose_test_british_spelling.py, which this pattern does not find and the job
+      # "Prose spelling (British)" runs.
       - name: Test the deployment script, the PowerShell scripts and the templates
         run: python3 -m unittest discover -s infra -p 'test_*.py' -v
 
@@ -1115,3 +1107,40 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python3 infra/check_commit_messages.py "origin/$BASE_REF" "$HEAD_SHA"
+
+  # The prose of the repository is in British spelling: organise, behaviour, artefact. This job
+  # reads every Markdown file that git tracks and the English half of site/index.html, outside
+  # code, addresses and attributes, for the American forms that
+  # infra/british_spelling_words.txt lists. It is not among the checks the rule set of main
+  # requires, and that is on purpose: a word must not stop a fix of the application, and a name
+  # the list does not know yet would block a pull request for nothing. So a spelling shows as
+  # a red mark on the pull request, and the merge stays open. When it is red: correct the word
+  # the annotation names; or, if the word is a name that keeps its own spelling, put it in
+  # backticks, or add its line to infra/british_spelling_allowed.txt with the reason. It runs on
+  # a pull request only, as the job above does: on main the word is already merged, and a red
+  # run there would say that main is broken. It cannot see a form that the list does not hold,
+  # a code comment, or the title and the text of a pull request. The job takes python3 and git
+  # from the image and installs nothing.
+  prose-spelling:
+    name: Prose spelling (British)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      # Each finding is an annotation on its file and its line: the word and its British form.
+      - name: Read the prose for American spellings
+        run: python3 infra/check_british_spelling.py
+
+      # Two tests on the pages as they are. The first runs the same check. The second fails when
+      # a page writes a word in -ise or -yse whose American twin the list does not hold, and
+      # says which of the two lists the word goes in. They are here and not among the tests of
+      # the Infrastructure job, which is required: a new word in a page would fail that job.
+      # This step runs after a finding too, so that one run shows both.
+      - name: Test the list of words against the prose
+        if: ${{ !cancelled() }}
+        run: python3 -m unittest discover -s infra -p 'prose_test_*.py' -v

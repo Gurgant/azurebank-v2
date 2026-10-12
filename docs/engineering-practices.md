@@ -237,10 +237,14 @@ Every document here says what is true now. A sentence that turns out wrong, or t
 moved away from, is corrected in place, with no line about what it used to claim: git keeps what
 it said. A date stays where it is a fact about the system, such as the day something was measured.
 
-Prose is in British spelling, and CI reads every page for the American forms that
-`infra/british_spelling_words.txt` lists: run `python infra/check_british_spelling.py` from the
-root, and put a name that keeps its own spelling in backticks, or in
-`infra/british_spelling_allowed.txt` with its reason.
+Prose is in British spelling. `python infra/check_british_spelling.py`, run from the root, reads
+every page for the American forms that `infra/british_spelling_words.txt` lists. On a pull
+request the job "Prose spelling (British)" runs it and reports: a finding is a red mark on the
+pull request, and the job is not among the required checks, so a word does not block a merge.
+When it is red, correct the word; a name that keeps its own spelling goes in backticks, or in
+`infra/british_spelling_allowed.txt` with its reason. The job also runs
+`python -m unittest discover -s infra -p 'prose_test_*.py'`, which fails when a page writes a
+word in -ise whose American twin the list does not hold yet, and says where to add it.
 
 ## Code style
 
