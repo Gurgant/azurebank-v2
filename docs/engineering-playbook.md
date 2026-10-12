@@ -88,7 +88,7 @@ through an MCP server and reports what it read.
 
 - **The rule set.** `main` takes a change only as a squash-merged pull request that has passed
   nine required checks and a CodeQL scan. The rule set has no bypass list, so it binds my own
-  account too.
+  account too; the repository is mine, so I can still edit the rule set.
 - **No agent merges: I do.** The orchestrator is stopped by a permission rule and a hook that
   refuse the merge command before it runs. The other three are held one step earlier: their
   folders refuse a push, and their brief ends at the local commit.
@@ -99,6 +99,19 @@ An instruction in a prompt is not a permission boundary: that is why each of the
 mechanism. Each has its limit. The hook and the folders that refuse a push run on my machine:
 they stop a habit or a mistake, not an agent set on getting around them. The rule set and the
 reviewer on the live environment are enforced by GitHub.
+
+## Harness engineering
+
+The instructions I give the agents, the checks that run on their changes and the limits on what
+they may do are, together, the harness. Building it and correcting it is harness engineering:
+the agents are products made by others, and the harness is the part I build. I merge every pull
+request myself.
+
+I revise the harness when a mistake shows a missing check or rule. When a program can detect the
+mistake, I add an automated check for that case; when only a reader can judge it, I add a written
+rule. [Harness engineering on AzureBank](harness-engineering.md) follows one pull request from
+start to finish, tells three episodes in which a mistake led to a new check, and says what I have
+not measured.
 
 ## The contract between backend and frontend
 
