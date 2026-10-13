@@ -4,6 +4,7 @@ import type { paths } from '../api/schema';
 import type { AccountType } from '../api/enums';
 import {
   bffProblem,
+  duplicateMemberProblem,
   fakeTraceId,
   invalidJsonValueProblem,
   missingMemberProblem,
@@ -13,6 +14,7 @@ import {
   unsupportedMediaTypeProblem,
 } from './problem';
 import { LOGIN_REQUEST, REGISTER_REQUEST, bindMembers, modelStateFor } from './dataAnnotations';
+import { jsonMembersAsWritten } from './jsonMembers';
 import {
   MOCK_PASSWORD,
   MOCK_SESSION_COOKIE,
@@ -975,57 +977,110 @@ const createAccount = api.post('/api/accounts', async ({ request, response }) =>
   if (!parsed) {
     return response.untyped(unreadableBodyProblem(await request.clone().text()));
   }
-  const { body } = parsed;
 
   /*
     THREE LAYERS ANSWER ON THIS ROUTE, IN THIS ORDER, AND ONE AT A TIME.
 
-    The deserialiser reads the members in the order the body writes them, and a `type` that is not
-    a name of the enum is refused where it is read, under the path to the member, `$.type`. That
-    is before the deserialiser's check for a `required` member that is absent, which answers under
-    the document root, `$`. Only a body that deserialises reaches `[ApiController]` model state,
-    where `Name` carries DataAnnotations and its key is PascalCase. All three answers are the
-    framework's envelope, and a request that breaks two rules gets the answer of the first layer
-    alone. Measured 2026-10-13:
+    The deserialiser reads the members in the order the body writes them, and a value it cannot
+    read is refused where it is read, under the path to the member: a `type` that is not a name of
+    the enum under `$.type`, a `name` that is neither a JSON string nor `null` under `$.name`.
+    That is before the deserialiser's check for a `required` member that is absent, which answers
+    under the document root, `$`. Only a body that deserialises reaches `[ApiController]` model
+    state, where `Name` carries DataAnnotations and its key is PascalCase. All three answers are
+    the framework's envelope, and a request that breaks two rules gets the answer of the first
+    layer alone. Measured 2026-10-13:
 
       {"name":"x","type":"99"}        -> errors {"request":[…],"$.type":[…]}   ← `Name` absent
       {"type":"99"}                   -> errors {"request":[…],"$.type":[…]}   ← `$` absent
       {"name":"No Type Probe"}        -> errors {"$":[…],"request":[…]}
       {"name":"x","type":"Checking"}  -> errors {"Name":[…]}
-
-    NOT MODELLED: a `name` that is not a JSON string. The API refuses it where it is read as well,
-    under `$.name`, so of two unreadable members the one written first answers:
-
       {"name":123,"type":"99"}        -> errors {"request":[…],"$.name":[…]}
       {"type":"99","name":123}        -> errors {"request":[…],"$.type":[…]}
-      {"name":123,"type":"Checking"}  -> errors {"request":[…],"$.name":[…]}
+      {"name":123}                    -> errors {"request":[…],"$.name":[…]}   ← `$` absent
+      {"name":null,"type":"Savings"}  -> errors {"Name":["The Name field is required."]}
 
-    This handler answers `$.type` for the first and `Name` for the third. The app's forms send
-    the name as a string.
+    A MEMBER IS KNOWN BY ITS NAME IN ANY LETTER CASE, and the path of a refusal spells it as the
+    body did, where model state and the sentence for an absent member spell it as the contract
+    does:
+
+      {"NAME":"Probe Upper","TYPE":"savings"}  -> 201
+      {"name":"Probe","Type":"99"}             -> errors {"request":[…],"$.Type":[…]}
+      {"Name":"x","type":"Savings"}            -> errors {"Name":[…]}
+      {"Type":"Savings"}                       -> errors {"$":["… including: 'name'."],…}
+
+    A MEMBER WRITTEN TWICE IS REFUSED AT ITS SECOND OCCURRENCE, whatever the two values and
+    whatever the letter case of either. Its value is read first, so a second occurrence that
+    cannot be read gets the answer of the value:
+
+      {"name":"Dup One","Name":"Dup Two","type":"Savings"}
+        -> errors {"request":[…],"$.Name":["Duplicate property 'name' encountered during
+                   deserialization of type '…CreateAccountRequest'."]}
+      {"type":"Savings","type":"Savings"}              -> the same under `$.type`  ← `$` absent
+      {"name":"Dup One","name":null,"type":"Savings"}  -> the same under `$.name`
+      {"name":"Dup One","type":"Savings","type":"99"}  -> errors {"request":[…],"$.type":["'99'
+                                                          is not a valid value for enum …"]}
+      {"name":"Dup One","name":123,"type":"Savings"}   -> errors {"request":[…],"$.name":["The
+                                                          JSON value could not be converted …"]}
+
+    A member the request does not have is skipped without being read, twice or not, whatever is
+    inside it:
+
+      {"name":"Dup One","type":"Savings","extra":1,"extra":{"name":1,"name":2}}  -> 201
+
+    The sentence for a `name` that cannot be read stops at the path, as `modelStateFor` stops its
+    own: the API goes on with a line and a byte position in the body.
 
     FluentValidation's envelope ("Validation Failed", camelCase keys) was not seen on this route:
     what the validator checks, these layers have refused before it runs.
   */
+  const requestType = 'AzureBank.Shared.DTOs.Account.CreateAccountRequest';
+  let readName: { value: string | null } | undefined;
+  let readType: AccountType | undefined;
+  // From the text and not from the parsed object, which holds one value for a member written
+  // twice and cannot say that there were two.
+  for (const [written, value] of jsonMembersAsWritten(parsed.raw)) {
+    const path = `$.${written}`;
+    const member = written.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+    if (member === 'name') {
+      if (value !== null && typeof value !== 'string') {
+        return response.untyped(
+          invalidJsonValueProblem(
+            path,
+            `The JSON value could not be converted to System.String. Path: ${path}`,
+          ),
+        );
+      }
+      if (readName !== undefined) {
+        return response.untyped(duplicateMemberProblem(path, member, requestType));
+      }
+      readName = { value };
+    }
+    if (member === 'type') {
+      const accountType = parseAccountType(value);
+      if ('refusal' in accountType) {
+        return response.untyped(invalidJsonValueProblem(path, accountType.refusal));
+      }
+      if (readType !== undefined) {
+        return response.untyped(duplicateMemberProblem(path, member, requestType));
+      }
+      readType = accountType.member;
+    }
+  }
   /*
     ABSENT is not the same as EMPTY. `CreateAccountRequest` declares BOTH members `required`, so
     System.Text.Json fails to deserialise before `[Required]` ever runs, and nothing is created.
 
     Measured: {"name":"No Type Probe"} -> 400 keyed `$` + `request`. See `missingMemberProblem`.
   */
-  const requestType = 'AzureBank.Shared.DTOs.Account.CreateAccountRequest';
-  if (body.type === undefined) {
-    const missing = (['name', 'type'] as const).filter((m) => body[m] === undefined);
+  if (readName === undefined || readType === undefined) {
+    const missing = [
+      ...(readName === undefined ? ['name'] : []),
+      ...(readType === undefined ? ['type'] : []),
+    ];
     return response.untyped(missingMemberProblem(requestType, ...missing));
   }
-  const accountType = parseAccountType(body.type);
-  if ('refusal' in accountType) {
-    return response.untyped(invalidJsonValueProblem('$.type', accountType.refusal));
-  }
-  if (body.name === undefined) {
-    return response.untyped(missingMemberProblem(requestType, 'name'));
-  }
 
-  const nameError = rejectBadAccountName(body.name, CREATE_NAME_REQUIRED);
+  const nameError = rejectBadAccountName(readName.value, CREATE_NAME_REQUIRED);
   if (nameError) {
     return response.untyped(modelStateProblem({ Name: nameError }));
   }
@@ -1057,8 +1112,8 @@ const createAccount = api.post('/api/accounts', async ({ request, response }) =>
     // returned a canonical member, so both narrow honestly instead of being asserted. Storing the
     // CANONICAL value matters — the API persists `Checking` for an input of `"checking"`, so
     // echoing the caller's casing back would drift the read model too.
-    name: String(body.name),
-    type: accountType.member,
+    name: String(readName.value),
+    type: readType,
     balance: 0,
     isPrimary: false,
     createdAt: '2026-07-21T12:00:00.0000000Z',

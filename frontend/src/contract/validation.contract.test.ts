@@ -284,6 +284,263 @@ describe('contract: validation envelopes', () => {
     ]);
   });
 
+  it('reads a member by its name in any letter case, and names it in a refusal as it was written', async () => {
+    /*
+      The API matches the members of a body to the request without regard to letter case, as it
+      does a query. A refusal where the body is read is keyed by the path as the body spelled it;
+      a refusal by model state is keyed by the CLR property, whatever the body spelled. Measured
+      2026-10-13 on POST /api/accounts:
+
+        {"Name":"Probe Pascal","Type":"Savings"}  -> 201, name "Probe Pascal", type "Savings"
+        {"NAME":"Probe Upper","TYPE":"savings"}   -> 201, type "Savings"
+        {"name":"Probe","Type":"99"}    -> 400 errors {"request":[…],"$.Type":["'99' is not a
+                                           valid value for enum 'AccountType'. Valid values:
+                                           Checking, Savings, Investment"]}
+        {"Name":"x","type":"Savings"}   -> 400 errors {"Name":["Account name must be between 2
+                                           and 100 characters."]}
+        {"Type":"Savings"}              -> 400 errors {"$":["… was missing required properties
+                                           including: 'name'."],"request":[…]}
+
+      The last one names the member that is absent as the contract spells it.
+    */
+    const post = (body: unknown) =>
+      call('/api/accounts', { method: 'POST', body: JSON.stringify(body) });
+
+    const created = await post({ NAME: 'Contract Member Case', Type: 'savings' });
+    const account = (created.body as { data?: { id?: string; name?: string; type?: string } }).data;
+    try {
+      expect(created.status).toBe(201);
+      expect(account?.name).toBe('Contract Member Case');
+      expect(account?.type).toBe('Savings');
+    } finally {
+      if (account?.id) await closeAccount(account.id);
+    }
+
+    const badType = await post({ name: 'Valid Name', Type: '99' });
+    expect(badType.status).toBe(400);
+    expect(Object.keys(asProblem(badType.body).errors ?? {}).sort()).toEqual(['$.Type', 'request']);
+    expect(asProblem(badType.body).errors?.['$.Type']).toEqual([
+      "'99' is not a valid value for enum 'AccountType'. Valid values: Checking, Savings, Investment",
+    ]);
+
+    const badName = await post({ Name: 'x', type: 'Savings' });
+    expect(badName.status).toBe(400);
+    expect(asProblem(badName.body).errors).toEqual({
+      Name: ['Account name must be between 2 and 100 characters.'],
+    });
+
+    const noName = await post({ Type: 'Savings' });
+    expect(noName.status).toBe(400);
+    expect(Object.keys(asProblem(noName.body).errors ?? {}).sort()).toEqual(['$', 'request']);
+    expect(asProblem(noName.body).errors?.$?.[0]).toContain("including: 'name'.");
+  });
+
+  it.each([
+    ['the name twice', '{"name":"Dup One","name":"Dup Two","type":"Savings"}', '$.name', 'name'],
+    [
+      'the name twice, in two letter cases',
+      '{"name":"Dup One","Name":"Dup Two","type":"Savings"}',
+      '$.Name',
+      'name',
+    ],
+    [
+      'the name twice, once with an escaped letter',
+      '{"name":"Dup One","na\\u006de":"Dup Two","type":"Savings"}',
+      '$.name',
+      'name',
+    ],
+    [
+      'the name twice, the second time null',
+      '{"name":"Dup One","name":null,"type":"Savings"}',
+      '$.name',
+      'name',
+    ],
+    [
+      'the name twice, too short both times',
+      '{"name":"x","name":"x","type":"Savings"}',
+      '$.name',
+      'name',
+    ],
+    [
+      'the type twice, with one value',
+      '{"name":"Dup One","type":"Savings","type":"Savings"}',
+      '$.type',
+      'type',
+    ],
+    [
+      'the type twice, in two letter cases',
+      '{"name":"Dup One","type":"Savings","Type":"Checking"}',
+      '$.Type',
+      'type',
+    ],
+    ['the type twice and no name', '{"type":"Savings","type":"Savings"}', '$.type', 'type'],
+  ])('refuses a body that writes %s, keyed by the second one', async (_case, raw, key, member) => {
+    /*
+      A member written twice is refused, not resolved: which of the two values the sender meant
+      is not the API's to guess. The answer is the framework's envelope, under the path of the
+      second occurrence as the body spelled it, and the sentence names the member as the contract
+      spells it. Measured 2026-10-13:
+
+        POST /api/accounts {"name":"Dup One","Name":"Dup Two","type":"Savings"}
+          -> 400 {"type":"https://tools.ietf.org/html/rfc9110#section-15.5.1",
+                  "title":"One or more validation errors occurred.","status":400,
+                  "errors":{"request":["The request field is required."],
+                            "$.Name":["Duplicate property 'name' encountered during
+                                       deserialization of type
+                                       'AzureBank.Shared.DTOs.Account.CreateAccountRequest'."]},
+                  "traceId":"00-…-01"}
+
+      The second occurrence answers where it is read, so before a member that is absent and
+      before model state looks at a name. The body is a text here and not an object: an object
+      cannot hold a member twice.
+
+      Asserted without the C# type name, as the missing member is. Refused, so no account is
+      created and this test leaves no state on either target.
+    */
+    const { status, body } = await call('/api/accounts', { method: 'POST', body: raw });
+    const problem = asProblem(body);
+
+    expect(status).toBe(400);
+    expect(problem.title).toBe('One or more validation errors occurred.');
+    expect(problem.detail).toBeUndefined();
+    expect(Object.keys(problem.errors ?? {}).sort()).toEqual([key, 'request']);
+    expect(problem.errors?.[key]).toHaveLength(1);
+    expect(problem.errors?.[key]?.[0]).toMatch(
+      new RegExp(
+        `^Duplicate property '${member}' encountered during deserialization of type '[^']+'\\.$`,
+      ),
+    );
+  });
+
+  it('answers a value it cannot read before it answers a member written twice', async () => {
+    /*
+      The value of a member is read before the API looks whether the member was there already,
+      so a second occurrence with a value that cannot be read gets the answer of the value.
+      Measured 2026-10-13:
+
+        {"name":"Dup One","type":"Savings","type":"99"} -> errors {"request":[…],"$.type":["'99'
+                                                           is not a valid value for enum …"]}
+        {"name":"Dup One","name":123,"type":"Savings"}  -> errors {"request":[…],"$.name":["The
+                                                           JSON value could not be converted to
+                                                           System.String. Path: $.name | …"]}
+
+      Both are refused, so neither creates an account.
+    */
+    const post = (raw: string) => call('/api/accounts', { method: 'POST', body: raw });
+
+    const badType = await post('{"name":"Dup One","type":"Savings","type":"99"}');
+    expect(badType.status).toBe(400);
+    expect(asProblem(badType.body).errors?.['$.type']).toEqual([
+      "'99' is not a valid value for enum 'AccountType'. Valid values: Checking, Savings, Investment",
+    ]);
+
+    const badName = await post('{"name":"Dup One","name":123,"type":"Savings"}');
+    expect(badName.status).toBe(400);
+    expect(asProblem(badName.body).errors?.['$.name']?.[0]).toMatch(
+      /^The JSON value could not be converted to System\.String\. Path: \$\.name/,
+    );
+  });
+
+  it('takes a body that writes twice a member the request does not have', async () => {
+    /*
+      The line on the other side: the API skips a member it does not know without reading it, at
+      any depth, so it does not see that one is there twice. Measured 2026-10-13:
+
+        {"name":"Dup One","type":"Savings","extra":1,"extra":2}                 -> 201
+        {"name":"Dup One","type":"Savings","extra":{"name":1,"name":2}}         -> 201
+    */
+    const created = await call('/api/accounts', {
+      method: 'POST',
+      body: '{"name":"Contract Unknown Twice","type":"Savings","extra":1,"extra":{"name":1,"name":2}}',
+    });
+    const account = (created.body as { data?: { id?: string; name?: string } }).data;
+
+    try {
+      expect(created.status).toBe(201);
+      expect(account?.name).toBe('Contract Unknown Twice');
+    } finally {
+      if (account?.id) await closeAccount(account.id);
+    }
+  });
+
+  it.each([
+    ['a number', 123],
+    ['a number with decimals', 1.5],
+    ['true', true],
+    ['false', false],
+    ['an empty object', {}],
+    ['an object', { type: '99' }],
+    ['an empty list', []],
+    ['a list with a text in it', ['Valid Name']],
+  ])('refuses %s for a name where the body is read, keyed `$.name`', async (_case, name) => {
+    /*
+      A name that is not a JSON string is not a name that fails a rule: the API cannot read it,
+      so the answer comes from where the body is read, under the path to the member, and model
+      state's `Name` does not appear. Measured 2026-10-13:
+
+        POST /api/accounts {"name":123,"type":"Savings"}
+          -> 400 {"type":"https://tools.ietf.org/html/rfc9110#section-15.5.1",
+                  "title":"One or more validation errors occurred.","status":400,
+                  "errors":{"request":["The request field is required."],
+                            "$.name":["The JSON value could not be converted to System.String.
+                                       Path: $.name | LineNumber: 0 | BytePositionInLine: 11."]},
+                  "traceId":"00-…-01"}
+
+      and the same for each row here, the position apart. The sentence is asserted up to the
+      path: what follows counts bytes of the body, and the mock does not write it.
+
+      Refused, so no account is created and this test leaves no state on either target.
+    */
+    const { status, body } = await call('/api/accounts', {
+      method: 'POST',
+      body: JSON.stringify({ name, type: 'Savings' }),
+    });
+    const problem = asProblem(body);
+
+    expect(status).toBe(400);
+    expect(problem.title).toBe('One or more validation errors occurred.');
+    expect(problem.detail).toBeUndefined();
+    expect(Object.keys(problem.errors ?? {}).sort()).toEqual(['$.name', 'request']);
+    expect(problem.errors?.['$.name']).toHaveLength(1);
+    expect(problem.errors?.['$.name']?.[0]).toMatch(
+      /^The JSON value could not be converted to System\.String\. Path: \$\.name/,
+    );
+  });
+
+  it('answers the first member it cannot read, in the order the body writes them', async () => {
+    /*
+      A name and a type that both cannot be read: the one written first answers, alone. A name
+      that cannot be read also answers before a type that is absent, because what is absent is
+      known only at the end of the body. And `null` is on the other side of the line: it is read,
+      as no name, and model state refuses it under `Name`. Measured 2026-10-13:
+
+        {"name":123,"type":"99"}        -> errors {"request":[…],"$.name":[…]}
+        {"type":"99","name":123}        -> errors {"request":[…],"$.type":[…]}
+        {"name":123}                    -> errors {"request":[…],"$.name":[…]}      no `$`
+        {"Name":123,"type":"Savings"}   -> errors {"request":[…],"$.Name":[…]}
+        {"name":null,"type":"Savings"}  -> errors {"Name":["The Name field is required."]}
+
+      All five are refused, so none creates an account.
+    */
+    const keysOf = async (raw: string) => {
+      const { status, body } = await call('/api/accounts', { method: 'POST', body: raw });
+      expect(status).toBe(400);
+      return Object.keys(asProblem(body).errors ?? {}).sort();
+    };
+
+    expect(await keysOf('{"name":123,"type":"99"}')).toEqual(['$.name', 'request']);
+    expect(await keysOf('{"type":"99","name":123}')).toEqual(['$.type', 'request']);
+    expect(await keysOf('{"name":123}')).toEqual(['$.name', 'request']);
+    expect(await keysOf('{"Name":123,"type":"Savings"}')).toEqual(['$.Name', 'request']);
+
+    const nullName = await call('/api/accounts', {
+      method: 'POST',
+      body: '{"name":null,"type":"Savings"}',
+    });
+    expect(nullName.status).toBe(400);
+    expect(asProblem(nullName.body).errors).toEqual({ Name: ['The Name field is required.'] });
+  });
+
   it('quotes the idempotency header requirement in the server’s exact words', async () => {
     /*
       A `detail` string, which is the one member of this envelope the app renders verbatim
