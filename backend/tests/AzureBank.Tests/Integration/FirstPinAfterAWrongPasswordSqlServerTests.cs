@@ -54,7 +54,7 @@ public sealed class FirstPinAfterAWrongPasswordSqlServerTests : IDisposable
     [SqlServerFact]
     public async Task AfterOneWrongPassword_TheRightOneStoresThePin_AndTheCountStaysCleared()
     {
-        var (client, azureTag) = await RegisterAsync();
+        var (client, azureTag, _) = await RegisterAsync();
 
         (await SetPinAsync(client, WrongPassword)).Should().Be(HttpStatusCode.Unauthorized);
         (await StoredAsync(azureTag)).AccessFailedCount.Should().Be(1, "ARRANGE: the wrong password was counted");
@@ -75,7 +75,7 @@ public sealed class FirstPinAfterAWrongPasswordSqlServerTests : IDisposable
     public async Task WithNoWrongPasswordBefore_TheRightOneStoresThePin()
     {
         // The control: nothing to clear, so the row is never taken out of the tracker.
-        var (client, azureTag) = await RegisterAsync();
+        var (client, azureTag, _) = await RegisterAsync();
 
         var enrolled = await SetPinAsync(client, Password);
 
@@ -92,7 +92,7 @@ public sealed class FirstPinAfterAWrongPasswordSqlServerTests : IDisposable
     [SqlServerFact]
     public async Task AWrongPassword_IsRefused_IsCounted_AndStoresNothing()
     {
-        var (client, azureTag) = await RegisterAsync();
+        var (client, azureTag, _) = await RegisterAsync();
 
         var first = await SetPinAsync(client, WrongPassword);
         var afterOne = await StoredAsync(azureTag);
@@ -118,7 +118,7 @@ public sealed class FirstPinAfterAWrongPasswordSqlServerTests : IDisposable
           row holds a count of zero and a LockoutEnd in the past. The right password clears that
           too, and the row is taken out of the tracker exactly as it is for a count.
         */
-        var (client, azureTag) = await RegisterAsync();
+        var (client, azureTag, _) = await RegisterAsync();
 
         for (var attempt = 0; attempt < ValidationRules.MaxLoginAttempts; attempt++)
         {
@@ -148,7 +148,29 @@ public sealed class FirstPinAfterAWrongPasswordSqlServerTests : IDisposable
         await AssertOneEnrolmentIsOnRecordAsync(stored.Id);
     }
 
-    private async Task<(HttpClient Client, string AzureTag)> RegisterAsync()
+    [SqlServerFact]
+    public async Task ASignInAfterAWrongPassword_StillSucceeds_AndTheCountIsCleared()
+    {
+        /*
+          The sign-in clears the count through the same statement and leaves its user out of the
+          tracker, which is right there: all it saves afterwards is the grant, by the user's key.
+          This holds that the enrolment's way of tracking the user again stayed out of that path.
+        */
+        var (client, azureTag, email) = await RegisterAsync();
+
+        (await SignInAsync(client, email, WrongPassword)).Should().Be(HttpStatusCode.Unauthorized);
+        (await StoredAsync(azureTag)).AccessFailedCount.Should().Be(1, "ARRANGE: the wrong password was counted");
+
+        var signedIn = await SignInAsync(client, email, Password);
+
+        var stored = await StoredAsync(azureTag);
+        using var all = new AssertionScope();
+        signedIn.Should().Be(HttpStatusCode.OK);
+        stored.AccessFailedCount.Should().Be(0, "the right password clears the count");
+        stored.LockoutEnd.Should().BeNull();
+    }
+
+    private async Task<(HttpClient Client, string AzureTag, string Email)> RegisterAsync()
     {
         _factory = new CustomWebApplicationFactory();
         _factory.SetConnectionString(SqlServerFactAttribute.ConnectionString!);
@@ -156,10 +178,11 @@ public sealed class FirstPinAfterAWrongPasswordSqlServerTests : IDisposable
 
         var unique = Guid.NewGuid().ToString("N")[..8];
         var azureTag = $"firstpin_{unique}";
+        var email = $"firstpin{unique}@example.com";
         var response = await client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
         {
             AzureTag = azureTag,
-            Email = $"firstpin{unique}@example.com",
+            Email = email,
             Password = Password,
             FirstName = "First",
             LastName = "Pin",
@@ -169,7 +192,14 @@ public sealed class FirstPinAfterAWrongPasswordSqlServerTests : IDisposable
         var result = await response.Content.ReadFromJsonAsync<ApiResponse<RegisterResponse>>(Json);
         client.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", result!.Data!.Token.AccessToken);
-        return (client, azureTag);
+        return (client, azureTag, email);
+    }
+
+    private static async Task<HttpStatusCode> SignInAsync(HttpClient client, string email, string password)
+    {
+        using var response = await client.PostAsJsonAsync(
+            "/api/auth/login", new LoginRequest { Email = email, Password = password }, Json);
+        return response.StatusCode;
     }
 
     private static async Task<HttpStatusCode> SetPinAsync(HttpClient client, string password)
