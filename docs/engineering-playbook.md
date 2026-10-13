@@ -59,10 +59,10 @@ mine.
 5. **Pull request.** One topic, fewer than 100 files, and a title that says the outcome. CI then
    runs every suite, including those that need a real SQL Server, the running stack and a
    browser, and the demo's, which restarts two containers of the stack.
-6. **Review.** Every pull request goes through CI and a security scan, and an AI review is
-   asked for on each, before I merge it. Each finding is checked against the code, then fixed,
-   declined with the reason, or set aside for a change of its own, with a written answer on
-   the pull request.
+6. **Review.** Every pull request goes through CI and a security scan, and an AI review starts
+   by itself or is asked for on each, before I merge it. Each finding is checked against the
+   code, then fixed, declined with the reason, or set aside for a change of its own, with a
+   written answer on the pull request.
 7. **Merge.** I merge: a green pipeline is necessary, but it does not replace my reading of the
    change. When several pull requests go in together, their combination is built and tested
    first.
@@ -76,7 +76,7 @@ mine.
 | **Claude Code** | The orchestrator. It drafts the plan I approve, writes the briefs, runs the gate, opens the pull request and works through each review round. Then it stops: the merge is mine. |
 | **Codex, Cursor, Antigravity** | Three agents working in parallel, each in its own folder, from its own brief. I start each one myself. The orchestrator reviews each of their branches before it leaves the machine. |
 | **A second reader** | Where a mistake is expensive (money, access, a database migration), another agent reads the change with one task: to find what is wrong. |
-| **CodeRabbit** | AI review, asked for on every pull request. |
+| **CodeRabbit** | AI review on pull requests. |
 | **CodeQL** | Security scan of the C#, the TypeScript and the workflows. |
 
 Models are chosen per task: the most capable one orchestrates and verifies, a cheaper one does the

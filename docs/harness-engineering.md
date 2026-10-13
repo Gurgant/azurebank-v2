@@ -9,9 +9,9 @@ made by others. It has three parts:
 - **what they read:** I give every agent the same public [instruction file][ag], with the
   commands, what "done" means and [what an agent never does][never];
 - **what runs on their changes:** the jobs of two workflows, [CI][ci] and the
-  [contract tests][bru], a security scan and an AI review asked for on each pull request; nine
-  of those checks are [required][rs] today, and `main` does not take a change that has not
-  passed them ([that is recent](#what-this-does-not-show));
+  [contract tests][bru], a security scan and an AI review; nine of those checks are
+  [required][rs] today, and `main` does not take a change that has not passed them
+  ([that is recent](#what-this-does-not-show));
 - **what limits them:** on my computer the orchestrator's merge command is refused before it
   runs, and the folders of the other three agents refuse a push; on GitHub a deployment waits
   for my approval. I merge every pull request myself.
@@ -115,7 +115,7 @@ inferential when an AI model judges the result.
 |---|---|
 | Instructions (guides) | One [instruction file][ag] for all agents, two procedures ([gate][gate], [review round][round]), 64 [decisions][adr], the [traps][tr] |
 | Checks a program runs (computational sensors) | [CI jobs][ci]; a security scan; 24 [architecture-test][arch] files |
-| Checks a model judges (inferential sensors) | An AI review asked for on each pull request; a [second reader][who] |
+| Checks a model judges (inferential sensors) | An AI review on pull requests; a [second reader][who] |
 | Limits and my checkpoints | The [rule set][rs], 9 required checks; my merge; a [deploy][dep] |
 | Isolation | A separate folder and branch per agent ([the path of a change][path]): it separates files, nothing else |
 | Memory | The [decision records][adr], cited in the code by number; a page of [traps][tr] |
