@@ -38,7 +38,7 @@ false positives), and would again on every later change.
 
 ### CodeQL log-forging barrier
 
-6. **One central sanitizer, `AzureBank.Shared.Utilities.LogSanitizer.Sanitize(string)`** (D6),
+6. **One central sanitiser, `AzureBank.Shared.Utilities.LogSanitizer.Sanitize(string)`** (D6),
    removes every `\p{C}` code unit (C0 and C1 controls, DEL, format, private-use, unassigned,
    surrogates) and the U+2028 and U+2029 line separators. It is a `Regex.Replace`, because that is
    a call shape CodeQL's built-in `StringReplaceSanitizer` already recognises.

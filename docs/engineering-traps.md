@@ -34,7 +34,7 @@ await _context.Database.CreateExecutionStrategy().ExecuteAsync(async () => { /* 
 - **Normalise and trim in the DTO setter, not in the service.** FluentValidation runs against the
   DTO as bound: with a trim in the service, the validator inspects one string and another is
   stored.
-- **Do not add a `required` member to a DTO that crosses the BFF boundary.** The BFF deserializes
+- **Do not add a `required` member to a DTO that crosses the BFF boundary.** The BFF deserialises
   API responses, and a newly `required` member fails that hop as soon as the two hosts are a
   version apart: it surfaces as a broken BFF, not as a contract change.
 

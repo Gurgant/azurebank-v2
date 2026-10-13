@@ -70,7 +70,7 @@ while its read is slow (light, dark and 375 px wide) and the open leave prompt o
 fails that job on any serious or critical finding except colour contrast, which it only reports.
 Fluent's own focus sentinels, which axe flags as `aria-hidden-focus`, are excluded by a selector
 the gate proves matches nothing else. Every page carries its own title, and a route change is
-announced and moves focus to the new page. The report of each scan is a CI artifact.
+announced and moves focus to the new page. The report of each scan is a CI artefact.
 
 The same run holds more by measuring it, each with its note in
 [`e2e/accessibility.spec.ts`](e2e/accessibility.spec.ts) and `e2e/deposit.spec.ts`: text that can
@@ -79,7 +79,7 @@ and the layout of the money tiles and of a transaction's row at 375 px.
 
 The public demo's screens are scanned by the same gate only in `npm run test:e2e:demo`, which
 CI's `demo-stack` job runs on every pull request: a finding on a demo screen fails that job, and
-the report of each scan is its artifact. The sign-in page of a browser that keeps a copy is
+the report of each scan is its artefact. The sign-in page of a browser that keeps a copy is
 under no scan.
 
 ## Screenshots

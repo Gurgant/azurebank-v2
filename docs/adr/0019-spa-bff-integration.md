@@ -16,7 +16,7 @@ two PIN models, a five-state idempotency protocol that fingerprints raw body byt
 
 1. **One data client, one error channel.** RTK Query only: `problemBaseQuery` turns every failure
    into a typed `ApiProblem` routed on `errorCode`, so that the contract's edges are encoded once
-   (`VALIDATION_ERROR` synthesized for a 400 with `errors`, the step-up 403 recognized from
+   (`VALIDATION_ERROR` synthesised for a 400 with `errors`, the step-up 403 recognised from
    `X-Auth-Level-Required` before the body, `retryAfterSeconds` from the body first). Retry is
    structural: queries only, transport and gateway failures only, never mutations.
 2. **No API token ever reaches the browser.** The access and refresh tokens stay in the BFF's
