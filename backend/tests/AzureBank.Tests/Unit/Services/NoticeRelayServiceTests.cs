@@ -345,6 +345,28 @@ public sealed class NoticeRelayServiceTests : IDisposable
         await relay.StopAsync(CancellationToken.None);
     }
 
+    [Fact]
+    public async Task AFailureThatArrivesAfterTheStopWasAsked_EndsTheLoop_AndLogsNoError()
+    {
+        var owner = await OwnerAsync();
+        var notice = await OwedAsync(owner);
+        await using var provider = Provider();
+        using var stop = new CancellationTokenSource();
+        var scopes = new StopsThenThrowsScopeFactory(stop);
+        var relay = Relay(provider, periodSeconds: 5, scopes: scopes);
+
+        await relay.StartAsync(stop.Token);
+        await AdvanceUntilAsync(() => Task.FromResult(relay.ExecuteTask!.IsCompleted));
+
+        relay.ExecuteTask!.Status.Should().Be(TaskStatus.RanToCompletion);
+        scopes.Calls.Should().Be(1);
+        (await StoredAsync(notice.Id)).DeliveredAt.Should().BeNull("the sweep ended before it could claim");
+        _logs.Lines.Should().NotContain(
+            l => l.Level >= LogLevel.Warning,
+            "once the stop is asked, a sweep that failed cannot be told from one the stop interrupted, "
+            + "and this process retries neither");
+    }
+
     [Theory]
     [InlineData(typeof(IOException))]
     [InlineData(typeof(InvalidOperationException))]
@@ -887,6 +909,21 @@ public sealed class NoticeRelayServiceTests : IDisposable
         throw new TimeoutException(
             "the condition did not become true within 10 s of wall clock; log so far: "
             + string.Join(" || ", _logs.Lines.Select(l => $"[{l.Level}] {l.Message}")));
+    }
+
+    /// <summary>Asks for the stop and then throws, each time a sweep asks for its scope.</summary>
+    private sealed class StopsThenThrowsScopeFactory(CancellationTokenSource stop) : IServiceScopeFactory
+    {
+        private int _calls;
+
+        public int Calls => Volatile.Read(ref _calls);
+
+        public IServiceScope CreateScope()
+        {
+            Interlocked.Increment(ref _calls);
+            stop.Cancel();
+            throw new InvalidOperationException("the store went away as the host stopped");
+        }
     }
 
     /// <summary>Throws on the first scope only: a store that could not be opened once.</summary>

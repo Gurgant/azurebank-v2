@@ -101,6 +101,16 @@ public sealed class NoticeRelayService : BackgroundService
                 {
                     throw;
                 }
+                catch (Exception ex) when (stoppingToken.IsCancellationRequested)
+                {
+                    // A statement cancelled once it is on the server comes back as the provider's
+                    // own exception, not as an OperationCanceledException, and nothing in it tells
+                    // it from a statement that failed while the host was stopping. Neither is
+                    // logged as a failed sweep: this process retries nothing after the stop, and a
+                    // fault that outlives it meets the first sweep of the next start, which says so.
+                    _logger.LogDebug(ex, "Notice relay: sweep interrupted by the host's shutdown");
+                    return;
+                }
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Notice relay: sweep failed; will retry next period");

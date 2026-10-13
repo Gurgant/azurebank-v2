@@ -142,6 +142,29 @@ public sealed class IdempotencyCleanupServiceTests
         rig.Log.Lines.Should().BeEmpty("a cancelled sweep is the shutdown, not an error to retry");
     }
 
+    [Fact]
+    public async Task AFailureThatArrivesAfterTheStopWasAsked_EndsTheLoop_AndLogsNoError()
+    {
+        await using var rig = Rig();
+        rig.BeforeSweep = _ =>
+        {
+            rig.RequestStop();
+            throw new InvalidOperationException("Injected failure: the store went away as the host stopped.");
+        };
+
+        await rig.StartAsync();
+        var loop = await rig.EndedAsync();
+
+        loop.Status.Should().Be(TaskStatus.RanToCompletion);
+        rig.SweepsStarted.Should().Be(1);
+        rig.Lines(LogLevel.Error).Should().BeEmpty(
+            "once the stop is asked, a sweep that failed cannot be told from one the stop interrupted, "
+            + "and this process retries neither");
+        rig.Lines(LogLevel.Debug).Should().ContainSingle()
+            .Which.Should().StartWith("Idempotency cleanup sweep interrupted by the host's shutdown")
+            .And.Contain("Injected failure", "the exception stays readable for whoever asks for Debug");
+    }
+
     private static bool Removes(DbContextEventData save) =>
         save.Context!.ChangeTracker.Entries().Any(entry => entry.State == EntityState.Deleted);
 
