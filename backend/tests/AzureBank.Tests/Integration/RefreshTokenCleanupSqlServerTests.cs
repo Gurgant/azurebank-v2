@@ -28,19 +28,18 @@ namespace AzureBank.Tests.Integration;
 /// </para>
 /// <para>
 /// The clock is a <see cref="FakeTimeProvider"/> started at the real time and moved by the
-/// shortest interval the API accepts, one minute. The database is the one the SQL Server proofs
-/// share, so the sweep also takes whatever other proofs left there that has expired by then;
-/// nothing reads those rows again.
+/// shortest interval the API accepts, one minute.
+/// </para>
+/// <para>
+/// ITS OWN DATABASE, created for the test and dropped when it ends. The sweep deletes every
+/// expired row of the database it is pointed at: on the one the SQL Server proofs share it would
+/// take other proofs' rows with it, and this test would leave its user and its live grants there.
 /// </para>
 /// </remarks>
 [Trait("Category", "SqlServer")]
 [Collection(SqlServerProofsCollection.Name)]
-public sealed class RefreshTokenCleanupSqlServerTests : IDisposable
+public sealed class RefreshTokenCleanupSqlServerTests
 {
-    private CustomWebApplicationFactory? _factory;
-
-    public void Dispose() => _factory?.Dispose();
-
     /// <summary>Exposes the loop itself, so the timer exists before the test moves the clock.</summary>
     private sealed class Probe(IServiceScopeFactory scopes, ILogger<RefreshTokenCleanupService> logger, TimeProvider clock)
         : RefreshTokenCleanupService(
@@ -58,10 +57,10 @@ public sealed class RefreshTokenCleanupSqlServerTests : IDisposable
     {
         // Measured 2026-10-12: the two expired rows gone, the three live ones kept, the link of the
         // live predecessor null, and nothing logged at Error.
-        _factory = new CustomWebApplicationFactory();
-        _factory.SetConnectionString(SqlServerFactAttribute.ConnectionString!);
-        _factory.CaptureLog();
-        var client = _factory.CreateClient();
+        await using var database = await DemoPoolDatabase.CreateAsync();
+        var factory = database.Api();
+        factory.CaptureLog();
+        var client = factory.CreateClient();
 
         // A real user, for the foreign key to AspNetUsers; registration also leaves one live grant.
         var unique = Guid.NewGuid().ToString("N")[..8];
@@ -78,7 +77,7 @@ public sealed class RefreshTokenCleanupSqlServerTests : IDisposable
         var now = DateTime.UtcNow;
         Guid userId;
         Guid registrationGrant;
-        using (var scope = _factory.Services.CreateScope())
+        using (var scope = factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
             userId = await db.Users.Where(u => u.Email == $"sweep{unique}@example.com").Select(u => u.Id).SingleAsync();
@@ -114,8 +113,8 @@ public sealed class RefreshTokenCleanupSqlServerTests : IDisposable
 
         var clock = new FakeTimeProvider(new DateTimeOffset(now, TimeSpan.Zero));
         var sweep = new Probe(
-            _factory.Services.GetRequiredService<IServiceScopeFactory>(),
-            _factory.Services.GetRequiredService<ILogger<RefreshTokenCleanupService>>(),
+            factory.Services.GetRequiredService<IServiceScopeFactory>(),
+            factory.Services.GetRequiredService<ILogger<RefreshTokenCleanupService>>(),
             clock);
         using var stop = new CancellationTokenSource();
         var loop = sweep.RunAsync(stop.Token);
@@ -124,7 +123,7 @@ public sealed class RefreshTokenCleanupSqlServerTests : IDisposable
 
         async Task<List<RefreshToken>> OfThisUserAsync()
         {
-            using var scope = _factory.Services.CreateScope();
+            using var scope = factory.Services.CreateScope();
             return await scope.ServiceProvider.GetRequiredService<AzureBankDbContext>().RefreshTokens
                 .AsNoTracking().Where(t => t.UserId == userId).OrderBy(t => t.TokenHash).ToListAsync();
         }
@@ -147,7 +146,7 @@ public sealed class RefreshTokenCleanupSqlServerTests : IDisposable
             .Should().BeNull("the row that stays no longer names the row that went");
         left.Single(t => t.TokenHash == $"live-{unique}").ReplacedByTokenId
             .Should().Be(registrationGrant, "a link to a row that lives is left alone");
-        _factory.CapturedLog.Should().NotContain(
+        factory.CapturedLog.Should().NotContain(
             line => line.Contains("Refresh-token cleanup sweep failed", StringComparison.Ordinal),
             "the foreign key did not refuse the delete");
     }
