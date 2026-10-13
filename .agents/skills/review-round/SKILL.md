@@ -143,22 +143,25 @@ say what the pull request waits for and stop: the next round starts at step 1 wh
 the last head exists, or when the person has decided (step 7). The merge is never the agent's.
 
 Before a proposal, `git fetch origin`: the branch is behind `main` when the first number of
-`git rev-list --left-right --count "origin/main...origin/$first"` is above 0, with `first` set
-as in the block below. When several pull requests are proposed together, or one whose branch is
+`git rev-list --left-right --count "origin/main...$first"` is above 0, with `first` set as in
+the block below. When several pull requests are proposed together, or one whose branch is
 behind `main`, check the combination first. Green alone, or green on an older `main`, does not
 prove green together.
 
-A branch is named by its pull request's number and its name is read into a variable, never typed
-into a command: git accepts a branch name that holds `;` or `$(...)`, which a shell would run.
+A pull request is taken by its number, and its head as a commit: no branch name is typed into a
+command. Git accepts a branch name that holds `;` or `$(...)`, which a shell would run, and the
+branch of a fork is not under `origin/` at all. Each commit read this way must be the
+`headRefOid` that step 1 read for that pull request, the one its review names: when it is
+another, somebody has pushed since, and that pull request goes back to step 1.
 
 ```bash
 git fetch origin
-first=$(gh pr view <number> --json headRefName --jq .headRefName)
-t=$(git merge-tree --write-tree origin/main "origin/$first")            # exit 1: a conflict: no proposal
-c=$(git commit-tree "$t" -p origin/main -p "origin/$first" -m scratch)  # an object: no branch moves
-second=$(gh pr view <number> --json headRefName --jq .headRefName)      # these three lines again,
-t=$(git merge-tree --write-tree "$c" "origin/$second")                  # once for each further one
-c=$(git commit-tree "$t" -p "$c" -p "origin/$second" -m scratch)
+git fetch origin pull/<number>/head && first=$(git rev-parse FETCH_HEAD)   # GitHub keeps each head there
+t=$(git merge-tree --write-tree origin/main "$first")                      # exit 1: a conflict: no proposal
+c=$(git commit-tree "$t" -p origin/main -p "$first" -m scratch)            # an object: no branch moves
+git fetch origin pull/<number>/head && second=$(git rev-parse FETCH_HEAD)  # these three lines again,
+t=$(git merge-tree --write-tree "$c" "$second")                            # once for each further one
+c=$(git commit-tree "$t" -p "$c" -p "$second" -m scratch)
 git worktree add --detach "<a folder the task names>" "$c"
 ```
 
