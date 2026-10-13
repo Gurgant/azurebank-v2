@@ -423,19 +423,18 @@ jobs:
   # line, keeps apart what the build writes under obj/ and the EF migrations, and fails where
   # it finds no coverage file or no line: a job that counted nothing is not green.
   #
-  # The floors are tripwires, not targets: each is under what was measured on 2026-10-12, so
-  # that a change that leaves a large part untested is seen.
-  #   backend,  floor 91: 93.0 % measured, 12,405 of 13,334 lines, on Windows with LocalDB,
-  #     on commit 4163925b;
-  #   frontend, floor 95: 98.0 % measured, 2,836 of 2,891 lines, on Windows, on a later
-  #     commit: more tests, and without the code that nothing imported.
+  # The floors are tripwires, not targets: each is under what this job printed on main on
+  # 2026-10-13 (run 38371242081, commit 7bbc8be4), so that a change that leaves a large part
+  # untested is seen.
+  #   backend, all hand-written code, floor 91: 94.9 %, 12,666 of 13,334 lines;
+  #   backend, the application alone (backend/src), floor 95: 96.8 %, 10,340 of 10,675
+  #     lines. It is the figure the entry page shows, and the floor on the whole does not
+  #     defend it: the command-line tools can carry the whole while the application falls;
+  #   frontend, floor 95: 98.0 %, 2,836 of 2,891 lines.
   # The floor is on lines. Branches are printed and hold no floor: the backend's are joined
   # from two files by the best count of each, which is a lower bound and not a count.
   #
-  # 25 minutes: the job has run on no runner yet. Its steps, without a collector, took about
-  # 13 minutes in the other jobs of the run of 2026-10-12 on main (container 29 s, restore and
-  # build 59 s, the two backend suites 71 s and 41 s, the SQL proofs 439 s, npm ci 11 s, the
-  # frontend suite 126 s).
+  # 25 minutes: in that run the job took 983 seconds.
   # ---------------------------------------------------------------------------------------
   coverage:
     name: Test coverage (hand-written code)
@@ -524,7 +523,7 @@ jobs:
       - name: Backend coverage
         run: >
           python3 infra/coverage_summary.py backend
-          --floor 91 "$RUNNER_TEMP/coverage"
+          --floor 91 --floor-application 95 "$RUNNER_TEMP/coverage"
 
       # The frontend's figure is printed whatever the backend's was: a run under one floor
       # still shows both numbers.
