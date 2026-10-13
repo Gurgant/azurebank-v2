@@ -142,8 +142,8 @@ public class TransferService : ITransferService
 
       The obvious place for a step-up gate is the BFF's AuthLevelMiddleware, or a middleware beside
       the idempotency claim. Both are wrong, and the reason is measured rather than argued:
-      IdempotencyMiddleware.cs:107-112 writes the stored response and RETURNS, never reaching
-      `await _next(context)` at :126. A replay therefore runs no model binding, no validation, no
+      on a replay IdempotencyMiddleware writes the stored response and RETURNS, never reaching
+      `await _next(context)`. A replay therefore runs no model binding, no validation, no
       controller and no service — so it also runs no authorisation check.
 
       That is the correct behaviour, and every payment API that documents the ordering agrees:

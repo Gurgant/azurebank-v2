@@ -179,9 +179,10 @@ public class StepUpAuthorizationService : IStepUpAuthorizationService
       (TreatWarningsAsErrors is on in Release, so CS8509 WOULD be an error -- it is the enum's open
       domain, not the warning policy, that makes compile-time exhaustiveness unavailable).
 
-      What catches a FIFTH member is therefore a test, not the compiler:
+      What catches a NEW member is therefore a test, not the compiler:
       SecurityEventConstantTests.EveryStepUpOperationMapsToItsOwnRefusalEvent walks
-      Enum.GetValues<StepUpOperation>() and asserts each one maps and that no two share an event.
+      Enum.GetValues<StepUpOperation>() and asserts each one maps. It also pins the event of each
+      member it knows by name: the two transfers share one on purpose (ADR-0044).
       Adding a member without a case here fails that test rather than mis-filing a row.
     */
     // INTERNAL rather than private so the guard named above can call it directly

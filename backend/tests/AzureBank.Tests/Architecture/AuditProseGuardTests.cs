@@ -381,11 +381,9 @@ public class AuditProseGuardTests
       dozen unresolved names, NOT the fourteen this comment used to claim, and NOT zero real ones.
       No exact figure is pinned here on purpose — it moves with every document edit, and the version
       of this sentence that did pin one was already stale one commit later. What does not move is
-      the counter-example: at least two of them are genuine dead citations of exactly the kind this
-      guard exists to catch — AzureBankDbContext.cs names AuditChainRetryingStrategySqlServerTests
-      in the present tense and no such class exists, and docs/adr/0041 names an elided
-      Transfer_WithNoPinField… that no test answers to. Both are older than this branch, so neither
-      is fixed here; the point is that the sentence claiming a clean widening measured nothing.
+      that the wider sweep is not all noise: it has found genuine dead citations of exactly the
+      kind this guard exists to catch, a source comment and a decision record each naming a test
+      that nothing answered to. Widening the scope means owning what it then finds.
     */
     private static readonly string[] AuditCorpus =
     [
