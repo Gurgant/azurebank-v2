@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.Globalization;
 using System.Text.Json;
 using AzureBank.Api.Transformers;
 using FluentAssertions;
@@ -88,15 +89,27 @@ public sealed class DataAnnotationSchemaTransformerTests
     [Fact]
     public async Task Range_PublishesBothBounds_AsInvariantNumbers()
     {
-        var schemas = await Transformed();
+        // Under a culture that writes a comma. On a machine whose culture writes a point the two
+        // last assertions hold the bounds and not the invariance: there, the conversion with the
+        // invariant culture taken out still publishes "0.5".
+        var machine = CultureInfo.CurrentCulture;
+        CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("it-IT");
+        try
+        {
+            var schemas = await Transformed();
 
-        using var all = new AssertionScope();
-        schemas["pageSize"].Minimum.Should().Be("1");
-        schemas["pageSize"].Maximum.Should().Be("50");
+            using var all = new AssertionScope();
+            schemas["pageSize"].Minimum.Should().Be("1");
+            schemas["pageSize"].Maximum.Should().Be("50");
 
-        // A point, whatever the machine's culture: a comma here is not a JSON Schema number.
-        schemas["rate"].Minimum.Should().Be("0.5");
-        schemas["rate"].Maximum.Should().Be("99.75");
+            // A point, whatever the culture: a comma here is not a JSON Schema number.
+            schemas["rate"].Minimum.Should().Be("0.5");
+            schemas["rate"].Maximum.Should().Be("99.75");
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = machine;
+        }
     }
 
     [Theory]
