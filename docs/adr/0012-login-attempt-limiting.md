@@ -1,7 +1,7 @@
 # ADR-0012: Password/login attempt-limiting (account lockout)
 
-**Status:** Accepted · **Date:** 2026-07-15 · **Amended:** 2026-09-23 (decision 4) ·
-**Decision Makers:** Vladislav Aleshaev
+**Status:** Accepted · **Date:** 2026-07-15 · **Amended:** 2026-09-23 (decision 4), 2026-10-13
+(decision 6) · **Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
@@ -38,8 +38,8 @@ identical `401 Invalid email or password.`
 5. **The policy is `ValidationRules.MaxLoginAttempts` (5) and `LoginLockoutMinutes` (15)**, the
    same constants `IdentityOptions.Lockout` is configured from, so the two cannot differ.
 6. **An unknown email spends the cost of a real password check**: `ILoginTimingEqualizer` runs a
-   dummy verification through the request's own `IPasswordHasher<ApplicationUser>` (PBKDF2, so the
-   real verifier's cost), because the hash latency is otherwise a larger oracle than the body.
+   dummy verification through the request's own hasher, which spends the same PBKDF2 iterations on
+   any stored hash (ADR-0003), because the hash latency is otherwise a larger oracle than the body.
 7. **The lockout honours Identity's per-user `LockoutEnabled` flag**, as `IsLockedOutAsync` does:
    an exempt account is never treated as locked and accrues no lock state. Every registered user
    has it `true` through `AllowedForNewUsers`; the PIN lockout is not governed by it.
@@ -71,7 +71,7 @@ identical `401 Invalid email or password.`
 
 ## Verified by
 
-- `AuthServiceTests` (the region "Login lockout Tests") and `LoginTimingEqualizerTests`.
+- `AuthServiceTests` ("Login lockout Tests"), `LoginTimingEqualizerTests`, `PasswordRoundsTests`.
 - `AuthEndpointTests.Login_AfterTooManyWrongPasswords_LocksAccount_Returns429`.
 - `LoginLockoutConcurrencySqlServerTests`: a parallel burst locks, and leaves no residual count.
 

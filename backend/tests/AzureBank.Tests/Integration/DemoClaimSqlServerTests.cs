@@ -16,6 +16,7 @@ using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.Transaction;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Options;
+using AzureBank.Shared.Services.Implementations;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using FluentAssertions.Execution;
@@ -411,9 +412,12 @@ public sealed class DemoClaimSqlServerTests
 
             // The owner: a password that is the answered one, and stamps that say the row changed.
             claimed.Owner.PasswordHash.Should().NotBeNullOrEmpty();
-            new PasswordHasher<ApplicationUser>()
+            new AccountPasswordHasher()
                 .VerifyHashedPassword(claimed.Owner, claimed.Owner.PasswordHash!, claim.Copy.Password)
-                .Should().NotBe(PasswordVerificationResult.Failed, "the hash stored is the hash of the password answered");
+                .Should().Be(
+                    PasswordVerificationResult.Success,
+                    "the hash stored is the hash of the password answered, at the rounds a registered one has");
+            AccountPasswordHasher.IterationsOf(claimed.Owner.PasswordHash).Should().Be(220_000);
             claimed.Owner.SecurityStamp.Should().NotBeNullOrEmpty().And.NotBe(free.Owner.SecurityStamp);
             claimed.Owner.ConcurrencyStamp.Should().NotBeNullOrEmpty().And.NotBe(free.Owner.ConcurrencyStamp);
 

@@ -21,7 +21,7 @@ that `ApplicationUser` extends, and `Konscious.Security.Cryptography.Argon2`, fo
 | `Options/` | The classes the configuration sections bind to, each naming its section in `SectionName` |
 | `Validation/` | Attributes for a money amount, a PIN, a password, an AzureTag, a GUID that is not empty and a list with no null item |
 | `Utilities/` | `IdGenerator` (account and transaction numbers), `LogSanitizer`, `SecretPrefix` |
-| `Services/` | `IPasswordHasher`: Argon2id for the PIN, and for nothing else |
+| `Services/` | `IPasswordHasher`: Argon2id for the PIN, and for nothing else. `AccountPasswordHasher`: Identity's PBKDF2 for the account password, and its iteration count |
 | `Observability/` | The console log format and the rule for an OTLP endpoint, shared by the API and the BFF |
 
 A success body is one of the envelopes in `DTOs/Common`: `ApiResponse<T>` (`data` and `message`),
@@ -97,7 +97,8 @@ dotnet test tests/AzureBank.Tests/AzureBank.Tests.csproj
 ```
 
 Its tests are under `tests/AzureBank.Tests/Unit`, by folder: `Utilities`, `Exceptions`, `Options`,
-`Validators`, `Observability`, and `Services/PasswordHasher*Tests.cs`. The three guards named
+`Validators`, `Observability`, and `Services/PasswordHasher*Tests.cs` with
+`Services/AccountPasswordHasherTests.cs`. The three guards named
 above are in `tests/AzureBank.Tests/Architecture`; `CommittedOpenApiDocumentTests`, named below, is
 in `tests/AzureBank.Tests/Integration`.
 
@@ -113,7 +114,8 @@ in `tests/AzureBank.Tests/Integration`.
   renaming one changes what the stored rows say.
 - **`IPasswordHasher` hashes the PIN and nothing else**: Argon2id, keyed with the pepper in
   `Security:PinPepper` (ADR-0003, ADR-0011). Account passwords are hashed by ASP.NET Core Identity
-  and never reach it.
+  and never reach it: `AccountPasswordHasher` is Identity's hasher with the iteration count set,
+  and the API and the Seeder both register it.
 - **`LogSanitizer.Sanitize(string)` is named in a CodeQL model**,
   `.github/codeql/extensions/azurebank-csharp-models/models/logsanitizer.model.yml`, by its
   namespace, type, name and signature. Rename it, move it or add an overload and that row matches

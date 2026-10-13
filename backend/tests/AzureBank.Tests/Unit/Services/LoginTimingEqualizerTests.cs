@@ -1,8 +1,6 @@
 using AzureBank.Api.Security;
-using AzureBank.Shared.Entities;
+using AzureBank.Shared.Services.Implementations;
 using FluentAssertions;
-using Microsoft.AspNetCore.Identity;
-using Microsoft.Extensions.Options;
 
 namespace AzureBank.Tests.Unit.Services;
 
@@ -14,8 +12,7 @@ namespace AzureBank.Tests.Unit.Services;
 /// </summary>
 public class LoginTimingEqualizerTests
 {
-    private readonly LoginTimingEqualizer _sut =
-        new(new PasswordHasher<ApplicationUser>(Options.Create(new PasswordHasherOptions())));
+    private readonly LoginTimingEqualizer _sut = new(new AccountPasswordHasher());
 
     [Fact]
     public void SpendVerifyCost_RunsWithoutThrowing()
