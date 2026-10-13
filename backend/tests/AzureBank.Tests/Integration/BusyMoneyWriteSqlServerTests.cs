@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using AzureBank.Api.Services;
@@ -15,6 +16,7 @@ using FluentAssertions;
 using FluentAssertions.Execution;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Serilog.Events;
 using Xunit.Abstractions;
 
 namespace AzureBank.Tests.Integration;
@@ -43,8 +45,10 @@ namespace AzureBank.Tests.Integration;
 /// about the claim and the commit: a claim taken over and a commit let start that failed are
 /// answered 500, and a commit that landed and lost its acknowledgement is answered the 409 of a
 /// write that was applied, before the busy question is asked. Two send 24 writes at once to one
-/// account. Not held: a payee's handle renamed during the attempts, since a handle is resolved
-/// once per request and not looked at again.
+/// account: one of the 24 is made to lose every attempt and is answered busy, and the others race
+/// for the row by themselves. How many of those spend their attempts is the run's, from none to
+/// most of them: it is written to the output and not asserted. Not held: a payee's handle renamed
+/// during the attempts, since a handle is resolved once per request and not looked at again.
 /// </para>
 /// <para>
 /// A transfer saves two accounts, so each of its proofs says which of the two is lost
@@ -607,18 +611,19 @@ public sealed class BusyMoneyWriteSqlServerTests(ITestOutputHelper output) : Clo
     /// More parallel withdrawals than the retry carries, from an account that holds less than they
     /// ask for together, a key, an amount and an authorisation of its own each: each is answered
     /// 201 and made once, or the busy 503 and not made, or 422 <c>INSUFFICIENT_FUNDS</c> and not
-    /// made, and at least one is answered busy. The balance is what the 201s leave and never
-    /// below zero. None is a 500.
+    /// made. One of them loses the row on every attempt while the others race for it, and is
+    /// answered busy. The balance is what the 201s leave and never below zero. None is a 500.
     /// </summary>
     [SqlServerFact]
     public async Task MoreParallelWithdrawalsThanTheAccountCovers_AreMadeOnce_AnsweredBusy_OrRefusedForFunds()
     {
-        var client = CreateSqlClient(host => host.CaptureLog());
+        var race = new StaleRowVersionInterceptor();
+        var client = CreateParallelClient(race);
         var user = await RegisterWithPinAsync(client, "bw");
         var account = user.PrimaryAccountId;
 
         await RunInParallelAsync(
-            client, user, account, credited: null, start: 1100m, AmountsTheAccountDoesNotCover,
+            client, race, user, account, credited: null, start: 1100m, AmountsTheAccountDoesNotCover,
             TransactionType.Withdrawal, SecurityEvents.MoneyWithdrawn,
             amount => MintWithdrawalAsync(client, user, account, amount),
             (amount, authorizationId, key) => WithdrawAsync(client, user, account, authorizationId, key, amount));
@@ -627,19 +632,21 @@ public sealed class BusyMoneyWriteSqlServerTests(ITestOutputHelper output) : Clo
     /// <summary>
     /// More parallel internal transfers than the retry carries, out of one account that covers them
     /// all into another of the same user: each is answered 201 and made once, or the busy 503 and
-    /// not made, and at least one is answered busy. Each transfer writes both rows, so the
-    /// destination's balance holds the same transfers.
+    /// not made. One of them loses the source's row on every attempt while the others race for
+    /// it, and is answered busy. Each transfer writes both rows, so the destination's balance
+    /// holds the same transfers.
     /// </summary>
     [SqlServerFact]
     public async Task MoreParallelInternalTransfersThanTheRetryCarries_AreMadeOnce_OrAnsweredTheBusy503()
     {
-        var client = CreateSqlClient(host => host.CaptureLog());
+        var race = new StaleRowVersionInterceptor();
+        var client = CreateParallelClient(race);
         var user = await RegisterWithPinAsync(client, "bi");
         var source = user.PrimaryAccountId;
         var destination = await CreateSpareAsync(client, user);
 
         await RunInParallelAsync(
-            client, user, source, destination, start: 1000m, AmountsTheAccountCovers,
+            client, race, user, source, destination, start: 1000m, AmountsTheAccountCovers,
             TransactionType.TransferOut, SecurityEvents.MoneyTransferredInternally,
             amount => MintAsync(client, user, "/api/transfers/internal/authorizations",
                 new InternalTransferAuthorizationRequest
@@ -661,6 +668,17 @@ public sealed class BusyMoneyWriteSqlServerTests(ITestOutputHelper output) : Clo
 
     private const int Parallelism = 24;
 
+    /// <summary>
+    /// A host for 24 writes at once. Its log is kept from Information upward: a conflict that is
+    /// tried again is logged there, and a write that spent its attempts as a warning.
+    /// </summary>
+    private HttpClient CreateParallelClient(StaleRowVersionInterceptor race) =>
+        CreateSqlClient(host =>
+        {
+            host.AddInterceptor(race);
+            host.CaptureLog(LogEventLevel.Information);
+        });
+
     /// <summary>An amount of its own for each parallel request, 516 together: an account that holds 1000 covers them all.</summary>
     private static readonly decimal[] AmountsTheAccountCovers =
         Enumerable.Range(0, Parallelism).Select(i => 10m + i).ToArray();
@@ -669,7 +687,9 @@ public sealed class BusyMoneyWriteSqlServerTests(ITestOutputHelper output) : Clo
     /// An amount of its own for each parallel request, 2223 together, which an account that holds
     /// 1100 does not cover: three of 600 and more, of which the account covers one, and twenty-one
     /// small ones, 420 together, which it covers beside that one and which therefore keep racing
-    /// for the row until they are made or have spent their attempts.
+    /// for the row until they are made or have spent their attempts. The first, which is the one
+    /// made to lose every attempt, is a small one: whatever the others leave covers it, so it is
+    /// never refused for funds.
     /// </summary>
     private static readonly decimal[] AmountsTheAccountDoesNotCover =
         Enumerable.Range(0, Parallelism).Select(i => i < 21 ? 10m + i : 579m + i).ToArray();
@@ -693,8 +713,17 @@ public sealed class BusyMoneyWriteSqlServerTests(ITestOutputHelper output) : Clo
     /// were made, not only how many. A <paramref name="start"/> below what the amounts sum to also
     /// lets a request be refused for funds.
     /// </summary>
+    /// <remarks>
+    /// THE BUSY ANSWER IS NOT LEFT TO THE RACE. How many of 24 free writes spend their attempts
+    /// depends on how far the host and the database overlap them: none when few are under way at
+    /// a time, most of them when all are. So <paramref name="race"/> makes the first request lose
+    /// the debited account's row on every attempt, and that one is answered busy on any machine.
+    /// It does so without writing the row, so the others race for it by themselves and lose an
+    /// attempt only to one another. What they did is written to the output.
+    /// </remarks>
     private async Task RunInParallelAsync(
-        HttpClient client, TestUser user, Guid debited, Guid? credited, decimal start, decimal[] amounts,
+        HttpClient client, StaleRowVersionInterceptor race, TestUser user, Guid debited, Guid? credited,
+        decimal start, decimal[] amounts,
         TransactionType ledgerType, string moneyEvent,
         Func<decimal, Task<Guid>> mintAsync,
         Func<decimal, Guid, Guid, Task<HttpResponseMessage>> sendAsync)
@@ -712,21 +741,31 @@ public sealed class BusyMoneyWriteSqlServerTests(ITestOutputHelper output) : Clo
             authorizations[i] = await mintAsync(amounts[i]);
         }
 
+        // Armed after the funding, for the saves that carry the first request's key and no other.
+        var keys = Enumerable.Range(0, Parallelism).Select(_ => Guid.NewGuid()).ToArray();
+        race.Arm(debited, keys[0]);
+
         var clock = Stopwatch.StartNew();
         var answers = await Task.WhenAll(Enumerable.Range(0, Parallelism).Select(async i =>
         {
-            var key = Guid.NewGuid();
+            var key = keys[i];
             var response = await sendAsync(amounts[i], authorizations[i], key);
             return new Answer(amounts[i], authorizations[i], key, response, await response.Content.ReadAsStringAsync());
         }));
         clock.Stop();
+        race.Disarm();
 
+        var outrun = answers[0];
         var made = answers.Where(a => a.Status == HttpStatusCode.Created).ToArray();
         var busy = answers.Where(a => a.Status == HttpStatusCode.ServiceUnavailable).ToArray();
         var refusedForFunds = answers
             .Where(a => a.Status == HttpStatusCode.UnprocessableEntity && a.ErrorCode == ErrorCodes.InsufficientFunds)
             .ToArray();
         var gaveUp = Host.CapturedLog.Count(l => l.Contains("lost the account to another write", StringComparison.Ordinal));
+        var conflicts = Host.CapturedEvents
+            .Where(e => e.MessageTemplate.Text.StartsWith("Concurrency conflict on", StringComparison.Ordinal))
+            .Select(e => int.Parse(e.Properties["Attempt"].ToString(), CultureInfo.InvariantCulture))
+            .ToArray();
 
         using var services = Host.Services.CreateScope();
         var db = services.ServiceProvider.GetRequiredService<AzureBankDbContext>();
@@ -759,7 +798,10 @@ public sealed class BusyMoneyWriteSqlServerTests(ITestOutputHelper output) : Clo
             + $"{made.Length} made (201), {busy.Length} busy (503), {refusedForFunds.Length} refused for funds (422); every answer: "
             + string.Join(", ", answers.GroupBy(a => (int)a.Status).OrderBy(g => g.Key)
                 .Select(g => $"{g.Count()} x {g.Key}{(g.Key is 201 or 503 ? string.Empty : " " + string.Join("/", g.Select(a => a.ErrorCode).Distinct()))}"))
-            + $"; gave up in the log: {gaveUp}; balance {start} -> {balance}, the 201s sum to {made.Sum(a => a.Amount)}, "
+            + $"; the request made to lose lost {race.Fired} of {ConcurrencyRetry.MaxAttempts} attempts and was answered {(int)outrun.Status}"
+            + $"; gave up in the log: {gaveUp}; {conflicts.Length} conflicts tried again, by attempt: "
+            + string.Join(", ", conflicts.GroupBy(a => a).OrderBy(g => g.Key).Select(g => $"{g.Key}: {g.Count()}"))
+            + $"; balance {start} -> {balance}, the 201s sum to {made.Sum(a => a.Amount)}, "
             + $"lowest balance in the ledger {lowest}; credited account: {creditedBalance?.ToString() ?? "none"}; "
             + $"ledger rows {ledger.Count}, audit rows {auditRows}; "
             + $"authorisations of the 201s: {Tally(made.Select(a => spent[a.AuthorizationId].ToString()))}; "
@@ -781,7 +823,9 @@ public sealed class BusyMoneyWriteSqlServerTests(ITestOutputHelper output) : Clo
             refusedForFunds.Should().BeEmpty("the account covers every amount, so none is refused for funds");
         }
 
-        busy.Should().NotBeEmpty("the proof is void unless at least one write spent its attempts and was answered busy");
+        race.Fired.Should().Be(
+            ConcurrencyRetry.MaxAttempts, "the proof is void unless one write lost every attempt it is given");
+        busy.Should().Contain(outrun, "a write that loses every attempt is answered busy, whatever the others are answered");
 
         foreach (var answer in busy)
         {
