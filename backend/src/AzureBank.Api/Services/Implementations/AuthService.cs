@@ -309,7 +309,10 @@ public class AuthService : IAuthService
     // `user` keeps its stale AccessFailedCount/LockoutEnd. Detach it so a later
     // SaveChanges in the same request (e.g. a future unit-of-work or audit interceptor)
     // can't write those stale values back and silently revert the reset. Subsequent reads
-    // (JWT generation, identity mapping) work fine on the detached entity.
+    // (JWT generation, identity mapping) work fine on the detached entity. A caller that goes
+    // on to SAVE this user has to mirror the reset onto it and attach it again first, as
+    // VerifyAccountPasswordAsync does: Identity's update cannot attach it once its own
+    // validators have tracked a second instance of the row.
     private async Task ResetLoginLockoutAsync(ApplicationUser user, CancellationToken cancellationToken)
     {
         if (_context.Database.IsRelational())
@@ -971,14 +974,34 @@ public class AuthService : IAuthService
             {
                 await ResetLoginLockoutAsync(user, cancellationToken);
                 /*
-                  MIRROR the reset onto the TRACKED entity — the same aliasing trap the CurrentPin
-                  branch documents. ResetLoginLockoutAsync writes through its own path; `user` here
-                  was loaded by _userManager and still holds the pre-reset counters, and the
-                  UpdateAsync that persists the new PIN hash writes the whole tracked row. Without
-                  these two lines the reset is resurrected by the very call that stores the PIN.
+                  MIRROR the reset onto the entity the caller goes on to save — the same aliasing
+                  trap the CurrentPin branch documents. ResetLoginLockoutAsync writes through its
+                  own path; `user` here was loaded by _userManager and still holds the pre-reset
+                  counters, and the UpdateAsync that persists the new PIN hash writes the whole
+                  row. Without these two lines the reset is resurrected by the very call that
+                  stores the PIN.
                 */
                 user.AccessFailedCount = 0;
                 user.LockoutEnd = null;
+
+                /*
+                  THEN TRACK IT AGAIN, where the reset stopped tracking it. On a relational
+                  provider ResetLoginLockoutAsync detaches `user`, and the login path can leave it
+                  so because it never saves that user again. This caller does: UpdateAsync first
+                  runs Identity's user validators, which look the user up by name and by e-mail.
+                  With `user` detached those lookups track a SECOND instance of the row, the
+                  store's Attach(user) then finds two instances under one key and throws, and a
+                  first PIN after a wrong password answers 500 with nothing stored. Tracked, the
+                  lookups resolve to this instance.
+
+                  After the two lines above and not before: the values Attach snapshots are then
+                  the ones the row now holds. The InMemory branch of the reset never detaches, so
+                  there is nothing to attach there.
+                */
+                if (_context.Entry(user).State == EntityState.Detached)
+                {
+                    _context.Attach(user);
+                }
             }
 
             return;
