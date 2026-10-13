@@ -65,8 +65,8 @@ every pull request.
   failed, skipped. "Should pass" is not a result.
 - A new or changed check proves nothing until you have seen it fail. Break the thing once on
   purpose and watch the check go red.
-- A change to a page under `docs/` also runs the backend commands: architecture tests read the
-  pages.
+- A change to a page under `docs/`, or to a README, also runs the backend commands:
+  architecture tests read the pages.
 - The running API is the oracle for what the server does, never the mock. Where the two disagree,
   read the contract and the decision record first: if the API is right the mock changes, and if
   the API is wrong that is a defect to report, not a mock to bend.

@@ -10,14 +10,15 @@ A round is everything the reviewers said about one head. It ends with at most on
 fixes, after a merge of `main` where the branch needed one (step 3), one reply in each thread,
 and the next request, the proposal of a merge, or a report of what the pull request waits for.
 A round pushes and posts: work it only when the task says so (`AGENTS.md`, "What an agent never
-does"). Otherwise stop after step 2 and hand back what each finding needs.
+does"). Otherwise stop after step 2 and hand back what each finding needs. Asked only whether a
+merge can be proposed, answer from step 6 as well, and push and post nothing.
 
 ## 1. Read the whole round before touching anything
 
 ```bash
 gh pr view <number> --json headRefOid,statusCheckRollup,reviews,comments
 gh pr checks <number> --required     # the checks that step 6 calls required
-gh api graphql -f query='query($n:Int!){repository(owner:"Gurgant",name:"azurebank-v2"){pullRequest(number:$n){reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{id isResolved isOutdated comments(first:100){nodes{databaseId author{login} path body createdAt}}}}}}}' -F n=<number>
+gh api graphql -f query='query($n:Int!){repository(owner:"Gurgant",name:"azurebank-v2"){pullRequest(number:$n){reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{id isResolved isOutdated comments(first:100){nodes{databaseId author{login} path line originalLine body createdAt}}}}}}}' -F n=<number>
 gh api --paginate "repos/Gurgant/azurebank-v2/code-scanning/alerts?state=open&pr=<number>&per_page=100"
 ```
 
@@ -36,9 +37,10 @@ gh api --paginate "repos/Gurgant/azurebank-v2/code-scanning/alerts?state=open&pr
 
 ## 2. Judge each finding against the code
 
-Open the file at the line. Then:
+Open the file at the line (`line`; a comment on lines that have since changed has only
+`originalLine`, the line in the commit it was made on). Then:
 
-- true, or partly true: fix what is true, and say in the reply what is not;
+- true, or partly true: what is true is to be fixed (step 3), and the reply says what is not;
 - false: decline it, with the line, the test or the primary source that shows why;
 - true but outside the topic: note it for a change of its own (in the report of the task, or
   in an issue when the task allows opening one) and say so in the reply. Do not widen this one.
@@ -46,7 +48,8 @@ Open the file at the line. Then:
 A suggested patch is a claim like any other: it can be partial or wrong. Where a reviewer
 challenges a statement, check the primary source, then concede or answer on evidence. A finding
 from a review of an older head is still judged, against the code of the last head: if a later
-commit already fixed it, the reply names that commit.
+commit already fixed it, the reply names that commit. An open code-scanning alert is judged the
+same way, before the commit of step 3.
 
 ## 3. One commit for the round
 
@@ -139,8 +142,10 @@ where the next paragraph asks for a check of the combination, that check comes f
 say what the pull request waits for and stop: the next round starts at step 1 when a verdict on
 the last head exists, or when the person has decided (step 7). The merge is never the agent's.
 
-When several pull requests are proposed together, or one whose branch is behind `main`, check the
-combination first. Green alone, or green on an older `main`, does not prove green together.
+Before a proposal, `git fetch origin`: the branch is behind `main` when the first number of
+`git rev-list --left-right --count origin/main...origin/<branch>` is above 0. When several pull
+requests are proposed together, or one whose branch is behind `main`, check the combination
+first. Green alone, or green on an older `main`, does not prove green together.
 
 ```bash
 git fetch origin
@@ -148,7 +153,7 @@ t=$(git merge-tree --write-tree origin/main origin/<first>)            # exit 1:
 c=$(git commit-tree "$t" -p origin/main -p origin/<first> -m scratch)  # an object: no branch moves
 t=$(git merge-tree --write-tree "$c" origin/<second>)                  # these two lines again,
 c=$(git commit-tree "$t" -p "$c" -p origin/<second> -m scratch)        # once for each further one
-git worktree add --detach <a folder the task allows> "$c"
+git worktree add --detach <a folder the task names> "$c"
 ```
 
 Combine in the order the merges are proposed in. In that folder run the pre-pr-gate skill, step

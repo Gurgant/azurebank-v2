@@ -178,9 +178,9 @@ change, from anyone's agent, is public: [`AGENTS.md`][ag], the checks in [CI][ci
 - **No comparison with and without the harness exists, and the accuracy of the AI review is
   unknown.** I have not measured the work with and without any part of it. The episodes show
   what a new check caught on its first run; they do not show a rate. Each finding of the AI
-  review is checked against the code and fixed, declined or set aside in its thread, but I have
-  not counted how many were real defects. Some pull requests were merged without a review
-  coming back, and the rule set requires no approving review.
+  review is checked against the code and fixed, declined or set aside, with a written answer
+  on the pull request, but I have not counted how many were real defects. Some pull requests
+  were merged without a review coming back, and the rule set requires no approving review.
 - **The blocks on my machine are not a lock.** They refuse a merge command or a push
   ([the playbook][guards] describes them) and stop a habit or a mistake, not an agent set on
   getting around them. Some rules have no check at all: not rewriting a pushed branch is

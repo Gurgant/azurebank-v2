@@ -43,12 +43,19 @@ git diff --name-only origin/main...HEAD               # read the list: one topic
 | `frontend/` | the frontend line (`npm ci` first in a fresh checkout) | `frontend/` |
 | `infra/`, `.github/workflows/` | `python -m unittest discover -s infra -p 'test_*.py'` | the root |
 | `.github/workflows/` | also `actionlint`, with `shellcheck` installed: the infrastructure job runs it, and it reads the shell of every `run:` block | the root |
-| any Markdown | every relative link and anchor still resolves. For a page under `docs/`, the root `README.md` or `SECURITY.md`: `npm ci --ignore-scripts && npm run build` from `docs-site/`, whose last line must read `check-links: <n> references in <m> pages, none broken`. The site build does not read Markdown outside `docs/` other than those two (`AGENTS.md`, a README in `backend/` or `frontend/`): open each link the diff adds or changes | the root |
+| any Markdown, `docs-site/`, or a file moved, renamed or deleted | every relative link and anchor still resolves. For a page under `docs/`, the root `README.md` or `SECURITY.md`, a heading renamed or removed in any Markdown file, a file moved, renamed or deleted, or a change under `docs-site/`: `npm ci --ignore-scripts && npm run build` from `docs-site/`, whose last line must read `check-links: <n> references in <m> pages, none broken`. The pages link to files and to headings all over the repository, and the build stops on a target that is gone. The links written in Markdown outside `docs/` other than those two (`AGENTS.md`, a README in `backend/` or `frontend/`) the build does not check: open each one the diff adds or changes | the root |
+| any Markdown, `infra/british_spelling_*.txt` | also `python infra/check_british_spelling.py` and `python -m unittest discover -s infra -p 'prose_test_*.py'`: CI runs both, and a finding there is a red mark that blocks no merge | the root |
 | Markdown under `docs/`, or a README | also the backend row: architecture tests read the pages, so a sentence can turn a test red | `backend/` |
 | a DTO, a route, a status code | the contract, step 3 | |
 
 Write down passed, failed and skipped for each suite. A skipped count that differs from the last
-CI run on `main` needs its reason (the backend job prints its counts in the step "Test totals").
+CI run on `main` needs its reason (the backend job prints its counts at the end of the steps
+"Test" and "Test BFF").
+
+A row is the least that is due, not all that can fail: tests of each part read files of the
+others as text (backend tests read `frontend/src` and the README of the API collection; frontend
+and deployment tests read sources under `backend/src`). A check that no row selected and that
+goes red in CI is read in step 7.
 
 What these commands do not run. CI runs all of it on every pull request: say which were left to
 CI, and never count them as passed.
@@ -58,8 +65,8 @@ CI, and never count them as passed.
   and `npm run test:e2e` (the real stack), and `npm run test:e2e:demo` (the stack in containers,
   with the demo on).
 - The frontend unit suite under two other time zones, the run of Schemathesis against the running
-  API, the Bruno collection, the check that every model change has a migration, and the compile
-  and lint of the deployment templates.
+  API, the Bruno collection, the check that every model change has a migration, the compile and
+  lint of the deployment templates, and the floors on test coverage.
 
 Where the change touches what only one of these can see (a status code, an error body, a flow in
 the browser, a query, a migration), bring the stack up (`AGENTS.md` points to the commands) and
@@ -125,9 +132,11 @@ diff again does not count.
 
 ## 7. Open, read the checks, stop
 
-Only when the task says to push or to open a pull request (`AGENTS.md`, "What an agent never
-does"). Otherwise stop here: report the results of steps 1 to 6 and hand back the local commit,
-the title and the text.
+The push only when the task says to push, and the pull request only when the task says to open
+one (`AGENTS.md`, "What an agent never does"). A task that asks for the pull request has asked
+for the push it needs. A task that asks for the push has not asked for the pull request: push,
+report the results of steps 1 to 6 and stop. With neither, stop here: report the results of
+steps 1 to 6 and hand back the local commit, the title and the text.
 
 ```bash
 git push -u origin <branch>
