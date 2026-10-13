@@ -94,26 +94,46 @@ public sealed class BalanceConcurrencySqlServerTests : IDisposable
 
     /// <summary>
     /// More parallel deposits to one account than the retry carries: each is answered 201 and
-    /// applied once, or answered the busy 503 and not applied, and at least one is answered busy.
-    /// None is a 500. Each key holds what its answer says: one record after a 201, none after a 503.
+    /// applied once, or answered the busy 503 and not applied. One of them loses the account's
+    /// row on every attempt while the others race for it, and is answered busy. None is a 500.
+    /// Each key holds what its answer says: one record after a 201, none after a 503.
     /// </summary>
+    /// <remarks>
+    /// THE BUSY ANSWER IS NOT LEFT TO THE RACE. How many of 24 free deposits spend their attempts
+    /// depends on how far the host and the database overlap them: none when they are taken one at
+    /// a time, about half of them when all are under way. So the first deposit is made to lose
+    /// the account's row on every attempt, and that one is answered busy on any machine. Nothing
+    /// writes the row to make it lose, so the others race for it by themselves and lose an attempt
+    /// only to one another. What they did is written to the output and not asserted.
+    /// </remarks>
     [SqlServerFact]
     public async Task MoreParallelDepositsThanTheRetryCarries_AreAppliedOnce_OrAnsweredTheBusy503()
     {
         const int parallelism = 24;
 
-        var client = CreateSqlClient(factory => factory.CaptureLog(LogEventLevel.Information));
+        var race = new StaleRowVersionInterceptor();
+        var client = CreateSqlClient(factory =>
+        {
+            factory.AddInterceptor(race);
+            factory.CaptureLog(LogEventLevel.Information);
+        });
         var (token, accountId) = await RegisterAsync(client);
         var start = await GetBalanceAsync(client, token, accountId);
+
+        // Armed after the registration, for the saves that carry the first deposit's key and no other.
+        var keys = Enumerable.Range(0, parallelism).Select(_ => Guid.NewGuid()).ToArray();
+        race.Arm(accountId, keys[0]);
 
         // An amount and a description of its own for each request, so that the balance and the
         // ledger say WHICH deposits were applied, not only how many.
         var clock = Stopwatch.StartNew();
         var answers = await Task.WhenAll(
             Enumerable.Range(0, parallelism).Select(i => SendDepositAsync(
-                client, token, accountId, 10m + i, $"Busy deposit {i}", Guid.NewGuid())));
+                client, token, accountId, 10m + i, $"Busy deposit {i}", keys[i])));
         clock.Stop();
+        race.Disarm();
 
+        var outrun = answers[0];
         var applied = answers.Where(a => a.Status == HttpStatusCode.Created).ToArray();
         var refused = answers.Where(a => a.Status != HttpStatusCode.Created).ToArray();
         var conflicts = _factory!.CapturedEvents
@@ -133,6 +153,7 @@ public sealed class BalanceConcurrencySqlServerTests : IDisposable
         _output.WriteLine(
             $"{parallelism} parallel deposits at {ConcurrencyRetry.MaxAttempts} attempts in {clock.ElapsedMilliseconds} ms: "
             + string.Join(", ", answers.GroupBy(a => (int)a.Status).OrderBy(g => g.Key).Select(g => $"{g.Count()} x {g.Key}"))
+            + $"; the deposit made to lose lost {race.Fired} of {ConcurrencyRetry.MaxAttempts} attempts and was answered {(int)outrun.Status}"
             + $"; busy with applied false: {refused.Count(a => a.AppliedIsFalse)}; gave up in the log: {gaveUp}; "
             + $"balance {start} -> {balance}, the 201s sum to {applied.Sum(a => a.Amount)}; "
             + $"ledger rows {ledger.Length}, audit rows {auditRows}; "
@@ -145,8 +166,10 @@ public sealed class BalanceConcurrencySqlServerTests : IDisposable
             + string.Join(" | ", answers.Where(a => a.Status == HttpStatusCode.InternalServerError)
                 .Select(a => $"{(int)a.Status}: {a.Body[..Math.Min(150, a.Body.Length)]}")));
 
-        refused.Should().NotBeEmpty(
-            "the proof is void unless at least one deposit spent its attempts and was answered busy");
+        race.Fired.Should().Be(
+            ConcurrencyRetry.MaxAttempts, "the proof is void unless one deposit lost every attempt it is given");
+        refused.Should().Contain(
+            outrun, "a deposit that loses every attempt is answered busy, whatever the others are answered");
 
         foreach (var answer in refused)
         {
