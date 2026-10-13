@@ -50,7 +50,7 @@ directory, as user-secrets do for the API.
 | Key | What it does |
 | --- | --- |
 | `ConnectionStrings:DefaultConnection` | The store the notices live in |
-| `Notices:Runner` | `Function` for this host to deliver; `Api` or `None` and it steps aside. Gates the hosted runners only, never the `notify` verb |
+| `Notices:Runner` | `Function` for this host to deliver; `Api` or `None` and it steps aside. One of those three names, in any letter case: a number or any other text stops the host at start. Gates the hosted runners only, never the `notify` verb |
 | `Notices:Schedule` | The trigger's CRON or TimeSpan expression, bound as `%Notices:Schedule%`. Required whatever the runner |
 | `Notices:PickupDirectory` | An existing directory outside any git tree; one `.eml` per notice |
 | `Notices:Contact` | How a recipient repudiates the event: mandatory content of every notice |

@@ -76,6 +76,28 @@ public sealed class NoticeRelayStartupTests : IDisposable
         return string.Join("\n", refusal.Failures);
     }
 
+    /// <summary>
+    /// The real root's answer to a runner it cannot read: every message of the exception the first
+    /// resolution throws, outermost first. The refusal comes from reading the section, before any
+    /// validator runs, so it is not an <see cref="OptionsValidationException"/>.
+    /// </summary>
+    private static string BindingRefusalOf(params (string Key, string Value)[] notices)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddApplicationServices(Configuration(notices));
+        using var provider = services.BuildServiceProvider();
+
+        var resolve = () => provider.GetRequiredService<IOptions<NoticeRelayOptions>>().Value;
+        var messages = new List<string>();
+        for (Exception? refusal = resolve.Should().Throw<Exception>().Which; refusal is not null; refusal = refusal.InnerException)
+        {
+            messages.Add(refusal.Message);
+        }
+
+        return string.Join("\n", messages);
+    }
+
     private static WebApplicationFactory<Program> Host(params (string Key, string Value)[] settings)
     {
         var factory = new CustomWebApplicationFactory();
@@ -98,6 +120,75 @@ public sealed class NoticeRelayStartupTests : IDisposable
         using var client = factory.CreateClient();
         var options = factory.Services.GetRequiredService<IOptions<NoticeRelayOptions>>().Value;
         options.Runner.Should().Be(NoticeRunner.None, "nothing delivers unless somebody names a runner");
+    }
+
+    [Theory]
+    [InlineData("1")]
+    [InlineData("0")]
+    [InlineData("7")]
+    [InlineData("Apy")]
+    [InlineData(" Api ")]
+    [InlineData("Api,Function")]
+    [InlineData("")]
+    public void ARunnerThatIsNotOneOfTheNames_IsRefused_AndTheMessageNamesTheSettingAndTheNames(string runner)
+    {
+        // "1" is the number of Api and "0" of None: a number is refused even when it is a member's,
+        // because nobody reading the file can tell which runner it names.
+        var refusal = BindingRefusalOf(
+            ("Notices:Runner", runner),
+            ("Notices:PickupDirectory", _directory),
+            ("Notices:Contact", "security@your-bank.example"));
+
+        refusal.Should().Contain("Notices:Runner").And.Contain("None, Api, Function");
+    }
+
+    [Theory]
+    [InlineData("None", NoticeRunner.None)]
+    [InlineData("Api", NoticeRunner.Api)]
+    [InlineData("Function", NoticeRunner.Function)]
+    [InlineData("api", NoticeRunner.Api)]
+    [InlineData("FUNCTION", NoticeRunner.Function)]
+    public void ARunnerNamedInAnyLetterCase_IsRead(string runner, NoticeRunner expected)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddApplicationServices(Configuration(
+            ("Notices:Runner", runner),
+            ("Notices:PickupDirectory", _directory),
+            ("Notices:Contact", "security@your-bank.example")));
+        using var provider = services.BuildServiceProvider();
+
+        provider.GetRequiredService<IOptions<NoticeRelayOptions>>().Value.Runner.Should().Be(expected);
+    }
+
+    [Fact]
+    public void ARunnerGivenAsItsNumber_StopsTheHostFromStarting()
+    {
+        // Everything Api needs is here, so the number is the only thing left to refuse.
+        var factory = Host(
+            ("Notices:Runner", "1"),
+            ("Notices:PickupDirectory", _directory),
+            ("Notices:Contact", "security@your-bank.example, +00 000 0000"));
+        try
+        {
+            var start = () => factory.CreateClient();
+            // Only that it throws: a started host answers with an ObjectDisposedException in
+            // place of the refusal (see the remarks on this class), and the theory above reads
+            // the message.
+            start.Should().Throw<Exception>("1 is the number of Api, and a runner is read from its name only");
+        }
+        finally
+        {
+            try
+            {
+                factory.Dispose();
+            }
+            catch (ArgumentNullException)
+            {
+                // The factory stops its host when disposed, and stopping a host that never started
+                // throws this.
+            }
+        }
     }
 
     [Fact]
