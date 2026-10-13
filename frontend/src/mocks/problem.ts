@@ -315,6 +315,26 @@ export function invalidJsonValueProblem(path: string, message: string) {
 }
 
 /**
+ * A member the request has, written a second time in the body.
+ *
+ * The API refuses it and does not choose between the two values. The envelope and the place are
+ * those of a value that cannot be converted: the key is the path of the SECOND occurrence, spelled
+ * as the body spelled it, while the sentence names the member as the contract spells it.
+ *
+ * Measured 2026-10-13, `POST /api/accounts {"name":"Dup One","Name":"Dup Two","type":"Savings"}`:
+ *
+ *   {"errors":{"request":["The request field is required."],
+ *              "$.Name":["Duplicate property 'name' encountered during deserialization of type
+ *                         'AzureBank.Shared.DTOs.Account.CreateAccountRequest'."]}}
+ */
+export function duplicateMemberProblem(path: string, member: string, clrType: string) {
+  return invalidJsonValueProblem(
+    path,
+    `Duplicate property '${member}' encountered during deserialization of type '${clrType}'.`,
+  );
+}
+
+/**
  * The third deserialisation shape: the body could not be READ at all.
  *
  * Sibling of the two above and, until measured, assumed to be the FluentValidation envelope with
