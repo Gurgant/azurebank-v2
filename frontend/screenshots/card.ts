@@ -72,7 +72,7 @@ export function socialCard(hero: string, logo: string): string {
       <p class="lede">A personal banking app, built end to end as a portfolio project.</p>
       <p class="stack">.NET 10 · ASP.NET Core BFF · React 19 · SQL Server</p>
       <ul>
-        <li>Every payment applied exactly once</li>
+        <li>The same payment is not applied twice</li>
         <li>No token in the browser</li>
         <li>One PIN entry authorises one payment</li>
       </ul>

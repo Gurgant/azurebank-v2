@@ -45,7 +45,7 @@ export type WaitPhase = 'none' | 'slow' | 'stillTrying' | 'ended';
  * `'none'`. A wait that ends before its first word (`slowAfterMs`, 5 s unless the host says
  * otherwise) goes straight to `'none'`.
  *
- * `useDelayedFlag`'s pattern with two thresholds: the timers are the only thing that sets the
+ * Two thresholds, each on its own timer: the timers are the only thing that sets the
  * phase, and the cleanup puts it back to `'none'` when `active` flips or the host unmounts. A new
  * wait starts from zero: the cleanup clears the old timers, so a wait that ended at 3 s cannot
  * speak into the next one at 5 s, and a wait that starts drops an `'ended'` at once.

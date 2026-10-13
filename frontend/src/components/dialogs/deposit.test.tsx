@@ -670,3 +670,117 @@ describe('deposit — the server says it went through', () => {
     expect(keys).toHaveLength(1);
   });
 });
+
+/*
+  Choosing the account from the keyboard, and a refusal that names a field. The account cards
+  are styled `div`s with the button's behaviour wired by hand, so the keys are the dialog's own
+  to get right; and which account is chosen decides where the money lands.
+*/
+describe('deposit — choosing the account from the keyboard, and a refused field', () => {
+  const SAVINGS = mockState.accounts[1]; // seed: id a2, "Rainy Day", balance 830
+
+  function renderWithTwoAccounts() {
+    return renderWithProviders(
+      <Routes>
+        <Route
+          path="/"
+          element={
+            <DepositDialog
+              isOpen
+              onClose={() => {}}
+              accounts={[
+                seedAccount(),
+                {
+                  id: SAVINGS.id,
+                  name: 'Rainy Day',
+                  accountNumber: 'AB-****-****-34',
+                  balance: 830,
+                },
+              ]}
+            />
+          }
+        />
+      </Routes>,
+      { routerEntries: ['/'] },
+    );
+  }
+
+  const card = (name: RegExp) => screen.getByRole('button', { name });
+  const chosen = (name: RegExp) => card(name).getAttribute('aria-pressed');
+
+  it('chooses an account with Enter and with Space, and with no other key', async () => {
+    renderWithTwoAccounts();
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    expect(chosen(/Main Account/)).toBe('true');
+    expect(screen.getByText('New balance: €1,350.50')).toBeInTheDocument();
+
+    card(/Rainy Day/).focus();
+    await userEvent.keyboard('{Enter}');
+    expect(chosen(/Rainy Day/)).toBe('true');
+    expect(chosen(/Main Account/)).toBe('false');
+    // The amount is kept, and the preview is the chosen account's.
+    expect(screen.getByText('New balance: €930.00')).toBeInTheDocument();
+
+    card(/Main Account/).focus();
+    await userEvent.keyboard(' ');
+    expect(chosen(/Main Account/)).toBe('true');
+    expect(screen.getByText('New balance: €1,350.50')).toBeInTheDocument();
+
+    card(/Rainy Day/).focus();
+    await userEvent.keyboard('a');
+    expect(chosen(/Main Account/)).toBe('true');
+  });
+
+  it('deposits into the account chosen from the keyboard, not into the first one', async () => {
+    let sentBody: Record<string, unknown> | null = null;
+    server.use(
+      http.post('*/api/transactions/deposit', async ({ request }) => {
+        sentBody = (await request.clone().json()) as Record<string, unknown>;
+      }),
+    );
+    renderWithTwoAccounts();
+    card(/Rainy Day/).focus();
+    await userEvent.keyboard('{Enter}');
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+
+    expect(await screen.findByText('Deposit Successful!')).toBeInTheDocument();
+    expect(sentBody).toMatchObject({ accountId: SAVINGS.id, amount: 100 });
+    // The mock moved the money of that account and of no other.
+    expect(mockState.accounts.find((a) => a.id === SAVINGS.id)?.balance).toBe(930);
+    expect(mockState.accounts.find((a) => a.id === MAIN.id)?.balance).toBe(1250.5);
+  });
+
+  /*
+    A rule of the server's that the form does not have. The form's bounds are the contract's, so
+    no amount typed here reaches it today. The sentence is the API's for an amount out of range,
+    measured on 2026-09-03 and quoted in src/forms/moneySchemas.ts.
+  */
+  it("shows the server's own sentence when the server refuses a field", async () => {
+    server.use(
+      http.post('*/api/transactions/deposit', () =>
+        problem({
+          status: 400,
+          errors: { Amount: ['Amount must be between 0.01 EUR and 100000.00 EUR'] },
+        }),
+      ),
+    );
+    renderDeposit();
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+
+    const words = await screen.findByText('Amount must be between 0.01 EUR and 100000.00 EUR');
+    expect(words.closest('[role="alert"]')).not.toBeNull();
+    expect(screen.queryByText('Deposit Successful!')).not.toBeInTheDocument();
+  });
+
+  it('says to check the amount when a refused field comes with no sentence', async () => {
+    server.use(http.post('*/api/transactions/deposit', () => problem({ status: 400, errors: {} })));
+    renderDeposit();
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+
+    const words = await screen.findByText('Please check the amount and try again.');
+    expect(words.closest('[role="alert"]')).not.toBeNull();
+  });
+});

@@ -1,8 +1,12 @@
 import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { http, HttpResponse } from 'msw';
 import { Route, Routes, useLocation } from 'react-router-dom';
 import { server } from '../../mocks/server';
+import { problem } from '../../mocks/problem';
+import { CONNECTION_FAILED } from '../../api/problemMessages';
+import { advance, fakeClockUser, installFakeClock } from '../../test/outage';
 import { MOCK_USER, mockState, seedMockSession, type MockSessionUser } from '../../mocks/state';
 import { enableDemoMode } from '../../test/demoMode';
 import { makeTestStore, renderWithProviders } from '../../test/renderWithProviders';
@@ -289,5 +293,139 @@ describe('ChangePinDialog', () => {
       'New PIN': null,
       'Confirm new PIN': null,
     });
+  });
+});
+
+/*
+  The answers above are the ones the mock gives by itself. These are the rest of what the dialog
+  does: the lock that ends, Escape, and the refusals it words itself or leaves in the server's
+  words. Each refusal is answered here in the API's own envelope (`problem`).
+*/
+describe('ChangePinDialog — the lock ends, Escape, and the rarer refusals', () => {
+  // Unmount first, then restore the clock: a countdown still mounted on a fake clock would go on
+  // ticking into the next test (withdraw.test.tsx has the long version).
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
+  /** The change is refused as `refusal` answers, and the dialog's alert is returned. */
+  async function refusedWith(refusal: () => Response) {
+    server.use(http.post('*/bff/auth/set-pin', refusal));
+    await renderSettings();
+    const dialog = await openDialog();
+    await fillAll(TEST_PIN, '246802');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Change PIN' }));
+    return within(dialog).findByRole('alert');
+  }
+
+  it('is usable again when the lock ends: the same dialog changes the PIN', async () => {
+    /*
+      A lock of five seconds, and then the mock's own answers. The deadline is the body's
+      `retryAfterSeconds` (the measured 429 carries no Retry-After header). What comes back is
+      what the lock took away: the boxes of the current PIN, which the lock had emptied.
+    */
+    let answers = 0;
+    server.use(
+      http.post('*/bff/auth/set-pin', () => {
+        answers += 1;
+        if (answers === 1) {
+          return problem({
+            status: 429,
+            errorCode: 'PIN_LOCKED',
+            detail: 'Too many incorrect PIN attempts.',
+            instance: '/api/auth/pin',
+            extensions: { retryAfterSeconds: 5 },
+          });
+        }
+      }),
+    );
+    await renderSettings();
+    const dialog = await openDialog();
+    await fillAll(TEST_PIN, '246802');
+
+    // Before the press: until then no countdown exists, so nothing of it is on the real clock.
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(within(dialog).getByRole('button', { name: 'Change PIN' }));
+    expect(await within(dialog).findByText('Too many incorrect PIN attempts.')).toBeVisible();
+    for (const box of boxes('Current PIN')) expect(box).toBeDisabled();
+
+    await advance(6_000);
+
+    await waitFor(() =>
+      expect(
+        within(dialog).queryByText('Too many incorrect PIN attempts.'),
+      ).not.toBeInTheDocument(),
+    );
+    expect(within(dialog).queryByRole('timer')).not.toBeInTheDocument();
+    for (const box of boxes('Current PIN')) expect(box).toBeEnabled();
+    // The two new PINs were not the problem and are still there.
+    expect(boxes('New PIN')[5]).toHaveValue('2');
+
+    await user.click(within(group('Current PIN')).getByLabelText('Digit 1 of 6'));
+    await user.paste(TEST_PIN);
+    await user.click(within(dialog).getByRole('button', { name: 'Change PIN' }));
+    expect(await within(dialog).findByText('Your PIN has been changed.')).toBeInTheDocument();
+    expect(mockState.pin).toBe('246802');
+  });
+
+  it('closes on Escape without sending', async () => {
+    await renderSettings();
+    const sent = observeSetPin();
+    await openDialog();
+    await fill('Current PIN', TEST_PIN);
+
+    await userEvent.keyboard('{Escape}');
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(await sent()).toEqual([]);
+    expect(mockState.pin).toBe(TEST_PIN);
+  });
+
+  it("shows the server's own sentence when it refuses the new PIN", async () => {
+    // Measured on 2026-09-11 (the dialog's own table): '12345' as the new PIN -> 400, errors
+    // {"Pin":["PIN must be exactly 6 digits."]}. These boxes cannot send that PIN; the sentence
+    // stands for any rule of the server's about a PIN that they can send.
+    const alert = await refusedWith(() =>
+      problem({ status: 400, errors: { Pin: ['PIN must be exactly 6 digits.'] } }),
+    );
+
+    expect(alert).toHaveTextContent('PIN must be exactly 6 digits.');
+    expect(mockState.pin).toBe(TEST_PIN);
+  });
+
+  it('says the PIN is not allowed when that refusal has no sentence', async () => {
+    const alert = await refusedWith(() => problem({ status: 400, errors: {} }));
+
+    expect(alert).toHaveTextContent('That PIN is not allowed. Please choose another.');
+  });
+
+  it('says to check the connection when the request never reaches the server', async () => {
+    const alert = await refusedWith(() => HttpResponse.error());
+
+    expect(alert).toHaveTextContent(CONNECTION_FAILED);
+    // All three PINs are kept: nothing about them was refused.
+    expect(boxes('Current PIN')[5]).toHaveValue(TEST_PIN[5]);
+    expect(boxes('New PIN')[5]).toHaveValue('2');
+  });
+
+  it("shows the server's sentence for any other refusal, and one of its own when there is none", async () => {
+    // Measured on 2026-09-11: no currentPin -> 422 PIN_REQUIRED "The current PIN is required to
+    // change it." The dialog cannot send that body; it has no words of its own for the code, so
+    // the server's are shown.
+    const withASentence = await refusedWith(() =>
+      problem({
+        status: 422,
+        errorCode: 'PIN_REQUIRED',
+        detail: 'The current PIN is required to change it.',
+        instance: '/api/auth/pin',
+      }),
+    );
+    expect(withASentence).toHaveTextContent('The current PIN is required to change it.');
+    cleanup();
+
+    const withNone = await refusedWith(() => problem({ status: 422, errorCode: 'PIN_REQUIRED' }));
+    expect(withNone).toHaveTextContent('Could not change your PIN. Please try again.');
   });
 });

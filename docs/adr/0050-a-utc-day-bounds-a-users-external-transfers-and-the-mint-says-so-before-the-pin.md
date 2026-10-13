@@ -111,9 +111,10 @@ body), so a doomed transfer cost a PIN entry. The balance guard itself has no AD
   `EightAccountsOfOneUser_OneTransferEach_NeverExceedTheDay` (eight payees) is the lock's tripwire,
   red without it; `OneAccount_ParallelTransfers_NeverExceedTheDay_ThroughTheRowVersionRetry` is the
   retry's, because one payee's row serialises that shape with or without the lock.
-- `DailyOutflowLimitServiceTests` (D1–D3), `TransferServiceTests` (D4), `DailyLimitEndpointTests`,
-  `DailyLimitOptionsTests`, `PublishedDailyLimitTests`, `DbContextReceivesRegisteredClockTests`,
-  `LedgerClockHygieneTests`, `ATransferRefusedForDailyLimit_WritesNoRow_AndThatIsTheDecision`.
+- `DailyOutflowLimitServiceTests` (D1–D3), `TransferServiceTests` (D4, and the name of D5's lock),
+  `DailyLimitEndpointTests`, `DailyLimitOptionsTests`, `PublishedDailyLimitTests`,
+  `DbContextReceivesRegisteredClockTests`, `LedgerClockHygieneTests`,
+  `ATransferRefusedForDailyLimit_WritesNoRow_AndThatIsTheDecision`.
 
 ## Related
 

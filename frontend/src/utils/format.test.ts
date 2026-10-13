@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { formatCurrency, formatDateHeading, formatDateTime, formatTime } from './format';
+import {
+  formatCurrency,
+  formatDateHeading,
+  formatDateTime,
+  formatLockHorizon,
+  formatTime,
+  isIncomeType,
+  maskAccountNumber,
+} from './format';
 
 /**
  * The display formatters on their own, so that the page tests may use them as the oracle for
@@ -51,5 +59,66 @@ describe('formatCurrency', () => {
   it('formats euro with two decimals and an Irish-English separator convention', () => {
     expect(formatCurrency(1250.5)).toBe('€1,250.50');
     expect(formatCurrency(0)).toBe('€0.00');
+  });
+});
+
+describe('isIncomeType', () => {
+  it('reads the direction of money from the type: in for a deposit and a transfer received', () => {
+    expect({
+      Deposit: isIncomeType('Deposit'),
+      TransferIn: isIncomeType('TransferIn'),
+      Withdrawal: isIncomeType('Withdrawal'),
+      TransferOut: isIncomeType('TransferOut'),
+    }).toEqual({ Deposit: true, TransferIn: true, Withdrawal: false, TransferOut: false });
+  });
+});
+
+/*
+  How long a lock lasts, in the words a refusal uses ("Try again in about 15 minutes."). A part
+  of a minute counts as a whole one: "1 minute" for 90 seconds would promise an unlock that is
+  not there yet.
+*/
+describe('formatLockHorizon', () => {
+  it('rounds up to whole minutes from one minute on', () => {
+    expect([60, 61, 90, 120, 900].map(formatLockHorizon)).toEqual([
+      '1 minute',
+      '2 minutes',
+      '2 minutes',
+      '2 minutes',
+      '15 minutes',
+    ]);
+  });
+
+  it('counts in seconds under a minute, and says "1 second" for one', () => {
+    expect([59, 45, 2, 1].map(formatLockHorizon)).toEqual([
+      '59 seconds',
+      '45 seconds',
+      '2 seconds',
+      '1 second',
+    ]);
+  });
+});
+
+/*
+  The second line of defence for an account number. The API masks it first, so what arrives is
+  already `AB-****-****-90`; this turns the middle into bullets, and would do the same to a full
+  number if one ever arrived. What it must never do is hand back, readable, a string it does not
+  recognise.
+*/
+describe('maskAccountNumber', () => {
+  it('keeps the prefix and the last group, and bullets the groups between', () => {
+    expect(maskAccountNumber('AB-****-****-90')).toBe('AB-••••-••••-90');
+    // A full number, were one to reach the client: its middle does not reach the screen.
+    expect(maskAccountNumber('AB-1234-5678-90')).toBe('AB-••••-••••-90');
+  });
+
+  it('shows only the last two characters of a number in a form it does not know', () => {
+    expect(maskAccountNumber('1234567890')).toBe('••••••••90');
+    // Two groups is not the scheme either: nothing of the first group is kept.
+    expect(maskAccountNumber('AB-1234567890')).toBe('•••••••••••90');
+  });
+
+  it('shows nothing of a string too short to mask', () => {
+    expect(['', '9', '90'].map(maskAccountNumber)).toEqual(['••', '••', '••']);
   });
 });
