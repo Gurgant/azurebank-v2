@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { FluentProvider } from '@fluentui/react-components';
 import { describe, expect, it } from 'vitest';
 // Vite's `?raw` rather than `node:fs`: no Node types to add to a browser-targeted tsconfig, and it
@@ -254,6 +254,96 @@ describe('Sidebar footer', () => {
     // through the table, which is precisely why only mobile ever lit it. One route now.
     expect(screen.getAllByRole('link', { name: 'Settings' })).toHaveLength(1);
     expect(screen.queryByRole('button', { name: 'Settings' })).toBeNull();
+  });
+});
+
+/*
+  The row behind "More" on the phone, in use. What it shows is held above; what a press does was
+  not: every control that leaves also closes the row, so that no menu hangs over the page just
+  arrived at, and Escape closes it and puts focus back on the button that opened it.
+*/
+describe('BottomNav — the row behind More, in use', () => {
+  function Where() {
+    return <p data-testid="where">{useLocation().pathname}</p>;
+  }
+
+  function renderBar(onLogout: () => void = () => {}) {
+    return render(
+      <FluentProvider theme={azureBankLightTheme}>
+        <MemoryRouter initialEntries={['/dashboard']}>
+          <BottomNav onLogout={onLogout} />
+          <Where />
+        </MemoryRouter>
+      </FluentProvider>,
+    );
+  }
+
+  const more = () => screen.getByRole('button', { name: 'More' });
+  const where = () => screen.getByTestId('where').textContent;
+
+  /** The row is open while its links are on the page and the button says so. */
+  function expectRowClosed() {
+    expect(more()).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('link', { name: 'Contact' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /sign out/i })).toBeNull();
+  }
+
+  it('Escape closes the row and gives focus back to More', () => {
+    renderBar();
+    fireEvent.click(more());
+    const contact = screen.getByRole('link', { name: 'Contact' });
+    contact.focus();
+
+    fireEvent.keyDown(contact, { key: 'Escape' });
+
+    expectRowClosed();
+    expect(more()).toHaveFocus();
+  });
+
+  it('Escape with the row closed moves no focus', () => {
+    renderBar();
+    const home = screen.getByRole('link', { name: 'Home' });
+    home.focus();
+
+    fireEvent.keyDown(home, { key: 'Escape' });
+
+    expect(home).toHaveFocus();
+    expectRowClosed();
+  });
+
+  it('a place of the row goes there and closes the row', () => {
+    renderBar();
+    fireEvent.click(more());
+
+    fireEvent.click(screen.getByRole('link', { name: 'Contact' }));
+
+    expect(where()).toBe('/about');
+    expectRowClosed();
+  });
+
+  it('Transfer goes to the transfer and closes the row', () => {
+    renderBar();
+    fireEvent.click(more());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Transfer' }));
+
+    expect(where()).toBe('/transfer');
+    expectRowClosed();
+  });
+
+  it('Sign out asks for the sign-out once, closes the row and goes nowhere by itself', () => {
+    let asked = 0;
+    renderBar(() => {
+      asked += 1;
+    });
+    fireEvent.click(more());
+
+    fireEvent.click(screen.getByRole('button', { name: /sign out/i }));
+
+    expect(asked).toBe(1);
+    expectRowClosed();
+    // Where the visitor lands is the caller's to decide, once the server has signed them out.
+    expect(where()).toBe('/dashboard');
   });
 });
 
