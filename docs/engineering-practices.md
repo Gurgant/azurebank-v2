@@ -215,9 +215,10 @@ either saw it run.
 
 - **Every pull request is merged by hand after review.** `main` requires a pull request,
   permits squash only, and has no bypass list.
-- **A branch is deleted when its pull request is merged.** GitHub does it at the merge. A squash
-  leaves one commit on `main`; the commits behind it stay on the pull request, which keeps them
-  and can restore the branch.
+- **A branch is deleted when its pull request is merged.** GitHub does it at the merge, because
+  the repository's setting "Automatically delete head branches" is on. A squash leaves one
+  commit on `main`; the commits behind it stay on the pull request, which keeps them and can
+  restore the branch.
 - **Contract changes ship as two pull requests.** The endpoint, the regenerated OpenAPI document
   and the generated types land in the backend change; the UI that consumes them follows.
 - **Integration is verified against the real stack before a release.** A green mock-mode run
@@ -237,13 +238,14 @@ the frontend's artefacts to regenerate, and the other route, against a running A
 
 This repository squash-merges, so one commit lands on `main`: **its title is the pull request's
 and its text is a shorter one written for the commit**, both put there by hand at the merge.
-The commits of the branch do not land, but they stay public, on the pull request's page and on
-the branch. They follow the same rules as any text here: a subject that says what the commit
-does, no line that credits a second author, no at-sign before a name, no secret. CI reads the
-commits of a pull request and fails on two things: a line that begins with a key ending in
-`-by:`, the form in which git names a signer, a reviewer or a second author, and an at-sign
-before a name outside backticks. Any other closing line, such as `Gate: 12 passed`, passes. A
-pushed commit is not rewritten, so a branch with a message that fails is replaced by a new one.
+The commits of the branch do not land, but they stay public on the pull request's page, also
+after the branch is deleted. They follow the same rules as any text here: a subject that says
+what the commit does, no line that credits a second author, no at-sign before a name, no secret.
+CI reads the commits of a pull request and fails on two things: a line that begins with a key
+ending in `-by:`, the form in which git names a signer, a reviewer or a second author, and an
+at-sign before a name outside backticks. Any other closing line, such as `Gate: 12 passed`,
+passes. A pushed commit is not rewritten, so a branch with a message that fails is replaced by a
+new one.
 
 The title is plain, imperative, at most 72 characters, and names the concrete outcome, not a
 category:

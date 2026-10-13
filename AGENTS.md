@@ -134,8 +134,8 @@ every pull request.
   scratch tree of a combination check goes in a folder the task names.
 - Rewrite history that has left the machine: no force-push, no rebase of a pushed branch. A
   branch that has to be brought up to date takes a merge of `main`.
-- Delete a branch: GitHub deletes the branch of a merged pull request at the merge, and every
-  other branch is work that somebody has not finished.
+- Delete a branch: a setting of the repository has GitHub delete the branch of a merged pull
+  request at the merge, and every other branch is work that somebody has not finished.
 - Dismiss a finding without a reason that will still convince in six months, skip a test, or
   weaken a check to reach green.
 - Install a tool, add a dependency or move a pinned version without asking first, naming the
