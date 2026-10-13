@@ -125,6 +125,47 @@ public sealed class IdempotencyCleanupSqlServerTests
         rig.Log.Lines.Should().NotContain(line => line.Level >= LogLevel.Warning || line.Level == LogLevel.Debug);
     }
 
+    [SqlServerFact]
+    public async Task AStopThatLandsWhileTheDeleteIsOnTheServer_EndsTheLoop_AndLogsNoError()
+    {
+        await using var database = await ScratchDatabase.CreateAsync();
+        // A statement cancelled once it is on the server does not come back as an
+        // OperationCanceledException: the provider throws an exception of its own. So the stop has
+        // to land there, and a lock keeps the delete there: another connection takes the expired
+        // row just before the delete is sent and holds it until the loop has ended.
+        var expired = IdempotencyCleanupRig.Record(IdempotencyStatus.Executed, DateTime.UtcNow.AddMinutes(-1));
+        await using var holder = database.NewContext();
+        var held = new BeforeTheFirst("DELETE", async _ =>
+        {
+            await holder.Database.BeginTransactionAsync();
+            await holder.IdempotencyRecords
+                .Where(r => r.Key == expired.Key)
+                .ExecuteUpdateAsync(row => row.SetProperty(r => r.RequestHash, r => r.RequestHash));
+        });
+        await using var rig = database.Rig(held);
+        await rig.SeedAsync(expired);
+
+        await rig.StartAsync();
+        await rig.EventuallyAsync(
+            async () => await database.StatementsWaitingForALockAsync() == 1,
+            "the sweep's delete was on the server, waiting for the row");
+        var loop = await rig.StopAsync();
+        await holder.Database.RollbackTransactionAsync();
+
+        loop.Status.Should().Be(TaskStatus.RanToCompletion, "a host's shutdown is not a fault of the service");
+        held.Fired.Should().BeTrue("the proof needs the row held before the delete is sent");
+        rig.SweepsStarted.Should().Be(1, "the stop came while the first sweep waited");
+        (await rig.KeysAsync()).Should().Equal(
+            [expired.Key], "the delete was cancelled on the server, which is what makes this a stop inside one");
+        rig.Lines(LogLevel.Error).Should().BeEmpty(
+            "a sweep the stop interrupted has not failed, and nothing retries it in this process");
+        rig.Lines(LogLevel.Debug).Should().ContainSingle()
+            .Which.Should().StartWith("Idempotency cleanup sweep interrupted by the host's shutdown")
+            .And.Contain(
+                nameof(SqlException),
+                "the provider's own exception shows the statement was cancelled on the server, not before it was sent");
+    }
+
     /// <summary>
     /// Runs once, just before the first statement on <c>[IdempotencyRecords]</c> whose text holds
     /// <paramref name="verb"/> reaches the server.
@@ -181,6 +222,20 @@ public sealed class IdempotencyCleanupSqlServerTests
             await using var db = database.NewContext();
             await db.Database.MigrateAsync();
             return database;
+        }
+
+        /// <summary>
+        /// How many statements on this database wait for a lock another session holds, as the
+        /// server counts them.
+        /// </summary>
+        public async Task<int> StatementsWaitingForALockAsync()
+        {
+            await using var db = NewContext();
+            return await db.Database
+                .SqlQueryRaw<int>(
+                    "SELECT COUNT(*) AS [Value] FROM sys.dm_exec_requests "
+                    + "WHERE blocking_session_id <> 0 AND database_id = DB_ID()")
+                .SingleAsync();
         }
 
         /// <summary>A plain context on this database: no interceptor, nothing tracked across uses.</summary>

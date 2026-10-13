@@ -150,6 +150,44 @@ public sealed class RefreshTokenCleanupFailureAndLinkTests : IDisposable
         (await RemainingAsync()).Select(t => t.TokenHash).Should().Equal(["lives-a-week"]);
     }
 
+    /// <summary>Asks for the stop and then fails, each time a sweep asks for its scope.</summary>
+    private sealed class StopsThenFails(CancellationTokenSource stop) : IServiceScopeFactory
+    {
+        private int _asked;
+
+        public int Asked => Volatile.Read(ref _asked);
+
+        public IServiceScope CreateScope()
+        {
+            Interlocked.Increment(ref _asked);
+            stop.Cancel();
+            throw new InvalidOperationException("Injected failure: the store went away as the host stopped.");
+        }
+    }
+
+    [Fact]
+    public async Task AFailureThatArrivesAfterTheStopWasAsked_EndsTheLoop_AndLogsNoError()
+    {
+        using var stop = new CancellationTokenSource();
+        var scopes = new StopsThenFails(stop);
+        var loop = Sweep(scopes).RunAsync(stop.Token);
+
+        _clock.Advance(Interval);
+        var ended = await EventuallyAsync(() => Task.FromResult(loop.IsCompleted));
+
+        using var all = new AssertionScope();
+        ended.Should().BeTrue("the stop ends the loop");
+        loop.Status.Should().Be(TaskStatus.RanToCompletion);
+        scopes.Asked.Should().Be(1);
+        _log.Lines.Should().NotContain(
+            line => line.Level == LogLevel.Error,
+            "once the stop is asked, a sweep that failed cannot be told from one the stop interrupted, "
+            + "and this process retries neither");
+        _log.Lines.Should().ContainSingle(line => line.Level == LogLevel.Debug)
+            .Which.Message.Should().StartWith("Refresh-token cleanup sweep interrupted by the host's shutdown")
+            .And.Contain("Injected failure", "the exception stays readable for whoever asks for Debug");
+    }
+
     [Fact]
     public async Task ALiveTokenThatPointsAtAnExpiredOne_IsKept_AndNamesNoRowThatIsGone()
     {
