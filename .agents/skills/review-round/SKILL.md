@@ -143,17 +143,23 @@ say what the pull request waits for and stop: the next round starts at step 1 wh
 the last head exists, or when the person has decided (step 7). The merge is never the agent's.
 
 Before a proposal, `git fetch origin`: the branch is behind `main` when the first number of
-`git rev-list --left-right --count origin/main...origin/<branch>` is above 0. When several pull
-requests are proposed together, or one whose branch is behind `main`, check the combination
-first. Green alone, or green on an older `main`, does not prove green together.
+`git rev-list --left-right --count "origin/main...origin/$first"` is above 0, with `first` set
+as in the block below. When several pull requests are proposed together, or one whose branch is
+behind `main`, check the combination first. Green alone, or green on an older `main`, does not
+prove green together.
+
+A branch is named by its pull request's number and its name is read into a variable, never typed
+into a command: git accepts a branch name that holds `;` or `$(...)`, which a shell would run.
 
 ```bash
 git fetch origin
-t=$(git merge-tree --write-tree origin/main origin/<first>)            # exit 1: a conflict: no proposal
-c=$(git commit-tree "$t" -p origin/main -p origin/<first> -m scratch)  # an object: no branch moves
-t=$(git merge-tree --write-tree "$c" origin/<second>)                  # these two lines again,
-c=$(git commit-tree "$t" -p "$c" -p origin/<second> -m scratch)        # once for each further one
-git worktree add --detach <a folder the task names> "$c"
+first=$(gh pr view <number> --json headRefName --jq .headRefName)
+t=$(git merge-tree --write-tree origin/main "origin/$first")            # exit 1: a conflict: no proposal
+c=$(git commit-tree "$t" -p origin/main -p "origin/$first" -m scratch)  # an object: no branch moves
+second=$(gh pr view <number> --json headRefName --jq .headRefName)      # these three lines again,
+t=$(git merge-tree --write-tree "$c" "origin/$second")                  # once for each further one
+c=$(git commit-tree "$t" -p "$c" -p "origin/$second" -m scratch)
+git worktree add --detach "<a folder the task names>" "$c"
 ```
 
 Combine in the order the merges are proposed in. In that folder run the pre-pr-gate skill, step
@@ -161,7 +167,7 @@ Combine in the order the merges are proposed in. In that folder run the pre-pr-g
 order, and the numbers. If the combined run fails, or two of them conflict, propose none of them
 together: report which pair breaks and the failing numbers. A branch that conflicts with `main`
 is updated first, as said above. Remove the folder afterwards with
-`git worktree remove <folder>`.
+`git worktree remove "<folder>"`.
 
 ## 7. When to stop and ask
 
