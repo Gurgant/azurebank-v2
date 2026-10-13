@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AzureBank.Shared.Utilities;
 
 namespace AzureBank.Api.Converters;
 
@@ -13,6 +14,8 @@ namespace AzureBank.Api.Converters;
 /// - Rejects every other string with the answer an unknown name gets: a number written as text
 ///   (e.g., "type": "1"), a list of names, a name with white space around it
 /// - Rejects the empty string with a sentence of its own, which does not list the names
+/// - Repeats a rejected string only in part, and says so: its first 64 characters, without the
+///   ones that can break a line or drive a terminal
 /// - Fixes Schemathesis "API accepted schema-violating request" when sending integers
 ///
 /// The standard JsonStringEnumConverter accepts both strings and integers,
@@ -23,6 +26,26 @@ public sealed class StrictJsonStringEnumConverterFactory : JsonConverterFactory
     public override bool CanConvert(Type typeToConvert)
     {
         return typeToConvert.IsEnum;
+    }
+
+    /// <summary>
+    /// How much of a rejected text the answer repeats. It is the length a caller's correlation
+    /// identifier may have, the other text of a caller that the API hands back, and it is longer
+    /// than every name an enum of the API has.
+    /// </summary>
+    internal const int RepeatedCharacters = 64;
+
+    /// <summary>
+    /// A rejected text between quotes, as the answer repeats it. The text is cut before it is
+    /// cleaned, so the work is the same whatever the caller sent.
+    /// </summary>
+    internal static string Quote(string rejected)
+    {
+        var shown = LogSanitizer.Sanitize(rejected[..Math.Min(rejected.Length, RepeatedCharacters)]);
+
+        return shown.Length == rejected.Length
+            ? $"'{shown}'"
+            : $"'{shown}' (shown in part: {shown.Length} of {rejected.Length} characters)";
     }
 
     public override JsonConverter CreateConverter(Type typeToConvert, JsonSerializerOptions options)
@@ -78,7 +101,8 @@ public sealed class StrictJsonStringEnumConverter<TEnum> : JsonConverter<TEnum>
         }
 
         throw new JsonException(
-            $"'{stringValue}' is not a valid value for enum '{typeof(TEnum).Name}'. " +
+            $"{StrictJsonStringEnumConverterFactory.Quote(stringValue)} is not a valid value " +
+            $"for enum '{typeof(TEnum).Name}'. " +
             $"Valid values: {string.Join(", ", Enum.GetNames(typeof(TEnum)))}");
     }
 
