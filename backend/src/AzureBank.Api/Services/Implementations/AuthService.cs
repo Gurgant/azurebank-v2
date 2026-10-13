@@ -994,9 +994,8 @@ public class AuthService : IAuthService
                   first PIN after a wrong password answers 500 with nothing stored. Tracked, the
                   lookups resolve to this instance.
 
-                  After the two lines above and not before: the values Attach snapshots are then
-                  the ones the row now holds. The InMemory branch of the reset never detaches, so
-                  there is nothing to attach there.
+                  The InMemory branch of the reset never detaches, so there is nothing to attach
+                  there.
                 */
                 if (_context.Entry(user).State == EntityState.Detached)
                 {

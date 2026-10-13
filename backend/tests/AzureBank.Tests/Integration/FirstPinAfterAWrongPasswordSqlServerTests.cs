@@ -129,6 +129,12 @@ public sealed class FirstPinAfterAWrongPasswordSqlServerTests : IDisposable
         locked.AccessFailedCount.Should().Be(0, "ARRANGE: the lock replaced the count");
         locked.LockoutEnd.Should().BeAfter(DateTimeOffset.UtcNow, "ARRANGE: the account is locked");
 
+        var wrongWhileLocked = await SetPinAsync(client, WrongPassword);
+        wrongWhileLocked.Should().Be(
+            HttpStatusCode.Unauthorized, "a lock is not revealed to a caller that has not proved the password");
+        (await StoredAsync(azureTag)).LockoutEnd.Should().Be(
+            locked.LockoutEnd, "a wrong password while locked does not extend the lock");
+
         var whileLocked = await SetPinAsync(client, Password);
         whileLocked.Should().Be(
             HttpStatusCode.TooManyRequests, "the lock is revealed to a caller that proved the password");
@@ -154,7 +160,7 @@ public sealed class FirstPinAfterAWrongPasswordSqlServerTests : IDisposable
         /*
           The sign-in clears the count through the same statement and leaves its user out of the
           tracker, which is right there: all it saves afterwards is the grant, by the user's key.
-          This holds that the enrolment's way of tracking the user again stayed out of that path.
+          This holds that a sign-in after a wrong password still answers 200 and clears the count.
         */
         var (client, azureTag, email) = await RegisterAsync();
 
