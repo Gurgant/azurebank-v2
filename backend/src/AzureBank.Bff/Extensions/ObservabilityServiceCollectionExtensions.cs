@@ -1,5 +1,9 @@
+using System.Diagnostics;
 using AzureBank.Bff.Health;
+using AzureBank.Bff.Observability;
 using AzureBank.Shared.Observability;
+using OpenTelemetry;
+using OpenTelemetry.Context.Propagation;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -59,6 +63,20 @@ public static class ObservabilityServiceCollectionExtensions
         // doesn't silently default to gRPC:4317 and ship to the http/4318 port.
         static void ConfigureOtlp(OtlpExporterOptions o) => o.Protocol = OtlpExportProtocol.HttpProtobuf;
 
+        // The trace of a request starts here, whatever trace headers its caller sends: the trace id
+        // is written on the API's audit rows and in every error answer, and a caller must not
+        // choose it. Two readers have to be told, and with either one alone the caller's trace is
+        // still adopted. The host reads the headers through the propagator in the container: this
+        // one reads nothing. The ASP.NET Core instrumentation then reads them again by itself,
+        // through the SDK's default propagator, unless that one is the W3C trace context alone,
+        // which it takes to mean the host has done the reading. The SDK's default is one value for
+        // the process. With both in place neither is what the two clients write with: they inject
+        // through DistributedContextPropagator.Current, so the API is still handed this host's
+        // trace.
+        services.AddSingleton<DistributedContextPropagator>(
+            new TraceStartsHerePropagator(DistributedContextPropagator.Current));
+        Sdk.SetDefaultTextMapPropagator(new TraceContextPropagator());
+
         services.AddOpenTelemetry()
             .ConfigureResource(r => r
                 .AddService(
@@ -72,9 +90,10 @@ public static class ObservabilityServiceCollectionExtensions
                 }))
             .WithTracing(tracing =>
             {
-                // AddHttpClientInstrumentation is REQUIRED alongside AddSource: it emits the
-                // outbound forwarder span AND injects the W3C traceparent that stitches the API
-                // span into this trace. YARP propagates context by default — do not disable it.
+                // AddHttpClientInstrumentation is REQUIRED alongside AddSource: it records the
+                // client span of each outbound call, the parent of the API's server span. It does
+                // not write the traceparent: the runtime's HTTP handler does, through
+                // DistributedContextPropagator.Current. YARP passes it on by default — keep it so.
                 // RecordException attaches exception.* to error spans; /health probes are filtered.
                 tracing
                     .AddAspNetCoreInstrumentation(o =>
