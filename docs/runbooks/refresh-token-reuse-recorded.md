@@ -98,13 +98,15 @@ No token scheme can see that code (ADR-0057 §7), so every secret it could hold 
    check.
 
    The deployment files have no step that does this. `infra/secrets.ps1` writes back each of the
-   two as the deployed app holds it, and generates one only where no app is deployed: a run of
-   the template keeps both. What the files do have is in
+   two as the deployed app holds it: a run of the template keeps both. It generates one only
+   where no app is deployed and the parameter file of an earlier run is gone too, because it
+   takes a value from that file before it makes a new one. What the files do have is in
    [`infra/README.md`](../../infra/README.md), under "Operating it". "Stop the app by hand" has
    been run: the app answers 404 until it is started, and no secret is replaced. "If something
-   was stolen" deletes the app and both jobs and deploys them again, so every application secret
-   is generated anew, the PIN pepper and the audit chain's key among them, not these two alone.
-   That road has not been run.
+   was stolen" deletes the app and both jobs and deploys them again. Every application secret is
+   then generated anew, the PIN pepper and the audit chain's key among them and not these two
+   alone, only if no earlier parameter file is left on the machine that makes the run:
+   `./infra/secrets.ps1 -Action Remove` deletes it. That road has not been run.
 2. Once the new revision answers, take the database's time. It is the cutoff for step 3:
 
 ```sql
