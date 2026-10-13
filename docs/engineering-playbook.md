@@ -23,7 +23,7 @@ a change takes from a plan to the live demo, and what stands between an agent an
 
 | Number | What it counts |
 |--:|---|
-| **[291](https://github.com/Gurgant/azurebank-v2/pulls?q=is%3Apr+is%3Amerged)** | pull requests merged: each one by me, each one through the automated tests |
+| **[296](https://github.com/Gurgant/azurebank-v2/pulls?q=is%3Apr+is%3Amerged)** | pull requests merged: each one by me, each one through the automated tests |
 | **[9](https://github.com/Gurgant/azurebank-v2/rules/18930321)** | checks now required before `main` takes a pull request, plus a security scan |
 | **[3,104](https://github.com/Gurgant/azurebank-v2/actions/runs/38422967978/job/115384849847)** | backend tests that run with no database |
 | **[452](https://github.com/Gurgant/azurebank-v2/actions/runs/38422967978/job/115384850605)** | backend proofs on a real SQL Server, in a job of their own |
