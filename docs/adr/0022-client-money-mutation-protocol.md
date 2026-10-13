@@ -53,7 +53,7 @@ This record is the client half of ADR-0009; `frontend/src/hooks/useIdempotentMut
 7. **`keyRetained` blocks dismissal while any key is live**, not only while a request is in flight,
    because abandoning a kept key and reopening the dialog mints a fresh key over the same money.
 8. **Step-up replay is byte-identical and happens at `baseQuery` level.** After a PIN elevation the
-   wrapper replays the original serialized `FetchArgs` exactly once, same body bytes and same
+   wrapper replays the original serialised `FetchArgs` exactly once, same body bytes and same
    `Idempotency-Key`, and never rebuilds the payload at hook level, because a different key order
    changes the fingerprint and returns `422 IDEMPOTENCY_KEY_REUSE`. At most one elevation and one
    retry; parallel 403s collapse behind an async mutex, each replaying its own stored args. The
@@ -112,7 +112,7 @@ reverses this decision. The six behaviours they hold:
 1. The same key survives a 503 and a user-driven Retry; a new key appears only after a 422 and an
    edit.
 2. GET retries on 503; POST never does.
-3. A ProblemDetails `traceId` reaches the UI as a normalized `ApiProblem`.
+3. A ProblemDetails `traceId` reaches the UI as a normalised `ApiProblem`.
 4. Step-up replay carries a byte-identical body and the same key; the body is compared as raw text.
 5. Withdraw with a wrong PIN does not dispatch `sessionExpired`, and drops the key.
 6. `IN_FLIGHT` keeps the key across a Retry; `RESULT_UNKNOWN` forces the verify dialog before any

@@ -26,8 +26,9 @@ two more in full.
 
 This page takes the public part of the harness piece by piece, each with the file, the job or
 the rule that shows it, and says where a part rests on my word alone. How I lead the work is in
-the [Engineering Playbook][pb]; its [table][who] names the agents. The numbers were counted on
-12 October 2026; [the last table](#the-numbers) says where each can be counted again.
+the [Engineering Playbook][pb]; its [table][who] names the agents. The numbers in
+[the last table](#the-numbers) were counted on 12 October 2026; it says where each can be
+counted again.
 
 ## One change, start to finish
 
@@ -124,10 +125,10 @@ inferential when an AI model judges the result.
   does][never]. The file gives instructions; nothing automatic checks that they were followed.
 - **Checks a program runs.** A green job does not show that any test passed. So 9 steps in
   [`ci.yml`][ci] and [`contract-tests.yml`][bru] count what ran and fail their job when the
-  suite beside them passed nothing, skipped a test or fell under a minimum. Four jobs run on a
+  suite beside them passed nothing, skipped a test or fell under a minimum. Five jobs run on a
   pull request and are not required: the demo suite, the documentation site, the check on
-  commit messages and the test coverage. Two of the counting steps are in the first of them
-  and one in the last.
+  commit messages, the check on spelling and the test coverage. Two of the counting steps are
+  in the first of them and one in the last.
 - **Checks a model judges.** The second reader is another agent with one task, to find what is
   wrong, and only where a mistake is expensive: money, access, a database migration. Its
   findings are not in the pull requests: that it ran is my own statement.
@@ -169,12 +170,12 @@ and the [rule set][rs] on GitHub.
   last changed, and each pull request shows which checks ran on it. `AGENTS.md` itself entered
   the repository on 11 October ([history][agh]); the written gates and merge rules have been in
   [Engineering practices][ep] since 25 July.
-- **No comparison exists, and the accuracy of the AI review is unknown.** I have not measured
-  the work with and without any part of the harness. The episodes show what a new check caught
-  on its first run; they do not show a rate. Each finding of the AI review is checked against
-  the code and fixed or declined in its thread, but I have not counted how many were real
-  defects. Some pull requests were merged without a review coming back, and the rule set
-  requires no approving review.
+- **No comparison with and without the harness exists, and the accuracy of the AI review is
+  unknown.** I have not measured the work with and without any part of it. The episodes show
+  what a new check caught on its first run; they do not show a rate. Each finding of the AI
+  review is checked against the code and fixed or declined in its thread, but I have not
+  counted how many were real defects. Some pull requests were merged without a review coming
+  back, and the rule set requires no approving review.
 - **The blocks on my machine are not a lock.** They refuse a merge command or a push
   ([the playbook][guards] describes them) and stop a habit or a mistake, not an agent set on
   getting around them. Some rules have no check at all: not rewriting a pushed branch is
@@ -190,6 +191,52 @@ and the [rule set][rs] on GitHub.
   [weakening a check to reach green][never]); a list of the test and workflow files a change
   edits, made on my machine before a pull request, which I read with the diff; and my reading of
   the diff. That the list exists is my own statement.
+
+## Finding who uses a piece of code
+
+For "which files use this member or type" the orchestrator starts from one command that takes
+the name: it runs a few syntax patterns and a text search on that name, and both lists are
+read. That rule is in the private file that only the orchestrator reads, not in `AGENTS.md`:
+that it is in force is my own statement. One measurement of that question follows: four ways to
+search, and no other part of the harness.
+
+The measurement had ten such questions, all about a member and none about a type, on this
+repository's C# backend, at one commit of 12 October 2026: among them a method name that exists
+on unrelated types, one overload of two, an extension method, a generic method, a constructor
+and a constant. The right answers came from the compiler: the member was marked obsolete, the
+solution was built, and the right files are those in which the build warned, 63 in all, a file
+counted once for each question it answers. Questions and answers were fixed before any scored
+run. So was one condition, written before any result came back: a tool's figures are printed
+only if its three runs agree with one another. Each tool was used by a separate agent that had
+not been shown the answers, in three runs per tool, all with one AI model.
+
+| Tool | The tool's own output: right files, of files returned | The agent's list after reading that output: right files of 63 | Questions the agent answered exactly, of 10 |
+|---|---|---|---|
+| Text search (`git grep -w` on the name) | 63 of 205 | 63 in each run | 10 in each run |
+| Syntax patterns (ast-grep 0.50.0, a few patterns of mine on the name) | 63 of 128 | 63 in each run | 10 in each run |
+| Language server (csharp-ls 0.28.0, asked for references by a script) | 63 of 65 | 63 in each run | 10 in each run |
+
+After reading, the agents with these three listed exactly the compiler's 63 files in all nine
+runs. The language server's own output was the nearest to that list: its 2 extra files name the
+member only inside a documentation comment, where the compiler does not warn. The fourth way was
+a code graph (graphify 0.9.86, built beforehand and asked to explain the name). Its three runs
+did not agree with one another, so it has no row: in none of them did the agent's list hold all
+63 files, and no file on those lists was wrong. The measurement does not choose among the first
+three, and the command the rule names runs the first two together. The graph is kept, on trial,
+for another question, how one piece of code reaches another, which this did not measure.
+
+Limits. One repository, one language, ten questions of one kind, chosen by an agent that read
+the code with a text search: eight to a list of kinds set in its brief, two of its own choosing.
+Two were swapped in during that choice so that a file naming the member only in a documentation
+comment existed: the language server's 2 extra files are those. One AI model; three runs per
+tool. "Right" means that the compiler warns there, so a use inside a comment or a string does
+not count. The agents were told not to look for the answers; nothing made it impossible. The row
+of the syntax patterns measures my patterns, tried beforehand on this same repository and run by
+a script that is not in it, which prints beside them the lines a text search finds; and it is a
+second pass: in a first one my instructions asked for the constructor with the pattern for
+calls, and the tool's own output held 51 of the 63. The questions, the compiler's answers and
+the scoring are not in this repository, so every figure here is my own statement, and none is in
+the table of numbers below.
 
 ## Where I differ from OpenAI's post
 

@@ -66,7 +66,7 @@ services) and quiet by default: tests and runs without a collector must not spra
   service show real traces, metrics and correlated logs in Grafana.
 - Everything is opt-in: the full test suite runs with no telemetry.
 - Not covered: `/health/ready` runs a live dependency check per request, unauthenticated. Accepted
-  for a loopback stack; the fix is publisher or TTL memoization.
+  for a loopback stack; the fix is publisher or TTL memoisation.
 - Not covered: the production TLS guard covers `OTEL_EXPORTER_OTLP_ENDPOINT` and not the per-signal
   variants (`…_TRACES_ENDPOINT` and the others): a misconfiguration risk, not an attacker boundary.
 - Not covered: `service.version` reports the assembly version, 1.0.0 until CI stamps a real one.
