@@ -1395,8 +1395,8 @@ public sealed class AuditChain : IAuditChain
                     // one that made the boundary half a boundary: a key answering from the bottom of
                     // the table meant compromising the NEWEST retired key handed over the history.
                     (null, { } start, not null) =>
-                        $"Row {row.Id} is sequence {row.Sequence:N0} and names key id "
-                        + $"'{row.KeyId}', whose epoch begins at {start:N0} — so it names a key that "
+                        $"Row {row.Id} is sequence {ReportText.Grouped(row.Sequence)} and names key id "
+                        + $"'{row.KeyId}', whose epoch begins at {ReportText.Grouped(start)} — so it names a key that "
                         + "had not started writing when this row was written. Its hash was NOT "
                         + "checked. An earlier key wrote this stretch; a row here that claims a later "
                         + "one is either a boundary recorded too HIGH for that earlier key, or a row "
@@ -1422,7 +1422,7 @@ public sealed class AuditChain : IAuditChain
                     */
                     (null, { } start, null) when row.Sequence < 1 =>
                         $"Row {row.Id} is a '{LegacyPayloadVersion}' row stored at sequence "
-                        + $"{row.Sequence:N0}, which is below the first sequence this trail can "
+                        + $"{ReportText.Grouped(row.Sequence)}, which is below the first sequence this trail can "
                         + "have. Its hash was NOT checked. ⚠️ THIS IS NOT A CONFIGURATION PROBLEM. "
                         + "Writing assigns each row the tail plus one, starting from 1, so nothing "
                         + "this deployment writes lands here and no key needs to be held to put it "
@@ -1434,8 +1434,8 @@ public sealed class AuditChain : IAuditChain
                     (null, { } start, null) =>
                         $"Row {row.Id} is a '{LegacyPayloadVersion}' row, which records no key "
                         + "identity, so it is checked under Audit:FoundingChainKey — and the epoch "
-                        + $"that key opens begins at {start:N0}, while this row is sequence "
-                        + $"{row.Sequence:N0}. Its hash was NOT checked. Rows recording no identity "
+                        + $"that key opens begins at {ReportText.Grouped(start)}, while this row is sequence "
+                        + $"{ReportText.Grouped(row.Sequence)}. Its hash was NOT checked. Rows recording no identity "
                         + "are the OLDEST rows there are, so a founding key whose epoch starts above "
                         + "them is a designation that cannot mean what it says. ⚠️ The fix is "
                         + "Audit:FoundingChainKey — point it at the OLDEST key in the ring. Lowering "
@@ -1451,8 +1451,8 @@ public sealed class AuditChain : IAuditChain
                     // Named a key the ring holds, above that key's epoch.
                     ({ } bound, _, not null) =>
                         $"Row {row.Id} names key id '{row.KeyId}', which this verification DOES "
-                        + $"hold — but that key was retired at sequence {bound:N0} and this row is "
-                        + $"sequence {row.Sequence:N0}. Its hash was NOT checked. Two readings, and "
+                        + $"hold — but that key was retired at sequence {ReportText.Grouped(bound)} and this row is "
+                        + $"sequence {ReportText.Grouped(row.Sequence)}. Its hash was NOT checked. Two readings, and "
                         + "they need opposite responses: either the recorded boundary is too LOW "
                         + "and this row is genuine history, or the row was MINTED with a retired "
                         + "key after the rotation. ⚠️ Raising LastSequence can turn this verdict "
@@ -1466,8 +1466,8 @@ public sealed class AuditChain : IAuditChain
                     ({ } bound, _, null) =>
                         $"Row {row.Id} is a '{LegacyPayloadVersion}' row, which records no key "
                         + "identity, so it is checked under Audit:FoundingChainKey — and that key "
-                        + $"was retired at sequence {bound:N0} while this row is sequence "
-                        + $"{row.Sequence:N0}. Its hash was NOT checked. A row above the founding "
+                        + $"was retired at sequence {ReportText.Grouped(bound)} while this row is sequence "
+                        + $"{ReportText.Grouped(row.Sequence)}. Its hash was NOT checked. A row above the founding "
                         + "key's boundary that names no key is the one shape that reaches that key "
                         + "without naming it, so treat MINTING as the leading reading here rather "
                         + "than as the alternative. The benign reading is that the boundary is too "

@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.CommandLine.Invocation;
 using System.Data.Common;
+using System.Globalization;
 using AzureBank.Infrastructure.Notices;
 using AzureBank.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -345,7 +346,7 @@ public static class NotifyCommand
                             lines.Add($"NOT NOTIFIED by this run: notice {reference} was marked by another run while this one wrote {result.Receipt}; that file is a duplicate.");
                             break;
                         case NoticeOutcome.Delivered:
-                            lines.Add($"  {result.Receipt} <- notice {reference}, {notice.Event} at {notice.OccurredAt:yyyy-MM-dd HH:mm:ss}Z");
+                            lines.Add($"  {result.Receipt} <- notice {reference}, {notice.Event} at {notice.OccurredAt.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)}Z");
                             written++;
                             break;
                     }
