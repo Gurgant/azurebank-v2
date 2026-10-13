@@ -157,12 +157,12 @@ public static class VerifyCommand
         {
             var lines = new List<string>
             {
-                $"CHAIN BROKEN at sequence {result.FirstBrokenSequence:N0}.",
+                $"CHAIN BROKEN at sequence {ReportText.Grouped(result.FirstBrokenSequence)}.",
                 $"  {result.Reason}",
-                $"  Rows verified before the break: {result.Verified:N0}",
+                $"  Rows verified before the break: {ReportText.Grouped(result.Verified)}",
                 lowest is null
                     ? "  Sequences read: none -- the walk did not get past the first row"
-                    : $"  Sequences read: {lowest:N0} to {highest:N0}",
+                    : $"  Sequences read: {ReportText.Grouped(lowest)} to {ReportText.Grouped(highest)}",
             };
 
             /*
@@ -420,8 +420,8 @@ public static class VerifyCommand
 
         return (Intact,
         [
-            $"CHAIN INTACT: {result.Verified:N0} rows verified.",
-            $"  Sequence range: {lowest:N0} to {highest:N0}",
+            $"CHAIN INTACT: {ReportText.Grouped(result.Verified)} rows verified.",
+            $"  Sequence range: {ReportText.Grouped(lowest)} to {ReportText.Grouped(highest)}",
             "  This proves no row was altered by anyone who does not hold the key whose",
             "  EPOCH that row falls in -- Audit:ChainKey for everything since the last",
             "  retirement, and each retired key for its own stretch and no other -- and",
@@ -519,7 +519,7 @@ public static class VerifyCommand
             */
             return
             [
-                $"UNCOVERED WINDOW: EVERY row. {coverage.Records:N0} anchor records exist and none",
+                $"UNCOVERED WINDOW: EVERY row. {ReportText.Grouped(coverage.Records)} anchor records exist and none",
                 "  of them covers anything -- every one is a gap marker, which asserts coverage of",
                 "  nothing by construction. A populated anchor table is not the same as an anchored",
                 "  chain, and this is the case where the two look alike.",
@@ -533,8 +533,8 @@ public static class VerifyCommand
             return
             [
                 $"⚠️ UNCOVERED WINDOW: NEGATIVE. The anchors claim coverage through sequence"
-                    + $" {covered:N0}, and the chain ends at {tail:N0}.",
-                $"  {covered - tail:N0} sequences that an anchor says it saw are not there now. That",
+                    + $" {ReportText.Grouped(covered)}, and the chain ends at {ReportText.Grouped(tail)}.",
+                $"  {ReportText.Grouped(covered - tail)} sequences that an anchor says it saw are not there now. That",
                 "  is what a tail truncation looks like when whoever did it left the anchor records",
                 "  behind. It is NOT proof on its own -- the anchor key holder can write records",
                 "  claiming anything -- but nothing legitimate produces it. Preserve the database and",
@@ -549,9 +549,9 @@ public static class VerifyCommand
         [
             window == 0
                 ? "UNCOVERED WINDOW: at least 0 rows -- the deepest anchor reaches the current tail."
-                : $"UNCOVERED WINDOW: at least {window:N0} rows are outside every anchor.",
-            $"  The deepest coverage any record claims is sequence {covered:N0}; the chain ends at"
-                + $" {tail:N0}.",
+                : $"UNCOVERED WINDOW: at least {ReportText.Grouped(window)} rows are outside every anchor.",
+            $"  The deepest coverage any record claims is sequence {ReportText.Grouped(covered)}; the chain ends at"
+                + $" {ReportText.Grouped(tail)}.",
             "  AT LEAST, because rows can be appended while this walk runs. And it is not an upper",
             "  bound on anything: nothing here schedules an anchor, so the window has no ceiling and",
             "  a small number now says nothing about tomorrow. A missing anchor is not evidence.",

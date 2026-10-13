@@ -177,7 +177,7 @@ public static class ExportCommand
         return (VerifyCommand.Broken,
         [
             "CHAIN BROKEN -- and separately, no copy was written.",
-            $"  {broken.Kind} at anchor {broken.FirstBrokenSequence?.ToString("N0") ?? "(unknown)"}:"
+            $"  {broken.Kind} at anchor {ReportText.Grouped(broken.FirstBrokenSequence) ?? "(unknown)"}:"
                 + $" {broken.Reason}",
             "  This exits with the CHAIN verdict, not the writing one. The export can be retried",
             "  against another path in a second; a chain that does not verify cannot.",
@@ -497,9 +497,9 @@ public static class ExportCommand
 
             var lines = new List<string>
             {
-                $"EXPORTED {records.Count:N0} anchor records to {path}",
+                $"EXPORTED {ReportText.Grouped(records.Count)} anchor records to {path}",
                 $"  Covering through sequence "
-                    + $"{records[^1].CoveredThroughSequence?.ToString("N0") ?? "(nothing -- the last record is a gap marker)"}.",
+                    + $"{ReportText.Grouped(records[^1].CoveredThroughSequence) ?? "(nothing -- the last record is a gap marker)"}.",
                 string.Empty,
             };
 
@@ -517,7 +517,7 @@ public static class ExportCommand
                 */
                 lines.Add("⚠️ THE ANCHOR CHAIN DID NOT VERIFY, and this file is a copy of that.");
                 lines.Add($"  {state.Kind} at anchor "
-                    + $"{state.FirstBrokenSequence?.ToString("N0") ?? "(unknown)"}: {state.Reason}");
+                    + $"{ReportText.Grouped(state.FirstBrokenSequence) ?? "(unknown)"}: {state.Reason}");
                 lines.Add("  The copy was written anyway: a chain that has stopped verifying is when an");
                 lines.Add("  off-machine copy is worth the most, and copying asserts nothing about what");
                 lines.Add("  it copied. Do not install this as the reference for a healthy chain.");

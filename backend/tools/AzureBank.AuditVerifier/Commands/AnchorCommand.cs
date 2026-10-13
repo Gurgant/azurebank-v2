@@ -294,8 +294,8 @@ public static class AnchorCommand
         var lines = new List<string>
         {
             "NOT RECORDED: the existing anchor chain did not verify, so nothing was appended.",
-            $"  Records verified before the break: {state.Verified:N0}",
-            $"  Broke at anchor: {state.FirstBrokenSequence:N0}",
+            $"  Records verified before the break: {ReportText.Grouped(state.Verified)}",
+            $"  Broke at anchor: {ReportText.Grouped(state.FirstBrokenSequence)}",
             string.Empty,
             "  " + state.Reason,
             string.Empty,
@@ -333,7 +333,7 @@ public static class AnchorCommand
 
         if (record.Kind == AuditAnchorKind.GapMarker)
         {
-            lines.Add($"GAP MARKER {record.AnchorSequence:N0} recorded: this run found nothing to anchor.");
+            lines.Add($"GAP MARKER {ReportText.Grouped(record.AnchorSequence)} recorded: this run found nothing to anchor.");
             lines.Add(verification.IsIntact
                 ? "  The audit table has no rows. That is not the same as an intact chain, and"
                   + " recording"
@@ -344,9 +344,9 @@ public static class AnchorCommand
             return [.. lines];
         }
 
-        lines.Add($"ANCHOR {record.AnchorSequence:N0} recorded.");
-        lines.Add($"  Covers sequences {record.LowestCoveredSequence:N0} to "
-            + $"{record.CoveredThroughSequence:N0}, {record.CoveredRowCount:N0} rows.");
+        lines.Add($"ANCHOR {ReportText.Grouped(record.AnchorSequence)} recorded.");
+        lines.Add($"  Covers sequences {ReportText.Grouped(record.LowestCoveredSequence)} to "
+            + $"{ReportText.Grouped(record.CoveredThroughSequence)}, {ReportText.Grouped(record.CoveredRowCount)} rows.");
         lines.Add(string.Empty);
 
         /*
@@ -360,7 +360,7 @@ public static class AnchorCommand
           of the way. CoveredThroughSequence is the one quantity that cannot be regrown downward.
         */
         lines.Add("  WRITE THESE TWO NUMBERS DOWN SOMEWHERE THIS MACHINE CANNOT REACH:");
-        lines.Add($"      anchor {record.AnchorSequence:N0}  through sequence {record.CoveredThroughSequence:N0}");
+        lines.Add($"      anchor {ReportText.Grouped(record.AnchorSequence)}  through sequence {ReportText.Grouped(record.CoveredThroughSequence)}");
         lines.Add("  The pair, not the counter alone -- a counter can be regrown by re-running this");
         lines.Add("  command, and the sequence it covers cannot be regrown downward.");
         lines.Add("  Or run `export <path>`, which writes every record to a file so the numbers");

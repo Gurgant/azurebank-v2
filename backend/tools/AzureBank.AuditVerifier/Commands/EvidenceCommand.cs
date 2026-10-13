@@ -571,7 +571,7 @@ public static class EvidenceCommand
         yield return $"Audit rows naming this transaction: {rows.Count}";
         foreach (var row in rows)
         {
-            yield return $"  #{row.Sequence:N0} {row.Event} -> {row.Outcome} at {row.OccurredAt:O}";
+            yield return $"  #{ReportText.Grouped(row.Sequence)} {row.Event} -> {row.Outcome} at {row.OccurredAt:O}";
             var actor = row.ActorUserId?.ToString("D") ?? "(none)";
             yield return $"      actor {actor}, payload {row.PayloadVersion},"
                 + $" key {row.KeyId ?? "(no identity recorded)"}";

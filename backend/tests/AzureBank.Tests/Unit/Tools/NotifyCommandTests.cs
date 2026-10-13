@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using AzureBank.AuditVerifier.Commands;
 using AzureBank.Infrastructure.Notices;
@@ -178,6 +179,32 @@ public class NotifyCommandTests : IDisposable
         text.Should().Contain("NOTIFIED 1 of 1").And.Contain(notice.Id.ToString("N"));
         text.Should().NotContain("@", "the console never carries an address")
             .And.NotContain("owner", "nor anything that names the recipient");
+    }
+
+    // th-TH counts years in the Buddhist calendar and fi-FI puts a full stop between hours and
+    // minutes; the empty name is the invariant culture.
+    [Theory]
+    [InlineData("th-TH")]
+    [InlineData("fi-FI")]
+    [InlineData("")]
+    public async Task ADeliveredNoticesInstant_IsPrintedTheSameUnderEveryCulture(string culture)
+    {
+        var owner = await OwnerAsync();
+        await OwedAsync(owner);
+        await using var provider = Provider();
+
+        var previous = CultureInfo.CurrentCulture;
+        CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo(culture);
+        try
+        {
+            var (_, lines) = await RunAsync(provider);
+
+            string.Join("\n", lines).Should().Contain($"{SecurityEvents.PinEnrolled} at 2026-09-03 10:15:00Z");
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previous;
+        }
     }
 
     [Fact]

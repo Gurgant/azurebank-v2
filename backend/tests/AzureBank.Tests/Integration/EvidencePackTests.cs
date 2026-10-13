@@ -667,8 +667,8 @@ public class EvidencePackUncoveredWindowTests : IntegrationTestBase
             "the rows that remain still hash and link, so only the anchors can show one is gone");
         text.Should().Contain("NO AUDIT ROW names this transaction.");
         text.Should().Contain(
-            $"UNCOVERED WINDOW: NEGATIVE. The anchors claim coverage through sequence {removed:N0},"
-            + $" and the chain ends at {removed - 1:N0}.");
+            $"UNCOVERED WINDOW: NEGATIVE. The anchors claim coverage through sequence {ReportText.Grouped(removed)},"
+            + $" and the chain ends at {ReportText.Grouped(removed - 1)}.");
         await ShouldCarryWhatVerifyPrintsAsync(lines, Factory.Services);
     }
 
