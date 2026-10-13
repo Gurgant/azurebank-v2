@@ -669,7 +669,7 @@ public class AuthServiceTests : IDisposable
 
     [Theory]
     [InlineData(24)]
-    [InlineData(5)]
+    [InlineData(36)]
     public async Task InDemoMode_ACopyAtItsLifetimesEnd_Is401_AndOneSecondBeforeItSignsIn(int lifetimeHours)
     {
         var claimedAt = GateNow.UtcDateTime;

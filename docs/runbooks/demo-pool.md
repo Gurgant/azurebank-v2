@@ -150,8 +150,8 @@ ORDER BY Claims DESC;
   visitor has the proxy's key, as under `compose.demo.yaml`.
 - **Many keys, one or two claims each:** a busy day. A run tops the pool up to
   `Demo:Pool:TargetFree`.
-- **A row that has no key** counts claims whose copies were deleted already, which inside 24
-  hours happens only when `Demo:CopyLifetimeHours` is below 24.
+- **No row is without a key:** a deleted copy's record has none, and a copy is deleted only
+  after its claim has left these 24 hours (`Demo:CopyLifetimeHours` is 24 at least).
 
 **What a visitor reads.** At `Demo:Claim:MaxPerClientPerDay` claims in those 24 hours, a client's
 next claim is refused: 429 `DEMO_DAILY_LIMIT`, whose `retryAfterSeconds` and `Retry-After` header

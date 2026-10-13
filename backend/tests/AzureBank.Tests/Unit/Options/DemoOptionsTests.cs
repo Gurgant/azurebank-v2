@@ -54,6 +54,7 @@ public class DemoOptionsTests
 
     [Theory]
     [InlineData("Demo:CopyLifetimeHours", "0")]
+    [InlineData("Demo:CopyLifetimeHours", "23")]
     [InlineData("Demo:CopyLifetimeHours", "169")]
     [InlineData("Demo:Pool:TargetFree", "0")]
     [InlineData("Demo:Pool:TargetFree", "501")]
@@ -102,6 +103,21 @@ public class DemoOptionsTests
         result.FailureMessage.Should().Contain("Demo:Pool:MaxClaimsPerDay").And.Contain("Demo:Pool:TargetFree");
     }
 
+    [Theory]
+    [InlineData("1")]
+    [InlineData("23")]
+    public void ALifetimeUnderADay_IsRefused_AndTheRefusalSaysWhy(string hours)
+    {
+        // The pool's job removes a deleted copy's client key, and the daily cap counts the claims
+        // of the last 24 hours that still carry one.
+        var result = Validated(Bound(("Demo:CopyLifetimeHours", hours)));
+
+        result.FailureMessage.Should().Be(
+            $"Demo:CopyLifetimeHours must be between 24 and 168, and is {hours}: a copy that ends sooner is deleted "
+            + "while its claim is still inside the 24 hours Demo:Claim:MaxPerClientPerDay counts over, and a deleted "
+            + "copy's claim is not counted.");
+    }
+
     /// <summary>
     /// CONTROLS: both ends of every range are accepted. They pass against a validator that accepts
     /// everything too, so they say something only beside the refusals above: a range written one
@@ -111,7 +127,7 @@ public class DemoOptionsTests
     public void TheEndsOfEveryRange_AreAccepted()
     {
         var smallest = Bound(
-            ("Demo:CopyLifetimeHours", "1"),
+            ("Demo:CopyLifetimeHours", "24"),
             ("Demo:Pool:TargetFree", "1"),
             ("Demo:Pool:LowMark", "0"),
             ("Demo:Pool:MaxFreeAgeHours", "1"),
@@ -134,7 +150,7 @@ public class DemoOptionsTests
     [Theory]
     [InlineData(
         "Demo:CopyLifetimeHours", "169", "Demo:Pool:TargetFree", "50",
-        "Demo:CopyLifetimeHours must be between 1 and 168, and is 169.")]
+        "Demo:CopyLifetimeHours must be between 24 and 168, and is 169.")]
     [InlineData(
         "Demo:Pool:TargetFree", "10", "Demo:Pool:LowMark", "11",
         "Demo:Pool:LowMark must be between 0 and Demo:Pool:TargetFree (10), and is 11.")]
@@ -242,7 +258,7 @@ public class DemoOptionsTests
     {
         using var root = SeederRoot(
             ("Demo:Enabled", "true"),
-            ("Demo:CopyLifetimeHours", "12"),
+            ("Demo:CopyLifetimeHours", "36"),
             ("Demo:Pool:TargetFree", "7"),
             ("Demo:Pool:LowMark", "3"),
             ("Demo:Pool:MaxFreeAgeHours", "30"),
@@ -252,7 +268,7 @@ public class DemoOptionsTests
         var options = root.GetRequiredService<IOptions<DemoOptions>>().Value;
 
         options.Enabled.Should().BeTrue();
-        options.CopyLifetimeHours.Should().Be(12);
+        options.CopyLifetimeHours.Should().Be(36);
         options.Pool.TargetFree.Should().Be(7);
         options.Pool.LowMark.Should().Be(3);
         options.Pool.MaxFreeAgeHours.Should().Be(30);
@@ -264,6 +280,7 @@ public class DemoOptionsTests
     [InlineData("Demo:Pool:TargetFree", "0")]
     [InlineData("Demo:Pool:LowMark", "51")] // above the default target of 50
     [InlineData("Demo:CopyLifetimeHours", "169")]
+    [InlineData("Demo:CopyLifetimeHours", "23")]
     public void TheSeeder_RefusesToRunOnADemoSettingOutOfRange(string key, string value)
     {
         using var root = SeederRoot((key, value));

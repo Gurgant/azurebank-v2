@@ -18,7 +18,7 @@ public class DemoOptions
     /// <summary>Whether this deployment is the public demo. Off by default.</summary>
     public bool Enabled { get; set; }
 
-    /// <summary>Hours a claimed copy can be signed in to. 24.</summary>
+    /// <summary>Hours a claimed copy can be signed in to. 24, and never fewer.</summary>
     public int CopyLifetimeHours { get; set; } = 24;
 
     /// <summary>The pool of free copies.</summary>
@@ -113,6 +113,9 @@ public sealed class DemoOptionsValidator : IValidateOptions<DemoOptions>
     /// <summary>The most claims a day <c>Demo:Pool:MaxClaimsPerDay</c> may allow.</summary>
     private const int MaxClaimsPerDayCeiling = 10_000;
 
+    /// <summary>The hours <c>Demo:Claim:MaxPerClientPerDay</c> counts a client's claims over.</summary>
+    private const int ClaimCountedForHours = 24;
+
     /// <inheritdoc />
     public ValidateOptionsResult Validate(string? name, DemoOptions options)
     {
@@ -148,7 +151,21 @@ public sealed class DemoOptionsValidator : IValidateOptions<DemoOptions>
             }
         }
 
-        Range(CopyLifetimeHours, options.CopyLifetimeHours, 1, 168);
+        // The pool's job deletes a copy once its lifetime is over, and a deleted copy keeps no
+        // client key, so its claim is no longer counted towards its client's daily cap. A copy
+        // that lasts the 24 hours of that count is deleted only after its claim has left it.
+        if (options.CopyLifetimeHours < ClaimCountedForHours)
+        {
+            errors.Add(
+                $"{CopyLifetimeHours} must be between {ClaimCountedForHours} and 168, and is {options.CopyLifetimeHours}: "
+                + $"a copy that ends sooner is deleted while its claim is still inside the {ClaimCountedForHours} hours "
+                + $"{MaxPerClientPerDay} counts over, and a deleted copy's claim is not counted.");
+        }
+        else
+        {
+            Range(CopyLifetimeHours, options.CopyLifetimeHours, ClaimCountedForHours, 168);
+        }
+
         Range(TargetFree, options.Pool.TargetFree, 1, DemoPoolOptions.TargetFreeCeiling);
         Range(MaxFreeAgeHours, options.Pool.MaxFreeAgeHours, 1, 720);
         Range(MaxPerClientPerDay, options.Claim.MaxPerClientPerDay, 1, 1000);

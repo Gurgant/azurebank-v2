@@ -118,4 +118,28 @@ public class DemoApiOptionsTests
         start.Should().Throw<OptionsValidationException>()
             .Which.Message.Should().Contain("Demo:Copy:MaxWrites must be between 10 and 100000, and is 9.");
     }
+
+    [Fact]
+    public void ACopyLifetimeUnderADay_StopsTheApi()
+    {
+        using var root = RealRoot(
+            ("Demo:Enabled", "true"), ("Demo:ClientKeySecret", SecretOf32Characters), ("Demo:CopyLifetimeHours", "23"));
+
+        var start = () => root.GetRequiredService<IStartupValidator>().Validate();
+
+        start.Should().Throw<OptionsValidationException>()
+            .Which.Message.Should().Contain("Demo:CopyLifetimeHours must be between 24 and 168, and is 23");
+    }
+
+    // CONTROL: the same root one hour up starts, so what stopped the one above is the hour.
+    [Fact]
+    public void ACopyLifetimeOfADay_StartsTheApi()
+    {
+        using var root = RealRoot(
+            ("Demo:Enabled", "true"), ("Demo:ClientKeySecret", SecretOf32Characters), ("Demo:CopyLifetimeHours", "24"));
+
+        var start = () => root.GetRequiredService<IStartupValidator>().Validate();
+
+        start.Should().NotThrow();
+    }
 }

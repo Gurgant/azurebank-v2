@@ -7,12 +7,16 @@ using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
+using AzureBank.Shared.Options;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using Xunit.Abstractions;
 using PoolRunSummary = seeder::AzureBank.Seeder.Pool.PoolRunSummary;
@@ -698,21 +702,21 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
             await DemoVisitor.SignInAsync(client, copy.Owner.Email!, DemoPoolDatabase.VisitorPassword);
         }
 
-        // Claimed 51 hours ago, and its session is still running.
-        await database.BackdateClaimAsync(copy.Id, DateTime.UtcNow.AddHours(-51));
+        // Claimed 75 hours ago, and its session is still running.
+        await database.BackdateClaimAsync(copy.Id, DateTime.UtcNow.AddHours(-75));
 
-        // CONTROL: with the default lifetime of 24 hours the backstop is at 72, so the grant
-        // still protects the copy.
-        var inside = await database.RecycleAsync();
+        // CONTROL: with a lifetime of 48 hours the backstop is at 96, so the grant still protects
+        // the copy.
+        var inside = await database.RecycleAsync(settings: new() { ["Demo:CopyLifetimeHours"] = "48" });
 
         (inside.DeletedExpired, inside.DeletedHardStop).Should().Be((0, 0));
-        StillWhole(await database.CopyAsync(copy.Id), "51 hours of 72, and a live grant");
+        StillWhole(await database.CopyAsync(copy.Id), "75 hours of 96, and a live grant");
 
-        // With a lifetime of 2 hours the backstop is at 50.
-        var summary = await database.RecycleAsync(settings: new() { ["Demo:CopyLifetimeHours"] = "2" });
+        // With the default lifetime of 24 hours the backstop is at 72.
+        var summary = await database.RecycleAsync();
 
         (summary.DeletedExpired, summary.DeletedHardStop, summary.DeleteFailed).Should().Be((0, 1, 0));
-        ATombstone(await database.CopyAsync(copy.Id), "51 hours of 50: past the backstop, grant or no grant");
+        ATombstone(await database.CopyAsync(copy.Id), "75 hours of 72: past the backstop, grant or no grant");
     }
 
     [SqlServerFact]
@@ -744,16 +748,17 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
     {
         await using var database = await DemoPoolDatabase.CreateAsync();
         var copy = (await database.BuildCopiesAsync(3))[0];
-        await database.MarkClaimedAsync(copy.Id, DateTime.UtcNow.AddHours(-3));
+        await database.MarkClaimedAsync(copy.Id, DateTime.UtcNow.AddHours(-30));
 
-        // CONTROL: with the default of 24 hours, a copy claimed 3 hours ago is in use.
-        (await database.RecycleAsync()).DeletedExpired.Should().Be(0);
-        StillWhole(await database.CopyAsync(copy.Id), "3 hours of 24");
+        // CONTROL: with a lifetime of 48 hours, a copy claimed 30 hours ago is in use.
+        var inUse = await database.RecycleAsync(settings: new() { ["Demo:CopyLifetimeHours"] = "48" });
+        inUse.DeletedExpired.Should().Be(0);
+        StillWhole(await database.CopyAsync(copy.Id), "30 hours of 48");
 
-        var summary = await database.RecycleAsync(settings: new() { ["Demo:CopyLifetimeHours"] = "2" });
+        var summary = await database.RecycleAsync();
 
         summary.DeletedExpired.Should().Be(1);
-        ATombstone(await database.CopyAsync(copy.Id), "3 hours of 2");
+        ATombstone(await database.CopyAsync(copy.Id), "30 hours of the default 24");
     }
 
     // ── Free copies too old to hand out ──────────────────────────────────────────────────────────
@@ -1322,25 +1327,24 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
     /// <summary>
     /// A record is not a copy, so a pool whose every copy was deleted is read as a first fill: the
     /// next run exits 0, not 11, although visitors may have been turned away since the run before.
-    /// The run that left no copy behind said so with its own code, 15 here: the day's one claim
-    /// held its top-up at 0.
+    /// The run that left no copy behind said so with its own code, 12 here: it could build no
+    /// copy.
     /// </summary>
     [SqlServerFact]
     public async Task APoolLeftWithOnlyRecords_IsReadAsAFirstFill_AndExitsZero()
     {
         await using var database = await DemoPoolDatabase.CreateAsync();
         var copy = (await database.BuildCopiesAsync(1))[0];
-        await database.MarkClaimedAsync(copy.Id, DateTime.UtcNow.AddHours(-2));
+        await database.MarkClaimedAsync(copy.Id, ADayAndAnHourAgo);
 
-        var emptied = await database.RecycleAsync(settings: new()
-        {
-            ["Demo:CopyLifetimeHours"] = "1",
-            ["Demo:Pool:TargetFree"] = "1",
-            ["Demo:Pool:MaxClaimsPerDay"] = "1",
-        });
+        var refusal = new RefusingAfterCreationUserValidator();
+        database.AlsoRegister = services => services.AddSingleton<IUserValidator<ApplicationUser>>(refusal);
+        var emptied = await database.RecycleAsync();
+        database.AlsoRegister = null;
         output.WriteLine(emptied.ToLine());
         (emptied.Seeded, emptied.DeletedExpired, emptied.Free, emptied.Claimed, emptied.Tombstones, emptied.ExitCode).Should().Be(
-            (0, 1, 0, 0, 1, 15), "ARRANGE: the copy is deleted, the ceiling built none, and only the copy's record is left");
+            (0, 1, 0, 0, 1, 12), "ARRANGE: the copy is deleted, no copy could be built, and only the copy's record is left");
+        refusal.Refusals.Should().BeGreaterThan(0, "ARRANGE: the top-up came up short because the refusal was injected");
 
         var next = await database.RecycleAsync();
         output.WriteLine(next.ToLine());
@@ -1513,9 +1517,12 @@ public sealed class DemoPoolRecycleSqlServerTests(ITestOutputHelper output)
         var busy = Enumerable.Repeat((byte)0xA1, 32).ToArray();
 
         // Two claims by one client three hours ago: the client is at a cap of 2, and under a
-        // lifetime of 2 hours both copies' time is over.
+        // lifetime of 2 hours both copies' time is over. No host starts on that lifetime
+        // (DemoOptionsValidator), so this container is built without the rule: only under a
+        // lifetime shorter than the day's count does a run delete a copy it has just counted.
         await database.MarkClaimedAsync(copies[0].Id, DateTime.UtcNow.AddHours(-3), busy);
         await database.MarkClaimedAsync(copies[1].Id, DateTime.UtcNow.AddHours(-3), busy);
+        database.AlsoRegister = services => services.RemoveAll<IValidateOptions<DemoOptions>>();
 
         var summary = await database.RecycleAsync(
             settings: new() { ["Demo:CopyLifetimeHours"] = "2", ["Demo:Claim:MaxPerClientPerDay"] = "2" });

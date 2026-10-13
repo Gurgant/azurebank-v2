@@ -528,13 +528,13 @@ public sealed class DemoClaimSqlServerTests
     {
         await using var database = await DemoPoolDatabase.CreateAsync();
         var free = (await database.BuildCopiesAsync(1)).Single();
-        using var client = database.DemoApi(("Demo:CopyLifetimeHours", "5")).CreateClient();
+        using var client = database.DemoApi(("Demo:CopyLifetimeHours", "36")).CreateClient();
 
         using var response = await DemoVisitor.ClaimAsync(client, Visitor);
 
         var claim = await DemoVisitor.ClaimedAsync(response);
         var row = (await database.CopyAsync(free.Id))!.Row;
-        claim.Copy.ExpiresAt.Should().Be(row.ClaimedAt!.Value.AddHours(5));
+        claim.Copy.ExpiresAt.Should().Be(row.ClaimedAt!.Value.AddHours(36));
     }
 
     // ── Many claims at once ──────────────────────────────────────────────────────────────────────
