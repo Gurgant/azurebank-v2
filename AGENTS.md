@@ -101,6 +101,10 @@ every pull request.
   named the same way.
 - A document says what is true now. A sentence that turned out wrong is corrected in place, with
   no note about what it used to say.
+- Prose is in British spelling: organise, behaviour, artefact.
+  `python infra/check_british_spelling.py` reports an American form; in CI that is a red mark
+  that blocks no merge. A name that keeps its own spelling goes in backticks, or in
+  `infra/british_spelling_allowed.txt` with its reason.
 - A comment explains a constraint the code cannot show. It does not restate the next line and it
   does not argue that the change is right.
 - No at-sign in front of a name in a commit message, a pull request, a comment or a review:

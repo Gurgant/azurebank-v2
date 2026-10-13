@@ -124,10 +124,10 @@ inferential when an AI model judges the result.
   does][never]. The file gives instructions; nothing automatic checks that they were followed.
 - **Checks a program runs.** A green job does not show that any test passed. So 9 steps in
   [`ci.yml`][ci] and [`contract-tests.yml`][bru] count what ran and fail their job when the
-  suite beside them passed nothing, skipped a test or fell under a minimum. Four jobs run on a
+  suite beside them passed nothing, skipped a test or fell under a minimum. Five jobs run on a
   pull request and are not required: the demo suite, the documentation site, the check on
-  commit messages and the test coverage. Two of the counting steps are in the first of them
-  and one in the last.
+  commit messages, the check on spelling and the test coverage. Two of the counting steps are
+  in the first of them and one in the last.
 - **Checks a model judges.** The second reader is another agent with one task, to find what is
   wrong, and only where a mistake is expensive: money, access, a database migration. Its
   findings are not in the pull requests: that it ran is my own statement.

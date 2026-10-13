@@ -20,7 +20,7 @@ builds a feature that was researched and rejected.
    owner's own devices and is accepted, at the cost of version tokens on responses, 428 and 412
    handling and a frontend cache slice.
 2. **Idempotency keys are the only client-facing write-safety contract** (ADR-0009, ADR-0022),
-   because that is what the payment industry standardizes on: Stripe, Adyen, PayPal, GoCardless,
+   because that is what the payment industry standardises on: Stripe, Adyen, PayPal, GoCardless,
    Marqeta, Plaid, Wise, Modern Treasury and UK Open Banking. `If-Match` is a cloud and platform
    pattern (GitHub, Cosmos DB, Microsoft Graph, Google Cloud Storage), where independent editors
    mutate shared objects. A future write-safety proposal is expressed as an idempotency key, or it
