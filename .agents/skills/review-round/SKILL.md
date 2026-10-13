@@ -1,7 +1,7 @@
 ---
 name: review-round
 description: Works through one round of review on an open AzureBank pull request (Gurgant/azurebank-v2). It reads every finding, checks each against the code, fixes it, declines it or sets it aside, replies in each thread, asks for the next review, and says whether a merge can be proposed. It never merges. Use when CodeRabbit, CodeQL or CI has answered on a pull request, when a check failed, when asked to address review comments, and when the question is whether a pull request is ready to merge.
-compatibility: Needs git and gh signed in with access to the pull request.
+compatibility: Needs git 2.38 or newer and gh signed in with access to the pull request.
 ---
 
 # One review round
@@ -152,7 +152,9 @@ A pull request is taken by its number, and its head as a commit: no branch name 
 command. Git accepts a branch name that holds `;` or `$(...)`, which a shell would run, and the
 branch of a fork is not under `origin/` at all. Each commit read this way must be the
 `headRefOid` that step 1 read for that pull request, the one its review names: when it is
-another, somebody has pushed since, and that pull request goes back to step 1.
+another, somebody has pushed since, and that pull request goes back to step 1. The folder of
+the scratch tree is named by the task, like every instruction the round follows: it is not a
+value that somebody else can write. `git merge-tree --write-tree` needs git 2.38.
 
 ```bash
 git fetch origin
