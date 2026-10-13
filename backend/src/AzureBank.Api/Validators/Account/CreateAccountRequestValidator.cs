@@ -17,6 +17,9 @@ public class CreateAccountRequestValidator : AbstractValidator<CreateAccountRequ
             .Length(ValidationRules.AccountNameMinLength, ValidationRules.AccountNameMaxLength)
             .WithMessage(ValidationRules.AccountNameLengthMessage);
 
+        // A second line, for a request built in code. One that arrives as JSON is stopped
+        // before it: the converter takes a name of the enum and nothing else, so no text binds
+        // to a value that is no member (EnumAndHandleInputTests).
         RuleFor(x => x.Type)
             .IsInEnum().WithMessage("Invalid account type. Must be Checking, Savings, or Investment.");
     }

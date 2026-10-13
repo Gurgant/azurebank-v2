@@ -31,6 +31,12 @@
  *       POST /api/accounts {"name":"Valid Name","type":12345}
  *       -> {"errors":{"request":["The request field is required."],
  *                     "$.type":["Integer values are not allowed for enum 'AccountType'. …"]}}
+ *       An enum is read from one of its names, in any letter case, and from nothing else, so a
+ *       string that is not a name is a bad value too (measured 2026-10-13):
+ *       POST /api/accounts {"name":"Valid Name","type":"99"}
+ *       -> {"errors":{"request":["The request field is required."],
+ *                     "$.type":["'99' is not a valid value for enum 'AccountType'. Valid values:
+ *                                Checking, Savings, Investment"]}}
  *
  *       an ABSENT `required` member -> the document ROOT, a bare `$`, because the deserialiser
  *       fails before there is a member to name. (`required` is enforced by System.Text.Json, not
@@ -44,19 +50,21 @@
  *   title "Validation Failed" · `detail` · `instance` · httpstatuses `type` · ALWAYS camelCase
  *   (the handler runs `ToCamelCase(PropertyName)`, so the binding name never shows through).
  *
- *       POST /api/accounts {"name":"Valid Name","type":"99"}
- *       -> {"title":"Validation Failed","instance":"/api/accounts",
- *           "errors":{"type":["Invalid account type. Must be Checking, Savings, or Investment."]}}
+ *       POST /api/transactions/deposit {"accountId":"…","amount":10.001}   (measured 2026-10-13)
+ *       -> {"title":"Validation Failed","instance":"/api/transactions/deposit",
+ *           "errors":{"amount":["Amount cannot have more than 2 decimal places."]}}
  *
  *   Easy to believe dead, and it is not. `[ApiController]` validates model state BEFORE the action
  *   body, so a DataAnnotation failure short-circuits and the controller's `ValidateAndThrowAsync`
  *   never runs — and most validators here merely restate their annotations. It is reachable only
- *   where a validator is STRICTER than every annotation on that property. Three such gaps exist:
- *   `CreateAccountRequest.Type` has no annotation at all (the response above: `"99"` is a JSON
- *   string, so the strict enum converter hands it to `Enum.TryParse`, which accepts the numeric
- *   form and binds an undefined member for `IsInEnum()` to reject); `[MoneyRange]` checks
- *   magnitude but not scale, so `10.123` reaches `.ValidMoneyScale()`; and "transfer to the same
- *   account" is cross-field, which DataAnnotations on these DTOs cannot express.
+ *   where a validator is STRICTER than every annotation on that property. Among those gaps:
+ *   `[MoneyRange]` checks magnitude but not scale, so `10.001` reaches `.ValidMoneyScale()` (the
+ *   response above); "transfer to the same account" is cross-field, which DataAnnotations on
+ *   these DTOs cannot express; and `SetPinRequest.Password` carries no annotation, so an empty
+ *   password reaches the validator (measured 2026-10-13):
+ *       POST /api/auth/pin {"pin":"123456","password":""}
+ *       -> {"title":"Validation Failed","instance":"/api/auth/pin",
+ *           "errors":{"password":["Password is required."]}}
  * ---------------------------------------------------------------------------------------------
  *
  * So lower-casing the first character is not tidiness: shape (a) needs it, and it must not damage
@@ -72,12 +80,13 @@
  * and does not split words, because no shape above produces those. Handling cases the server
  * cannot emit would be untested code pretending to be a contract.
  *
- * HONEST SCOPE. The app's own forms currently block every payload that reaches producer 2:
- * `moneySchemas` clamps amounts to two decimals and refuses a same-account transfer, and the
- * account-type control is a three-option select. Producer 2 was reached here with curl, not by the
- * SPA. Producer 1 is the one the app actually meets, whenever a client rule and a server rule
- * drift. So this function earns its place as insurance against a form that later drops one of
- * those client-side guards — not because camelCase keys arrive every day.
+ * HONEST SCOPE. The app's own forms currently block the money payloads that reach producer 2:
+ * `moneySchemas` clamps amounts to two decimals and refuses a same-account transfer. Producer 2
+ * was reached here with curl, not by the SPA. The account-type control is a three-option select,
+ * so shape (c) with `$.type` was reached with curl too. Producer 1 is the one the app actually
+ * meets, whenever a client rule and a server rule drift. So this function earns its place as
+ * insurance against a form that later drops one of those client-side guards — not because
+ * camelCase keys arrive every day.
  *
  * There is also a fourth 400 with NO `errors` member at all (`InvalidRequestMiddleware`, for a
  * malformed HTTP request). `problemBaseQuery` gives it `errorCode: 'HTTP_400'`, never

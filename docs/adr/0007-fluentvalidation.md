@@ -1,6 +1,6 @@
 # ADR-0007: FluentValidation for Request Validation
 
-**Status:** Accepted · **Date:** 2026-01-11 · **Amended:** 2026-08-04 ·
+**Status:** Accepted · **Date:** 2026-01-11 · **Amended:** 2026-08-04, 2026-10-13 ·
 **Decision Makers:** Vladislav Aleshaev
 
 ## Context
@@ -52,10 +52,19 @@ from the DTOs, and able to express conditions and comparisons between two proper
   | key | the binding name: PascalCase for a DTO property (`Name`, `FromDate`), camelCase for an action parameter (`at`), a JSON path (`$.type`) when deserialisation failed | always camelCase |
 
 - Most validators restate their annotations, so layer 2 is reached only where a validator is
-  stricter: `CreateAccountRequest.Type` carries no annotation; `[MoneyRange]` checks magnitude and
-  not scale, so `.ValidMoneyScale()` still bites; "transfer to the same account" is cross-field.
-- Layer 2 on the wire: `POST /api/accounts {"name":"Valid Name","type":"99"}` answers
-  `"errors": {"type": ["Invalid account type. Must be Checking, Savings, or Investment."]}`.
+  stricter. Among those places: `[MoneyRange]` checks magnitude and not scale, so
+  `.ValidMoneyScale()` still bites; "transfer to the same account" is cross-field;
+  `SetPinRequest.Password` carries no annotation, so an empty password on `POST /api/auth/pin`
+  reaches its validator.
+- Layer 2 on the wire: `POST /api/transactions/deposit {"accountId":"…","amount":10.001}`, with an
+  account of the caller and an `Idempotency-Key`, answers
+  `"errors": {"amount": ["Amount cannot have more than 2 decimal places."]}`.
+- An enum is not among them. `CreateAccountRequest.Type` carries no annotation, but its
+  validator's `IsInEnum` is not what answers a request: the API reads an enum from one of its
+  names, in any letter case, and deserialisation refuses every other value. So
+  `POST /api/accounts {"name":"Valid Name","type":"99"}` gets the layer 1 answer, under the key
+  `$.type`:
+  `'99' is not a valid value for enum 'AccountType'. Valid values: Checking, Savings, Investment`.
 - `frontend/src/api/validationErrors.ts` carries the same table, with the raw responses.
 
 ## Verified by

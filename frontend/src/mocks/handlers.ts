@@ -742,8 +742,8 @@ function pinLockedProblem(lockedUntil: string, now: number, source: 'verify-pin'
  * — the alternative is a mock that can only ever exercise the happy path of the surfaces whose
  * whole job is the unhappy one.
  *
- * Bounds and wording are the validators' own: `Length(2, 100)` with
- * `AccountNameLengthMessage`, `IsInEnum` with its sentence, and the `AzureTagPattern` regex that
+ * Bounds and wording are the server's own: `Length(2, 100)` with `AccountNameLengthMessage`, the
+ * enum converter's sentences for an account type, and the `AzureTagPattern` regex that
  * `[AzureTagQuery]` compiles.
  */
 /**
@@ -785,31 +785,68 @@ async function readJsonBody(
 // ever changes this stops being a hand-maintained list that can drift in silence.
 const ACCOUNT_TYPES = ['Checking', 'Savings', 'Investment'] satisfies AccountType[];
 
+/** What reading an account type came to: the member, or the sentence the API refuses it with. */
+type AccountTypeReading = { member: AccountType } | { refusal: string };
+
+/** The name System.Text.Json gives the token of a JSON value that is neither string nor number. */
+function jsonTokenName(value: unknown): string {
+  if (value === null) return 'Null';
+  if (value === true) return 'True';
+  if (value === false) return 'False';
+  return Array.isArray(value) ? 'StartArray' : 'StartObject';
+}
+
 /**
- * Parse an account type the way the API does: CASE-INSENSITIVELY, returning the canonical member.
+ * Read an account type the way the API's enum converter does: a NAME of the enum, in any letter
+ * case, and nothing else. Every other JSON value is refused by the deserialiser, under the key
+ * `$.type`, with a sentence of its own.
  *
- * The mock used to demand an exact match and was therefore STRICTER than the server — a fixture
- * rejecting input the product accepts, which is the more insidious direction of drift because it
- * hides a working path instead of inventing a broken one. `StrictJsonStringEnumConverter` refuses
- * JSON *numbers*, but hands any non-empty string to `Enum.TryParse(..., ignoreCase: true)`.
- * Measured 2026-08-04: `POST /api/accounts {"name":"Case Probe","type":"checking"}` -> **201**.
+ * Measured 2026-10-13 on `POST /api/accounts {"name":"Valid Name","type":<value>}`:
  *
- * It returns the CANONICAL member rather than the caller's string, because the API persists
- * `Checking` for an input of `"checking"` — echoing the input back would drift the read model too.
+ *   "Savings" · "savings" · "SAVINGS"   -> 201, and the account is stored as `Savings`
+ *   "Bogus" · "99" · "-1" · "1" · " Savings" · "Savings,Checking" · " "
+ *       -> "'<the text>' is not a valid value for enum 'AccountType'. Valid values: Checking,
+ *           Savings, Investment"
+ *   ""  -> "Empty string is not a valid value for enum 'AccountType'."
+ *   1 · 12345 · 1.0
+ *       -> "Integer values are not allowed for enum 'AccountType'. Use string values: Checking,
+ *           Savings, Investment"
+ *   null · true · false · ["Checking"] · {}
+ *       -> "Expected string value for enum 'AccountType', but got Null." (and True, False,
+ *           StartArray, StartObject)
  *
- * `typeof value !== 'string'` FIRST, and that guard is the point rather than ceremony: `['Checking']`
- * stringifies to `"Checking"`, so any comparison that coerces would accept the ARRAY and then store
- * it on the account, where the response contract promises a string. Same shape as the
- * `RegExp.test(['abc'])` trap documented on the azureTag handler below — a rule that was already
- * written down here and still did not stop the coercing version being written first.
+ * The member comes back in its CANONICAL spelling, because the API stores `Checking` for an input
+ * of `"checking"`: echoing the caller's letters back would drift the read model too.
  *
- * null means "no member matches", which is the `IsInEnum` case. Note `"99"` DOES parse on the real
- * side (TryParse accepts the numeric form) and is then rejected by the validator, so a null here
- * and a null there are the same 400 arrived at slightly differently.
+ * Only ASCII letters are folded. `toLowerCase()` by itself turns the Kelvin sign into a `k` and
+ * would read "Chec\u212Aing" as Checking, which the API refuses with the first sentence above.
+ *
+ * The `typeof` guards come before any comparison, and that is the point rather than ceremony:
+ * `['Checking']` stringifies to `"Checking"`, so a comparison that coerces would take the ARRAY
+ * and then store it on the account, where the response contract promises a string. Same shape as
+ * the `RegExp.test(['abc'])` trap documented on the azureTag handler below.
  */
-function parseAccountType(value: unknown): AccountType | null {
-  if (typeof value !== 'string') return null;
-  return ACCOUNT_TYPES.find((t) => t.toLowerCase() === value.toLowerCase()) ?? null;
+function parseAccountType(value: unknown): AccountTypeReading {
+  const names = ACCOUNT_TYPES.join(', ');
+  if (typeof value === 'number') {
+    return {
+      refusal: `Integer values are not allowed for enum 'AccountType'. Use string values: ${names}`,
+    };
+  }
+  if (typeof value !== 'string') {
+    return {
+      refusal: `Expected string value for enum 'AccountType', but got ${jsonTokenName(value)}.`,
+    };
+  }
+  if (value === '') {
+    return { refusal: "Empty string is not a valid value for enum 'AccountType'." };
+  }
+  const member = /^[A-Za-z]+$/.test(value)
+    ? ACCOUNT_TYPES.find((t) => t.toLowerCase() === value.toLowerCase())
+    : undefined;
+  return member
+    ? { member }
+    : { refusal: `'${value}' is not a valid value for enum 'AccountType'. Valid values: ${names}` };
 }
 const AZURE_TAG_RE = /^[a-z][a-z0-9_]{2,19}$/;
 
@@ -941,71 +978,56 @@ const createAccount = api.post('/api/accounts', async ({ request, response }) =>
   const { body } = parsed;
 
   /*
-    ONE ENDPOINT, TWO ENVELOPES, AND THEY ARE MUTUALLY EXCLUSIVE.
+    THREE LAYERS ANSWER ON THIS ROUTE, IN THIS ORDER, AND ONE AT A TIME.
 
-    `Name` carries DataAnnotations, so `[ApiController]` model state rejects it BEFORE the action
-    runs — PascalCase key, framework envelope, and the validator never executes. `Type` carries no
-    annotation at all, so a bad type only surfaces later, from FluentValidation's `IsInEnum()` —
-    camelCase key, "Validation Failed" envelope.
+    The deserialiser reads the members in the order the body writes them, and a `type` that is not
+    a name of the enum is refused where it is read, under the path to the member, `$.type`. That
+    is before the deserialiser's check for a `required` member that is absent, which answers under
+    the document root, `$`. Only a body that deserialises reaches `[ApiController]` model state,
+    where `Name` carries DataAnnotations and its key is PascalCase. All three answers are the
+    framework's envelope, and a request that breaks two rules gets the answer of the first layer
+    alone. Measured 2026-10-13:
 
-    They therefore never appear together. Measured 2026-08-04 with BOTH fields invalid:
-      {"name":"x","type":"99"}
-        -> title "One or more validation errors occurred.", errors {"Name":[…]}   ← `type` absent
+      {"name":"x","type":"99"}        -> errors {"request":[…],"$.type":[…]}   ← `Name` absent
+      {"type":"99"}                   -> errors {"request":[…],"$.type":[…]}   ← `$` absent
+      {"name":"No Type Probe"}        -> errors {"$":[…],"request":[…]}
+      {"name":"x","type":"Checking"}  -> errors {"Name":[…]}
 
-    The mock used to merge both into one camelCase dictionary under the FluentValidation envelope,
-    which is wrong in the key, the envelope and the co-occurrence. This is the endpoint that makes
-    `toFieldName` necessary, so getting it right here is the whole point.
+    NOT MODELLED: a `name` that is not a JSON string. The API refuses it where it is read as well,
+    under `$.name`, so of two unreadable members the one written first answers:
+
+      {"name":123,"type":"99"}        -> errors {"request":[…],"$.name":[…]}
+      {"type":"99","name":123}        -> errors {"request":[…],"$.type":[…]}
+      {"name":123,"type":"Checking"}  -> errors {"request":[…],"$.name":[…]}
+
+    This handler answers `$.type` for the first and `Name` for the third. The app's forms send
+    the name as a string.
+
+    FluentValidation's envelope ("Validation Failed", camelCase keys) was not seen on this route:
+    what the validator checks, these layers have refused before it runs.
   */
   /*
-    ABSENT is not the same as EMPTY, and this endpoint is where the mock used to accept a WRITE the
-    API refuses. `CreateAccountRequest` declares BOTH members `required`, so System.Text.Json fails
-    to deserialise before `[Required]` ever runs — the mock previously defaulted a missing `type` to
-    Checking and answered 201, persisting a row the real API would never have created.
+    ABSENT is not the same as EMPTY. `CreateAccountRequest` declares BOTH members `required`, so
+    System.Text.Json fails to deserialise before `[Required]` ever runs, and nothing is created.
 
     Measured: {"name":"No Type Probe"} -> 400 keyed `$` + `request`. See `missingMemberProblem`.
   */
-  const missing = (['name', 'type'] as const).filter((m) => body[m] === undefined);
-  if (missing.length > 0) {
-    return response.untyped(
-      missingMemberProblem('AzureBank.Shared.DTOs.Account.CreateAccountRequest', ...missing),
-    );
+  const requestType = 'AzureBank.Shared.DTOs.Account.CreateAccountRequest';
+  if (body.type === undefined) {
+    const missing = (['name', 'type'] as const).filter((m) => body[m] === undefined);
+    return response.untyped(missingMemberProblem(requestType, ...missing));
+  }
+  const accountType = parseAccountType(body.type);
+  if ('refusal' in accountType) {
+    return response.untyped(invalidJsonValueProblem('$.type', accountType.refusal));
+  }
+  if (body.name === undefined) {
+    return response.untyped(missingMemberProblem(requestType, 'name'));
   }
 
   const nameError = rejectBadAccountName(body.name, CREATE_NAME_REQUIRED);
   if (nameError) {
     return response.untyped(modelStateProblem({ Name: nameError }));
-  }
-  /*
-    A JSON NUMBER never reaches the validator. `StrictJsonStringEnumConverter` rejects the token in
-    the deserialiser, so the answer is the framework's conversion envelope keyed by the path to the
-    member — `$.type`, not the bare `$` an absent member produces, and not the camelCase `type` a
-    bad enum STRING produces. Three inputs to the same field, three different answers.
-
-    Measured: {"name":"Valid Name","type":12345}
-      -> {"$.type":["Integer values are not allowed for enum 'AccountType'. Use string values: …"],
-          "request":["The request field is required."]}
-  */
-  if (typeof body.type === 'number') {
-    return response.untyped(
-      invalidJsonValueProblem(
-        '$.type',
-        "Integer values are not allowed for enum 'AccountType'. Use string values: Checking, Savings, Investment",
-      ),
-    );
-  }
-
-  const accountType = parseAccountType(body.type);
-  if (accountType === null) {
-    // Measured: {"name":"Valid Name","type":"99"}
-    //   -> {"title":"Validation Failed","detail":"One or more validation errors occurred.",
-    //       "instance":"/api/accounts","errors":{"type":["Invalid account type. Must be …"]}}
-    return response.untyped(
-      problem({
-        instance: pathOf(request),
-        status: 400,
-        errors: { type: ['Invalid account type. Must be Checking, Savings, or Investment.'] },
-      }),
-    );
   }
 
   /*
@@ -1036,7 +1058,7 @@ const createAccount = api.post('/api/accounts', async ({ request, response }) =>
     // CANONICAL value matters — the API persists `Checking` for an input of `"checking"`, so
     // echoing the caller's casing back would drift the read model too.
     name: String(body.name),
-    type: accountType,
+    type: accountType.member,
     balance: 0,
     isPrimary: false,
     createdAt: '2026-07-21T12:00:00.0000000Z',

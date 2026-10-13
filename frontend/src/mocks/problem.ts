@@ -46,12 +46,14 @@ export function fakeTraceId(): string {
 }
 
 /*
-  Which responses actually carry `instance`, measured on the running stack 2026-08-05. The audit
-  entry that prompted this said "EVERY mock error body omits instance"; both halves of that are
-  wrong, and applying it as written would have added the member to paths that provably lack it.
+  Which responses actually carry `instance`, measured on the running stack 2026-08-05, and the
+  FluentValidation row on 2026-10-13. The audit entry that prompted this said "EVERY mock error
+  body omits instance"; both halves of that are wrong, and applying it as written would have
+  added the member to paths that provably lack it.
 
     PRESENT — the API's own handlers, which all assign `Instance = httpContext.Request.Path`:
-      FluentValidation 400   POST /api/accounts {"type":"99"}  -> instance "/api/accounts"
+      FluentValidation 400   POST /api/transactions/deposit {"accountId":"…","amount":10.001}
+                                                    -> instance "/api/transactions/deposit"
       domain 404/422/400     AppExceptionHandler               -> instance "/api/accounts/{id}"
       JWT 401                OnChallenge                       -> instance "/api/accounts"
 
@@ -294,10 +296,16 @@ export function missingMemberProblem(clrType: string, ...members: string[]) {
  *              "$.type":["Integer values are not allowed for enum 'AccountType'.
  *                         Use string values: Checking, Savings, Investment"]}}
  *
- * Note this is NOT the same as a bad enum *string*: `"99"` deserialises fine (the converter defers
- * to `Enum.TryParse`, which accepts the numeric form) and is then caught by FluentValidation's
- * `IsInEnum` — the "Validation Failed" envelope keyed camelCase `type`. A JSON **number** never
- * reaches the validator at all.
+ * A string that is not a name of the enum gets the same envelope and the same key, with a
+ * sentence of its own: the converter takes a name, in any letter case, and nothing else.
+ * Measured 2026-10-13, `POST /api/accounts {"name":"Valid Name","type":"99"}`:
+ *
+ *   {"errors":{"request":["The request field is required."],
+ *              "$.type":["'99' is not a valid value for enum 'AccountType'.
+ *                         Valid values: Checking, Savings, Investment"]}}
+ *
+ * The empty string is refused under the same key with a third sentence, which does not list the
+ * names: `Empty string is not a valid value for enum 'AccountType'.`
  */
 export function invalidJsonValueProblem(path: string, message: string) {
   return modelStateProblem({
