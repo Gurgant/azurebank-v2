@@ -121,7 +121,7 @@ diff again does not count.
   exception is the review bot's handle in a request for review.
 - `python infra/check_commit_messages.py origin/main HEAD` exits 0: no commit message has a line
   that credits a second author, or an at-sign before a name. A pushed commit is not rewritten,
-  so run it before the first push.
+  so run it before every push.
 
 ## 7. Open, read the checks, stop
 
@@ -138,9 +138,10 @@ gh pr checks <number>             # read every row
 
 A pull request is called green only when every check has finished and every row reads `pass`.
 Read the description of the review bot's row too: `pass` beside "Review skipped" is not a
-review. A failed check goes to the review-round skill. Then the review is asked for (that skill,
-step 5) and the work stops. Asked whether it can be merged, give every row and the state of the
-review: the decision and the merge are never the agent's.
+review. A failed check goes to the review-round skill, whose step 5 asks for the review. With
+no failed check, the review is asked for (that skill, step 5) and the work stops. Asked whether
+it can be merged, give every row and the state of the review: the decision and the merge are
+never the agent's.
 
 Every step above is complete on a fresh clone. Where a file named `LOCAL.md` exists beside this
 one, it holds the steps of that machine: follow it too.

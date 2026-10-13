@@ -6,15 +6,17 @@ compatibility: Needs git and gh signed in with access to the pull request.
 
 # One review round
 
-A round is everything the reviewers said about one head. It ends with at most one commit, one
-reply in each thread, and either the next request or the proposal of a merge. A round pushes and
-posts: work it only when the task says so (`AGENTS.md`, "What an agent never does"). Otherwise
-stop after step 2 and hand back what each finding needs.
+A round is everything the reviewers said about one head. It ends with at most one commit of
+fixes, after a merge of `main` where the branch needed one (step 3), one reply in each thread,
+and the next request, the proposal of a merge, or a report of what the pull request waits for.
+A round pushes and posts: work it only when the task says so (`AGENTS.md`, "What an agent never
+does"). Otherwise stop after step 2 and hand back what each finding needs.
 
 ## 1. Read the whole round before touching anything
 
 ```bash
 gh pr view <number> --json headRefOid,statusCheckRollup,reviews,comments
+gh pr checks <number> --required     # the checks that step 6 calls required
 gh api graphql -f query='query($n:Int!){repository(owner:"Gurgant",name:"azurebank-v2"){pullRequest(number:$n){reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{id isResolved isOutdated comments(first:100){nodes{databaseId author{login} path body createdAt}}}}}}}' -F n=<number>
 gh api --paginate "repos/Gurgant/azurebank-v2/code-scanning/alerts?state=open&pr=<number>&per_page=100"
 ```
@@ -51,24 +53,27 @@ commit already fixed it, the reply names that commit.
 All fixes of the round go in one commit whose message says the outcome: the reviewer then reads
 one new head, and each reply can name one commit. The order is:
 
-- First, when the round has a fix to commit, a branch that is behind takes `git fetch origin`,
-  then `git merge origin/main`: without the fetch the merge takes main as this machine last saw
-  it, and a merge made after the checks would leave them run on another tree.
+- First, when the round has a fix to commit: `git fetch origin`, then, where the branch is
+  behind, `git merge origin/main`. Without the fetch the merge takes main as this machine last
+  saw it, and a merge made after the checks would leave them run on another tree.
 - Then fix, and commit.
 - Then run the pre-pr-gate skill's step 2 on that commit and read the numbers. Its list of what
   to run is read from the committed diff: a fix that is not committed yet, in a folder the pull
   request had not touched, would select none of that folder's checks.
+- Then the check of the commit messages (that skill, step 6): a pushed message is not rewritten.
 - Then push, and reply.
 
 A check that fails there is corrected before the push, in the same commit while it has not left
-the machine. A round with nothing true to fix has no commit and no merge of `main`: nothing is
-pushed. Go to step 4. The one exception is a branch that conflicts with `main` (step 6).
+the machine, and the checks run again on the corrected commit: what is pushed has passed them.
+A round with nothing true to fix has no commit and no merge of `main`: nothing is pushed. Go to
+step 4. The one exception is a branch that conflicts with `main` (step 6).
 
 ## 4. One reply in each thread
 
-Push the commit first. Each thread then gets what was done, with the commit, or why it was
-declined. Write each reply to a file and post it from the file, to the FIRST comment of the
-thread (its `databaseId` from step 1; a reply to a reply is refused):
+When the round has a commit, push it first. Each thread then gets what was done, with the
+commit, why it was declined, or where it was noted for a change of its own. Write each reply to
+a file and post it from the file, to the FIRST comment of the thread (its `databaseId` from
+step 1; a reply to a reply is refused):
 
 ```bash
 gh api repos/Gurgant/azurebank-v2/pulls/<number>/comments/<databaseId>/replies -F body=@<file>
@@ -83,12 +88,13 @@ convince in six months.
 
 ## 5. Ask for the next round
 
-A round that pushed nothing asks for no review: its head has been read already. Go to step 6.
+A round that pushed nothing asks for no review when a review has already read its head, or when
+a request on that head still waits for its answer: go to step 6. Every other round asks for one.
 
 The repository's configuration turns automatic review on, but a review has not always started by
 itself here, and the reviewer's check can be green for a review that was skipped. So a review is
-asked for, after the last push of the round, in one comment that holds only the request, posted
-from a file:
+asked for, after the round's push where it made one, in one comment that holds only the request,
+posted from a file:
 
 ```bash
 gh pr comment <number> --body-file <file>
@@ -111,9 +117,10 @@ Every required check is green on the last head, and a review has read that head 
 nothing to change:
 
 - it has no finding; or
-- every finding it has was answered without a commit (step 2): declined with the reason, set
-  aside for a change of its own, or already fixed by a commit the review had read. The answer
-  is in the finding's thread, or in the comment of step 4 for a finding that has none.
+- every finding it has was answered without a commit (step 2): declined with the reason, which
+  names the commit when an earlier one had already fixed it, or set aside for a change of its
+  own. The answer is in the finding's thread, or in the comment of step 4 for a finding that
+  has none.
 
 A push after a review makes a new head, and a fix is such a push: that head has no review of its
 own, however green its checks. So the next round is asked for (step 5), and no merge is proposed
@@ -127,15 +134,17 @@ merge of `main` is a push too. It is updated when it conflicts, in the order of 
 merge `origin/main`, resolve, commit, the checks on that commit, push), and then a full review
 is asked for (step 5): no merge is proposed before its verdict.
 
-When both hold, say that the merge can be proposed, with the title and the merge text, and stop.
-Otherwise go to the next round. The merge is never the agent's.
+When both hold, say that the merge can be proposed, with the title and the merge text, and stop;
+where the next paragraph asks for a check of the combination, that check comes first. Otherwise
+say what the pull request waits for and stop: the next round starts at step 1 when a verdict on
+the last head exists, or when the person has decided (step 7). The merge is never the agent's.
 
 When several pull requests are proposed together, or one whose branch is behind `main`, check the
 combination first. Green alone, or green on an older `main`, does not prove green together.
 
 ```bash
 git fetch origin
-t=$(git merge-tree --write-tree origin/main origin/<first>)            # exit 1: a conflict, stop and report
+t=$(git merge-tree --write-tree origin/main origin/<first>)            # exit 1: a conflict: no proposal
 c=$(git commit-tree "$t" -p origin/main -p origin/<first> -m scratch)  # an object: no branch moves
 t=$(git merge-tree --write-tree "$c" origin/<second>)                  # these two lines again,
 c=$(git commit-tree "$t" -p "$c" -p origin/<second> -m scratch)        # once for each further one
@@ -144,8 +153,9 @@ git worktree add --detach <a folder the task allows> "$c"
 
 Combine in the order the merges are proposed in. In that folder run the pre-pr-gate skill, step
 2, for every part the pull requests change. Say in the proposal what was combined, in which
-order, and the numbers. If the combined run fails, propose none of them together: report which
-pair breaks and the failing numbers. Remove the folder afterwards with
+order, and the numbers. If the combined run fails, or two of them conflict, propose none of them
+together: report which pair breaks and the failing numbers. A branch that conflicts with `main`
+is updated first, as said above. Remove the folder afterwards with
 `git worktree remove <folder>`.
 
 ## 7. When to stop and ask
