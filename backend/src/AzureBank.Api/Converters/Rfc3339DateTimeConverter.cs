@@ -27,8 +27,12 @@ public sealed class Rfc3339DateTimeConverter : JsonConverter<DateTime>
             return default;
         }
 
-        // Parse ISO 8601/RFC 3339 format
-        return DateTime.Parse(dateString, null, System.Globalization.DateTimeStyles.RoundtripKind);
+        // Parse ISO 8601/RFC 3339 format. The invariant culture: with none named, a text in another
+        // shape is read by the host's calendar and day-month order.
+        return DateTime.Parse(
+            dateString,
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.RoundtripKind);
     }
 
     public override void Write(Utf8JsonWriter writer, DateTime value, JsonSerializerOptions options)
@@ -41,6 +45,9 @@ public sealed class Rfc3339DateTimeConverter : JsonConverter<DateTime>
             _ => DateTime.SpecifyKind(value, DateTimeKind.Utc) // Assume unspecified is UTC
         };
 
-        writer.WriteStringValue(utcValue.ToString(Rfc3339Format));
+        // The invariant culture: with none named, the text follows the host's calendar and time
+        // separator.
+        writer.WriteStringValue(
+            utcValue.ToString(Rfc3339Format, System.Globalization.CultureInfo.InvariantCulture));
     }
 }

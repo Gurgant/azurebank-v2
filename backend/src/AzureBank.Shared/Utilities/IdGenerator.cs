@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 
 namespace AzureBank.Shared.Utilities;
@@ -83,7 +84,8 @@ public static class IdGenerator
     /// </returns>
     public static string GenerateTransactionNumber()
     {
-        var stamp = $"{DateTime.UtcNow:yyyyMMdd}";
+        // The invariant culture: with none named, the year and the day follow the host's calendar.
+        var stamp = DateTime.UtcNow.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
         var suffix = RandomSuffix(TransactionSuffixLength);
         return $"TXN-{stamp}-{suffix}{CheckSymbol(stamp + suffix)}";
     }
