@@ -59,9 +59,9 @@
     <link rel="apple-touch-icon" href="apple-touch-icon.png" />
     <!-- The number after the name changes when the page and its two files change together, so
          that a browser never pairs this page with an older copy of them. -->
-    <link rel="stylesheet" href="entry.css?v=5" />
+    <link rel="stylesheet" href="entry.css?v=6" />
     <!-- A blocking script in the head, so that the language is chosen before the first paint. -->
-    <script src="entry.js?v=5"></script>
+    <script src="entry.js?v=6"></script>
   </head>
   <body>
     <a class="skip" href="#content">
@@ -225,24 +225,24 @@
             >
               <li>
                 <a href="https://github.com/Gurgant/azurebank-v2/pulls?q=is%3Apr+is%3Amerged">
-                  <span class="fig" lang="en" data-lang="en"><b>269</b><span>pull requests merged, each one by me</span></span>
-                  <span class="fig" lang="it" data-lang="it"><b>269</b><span>merge di pull request, tutti fatti da me</span></span>
+                  <span class="fig" lang="en" data-lang="en"><b>282</b><span>pull requests merged, each one by me</span></span>
+                  <span class="fig" lang="it" data-lang="it"><b>282</b><span>merge di pull request, tutti fatti da me</span></span>
                 </a>
               </li>
               <li>
-                <a href="https://github.com/Gurgant/azurebank-v2/actions/runs/38182217230">
+                <a href="https://github.com/Gurgant/azurebank-v2/actions/runs/38371242081">
                   <span class="fig" lang="en" data-lang="en"
-                    ><b>4,436</b
+                    ><b>4,596</b
                     ><span
                       >automated tests
-                      <small>2,889 backend + 1,457 frontend + 90 in a real browser on the real stack</small></span
+                      <small>2,973 backend + 1,533 frontend + 90 in a real browser on the real stack</small></span
                     ></span
                   >
                   <span class="fig" lang="it" data-lang="it"
-                    ><b>4.436</b
+                    ><b>4.596</b
                     ><span
                       >test automatici
-                      <small>2.889 di backend + 1.457 di frontend + 90 in un browser vero sullo stack reale</small></span
+                      <small>2.973 di backend + 1.533 di frontend + 90 in un browser vero sullo stack reale</small></span
                     ></span
                   >
                 </a>
@@ -265,8 +265,8 @@
               </li>
             </ul>
             <p class="proof__date">
-              <span lang="en" data-lang="en">Counted on <time datetime="2026-10-11">11 October 2026</time></span>
-              <span lang="it" data-lang="it">Contati l'<time datetime="2026-10-11">11 ottobre 2026</time></span>
+              <span lang="en" data-lang="en">Counted on <time datetime="2026-10-13">13 October 2026</time></span>
+              <span lang="it" data-lang="it">Contati il <time datetime="2026-10-13">13 ottobre 2026</time></span>
             </p>
           </div>
 
@@ -501,6 +501,60 @@
                 </p>
               </li>
             </ul>
+
+            <!-- Test coverage, the foot of the statement. Each figure is one text node, written
+                 once for each language, and a link to the run of the CI job that printed it.
+                 Both are figures the job holds a floor on. -->
+            <div class="cover">
+              <h3 class="datalabel">
+                <span lang="en" data-lang="en">Test coverage</span>
+                <span lang="it" data-lang="it">Copertura dei test</span>
+              </h3>
+              <p class="cover__say" lang="en" data-lang="en">
+                A CI job counts the lines of hand-written code that the tests run, on every pull
+                request to main, and fails when the backend's application code or the frontend's
+                falls under 95%. It is not one of the nine required checks. Tests and their
+                helpers, generated code and database migrations are in no figure.
+              </p>
+              <p class="cover__say" lang="it" data-lang="it">
+                Un job di CI conta, a ogni pull request verso main, le righe di codice scritto a
+                mano che i test eseguono, e fallisce quando il codice applicativo del backend o
+                quello del frontend scende sotto il 95%. Non è uno dei nove controlli obbligatori.
+                I test con i loro strumenti, il codice generato e le migrazioni del database non
+                entrano in nessun numero.
+              </p>
+              <div class="cover__figs">
+                <ul
+                  class="cover__list"
+                  role="list"
+                  aria-label="Test coverage in figures"
+                  data-label-it="La copertura dei test in numeri"
+                >
+                  <li>
+                    <a href="https://github.com/Gurgant/azurebank-v2/actions/runs/38375359345/job/115222251046">
+                      <span class="fig" lang="en" data-lang="en"><b>96.8%</b><span>of the backend's application code</span></span>
+                      <span class="fig" lang="it" data-lang="it"><b>96,8%</b><span>del codice applicativo del backend</span></span>
+                    </a>
+                  </li>
+                  <li>
+                    <a href="https://github.com/Gurgant/azurebank-v2/actions/runs/38375359345/job/115222251046">
+                      <span class="fig" lang="en" data-lang="en"><b>98.0%</b><span>of the frontend's application code</span></span>
+                      <span class="fig" lang="it" data-lang="it"><b>98,0%</b><span>del codice applicativo del frontend</span></span>
+                    </a>
+                  </li>
+                </ul>
+                <p class="cover__foot">
+                  <strong class="cover__but">
+                    <span lang="en" data-lang="en">A line that ran is not a line that was checked.</span>
+                    <span lang="it" data-lang="it">Una riga eseguita non è una riga verificata.</span>
+                  </strong>
+                  <span class="cover__date">
+                    <span lang="en" data-lang="en">Counted on <time datetime="2026-10-13">13 October 2026</time></span>
+                    <span lang="it" data-lang="it">Contati il <time datetime="2026-10-13">13 ottobre 2026</time></span>
+                  </span>
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -1001,6 +1055,15 @@
                 <span lang="it" data-lang="it">Per approfondire (in inglese)</span>
               </h3>
               <ul class="sheet doors" role="list">
+                <li>
+                  <a href="https://github.com/Gurgant/azurebank-v2/wiki">
+                    <span>
+                      <span lang="en" data-lang="en">The wiki: the project in short pages</span>
+                      <span lang="it" data-lang="it">La wiki: il progetto in pagine brevi</span>
+                    </span>
+                    <svg class="i" aria-hidden="true" focusable="false"><use href="#i-out" /></svg>
+                  </a>
+                </li>
                 <li>
                   <a href="docs/architecture/overview">
                     <span>

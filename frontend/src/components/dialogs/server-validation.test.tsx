@@ -93,9 +93,10 @@ describe('the account rules the mock did not enforce', () => {
 
   it('accepts a lower-case type and stores the canonical member', async () => {
     /*
-      The API is case-insensitive here (`Enum.TryParse(..., ignoreCase: true)`) and the mock used to
-      be STRICTER than the server — a fixture rejecting input the product accepts, which hides a
-      working path. Measured: POST /api/accounts {"type":"checking"} -> 201.
+      The API takes a name of the enum in any letter case, and a mock that demanded the exact
+      spelling would be STRICTER than the server — a fixture rejecting input the product accepts,
+      which hides a working path. Measured 2026-10-13: POST /api/accounts with "type":"savings" or
+      "SAVINGS" -> 201, stored as `Savings`.
 
       Asserting the STORED value, not just the status: the API persists the canonical `Checking`,
       so echoing the caller's casing back would drift the read model even with a correct 201.
@@ -106,15 +107,79 @@ describe('the account rules the mock did not enforce', () => {
     expect((await res.json()).data.type).toBe('Checking');
   });
 
-  it('rejects a type that is not one of the three', async () => {
-    // `IsInEnum` — the mock used to cast whatever string arrived straight onto the account, so a
-    // "Crypto" account was creatable here and impossible in production.
-    const res = await create({ name: 'Holiday Fund', type: 'Crypto' });
+  const NOT_A_NAME =
+    " is not a valid value for enum 'AccountType'. Valid values: Checking, Savings, Investment";
+  it.each([
+    ['a name the enum does not have', 'Crypto', `'Crypto'${NOT_A_NAME}`],
+    ['a number written as text', '99', `'99'${NOT_A_NAME}`],
+    ['the number of a member, written as text', '1', `'1'${NOT_A_NAME}`],
+    ['a negative number written as text', '-1', `'-1'${NOT_A_NAME}`],
+    ['a name with a space before it', ' Savings', `' Savings'${NOT_A_NAME}`],
+    ['a list of names', 'Savings,Checking', `'Savings,Checking'${NOT_A_NAME}`],
+    ['a name with a look-alike letter', 'Chec\u212Aing', `'Chec\u212Aing'${NOT_A_NAME}`],
+    ['an empty string', '', "Empty string is not a valid value for enum 'AccountType'."],
+  ])('refuses %s as the deserialiser does, keyed `$.type`', async (_case, type, sentence) => {
+    /*
+      The API reads an enum from one of its names and from nothing else, and refuses the rest
+      where the body is read. Measured 2026-10-13, each row:
+
+        POST /api/accounts {"name":"Valid Name","type":"99"}
+          -> 400 {"title":"One or more validation errors occurred.",
+                  "errors":{"request":["The request field is required."],
+                            "$.type":["'99' is not a valid value for enum 'AccountType'. Valid
+                                       values: Checking, Savings, Investment"]}}   no detail, no instance
+
+      The Kelvin sign is the row that a `toLowerCase()` comparison gets wrong: it lower-cases to
+      `k`, and the API does not take it for one.
+    */
+    const before = mockState.accounts.length;
+    const res = await create({ name: 'Holiday Fund', type });
+    const body = await res.json();
 
     expect(res.status).toBe(400);
-    expect((await res.json()).errors.type).toEqual([
-      'Invalid account type. Must be Checking, Savings, or Investment.',
-    ]);
+    expect(body.title).toBe('One or more validation errors occurred.');
+    expect(body.detail).toBeUndefined();
+    expect(body.instance).toBeUndefined();
+    expect(body.errors['$.type']).toEqual([sentence]);
+    expect(body.errors.request).toEqual(['The request field is required.']);
+    expect(body.errors.type).toBeUndefined();
+    expect(mockState.accounts).toHaveLength(before);
+  });
+
+  it.each([
+    [
+      'a number',
+      1,
+      "Integer values are not allowed for enum 'AccountType'. Use string values: Checking, Savings, Investment",
+    ],
+    ['null', null, "Expected string value for enum 'AccountType', but got Null."],
+    ['true', true, "Expected string value for enum 'AccountType', but got True."],
+    ['false', false, "Expected string value for enum 'AccountType', but got False."],
+    ['an object', {}, "Expected string value for enum 'AccountType', but got StartObject."],
+  ])('refuses %s for the type with the sentence of its token', async (_case, type, sentence) => {
+    // Measured 2026-10-13 on POST /api/accounts {"name":"Valid Name","type":<value>}: each 400,
+    // keys `request` and `$.type`.
+    const res = await create({ name: 'Holiday Fund', type });
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).errors['$.type']).toEqual([sentence]);
+  });
+
+  it.each([
+    ['a name that is too short', { name: 'x', type: '99' }],
+    ['no name at all', { type: '99' }],
+  ])('answers a bad type alone when the body also has %s', async (_case, body) => {
+    /*
+      The deserialiser answers before model state has a `Name` to judge and before it checks for
+      an absent `required` member. Measured 2026-10-13:
+
+        {"name":"x","type":"99"} -> errors {"request":[…],"$.type":[…]}   no `Name`
+        {"type":"99"}            -> errors {"request":[…],"$.type":[…]}   no `$`
+    */
+    const res = await create(body);
+
+    expect(res.status).toBe(400);
+    expect(Object.keys((await res.json()).errors).sort()).toEqual(['$.type', 'request']);
   });
 
   it('still creates a valid account', async () => {
@@ -473,9 +538,11 @@ describe('a body that cannot be read at all', () => {
       {},
     );
 
+    // Measured 2026-10-13: POST /api/accounts {"name":"Valid Name","type":["Checking"]} -> 400
+    //   {"$.type":["Expected string value for enum 'AccountType', but got StartArray."], …}
     expect(res.status).toBe(400);
-    expect((await res.json()).errors.type).toEqual([
-      'Invalid account type. Must be Checking, Savings, or Investment.',
+    expect((await res.json()).errors['$.type']).toEqual([
+      "Expected string value for enum 'AccountType', but got StartArray.",
     ]);
     expect(mockState.accounts).toHaveLength(before);
   });

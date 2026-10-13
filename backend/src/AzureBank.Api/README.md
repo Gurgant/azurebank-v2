@@ -120,10 +120,17 @@ A request passes two layers, and it matters which one answers (ADR-0007).
    (`AddValidatorsFromAssemblyContaining<Program>`); auto-validation is not wired, because
    `FluentValidation.AspNetCore` is deprecated.
 
-So layer 2 answers only where a validator is stricter than every annotation on that property:
-the unannotated `CreateAccountRequest.Type`, the money scale, which `[MoneyRange]` does not
-check, and the same-account rule of an internal transfer. A request DTO with no validator, such as
-`RefreshRequest`, `RevokeRequest` or `UpdateAzureTagRequest`, can only produce the layer-1 answer.
+So layer 2 answers only where a validator is stricter than every annotation on that property.
+Among those places: the money scale, which `[MoneyRange]` does not check; the same-account rule of
+an internal transfer; and an empty password on `POST /api/auth/pin`, where `SetPinRequest.Password`
+carries no annotation. A request DTO with no validator, such as `RefreshRequest`, `RevokeRequest`
+or `UpdateAzureTagRequest`, can only produce the layer-1 answer.
+
+An enum is read from one of its names, in any letter case, and from nothing else. A number, the
+same number written as text (`"type": "1"`), a list of names and a name with white space around it
+are refused while the body is read, with the layer-1 title, under the JSON path of the member
+(`$.type`) and with the list of the valid names. The empty string is refused in the same place
+and under the same key, with a sentence of its own that does not list the names.
 
 The limits are constants in `../AzureBank.Shared/Constants/ValidationRules.cs`: a password of 8
 to 128 characters with an uppercase letter, a lowercase letter, a digit and a special character;

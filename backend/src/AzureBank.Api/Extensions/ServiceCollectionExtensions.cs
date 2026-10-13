@@ -847,7 +847,7 @@ public static class ServiceCollectionExtensions
                 // "amount":1,"Amount":3 moved 3, because binding is also case-insensitive.
                 options.JsonSerializerOptions.AllowDuplicateProperties = false;
 
-                // Strict enum converter: rejects integer values, only accepts strings
+                // Strict enum converter: rejects integer values, accepts only a name of the enum
                 // Fixes Schemathesis "API accepted schema-violating request" for enum fields
                 options.JsonSerializerOptions.Converters.Add(
                     new Converters.StrictJsonStringEnumConverterFactory());
