@@ -1,8 +1,8 @@
 # ADR-0062: Demo visitors get private copies from a prepared pool
 
 **Status:** Accepted · **Date:** 2026-10-03 · **Amended:** 2026-10-03 (ADR-0061), 2026-10-04
-(ADR-0063), 2026-10-05 (ADR-0064) · **Amends:** ADR-0011, ADR-0042, ADR-0044 (D6), ADR-0060
-(decisions 4 and 5) · **Decision Makers:** Vladislav Aleshaev
+(ADR-0063), 2026-10-05 (ADR-0064), 2026-10-14 (decision 3) · **Amends:** ADR-0011, ADR-0042,
+ADR-0044 (D6), ADR-0060 (decisions 4 and 5) · **Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
@@ -26,7 +26,7 @@ and `EnforceTransactionImmutability` refuses a tracked delete of a ledger row (A
 3. **Off unless a deployment turns it on**: `Demo:Enabled` is false by default, the builder and
    the recycler refuse in their own code to run without it, and `DemoOptionsValidator` checks
    every range in the Seeder, the API and the BFF, with the demo on or off, so that a bad value is
-   refused the day it is written: `Demo:CopyLifetimeHours` 24 (1 to 168), `Demo:Pool:TargetFree`
+   refused the day it is written: `Demo:CopyLifetimeHours` 24 (24 to 168), `Demo:Pool:TargetFree`
    50 (1 to 500), `Demo:Pool:LowMark` 20 (0 to `TargetFree`), `Demo:Pool:MaxFreeAgeHours` 44 (1 to
    720), `Demo:Pool:MaxClaimsPerDay` 150 (`TargetFree` to 10,000),
    `Demo:Claim:MaxPerClientPerDay` 10 (1 to 1,000), `Demo:Copy:MaxWrites` 200 (10 to 100,000).
@@ -100,8 +100,8 @@ and `EnforceTransactionImmutability` refuses a tracked delete of a ledger row (A
 - Not covered: a caller whose copy is gone is a user outside every copy until its token expires.
 - Not covered: a run whose top-up came up short keeps every free copy too old to count, so a
   visitor can be given a copy whose history ends more than `MaxFreeAgeHours` ago.
-- Not covered: with `Demo:CopyLifetimeHours` below 24 a copy and its client key can go inside the
-  24 hours its claim is counted over, and that claim stops counting towards its client's cap.
+- `Demo:CopyLifetimeHours` is 24 at least, because a deleted copy keeps no client key: a copy
+  that ended sooner would stop counting towards its client's cap inside the cap's 24 hours.
 - Not covered: two runs at once can build up to twice the target: no lock serialises them.
 
 ## Revisit when
