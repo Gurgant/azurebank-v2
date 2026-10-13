@@ -44,8 +44,8 @@ describe('PinInput (PR-10)', () => {
 
     expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue('1');
     expect(screen.getByLabelText('Digit 6 of 6')).toHaveValue('6');
-    expect(screen.getByTestId('value')).toHaveTextContent('123456');
-    expect(screen.getByTestId('completed')).toHaveTextContent('123456');
+    expect(screen.getByTestId('value').textContent).toBe('123456');
+    expect(screen.getByTestId('completed').textContent).toBe('123456');
   });
 
   it('accepts per-box typing and auto-advances', async () => {
@@ -53,15 +53,15 @@ describe('PinInput (PR-10)', () => {
     for (let i = 1; i <= 6; i++) {
       await userEvent.type(screen.getByLabelText(`Digit ${i} of 6`), String(i));
     }
-    expect(screen.getByTestId('value')).toHaveTextContent('123456');
+    expect(screen.getByTestId('value').textContent).toBe('123456');
   });
 
   it('strips non-digits from a paste', async () => {
     renderWithProviders(<Harness />);
     await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
     await userEvent.paste('12ab34');
-    expect(screen.getByTestId('value')).toHaveTextContent('1234');
-    expect(screen.getByTestId('completed')).toHaveTextContent('');
+    expect(screen.getByTestId('value').textContent).toBe('1234');
+    expect(screen.getByTestId('completed').textContent).toBe('');
   });
 
   it('backspace removes the last digit', async () => {
@@ -69,7 +69,7 @@ describe('PinInput (PR-10)', () => {
     await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
     await userEvent.paste('123');
     await userEvent.type(screen.getByLabelText('Digit 3 of 6'), '{backspace}');
-    expect(screen.getByTestId('value')).toHaveTextContent('12');
+    expect(screen.getByTestId('value').textContent).toBe('12');
   });
 
   it('never drops a keystroke typed into an empty out-of-range box (append, not ignore)', async () => {
@@ -77,7 +77,7 @@ describe('PinInput (PR-10)', () => {
     // first empty slot) rather than being silently discarded — the wrong-PIN retry path.
     renderWithProviders(<Harness />);
     await userEvent.type(screen.getByLabelText('Digit 4 of 6'), '7');
-    expect(screen.getByTestId('value')).toHaveTextContent('7');
+    expect(screen.getByTestId('value').textContent).toBe('7');
   });
 
   it('distributes a multi-digit value from a single change event (OTP / password-manager autofill)', () => {
@@ -85,8 +85,8 @@ describe('PinInput (PR-10)', () => {
     // truncated to the last digit.
     renderWithProviders(<Harness />);
     fireEvent.change(screen.getByLabelText('Digit 1 of 6'), { target: { value: '123456' } });
-    expect(screen.getByTestId('value')).toHaveTextContent('123456');
-    expect(screen.getByTestId('completed')).toHaveTextContent('123456');
+    expect(screen.getByTestId('value').textContent).toBe('123456');
+    expect(screen.getByTestId('completed').textContent).toBe('123456');
   });
 
   it('masks digits by default and reveals them on the toggle', async () => {
@@ -118,8 +118,8 @@ describe('PinInput (PR-10)', () => {
     await userEvent.click(screen.getByLabelText('Digit 3 of 6'));
     await userEvent.paste('123456');
 
-    expect(screen.getByTestId('value')).toHaveTextContent('123456');
-    expect(screen.getByTestId('completed')).toHaveTextContent('123456');
+    expect(screen.getByTestId('value').textContent).toBe('123456');
+    expect(screen.getByTestId('completed').textContent).toBe('123456');
   });
 
   it('replaces a complete entry with a whole PIN pasted into any box', async () => {
@@ -130,7 +130,7 @@ describe('PinInput (PR-10)', () => {
     await userEvent.click(screen.getByLabelText('Digit 4 of 6'));
     await userEvent.paste('654321');
 
-    expect(screen.getByTestId('value')).toHaveTextContent('654321');
+    expect(screen.getByTestId('value').textContent).toBe('654321');
   });
 
   it('replaces what is there with a whole autofilled PIN', async () => {
@@ -140,7 +140,7 @@ describe('PinInput (PR-10)', () => {
 
     fireEvent.change(screen.getByLabelText('Digit 2 of 6'), { target: { value: '987654' } });
 
-    expect(screen.getByTestId('value')).toHaveTextContent('987654');
+    expect(screen.getByTestId('value').textContent).toBe('987654');
   });
 
   /*
@@ -189,7 +189,7 @@ describe('PinInput (PR-10)', () => {
     await userEvent.keyboard('{ArrowRight}');
     expect(screen.getByLabelText('Digit 6 of 6')).toHaveFocus();
     // Moving between the boxes types nothing.
-    expect(screen.getByTestId('value')).toHaveTextContent('');
+    expect(screen.getByTestId('value').textContent).toBe('');
   });
 });
 

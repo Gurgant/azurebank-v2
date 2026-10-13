@@ -26,6 +26,23 @@ beforeAll(async () => {
   expect((await login()).status).toBe(200);
 });
 
+/**
+ * How far behind the server's clock this process may read, in milliseconds, with both on one
+ * machine: the allowance on every "expires at most two minutes from now" below.
+ *
+ * The expiry is stamped by the server's clock and compared here with `Date.now()`. On Windows the
+ * two are different readings of the time. `Date.now()` starts from the system's coarse clock,
+ * which stands still between two ticks of the system timer, and counts on from that reading for
+ * up to a minute before it takes another; the server reads the precise clock. So this process can
+ * be behind the server by up to one tick, which is 15.625 ms at its coarsest, and an expiry that
+ * is exactly two minutes after the mint then reads a few milliseconds more than two minutes away.
+ *
+ * Measured on one Windows machine against a .NET clock answering over HTTP: of 1,905 readings
+ * taken after the answer had arrived, 1,752 were behind the stamp inside it, by 2.4 ms at most,
+ * at a distance that changed once a minute. The allowance is that one tick, rounded up.
+ */
+const CLOCK_TICK_MS = 16;
+
 /** A GUID that is well-formed and names nothing. */
 const UNKNOWN_AUTHORIZATION = '3f2504e0-4f89-41d3-9a0c-0305e82c3399';
 
@@ -71,7 +88,7 @@ describe('contract: step-up authorisations', () => {
 
     const ttl = new Date(data?.expiresAt ?? 0).getTime() - Date.now();
     expect(ttl).toBeGreaterThan(30_000);
-    expect(ttl).toBeLessThanOrEqual(120_000);
+    expect(ttl).toBeLessThanOrEqual(120_000 + CLOCK_TICK_MS);
   });
 
   it('refuses a mint one cent over the daily ceiling, with the four figures (ADR-0050)', async () => {
@@ -604,7 +621,7 @@ describe('contract: deletion authorisations', () => {
       expect(data?.authorizationId).toMatch(/^[0-9a-f-]{36}$/i);
       const ttl = new Date(data?.expiresAt ?? 0).getTime() - Date.now();
       expect(ttl).toBeGreaterThan(30_000);
-      expect(ttl).toBeLessThanOrEqual(120_000);
+      expect(ttl).toBeLessThanOrEqual(120_000 + CLOCK_TICK_MS);
       const headers = { 'Step-Up-Authorization': data?.authorizationId ?? '' };
 
       const first = await call(`/api/accounts/${spare}`, { method: 'DELETE', headers });
