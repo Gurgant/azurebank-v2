@@ -46,10 +46,19 @@ commit already fixed it, the reply names that commit.
 ## 3. One commit for the round
 
 All fixes of the round go in one commit whose message says the outcome: the reviewer then reads
-one new head, and each reply can name one commit. The order is: fix, run the pre-pr-gate skill's
-step 2 for what changed and read the numbers, commit, push, reply. A round with nothing true to
-fix has no commit: go to step 4. A branch that is behind takes `git fetch origin`, then
-`git merge origin/main`: without the fetch the merge takes main as this machine last saw it.
+one new head, and each reply can name one commit. The order is:
+
+- First, a branch that is behind takes `git fetch origin`, then `git merge origin/main`:
+  without the fetch the merge takes main as this machine last saw it, and a merge made after
+  the checks would leave them run on another tree.
+- Then fix, and commit.
+- Then run the pre-pr-gate skill's step 2 on that commit and read the numbers. Its list of what
+  to run is read from the committed diff: a fix that is not committed yet, in a folder the pull
+  request had not touched, would select none of that folder's checks.
+- Then push, and reply.
+
+A check that fails there is corrected before the push, in the same commit while it has not left
+the machine. A round with nothing true to fix has no commit: go to step 4.
 
 ## 4. One reply in each thread
 
