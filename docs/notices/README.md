@@ -59,6 +59,9 @@ the `Notices` settings. The API's relay needs `Notices__Runner=Api`, `Notices__P
   steps aside unless the flag names it, so a configuration that names neither delivers nothing and
   an owed notice waits. A host that steps aside says so in its log, at Information:
   `Notice relay: runner is None; this process delivers nothing (Notices:Runner)`.
+- **The value is one of those three names, in any letter case, and nothing else.** A number, even
+  the number of a name, a list of names or a name with spaces around it stops the host at start,
+  and the message names the setting and the three names.
 - **The flag does not gate the verb.** `notify` delivers whenever a person runs it,
   `Notices:Runner=None` included. It takes the same lease a host takes (ADR-0048 D5): it claims what
   it delivers under its own name, and takes a row another runner holds only once that runner's lease

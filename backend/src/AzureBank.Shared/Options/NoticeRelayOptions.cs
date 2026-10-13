@@ -1,8 +1,13 @@
+using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 
 namespace AzureBank.Shared.Options;
 
-/// <summary>Which process, if any, delivers owed notices (ADR-0048).</summary>
+/// <summary>
+/// Which process, if any, delivers owed notices (ADR-0048). Configuration names a member by its
+/// name, never by its number: see <see cref="NoticeRunnerNameConverter"/>.
+/// </summary>
+[TypeConverter(typeof(NoticeRunnerNameConverter))]
 public enum NoticeRunner
 {
     /// <summary>Nothing runs. Notices stay owed until an operator runs the tool's <c>notify</c> verb.</summary>
@@ -47,7 +52,10 @@ public class NoticeRelayOptions
 {
     public const string SectionName = "Notices";
 
-    /// <summary>Which runner delivers. Default: nobody.</summary>
+    /// <summary>
+    /// Which runner delivers. Default: nobody. A value that is not one of the names stops the host
+    /// that binds this section at start.
+    /// </summary>
     public NoticeRunner Runner { get; set; } = NoticeRunner.None;
 
     /// <summary>

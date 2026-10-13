@@ -84,6 +84,49 @@ public sealed class NoticeFunctionStartupTests : IDisposable
         options.BatchSize.Should().Be(100, "the shipped default survives a section that does not set it");
     }
 
+    [Theory]
+    [InlineData("1")]
+    [InlineData("2")]
+    [InlineData("7")]
+    [InlineData("Apy")]
+    [InlineData(" Function ")]
+    [InlineData("Api,Function")]
+    [InlineData("")]
+    public void ARunnerThatIsNotOneOfTheNames_IsRefused_AndTheMessageNamesTheSettingAndTheNames(string runner)
+    {
+        // "2" is the number of Function: a number is refused even when it is a member's, because
+        // nobody reading the file can tell which runner it names.
+        var resolve = () => Resolve(
+            ("Notices:Runner", runner),
+            ("Notices:PickupDirectory", _directory),
+            ("Notices:Contact", "security@your-bank.example"),
+            ("Notices:Schedule", "*/15 * * * * *"));
+
+        var messages = new List<string>();
+        for (Exception? refusal = resolve.Should().Throw<Exception>().Which; refusal is not null; refusal = refusal.InnerException)
+        {
+            messages.Add(refusal.Message);
+        }
+
+        string.Join("\n", messages).Should().Contain("Notices:Runner").And.Contain("None, Api, Function");
+    }
+
+    [Theory]
+    [InlineData("None", NoticeRunner.None)]
+    [InlineData("Api", NoticeRunner.Api)]
+    [InlineData("Function", NoticeRunner.Function)]
+    [InlineData("function", NoticeRunner.Function)]
+    [InlineData("API", NoticeRunner.Api)]
+    public void ARunnerNamedInAnyLetterCase_IsRead(string runner, NoticeRunner expected)
+    {
+        Resolve(
+                ("Notices:Runner", runner),
+                ("Notices:PickupDirectory", _directory),
+                ("Notices:Contact", "security@your-bank.example"),
+                ("Notices:Schedule", "*/15 * * * * *"))
+            .Runner.Should().Be(expected);
+    }
+
     [Fact]
     public void RunnerFunction_WithoutAContact_IsRefused_AndTheMessageNamesTheRunner()
     {
