@@ -18,12 +18,12 @@ describe('toFieldName', () => {
   });
 
   it('leaves a FluentValidation key alone, which the API already sends camelCase', () => {
-    // POST /api/transactions/deposit {"amount":10.123} -> 400
+    // POST /api/transactions/deposit {"accountId":"…","amount":10.001} -> 400
     // {"title":"Validation Failed","errors":{"amount":["Amount cannot have more than 2 decimal places."]}}
     expect(toFieldName('amount')).toBe('amount');
-    // POST /api/accounts {"name":"Valid Name","type":"99"} -> 400
-    // {"title":"Validation Failed","errors":{"type":["Invalid account type. Must be Checking, …"]}}
-    expect(toFieldName('type')).toBe('type');
+    // POST /api/transfers/internal, from and to the same account -> 400
+    // {"title":"Validation Failed","errors":{"toAccountId":["Cannot transfer to the same account."]}}
+    expect(toFieldName('toAccountId')).toBe('toAccountId');
   });
 
   it('leaves a parameter-bound model-state key alone — that envelope is NOT always PascalCase', () => {
@@ -47,6 +47,9 @@ describe('toFieldName', () => {
     /*
       POST /api/accounts {"name":"Valid Name","type":12345} -> 400
       {"errors":{"request":["The request field is required."],"$.type":["Integer values are not …"]}}
+      POST /api/accounts {"name":"Valid Name","type":"99"} -> 400
+      {"errors":{"request":["The request field is required."],
+                 "$.type":["'99' is not a valid value for enum 'AccountType'. Valid values: …"]}}
 
       `$` has no lower case, so the key comes back unchanged and matches no form field — which is
       the CORRECT outcome. Both consumers treat an unmatched key as a form-level error, so the

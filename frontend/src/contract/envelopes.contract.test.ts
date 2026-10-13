@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { asProblem, call, elevate, firstAccountId, login } from './client';
+import { asProblem, call, elevate, firstAccountId, idempotencyKey, login } from './client';
 
 /**
  * The SUCCESS envelopes — the positive controls.
@@ -76,20 +76,25 @@ describe('contract: the instance member', () => {
       `Request.QueryString` are separate members, so `pathname + search` would have been a
       plausible and wrong implementation.
 
-      Observed 2026-08-05:
-        POST /api/accounts?probe=1 {"name":"Valid Name","type":"99"}
+      Observed 2026-10-13:
+        POST /api/transactions/deposit?probe=1 {"accountId":"…","amount":10.001}
         -> {"type":"https://httpstatuses.com/400","title":"Validation Failed","status":400,
-            "detail":"One or more validation errors occurred.","instance":"/api/accounts",...}
+            "detail":"One or more validation errors occurred.",
+            "instance":"/api/transactions/deposit","traceId":"…",
+            "errors":{"amount":["Amount cannot have more than 2 decimal places."]}}
+
+      Refused before any money moves, so this leaves no state on either target.
     */
-    const { status, body } = await call('/api/accounts?probe=1', {
+    const { status, body } = await call('/api/transactions/deposit?probe=1', {
       method: 'POST',
-      body: JSON.stringify({ name: 'Valid Name', type: '99' }),
+      headers: { 'Idempotency-Key': idempotencyKey() },
+      body: JSON.stringify({ accountId: await firstAccountId(), amount: 10.001 }),
     });
     const problem = asProblem(body);
 
     expect(status).toBe(400);
     expect(problem.title).toBe('Validation Failed');
-    expect(problem.instance).toBe('/api/accounts');
+    expect(problem.instance).toBe('/api/transactions/deposit');
   });
 
   it('omits it entirely on the framework model-state path', async () => {

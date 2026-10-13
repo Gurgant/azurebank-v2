@@ -31,33 +31,6 @@ public partial class AccountMapper
     /// </summary>
     public partial List<AccountResponse> ToResponseList(List<Account> entities);
 
-    // ToSummary removed - MaskedAccountNumber requires custom mapping
-    // Use ToSummaryWithMask or ToSummaryWithMaskList instead
-
-    /// <summary>
-    /// Maps Account entity to AccountSummaryResponse with masked account number.
-    /// Used for list views where full account number should not be displayed.
-    /// </summary>
-    public AccountSummaryResponse ToSummaryWithMask(Account entity)
-    {
-        return new AccountSummaryResponse
-        {
-            Id = entity.Id,
-            MaskedAccountNumber = MaskAccountNumber(entity.AccountNumber),
-            Name = entity.Name,
-            Type = entity.Type,
-            Balance = entity.Balance
-        };
-    }
-
-    /// <summary>
-    /// Maps list of Account entities to list of AccountSummaryResponse with masked numbers.
-    /// </summary>
-    public List<AccountSummaryResponse> ToSummaryWithMaskList(List<Account> entities)
-    {
-        return entities.Select(ToSummaryWithMask).ToList();
-    }
-
     /// <summary>
     /// Creates a BalanceResponse from account data.
     /// </summary>

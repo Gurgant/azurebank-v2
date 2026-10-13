@@ -50,9 +50,11 @@ export interface CreateAccountDialogProps {
  * the dialog; the new account appears through the tag invalidation ({Account,'LIST'}),
  * never through a hand-patched cache.
  */
-// The server keys validation errors PascalCase (model-state) or camelCase (FluentValidation)
-// depending on which layer rejected the request; `toFieldName` reconciles both. See its docblock
-// for the measured responses.
+// The server keys a validation error by the layer that refused it: PascalCase from model state,
+// which is what this route answers for a bad name, and camelCase from FluentValidation on the
+// routes that reach it; `toFieldName` reconciles the two (its docblock has the measured
+// responses). A type the API cannot read is keyed by its JSON path, `$.type`, which is no field
+// of this form: it shows in the error bar.
 const isOurField = (key: string) => {
   const field = toFieldName(key);
   return field === 'name' || field === 'type';

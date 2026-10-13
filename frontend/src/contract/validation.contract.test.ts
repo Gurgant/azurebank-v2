@@ -88,43 +88,139 @@ describe('contract: validation envelopes', () => {
 
   it('emits BOTH casings from ONE endpoint, and never both at once', async () => {
     /*
-      The case that makes `toFieldName` necessary rather than decorative, on the endpoint the app
-      actually posts to. `CreateAccountRequest.Name` carries DataAnnotations and `Type` carries
-      none, so the same route answers from two different layers:
+      The case that makes `toFieldName` necessary rather than decorative, on an endpoint the app
+      posts to. `DepositRequest.Amount` carries `[MoneyRange]`, which checks the range and not the
+      decimals, and the deposit validator adds the scale rule, so the same route and the same
+      member answer from two different layers. Measured 2026-10-13:
 
-        {"name":"x","type":"Checking"}     -> model state, BEFORE the action runs
-             title "One or more validation errors occurred.", errors {"Name":[…]}   PascalCase
-        {"name":"Valid Name","type":"99"}  -> FluentValidation, INSIDE the action
-             title "Validation Failed", errors {"type":[…]}                         camelCase
+        {"accountId":"…","amount":-5}      -> model state, BEFORE the action runs
+             title "One or more validation errors occurred.",
+             errors {"Amount":["Amount must be between 0.01 EUR and 100000.00 EUR"]}   PascalCase
+        {"accountId":"…","amount":10.001}  -> FluentValidation, INSIDE the action
+             title "Validation Failed", detail, instance "/api/transactions/deposit",
+             errors {"amount":["Amount cannot have more than 2 decimal places."]}      camelCase
 
-      ("99" binds: the strict converter rejects JSON *numbers*, but hands any non-empty string to
-      `Enum.TryParse`, which accepts the numeric form and yields an undefined member for
-      `IsInEnum()` to catch.)
+      And they are MUTUALLY EXCLUSIVE: an amount that breaks both rules is answered by model
+      state alone (0.001 is out of range and has three decimals). A consumer that assumed one
+      casing per endpoint, or that expected to see every problem in one response, would be wrong
+      on this route.
 
-      And they are MUTUALLY EXCLUSIVE — with both fields invalid, model state short-circuits and
-      the `type` error is never reported. A consumer that assumed one casing per endpoint, or that
-      expected to see every problem in one response, would be wrong on this route.
+      All three requests are refused before any money moves, so this test leaves no state.
+    */
+    const accountId = await firstAccountId();
+    const deposit = (amount: number) =>
+      call('/api/transactions/deposit', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': idempotencyKey() },
+        body: JSON.stringify({ accountId, amount }),
+      });
 
-      Both requests are rejected, so neither creates an account and this test leaves no state.
+    const annotation = await deposit(-5);
+    expect(annotation.status).toBe(400);
+    const annotationProblem = asProblem(annotation.body);
+    expect(Object.keys(annotationProblem.errors ?? {})).toEqual(['Amount']);
+    expect(annotationProblem.title).toBe('One or more validation errors occurred.');
+    expect(annotationProblem.detail).toBeUndefined();
+
+    const validator = await deposit(10.001);
+    expect(validator.status).toBe(400);
+    const validatorProblem = asProblem(validator.body);
+    expect(Object.keys(validatorProblem.errors ?? {})).toEqual(['amount']);
+    expect(validatorProblem.errors?.amount).toEqual([
+      'Amount cannot have more than 2 decimal places.',
+    ]);
+    expect(validatorProblem.title).toBe('Validation Failed');
+    expect(validatorProblem.detail).toBe('One or more validation errors occurred.');
+
+    // Both rules broken -> the annotation layer wins alone; the camelCase key never appears.
+    const both = asProblem((await deposit(0.001)).body);
+    expect(Object.keys(both.errors ?? {})).toEqual(['Amount']);
+    expect(both.title).toBe('One or more validation errors occurred.');
+  });
+
+  it.each([
+    ['a number written as text', '99'],
+    ['a negative number written as text', '-1'],
+    ['the number of a member, written as text', '1'],
+    ['a name the enum does not have', 'Bogus'],
+    ['a name with a space before it', ' Savings'],
+    ['a list of names', 'Savings,Checking'],
+    // U+212A, the Kelvin sign, in the place of the K: a comparison that folds case by the rules
+    // of a language takes it for the letter.
+    ['a name with a look-alike letter', 'Chec\u212Aing'],
+  ])('refuses %s for an enum where the body is read, keyed `$.type`', async (_case, type) => {
+    /*
+      The API reads an enum from one of its names, in any letter case, and from nothing else. A
+      text that is not a name is refused where the body is read, so the answer is the framework's
+      envelope under the path to the member, whatever the text would have meant as a number or
+      as a list. Measured 2026-10-13:
+
+        POST /api/accounts {"name":"Valid Name","type":"99"}
+          -> 400 {"type":"https://tools.ietf.org/html/rfc9110#section-15.5.1",
+                  "title":"One or more validation errors occurred.","status":400,
+                  "errors":{"request":["The request field is required."],
+                            "$.type":["'99' is not a valid value for enum 'AccountType'. Valid
+                                       values: Checking, Savings, Investment"]},
+                  "traceId":"00-…-01"}
+
+      and the same body, the quoted text apart, for each row here. No `detail`, no `instance`,
+      and no camelCase `type` key: FluentValidation does not answer for this member.
+
+      Refused, so no account is created and this test leaves no state on either target.
+    */
+    const { status, body } = await call('/api/accounts', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'Valid Name', type }),
+    });
+    const problem = asProblem(body);
+
+    expect(status).toBe(400);
+    expect(problem.title).toBe('One or more validation errors occurred.');
+    expect(problem.detail).toBeUndefined();
+    expect(problem.instance).toBeUndefined();
+    expect(Object.keys(problem.errors ?? {}).sort()).toEqual(['$.type', 'request']);
+    expect(problem.errors?.['$.type']).toEqual([
+      `'${type}' is not a valid value for enum 'AccountType'. Valid values: Checking, Savings, Investment`,
+    ]);
+  });
+
+  it('answers a bad enum text ALONE when the name is invalid too', async () => {
+    /*
+      The deserialiser runs before model state has a `Name` to judge, so the two never appear
+      together and the name's error is not reported. Measured 2026-10-13:
+
+        {"name":"x","type":"Checking"} -> errors {"Name":["Account name must be between 2 and 100
+                                                           characters."]}
+        {"name":"x","type":"99"}       -> errors {"request":[…],"$.type":[…]}      no `Name`
+
+      Both requests are refused, so neither creates an account.
     */
     const post = (body: unknown) =>
       call('/api/accounts', { method: 'POST', body: JSON.stringify(body) });
 
-    const annotation = await post({ name: 'x', type: 'Checking' });
-    expect(annotation.status).toBe(400);
-    const annotationProblem = asProblem(annotation.body);
-    expect(Object.keys(annotationProblem.errors ?? {})).toContain('Name');
-    expect(annotationProblem.title).toBe('One or more validation errors occurred.');
+    const nameOnly = await post({ name: 'x', type: 'Checking' });
+    expect(nameOnly.status).toBe(400);
+    expect(Object.keys(asProblem(nameOnly.body).errors ?? {})).toEqual(['Name']);
 
-    const validator = await post({ name: 'Valid Name', type: '99' });
-    expect(validator.status).toBe(400);
-    const validatorProblem = asProblem(validator.body);
-    expect(Object.keys(validatorProblem.errors ?? {})).toContain('type');
-    expect(validatorProblem.title).toBe('Validation Failed');
+    const both = await post({ name: 'x', type: '99' });
+    expect(both.status).toBe(400);
+    expect(Object.keys(asProblem(both.body).errors ?? {}).sort()).toEqual(['$.type', 'request']);
+  });
 
-    // Both invalid -> the annotation layer wins alone; `type` never appears.
-    const both = asProblem((await post({ name: 'x', type: '99' })).body);
-    expect(Object.keys(both.errors ?? {})).toEqual(['Name']);
+  it('takes a name of the enum in any letter case and stores the member as it is spelled', async () => {
+    // Measured 2026-10-13: POST /api/accounts {"name":"…","type":"sAVINGS"} -> 201, type "Savings".
+    const created = await call('/api/accounts', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'Contract Enum Case', type: 'sAVINGS' }),
+    });
+    const account = (created.body as { data?: { id?: string; type?: string } }).data;
+
+    try {
+      expect(created.status).toBe(201);
+      expect(account?.type).toBe('Savings');
+    } finally {
+      if (account?.id) await closeAccount(account.id);
+    }
   });
 
   it('answers a MISSING required member from the deserialiser, keyed by the document root', async () => {
@@ -161,17 +257,17 @@ describe('contract: validation envelopes', () => {
 
   it('answers a NUMERIC enum from the deserialiser, keyed by the path to the member', async () => {
     /*
-      Three inputs to the same field, three different answers — the distinction CodeRabbit caught
-      me collapsing on this PR:
+      Three inputs to the same field, all answered by the deserialiser, under two keys and with
+      three sentences:
 
-        {"type":12345}   -> deserialiser, keyed `$.type`   (the converter refuses the token)
-        {"type":"99"}    -> FluentValidation, keyed `type`  (TryParse accepts the numeric STRING,
-                                                             then IsInEnum rejects the value)
-        (absent)         -> deserialiser, keyed `$`         (fails at the document root)
+        {"type":12345}   -> keyed `$.type`   "Integer values are not allowed for enum …"
+        {"type":"99"}    -> keyed `$.type`   "'99' is not a valid value for enum …"
+        (absent)         -> keyed `$`        (fails at the document root)
 
-      Measured 2026-08-04:
-        {"errors":{"request":[…],
-                   "$.type":["Integer values are not allowed for enum 'AccountType'. …"]}}
+      Measured 2026-10-13:
+        {"errors":{"request":["The request field is required."],
+                   "$.type":["Integer values are not allowed for enum 'AccountType'. Use string
+                              values: Checking, Savings, Investment"]}}
     */
     const { status, body } = await call('/api/accounts', {
       method: 'POST',
@@ -183,6 +279,9 @@ describe('contract: validation envelopes', () => {
     expect(keys).toContain('$.type');
     // The path form, NOT the root — the deserialiser knew which member failed.
     expect(keys).not.toContain('$');
+    expect(asProblem(body).errors?.['$.type']).toEqual([
+      "Integer values are not allowed for enum 'AccountType'. Use string values: Checking, Savings, Investment",
+    ]);
   });
 
   it('quotes the idempotency header requirement in the server’s exact words', async () => {

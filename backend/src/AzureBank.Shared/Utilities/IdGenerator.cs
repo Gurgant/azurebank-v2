@@ -233,21 +233,4 @@ public static class IdGenerator
 
         return new string(suffix);
     }
-
-    /// <summary>
-    /// Generates a transfer reference in format TRF-YYYYMMDD-XXXXXX.
-    ///
-    /// <para>
-    /// Deliberately left at six digits while <c>GenerateTransactionNumber</c> was widened, because
-    /// the reason to widen does not apply here: this value carries <b>no unique index</b>, so a
-    /// repeat is a cosmetic coincidence rather than a failed INSERT. If a uniqueness constraint is
-    /// ever added, this needs the same treatment first.
-    /// </para>
-    /// </summary>
-    /// <returns>Transfer reference string (e.g., "TRF-20260114-123456").</returns>
-    public static string GenerateTransferReference()
-    {
-        var random = RandomNumberGenerator.GetInt32(100000, 1000000);
-        return $"TRF-{DateTime.UtcNow:yyyyMMdd}-{random}";
-    }
 }

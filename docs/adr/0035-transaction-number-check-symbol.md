@@ -43,8 +43,9 @@ characters) filled its 20-character column exactly, so a check symbol needs a mi
 - Rejected: the same algorithm in the frontend mock, because a second copy in TypeScript would
   drift with nothing to catch it, and no frontend code parses the value: the contract types it as a
   plain string. The mock's fixtures are 24 characters, so every screen renders at real length.
-- Rejected: widening `GenerateTransferReference` from six digits, because nothing calls it: its
-  value reaches no DTO and no database. If it is ever stored, it needs this treatment first.
+- Rejected: widening the six-digit transfer reference of `IdGenerator`, because nothing called
+  it: its value reached no DTO and no database. The method has since been removed; a reference
+  that is ever stored needs this treatment first.
 
 ## Consequences
 
