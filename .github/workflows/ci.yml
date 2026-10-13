@@ -317,6 +317,17 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      # public/mockServiceWorker.js is the mock's script for `npm run dev:mock` alone, and a plugin
+      # in vite.config.ts takes its copy out of a build. Without it the BFF would serve a service
+      # worker script that nothing in the built app registers.
+      - name: No mock service worker in the build
+        working-directory: frontend
+        run: |
+          if [ -e dist/mockServiceWorker.js ]; then
+            echo "::error::dist/ holds mockServiceWorker.js: the mock's worker is for dev:mock alone"
+            exit 1
+          fi
+
       # The BFF serves this page under `script-src 'self'` with no 'unsafe-inline' (ADR-0054), so an
       # inline <script> or on*= handler in it would pass every test that runs against vite, which
       # sends no CSP, and be refused in production. The real-stack job's csp.spec.ts walks the

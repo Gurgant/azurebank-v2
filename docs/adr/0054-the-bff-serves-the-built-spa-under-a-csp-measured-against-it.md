@@ -1,7 +1,8 @@
 # ADR-0054: The BFF serves the built SPA under a CSP measured against it
 
 **Status:** Accepted · **Date:** 2026-09-11 · **Amended:** 2026-09-25 (HSTS), 2026-10-05 (D2, with
-ADR-0063). Changes ADR-0031, decision 1, for CI; the local default is untouched.
+ADR-0063), 2026-10-13 (the mock's worker is no longer in `dist/`). Changes ADR-0031, decision 1,
+for CI; the local default is untouched.
 
 ## Context
 
@@ -65,8 +66,9 @@ that "can create XSS vulnerabilities in otherwise safe websites" (OWASP HTTP Hea
 - The BFF sends `Strict-Transport-Security: max-age=31536000` in every environment but Development,
   from the same middleware and not through `UseHsts`, which skips any request that is not https:
   behind an edge that terminates TLS every request reaches the BFF over http.
-- `dist/` ships `mockServiceWorker.js` from `public/` and the BFF serves it. It is inert: the app
-  registers it only in Vite's `mock` mode (`main.tsx`).
+- `dist/` does not ship `mockServiceWorker.js`: the script stays in `public/` for Vite's `mock`
+  mode, a plugin in `vite.config.ts` takes its copy out of a build, and CI fails a build that holds
+  it. The app registers it in that mode alone (`main.tsx`).
 - Not covered: a page neither the walk nor the suite reaches, and any browser but Chromium.
 - Not covered: `img-src 'self' data:` is kept as it was and not re-measured.
 - Not covered: nothing reports violations from real browsers; there is no `report-to`.
