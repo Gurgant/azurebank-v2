@@ -280,8 +280,8 @@ public static class SecurityEvents
     public const string PinChanged = "PinChanged";
 
     /// <summary>
-    /// A PIN change was refused because the current PIN it offered was wrong, or because the PIN is
-    /// locked. Detail carries the ErrorCodes reason: <c>INVALID_PIN</c> or <c>PIN_LOCKED</c>.
+    /// A PIN change was refused because the current PIN it offered was wrong. Detail carries the
+    /// ErrorCodes reason: <c>INVALID_PIN</c>, or <c>PIN_LOCKED</c> for the attempt that arms the lock.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -299,8 +299,11 @@ public static class SecurityEvents
     /// </para>
     /// <para>
     /// NOT raised for a change that offers no current PIN (422 <c>PIN_REQUIRED</c>): nothing was
-    /// guessed and no attempt is spent. NOT raised for a wrong password at an enrolment: that proof
-    /// is the account password's, and a wrong password writes no row at sign-in either.
+    /// guessed and no attempt is spent. NOT raised for a request that finds the PIN already locked:
+    /// its PIN is not read, and a row for each such request would be a write the caller repeats at
+    /// will for as long as the lock stands (ADR-0044). NOT raised for a wrong password at an
+    /// enrolment: that proof is the account password's, and a wrong password writes no row at
+    /// sign-in either.
     /// </para>
     /// <para>OWASP: <c>authn_login_fail</c>.</para>
     /// </remarks>

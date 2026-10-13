@@ -766,16 +766,20 @@ public class AuthService : IAuthService
             }
 
             // Throws PinLockedException (429) if locked; false on a wrong PIN under the threshold.
-            // Both leave a row, as at the mints (StepUpAuthorizationService.MintAsync): the lock
-            // these attempts arm is the one every money movement answers to. The lock throws, so
-            // it needs a catch of its own.
+            // A wrong PIN leaves a row, and so does the one that arms the lock, as at the mints
+            // (StepUpAuthorizationService.MintAsync): that lock is the one every money movement
+            // answers to. A PIN that was locked before this request began is no guess: the
+            // verifier refuses it unread, and a row for each such request would be a write the
+            // caller repeats at will for as long as the lock stands (ADR-0044).
+            var lockedBeforeThisRequest =
+                user.PinLockoutEnd is { } standing && standing > DateTimeOffset.UtcNow;
             bool currentPinProved;
             try
             {
                 currentPinProved = await _pinVerifier.VerifyPinAsync(
                     userId, request.CurrentPin, cancellationToken);
             }
-            catch (PinLockedException)
+            catch (PinLockedException) when (!lockedBeforeThisRequest)
             {
                 await RecordPinChangeRefusalAsync(userId, ErrorCodes.PinLocked);
                 throw;

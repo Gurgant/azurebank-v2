@@ -76,7 +76,7 @@ from modification, and PSD2 Art. 72 that an institution can reconstruct what hap
   with a failed attempt (`ADepositThatRetries_WritesExactlyOneAuditRow`), and no log line: evidence
   to keep, not an alert. Four are refusals: `MoneyWithdrawalRefused`, `MoneyTransferRefused` and
   `AccountDeletionRefused` (ADR-0049) for no step-up authorisation, or a wrong or locked PIN at the
-  four mints (ADR-0056), and `PinChangeRefused` for a wrong or locked current PIN on a PIN change.
+  four mints (ADR-0056), and `PinChangeRefused` for a current PIN that is wrong or arms the lock.
   Registration refusals and business validation (insufficient funds, the daily limit) stay log-only,
   because a row the caller can repeat at will is an unbounded write on the tail lock
   (`AWithdrawalRefusedForFunds_WritesNoRow_AndThatIsTheDecision`); retry collisions as health

@@ -16,8 +16,9 @@ using Microsoft.Extensions.DependencyInjection;
 namespace AzureBank.Tests.Integration;
 
 /// <summary>
-/// A wrong current PIN on a PIN change, and then the lock, on SQL Server: each refusal's row is
-/// committed although the request that caused it fails, and the chain they joined still verifies.
+/// A wrong current PIN on a PIN change, and then the lock, on SQL Server: the row of each refused
+/// guess is committed although the request that caused it fails, a request that finds the lock
+/// standing writes none, and the chain the rows joined still verifies.
 /// </summary>
 /// <remarks>
 /// The same proof <c>MintPinRefusalSqlServerTests</c> gives for the mints, and behind
@@ -70,8 +71,9 @@ public sealed class PinChangeRefusalSqlServerTests : IDisposable
             .ToListAsync();
 
         rows.Select(r => r.Detail).Should().Equal(
-            [ErrorCodes.InvalidPin, ErrorCodes.InvalidPin, ErrorCodes.PinLocked, ErrorCodes.PinLocked],
-            "one committed row for each refused request, in the order they were refused");
+            [ErrorCodes.InvalidPin, ErrorCodes.InvalidPin, ErrorCodes.PinLocked],
+            "one committed row for each refused guess, in the order they were refused, and none for "
+            + "the request that found the lock standing: its PIN was not read");
         rows.Should().OnlyContain(r =>
             r.Outcome == AuditOutcome.Refused && r.SubjectType == "User" && r.SubjectId == userId);
 
@@ -82,7 +84,7 @@ public sealed class PinChangeRefusalSqlServerTests : IDisposable
         var verification = await scope.ServiceProvider.GetRequiredService<IAuditChain>().VerifyAsync(db);
         verification.IsIntact.Should().BeTrue(because: verification.Reason);
         verification.Verified.Should().BeGreaterThanOrEqualTo(
-            rows.Count + 1, "the verdict read the enrolment's row and the four refusals");
+            rows.Count + 1, "the verdict read the enrolment's row and the three refusals");
     }
 
     [SqlServerFact]

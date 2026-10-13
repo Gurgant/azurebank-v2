@@ -680,7 +680,7 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
     }
 
     [Fact]
-    public async Task TheLockoutOnAPinChange_LeavesItsRows_CountedAsAtAMint()
+    public async Task TheLockoutOnAPinChange_LeavesARowForEachGuess_AndNoneForARequestAgainstTheLock()
     {
         var (token, userId, _) = await RegisterTestUserAsync();
         SetAuthHeader(token);
@@ -695,14 +695,16 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
         locked.StatusCode.Should().Be(
             HttpStatusCode.TooManyRequests, "the correct PIN is refused too once the PIN is locked");
 
-        // The same counts TheLockoutAtAMint_LeavesItsRows holds for the mints: the attempt that
-        // trips the lock is recorded as the lockout, so the wrong PINs read one short.
+        // As at the mints (TheLockoutAtAMint_LeavesItsRows), the attempt that trips the lock is
+        // recorded as the lockout, so the wrong PINs read one short. Unlike the mints, a request
+        // that finds the lock standing leaves no row: its PIN is not read, and the caller can
+        // repeat it for as long as the lock stands.
         var rows = await RowsForActorAsync(userId, SecurityEvents.PinChangeRefused);
         rows.Count(r => r.Detail == ErrorCodes.InvalidPin).Should().Be(
             ValidationRules.MaxPinAttempts - 1,
             "the attempt that trips the lock is recorded as the lockout instead");
         rows.Count(r => r.Detail == ErrorCodes.PinLocked).Should().Be(
-            2, "the attempt that trips it, and the one refused afterwards by the lock itself");
+            1, "the attempt that trips the lock, and not the request the standing lock refused");
         rows.Should().OnlyContain(r => r.Outcome == AuditOutcome.Refused && r.SubjectId == userId);
     }
 
