@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Account;
+using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.Transaction;
 using AzureBank.Shared.DTOs.Transfer;
@@ -655,6 +656,89 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
         rows.Count(r => r.Detail == ErrorCodes.PinLocked).Should().Be(
             2, "the attempt that trips it, and the one refused afterwards by the lock itself");
     }
+
+    [Fact]
+    public async Task AWrongCurrentPinOnAPinChange_WritesItsRow_AndNothingOfThePin()
+    {
+        var (token, userId, _) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        await SetPinAsync(token);
+
+        var response = await ChangePinAsync(currentPin: "999999", newPin: "654321");
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "999999 is not the PIN");
+
+        var row = await SingleRowForActorAsync(userId, SecurityEvents.PinChangeRefused);
+        row.Outcome.Should().Be(AuditOutcome.Refused);
+        row.Detail.Should().Be(
+            ErrorCodes.InvalidPin, "the reason the caller received, and neither PIN of the request");
+        row.SubjectType.Should().Be("User");
+        row.SubjectId.Should().Be(userId, "a PIN change names no account: its subject is the user");
+        row.RowHash.Should().MatchRegex("^[0-9a-f]{64}$", "the row joined the chain");
+
+        (await RowsForActorAsync(userId, SecurityEvents.PinChanged)).Should().BeEmpty(
+            "a refused change must not also record a change");
+    }
+
+    [Fact]
+    public async Task TheLockoutOnAPinChange_LeavesItsRows_CountedAsAtAMint()
+    {
+        var (token, userId, _) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        await SetPinAsync(token);
+
+        for (var i = 0; i < ValidationRules.MaxPinAttempts; i++)
+        {
+            await ChangePinAsync(currentPin: "999999", newPin: "654321");
+        }
+
+        var locked = await ChangePinAsync(currentPin: "123456", newPin: "654321");
+        locked.StatusCode.Should().Be(
+            HttpStatusCode.TooManyRequests, "the correct PIN is refused too once the PIN is locked");
+
+        // The same counts TheLockoutAtAMint_LeavesItsRows holds for the mints: the attempt that
+        // trips the lock is recorded as the lockout, so the wrong PINs read one short.
+        var rows = await RowsForActorAsync(userId, SecurityEvents.PinChangeRefused);
+        rows.Count(r => r.Detail == ErrorCodes.InvalidPin).Should().Be(
+            ValidationRules.MaxPinAttempts - 1,
+            "the attempt that trips the lock is recorded as the lockout instead");
+        rows.Count(r => r.Detail == ErrorCodes.PinLocked).Should().Be(
+            2, "the attempt that trips it, and the one refused afterwards by the lock itself");
+        rows.Should().OnlyContain(r => r.Outcome == AuditOutcome.Refused && r.SubjectId == userId);
+    }
+
+    [Fact]
+    public async Task APinChangeThatIsNotAGuess_WritesNoRefusal()
+    {
+        var (token, userId, _) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+
+        // A wrong password at the enrolment: the proof refused is the password's, not a PIN's.
+        var wrongPassword = await Client.PostAsJsonAsync(
+            "/api/auth/pin",
+            new SetPinRequest { Pin = "123456", Password = TestUserPassword + "x" },
+            JsonOptions);
+        wrongPassword.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await RowsForActorAsync(userId, SecurityEvents.PinChangeRefused)).Should().BeEmpty(
+            "a wrong password at an enrolment is not a refused PIN");
+
+        await SetPinAsync(token);
+
+        // No current PIN at all: 422, nothing guessed and no attempt spent.
+        var missing = await Client.PostAsJsonAsync(
+            "/api/auth/pin", new SetPinRequest { Pin = "654321" }, JsonOptions);
+        missing.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+
+        var changed = await ChangePinAsync(currentPin: "123456", newPin: "654321");
+        changed.StatusCode.Should().Be(HttpStatusCode.OK, "123456 is the PIN");
+
+        await SingleRowForActorAsync(userId, SecurityEvents.PinChanged);
+        (await RowsForActorAsync(userId, SecurityEvents.PinChangeRefused)).Should().BeEmpty(
+            "a change that proved its PIN, and one that offered none, are not refused guesses");
+    }
+
+    private Task<HttpResponseMessage> ChangePinAsync(string currentPin, string newPin) =>
+        Client.PostAsJsonAsync(
+            "/api/auth/pin", new SetPinRequest { Pin = newPin, CurrentPin = currentPin }, JsonOptions);
 
     /// <summary>
     /// One of the three mints, ready to be asked with any PIN: its path, its body for a given PIN,

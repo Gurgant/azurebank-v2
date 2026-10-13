@@ -483,7 +483,7 @@ public class SecurityEventConstantTests
           log line — a deposit is worth durable evidence and not worth waking anyone, and the money
           paths already carry their own operational log lines. So the two numbers moved
           independently for the first time, and a guard that only counted templates would have let
-          ADR-0044's "Fourteen events write a row" go stale in silence,
+          ADR-0044's "Fifteen events write a row" go stale in silence,
           exactly as "the six BFF events" did.
         */
         var sources = SourceFiles(RepoBackendRoot()).Select(File.ReadAllText).ToList();
@@ -501,7 +501,7 @@ public class SecurityEventConstantTests
             + "administrative, B1 added four money movements, and ADR-0047 added the PIN change. "
             + "Moving this means moving that section in the same commit");
         refusals.Should().Be(
-            7,
+            8,
             "the out-of-band half is counted separately because it answers a different question — "
             + "which refusals survive their own rollback. Three were token paths; two were added "
             + "on 2026-08-29 for an absent step-up at both transfer kinds; the sixth on 2026-09-06 "
@@ -514,7 +514,9 @@ public class SecurityEventConstantTests
             + "out, one in. Insufficient funds is NOT among them, on purpose, and neither are the "
             + "closure's two 422 guards. WENT DOWN TO SEVEN with PR-1: RefreshTokenReuseRevokeFailed's "
             + "MitigationFailed row went with the family revoke it reported on (ADR-0057 F3), so the token "
-            + "paths hold two — the unknown grant and the tripwire. Moving this means moving "
+            + "paths hold two — the unknown grant and the tripwire. EIGHT with PinChangeRefused: "
+            + "one site in AuthService for a wrong or locked current PIN on a PIN change, which "
+            + "arms the same lockout as a wrong PIN at a mint. Moving this means moving "
             + "ADR-0044's \"What is wired\" section too");
 
         perProject["Infrastructure"].Should().Be(

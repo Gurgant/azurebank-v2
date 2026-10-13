@@ -143,7 +143,7 @@ parallel guesses cannot race past the limit.
 
 ## A tamper-evident record of what happened
 
-Fourteen security events — nine successes and five on the refusal path — each write a row to one
+Fifteen security events — nine successes and six on the refusal path — each write a row to one
 `AuditEvents` table, each carrying a keyed HMAC over its own fields and the previous row's hash
 (ADR-0044). A success rides the act's own transaction, so a row that cannot be written stops the
 act; a refusal commits on its own connection at once, or its rollback would take the record with it.

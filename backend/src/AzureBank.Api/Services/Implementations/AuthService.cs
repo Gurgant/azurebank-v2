@@ -766,9 +766,26 @@ public class AuthService : IAuthService
             }
 
             // Throws PinLockedException (429) if locked; false on a wrong PIN under the threshold.
-            if (!await _pinVerifier.VerifyPinAsync(userId, request.CurrentPin, cancellationToken))
+            // Both leave a row, as at the mints (StepUpAuthorizationService.MintAsync): the lock
+            // these attempts arm is the one every money movement answers to. The lock throws, so
+            // it needs a catch of its own.
+            bool currentPinProved;
+            try
             {
-                // Same shape withdraw returns for a bad PIN (TransactionService.WithdrawAsync).
+                currentPinProved = await _pinVerifier.VerifyPinAsync(
+                    userId, request.CurrentPin, cancellationToken);
+            }
+            catch (PinLockedException)
+            {
+                await RecordPinChangeRefusalAsync(userId, ErrorCodes.PinLocked);
+                throw;
+            }
+
+            if (!currentPinProved)
+            {
+                await RecordPinChangeRefusalAsync(userId, ErrorCodes.InvalidPin);
+
+                // The answer a mint gives for a bad PIN (StepUpAuthorizationService.MintAsync).
                 throw new AuthenticationException("Invalid PIN.", ErrorCodes.InvalidPin);
             }
 
@@ -931,6 +948,27 @@ public class AuthService : IAuthService
 
         _logger.LogInformation("User {UserId} set their PIN", userId);
     }
+
+    /// <summary>
+    /// A PIN change refused for its current PIN, on its own connection: <c>PinChangeRefused</c>,
+    /// subject the user, <c>Detail</c> the <c>ErrorCodes</c> constant the caller received.
+    /// </summary>
+    /// <remarks>
+    /// <c>RecordRefusalAsync</c>, never <c>Record</c>: nothing is saved on this path, and a row in
+    /// the request's unit of work would be discarded with it. The detail is the reason and nothing
+    /// of either PIN the request carried (ADR-0044 D5).
+    /// </remarks>
+    private Task RecordPinChangeRefusalAsync(Guid userId, string errorCode) =>
+        _audit.RecordRefusalAsync(
+            SecurityEvents.PinChangeRefused,
+            AuditOutcome.Refused,
+            actorUserId: userId,
+            subjectType: "User",
+            subjectId: userId,
+            detail: errorCode,
+            // Never the request's token: the refusal's row must land even when the refused request
+            // is cancelled (ADR-0044 D1, ADR-0058).
+            cancellationToken: CancellationToken.None);
 
     /// <summary>
     /// Prove the account password for a sensitive action that is NOT a login, on the SAME lockout.
