@@ -184,7 +184,7 @@ public sealed class IdempotencyOperationTransformer : IOpenApiOperationTransform
                 ["errorCode"] = new OpenApiSchema
                 {
                     Type = JsonSchemaType.String,
-                    Description = "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                    Description = "Machine-readable code of the refusal: the value a client branches on"
                 },
                 ["traceId"] = new OpenApiSchema
                 {

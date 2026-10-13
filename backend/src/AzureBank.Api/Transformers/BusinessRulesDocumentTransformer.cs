@@ -376,7 +376,7 @@ public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransform
                 ["errorCode"] = new OpenApiSchema
                 {
                     Type = JsonSchemaType.String,
-                    Description = "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS')"
+                    Description = "Machine-readable code of the refusal: the value a client branches on"
                 },
                 ["traceId"] = new OpenApiSchema
                 {
