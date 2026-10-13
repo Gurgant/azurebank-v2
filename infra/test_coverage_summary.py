@@ -104,6 +104,8 @@ class Kinds(unittest.TestCase):
             'src/AzureBank.Infrastructure/Migrations/20260101_Initial.cs': summary.MIGRATIONS,
             'src/AzureBank.Api/obj/Release/net10.0/Generator/OpenApi.g.cs': summary.GENERATED,
             'tools/AzureBank.Seeder/obj/Release/net10.0/Regex.g.cs': summary.GENERATED,
+            'tests/AzureBank.Tests/Fixtures/Rig.cs': summary.TESTS,
+            'tests/AzureBank.Tests/obj/Release/net10.0/Regex.g.cs': summary.GENERATED,
         }
         for file, expected in cases.items():
             with self.subTest(file=file):
@@ -162,6 +164,21 @@ class Joining(Folder):
         self.assertIn('| **All hand-written code** | 4 | 3 | 75.0 % |', said)
         self.assertIn(f'{summary.MIGRATIONS}, 0 of 200 lines ran', said)
         self.assertIn(f'{summary.GENERATED}, 100 of 100 lines ran', said)
+
+    def test_a_helper_of_the_tests_is_in_no_figure_and_does_not_carry_the_application(self):
+        # The application alone is 1 of 4. Counted with the helper it would be 17 of 20, 85.0 %,
+        # and pass the floor.
+        self.report('api', LINUX, {
+            'AzureBank.Api': {'src/AzureBank.Api/A.cs': {1: 1, 2: 0, 3: 0, 4: 0}},
+            'AzureBank.Tests': {
+                'tests/AzureBank.Tests/Fixtures/Rig.cs': {n: 1 for n in range(1, 17)}}})
+        code, said = self.run_main('backend', '--floor', '0', '--floor-application', '85',
+                                   str(self.folder))
+        self.assertEqual(code, 1)
+        self.assertIn('| **All of the application (backend/src)** | 4 | 1 | 25.0 % |', said)
+        self.assertIn('| **All hand-written code** | 4 | 1 | 25.0 % |', said)
+        self.assertNotIn('| AzureBank.Tests |', said)
+        self.assertIn(f'{summary.TESTS}, 16 of 16 lines ran', said)
 
     def test_two_roots_with_a_relative_name_are_refused(self):
         target = self.report('api', LINUX, {'A': {'src/A/A.cs': {1: 1}}})

@@ -18,6 +18,9 @@ backend reads every coverage.cobertura.xml under the folders, the files that
   - a file under an `obj/` folder is written by the build (the source generators) and a file
     under a `Migrations/` folder by the EF tool. Both are printed apart and are in no figure:
     together they are larger than the code they sit beside;
+  - a file under `backend/tests` is a test or a helper of the tests. No coverage file names one
+    today, because the collector leaves the test assemblies out; the day one does, it is printed
+    apart and is in no figure either, so that it cannot carry the application over its floor;
   - what is left is hand-written: the application under `backend/src` and the command-line
     tools under `backend/tools`. The floor is held against the two together;
   - `--floor-application N` holds a second floor, on the application alone: the row "All of
@@ -57,10 +60,11 @@ TOPS = ('src', 'tools', 'tests')
 
 APPLICATION = 'the application (backend/src)'
 TOOLS = 'the command-line tools (backend/tools)'
+TESTS = 'the tests and their helpers (backend/tests)'
 MIGRATIONS = 'EF migrations'
 GENERATED = 'written by the build (obj/)'
 HAND_WRITTEN = (APPLICATION, TOOLS)
-KEPT_APART = (MIGRATIONS, GENERATED)
+KEPT_APART = (MIGRATIONS, GENERATED, TESTS)
 MEASURES = ('lines', 'branches', 'functions', 'statements')
 
 
@@ -91,6 +95,8 @@ def kind(file):
         return GENERATED
     if 'Migrations' in parts[:-1]:
         return MIGRATIONS
+    if parts[0] == 'tests':
+        return TESTS
     return TOOLS if parts[0] == 'tools' else APPLICATION
 
 

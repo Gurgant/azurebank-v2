@@ -414,10 +414,11 @@ jobs:
   #
   # The backend's two test projects run again here with a collector, and the first of them
   # whole, against a SQL Server as in the job of the concurrency proofs: without one those
-  # proofs skip themselves and the figure is 84.6 % where it is 93.0 % with them (measured
-  # 2026-10-12; for the application alone, 91.1 % against 95.0 %). The two test jobs are left
-  # as they are: a collector in them would slow the runs every pull request waits for and
-  # put the figure's failures in the test jobs. The price is a second run of the tests.
+  # proofs skip themselves and the figure falls. Measured both ways on 2026-10-12: 84.6 %
+  # without them against 93.0 % with them (for the application alone, 91.1 % against
+  # 95.0 %). The two test jobs are left as they are: a collector in them would slow the runs
+  # every pull request waits for and put the figure's failures in the test jobs. The price is
+  # a second run of the tests.
   #
   # infra/coverage_summary.py says what is counted. It joins the two Cobertura files line by
   # line, keeps apart what the build writes under obj/ and the EF migrations, and fails where
