@@ -24,10 +24,13 @@ git diff --name-only origin/main...HEAD               # read the list: one topic
 - One topic, in fewer than 100 files: past that, the review bot has refused the whole pull
   request on this repository. A file the title does not explain is a second topic: split before
   anything else.
-- Behind: `git merge origin/main`, resolve any conflict in that merge commit, then run step 2
-  again (and step 3 if it applied) before a push: results from before the merge no longer count.
-  A conflict in a generated file is resolved by generating it again (step 3), never by hand.
-  Never a rebase or a force-push of a pushed branch.
+- Behind, on a branch no review has read yet: `git merge origin/main`, resolve any conflict in
+  that merge commit, then run step 2 again (and step 3 if it applied) before a push: results
+  from before the merge no longer count. A conflict in a generated file is resolved by
+  generating it again (step 3), never by hand. Never a rebase or a force-push of a pushed
+  branch. A branch that a review has read is not updated for being behind alone: the merge would
+  be a new head with no review of its own. The review-round skill, step 6, says what is done
+  instead.
 
 ## 2. The checks for what changed
 

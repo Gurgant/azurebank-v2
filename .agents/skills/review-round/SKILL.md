@@ -1,6 +1,6 @@
 ---
 name: review-round
-description: Works through one round of review on an open AzureBank pull request (Gurgant/azurebank-v2). It reads every finding, checks each against the code, fixes or declines it, replies in each thread, asks for the next review, and says whether a merge can be proposed. It never merges. Use when CodeRabbit, CodeQL or CI has answered on a pull request, when a check failed, when asked to address review comments, and when the question is whether a pull request is ready to merge.
+description: Works through one round of review on an open AzureBank pull request (Gurgant/azurebank-v2). It reads every finding, checks each against the code, fixes it, declines it or sets it aside, replies in each thread, asks for the next review, and says whether a merge can be proposed. It never merges. Use when CodeRabbit, CodeQL or CI has answered on a pull request, when a check failed, when asked to address review comments, and when the question is whether a pull request is ready to merge.
 compatibility: Needs git and gh signed in with access to the pull request.
 ---
 
@@ -20,7 +20,9 @@ gh api --paginate "repos/Gurgant/azurebank-v2/code-scanning/alerts?state=open&pr
 ```
 
 - A verdict counts only when it is about the last head: the commit the review names
-  (`reviews[].commit.oid`, or the commit in the reviewer's summary) equals `headRefOid`. An
+  (`reviews[].commit.oid`, or the commit in the reviewer's summary) equals `headRefOid`. A `gh`
+  that prints no `commit` for a review is too old for the first command: read `commit_id` from
+  `gh api --paginate "repos/Gurgant/azurebank-v2/pulls/<number>/reviews?per_page=100"`. An
   acknowledgement is not a verdict, and neither is "currently processing", a review that was
   skipped, a green tick on the reviewer's check, the reviewer's reply in a thread, or a thread
   marked resolved.

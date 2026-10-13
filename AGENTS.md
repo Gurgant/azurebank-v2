@@ -86,8 +86,9 @@ every pull request.
   first, the screen that uses them second.
 - The commands above are green before a pull request is opened. A second, adversarial reader is
   added only where a mistake is expensive: money, access, a database migration.
-- Each finding of a review round is checked against the code, then fixed or declined with the
-  reason. At most one commit answers the round, and every thread gets its reply.
+- Each finding of a review round is checked against the code, then fixed, declined with the
+  reason, or set aside for a change of its own when it is true but outside the topic. At most
+  one commit answers the round, and every thread gets its reply.
 - A merge is proposed when every required check is green on the last head and a review has read
   that head and left nothing to change: it has no finding, or each finding it has was answered
   in writing without a commit, declined with the reason or set aside for a change of its own. A
