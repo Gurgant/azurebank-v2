@@ -210,6 +210,47 @@ public sealed class RequestDeadlineSqlServerTests : IDisposable
     }
 
     [SqlServerFact]
+    public async Task ARenameWhoseDeadlineFiresBeforeItsCommit_Answers503_AndSavesNothing()
+    {
+        // A rename is one statement, and it lands only at the commit of the transaction round it.
+        // The request is held in the process, after that statement has run and before the commit:
+        // nothing is on the server for the deadline to cancel, so what stops the name from landing
+        // is the commit that is not let start.
+        const string lateName = "Renamed late";
+        var setup = Host();
+        var setupClient = setup.CreateClient();
+        var user = await RegisterAsync(setupClient, "dln", withPin: false);
+        var before = await AccountNameAsync(setup, user.AccountId);
+
+        const int deadline = 2;
+        var deadlined = Host(deadline);
+        var client = deadlined.CreateClient();
+        _ = await GetAsync(client, user, "/api/accounts"); // warms the host
+
+        var hold = new HoldAfterSave(TimeSpan.FromSeconds(deadline + 2));
+        deadlined.AddInterceptor(hold);
+
+        var clock = Stopwatch.StartNew();
+        var response = await RenameAsync(client, user, lateName);
+        clock.Stop();
+        Print("rename held before its commit", response, clock, deadlined);
+        var after = await AccountNameAsync(setup, user.AccountId);
+
+        var again = await RenameAsync(setupClient, user, lateName);
+        var then = await AccountNameAsync(setup, user.AccountId);
+        _output.WriteLine(
+            $"name before: '{before}'; after the 503: '{after}'; the same PATCH again: {(int)again.StatusCode}; then: '{then}'");
+
+        hold.Fired.Should().BeTrue("the proof is void unless the rename's save ran and was held before the commit");
+        clock.Elapsed.Should().BeGreaterThan(TimeSpan.FromSeconds(deadline), "and unless the hold outlasted the deadline");
+        after.Should().Be(before, "a rename whose commit was not let start saved nothing");
+        before.Should().NotBe(lateName, "the proof is void unless the name asked for is a new one");
+        await DatabaseUnavailableSqlServerTests.AssertServiceUnavailableAsync(response, applied: null);
+        again.StatusCode.Should().Be(HttpStatusCode.OK, "the same request is made when it is sent again");
+        then.Should().Be(lateName);
+    }
+
+    [SqlServerFact]
     public async Task ACommitThatFails_TurnsTheDeadlineBackOn_SoTheRetryIsCancelledInTime()
     {
         // The gate turns the deadline off while a commit runs; a commit that fails must turn it back
@@ -680,6 +721,31 @@ public sealed class RequestDeadlineSqlServerTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// Holds the request in the process once the first save that wrote an account has run, for the
+    /// time given and whatever the request's token says: the save is done, its commit has not
+    /// started.
+    /// </summary>
+    private sealed class HoldAfterSave(TimeSpan hold) : SaveChangesInterceptor
+    {
+        private int _armed = 1;
+
+        public bool Fired => Volatile.Read(ref _armed) == 0;
+
+        public override async ValueTask<int> SavedChangesAsync(
+            SaveChangesCompletedEventData eventData, int result, CancellationToken cancellationToken = default)
+        {
+            if (result > 0
+                && eventData.Context?.ChangeTracker.Entries<AzureBank.Shared.Entities.Account>().Any() == true
+                && Interlocked.CompareExchange(ref _armed, 0, 1) == 1)
+            {
+                await Task.Delay(hold, CancellationToken.None);
+            }
+
+            return await base.SavedChangesAsync(eventData, result, cancellationToken);
+        }
+    }
+
     /// <summary>Counts <c>azurebank.commit_gate.entered</c> on the API's meter.</summary>
     private sealed class GateEntries : IDisposable
     {
@@ -757,6 +823,23 @@ public sealed class RequestDeadlineSqlServerTests : IDisposable
         var response = await client.SendAsync(request);
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<ApiResponse<AccountResponse>>(Json))!.Data!.Id;
+    }
+
+    private static Task<HttpResponseMessage> RenameAsync(HttpClient client, TestUser user, string name)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Patch, $"/api/accounts/{user.AccountId}")
+        {
+            Content = JsonContent.Create(new UpdateAccountRequest { Name = name }, options: Json),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", user.Token);
+        return client.SendAsync(request);
+    }
+
+    private static async Task<string> AccountNameAsync(CustomWebApplicationFactory host, Guid accountId)
+    {
+        using var scope = host.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        return (await db.Accounts.AsNoTracking().SingleAsync(a => a.Id == accountId)).Name;
     }
 
     private static Task<HttpResponseMessage> SignInAsync(HttpClient client, TestUser user) =>

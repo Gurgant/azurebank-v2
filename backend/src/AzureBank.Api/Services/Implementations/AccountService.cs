@@ -92,25 +92,55 @@ public class AccountService : IAccountService
         var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(accountId, userId, cancellationToken);
 
         /*
-          PAST ITS ATTEMPTS A RENAME IS NOT ANSWERED AS A BUSY ACCOUNT, where a closure and a change
-          of the primary account are. Those two hold no idempotency claim either, and what shows
-          that nothing of them was written is the request's commit mark
-          (ConcurrencyRetry.NoCommitWasLetStart). This save is one statement: it commits by itself,
-          outside any transaction, and passes no commit gate, so the mark says nothing about it.
-          The last conflict propagates. BusyAccountWriteSqlServerTests holds both facts.
+          AN EXPLICIT TRANSACTION ROUND ONE STATEMENT, FOR ITS COMMIT. The save is a single UPDATE
+          and would commit by itself; nothing here needs two statements to be one act. What the
+          transaction buys is the commit gate (ADR-0058 D4): a save that commits by itself passes
+          no gate and leaves the request's commit mark unset whether it landed or not, so the mark
+          could say nothing about it. Inside a transaction the save lands only at a commit the gate
+          marks before it starts, and a rename past its attempts can ask the mark whether anything
+          of it was written, as a closure does. Opened through the execution strategy, which
+          refuses a user-initiated transaction outside one.
+
+          EACH RUN OF THE DELEGATE STARTS FROM THE STORE, the first included: the strategy runs it
+          again on a transient fault and the loop round it runs it again when the account's
+          RowVersion refuses the save. A run that follows a commit whose acknowledgement was lost
+          reads the new name and writes it again, which changes nothing. A reload brings back a
+          closed row and detaches a row that is gone: either way there is no account to rename,
+          and a name set on a detached entity would be saved nowhere.
         */
+        var strategy = _context.Database.CreateExecutionStrategy();
         for (var attempt = 1; ; attempt++)
         {
-            // A reload brings back a closed row and detaches a row that is gone. Either way there is
-            // no account to rename, and a name set on a detached entity would be saved nowhere.
-            ConcurrencyRetry.RefuseIfClosed(_context, account);
-
-            account.Name = request.Name;
-            account.UpdatedAt = DateTime.UtcNow;
-
             try
             {
-                await _context.SaveChangesAsync(cancellationToken);
+                await strategy.ExecuteAsync(async ct =>
+                {
+                    await ConcurrencyRetry.ResetToStoreAsync(_context, [account], ct);
+                    ConcurrencyRetry.RefuseIfClosed(_context, account);
+
+                    await using var dbTransaction = await _context.Database.BeginTransactionAsync(ct);
+
+                    try
+                    {
+                        account.Name = request.Name;
+                        account.UpdatedAt = DateTime.UtcNow;
+                        await _context.SaveChangesAsync(ct);
+
+                        // Through the commit gate (ADR-0058): refused if the request deadline has
+                        // fired, and once started, nothing cancels it.
+                        await dbTransaction.CommitAsync(ct);
+                    }
+                    catch
+                    {
+                        // The original fault is the one the execution strategy has to see, and a
+                        // rollback on a connection that already failed can throw over it. Never
+                        // the request's token: a cancelled rollback leaves the row locked.
+                        try { await dbTransaction.RollbackAsync(CancellationToken.None); }
+                        catch { /* best effort: the transaction may already be gone */ }
+                        throw;
+                    }
+                }, cancellationToken);
+
                 break;
             }
             catch (DbUpdateConcurrencyException ex) when (ConcurrencyRetry.ShouldRetry(ex, attempt))
@@ -119,6 +149,37 @@ public class AccountService : IAccountService
                     "Concurrency conflict renaming account {AccountId} (attempt {Attempt}); retrying",
                     accountId, attempt);
                 await ConcurrencyRetry.PrepareNextAttemptAsync(_context, [account], cancellationToken);
+            }
+            catch (DbUpdateConcurrencyException ex) when (ConcurrencyRetry.IsAccountRace(ex))
+            {
+                /*
+                  THE LAST ATTEMPT LOST THE ACCOUNT TOO. The save that lost rolled its transaction
+                  back, so nothing of the rename is written: the answer can be the busy 503, where
+                  the conflict left to propagate is a 500.
+
+                  ONLY WHEN THE REQUEST LET NO COMMIT START. A rename holds no idempotency claim
+                  to read, so the commit mark is the whole proof, and the 503 says nothing of
+                  "applied". With the mark set the conflict propagates.
+
+                  THE ACCOUNT ONCE MORE, as every attempt begins: from the store, then the look
+                  the attempt takes at it. An account that closed, or whose row went, as the last
+                  attempt lost is the 404 of every other attempt. A rename presents no
+                  authorisation and looks at nothing else. BusyAccountWriteSqlServerTests holds
+                  each answer, and the same PATCH renaming the account when it is sent again.
+                */
+                if (!ConcurrencyRetry.NoCommitWasLetStart(_context))
+                {
+                    throw;
+                }
+
+                await ConcurrencyRetry.ResetToStoreAsync(_context, [account], cancellationToken);
+                ConcurrencyRetry.RefuseIfClosed(_context, account);
+
+                _logger.LogWarning(
+                    "Rename of account {AccountId} lost the account to another write on attempt "
+                        + "{Attempt}, its last; answering 503",
+                    accountId, attempt);
+                throw new AccountBusyException(ex);
             }
         }
 

@@ -15,20 +15,19 @@ namespace AzureBank.Shared.Exceptions;
 /// conditions as an outage and under no rule of its own.
 /// </para>
 /// <para>
-/// RAISED ON TWO PROOFS, by six writes. The first is the same for all: the last conflict names
+/// RAISED ON TWO PROOFS, by seven writes. The first is the same for all: the last conflict names
 /// accounts only (<c>ConcurrencyRetry.IsAccountRace</c>). The second depends on what the write
 /// holds. A deposit, a withdrawal and both transfers hold an idempotency key: the record, read
 /// then, is still the request's own claim and still <c>Processing</c>, with no commit let start
-/// (<c>ConcurrencyRetry.ClaimIsOwnAndNothingCommittedAsync</c>). A closure and a change of the
-/// primary account hold none: the request has let no commit start
+/// (<c>ConcurrencyRetry.ClaimIsOwnAndNothingCommittedAsync</c>). A closure, a change of the
+/// primary account and a rename hold none: the request has let no commit start
 /// (<c>ConcurrencyRetry.NoCommitWasLetStart</c>), which is a proof for them because each of their
 /// saves lands at a gated commit, and their 503 says nothing of <c>applied</c>.
 /// </para>
 /// <para>
 /// The first proof is not enough: a save that lost an account's row and the record's names the
 /// account alone. Without the second the conflict propagates, as it does when another request
-/// holds the key or the write is made. A rename of an account raises nothing: its one statement
-/// commits outside any transaction, so no mark covers it, and its last conflict propagates.
+/// holds the key or the write is made.
 /// </para>
 /// <para>
 /// AND AFTER THE SECOND PROOF, THE LOOKS OF AN ATTEMPT. Each write first takes once more the

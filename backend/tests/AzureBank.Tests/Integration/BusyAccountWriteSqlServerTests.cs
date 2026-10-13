@@ -10,6 +10,7 @@ using FluentAssertions;
 using FluentAssertions.Execution;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Serilog.Events;
 using Xunit.Abstractions;
 
 namespace AzureBank.Tests.Integration;
@@ -22,9 +23,8 @@ namespace AzureBank.Tests.Integration;
 /// <remarks>
 /// <para>
 /// With no claim to read, what shows that nothing of the write was committed is the request's
-/// commit mark alone. So three proofs are about the mark: each save of a closure and of a change
-/// of the primary account lands at a commit that has set it, and a rename's save commits by
-/// itself, outside any transaction, and sets none.
+/// commit mark alone. So three proofs are about the mark: each save of a closure, of a change of
+/// the primary account and of a rename lands at a commit that has set it.
 /// </para>
 /// <para>
 /// Seven are about a closure past its attempts. One answers the busy 503, which says nothing of
@@ -37,9 +37,15 @@ namespace AzureBank.Tests.Integration;
 /// <para>
 /// Four are about a change of the primary account past its attempts: one is busy and made when
 /// sent again, losing the old primary's row or the new one's; one has a target that closes (404);
-/// one a target whose row is deleted (404); one lets a commit start and fail first (500). The
-/// last proof is a rename past its attempts: no mark covers its save, so it is not answered busy
-/// and its last conflict propagates, a 500.
+/// one a target whose row is deleted (404); one lets a commit start and fail first (500).
+/// </para>
+/// <para>
+/// Six are about a rename. One is past its attempts: it answers the busy 503, leaves the name as
+/// it was, and is made when the same request is sent again. One loses every attempt but its last
+/// and is made there, at one commit. One has an account that closes as its last attempt loses
+/// (404); one an account whose row is deleted then (404); one lets a commit start and fail first
+/// (500). One has a commit that fails with no other write about: it is made on the run that
+/// follows, and spends no attempt.
 /// </para>
 /// <para>
 /// Not held here: a closure whose authorisation expires as its last attempt loses, and a change
@@ -97,7 +103,7 @@ public sealed class BusyAccountWriteSqlServerTests(ITestOutputHelper output) : C
     }
 
     [SqlServerFact]
-    public async Task TheSaveOfARename_CommitsByItself_AndSetsNoMark()
+    public async Task EverySaveOfARename_LandsAtACommitThatSetsTheMark()
     {
         var probe = new CommitMarkProbeInterceptor();
         var client = CreateSqlClient(host => host.AddInterceptor(probe));
@@ -106,13 +112,12 @@ public sealed class BusyAccountWriteSqlServerTests(ITestOutputHelper output) : C
         probe.Arm();
         using var response = await RenameAsync(client, user, user.PrimaryAccountId);
         probe.Disarm();
+        var renamed = await ReadAsync(user, null, user.PrimaryAccountId);
 
         WriteTheMark("rename", response, probe);
-        response.StatusCode.Should().Be(HttpStatusCode.OK, "the proof is void unless the rename was made");
-        probe.Commits.Should().BeEmpty("the rename's one statement rides no transaction, so no commit passes the gate");
-        probe.SavesOutsideATransaction.Should().Equal(
-            [false], "the save landed with the mark unset: for a rename the mark does not show that nothing was written");
-        ChainShouldBeIntact(await ReadAsync(user, null, user.PrimaryAccountId));
+        ShouldHaveLandedOnlyAtMarkedCommits(response, probe, commits: 1);
+        renamed.Accounts[0]!.Name.Should().Be(NewName);
+        ChainShouldBeIntact(renamed);
     }
 
     // The closure.
@@ -524,12 +529,8 @@ public sealed class BusyAccountWriteSqlServerTests(ITestOutputHelper output) : C
 
     // The rename.
 
-    /// <summary>
-    /// A rename that loses every attempt is not answered busy, since no mark covers its save
-    /// (<see cref="TheSaveOfARename_CommitsByItself_AndSetsNoMark"/>): the conflict propagates.
-    /// </summary>
     [SqlServerFact]
-    public async Task ARenameThatLosesEveryAttempt_IsNotAnsweredBusy()
+    public async Task ARenameThatLosesEveryAttempt_AnswersTheBusy503_ChangesNothing_AndIsMadeWhenSentAgain()
     {
         var race = new LostRowVersionRaceInterceptor(SqlServerFactAttribute.ConnectionString!);
         var client = CreateSqlClient(host =>
@@ -546,26 +547,204 @@ public sealed class BusyAccountWriteSqlServerTests(ITestOutputHelper output) : C
         var body = await response.Content.ReadAsStringAsync();
         var after = await ReadAsync(user, null, user.PrimaryAccountId);
 
+        // The 503 says to send the request again: the same PATCH with the same name.
         using var again = await RenameAsync(client, user, user.PrimaryAccountId);
         var againBody = await again.Content.ReadAsStringAsync();
         var renamed = await ReadAsync(user, null, user.PrimaryAccountId);
 
         _output.WriteLine(
             $"rename: fired {race.Fired} of {ConcurrencyRetry.MaxAttempts} attempts; {Describe(response, body)}; "
-            + $"before: {before}; after: {after}; the same PATCH again: {(int)again.StatusCode}; then: {renamed}");
+            + $"before: {before}; after: {after}; the same PATCH again: {(int)again.StatusCode}, body: {againBody}; then: {renamed}");
         WriteTheLog();
 
         using var scope = new AssertionScope();
         race.Fired.Should().Be(ConcurrencyRetry.MaxAttempts, "the proof is void unless the rename lost every attempt it is given");
-        response.StatusCode.Should().Be(
-            HttpStatusCode.InternalServerError, $"no mark shows that a rename wrote nothing; the body was: {body}");
-        response.Headers.RetryAfter.Should().BeNull("nothing invites the caller to send it again");
-        JsonSerializer.Deserialize<JsonElement>(body).TryGetProperty("retryAfterSeconds", out _).Should().BeFalse();
-        after.Should().Be(before, "the name is as it was");
+        ShouldBeTheBusy503(response, body, saysNothingWasApplied: false);
+        after.Should().Be(before, "a rename answered 503 left the name as it was");
+        before.Accounts[0]!.Name.Should().NotBe(NewName, "the proof is void unless the name asked for is a new one");
 
-        again.StatusCode.Should().Be(HttpStatusCode.OK, $"a rename sent again is made; the body was: {againBody}");
-        renamed.Accounts[0]!.Name.Should().Be(NewName);
+        again.StatusCode.Should().Be(HttpStatusCode.OK, $"the same request is made when it is sent again; the body was: {againBody}");
+        renamed.Should().Be(
+            before with { Accounts = [before.Accounts[0]! with { Name = NewName }] }, "the rename changes the name and nothing else");
         ChainShouldBeIntact(after, renamed);
+    }
+
+    /// <summary>
+    /// A rename that loses every attempt but its last is made on that one: one commit lands, with
+    /// the mark set, and no save writes outside it.
+    /// </summary>
+    [SqlServerFact]
+    public async Task ARenameThatGetsThroughOnItsLastAttempt_IsMadeOnce()
+    {
+        var race = new LostRowVersionRaceInterceptor(SqlServerFactAttribute.ConnectionString!);
+        var probe = new CommitMarkProbeInterceptor();
+        var client = CreateSqlClient(host =>
+        {
+            host.AddInterceptor(race);
+            host.AddInterceptor(probe);
+        });
+        var user = await RegisterAsync(client, "ro");
+        var before = await ReadAsync(user, null, user.PrimaryAccountId);
+
+        race.Arm(user.PrimaryAccountId, saves: ConcurrencyRetry.MaxAttempts - 1);
+        probe.Arm();
+        using var response = await RenameAsync(client, user, user.PrimaryAccountId);
+        probe.Disarm();
+        race.Disarm();
+        var body = await response.Content.ReadAsStringAsync();
+        var after = await ReadAsync(user, null, user.PrimaryAccountId);
+
+        _output.WriteLine(
+            $"rename: fired {race.Fired} of {ConcurrencyRetry.MaxAttempts} attempts; {Describe(response, body)}; "
+            + $"before: {before}; after: {after}");
+        WriteTheMark("rename", response, probe);
+
+        using var scope = new AssertionScope();
+        race.Fired.Should().Be(
+            ConcurrencyRetry.MaxAttempts - 1, "the proof is void unless the rename lost every attempt but its last");
+        ShouldHaveLandedOnlyAtMarkedCommits(response, probe, commits: 1);
+        after.Should().Be(
+            before with { Accounts = [before.Accounts[0]! with { Name = NewName }] }, "the rename changes the name and nothing else");
+        ChainShouldBeIntact(after);
+    }
+
+    [SqlServerFact]
+    public async Task ARenameWhoseAccountClosesAsItLosesItsLastAttempt_AnswersNotFound_NotBusy()
+    {
+        var race = new LostRowVersionRaceInterceptor(SqlServerFactAttribute.ConnectionString!);
+        var client = CreateSqlClient(host => host.AddInterceptor(race));
+        var user = await RegisterAsync(client, "rc");
+        var spare = await CreateSpareAsync(client, user);
+        var before = await ReadAsync(user, null, spare);
+
+        race.Arm(spare, closingOn: ConcurrencyRetry.MaxAttempts);
+        using var response = await RenameAsync(client, user, spare);
+        race.Disarm();
+        var body = await response.Content.ReadAsStringAsync();
+        var after = await ReadAsync(user, null, spare);
+
+        _output.WriteLine(
+            $"rename: fired {race.Fired} of {ConcurrencyRetry.MaxAttempts} attempts, the last a closure: {race.Closed}; "
+            + $"{Describe(response, body)}; before: {before}; after: {after}");
+
+        using var scope = new AssertionScope();
+        race.Fired.Should().Be(ConcurrencyRetry.MaxAttempts, "the proof is void unless the rename lost every attempt it is given");
+        race.Closed.Should().BeTrue("and unless the write that won the last one closed the account");
+        ShouldBeRefused(response, body, HttpStatusCode.NotFound, ErrorCodes.AccountNotFound);
+        after.Should().Be(
+            before with { Accounts = [before.Accounts[0]! with { IsDeleted = true }] },
+            "the account is closed by the other write alone, under the name it had");
+        ChainShouldBeIntact(after);
+    }
+
+    /// <summary>
+    /// The account's row is deleted, not closed, as the rename loses its last attempt: the answer
+    /// is the 404 of an account that is gone.
+    /// </summary>
+    [SqlServerFact]
+    public async Task ARenameWhoseRowIsDeletedAsItLosesItsLastAttempt_AnswersNotFound_NotBusy()
+    {
+        var race = new LostRowVersionRaceInterceptor(SqlServerFactAttribute.ConnectionString!);
+        var client = CreateSqlClient(host => host.AddInterceptor(race));
+        var user = await RegisterAsync(client, "rr");
+        var spare = await CreateSpareAsync(client, user);
+        var before = await ReadAsync(user, null, spare);
+
+        race.Arm(spare, removingOn: ConcurrencyRetry.MaxAttempts);
+        using var response = await RenameAsync(client, user, spare);
+        race.Disarm();
+        var body = await response.Content.ReadAsStringAsync();
+        var after = await ReadAsync(user, null, spare);
+
+        _output.WriteLine(
+            $"rename: fired {race.Fired} of {ConcurrencyRetry.MaxAttempts} attempts, the last a delete of the row: {race.Removed}; "
+            + $"{Describe(response, body)}; before: {before}; after: {after}");
+
+        using var scope = new AssertionScope();
+        race.Fired.Should().Be(ConcurrencyRetry.MaxAttempts, "the proof is void unless the rename lost every attempt it is given");
+        race.Removed.Should().BeTrue("and unless the write that won the last one deleted the account's row");
+        before.Accounts.Should().Equal([new AccountState("Spare", false, false, 0m)], "and unless the row was there, open, before");
+        ShouldBeRefused(response, body, HttpStatusCode.NotFound, ErrorCodes.AccountNotFound);
+        after.Should().Be(before with { Accounts = [null] }, "the row is gone, and a rename of nothing writes nothing");
+        ChainShouldBeIntact(after);
+    }
+
+    /// <summary>
+    /// The same for a rename: a commit that was let start and failed keeps the request from the
+    /// busy answer, whatever the store shows afterwards.
+    /// </summary>
+    [SqlServerFact]
+    public async Task ARenameThatLetACommitStart_AndThenLosesEveryAttempt_IsNotAnsweredBusy()
+    {
+        var race = new LostRowVersionRaceInterceptor(SqlServerFactAttribute.ConnectionString!);
+        var client = CreateSqlClient(host =>
+        {
+            host.EnableSqlRetryOnFailure();
+            host.AddInterceptor(race);
+        });
+        var user = await RegisterAsync(client, "rf");
+        var before = await ReadAsync(user, null, user.PrimaryAccountId);
+
+        var fault = new FailedCommitInterceptor(() => ArmAsync(race, user.PrimaryAccountId), "UPDATE [Accounts]");
+        AddInterceptor(fault);
+        using var response = await RenameAsync(client, user, user.PrimaryAccountId);
+        race.Disarm();
+        var body = await response.Content.ReadAsStringAsync();
+        var after = await ReadAsync(user, null, user.PrimaryAccountId);
+
+        _output.WriteLine(
+            $"rename: a commit let start and failed: {fault.Fired}; then fired {race.Fired} of "
+            + $"{ConcurrencyRetry.MaxAttempts} attempts; {Describe(response, body)}; before: {before}; after: {after}");
+
+        using var scope = new AssertionScope();
+        ShouldNotBeBusyAfterACommitStarted(fault, race, response, body);
+        after.Should().Be(before, "the commit that failed landed nothing, and no later attempt wrote");
+        ChainShouldBeIntact(after);
+    }
+
+    /// <summary>
+    /// A commit of a rename that fails and lands nothing, under the retrying strategy, with no
+    /// other write on the account: the run that follows starts from the store, so its save carries
+    /// the RowVersion the row has and is made. Left with what the failed run tracked, that save
+    /// would lose to nobody and spend one of the attempts.
+    /// </summary>
+    [SqlServerFact]
+    public async Task ARenameWhoseCommitFailed_IsMadeOnTheRunThatFollows_AndSpendsNoAttempt()
+    {
+        const string update = "UPDATE [Accounts]";
+        var commands = new CommandRecordingInterceptor();
+        var client = CreateSqlClient(host =>
+        {
+            host.EnableSqlRetryOnFailure();
+            host.AddInterceptor(commands);
+            host.CaptureLog(LogEventLevel.Information);
+        });
+        var user = await RegisterAsync(client, "rs");
+        var before = await ReadAsync(user, null, user.PrimaryAccountId);
+
+        var fault = new FailedCommitInterceptor(() => Task.CompletedTask, update);
+        AddInterceptor(fault);
+        commands.Start();
+        using var response = await RenameAsync(client, user, user.PrimaryAccountId);
+        commands.Stop();
+        var body = await response.Content.ReadAsStringAsync();
+        var after = await ReadAsync(user, null, user.PrimaryAccountId);
+        var updates = commands.Writes.Count(text => text.Contains(update, StringComparison.Ordinal));
+        var conflicts = Host.CapturedLog.Count(
+            line => line.Contains("Concurrency conflict renaming", StringComparison.Ordinal));
+
+        _output.WriteLine(
+            $"rename: a commit let start and failed: {fault.Fired}; {Describe(response, body)}; "
+            + $"{update} commands sent: {updates}; conflicts logged: {conflicts}; before: {before}; after: {after}");
+
+        using var scope = new AssertionScope();
+        fault.Fired.Should().BeTrue("the proof is void unless a commit of the rename failed");
+        response.StatusCode.Should().Be(HttpStatusCode.OK, $"the run that follows makes the rename; the body was: {body}");
+        updates.Should().Be(2, "one save whose commit failed, and one that is made");
+        conflicts.Should().Be(0, "no other write touched the account, so no attempt has a conflict to lose");
+        after.Should().Be(
+            before with { Accounts = [before.Accounts[0]! with { Name = NewName }] }, "the rename changes the name and nothing else");
+        ChainShouldBeIntact(after);
     }
 
     // What the proofs share.
@@ -678,8 +857,9 @@ public sealed class BusyAccountWriteSqlServerTests(ITestOutputHelper output) : C
     /// carry the mark when they have landed, which is when the probe reads it, and no save wrote
     /// rows outside a transaction, where no gate is passed. That the mark is set before a commit
     /// starts is held elsewhere:
-    /// <see cref="AClosureThatLetACommitStart_AndThenLosesEveryAttempt_IsNotAnsweredBusy"/> and
+    /// <see cref="AClosureThatLetACommitStart_AndThenLosesEveryAttempt_IsNotAnsweredBusy"/>,
     /// <see cref="AChangeOfPrimaryThatLetACommitStart_AndThenLosesEveryAttempt_IsNotAnsweredBusy"/>
+    /// and <see cref="ARenameThatLetACommitStart_AndThenLosesEveryAttempt_IsNotAnsweredBusy"/>
     /// answer 500 after a commit that failed.
     /// </summary>
     private static void ShouldHaveLandedOnlyAtMarkedCommits(
@@ -689,7 +869,7 @@ public sealed class BusyAccountWriteSqlServerTests(ITestOutputHelper output) : C
         probe.Commits.Should().Equal(
             Enumerable.Repeat(true, commits),
             "each commit of the write has set the mark by the time it lands; that the mark is set before the commit "
-            + "starts is held by the two proofs of a commit let start that then failed");
+            + "starts is held by the three proofs of a commit let start that then failed");
         probe.SavesOutsideATransaction.Should().BeEmpty("a save outside a transaction commits by itself and sets no mark");
     }
 

@@ -205,15 +205,15 @@ public class PublishedErrorContractTests
     }
 
     [Fact]
-    public void The_503_names_the_busy_account_on_the_six_writes_that_answer_it_and_on_no_other()
+    public void The_503_names_the_busy_account_on_the_seven_writes_that_answer_it_and_on_no_other()
     {
-        // Six writes answer the 503 for a cause no other operation has: every attempt the request
-        // is given lost an account to another write. BalanceConcurrencySqlServerTests makes one
-        // for the deposit, BusyMoneyWriteSqlServerTests for the withdrawal and both transfers,
-        // BusyAccountWriteSqlServerTests for the closure and the change of the primary account.
-        // The sentence is on those operations only: on another it would promise an answer the
-        // code does not send (the rename of an account, PATCH /api/accounts/{id}, answers 500
-        // there), and missing from one of the six it would leave a cause of its 503 unnamed.
+        // Seven writes answer the 503 for a cause no other operation has: every attempt the
+        // request is given lost an account to another write. BalanceConcurrencySqlServerTests
+        // makes one for the deposit, BusyMoneyWriteSqlServerTests for the withdrawal and both
+        // transfers, BusyAccountWriteSqlServerTests for the closure, the change of the primary
+        // account and the rename. The sentence is on those operations only: on another it would
+        // promise an answer the code does not send, and missing from one of the seven it would
+        // leave a cause of its 503 unnamed.
         var naming = Operations(Document())
             .Where(o => o.Value.GetProperty("responses").TryGetProperty("503", out var outage)
                 && outage.GetProperty("description").GetString()!
@@ -227,6 +227,7 @@ public class PublishedErrorContractTests
             "POST /api/transfers",
             "POST /api/transfers/internal",
             "DELETE /api/accounts/{id}",
+            "PATCH /api/accounts/{id}",
             "PATCH /api/accounts/{id}/set-primary");
     }
 

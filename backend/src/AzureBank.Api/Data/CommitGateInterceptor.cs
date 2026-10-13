@@ -23,17 +23,17 @@ namespace AzureBank.Api.Data;
 /// </para>
 /// <para>
 /// ONE HOOK, EVERY COMMIT OF THE REQUEST'S CONTEXT: the explicit ones (transfers, the withdrawal,
-/// set-primary, account closure), the audited saves the context opens for itself (deposit, the
-/// rename of a handle, reveal, PIN set), registration's, and EF's own implicit transactions. A
-/// commit that fails turns the deadline back on, at its original instant, and the request stays
-/// marked as one that started a commit.
+/// set-primary, account closure, the rename of an account), the audited saves the context opens
+/// for itself (deposit, the rename of a handle, reveal, PIN set), registration's, and EF's own
+/// implicit transactions. A commit that fails turns the deadline back on, at its original instant,
+/// and the request stays marked as one that started a commit.
 /// </para>
 /// <para>
 /// NOT GATED: a context from a fresh scope (a refusal's audit row, the release of an idempotency
 /// claim, the PIN counters), which finds no deadline in its scope; the endpoints marked
 /// <see cref="NoRequestDeadlineAttribute"/>; hosts that register no gate; and the in-memory
 /// provider, which has no transactions. A single statement outside a transaction (the idempotency
-/// claim, storing an answer for replay, the rename of an account) commits by itself and is not
+/// claim, storing an answer for replay, the creation of an account) commits by itself and is not
 /// gated either: such a save leaves <see cref="IRequestDeadline.CommitEntered"/> as it was.
 /// </para>
 /// <para>

@@ -1,8 +1,8 @@
 # ADR-0058: The API gives up cleanly when the database is down
 
 **Status:** Accepted · **Date:** 2026-09-29 · **Amended:** 2026-10-01 (ADR-0059, ADR-0060),
-2026-10-05 (ADR-0064), 2026-10-11 (D6, D7, the table of values, residual risks 6 and 8) ·
-**Decision Makers:** Vladislav Aleshaev
+2026-10-05 (ADR-0064), 2026-10-11 (D6, D7, the table of values, residual risks 6 and 8),
+2026-10-13 (D6, D7) · **Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
@@ -45,10 +45,10 @@ back. A token cannot interrupt a commit, so a late cancel can lose the answer to
   withdrawal and both transfers answer so only when their idempotency record, read then, is still
   their own claim and `Processing` and no commit started: the conflict names the account alone
   even when the save lost the record too. A claim taken over stays a 500; a commit that landed is
-  a 500 for a deposit and the 409 with `applied: true` for the other three. A closure and a change
-  of the primary account hold no key: they answer so when no commit started, since each of their
-  saves lands at a gated commit, and say nothing of `applied`. A rename's one statement passes no
-  gate, so past its attempts it stays a 500. A busy answer says "send it again", so after that
+  a 500 for a deposit and the 409 with `applied: true` for the other three. A closure, a change of
+  the primary account and a rename hold no key: they answer so when no commit started, since each
+  of their saves lands at a gated commit, and say nothing of `applied`. A rename is one statement,
+  in a transaction for that gate alone. A busy answer says "send it again", so after that
   proof the write takes once more every look one of its attempts takes before its save, by the
   code the attempt runs, and gives the answer an attempt gives: an account closed meanwhile (404,
   or 422 for a payee with no account left), funds another write took (422), the day's ceiling of
@@ -65,9 +65,9 @@ back. A token cannot interrupt a commit, so a late cancel can lose the answer to
 - **D7: `applied: false` only when the answer knows it**: on a money 503, for a request that owns
   the idempotency claim it made, has let no commit start and is younger than `ProcessingStaleAfter`
   less 10 s, because money moves only in a gated commit. A busy account is under this rule and has
-  none of its own, so a closure or a change of the primary account, which holds no claim, never
-  says it. **A client never drops the key on `applied: false`**, because one told so wrongly would
-  pay again under a new key.
+  none of its own, so a closure, a change of the primary account or a rename, which holds no
+  claim, never says it. **A client never drops the key on `applied: false`**, because one told
+  so wrongly would pay again under a new key.
 - **D8: The idempotency bookkeeping has budgets of its own**: 3 s each to store an answer and to
   release a claim, because each writes one row. An empty 2xx is never stored: it is a lost answer.
 - **D9: A stuck claim is stale after 2 minutes, not 10** (ADR-0009), because a claim whose release

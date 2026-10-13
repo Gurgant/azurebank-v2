@@ -162,6 +162,7 @@ public class AccountController(
     /// <param name="request">Update details</param>
     /// <returns>Updated account</returns>
     [HttpPatch("{id:guid}")]
+    [AnswersBusyAccount]
     [ProducesResponseType(typeof(ApiResponse<AccountResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
