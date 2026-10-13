@@ -191,7 +191,9 @@ backend's two test projects with a collector, the API's whole and against a SQL 
 the concurrency proofs run too, and then the frontend's unit and component tests
 (`npm run test:coverage`). Its summary gives the share of the lines of hand-written code that
 ran, for each backend assembly and in total, and the job fails under a floor set a little under
-the last figure measured: a tripwire, not a target.
+the last figure measured: a tripwire, not a target. The backend holds two floors, one on all its
+hand-written code and one on the application alone (`backend/src`), which the first does not
+defend: the command-line tools can carry the whole while the application falls.
 [`infra/coverage_summary.py`](../infra/coverage_summary.py) does the counting. Two test
 projects run the same assemblies, so their files are joined line by line: a line ran when
 either saw it run.
