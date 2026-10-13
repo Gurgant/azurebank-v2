@@ -276,7 +276,7 @@ describe('a partial failure', () => {
 const DEMO = {
   heading: 'Your private copy',
   notTheOwner:
-    'This is a private demo copy. It works for 24 hours from its first use, then it is closed and deleted.',
+    'This is a private demo copy. It works for 24 hours from its first use, then it is closed. It is deleted later.',
   startOver: 'Start over',
   startOverTitle: 'Start over with a new copy?',
   newCopy: 'You have a new copy.',

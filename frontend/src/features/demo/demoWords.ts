@@ -55,7 +55,7 @@ export const DEMO_NOTICE_FIRST =
   'You get a private copy of a demo bank account with invented money.';
 
 export const DEMO_NOTICE_REST =
-  "It has two accounts, two months of history and two contacts you can pay. Don't enter real personal data. The copy works for 24 hours, then it is closed and deleted. This browser remembers the copy's sign-in details so you can come back to it. To limit abuse, a one-way code of your network address is kept with the copy and removed when the copy is deleted.";
+  "It has two accounts, two months of history and two contacts you can pay. Don't enter real personal data. The copy works for 24 hours, then it is closed. It is deleted later. This browser remembers the copy's sign-in details so you can come back to it. To limit abuse, a one-way code of your network address is kept with the copy and removed when the copy is deleted.";
 
 /** Above the form, which on the demo is the second way in. Words to read, not a control. */
 export const HAVE_A_COPY_SIGN_IN = "Already have a copy's email and password? Sign in here.";
@@ -107,7 +107,7 @@ export const YOUR_PRIVATE_COPY = 'Your private copy';
  * written out as the app writes an instant (src/utils/format.ts).
  */
 export const copyIsYours = (until: string) =>
-  `Other visitors can't see this copy. It works until ${until}, then it is closed and deleted.`;
+  `Other visitors can't see this copy. It works until ${until}, then it is closed. It is deleted later.`;
 
 /**
  * Said to whoever is signed in to a copy on a browser that does not keep it. That browser has no
@@ -117,7 +117,7 @@ export const copyIsYours = (until: string) =>
  * setting.
  */
 export const COPY_IS_A_DEMO =
-  'This is a private demo copy. It works for 24 hours from its first use, then it is closed and deleted.';
+  'This is a private demo copy. It works for 24 hours from its first use, then it is closed. It is deleted later.';
 
 /**
  * The copy's PIN, for everyone signed in to it. A line of the panel and not a sentence, so it

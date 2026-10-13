@@ -5,7 +5,7 @@ For a person who wants to try everything. You need no knowledge of the code.
 Everything below was done on 2026-10-06, on the demo as this repository's two compose files
 run it on one machine, in a Chromium browser, in two walks: the first on one copy, the second,
 which followed this page, on two more. Where a line says **not seen**, the words come from the
-code and neither walk reached them. Three lines describe screens that changed after the walks,
+code and neither walk reached them. Five lines describe screens that changed after the walks,
 and tests hold them. [The last section](#where-these-facts-come-from) names the files.
 
 ## What the demo is, and is not
@@ -85,10 +85,10 @@ handles end in four characters of their own.
 
 The panel says it in three lines:
 
-- "Other visitors can't see this copy. It works until October 7, 2026 · 4:52 PM, then it is closed
-  and deleted." The date and the time are your copy's end, in your own time zone. The panel's words
-  are short for what the first section says: from that moment no new sign-in is accepted, and the
-  deletion comes at a later run.
+- "Other visitors can't see this copy. It works until October 7, 2026 · 4:52 PM, then it is closed.
+  It is deleted later." The date and the time are your copy's end, in your own time zone. Closed
+  is what the first section says: from that moment no new sign-in is accepted. The deletion comes
+  at a later run of the job.
 - "PIN: 123456, unless you changed it"
 - `Contacts you can pay: @jane_02ga and @mike_02ga`
 
@@ -288,9 +288,9 @@ Use a phone, or make the browser window about 390 pixels wide.
 2. In the other browser open the demo's address. Under "Already have a copy's email and
    password? Sign in here." type them and press **Sign in**.
 3. You should see the same copy with the same balances. The panel there is shorter: "This is a
-   private demo copy. It works for 24 hours from its first use, then it is closed and deleted."
-   and the PIN. It has no "Show sign-in details" and no "Start over": that browser does not keep
-   the copy.
+   private demo copy. It works for 24 hours from its first use, then it is closed. It is deleted
+   later." and the PIN. It has no "Show sign-in details" and no "Start over": that browser does
+   not keep the copy.
 
 Both browsers can be signed in at once. A wrong pair is answered "Invalid email or password."
 
@@ -499,13 +499,16 @@ not keep the copy. What it corrected it also read in the code:
 [`WithdrawDialog.tsx`](../../frontend/src/components/dialogs/WithdrawDialog.tsx) for the line
 under a withdrawal's amount.
 
-**After the walks.** Three lines describe screens that changed after both walks, and neither saw
+**After the walks.** Five lines describe screens that changed after both walks, and neither saw
 them. The repository's tests hold them: the sign-in page's title
 ([`LoginPage.test.tsx`](../../frontend/src/pages/LoginPage.test.tsx)), the sentence of the
 dialog in journey 2
-([`account-reveal.test.tsx`](../../frontend/src/pages/account-reveal.test.tsx)), and the first
+([`account-reveal.test.tsx`](../../frontend/src/pages/account-reveal.test.tsx)), the first
 step of journey 11, at 375 pixels on the home page and on History
-([`deposit.spec.ts`](../../frontend/e2e/deposit.spec.ts)).
+([`deposit.spec.ts`](../../frontend/e2e/deposit.spec.ts)), and the panel's two sentences about
+the copy's end, the longer one in the browser that keeps the copy and the shorter one of a
+second browser
+([`DemoCopyPanel.test.tsx`](../../frontend/src/features/demo/DemoCopyPanel.test.tsx)).
 
 **The words not seen** are typed as they stand in
 [`frontend/src/features/demo/demoWords.ts`](../../frontend/src/features/demo/demoWords.ts),

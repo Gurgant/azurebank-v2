@@ -53,7 +53,7 @@ const WORDS = {
   tryTheDemo: 'Try the demo',
   noticeFirst: 'You get a private copy of a demo bank account with invented money.',
   noticeRest:
-    "It has two accounts, two months of history and two contacts you can pay. Don't enter real personal data. The copy works for 24 hours, then it is closed and deleted. This browser remembers the copy's sign-in details so you can come back to it. To limit abuse, a one-way code of your network address is kept with the copy and removed when the copy is deleted.",
+    "It has two accounts, two months of history and two contacts you can pay. Don't enter real personal data. The copy works for 24 hours, then it is closed. It is deleted later. This browser remembers the copy's sign-in details so you can come back to it. To limit abuse, a one-way code of your network address is kept with the copy and removed when the copy is deleted.",
   divider: 'or',
   aboveTheForm: "Already have a copy's email and password? Sign in here.",
   signIn: 'Sign in',

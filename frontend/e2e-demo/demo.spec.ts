@@ -552,7 +552,7 @@ test.describe('the demo, from the first click', () => {
     ).toBeVisible();
     expect(await panel.locator('p').allTextContents()).toEqual([
       expect.stringMatching(
-        /^Other visitors can't see this copy\. It works until .+ · .+, then it is closed and deleted\.$/,
+        /^Other visitors can't see this copy\. It works until .+ · .+, then it is closed\. It is deleted later\.$/,
       ),
       'PIN: 123456, unless you changed it',
       expect.stringMatching(/^Contacts you can pay: @\S+ and @\S+$/),
