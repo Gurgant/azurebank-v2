@@ -215,10 +215,11 @@ either saw it run.
 
 - **Every pull request is merged by hand after review.** `main` requires a pull request,
   permits squash only, and has no bypass list.
-- **A branch is deleted when its pull request is merged.** GitHub does it at the merge, because
-  the repository's setting "Automatically delete head branches" is on. A squash leaves one
-  commit on `main`; the commits behind it stay on the pull request, which keeps them and can
-  restore the branch.
+- **A branch of this repository is deleted when its pull request is merged.** GitHub does it at
+  the merge, because the repository's setting "Automatically delete head branches" is on; the
+  branch of a pull request that comes from a fork is the fork's, and stays there. A squash
+  leaves one commit on `main`; the commits behind it stay on the pull request, which keeps them
+  and can restore the branch.
 - **Contract changes ship as two pull requests.** The endpoint, the regenerated OpenAPI document
   and the generated types land in the backend change; the UI that consumes them follows.
 - **Integration is verified against the real stack before a release.** A green mock-mode run
