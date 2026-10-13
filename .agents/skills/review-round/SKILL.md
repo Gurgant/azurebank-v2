@@ -60,14 +60,30 @@ one new head, and each reply can name one commit. The order is:
   behind, `git merge origin/main`. Without the fetch the merge takes main as this machine last
   saw it, and a merge made after the checks would leave them run on another tree.
 - Then fix, and commit.
-- Then run the pre-pr-gate skill's step 2 on that commit and read the numbers. Its list of what
-  to run is read from the committed diff: a fix that is not committed yet, in a folder the pull
-  request had not touched, would select none of that folder's checks.
+- Then check that commit on the machine, and read the numbers. In a round the rows of the
+  pre-pr-gate skill's step 2 are chosen by the files of the fix alone
+  (`git diff --name-only HEAD~1 HEAD`), not by the whole pull request, and each runs as the
+  table below says. What is not run here CI runs on the pushed commit, and step 6 proposes no
+  merge before every required check is green there.
 - Then the check of the commit messages (that skill, step 6): a pushed message is not rewritten.
 - Then push, and reply.
 
-A check that fails there is corrected before the push, in the same commit while it has not left
-the machine, and the checks run again on the corrected commit: what is pushed has passed them.
+| The fix changes | Before the push |
+|---|---|
+| `backend/` | the backend row as it is written: the three commands, with no filter. CI checks only the whitespace of the format, so the format command is not left to it |
+| `frontend/` | from `frontend/`: `npm run format:check && npm run lint && npm run build`, then `npx vitest related <the changed files under frontend/src, each written from frontend/, as src/...> --run`, which runs the tests that import those files. It exits 0 when it finds none: read the count of tests it ran, and when it ran none, or the fix changes a frontend file outside `frontend/src`, run the frontend line whole. Otherwise the whole `npm test` and the contract suite are CI's |
+| `infra/`, `.github/workflows/` | their rows as they are written. A workflow that is wrong can leave a check green without running it: after the push read that every required check ran, because a skipped job is not a pass |
+| Markdown, or a file moved, renamed or deleted | the two rows for links and for spelling as they are written: the jobs that check them in CI are not required checks, so step 6 does not hold a merge for them. A page under `docs/`, or a README, also takes the backend row: its tests read the pages by folder |
+| the contract (a DTO, a route, a status code), money movement, access control or a database migration | its row above, and also what the end of the pre-pr-gate skill's step 2 keeps for a stack: the suites that need a SQL Server or the real stack and that cover the change run before the push, and that skill's step 3 where the contract moved. There a check that goes red after the push is a risk, not a delay. Where the stack cannot be brought up, say in the reply that the fix touches it and that the suite was not run here |
+
+A check that fails on the machine is corrected before the push, in the same commit while it has
+not left the machine, and the checks run again on the corrected commit: what is pushed has
+passed them. A check that goes red in CI on the pushed commit, because of the fix or of the
+merge of `main` that came with it, is a finding of the next round: it is read in step 1 with
+that round's review, and fixed in that round's one commit. A merge of `main` that needed a
+conflict resolved by hand adds the rows of every part the resolution touched. Where that merge
+is the round's only commit (step 6), those are all its rows: on a merge commit
+`git diff --name-only HEAD~1 HEAD` lists everything `main` brought, which is not the fix.
 A round with nothing true to fix has no commit and no merge of `main`: nothing is pushed. Go to
 step 4. The one exception is a branch that conflicts with `main` (step 6).
 

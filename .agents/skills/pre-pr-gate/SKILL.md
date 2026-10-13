@@ -1,6 +1,6 @@
 ---
 name: pre-pr-gate
-description: Checks that a branch of AzureBank (Gurgant/azurebank-v2) is ready to become a pull request, and reports the numbers it read. Use before opening a pull request, before pushing a fix made in a review round, and whenever the question is whether a change is ready for review or would pass CI. It covers the scope, the checks for what changed, the generated API contract, one check seen failing, and the title, text and commit messages.
+description: Checks that a branch of AzureBank (Gurgant/azurebank-v2) is ready to become a pull request, and reports the numbers it read. Use before opening a pull request, and whenever the question is whether a change is ready for review or would pass CI. A fix made in a review round runs less than this: the review-round skill, step 3, says what. It covers the scope, the checks for what changed, the generated API contract, one check seen failing, and the title, text and commit messages.
 compatibility: Needs git, gh, the .NET SDK, Node.js and Python 3; actionlint and ShellCheck for a workflow change. A missing tool is never installed; the step is reported as not run.
 ---
 
@@ -56,6 +56,10 @@ A row is the least that is due, not all that can fail: tests of each part read f
 others as text (backend tests read `frontend/src` and the README of the API collection; frontend
 and deployment tests read sources under `backend/src`). A check that no row selected and that
 goes red in CI is read in step 7.
+
+A fix made in a review round does not run this step again for the whole pull request: the
+review-round skill, step 3, says which rows it runs and how. The check of a combination before
+a merge is proposed (that skill, step 6) runs this step as it is written here.
 
 What these commands do not run. CI runs all of it on every pull request: say which were left to
 CI, and never count them as passed.

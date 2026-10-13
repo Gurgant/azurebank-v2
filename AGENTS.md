@@ -62,7 +62,9 @@ every pull request.
 ## Before a change is called done
 
 - Run the commands above for every part you touched and report the numbers you read: passed,
-  failed, skipped. "Should pass" is not a result.
+  failed, skipped. "Should pass" is not a result. The one case that runs less on the machine is
+  a fix made in a review round, on a pull request that is already open: "Pull requests and
+  review" says what, and its numbers are reported the same way.
 - A new or changed check proves nothing until you have seen it fail. Break the thing once on
   purpose and watch the check go red.
 - A change to a page under `docs/`, or to a README, also runs the backend commands:
@@ -90,6 +92,14 @@ every pull request.
   reason, or set aside for a change of its own when it is true but outside the topic. At most
   one commit of fixes answers the round, after a merge of `main` where the branch needed one,
   and every thread gets its reply.
+- A fix of a review round, on a pull request that is already open, runs on the machine the
+  commands of the parts that the fix itself touches, not of the whole pull request, and of the
+  frontend's tests only the ones that import the files it changes, or the whole suite when none
+  does. Everything else runs in CI on the pushed commit. A fix to a Markdown page still runs
+  the checks of its links and of its spelling on the machine: the jobs that run them in CI are
+  not required checks. A fix to the contract, to money movement, to access control or to a
+  database migration also runs, before its push, the suites that need a SQL Server or the real
+  stack and that cover it.
 - A merge is proposed when every required check is green on the last head and a review has read
   that head and left nothing to change: it has no finding, or each finding it has was answered
   in writing without a commit, declined with the reason or set aside for a change of its own. A
