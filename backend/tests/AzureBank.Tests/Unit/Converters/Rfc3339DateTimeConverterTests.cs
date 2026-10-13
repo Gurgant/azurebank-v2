@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using AzureBank.Api.Converters;
 using FluentAssertions;
@@ -17,10 +18,10 @@ namespace AzureBank.Tests.Unit.Converters;
 /// before it is written with the <c>Z</c> that says UTC.
 /// </para>
 /// <para>
-/// The last test has two limits, both of the machine it runs on. In a zone with no offset from
-/// UTC a local time has the digits of its UTC instant, so the test cannot see the conversion
-/// there. And the converter writes with the current culture, so the expected string holds under a
-/// Gregorian culture that separates hours from minutes with a colon: the test sets none.
+/// The last test has one limit of the machine it runs on: in a zone with no offset from UTC a
+/// local time has the digits of its UTC instant, so the test cannot see the conversion there. It
+/// sets the invariant culture for its own time, because the converter writes with the current
+/// one: under a culture of another calendar the year would not be 2026.
 /// </para>
 /// </remarks>
 public sealed class Rfc3339DateTimeConverterTests
@@ -61,9 +62,17 @@ public sealed class Rfc3339DateTimeConverterTests
     public void ALocalTime_IsWrittenAsItsUtcInstant_WithTheZ()
     {
         var instant = new DateTime(2026, 7, 1, 10, 48, 26, DateTimeKind.Utc).AddTicks(5907775);
+        var machine = CultureInfo.CurrentCulture;
+        CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
+        try
+        {
+            var written = JsonSerializer.Serialize(instant.ToLocalTime(), Options);
 
-        var written = JsonSerializer.Serialize(instant.ToLocalTime(), Options);
-
-        written.Should().Be("\"2026-07-01T10:48:26.5907775Z\"");
+            written.Should().Be("\"2026-07-01T10:48:26.5907775Z\"");
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = machine;
+        }
     }
 }

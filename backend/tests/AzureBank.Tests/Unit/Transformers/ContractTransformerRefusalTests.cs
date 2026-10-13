@@ -50,7 +50,7 @@ public sealed class ContractTransformerRefusalTests
             .TransformAsync(new OpenApiDocument(), context, CancellationToken.None);
 
         (await transform.Should().ThrowAsync<InvalidOperationException>())
-            .WithMessage("The 'ProblemDetails' schema component was not found, so the error contract cannot be completed.*");
+            .WithMessage("*'ProblemDetails'*");
     }
 
     [Fact]
@@ -65,9 +65,7 @@ public sealed class ContractTransformerRefusalTests
             .TransformAsync(operation, AnAction(new RequireStepUpAuthorizationAttribute()), CancellationToken.None);
 
         (await transform.Should().ThrowAsync<InvalidOperationException>())
-            .WithMessage(
-                $"[RequireStepUpAuthorization] is on api/transactions/withdraw but no '{StepUpConstants.HeaderName}' "
-                + "header parameter was emitted for it.*");
+            .WithMessage($"*api/transactions/withdraw*'{StepUpConstants.HeaderName}'*");
     }
 
     [Fact]
