@@ -77,8 +77,9 @@ before the commit and a commit whose response was lost demand opposite recoverie
 `IdempotencyConcurrencyTests`, `IdempotencySqlServerConcurrencyTests`, `IdempotencyEndpointTests`,
 `IdempotencyServiceTests`, `TransferTransientRetrySqlServerTests`, `ProvenCommitSourceTests`,
 `KestrelRequestSizeLimitTests`, `OversizedBodyDrainTests`, `MintOversizedBodyDrainTests`,
-`BalanceConcurrencySqlServerTests` and `BusyMoneyWriteSqlServerTests` (a busy account: the record
-is released, and the same key is a new execution).
+`BalanceConcurrencySqlServerTests`, `BusyMoneyWriteSqlServerTests` (a busy account: the record
+is released, and the same key is a new execution), and `IdempotencyCleanupServiceTests` with
+`IdempotencyCleanupSqlServerTests` (the clean-up: what it deletes and what it keeps).
 
 ## Related
 
