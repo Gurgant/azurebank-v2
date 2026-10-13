@@ -29,7 +29,7 @@ import { DemoCopyPanel } from './DemoCopyPanel';
 const WORDS = {
   heading: 'Your private copy',
   notTheOwner:
-    'This is a private demo copy. It works for 24 hours from its first use, then it is closed and deleted.',
+    'This is a private demo copy. It works for 24 hours from its first use, then it is closed. It is deleted later.',
   pin: 'PIN: 123456, unless you changed it',
   show: 'Show sign-in details',
   hide: 'Hide sign-in details',
@@ -40,7 +40,7 @@ const WORDS = {
 
 /** "Other visitors can't see this copy. It works until January 5, 2026 · 9:15 AM, then …" */
 const OWNER =
-  /^Other visitors can't see this copy\. It works until ([A-Z][a-z]+ \d{1,2}, \d{4}) · (\d{1,2}:\d{2} (?:AM|PM)), then it is closed and deleted\.$/;
+  /^Other visitors can't see this copy\. It works until ([A-Z][a-z]+ \d{1,2}, \d{4}) · (\d{1,2}:\d{2} (?:AM|PM)), then it is closed\. It is deleted later\.$/;
 
 const CLAIM = '*/bff/auth/demo/claim';
 const KEY = 'azurebank.demoCopy';
