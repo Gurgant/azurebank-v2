@@ -63,14 +63,30 @@ public class AuditVerifierReportTests
         services.AddLogging();
         services.AddDbContext<AzureBankDbContext>(o => o.UseSqlServer(
             "Server=localhost,1;Database=Nope;User Id=u;Password=p;TrustServerCertificate=True;Connect Timeout=2"));
-        services.AddSingleton<IAuditChain>(new AuditChain(
-            Options.Create(new AuditOptions { ChainKey = new string('k', 32) }),
-            NullLogger<AuditChain>.Instance));
+        var options = Options.Create(new AuditOptions
+        {
+            ChainKey = new string('k', 32),
+            AnchorKey = new string('a', 32),
+        });
+        services.AddSingleton<IAuditChain>(new AuditChain(options, NullLogger<AuditChain>.Instance));
+
+        // Everything the command resolves is here, so the first thing to fail is the server. Before
+        // the anchor chain was registered this test never reached one: the command failed
+        // resolving that service, which is "no verdict" as well, and the second line named the
+        // missing service where it now names the database's own exception. Measured 2026-10-12
+        // without this line: "InvalidOperationException: No service for type" on that line.
+        services.AddSingleton<IAuditAnchorChain>(new AuditAnchorChain(options));
 
         using var provider = services.BuildServiceProvider();
 
         var (exitCode, lines) = await VerifyCommand.RunAsync(provider);
         var text = string.Join(" ", lines);
+
+        lines.Should().HaveCountGreaterThan(1);
+        lines[1].Should().StartWith(
+            "  SqlException: ",
+            "ARRANGE and the cause an operator reads: what failed is the server that is not there, "
+            + "and not a service this test forgot to register");
 
         exitCode.Should().Be(
             VerifyCommand.Misconfigured,
