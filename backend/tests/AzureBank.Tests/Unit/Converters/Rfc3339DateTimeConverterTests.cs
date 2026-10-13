@@ -10,10 +10,18 @@ namespace AzureBank.Tests.Unit.Converters;
 /// and a local time that leaves.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Every response of the API writes a UTC instant through this converter, and the contract's gate
 /// reads those. The reading half ran in no test: the instant a client sends with an offset, the
 /// instant it sends in UTC, and the empty string. Neither did the conversion of a local time
 /// before it is written with the <c>Z</c> that says UTC.
+/// </para>
+/// <para>
+/// The last test has two limits, both of the machine it runs on. In a zone with no offset from
+/// UTC a local time has the digits of its UTC instant, so the test cannot see the conversion
+/// there. And the converter writes with the current culture, so the expected string holds under a
+/// Gregorian culture that separates hours from minutes with a colon: the test sets none.
+/// </para>
 /// </remarks>
 public sealed class Rfc3339DateTimeConverterTests
 {

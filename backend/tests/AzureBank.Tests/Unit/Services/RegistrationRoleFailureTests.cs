@@ -30,11 +30,11 @@ namespace AzureBank.Tests.Unit.Services;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <c>AddToRoleAsync</c> answers with a result and does not throw (ADR-0037). A result nobody
-/// reads is a registration that answers 201 for a user with no role. A duplicate reported at that
-/// step is the lost race of ADR-0013 and has to be the same neutral 409 as every other duplicate;
-/// anything else is a fault of the deployment and must not be told to the caller as a defect of
-/// the request (422).
+/// <c>AddToRoleAsync</c> reports what its validators refuse as a result and does not throw it
+/// (ADR-0037). A result nobody reads is a registration that answers 201 for a user with no role.
+/// A duplicate reported at that step is the lost race of ADR-0013 and has to be the same neutral
+/// 409 as every other duplicate; anything else is a fault of the deployment and must not be told
+/// to the caller as a defect of the request (422).
 /// </para>
 /// <para>
 /// Mocks and InMemory, the idiom of <c>AuthServiceTests</c>, and with its limit: there is no

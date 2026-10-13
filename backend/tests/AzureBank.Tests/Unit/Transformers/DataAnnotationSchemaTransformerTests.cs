@@ -11,17 +11,18 @@ using Microsoft.OpenApi;
 namespace AzureBank.Tests.Unit.Transformers;
 
 /// <summary>
-/// The standard validation attributes that no request of this API carries today, as the published
-/// schema would show them: <c>[MinLength]</c>, <c>[Range]</c>, <c>[Phone]</c>, <c>[Url]</c> and
-/// <c>[CreditCard]</c>.
+/// The standard validation attributes that reach this transformer on no type of the API today, as
+/// the published schema would show them: <c>[MinLength]</c>, <c>[Range]</c>, <c>[Phone]</c>,
+/// <c>[Url]</c> and <c>[CreditCard]</c>.
 /// </summary>
 /// <remarks>
 /// <para>
-/// The committed contract holds the attributes the requests do carry: a change to one of those
-/// arms changes <c>openapi.json</c> and the contract's gate fails. An arm no request reaches is
-/// held by nothing, and the day a request takes <c>[Range(1, 50)]</c> its bounds are published by
-/// a line that never ran. So each arm is run here on a type of this file's own, and read from the
-/// schema it leaves.
+/// The committed contract holds the attributes the request bodies do carry: a change to one of
+/// those arms changes <c>docs/api/openapiv1.json</c> and the contract's gate fails. An arm no type
+/// reaches is held by nothing, and the day a request body takes <c>[Range(1, 50)]</c> its bounds
+/// are published by a line that never ran. (The query of <c>GET /api/transactions</c> carries
+/// <c>[Range]</c> today, and its bounds reach the contract without passing through this arm.) So
+/// each arm is run here on a type of this file's own, and read from the schema it leaves.
 /// </para>
 /// <para>
 /// The transformer is called as the framework calls it for a complex type: the schema with one
@@ -89,9 +90,8 @@ public sealed class DataAnnotationSchemaTransformerTests
     [Fact]
     public async Task Range_PublishesBothBounds_AsInvariantNumbers()
     {
-        // Under a culture that writes a comma. On a machine whose culture writes a point the two
-        // last assertions hold the bounds and not the invariance: there, the conversion with the
-        // invariant culture taken out still publishes "0.5".
+        // Under a culture that writes a comma: under one that writes a point, a conversion that
+        // follows the current culture publishes "0.5" too, and the test could not tell the two.
         var machine = CultureInfo.CurrentCulture;
         CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("it-IT");
         try

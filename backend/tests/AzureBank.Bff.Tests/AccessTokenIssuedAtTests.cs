@@ -41,6 +41,7 @@ public sealed class AccessTokenIssuedAtTests
     [InlineData("""{"sub":"u"}""", "no iat at all")]
     [InlineData("""{"sub":"u","iat":"1791795600"}""", "an iat that is a string")]
     [InlineData("""{"sub":"u","iat":1791795600.5}""", "an iat that is not a whole number")]
+    [InlineData("""{"sub":"u","iat":9223372036854775807}""", "an iat no date can hold")]
     [InlineData("""["iat",1791795600]""", "a payload that is not an object")]
     public void APayloadWithNoUsableIat_FallsBackToTheMomentOfReceipt(string payload, string because)
     {
@@ -55,7 +56,7 @@ public sealed class AccessTokenIssuedAtTests
     [InlineData(4)]
     public void AStringThatIsNotThreeParts_FallsBackToTheMomentOfReceipt_EvenWithAReadableIatInIt(int parts)
     {
-        // The second part is a payload with a usable iat, so what refuses it is the count of parts.
+        // Every part is a payload with a usable iat, so what refuses the string is the count of parts.
         var issuedAt = new DateTime(2026, 10, 12, 9, 0, 0, DateTimeKind.Utc);
         var payload = Part($$"""{"iat":{{new DateTimeOffset(issuedAt).ToUnixTimeSeconds()}}}""");
         var token = string.Join('.', Enumerable.Repeat(payload, parts));
