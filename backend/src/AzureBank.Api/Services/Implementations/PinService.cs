@@ -14,6 +14,12 @@ namespace AzureBank.Api.Services.Implementations;
 /// <see cref="ValidationRules.MaxPinAttempts"/> consecutive wrong attempts the
 /// PIN is locked for <see cref="ValidationRules.PinLockoutMinutes"/> minutes.
 ///
+/// An attempt is claimed on the user's row BEFORE the PIN is compared, in one conditional
+/// UPDATE that also applies the lock on the claim that reaches the threshold. So requests that
+/// arrive together cannot each read "not locked" and each be compared: the row hands out
+/// <see cref="ValidationRules.MaxPinAttempts"/> comparisons per window and refuses the rest
+/// unread (ADR-0010). A claim whose request then dies stays counted: the limiter fails closed.
+///
 /// The lockout counter is security bookkeeping that must persist INDEPENDENTLY
 /// of the caller's transaction: a wrong PIN during a withdrawal must record the
 /// failed attempt even though the withdrawal itself fails, and — critically —
@@ -65,13 +71,25 @@ public sealed class PinService : IPinVerifier
             return false;
         }
 
+        var claim = await ClaimAttemptAsync(db, user, cancellationToken);
+        if (claim.LockedUntil is { } refusedUntil)
+        {
+            _logger.LogWarning("PIN verification refused for locked user {UserId} until {Until}", userId, refusedUntil);
+            throw PinLockedException.Until(refusedUntil, DateTimeOffset.UtcNow);
+        }
+        if (!claim.Claimed)
+        {
+            _logger.LogWarning("PIN verification attempted for non-existent user {UserId}", userId);
+            return false;
+        }
+
         if (_passwordHasher.VerifyPin(user.PinHash, pin))
         {
-            // Success: clear any accumulated failures / expired lock.
-            if (user.PinAccessFailedCount != 0 || user.PinLockoutEnd is not null)
-            {
-                await ResetLockoutAsync(db, user, cancellationToken);
-            }
+            // Unconditional: the claim above counted this attempt, and this read of the user
+            // does not show it. It clears whatever lock is on the row as well: the one this
+            // claim applied at the threshold, or one a wrong PIN sent beside it applied while
+            // this PIN was being compared.
+            await ResetLockoutAsync(db, user, cancellationToken);
             // Transparent pepper migration (ADR-0011): if the stored hash predates the
             // active pepper key, re-hash the PIN now that the plaintext is available and
             // persist it — in this service's own scope, like the lockout bookkeeping.
@@ -107,13 +125,11 @@ public sealed class PinService : IPinVerifier
                 "not in the keyring — a pepper may have been retired before its hashes were migrated.", userId);
         }
 
-        // Wrong PIN. Increment the counter and — if it crosses the threshold —
-        // apply the lock in ONE atomic set-based statement. Doing both in a single
-        // UPDATE (rather than increment-then-separately-lock) removes the window in
-        // which a concurrent late increment could clear a just-applied lock and let
-        // a burst of parallel wrong PINs slip past the threshold.
-        var until = now.AddMinutes(ValidationRules.PinLockoutMinutes);
-        var lockoutEnd = await IncrementAndMaybeLockAsync(db, user, now, until, cancellationToken);
+        // Wrong PIN, already counted by the claim. Read from the row, not from the claim: the
+        // lock that answers may be the one this attempt applied or one a parallel attempt did.
+        var lockoutEnd = await db.Users.Where(u => u.Id == userId)
+            .Select(u => u.PinLockoutEnd).FirstOrDefaultAsync(cancellationToken);
+        now = DateTimeOffset.UtcNow;
 
         if (lockoutEnd is { } enforcedUntil && enforcedUntil > now)
         {
@@ -132,49 +148,74 @@ public sealed class PinService : IPinVerifier
     // test provider falls back to an equivalent tracked write (single-threaded there).
 
     /// <summary>
-    /// One atomic wrong-PIN transition: increment the failure counter, and when it
-    /// crosses <see cref="ValidationRules.MaxPinAttempts"/> set the lock and reset the
-    /// counter — all evaluated against the row's CURRENT value in a single statement.
-    /// The WHERE guard excludes a currently-locked row, so a burst of parallel wrong
-    /// PINs can neither bypass the threshold nor leave a residual count on a just-locked
-    /// account (a late increment updates zero rows). Returns the resulting PinLockoutEnd.
+    /// What a claim came to: the attempt is counted and may be compared (<c>Claimed</c>), or the
+    /// row is locked until <c>LockedUntil</c>, or, with neither, the user's row is gone.
     /// </summary>
-    private static async Task<DateTimeOffset?> IncrementAndMaybeLockAsync(
-        AzureBankDbContext db, ApplicationUser user, DateTimeOffset now, DateTimeOffset until,
-        CancellationToken cancellationToken)
+    private readonly record struct AttemptClaim(bool Claimed, DateTimeOffset? LockedUntil);
+
+    /// <summary>
+    /// Claims one attempt in a single statement, evaluated against the row's CURRENT value:
+    /// increment the counter, and on the claim that reaches
+    /// <see cref="ValidationRules.MaxPinAttempts"/> set the lock and reset the counter. The WHERE
+    /// guard excludes a currently-locked row, so of any number of parallel claims only the
+    /// threshold's worth update a row, and a late one can neither clear a lock that was just
+    /// applied nor leave a residual count on it.
+    /// </summary>
+    private static async Task<AttemptClaim> ClaimAttemptAsync(
+        AzureBankDbContext db, ApplicationUser user, CancellationToken cancellationToken)
     {
         var max = ValidationRules.MaxPinAttempts;
 
         if (db.Database.IsRelational())
         {
-            await db.Users
-                .Where(u => u.Id == user.Id && (u.PinLockoutEnd == null || u.PinLockoutEnd < now))
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(u => u.PinAccessFailedCount,
-                        u => u.PinAccessFailedCount + 1 >= max ? 0 : u.PinAccessFailedCount + 1)
-                    .SetProperty(u => u.PinLockoutEnd,
-                        u => u.PinAccessFailedCount + 1 >= max ? (DateTimeOffset?)until : null)
-                    .SetProperty(u => u.UpdatedAt, (DateTime?)DateTime.UtcNow), cancellationToken);
-            return await db.Users.Where(u => u.Id == user.Id)
-                .Select(u => u.PinLockoutEnd).FirstAsync(cancellationToken);
+            while (true)
+            {
+                var now = DateTimeOffset.UtcNow;
+                var until = now.AddMinutes(ValidationRules.PinLockoutMinutes);
+                var claimed = await db.Users
+                    .Where(u => u.Id == user.Id && (u.PinLockoutEnd == null || u.PinLockoutEnd <= now))
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(u => u.PinAccessFailedCount,
+                            u => u.PinAccessFailedCount + 1 >= max ? 0 : u.PinAccessFailedCount + 1)
+                        .SetProperty(u => u.PinLockoutEnd,
+                            u => u.PinAccessFailedCount + 1 >= max ? (DateTimeOffset?)until : null)
+                        .SetProperty(u => u.UpdatedAt, (DateTime?)DateTime.UtcNow), cancellationToken);
+                if (claimed > 0)
+                {
+                    return new AttemptClaim(Claimed: true, LockedUntil: null);
+                }
+
+                var row = await db.Users.Where(u => u.Id == user.Id)
+                    .Select(u => new { u.PinLockoutEnd }).FirstOrDefaultAsync(cancellationToken);
+                if (row is null)
+                {
+                    return new AttemptClaim(Claimed: false, LockedUntil: null);
+                }
+                if (row.PinLockoutEnd is { } lockedUntil && lockedUntil > now)
+                {
+                    return new AttemptClaim(Claimed: false, LockedUntil: lockedUntil);
+                }
+                // The lock that refused the claim is gone by the time it is read: a right PIN
+                // took it back in between. The row is free again, so the claim is made again.
+            }
         }
 
+        var untilInMemory = DateTimeOffset.UtcNow.AddMinutes(ValidationRules.PinLockoutMinutes);
         if (user.PinAccessFailedCount + 1 >= max)
         {
             user.PinAccessFailedCount = 0;   // the lock window is now authoritative
-            user.PinLockoutEnd = until;
+            user.PinLockoutEnd = untilInMemory;
         }
         else
         {
+            // The caller has already refused a row that is still locked, so a lock read here
+            // has run out.
             user.PinAccessFailedCount += 1;
-            if (user.PinLockoutEnd is { } expired && expired < now)
-            {
-                user.PinLockoutEnd = null;
-            }
+            user.PinLockoutEnd = null;
         }
         user.UpdatedAt = DateTime.UtcNow;   // parity with the relational writer's audit bump
         await db.SaveChangesAsync(cancellationToken);
-        return user.PinLockoutEnd;
+        return new AttemptClaim(Claimed: true, LockedUntil: null);
     }
 
     /// <summary>
