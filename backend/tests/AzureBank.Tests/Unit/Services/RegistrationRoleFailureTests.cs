@@ -39,7 +39,8 @@ namespace AzureBank.Tests.Unit.Services;
 /// <para>
 /// Mocks and InMemory, the idiom of <c>AuthServiceTests</c>, and with its limit: there is no
 /// transaction here, so what is read is the answer and what was NOT asked for after it (no
-/// account, no token, no grant). That the user's row is rolled back is the SQL Server tests' claim.
+/// account, no token, no grant). That the user's row is rolled back when the role cannot be written
+/// is held on SQL Server by <c>RegistrationRoleFailureSqlServerTests</c>.
 /// </para>
 /// </remarks>
 public sealed class RegistrationRoleFailureTests : IDisposable
