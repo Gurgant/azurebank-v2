@@ -809,6 +809,9 @@ function jsonTokenName(value: unknown): string {
  *   "Bogus" · "99" · "-1" · "1" · " Savings" · "Savings,Checking" · " "
  *       -> "'<the text>' is not a valid value for enum 'AccountType'. Valid values: Checking,
  *           Savings, Investment"
+ *   a text of more than 64 characters, or one with a line break in it
+ *       -> the same sentence, with only a part of the text between the quotes and a note after
+ *          them: "'xxxx…' (shown in part: 64 of 5000 characters) is not a valid value for …"
  *   ""  -> "Empty string is not a valid value for enum 'AccountType'."
  *   1 · 12345 · 1.0
  *       -> "Integer values are not allowed for enum 'AccountType'. Use string values: Checking,
@@ -848,7 +851,36 @@ function parseAccountType(value: unknown): AccountTypeReading {
     : undefined;
   return member
     ? { member }
-    : { refusal: `'${value}' is not a valid value for enum 'AccountType'. Valid values: ${names}` };
+    : {
+        refusal: `${quoteRefusedText(value)} is not a valid value for enum 'AccountType'. Valid values: ${names}`,
+      };
+}
+
+/**
+ * A refused text between quotes, as the API repeats it: the first 64 characters, without the ones
+ * that can break a line or drive a terminal, and a note when that is not the whole text.
+ *
+ * Measured 2026-10-13 on `POST /api/accounts {"name":"Holiday fund","type":<text>}`:
+ *
+ *   64 × "x"                    -> '<the 64>'
+ *   5,000 × "x"                 -> '<the first 64>' (shown in part: 64 of 5000 characters)
+ *   "ab\r\ncd\u0007\u001B[31m\u2028ef" -> 'abcd[31mef' (shown in part: 10 of 15 characters)
+ *   "a\u{1F600}b"               -> 'ab' (shown in part: 2 of 4 characters)
+ *
+ * The API counts and judges UTF-16 code units, which is why the text is split into them here: a
+ * character outside the basic plane is two surrogates there, each left out, where a pattern
+ * applied to the whole text would read the pair as one printable character and keep it. The text
+ * is cut before anything is left out, so nothing after the 64th unit is ever shown.
+ */
+function quoteRefusedText(text: string): string {
+  const shown = text
+    .slice(0, 64)
+    .split('')
+    .filter((unit) => !/[\p{C}\u2028\u2029]/u.test(unit))
+    .join('');
+  return shown.length === text.length
+    ? `'${shown}'`
+    : `'${shown}' (shown in part: ${shown.length} of ${text.length} characters)`;
 }
 const AZURE_TAG_RE = /^[a-z][a-z0-9_]{2,19}$/;
 

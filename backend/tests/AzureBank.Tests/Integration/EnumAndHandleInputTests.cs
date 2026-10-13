@@ -22,6 +22,9 @@ namespace AzureBank.Tests.Integration;
 /// the same reason, and so is every other text that is not a name. The answer to a text that
 /// is not a name lists the valid values, which is what makes the refusal usable; the empty
 /// string and a value that is not a string each have a sentence of their own, without the list.
+/// Of the refused text the answer repeats the first 64 characters, without the ones that can
+/// break a line or drive a terminal, and says so when that is not the whole of it: what a
+/// caller sends does not come back at the length the caller chose.
 /// </para>
 /// <para>
 /// THE HANDLE. <c>GET /api/users/{azureTag}</c> is an exact-match confirmation and answers 200
@@ -128,6 +131,54 @@ public sealed class EnumAndHandleInputTests : IntegrationTestBase
             WithoutTheTrace(await unknownName.Content.ReadFromJsonAsync<JsonElement>(), said: "Bogus"),
             "apart from the text it quotes, the answer is the one an unknown name gets");
         (await CountAccountsAsync(token)).Should().Be(before, "a refused request opens nothing");
+    }
+
+    [Theory]
+    [InlineData(10, "'xxxxxxxxxx'")]
+    [InlineData(64, "'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'")]
+    [InlineData(65, "'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' (shown in part: 64 of 65 characters)")]
+    [InlineData(200, "'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' (shown in part: 64 of 200 characters)")]
+    [InlineData(5_000, "'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' (shown in part: 64 of 5000 characters)")]
+    [InlineData(1_000_000, "'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' (shown in part: 64 of 1000000 characters)")]
+    public async Task AnAccountTypeOfAnyLength_IsRepeatedInTheRefusalOnlyInItsFirst64Characters(
+        int length, string quoted)
+    {
+        var (token, _, _) = await RegisterTestUserAsync();
+        var unknownName = await OpenAccountAsync(token, "\"Bogus\"");
+
+        var response = await OpenAccountAsync(token, JsonSerializer.Serialize(new string('x', length)));
+        var raw = await response.Content.ReadAsStringAsync();
+        var body = JsonSerializer.Deserialize<JsonElement>(raw);
+
+        using var all = new AssertionScope();
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        body.TryGetProperty("errorCode", out _).Should().BeFalse("model binding writes this answer");
+        body.GetProperty("errors").GetProperty("$.type").EnumerateArray().Select(e => e.GetString())
+            .Should().Equal(
+                $"{quoted} is not a valid value for enum 'AccountType'. Valid values: Checking, Savings, Investment");
+        raw.Length.Should().BeLessThan(500, "the answer does not grow with what was sent");
+        WithoutTheTrace(body, said: "no text").Replace(quoted, "'<the text>'", StringComparison.Ordinal)
+            .Should().Be(
+                WithoutTheTrace(await unknownName.Content.ReadFromJsonAsync<JsonElement>(), said: "Bogus"),
+                "apart from the text it quotes, the answer is the one an unknown name gets");
+    }
+
+    [Theory]
+    [InlineData("ab\\r\\ncd\\u0007\\u001B[31m\\u2028ef", "'abcd[31mef' (shown in part: 10 of 15 characters)")]
+    [InlineData("a\\uD83D\\uDE00b", "'ab' (shown in part: 2 of 4 characters)")]
+    public async Task AnAccountTypeWithALineBreakOrAnEscapeSequenceInIt_IsRepeatedWithoutThem(
+        string textAsJson, string quoted)
+    {
+        var (token, _, _) = await RegisterTestUserAsync();
+
+        var response = await OpenAccountAsync(token, $"\"{textAsJson}\"");
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        using var all = new AssertionScope();
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        body.GetProperty("errors").GetProperty("$.type").EnumerateArray().Select(e => e.GetString())
+            .Should().Equal(
+                $"{quoted} is not a valid value for enum 'AccountType'. Valid values: Checking, Savings, Investment");
     }
 
     /// <summary>

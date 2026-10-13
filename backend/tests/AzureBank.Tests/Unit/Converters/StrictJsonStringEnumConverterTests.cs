@@ -6,7 +6,7 @@ namespace AzureBank.Tests.Unit.Converters;
 
 /// <summary>
 /// The converter the API reads every enum with, held on its own: it takes a name of the enum, in
-/// any letter case, and refuses every other text.
+/// any letter case, and refuses every other text, of which its refusal repeats a bounded part.
 /// </summary>
 /// <remarks>
 /// <c>EnumAndHandleInputTests</c> holds the same rule through the host, on the one enum a request
@@ -84,6 +84,94 @@ public class StrictJsonStringEnumConverterTests
             $"'{text}' is not a valid value for enum 'AccountType'. Valid values: Checking, Savings, Investment",
             refusal.Message,
             StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(20)]
+    [InlineData(64)]
+    public void Read_RepeatsARefusedTextOfUpTo64Characters_Whole(int length)
+    {
+        var text = new string('x', length);
+
+        var refusal = Assert.Throws<JsonException>(() => Read<AccountType>(text));
+
+        Assert.StartsWith(
+            $"'{text}' is not a valid value for enum 'AccountType'. Valid values: Checking, Savings, Investment",
+            refusal.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(65)]
+    [InlineData(200)]
+    [InlineData(5_000)]
+    [InlineData(1_000_000)]
+    public void Read_RepeatsOnlyTheFirst64CharactersOfALongerText_AndSaysHowManyThereWere(int length)
+    {
+        var text = new string('x', 63) + 'y' + new string('z', length - 64);
+
+        var refusal = Assert.Throws<JsonException>(() => Read<AccountType>(text));
+
+        Assert.StartsWith(
+            $"'{new string('x', 63)}y' (shown in part: 64 of {length} characters) is not a valid value for enum "
+            + "'AccountType'. Valid values: Checking, Savings, Investment",
+            refusal.Message,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("z", refusal.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("ab\\r\\ncd", "abcd", 4, 6)]
+    [InlineData("ab\\u0007\\u001B[31mcd", "ab[31mcd", 8, 10)]
+    [InlineData("ab\\u2028cd\\u2029", "abcd", 4, 6)]
+    [InlineData("ab\\u200Bcd\\u202E", "abcd", 4, 6)]
+    [InlineData("a\\uD83D\\uDE00b", "ab", 2, 4)]
+    [InlineData("\\r\\n", "", 0, 2)]
+    public void Read_LeavesOutOfTheRepeatedTextWhatCanBreakALineOrDriveATerminal_AndSaysSo(
+        string textAsJson, string shown, int shownLength, int length)
+    {
+        // A line break, a bell and an escape sequence, the two separators that some viewers
+        // render as a line break, a zero-width space and a right-to-left override, a character
+        // outside the basic plane, and a text that is nothing else.
+        var refusal = Assert.Throws<JsonException>(
+            () => JsonSerializer.Deserialize<AccountType>($"\"{textAsJson}\"", Options));
+
+        Assert.StartsWith(
+            $"'{shown}' (shown in part: {shownLength} of {length} characters) is not a valid value for enum "
+            + "'AccountType'. Valid values: Checking, Savings, Investment",
+            refusal.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Read_CutsBeforeItLooksForWhatToLeaveOut_SoTheWorkDoesNotGrowWithTheText()
+    {
+        // 60 letters, six line breaks, then more letters: the six are inside the 64 that are
+        // looked at, so 60 are shown, and the letters after them are not brought forward.
+        var text = new string('x', 60) + new string('\n', 6) + new string('z', 100);
+
+        var refusal = Assert.Throws<JsonException>(() => Read<AccountType>(text));
+
+        Assert.StartsWith(
+            $"'{new string('x', 60)}' (shown in part: 60 of 166 characters) is not a valid value for enum",
+            refusal.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NoNameOfAnEnumOfTheApi_IsLongerThanWhatARefusalRepeats()
+    {
+        // A name with one letter wrong is the refusal a person reads, and it is shown whole only
+        // while every name fits in the part that is repeated.
+        var names = new[] { typeof(AccountType).Assembly, typeof(StrictJsonStringEnumConverterFactory).Assembly }
+            .SelectMany(assembly => assembly.GetTypes())
+            .Where(type => type.IsEnum)
+            .SelectMany(Enum.GetNames)
+            .ToList();
+
+        Assert.NotEmpty(names);
+        Assert.All(names, name => Assert.True(name.Length < 64, name));
     }
 
     [Fact]

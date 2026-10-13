@@ -184,6 +184,58 @@ describe('contract: validation envelopes', () => {
     ]);
   });
 
+  const first64 = 'x'.repeat(64);
+  it.each([
+    ['64 characters, whole', first64, `'${first64}'`],
+    ['65 characters', `${first64}y`, `'${first64}' (shown in part: 64 of 65 characters)`],
+    [
+      '5,000 characters',
+      first64 + 'z'.repeat(4936),
+      `'${first64}' (shown in part: 64 of 5000 characters)`,
+    ],
+    [
+      'a line break, a bell, an escape sequence and a line separator',
+      'ab\r\ncd\u0007\u001B[31m ef',
+      "'abcd[31mef' (shown in part: 10 of 15 characters)",
+    ],
+    [
+      'a character outside the basic plane',
+      'a\u{1F600}b',
+      "'ab' (shown in part: 2 of 4 characters)",
+    ],
+    [
+      'line breaks inside the first 64 characters and letters after them',
+      'x'.repeat(60) + '\n'.repeat(6) + 'z'.repeat(100),
+      `'${'x'.repeat(60)}' (shown in part: 60 of 166 characters)`,
+    ],
+  ])('repeats a refused enum text only in part: %s', async (_case, type, quoted) => {
+    /*
+      The refusal repeats the first 64 characters of the text, without the ones that can break a
+      line or drive a terminal, and says how many it shows of how many there were. The text is cut
+      first, so characters after the 64th never take the place of one that was left out. A
+      character outside the basic plane counts as two and is left out. Measured 2026-10-13:
+
+        POST /api/accounts {"name":"Holiday fund","type":"<5,000 characters>"}
+          -> 400 "errors":{"request":["The request field is required."],
+                           "$.type":["'xxxx…64…xxxx' (shown in part: 64 of 5000 characters) is not
+                                      a valid value for enum 'AccountType'. Valid values:
+                                      Checking, Savings, Investment"]}
+
+      Refused, so no account is created and this test leaves no state on either target.
+    */
+    const { status, body } = await call('/api/accounts', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'Valid Name', type }),
+    });
+    const problem = asProblem(body);
+
+    expect(status).toBe(400);
+    expect(Object.keys(problem.errors ?? {}).sort()).toEqual(['$.type', 'request']);
+    expect(problem.errors?.['$.type']).toEqual([
+      `${quoted} is not a valid value for enum 'AccountType'. Valid values: Checking, Savings, Investment`,
+    ]);
+  });
+
   it('answers a bad enum text ALONE when the name is invalid too', async () => {
     /*
       The deserialiser runs before model state has a `Name` to judge, so the two never appear
