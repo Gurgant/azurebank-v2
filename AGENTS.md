@@ -65,8 +65,8 @@ every pull request.
   failed, skipped. "Should pass" is not a result.
 - A new or changed check proves nothing until you have seen it fail. Break the thing once on
   purpose and watch the check go red.
-- A change to a page under `docs/` also runs the backend commands: architecture tests read the
-  pages.
+- A change to a page under `docs/`, or to a README, also runs the backend commands:
+  architecture tests read the pages.
 - The running API is the oracle for what the server does, never the mock. Where the two disagree,
   read the contract and the decision record first: if the API is right the mock changes, and if
   the API is wrong that is a defect to report, not a mock to bend.
@@ -86,13 +86,22 @@ every pull request.
   first, the screen that uses them second.
 - The commands above are green before a pull request is opened. A second, adversarial reader is
   added only where a mistake is expensive: money, access, a database migration.
-- Each finding of a review round is checked against the code, then fixed or declined with the
-  reason. One commit answers the round, and every thread gets its reply.
-- A merge is proposed when every required check is green on the last head, and either the last
-  round has no finding or two rounds in a row had only findings the reviewer marked minor, all
-  fixed.
-- When several pull requests are proposed together, their combination is checked first: merged
-  in the proposed order on a scratch tree, then built and tested.
+- Each finding of a review round is checked against the code, then fixed, declined with the
+  reason, or set aside for a change of its own when it is true but outside the topic. At most
+  one commit of fixes answers the round, after a merge of `main` where the branch needed one,
+  and every thread gets its reply.
+- A merge is proposed when every required check is green on the last head and a review has read
+  that head and left nothing to change: it has no finding, or each finding it has was answered
+  in writing without a commit, declined with the reason or set aside for a change of its own. A
+  push after a review, a fix included, makes a new head, and that head waits for a review of
+  its own. A reviewed head that is only behind `main` is left as it is; one that conflicts is
+  updated, and reviewed again.
+- When several pull requests are proposed together, or one that is behind `main`, the
+  combination is checked first: merged in the proposed order on a scratch tree, then built and
+  tested.
+- The steps in full are in two files:
+  [the gate before a pull request](.agents/skills/pre-pr-gate/SKILL.md) and
+  [one review round](.agents/skills/review-round/SKILL.md).
 
 ## Writing
 
@@ -121,9 +130,10 @@ every pull request.
 - **Merge.** I merge every pull request myself, and I approve every deployment of the application.
 - **Push, or open a pull request, unless the task says so explicitly.** Otherwise stop at the
   local commit and hand back what the task asks for.
-- Write outside the folder it was started in, or switch that folder to another branch.
+- Write outside the folder it was started in, or switch that folder to another branch. The
+  scratch tree of a combination check goes in a folder the task names.
 - Rewrite history that has left the machine: no force-push, no rebase of a pushed branch. A
-  branch that is behind takes a merge of `main`.
+  branch that has to be brought up to date takes a merge of `main`.
 - Delete a branch: a squash leaves one commit on `main`, and the branch is where the commits
   behind it stay.
 - Dismiss a finding without a reason that will still convince in six months, skip a test, or

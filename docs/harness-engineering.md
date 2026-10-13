@@ -113,7 +113,7 @@ inferential when an AI model judges the result.
 
 | Part | What is here, and where it shows |
 |---|---|
-| Instructions (guides) | One [instruction file][ag] for all agents, 64 [decisions][adr], the [traps][tr] |
+| Instructions (guides) | One [instruction file][ag] for all agents, two procedures ([gate][gate], [review round][round]), 64 [decisions][adr], the [traps][tr] |
 | Checks a program runs (computational sensors) | [CI jobs][ci]; a security scan; 24 [architecture-test][arch] files |
 | Checks a model judges (inferential sensors) | An AI review asked for on each pull request; a [second reader][who] |
 | Limits and my checkpoints | The [rule set][rs], 9 required checks; my merge; a [deploy][dep] |
@@ -122,7 +122,12 @@ inferential when an AI model judges the result.
 | The correction loop (steering loop) | A mistake becomes a check when a program can detect it: [three episodes](#three-episodes) |
 
 - **Instructions.** `AGENTS.md` holds the commands, what "done" means and [what an agent never
-  does][never]. The file gives instructions; nothing automatic checks that they were followed.
+  does][never]. Two procedures give the steps in order: [the gate before a pull request][gate]
+  and [the review round][round]. Before I published them I tried each twice: an AI model was
+  given the file and nothing else and answered fixed scenarios, a second model scored the
+  answers against what I require, and I corrected the text after the first trial (my own
+  statement: the record is not public). These files give instructions; nothing automatic checks
+  that they were followed.
 - **Checks a program runs.** A green job does not show that any test passed. So 9 steps in
   [`ci.yml`][ci] and [`contract-tests.yml`][bru] count what ran and fail their job when the
   suite beside them passed nothing, skipped a test or fell under a minimum. Five jobs run on a
@@ -147,13 +152,13 @@ inferential when an AI model judges the result.
 Part of the harness is not here, and for this part a visitor has my word alone. Beside this
 repository I keep a second, private one for my working material: notes on where the work stands,
 the plans, the brief each agent receives, a short file that only the orchestrator reads on top
-of `AGENTS.md`, the two procedures the [playbook][who] names (the gate before a pull request and
-the review round), the blocks that refuse a merge command or a push, and the scripts that run
-the checks before a pull request and after a merge. It is private because it holds drafts,
-unfinished decisions and paths of my computer. No file of the two procedures is in this
-repository. What the repository asks of a change, from anyone's agent, is public:
-[`AGENTS.md`][ag], the checks in [CI][ci] and the [decision records][adr] in this repository,
-and the [rule set][rs] on GitHub.
+of `AGENTS.md`, the blocks that refuse a merge command or a push, and the scripts that run the
+checks before a pull request and after a merge. It is private because it holds drafts,
+unfinished decisions and paths of my computer. The two procedures are public:
+[the gate before a pull request][gate] and [the review round][round]. Beside each I keep, in
+private, the steps of my own machine and a file of dated cases. What the repository asks of a
+change, from anyone's agent, is public: [`AGENTS.md`][ag], the checks in [CI][ci] and the
+[decision records][adr] in this repository, and the [rule set][rs] on GitHub.
 
 ## What this does not show
 
@@ -173,9 +178,9 @@ and the [rule set][rs] on GitHub.
 - **No comparison with and without the harness exists, and the accuracy of the AI review is
   unknown.** I have not measured the work with and without any part of it. The episodes show
   what a new check caught on its first run; they do not show a rate. Each finding of the AI
-  review is checked against the code and fixed or declined in its thread, but I have not
-  counted how many were real defects. Some pull requests were merged without a review coming
-  back, and the rule set requires no approving review.
+  review is checked against the code and fixed, declined or set aside, with a written answer
+  on the pull request, but I have not counted how many were real defects. Some pull requests
+  were merged without a review coming back, and the rule set requires no approving review.
 - **The blocks on my machine are not a lock.** They refuse a merge command or a push
   ([the playbook][guards] describes them) and stop a habit or a mistake, not an agent set on
   getting around them. Some rules have no check at all: not rewriting a pushed branch is
@@ -286,6 +291,8 @@ if the run sent no requests".
 [ep]: engineering-practices.md
 [ag]: ../AGENTS.md
 [never]: ../AGENTS.md#what-an-agent-never-does
+[gate]: ../.agents/skills/pre-pr-gate/SKILL.md
+[round]: ../.agents/skills/review-round/SKILL.md
 [agh]: https://github.com/Gurgant/azurebank-v2/commits/main/AGENTS.md
 [adr]: adr/README.md
 [adrdir]: https://github.com/Gurgant/azurebank-v2/tree/main/docs/adr

@@ -60,8 +60,9 @@ mine.
    runs every suite, including those that need a real SQL Server, the running stack and a
    browser, and the demo's, which restarts two containers of the stack.
 6. **Review.** Every pull request goes through CI and a security scan, and an AI review is
-   asked for on each, before I merge it. Each finding is checked against the code, then fixed
-   or declined with the reason written in its thread.
+   asked for on each, before I merge it. Each finding is checked against the code, then fixed,
+   declined with the reason, or set aside for a change of its own, with a written answer on
+   the pull request.
 7. **Merge.** I merge: a green pipeline is necessary, but it does not replace my reading of the
    change. When several pull requests go in together, their combination is built and tested
    first.
@@ -80,9 +81,10 @@ mine.
 
 Models are chosen per task: the most capable one orchestrates and verifies, a cheaper one does the
 mechanical work. One [`AGENTS.md`](../AGENTS.md) gives every agent the same commands, checks and
-rules. Two agent skills hold the repeatable procedures: the gate before a pull request and the
-review round. Where a check needs a real browser outside the test suite, an agent drives Chrome
-through an MCP server and reports what it read.
+rules. Two agent skills, each a file of numbered steps, hold the repeatable procedures:
+[the gate before a pull request](../.agents/skills/pre-pr-gate/SKILL.md) and
+[the review round](../.agents/skills/review-round/SKILL.md). Where a check needs a real browser
+outside the test suite, an agent drives Chrome through an MCP server and reports what it read.
 
 ## What stands between an agent and `main`
 
