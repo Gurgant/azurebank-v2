@@ -170,10 +170,11 @@ and section 2 revokes no token. Until the session ends (section 3) it still read
 its transactions and `/api/auth/me`, can deposit, and can reveal the full number if it was
 elevated before section 2 was run; a transfer authorisation already minted under the old PIN can
 be spent inside its two-minute window. Plan the clock on the 15 minutes of an access token, the
-shorter cases being a bonus: treat the account as contained only after they have passed, and
-write down when section 2 was run. After that the remedy is complete for this attacker, unless
-the subscriber also repudiates the original enrolment or reuses the lost PIN elsewhere. Say in
-the record which of the three it is.
+shorter cases being a bonus: they run from the commit of section 3, because until its grant is
+revoked a session can still be given a new token. Treat the account as contained only after they
+have passed, and write down when that commit was. After that the remedy is complete for this
+attacker, unless the subscriber also repudiates the original enrolment or reuses the lost PIN
+elsewhere. Say in the record which of the three it is.
 
 **The other address.** If the subscriber says the email on the account is not theirs, nothing here
 can change it: no endpoint exists, and every future notice goes to that address. That is a
