@@ -407,18 +407,8 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
     if (!account || pin.length !== PIN_LENGTH || lockDeadline !== null) {
       return;
     }
-    /*
-      Last look before the request leaves. The funds gate took a round trip when Continue was
-      pressed; this one is free — it reads the freshest CACHED balance, which a mutation elsewhere
-      in this tab may have moved since. Cheap enough to always do, and it means an over-balance
-      request is not merely refused by the server but never sent.
-    */
-    const stillAvailable = availableBalanceOf(account);
-    if (data.amount > stillAvailable) {
-      setStep('form');
-      setError(insufficientFundsMessage(stillAvailable));
-      return;
-    }
+    // No second check of the amount against the balance: the resolver has just made it, with a
+    // bound built in this render from these same accounts, and its refusal is `onInvalid` above.
     setError(null);
     setPinError(false);
     setInFlight(false);

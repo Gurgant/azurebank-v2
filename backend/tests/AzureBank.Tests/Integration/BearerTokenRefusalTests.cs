@@ -36,6 +36,12 @@ public sealed class BearerTokenRefusalTests : IntegrationTestBase
 {
     private const string AnotherKey = "integration-tests-only-a-signing-key-the-api-does-not-hold-0123456789";
 
+    /// <summary>
+    /// The media type of every refusal the application writes itself, as the published contract
+    /// declares it: plain JSON in the problem shape, not <c>application/problem+json</c>.
+    /// </summary>
+    private const string TheApplicationsOwnJson = "application/json; charset=utf-8";
+
     public BearerTokenRefusalTests(CustomWebApplicationFactory factory) : base(factory)
     {
     }
@@ -89,6 +95,7 @@ public sealed class BearerTokenRefusalTests : IntegrationTestBase
 
         using var all = new AssertionScope();
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        response.Content.Headers.ContentType?.ToString().Should().Be(TheApplicationsOwnJson);
         body.GetProperty("errorCode").GetString().Should().Be("AUTH_TOKEN_EXPIRED");
         body.GetProperty("detail").GetString().Should().Be("The authentication token has expired.");
         body.GetProperty("instance").GetString().Should().Be("/api/accounts");
@@ -118,6 +125,7 @@ public sealed class BearerTokenRefusalTests : IntegrationTestBase
 
         using var all = new AssertionScope();
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        response.Content.Headers.ContentType?.ToString().Should().Be(TheApplicationsOwnJson);
         body.GetProperty("status").GetInt32().Should().Be(401);
         body.GetProperty("errorCode").GetString().Should().Be(errorCode);
         body.GetProperty("detail").GetString().Should().Be(detail);

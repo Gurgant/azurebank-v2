@@ -424,9 +424,10 @@ export function InternalTransferPage() {
     const to = toAccount;
 
     /*
-      Last look before the request leaves. The funds gate took a round trip at Continue; this one
-      is free — the freshest CACHED balance, which a mutation elsewhere in this tab may have moved
-      since. So an over-balance transfer is not merely refused by the server: it is never sent.
+      The form has refused an amount over its own bound already (`onInvalid`). That bound is
+      state, copied from the cached balance by an effect, so it runs one render behind it: this
+      is for the render in which the balance has fallen and the bound has not followed yet. A
+      balance this tab has not heard of is the server's to refuse.
     */
     const stillAvailable = availableBalanceOf(from);
     if (data.amount > stillAvailable) {
