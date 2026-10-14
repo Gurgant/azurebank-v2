@@ -503,7 +503,8 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
 
         await client.SendAsync(Proxied(HttpMethod.Get, "/api/accounts", cookieName, sessionId));
 
-        // The renewal runs detached and writes its line itself; the request waits for it 5 s at most.
+        // The renewal runs detached and writes its line itself. The request stops waiting for it after 5 s
+        // (TokenRefresher's ForegroundWait), so a slower renewal writes it after the answer: wait up to 10 s.
         static bool IsRenewalLine(LogEvent e) => e.MessageTemplate.Text.Contains("efresh", StringComparison.Ordinal)
             || e.MessageTemplate.Text.Contains("Renewal", StringComparison.Ordinal);
         (await Eventually(() => log.Any(IsRenewalLine))).Should().BeTrue("the renewal says how it failed");
