@@ -52,6 +52,12 @@ public sealed class TraceStartsAtTheBffTests : IDisposable
     private static readonly JsonSerializerOptions Json =
         new(JsonSerializerDefaults.Web) { Converters = { new JsonStringEnumConverter() } };
 
+    /// <summary>How long <see cref="TraceIdsOnceAsync"/> waits for a request's log line.</summary>
+    private static readonly TimeSpan LineWait = TimeSpan.FromSeconds(10);
+
+    /// <summary>How both hosts' request line begins (<c>UseSerilogRequestLogging</c> in each Program.cs).</summary>
+    private const string RequestLine = "HTTP {RequestMethod} {RoutePattern} responded";
+
     private const string Password = "SecurePass123!";
     private const string Pin = "824613";
     private const string DepositPath = "/api/transactions/deposit";
@@ -114,6 +120,8 @@ public sealed class TraceStartsAtTheBffTests : IDisposable
         var atTheBff = _bff.Requests.Single(DepositPath);
         var atTheApi = _api.Requests.Single(DepositPath);
         var audited = await AuditedTraceIdAsync(visitor.UserId, SecurityEvents.MoneyDeposited);
+        var apiLines = await TraceIdsOnceAsync(_api.CapturedEvents, atTheBff.TraceId);
+        var bffLines = await TraceIdsOnceAsync(_bff.CapturedEvents, atTheBff.TraceId);
 
         using var all = new AssertionScope();
         atTheBff.TraceId.Should().NotBe(BrowsersTraceId, "the BFF starts the trace, whatever the browser names");
@@ -126,9 +134,9 @@ public sealed class TraceStartsAtTheBffTests : IDisposable
         atTheApi.Tracestate.Should().BeEmpty("the browser's trace state stops at the BFF");
         atTheApi.Baggage.Should().BeEmpty("the browser's baggage stops at the BFF");
         atTheApi.ActivityBaggage.Should().BeEmpty();
-        TraceIdsOn(_api.CapturedEvents).Should().Contain(atTheBff.TraceId, "the API's log lines carry the same id")
+        apiLines.Should().Contain(atTheBff.TraceId, "the API's log lines carry the same id")
             .And.NotContain(BrowsersTraceId);
-        TraceIdsOn(_bff.CapturedEvents).Should().Contain(atTheBff.TraceId, "the BFF's log lines carry the same id")
+        bffLines.Should().Contain(atTheBff.TraceId, "the BFF's log lines carry the same id")
             .And.NotContain(BrowsersTraceId);
     }
 
@@ -179,20 +187,22 @@ public sealed class TraceStartsAtTheBffTests : IDisposable
         var atTheBff = _bff.Requests.Single(missing);
         var atTheApi = _api.Requests.Single(missing);
         var refusedAtTheBff = _bff.Requests.Single("/api/accounts");
+        var apiLines = await TraceIdsOnceAsync(_api.CapturedEvents, atTheBff.TraceId);
+        var bffLines = await TraceIdsOnceAsync(_bff.CapturedEvents, atTheBff.TraceId, refusedAtTheBff.TraceId);
 
         using var all = new AssertionScope();
         notFound.StatusCode.Should().Be(HttpStatusCode.NotFound);
         fromTheApi.GetProperty("traceId").GetString().Should().NotBe(BrowsersTraceId)
             .And.Be(atTheBff.TraceId, "the id in the API's answer is the one the BFF gave the request")
             .And.Be(atTheApi.TraceId);
-        TraceIdsOn(_api.CapturedEvents).Should().Contain(atTheBff.TraceId, "the answer's id finds the API's log lines")
+        apiLines.Should().Contain(atTheBff.TraceId, "the answer's id finds the API's log lines")
             .And.NotContain(BrowsersTraceId);
 
         unauthorised.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
         fromTheBff.GetProperty("traceId").GetString().Should().NotBe(BrowsersTraceId)
             .And.Be(refusedAtTheBff.TraceId, "the id in the BFF's answer is the one it gave the request");
         _api.Requests.All("/api/accounts").Should().BeEmpty("the BFF refuses a request with no session itself");
-        TraceIdsOn(_bff.CapturedEvents).Should().Contain([atTheBff.TraceId, refusedAtTheBff.TraceId])
+        bffLines.Should().Contain([atTheBff.TraceId, refusedAtTheBff.TraceId])
             .And.NotContain(BrowsersTraceId);
     }
 
@@ -213,6 +223,8 @@ public sealed class TraceStartsAtTheBffTests : IDisposable
         var depositAtTheBff = _bff.Requests.Single(DepositPath);
         var depositAtTheApi = _api.Requests.Single(DepositPath);
         var audited = await AuditedTraceIdAsync(visitor.UserId, SecurityEvents.MoneyDeposited);
+        var apiLines = await TraceIdsOnceAsync(_api.CapturedEvents, depositAtTheBff.TraceId);
+        var bffLines = await TraceIdsOnceAsync(_bff.CapturedEvents, depositAtTheBff.TraceId);
 
         using var all = new AssertionScope();
         depositAtTheBff.Traceparent.Should().BeEmpty("ARRANGE: the browser sent no trace header");
@@ -226,8 +238,8 @@ public sealed class TraceStartsAtTheBffTests : IDisposable
         problem.GetProperty("traceId").GetString().Should().Be(_bff.Requests.Single(missing).TraceId)
             .And.Be(_api.Requests.Single(missing).TraceId)
             .And.NotBe(depositAtTheBff.TraceId, "each request has an id of its own");
-        TraceIdsOn(_api.CapturedEvents).Should().Contain(depositAtTheBff.TraceId);
-        TraceIdsOn(_bff.CapturedEvents).Should().Contain(depositAtTheBff.TraceId);
+        apiLines.Should().Contain(depositAtTheBff.TraceId);
+        bffLines.Should().Contain(depositAtTheBff.TraceId);
     }
 
     private sealed record Visitor(string Cookie, Guid UserId);
@@ -300,6 +312,30 @@ public sealed class TraceStartsAtTheBffTests : IDisposable
 
     private static string[] TraceIdsOn(IEnumerable<LogEvent> events) =>
         [.. events.Where(e => e.TraceId is not null).Select(e => e.TraceId.ToString()!).Distinct()];
+
+    /// <summary>
+    /// <see cref="TraceIdsOn"/>, read once the host has written the request line of every id asked
+    /// for: the last line a request writes, so every other line of that request is in by then. Both
+    /// hosts write it as the request ends (<c>UseSerilogRequestLogging</c>), and over a socket the
+    /// answer can reach this client first: read at once, the last request's line was missing on CI on
+    /// 2026-10-14. A request line that has not come after <see cref="LineWait"/> fails here.
+    /// </summary>
+    private static async Task<string[]> TraceIdsOnceAsync(IEnumerable<LogEvent> events, params string?[] traceIds)
+    {
+        var waited = Stopwatch.StartNew();
+        while (!traceIds.All(id => id is not null && RequestLineIdsOn(events).Contains(id))
+            && waited.Elapsed < LineWait)
+        {
+            await Task.Delay(20);
+        }
+
+        RequestLineIdsOn(events).Should().Contain(
+            traceIds.Select(id => id ?? "(no trace id)"), "a host writes a request's line when the request ends");
+        return TraceIdsOn(events);
+    }
+
+    private static string[] RequestLineIdsOn(IEnumerable<LogEvent> events) =>
+        TraceIdsOn(events.Where(e => e.MessageTemplate.Text.StartsWith(RequestLine, StringComparison.Ordinal)));
 
     /// <summary>What a host held for one request: the id of its trace, and the trace headers it was sent.</summary>
     private sealed record Seen(
