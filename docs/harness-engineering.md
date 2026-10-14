@@ -9,7 +9,7 @@ made by others. It has three parts:
 - **what they read:** I give every agent the same public [instruction file][ag], with the
   commands, what "done" means and [what an agent never does][never];
 - **what runs on their changes:** the jobs of two workflows, [CI][ci] and the
-  [contract tests][bru], a security scan and an AI review; nine of those checks are
+  [contract tests][bru], a security scan and an AI review; eleven of those checks are
   [required][rs] today, and `main` does not take a change that has not passed them
   ([that is recent](#what-this-does-not-show));
 - **what limits them:** on my computer the orchestrator's merge command is refused before it
@@ -27,8 +27,8 @@ two more in full.
 This page takes the public part of the harness piece by piece, each with the file, the job or
 the rule that shows it, and says where a part rests on my word alone. How I lead the work is in
 the [Engineering Playbook][pb]; its [table][who] names the agents. The numbers in
-[the last table](#the-numbers) were counted on 12 October 2026; it says where each can be
-counted again.
+[the last table](#the-numbers) were counted on 12 October 2026, and the first of them again on
+14 October 2026; it says where each can be counted again.
 
 ## One change, start to finish
 
@@ -45,9 +45,9 @@ The test is the one of the [third episode](#a-defect-the-build-did-not-report-se
    tests passed; 371 were skipped on my machine because they need a SQL Server, and CI runs
    them.
 2. **On GitHub.** The last commit has 17 results: twelve jobs of the two workflows, four of the
-   security scan and the status of the AI review. Nine of the jobs are the required checks, and
-   the security scan has a rule of its own; the other three jobs and the review's status are not
-   required.
+   security scan and the status of the AI review. On that day nine of the jobs were the required
+   checks, and the security scan had a rule of its own; the other three jobs and the review's
+   status were not required.
 3. **The AI review, first round.** One finding, marked minor, and it was right. The comment had
    been corrected, but the message the test prints when it fails still gave the old explanation
    in other words. Before the pull request I had searched the code for the comment's own words,
@@ -116,7 +116,7 @@ inferential when an AI model judges the result.
 | Instructions (guides) | One [instruction file][ag] for all agents, two procedures ([gate][gate], [review round][round]), 64 [decisions][adr], the [traps][tr] |
 | Checks a program runs (computational sensors) | [CI jobs][ci]; a security scan; 24 [architecture-test][arch] files |
 | Checks a model judges (inferential sensors) | An AI review on pull requests; a [second reader][who] |
-| Limits and my checkpoints | The [rule set][rs], 9 required checks; my merge; a [deploy][dep] |
+| Limits and my checkpoints | The [rule set][rs], 11 required checks; my merge; a [deploy][dep] |
 | Isolation | A separate folder and branch per agent ([the path of a change][path]): it separates files, nothing else |
 | Memory | The [decision records][adr], cited in the code by number; a page of [traps][tr] |
 | The correction loop (steering loop) | A mistake becomes a check when a program can detect it: [three episodes](#three-episodes) |
@@ -130,10 +130,9 @@ inferential when an AI model judges the result.
   that they were followed.
 - **Checks a program runs.** A green job does not show that any test passed. So 9 steps in
   [`ci.yml`][ci] and [`contract-tests.yml`][bru] count what ran and fail their job when the
-  suite beside them passed nothing, skipped a test or fell under a minimum. Five jobs run on a
-  pull request and are not required: the demo suite, the documentation site, the check on
-  commit messages, the check on spelling and the test coverage. Two of the counting steps are
-  in the first of them and one in the last.
+  suite beside them passed nothing, skipped a test or fell under a minimum. Three jobs run on a
+  pull request and are not required: the documentation site, the check on spelling and the test
+  coverage, which holds one of the counting steps.
 - **Checks a model judges.** The second reader is another agent with one task, to find what is
   wrong, and only where a mistake is expensive: money, access, a database migration. Its
   findings are not in the pull requests: that it ran is my own statement.
@@ -162,18 +161,18 @@ change, from anyone's agent, is public: [`AGENTS.md`][ag], the checks in [CI][ci
 
 ## What this does not show
 
-- **Nine required checks is recent.** The rule set on `main` required two checks from 14 July
-  2026, eight and the code-scanning rule from 25 September, and nine from 3 October. 202 of the
-  273 pull requests merged up to [#283][p283] were merged before 25 September. Fewer jobs
-  existed then: [#26][p26], merged on 22 July, ran three CI jobs, and [#208][p208], merged on
-  24 September, ran eight. Outside the two required ones, a red job would not have blocked the
-  merge. I counted how often that happened: of those 273, one was merged with a check red on
-  its last commit, the security scan on [#7][p7], in the scan's first week. The checks of every
-  pull request are public and can be counted again. The date of 25 September, and what each
-  version of the rule set required, are my own statement, because a visitor cannot read the
-  rule set's history; [GitHub's API][rsapi] shows when the rule set was created and when it
-  last changed, and each pull request shows which checks ran on it. `AGENTS.md` itself entered
-  the repository on 11 October ([history][agh]); the written gates and merge rules have been in
+- **Eleven required checks is recent.** The rule set on `main` required two checks from 14 July
+  2026, eight and the code-scanning rule from 25 September, nine from 3 October and eleven from 14
+  October. 202 of the 273 pull requests merged up to [#283][p283] were merged before 25 September.
+  Fewer jobs existed then: [#26][p26], merged on 22 July, ran three CI jobs, and [#208][p208],
+  merged on 24 September, ran eight. Outside the two required ones, a red job would not have blocked
+  the merge. I counted how often that happened: of those 273, one was merged with a check red on its
+  last commit, the security scan on [#7][p7], in the scan's first week. The checks of every pull
+  request are public and can be counted again. The dates of 25 September and 3 October, and what
+  each version of the rule set required, are my own statement, because a visitor cannot read the
+  rule set's history; [GitHub's API][rsapi] shows when the rule set was created and when it last
+  changed, and each pull request shows which checks ran on it. `AGENTS.md` itself entered the
+  repository on 11 October ([history][agh]); the written gates and merge rules have been in
   [Engineering practices][ep] since 25 July.
 - **No comparison with and without the harness exists, and the accuracy of the AI review is
   unknown.** I have not measured the work with and without any part of it. The episodes show
@@ -247,7 +246,7 @@ the table of numbers below.
 
 I use the same term as [OpenAI's post][oai] and the opposite merge policy. The post describes a
 repository with minimal blocking merge gates, where a person may review a pull request but does
-not have to, and where agents "often squash and merge their own pull requests". Here nine
+not have to, and where agents "often squash and merge their own pull requests". Here eleven
 required checks and a code-scanning rule block a merge, and I merge every pull request myself.
 
 This is a different position, not a correction of theirs. The post says its minimal gates fit a
@@ -272,7 +271,7 @@ elsewhere. I keep the merge decision because these changes can affect rules abou
 
 | Number | Where it can be counted again |
 |--:|---|
-| 9 | The required checks listed on the [rule set][rs] page |
+| 11 | The required checks listed on the [rule set][rs] page |
 | 64 | The numbered files in [`docs/adr/`][adrdir]: 65, one of which is the template |
 | 24 | The files in the [architecture tests' folder][arch]: 25, one of which holds no test |
 | 9 | Eight steps of [`ci.yml`][ci] and one of [`contract-tests.yml`][bru], named below |

@@ -24,7 +24,7 @@ a change takes from a plan to the live demo, and what stands between an agent an
 | Number | What it counts |
 |--:|---|
 | **[323](https://github.com/Gurgant/azurebank-v2/pulls?q=is%3Apr+is%3Amerged)** | pull requests merged: each one by me, each one through the automated tests |
-| **[9](https://github.com/Gurgant/azurebank-v2/rules/18930321)** | checks now required before `main` takes a pull request, plus a security scan |
+| **[11](https://github.com/Gurgant/azurebank-v2/rules/18930321)** | checks now required before `main` takes a pull request, plus a security scan |
 | **[3,243](https://github.com/Gurgant/azurebank-v2/actions/runs/38551127398/job/115809063440)** | backend tests that run with no database |
 | **[494](https://github.com/Gurgant/azurebank-v2/actions/runs/38551127398/job/115809063267)** | backend proofs on a real SQL Server, in a job of their own |
 | **[1,561](https://github.com/Gurgant/azurebank-v2/actions/runs/38551127398/job/115809063155)** | frontend tests |
@@ -89,7 +89,7 @@ outside the test suite, an agent drives Chrome through an MCP server and reports
 ## What stands between an agent and `main`
 
 - **The rule set.** `main` takes a change only as a squash-merged pull request that has passed
-  nine required checks and a CodeQL scan. The rule set has no bypass list, so it binds my own
+  eleven required checks and a CodeQL scan. The rule set has no bypass list, so it binds my own
   account too; the repository is mine, so I can still edit the rule set.
 - **No agent merges: I do.** The orchestrator is stopped by a permission rule and a hook that
   refuse the merge command before it runs. The other three are held one step earlier: their

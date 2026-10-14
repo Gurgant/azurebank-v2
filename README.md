@@ -125,7 +125,7 @@ money rules. [How AzureBank works](docs/architecture/overview.md) follows one re
 
 ## Tests and CI
 
-Today every pull request runs all of these, and `main` takes a merge only when the nine required
+Today every pull request runs all of these, and `main` takes a merge only when the eleven required
 checks have passed and CodeQL reports no error and no security alert rated high or critical.
 
 | Job | What it checks |
@@ -138,15 +138,14 @@ checks have passed and CodeQL reports no error and no security alert rated high 
 | Runtime conformance | Schemathesis against the running API, every check, with a real sign-in |
 | Contract tests (the check is named Bruno collection) | The Bruno collection, request by request, against the running API |
 | Infrastructure | The deployment templates compile and lint clean, the tests of the deployment script and of the PowerShell scripts, a lint of the workflows |
+| Demo suite | The demo's browser suite on the stack a deployment runs, with the two restarts of containers it makes |
+| Commit messages | The pull request's commit messages, read for a credit line or a mention |
 
 CodeQL analyses the C#, the TypeScript and the workflows on every pull request as well.
 
-Five more jobs run on every pull request and are not among the checks a merge requires: the
-documentation site, built with every link checked, the demo's browser suite on the stack a
-deployment runs, with the two restarts of containers it makes, a reading of the pull
-request's commit messages for a credit line or a mention, a count of how much of the
-hand-written code the tests run, which fails under a floor, and a reading of the prose for
-American spellings.
+Three more jobs run on every pull request and are not among the checks a merge requires: the
+documentation site, built with every link checked, a count of how much of the hand-written code the
+tests run, which fails under a floor, and a reading of the prose for American spellings.
 
 ## Read deeper
 
