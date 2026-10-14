@@ -456,6 +456,20 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
         public void Emit(LogEvent logEvent) => events.Enqueue(logEvent);
     }
 
+    private static async Task<bool> Eventually(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (!condition())
+        {
+            if (DateTime.UtcNow >= deadline)
+            {
+                return false;
+            }
+            await Task.Delay(25);
+        }
+        return true;
+    }
+
     [Theory]
     // Measured 2026-10-13. The client reads the whole body before the call returns, so a body
     // that breaks off fails the call itself; one that arrived whole and cannot be turned into
@@ -489,13 +503,17 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
 
         await client.SendAsync(Proxied(HttpMethod.Get, "/api/accounts", cookieName, sessionId));
 
+        // The renewal runs detached and writes its line itself; the request waits for it 5 s at most.
+        static bool IsRenewalLine(LogEvent e) => e.MessageTemplate.Text.Contains("efresh", StringComparison.Ordinal)
+            || e.MessageTemplate.Text.Contains("Renewal", StringComparison.Ordinal);
+        (await Eventually(() => log.Any(IsRenewalLine))).Should().BeTrue("the renewal says how it failed");
+
         using var all = new AssertionScope();
         api.RefreshCalls.Should().Be(1, "the foreground window must have tried a renewal");
         Session(factory, sessionId).Value.Should().NotBeNull("an answer that cannot be read is not a dead grant");
         forwarder.Forwarded.Should().ContainSingle()
             .Which.Auth.Should().Be($"Bearer {held}", "no new token came and the held one has more than 5 s left");
-        var renewal = log.Where(e => e.MessageTemplate.Text.Contains("efresh", StringComparison.Ordinal)
-            || e.MessageTemplate.Text.Contains("Renewal", StringComparison.Ordinal)).ToList();
+        var renewal = log.Where(IsRenewalLine).ToList();
         renewal.Should().ContainSingle("the failure is said once").Which.Should().Match<LogEvent>(
             e => e.MessageTemplate.Text.StartsWith(logged, StringComparison.Ordinal) && e.Exception!.GetType() == thrown);
     }
