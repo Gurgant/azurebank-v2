@@ -7,8 +7,8 @@
 # What it can change: a `uses:` line in .github/workflows. azure/login is pinned to a commit with
 # its version in a comment; GitHub's changelog of 2022-10-31 says Dependabot updates that comment
 # with the commit. Not seen here yet.
-# What it cannot: the image a job runs on (`runs-on: ubuntu-24.04`) and the version of
-# actionlint that ci.yml downloads. Both move by hand.
+# What it cannot: the image a job runs on (`runs-on: ubuntu-24.04`) and the versions of
+# actionlint and of Bicep that ci.yml downloads, each checked by its SHA-256. They move by hand.
 version: 2
 updates:
   - package-ecosystem: github-actions
