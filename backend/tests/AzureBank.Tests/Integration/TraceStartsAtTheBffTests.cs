@@ -55,6 +55,9 @@ public sealed class TraceStartsAtTheBffTests : IDisposable
     /// <summary>How long <see cref="TraceIdsOnceAsync"/> waits for a request's log line.</summary>
     private static readonly TimeSpan LineWait = TimeSpan.FromSeconds(10);
 
+    /// <summary>How both hosts' request line begins (<c>UseSerilogRequestLogging</c> in each Program.cs).</summary>
+    private const string RequestLine = "HTTP {RequestMethod} {RoutePattern} responded";
+
     private const string Password = "SecurePass123!";
     private const string Pin = "824613";
     private const string DepositPath = "/api/transactions/deposit";
@@ -311,22 +314,28 @@ public sealed class TraceStartsAtTheBffTests : IDisposable
         [.. events.Where(e => e.TraceId is not null).Select(e => e.TraceId.ToString()!).Distinct()];
 
     /// <summary>
-    /// <see cref="TraceIdsOn"/>, read once a line carries every id asked for, or once
-    /// <see cref="LineWait"/> has passed without one, so the assertion after it fails on what was
-    /// there. Both hosts write a request's line as the request ends (<c>UseSerilogRequestLogging</c>),
-    /// and over a socket the answer can reach this client first: read at once, the last request's
-    /// line was missing on CI on 2026-10-14.
+    /// <see cref="TraceIdsOn"/>, read once the host has written the request line of every id asked
+    /// for: the last line a request writes, so every other line of that request is in by then. Both
+    /// hosts write it as the request ends (<c>UseSerilogRequestLogging</c>), and over a socket the
+    /// answer can reach this client first: read at once, the last request's line was missing on CI on
+    /// 2026-10-14. A request line that has not come after <see cref="LineWait"/> fails here.
     /// </summary>
     private static async Task<string[]> TraceIdsOnceAsync(IEnumerable<LogEvent> events, params string?[] traceIds)
     {
         var waited = Stopwatch.StartNew();
-        while (!traceIds.All(id => id is not null && TraceIdsOn(events).Contains(id)) && waited.Elapsed < LineWait)
+        while (!traceIds.All(id => id is not null && RequestLineIdsOn(events).Contains(id))
+            && waited.Elapsed < LineWait)
         {
             await Task.Delay(20);
         }
 
+        RequestLineIdsOn(events).Should().Contain(
+            traceIds.Select(id => id ?? "(no trace id)"), "a host writes a request's line when the request ends");
         return TraceIdsOn(events);
     }
+
+    private static string[] RequestLineIdsOn(IEnumerable<LogEvent> events) =>
+        TraceIdsOn(events.Where(e => e.MessageTemplate.Text.StartsWith(RequestLine, StringComparison.Ordinal)));
 
     /// <summary>What a host held for one request: the id of its trace, and the trace headers it was sent.</summary>
     private sealed record Seen(
