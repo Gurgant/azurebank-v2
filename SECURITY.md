@@ -185,14 +185,17 @@ them in a minute.
 
 Two surfaces, two rules, and they are not the same rule:
 
-- **`/bff/auth/*`** has no OpenAPI contract behind it, so **every response carrying a payload** is
-  validated fail-closed at runtime, in production included — login, register, `me`,
-  `session-status` and `verify-pin`. The Zod schemas are also the source of the TypeScript types,
-  so the type and the validator cannot disagree. (`logout` and `set-pin` return no payload, so
-  there is nothing to validate.)
-- **`/api/*`** is validated fail-closed in production only on the **money** responses — the four
-  mutation receipts, the accounts list and the transaction summary. Everything else on that
-  surface validates in development and test only, deliberately: the contract there is already
+- **`/bff/auth/*`** has no OpenAPI contract behind it, so **every response of the BFF's own that
+  carries data** is validated fail-closed at runtime, in production included — login, register, the
+  demo's claim, re-authentication, `me`, `session-status` and `verify-pin`. The Zod schemas are also
+  the source of the TypeScript types, so the type and the validator cannot disagree. (`logout` and
+  `set-pin` answer with a message and no data, so there is nothing to validate.) One endpoint there
+  is not among them: the AzureTag rename has a schema generated from the API's contract and is
+  checked in development and test only.
+- **`/api/*`** is validated fail-closed in production only on the **money** responses and the
+  step-up authorisations — the four mutation receipts, the accounts list, the transaction summary
+  and the four authorisations (two transfers, a withdrawal, an account closure). Everything else on
+  that surface validates in development and test only, deliberately: the contract there is already
   guarded by generated types, a drift gate and contract tests, and a wrong field on a transaction
   list should not take the page down.
 

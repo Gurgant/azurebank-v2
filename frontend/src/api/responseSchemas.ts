@@ -26,8 +26,9 @@ type Schemas = components['schemas'];
  * - **B is the source**: nothing here is hand-written; regenerating from the spec keeps the
  *   validators drift-proof by construction.
  * - **A is where to enforce**: the MONEY surfaces (the four mutation receipts, the accounts
- *   list, the monthly summary) export STRICT schemas — validated fail-closed in every
- *   environment, because a silent drift there means wrong money on screen.
+ *   list, the monthly summary) and the four step-up authorisations export STRICT schemas —
+ *   validated fail-closed in every environment, because a silent drift there means wrong money
+ *   on screen, or an operation refused for no reason shown.
  * - **C is when to validate the rest**: every other response validates only outside
  *   production (`devOnly`) — catching MSW mock-drift in vitest and local integration drift
  *   with zero production crash-surface.
@@ -81,7 +82,7 @@ export type _GeneratedSchemasMatchSpec = [
   AssertExtends<Schemas['DemoCopyInfo'], DemoCopyInfo>,
 ];
 
-// ===== A — STRICT money schemas (fail-closed everywhere) =====
+// ===== A — STRICT schemas, money and step-up authorisations (fail-closed everywhere) =====
 
 export const depositResponseSchema = DepositResponse as ZodType<Schemas['DepositResponse']>;
 export const withdrawResponseSchema = WithdrawResponse as ZodType<Schemas['WithdrawResponse']>;
