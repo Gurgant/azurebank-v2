@@ -459,7 +459,7 @@
                     },
                     "errorCode": {
                       "type": "string",
-                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS')"
+                      "description": "Machine-readable code of the refusal: the value a client branches on"
                     },
                     "traceId": {
                       "type": "string",
@@ -915,7 +915,7 @@
                     },
                     "errorCode": {
                       "type": "string",
-                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS')"
+                      "description": "Machine-readable code of the refusal: the value a client branches on"
                     },
                     "traceId": {
                       "type": "string",
@@ -1675,7 +1675,7 @@
                     },
                     "errorCode": {
                       "type": "string",
-                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS')"
+                      "description": "Machine-readable code of the refusal: the value a client branches on"
                     },
                     "traceId": {
                       "type": "string",
@@ -2038,7 +2038,7 @@
                     },
                     "errorCode": {
                       "type": "string",
-                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS')"
+                      "description": "Machine-readable code of the refusal: the value a client branches on"
                     },
                     "traceId": {
                       "type": "string",
@@ -2274,7 +2274,7 @@
                     },
                     "errorCode": {
                       "type": "string",
-                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                      "description": "Machine-readable code of the refusal: the value a client branches on"
                     },
                     "traceId": {
                       "type": "string",
@@ -2317,7 +2317,7 @@
                     },
                     "errorCode": {
                       "type": "string",
-                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                      "description": "Machine-readable code of the refusal: the value a client branches on"
                     },
                     "traceId": {
                       "type": "string",
@@ -2353,7 +2353,7 @@
                     },
                     "errorCode": {
                       "type": "string",
-                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                      "description": "Machine-readable code of the refusal: the value a client branches on"
                     },
                     "traceId": {
                       "type": "string",
@@ -2511,7 +2511,7 @@
                     },
                     "errorCode": {
                       "type": "string",
-                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS')"
+                      "description": "Machine-readable code of the refusal: the value a client branches on"
                     },
                     "traceId": {
                       "type": "string",
@@ -2679,7 +2679,7 @@
                     },
                     "errorCode": {
                       "type": "string",
-                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                      "description": "Machine-readable code of the refusal: the value a client branches on"
                     },
                     "traceId": {
                       "type": "string",
@@ -2722,7 +2722,7 @@
                     },
                     "errorCode": {
                       "type": "string",
-                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                      "description": "Machine-readable code of the refusal: the value a client branches on"
                     },
                     "traceId": {
                       "type": "string",
@@ -2766,7 +2766,7 @@
                     },
                     "errorCode": {
                       "type": "string",
-                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                      "description": "Machine-readable code of the refusal: the value a client branches on"
                     },
                     "traceId": {
                       "type": "string",
@@ -2923,7 +2923,7 @@
                     },
                     "errorCode": {
                       "type": "string",
-                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS')"
+                      "description": "Machine-readable code of the refusal: the value a client branches on"
                     },
                     "traceId": {
                       "type": "string",
@@ -3097,7 +3097,7 @@
                     },
                     "errorCode": {
                       "type": "string",
-                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS')"
+                      "description": "Machine-readable code of the refusal: the value a client branches on"
                     },
                     "traceId": {
                       "type": "string",
@@ -3265,7 +3265,7 @@
                     },
                     "errorCode": {
                       "type": "string",
-                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                      "description": "Machine-readable code of the refusal: the value a client branches on"
                     },
                     "traceId": {
                       "type": "string",
@@ -3308,7 +3308,7 @@
                     },
                     "errorCode": {
                       "type": "string",
-                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                      "description": "Machine-readable code of the refusal: the value a client branches on"
                     },
                     "traceId": {
                       "type": "string",
@@ -3365,7 +3365,7 @@
                     },
                     "errorCode": {
                       "type": "string",
-                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                      "description": "Machine-readable code of the refusal: the value a client branches on"
                     },
                     "traceId": {
                       "type": "string",
@@ -3533,7 +3533,7 @@
                     },
                     "errorCode": {
                       "type": "string",
-                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                      "description": "Machine-readable code of the refusal: the value a client branches on"
                     },
                     "traceId": {
                       "type": "string",
@@ -3576,7 +3576,7 @@
                     },
                     "errorCode": {
                       "type": "string",
-                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                      "description": "Machine-readable code of the refusal: the value a client branches on"
                     },
                     "traceId": {
                       "type": "string",
@@ -3620,7 +3620,7 @@
                     },
                     "errorCode": {
                       "type": "string",
-                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                      "description": "Machine-readable code of the refusal: the value a client branches on"
                     },
                     "traceId": {
                       "type": "string",

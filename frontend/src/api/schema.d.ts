@@ -299,7 +299,7 @@ export interface paths {
                             status?: number;
                             /** @description A human-readable explanation of the business rule violation */
                             detail?: string;
-                            /** @description Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS') */
+                            /** @description Machine-readable code of the refusal: the value a client branches on */
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
@@ -786,7 +786,7 @@ export interface paths {
                             status?: number;
                             /** @description A human-readable explanation of the business rule violation */
                             detail?: string;
-                            /** @description Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS') */
+                            /** @description Machine-readable code of the refusal: the value a client branches on */
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
@@ -1559,7 +1559,7 @@ export interface paths {
                             status?: number;
                             /** @description A human-readable explanation of the business rule violation */
                             detail?: string;
-                            /** @description Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS') */
+                            /** @description Machine-readable code of the refusal: the value a client branches on */
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
@@ -1863,7 +1863,7 @@ export interface paths {
                             status?: number;
                             /** @description A human-readable explanation of the business rule violation */
                             detail?: string;
-                            /** @description Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS') */
+                            /** @description Machine-readable code of the refusal: the value a client branches on */
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
@@ -2062,7 +2062,7 @@ export interface paths {
                             status?: number;
                             /** @description A human-readable explanation of the failure */
                             detail?: string;
-                            /** @description Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE') */
+                            /** @description Machine-readable code of the refusal: the value a client branches on */
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
@@ -2089,7 +2089,7 @@ export interface paths {
                             status?: number;
                             /** @description A human-readable explanation of the failure */
                             detail?: string;
-                            /** @description Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE') */
+                            /** @description Machine-readable code of the refusal: the value a client branches on */
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
@@ -2120,7 +2120,7 @@ export interface paths {
                             status?: number;
                             /** @description A human-readable explanation of the failure */
                             detail?: string;
-                            /** @description Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE') */
+                            /** @description Machine-readable code of the refusal: the value a client branches on */
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
@@ -2253,7 +2253,7 @@ export interface paths {
                             status?: number;
                             /** @description A human-readable explanation of the business rule violation */
                             detail?: string;
-                            /** @description Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS') */
+                            /** @description Machine-readable code of the refusal: the value a client branches on */
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
@@ -2382,7 +2382,7 @@ export interface paths {
                             status?: number;
                             /** @description A human-readable explanation of the failure */
                             detail?: string;
-                            /** @description Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE') */
+                            /** @description Machine-readable code of the refusal: the value a client branches on */
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
@@ -2409,7 +2409,7 @@ export interface paths {
                             status?: number;
                             /** @description A human-readable explanation of the failure */
                             detail?: string;
-                            /** @description Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE') */
+                            /** @description Machine-readable code of the refusal: the value a client branches on */
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
@@ -2440,7 +2440,7 @@ export interface paths {
                             status?: number;
                             /** @description A human-readable explanation of the failure */
                             detail?: string;
-                            /** @description Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE') */
+                            /** @description Machine-readable code of the refusal: the value a client branches on */
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
@@ -2574,7 +2574,7 @@ export interface paths {
                             status?: number;
                             /** @description A human-readable explanation of the business rule violation */
                             detail?: string;
-                            /** @description Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS') */
+                            /** @description Machine-readable code of the refusal: the value a client branches on */
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
@@ -2724,7 +2724,7 @@ export interface paths {
                             status?: number;
                             /** @description A human-readable explanation of the business rule violation */
                             detail?: string;
-                            /** @description Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS') */
+                            /** @description Machine-readable code of the refusal: the value a client branches on */
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
@@ -2853,7 +2853,7 @@ export interface paths {
                             status?: number;
                             /** @description A human-readable explanation of the failure */
                             detail?: string;
-                            /** @description Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE') */
+                            /** @description Machine-readable code of the refusal: the value a client branches on */
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
@@ -2880,7 +2880,7 @@ export interface paths {
                             status?: number;
                             /** @description A human-readable explanation of the failure */
                             detail?: string;
-                            /** @description Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE') */
+                            /** @description Machine-readable code of the refusal: the value a client branches on */
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
@@ -2911,7 +2911,7 @@ export interface paths {
                             status?: number;
                             /** @description A human-readable explanation of the failure */
                             detail?: string;
-                            /** @description Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE') */
+                            /** @description Machine-readable code of the refusal: the value a client branches on */
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
@@ -3044,7 +3044,7 @@ export interface paths {
                             status?: number;
                             /** @description A human-readable explanation of the failure */
                             detail?: string;
-                            /** @description Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE') */
+                            /** @description Machine-readable code of the refusal: the value a client branches on */
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
@@ -3071,7 +3071,7 @@ export interface paths {
                             status?: number;
                             /** @description A human-readable explanation of the failure */
                             detail?: string;
-                            /** @description Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE') */
+                            /** @description Machine-readable code of the refusal: the value a client branches on */
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
@@ -3102,7 +3102,7 @@ export interface paths {
                             status?: number;
                             /** @description A human-readable explanation of the failure */
                             detail?: string;
-                            /** @description Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE') */
+                            /** @description Machine-readable code of the refusal: the value a client branches on */
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
