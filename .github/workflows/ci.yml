@@ -1149,8 +1149,27 @@ jobs:
         with:
           persist-credentials: false
 
-      # Bicep prints a warning on standard error and still exits 0 (measured with 0.47.16), so
-      # anything written there fails the step.
+      # The runner's image brings a Bicep of its own and changes it without notice: on 2026-10-14
+      # it moved from 0.47.16 to 0.48.1 and this job went red with nothing of the repository
+      # changed. The release is pinned by the SHA-256 published with it and put first on PATH for
+      # the steps below; infra/README.md names the same version, and infra/test_scripts.py checks
+      # that the Bicep it runs is this one.
+      - name: Install Bicep
+        shell: bash
+        env:
+          BICEP_VERSION: 0.48.1
+          BICEP_SHA256: b09ec25a9d376c1f8e33ede6ed22b587f915ad68488d5db77a6f9541748c7f6e
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bicep"
+          curl --silent --show-error --fail --location --output "$RUNNER_TEMP/bicep/bicep" \
+            "https://github.com/Azure/bicep/releases/download/v${BICEP_VERSION}/bicep-linux-x64"
+          echo "$BICEP_SHA256  $RUNNER_TEMP/bicep/bicep" | sha256sum --check --quiet
+          chmod +x "$RUNNER_TEMP/bicep/bicep"
+          echo "$RUNNER_TEMP/bicep" >> "$GITHUB_PATH"
+
+      # Bicep prints a warning on standard error and still exits 0 (measured with 0.47.16 and
+      # 0.48.1), so anything written there fails the step.
       - name: Compile and lint the templates
         shell: bash
         run: |

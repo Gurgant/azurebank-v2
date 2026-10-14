@@ -2433,32 +2433,40 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(environment['properties'].get('environmentMode'), 'WorkloadProfiles')
         self.assertEqual(environment['properties']['workloadProfiles'],
                          [{'name': 'Consumption', 'workloadProfileType': 'Consumption'}])
-        # The Bicep CLI has no types for that version: nothing but this test checks the names above.
+        # Bicep has had types for that version since 0.48.1 and checks them too; this test holds the
+        # names whatever Bicep runs.
         self.assertEqual(sorted(environment['properties']),
                          ['appLogsConfiguration', 'environmentMode', 'workloadProfiles'])
         # And the script that reads the environment back asks with the same version.
         self.assertIn(f"$EnvironmentApi = '{environment['apiVersion']}'",
                       (HERE / 'secrets.ps1').read_text(encoding='utf-8'))
 
-    def test_one_warning_is_silenced_on_one_line_and_any_other_still_reaches_standard_error(self):
-        # setUpClass fails on anything Bicep writes to standard error. The template silences one
-        # code on one line (no types for the environment's API version). Both halves are seen
-        # firing here, on copies: without that line the warning is back, and with it an unused
-        # parameter is still reported, by build and by lint.
+    def test_no_warning_is_silenced_and_one_still_reaches_standard_error(self):
+        # setUpClass fails on anything Bicep writes to standard error, and the template silences
+        # nothing: the line that silenced BCP081 went when Bicep 0.48.1 brought the types of the
+        # environment's API version. Seen firing here, on a copy: an unused parameter is still
+        # reported, by build and by lint.
         source = (HERE / 'main.bicep').read_text(encoding='utf-8')
-        self.assertEqual([line for line in source.splitlines() if line.lstrip().startswith('#')],
-                         ['#disable-next-line BCP081'])
-        mutants = {'BCP081': source.replace('#disable-next-line BCP081\n', ''),
-                   'no-unused-params': source + "\nparam nobodyReadsThis string = ''\n"}
-        self.assertNotIn('#disable', mutants['BCP081'])
-        for code, text in mutants.items():
-            for verb in (['build', '--stdout'], ['lint']):
-                with self.subTest(code=code, verb=verb[0]), tempfile.TemporaryDirectory() as folder:
-                    copy_templates(folder, main=text)
-                    result = subprocess.run([BICEP, verb[0], str(pathlib.Path(folder) / 'main.bicep'), *verb[1:]],
-                                            capture_output=True, text=True, timeout=300)
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertIn(f'Warning {code}', result.stderr)
+        self.assertEqual([line for line in source.splitlines() if line.lstrip().startswith('#')], [])
+        text = source + "\nparam nobodyReadsThis string = ''\n"
+        for verb in (['build', '--stdout'], ['lint']):
+            with self.subTest(verb=verb[0]), tempfile.TemporaryDirectory() as folder:
+                copy_templates(folder, main=text)
+                result = subprocess.run([BICEP, verb[0], str(pathlib.Path(folder) / 'main.bicep'), *verb[1:]],
+                                        capture_output=True, text=True, timeout=300)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('Warning no-unused-params', result.stderr)
+
+    def test_the_bicep_that_runs_is_the_one_ci_pins_and_the_readme_names(self):
+        # The runner's image changes its Bicep without notice: on 2026-10-14 it moved from 0.47.16
+        # to 0.48.1 and this suite went red with nothing of the repository changed. So CI pins one
+        # version, and a machine that runs these tests is asked for the same one.
+        workflow = (HERE.parent / '.github' / 'workflows' / 'ci.yml').read_text(encoding='utf-8')
+        (pinned,) = re.findall(r'BICEP_VERSION: (\d+\.\d+\.\d+)\s*$', workflow, re.MULTILINE)
+        self.assertIn(f'the Bicep CLI on `PATH` ({pinned})', (HERE / 'README.md').read_text(encoding='utf-8'))
+        result = subprocess.run([BICEP, '--version'], capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f'Bicep CLI version {pinned} ', result.stdout)
 
     def test_the_check_of_the_app_inputs_silences_one_code_and_any_other_still_reaches_standard_error(self):
         # Its parameters exist to be checked by Azure and nothing in the file reads them, so the
