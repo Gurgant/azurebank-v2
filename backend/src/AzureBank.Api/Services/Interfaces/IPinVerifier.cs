@@ -13,7 +13,8 @@ public interface IPinVerifier
     /// correct PIN (resetting the failure counter), <c>false</c> on a wrong PIN
     /// still under the lockout threshold. Throws
     /// <see cref="AzureBank.Shared.Exceptions.PinLockedException"/> (HTTP 429)
-    /// when the PIN is already locked or when this attempt crosses the threshold.
+    /// when the lock answers the request. Its <c>PinWasCompared</c> is true when this PIN was
+    /// compared and found wrong, and false when the lock refused the request unread.
     /// </summary>
     Task<bool> VerifyPinAsync(Guid userId, string pin, CancellationToken cancellationToken = default);
 }

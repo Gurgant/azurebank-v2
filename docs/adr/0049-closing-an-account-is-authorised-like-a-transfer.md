@@ -2,7 +2,7 @@
 
 **Status:** Accepted · **Date:** 2026-09-06 · **Amended:** 2026-09-07 (ADR-0050),
 2026-09-11 (ADR-0044), 2026-09-14 (ADR-0044), 2026-09-21 (ADR-0056), 2026-10-10 (D9),
-2026-10-11 (D8, D9)
+2026-10-11 (D8, D9), 2026-10-14 (D7)
 
 ## Context
 
@@ -44,8 +44,8 @@ balance before primary, is code (`RefuseIfNotClosable`), held by a unit test and
   is the contract: ownership → balance → primary → presence → validation → the transaction (D8).
 - **D7: One refusal event, and the 422s stay log-only.** A DELETE with no authorisation writes
   `AccountDeletionRefused` through `RecordRefusalAsync`, after the ownership check, so the row names
-  an account the caller owns and outlives the 401. A wrong or locked PIN at the mint writes the same
-  event (ADR-0044). The 422s write none, because the account's owner can trigger them at will.
+  an account the caller owns and outlives the 401. A PIN found wrong at the mint writes the same
+  event (ADR-0044). The 422s and a request the lock refuses unread write none: both repeat at will.
 - **D8: An explicit transaction, consume after the save, re-entrancy written into the delegate.**
   `DeleteAccountAsync` runs the soft delete, the `AccountDeleted` row, the save, then
   `ConsumeAsync`, then the commit, because two autocommits would leave the account closed with

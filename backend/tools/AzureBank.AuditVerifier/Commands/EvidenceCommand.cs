@@ -26,7 +26,7 @@ namespace AzureBank.AuditVerifier.Commands;
 /// <para>
 /// ⚠️ <b>THE AUTHORISATION ROW IS NOT INSIDE THE CHAIN, AND THE OUTPUT SAYS SO ON EVERY RUN.</b>
 /// A successful mint writes no audit row — measured: <c>StepUpAuthorizationService</c> calls
-/// <c>IAuditService</c> only to record a wrong or locked PIN (since 2026-09-14), and the mint
+/// <c>IAuditService</c> only to record a PIN found wrong (since 2026-09-14), and the mint
 /// endpoint not at all — so the PIN proof lives only in a table anybody holding the database
 /// can rewrite. What the chain vouches for is the
 /// <c>MoneyTransferred</c> (or <c>MoneyTransferredInternally</c>) row naming the transaction and,

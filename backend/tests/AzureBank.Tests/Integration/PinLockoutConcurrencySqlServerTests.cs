@@ -8,7 +8,6 @@ using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
-using AzureBank.Shared.Services.Interfaces;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -252,58 +251,13 @@ public sealed class PinLockoutConcurrencySqlServerTests : IDisposable
 
     private enum Answer { Verified, Wrong, Locked, Other }
 
-    /// <summary>Counts the comparisons with the stored PIN; everything else is the API's own hasher.</summary>
-    private sealed class ComparisonCountingHasher : IPasswordHasher
-    {
-        private int _comparisons;
-        private int _matchedAt;
-
-        public IPasswordHasher? Inner { get; set; }
-
-        public int Comparisons => Volatile.Read(ref _comparisons);
-
-        /// <summary>Which comparison, counted from 1 as they began, first matched; 0 when none did.</summary>
-        public int MatchedAt => Volatile.Read(ref _matchedAt);
-
-        public void Reset()
-        {
-            Volatile.Write(ref _comparisons, 0);
-            Volatile.Write(ref _matchedAt, 0);
-        }
-
-        public string HashPin(string pin) => Inner!.HashPin(pin);
-
-        public bool VerifyPin(string hash, string pin)
-        {
-            var number = Interlocked.Increment(ref _comparisons);
-            var matched = Inner!.VerifyPin(hash, pin);
-            if (matched)
-            {
-                Interlocked.CompareExchange(ref _matchedAt, number, 0);
-            }
-            return matched;
-        }
-
-        public bool PinNeedsRehash(string hash) => Inner!.PinNeedsRehash(hash);
-
-        public bool PinPepperMissingFor(string hash) => Inner!.PinPepperMissingFor(hash);
-    }
-
     private (HttpClient Client, ComparisonCountingHasher Hasher) CreateSqlClientCountingComparisons()
     {
         var hasher = new ComparisonCountingHasher();
         _factory = new CustomWebApplicationFactory();
         _factory.SetConnectionString(SqlServerFactAttribute.ConnectionString!);
-        _countingHost = _factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
-        {
-            var real = services.Single(d => d.ServiceType == typeof(IPasswordHasher));
-            services.Remove(real);
-            services.AddSingleton<IPasswordHasher>(provider =>
-            {
-                hasher.Inner = (IPasswordHasher)real.ImplementationFactory!(provider);
-                return hasher;
-            });
-        }));
+        _countingHost = _factory.WithWebHostBuilder(
+            builder => builder.ConfigureTestServices(hasher.InstallIn));
         return (_countingHost.CreateClient(), hasher);
     }
 

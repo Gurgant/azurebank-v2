@@ -210,9 +210,10 @@ public static class SecurityEvents
 
     /// <summary>
     /// A closure was refused (ADR-0049): at the DELETE because no step-up authorisation was
-    /// presented, or, since 2026-09-11, at the deletion mint for a wrong or locked PIN. Detail
-    /// carries the ErrorCodes reason: <c>AUTHORIZATION_REQUIRED</c>, <c>INVALID_PIN</c> or
-    /// <c>PIN_LOCKED</c>.
+    /// presented, or, since 2026-09-11, at the deletion mint for a PIN that was compared and found
+    /// wrong. Detail carries the ErrorCodes reason: <c>AUTHORIZATION_REQUIRED</c>,
+    /// <c>INVALID_PIN</c>, or <c>PIN_LOCKED</c> when the lock answers that wrong PIN. A request
+    /// the lock refused unread writes no row.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -280,8 +281,9 @@ public static class SecurityEvents
     public const string PinChanged = "PinChanged";
 
     /// <summary>
-    /// A PIN change was refused because the current PIN it offered was wrong. Detail carries the
-    /// ErrorCodes reason: <c>INVALID_PIN</c>, or <c>PIN_LOCKED</c> for the attempt that arms the lock.
+    /// A PIN change was refused because the current PIN it offered was compared and found wrong.
+    /// Detail carries the ErrorCodes reason: <c>INVALID_PIN</c>, or <c>PIN_LOCKED</c> when the lock
+    /// answers that wrong PIN. A request the lock refused unread writes no row.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -424,8 +426,11 @@ public static class SecurityEvents
       already classified it with the routine outcomes above -- an unbounded write into a never-purged
       table -- and that decision was reasoned before this code existed. The contention angle makes it
       firmer than the ADR put it: a wrong PIN is BOUNDED at three attempts by ADR-0010's lockout,
-      while a caller can ask to withdraw more than they hold forever at no cost, and every attempt
-      would take the chain tail lock that every real money movement queues behind.
+      and its rows with it, because a row is written only for a PIN that was compared and a
+      request the lock refuses unread writes none; while a caller can ask to withdraw more than
+      they hold forever at no cost, and every attempt would take the chain tail lock that every
+      real money movement queues behind. PinRefusalRowBoundSqlServerTests counts the rows of a
+      burst against the comparisons.
       AWithdrawalRefusedForFunds_WritesNoRow_AndThatIsTheDecision asserts the absence, because
       somebody re-reading this list will otherwise think it was forgotten.
 
@@ -442,14 +447,18 @@ public static class SecurityEvents
     /// A withdrawal was refused before any money moved. Detail carries the ErrorCodes reason.
     /// </summary>
     /// <remarks>
-    /// Raised for a locked PIN and a wrong PIN — the control that stands between a guessed PIN and
-    /// somebody's balance, and until 2026-08-29 neither left a row.
+    /// Raised at the withdrawal when the step-up authorisation is absent
+    /// (<c>AUTHORIZATION_REQUIRED</c>), and at the withdrawal MINT for a PIN that was compared and
+    /// found wrong: <c>INVALID_PIN</c>, or <c>PIN_LOCKED</c> when the lock answers that wrong PIN.
+    /// The PIN is the control that stands between a guess and somebody's balance. A request the
+    /// lock refused unread writes no row.
     /// <para>
     /// NOT raised for insufficient funds, and the omission is a decision rather than a gap: see the
     /// block comment above. A contract that merely stayed silent about it would let the next reader
     /// add the site back as an oversight, which is how the first draft of this change went wrong.
     /// </para>
-    /// <para>OWASP: <c>authn_login_fail</c>.</para>
+    /// <para>OWASP: <c>authz_fail:[userid,resource]</c> for the absent authorisation;
+    /// <c>authn_login_fail</c> for the PIN.</para>
     /// </remarks>
     public const string MoneyWithdrawalRefused = "MoneyWithdrawalRefused";
 
@@ -460,9 +469,10 @@ public static class SecurityEvents
     /// Raised at both transfer kinds when the step-up authorisation is absent, which is the one
     /// refusal on that path that is about a control rather than about a typo.
     /// <para>
-    /// And since 2026-09-11 at both transfer MINTS, for a wrong PIN (<c>INVALID_PIN</c>) or a locked
-    /// one (<c>PIN_LOCKED</c>): the guess a withdrawal already recorded as
-    /// <see cref="MoneyWithdrawalRefused"/>, which until then left only a log line at the mint.
+    /// And since 2026-09-11 at both transfer MINTS, for a PIN that was compared and found wrong:
+    /// <c>INVALID_PIN</c>, or <c>PIN_LOCKED</c> when the lock answers that wrong PIN. It is the guess
+    /// a withdrawal records as <see cref="MoneyWithdrawalRefused"/>. A request the lock refused
+    /// unread writes no row.
     /// </para>
     /// <para>OWASP: <c>authz_fail:[userid,resource]</c> for the absent authorisation;
     /// <c>authn_login_fail</c> for the PIN.</para>

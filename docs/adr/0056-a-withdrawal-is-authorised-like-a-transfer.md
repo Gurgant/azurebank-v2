@@ -1,7 +1,8 @@
 # ADR-0056: A withdrawal is authorised like a transfer
 
-**Status:** Accepted · **Date:** 2026-09-21 · **Amended:** 2026-09-22 (the SPA mints) ·
-**Extends:** ADR-0042 (the rail), ADR-0049 (account closures), ADR-0050 (what a mint does not check)
+**Status:** Accepted · **Date:** 2026-09-21 · **Amended:** 2026-09-22 (the SPA mints),
+2026-10-14 (D8) · **Extends:** ADR-0042 (the rail), ADR-0049 (account closures),
+ADR-0050 (what a mint does not check)
 
 ## Context
 
@@ -42,8 +43,8 @@ do not have that much", which costs nothing to give.
   movement and the evidence verb joins the authorisation to it on that id. The success row also
   names the authorisation in its hashed `Detail` (`AuditDetails.ConsumedAuthorisation`): the two
   agreeing is what makes a withdrawal strongly authenticated, and disagreement is a finding.
-- **D8: A refused PIN at this mint writes `MoneyWithdrawalRefused`.** The mapping from operation to
-  refusal event is a switch, held by a test that walks `Enum.GetValues<StepUpOperation>()`, because
+- **D8: A PIN found wrong at this mint writes `MoneyWithdrawalRefused`.** The operation is mapped to
+  its refusal event by a switch, held by a test that walks `Enum.GetValues<StepUpOperation>()`, as
   a two-armed choice files a refused withdrawal PIN as a refused transfer and no compiler objects.
 
 **Error codes, in the order they can fire.**

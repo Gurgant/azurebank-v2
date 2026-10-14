@@ -176,6 +176,10 @@ public class PinServiceTests : IDisposable
         ex.ErrorCode.Should().Be(ErrorCodes.PinLocked);
         ((int)ex.Details!["retryAfterSeconds"]).Should().BePositive()
             .And.BeLessThanOrEqualTo(ValidationRules.PinLockoutMinutes * 60);
+        ex.PinWasCompared.Should().BeTrue("this PIN was read and found wrong, and the lock answers it");
+        ex.Details.Keys.Should().BeEquivalentTo(
+            ["retryAfterSeconds", "lockedUntil"],
+            "every entry of Details is written into the answer, and whether the PIN was read is not part of it");
         user.PinLockoutEnd.Should().NotBeNull();
         user.PinLockoutEnd!.Value.Should().BeAfter(DateTimeOffset.UtcNow);
     }
@@ -187,7 +191,9 @@ public class PinServiceTests : IDisposable
 
         var act = () => _sut.VerifyPinAsync(user.Id, "123456");
 
-        await act.Should().ThrowAsync<PinLockedException>();
+        var ex = (await act.Should().ThrowAsync<PinLockedException>()).Which;
+        ex.PinWasCompared.Should().BeFalse("the lock refused this request unread");
+        ex.Details!.Keys.Should().BeEquivalentTo(["retryAfterSeconds", "lockedUntil"]);
         _hasherMock.Verify(x => x.VerifyPin(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
     }
 

@@ -617,8 +617,8 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
           THE BRANCH THAT RETURNS NOTHING. VerifyPinAsync THROWS PinLockedException once the attempt
           limit is crossed rather than returning false, so the lockout cannot be observed by reading
           the return value -- it needs its own catch, and a catch with no test is a branch nobody has
-          entered. Measured: PinService throws its lockout at two places and audits at neither, so
-          before this the control that stops a PIN brute-force was completely silent.
+          entered. Measured: PinService throws its lockout and audits nothing itself, so before
+          this the control that stops a PIN brute-force was completely silent.
 
           This absorbed the withdrawal-only version of this test when the withdrawal joined the rail
           (ADR-0056): the behaviour is identical at every mint, and one theory over four beats two
@@ -630,14 +630,29 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
         await SetPinAsync(token);
         var (path, body, securityEvent, _) = await MintScenarioAsync(mint, accountId);
 
+        HttpResponseMessage? arming = null;
         for (var i = 0; i < ValidationRules.MaxPinAttempts; i++)
         {
-            await Client.PostAsJsonAsync(path, body("999999"), JsonOptions);
+            arming = await Client.PostAsJsonAsync(path, body("999999"), JsonOptions);
         }
+        arming!.StatusCode.Should().Be(
+            HttpStatusCode.TooManyRequests, "the wrong PIN that reaches the threshold is answered by the lock");
 
         var locked = await Client.PostAsJsonAsync(path, body("123456"), JsonOptions);
         locked.StatusCode.Should().Be(
             HttpStatusCode.TooManyRequests, "the correct PIN is refused too once the PIN is locked");
+        var lockedAgain = await Client.PostAsJsonAsync(path, body("999999"), JsonOptions);
+        lockedAgain.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+
+        // The lock answers a PIN it compared and a PIN it did not read with the same members:
+        // what the server knows of the difference stays on the server.
+        string[] members =
+        [
+            "type", "title", "status", "detail", "instance", "errorCode", "traceId",
+            "retryAfterSeconds", "lockedUntil",
+        ];
+        (await MembersOfAsync(arming)).Should().Equal(members);
+        (await MembersOfAsync(locked)).Should().Equal(members);
 
         var rows = await RowsForActorAsync(userId, securityEvent);
         /*
@@ -654,7 +669,16 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
             ValidationRules.MaxPinAttempts - 1,
             "the attempt that trips the lock is recorded as the lockout instead");
         rows.Count(r => r.Detail == ErrorCodes.PinLocked).Should().Be(
-            2, "the attempt that trips it, and the one refused afterwards by the lock itself");
+            1,
+            "a row is written for a PIN that was compared and found wrong, and this is the one that "
+            + "trips the lock. The two requests the standing lock refused were not read, and a row "
+            + "for each would be a write the caller repeats at will (ADR-0044)");
+    }
+
+    private static async Task<string[]> MembersOfAsync(HttpResponseMessage response)
+    {
+        using var body = System.Text.Json.JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        return [.. body.RootElement.EnumerateObject().Select(member => member.Name)];
     }
 
     [Fact]
@@ -694,17 +718,19 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
         var locked = await ChangePinAsync(currentPin: "123456", newPin: "654321");
         locked.StatusCode.Should().Be(
             HttpStatusCode.TooManyRequests, "the correct PIN is refused too once the PIN is locked");
+        var lockedAgain = await ChangePinAsync(currentPin: "999999", newPin: "654321");
+        lockedAgain.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
 
         // As at the mints (TheLockoutAtAMint_LeavesItsRows), the attempt that trips the lock is
-        // recorded as the lockout, so the wrong PINs read one short. Unlike the mints, a request
-        // that finds the lock standing leaves no row: its PIN is not read, and the caller can
-        // repeat it for as long as the lock stands.
+        // recorded as the lockout, so the wrong PINs read one short, and a request that finds
+        // the lock standing leaves no row: its PIN is not read, and the caller can repeat it
+        // for as long as the lock stands.
         var rows = await RowsForActorAsync(userId, SecurityEvents.PinChangeRefused);
         rows.Count(r => r.Detail == ErrorCodes.InvalidPin).Should().Be(
             ValidationRules.MaxPinAttempts - 1,
             "the attempt that trips the lock is recorded as the lockout instead");
         rows.Count(r => r.Detail == ErrorCodes.PinLocked).Should().Be(
-            1, "the attempt that trips the lock, and not the request the standing lock refused");
+            1, "the attempt that trips the lock, and not the two requests the standing lock refused");
         rows.Should().OnlyContain(r => r.Outcome == AuditOutcome.Refused && r.SubjectId == userId);
     }
 
