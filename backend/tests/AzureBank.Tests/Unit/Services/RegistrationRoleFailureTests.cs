@@ -71,6 +71,7 @@ public sealed class RegistrationRoleFailureTests : IDisposable
             _jwt.Object,
             _grants.Object,
             new Mock<IPasswordHasher>().Object,
+            new Mock<IPasswordHasher<ApplicationUser>>().Object,
             new Mock<IPinVerifier>().Object,
             new UserMapper(),
             new AccountMapper(),

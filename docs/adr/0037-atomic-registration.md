@@ -1,7 +1,8 @@
 # ADR-0037: Registration is all-or-nothing
 
 **Status:** Accepted · **Date:** 2026-08-09 · **Amended:** 2026-09-17 (ADR-0003, the password hash
-is PBKDF2). Supersedes nothing. Closes the residual of ADR-0036 (Consequences).
+is PBKDF2), 2026-10-13 (ADR-0003, 220,000 iterations). Supersedes nothing. Closes the residual of
+ADR-0036 (Consequences).
 
 ## Context
 
@@ -64,7 +65,7 @@ insert.
   transaction, where a provider branch in production code would give them a path that does not ship.
   They prove the neutral-409 logic and say nothing about rollback.
 - Registration holds a transaction for the duration of password hashing: Identity's PBKDF2 at
-  100,000 iterations (ADR-0003), which `UserManager.CreateAsync` runs inside it. A connection and
+  220,000 iterations (ADR-0003), which `UserManager.CreateAsync` runs inside it. A connection and
   its locks are held longer. Accepted at this scale: registration is rare and the rows are new, so
   nothing contends on them. If registration becomes hot, the hash moves outside the transaction.
 

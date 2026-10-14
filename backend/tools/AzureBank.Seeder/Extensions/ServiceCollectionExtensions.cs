@@ -31,6 +31,10 @@ public static class ServiceCollectionExtensions
         // Add Infrastructure (DbContext)
         services.AddInfrastructure(configuration, environment);
 
+        // The API's hasher of account passwords, so a seeded password is hashed as a registered
+        // one is (ADR-0003). Before AddIdentity, which adds its own only where none is registered.
+        services.AddScoped<IPasswordHasher<ApplicationUser>, AccountPasswordHasher>();
+
         // Add Identity services (UserManager, RoleManager)
         services.AddIdentity<ApplicationUser, IdentityRole<Guid>>(options =>
         {

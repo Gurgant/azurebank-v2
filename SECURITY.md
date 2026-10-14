@@ -11,13 +11,13 @@ authorisation rails and the audit trail, because those are where the project mak
 ## Security Measures
 
 ### Authentication
-- **Passwords are hashed by ASP.NET Core Identity's default: PBKDF2 with HMAC-SHA512 and 100,000
-  iterations** (the Identity V3 format). Measured, not read: every stored `PasswordHash` on a seeded
-  store starts `AQAAAAIAAYag`, which decodes to exactly that. **That iteration count is below
-  OWASP's current recommendation for this PRF (220,000)**, and PBKDF2 is not memory-hard; raising it
-  is tracked as its own change, because the login path's timing defence is calibrated to this
-  hasher (ADR-0012) and has to move with it. Argon2id hashes PINs only (ADR-0003): the API
-  registers Identity with no custom password hasher.
+- **Passwords are hashed by ASP.NET Core Identity's PBKDF2 with HMAC-SHA512 and 220,000
+  iterations** (the Identity V3 format), the count OWASP's Password Storage Cheat Sheet gives for
+  this function. Measured, not read: the `PasswordHash` the running API stores for a registered
+  password starts `AQAAAAIAA1tg`, which decodes to exactly that. A hash made at 100,000 iterations
+  still signs in, and is stored again at 220,000 when it does. Until then its check is topped up
+  to 220,000, so a sign-in that fails costs the same iterations whether the email is unknown or
+  known (ADR-0012). PBKDF2 is not memory-hard. Argon2id hashes PINs only (ADR-0003).
 - **A 15-minute access token, silently re-minted** by the BFF from the session's refresh token, its
   grant. Short-lived so a leaked token is nearly worthless; re-minted server-side so the user never
   sees an expiry. An active session is bounded by inactivity and absolute timeouts (ADR-0021), and

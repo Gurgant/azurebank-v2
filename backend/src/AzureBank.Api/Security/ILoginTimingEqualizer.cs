@@ -7,8 +7,8 @@ namespace AzureBank.Api.Security;
 ///
 /// The reference hash is cached process-wide and computed lazily on the first
 /// unknown-email login; from then on an unknown-email login performs a single
-/// verification (not a hash + a verify), keeping the cost equal to
-/// <c>UserManager.CheckPasswordAsync</c>. The service is registered scoped and uses
+/// verification (not a hash + a verify), keeping the cost equal to a real
+/// account's check. The service is registered scoped and uses
 /// the request's own password hasher, so the cost tracks the configured hashing
 /// options; only the very first unknown-email login after startup pays the one-time
 /// hash + verify.

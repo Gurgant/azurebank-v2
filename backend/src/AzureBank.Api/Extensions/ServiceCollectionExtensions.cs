@@ -48,6 +48,10 @@ public static class ServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddIdentityServices(this IServiceCollection services)
     {
+        // The hasher of account passwords, which holds their iteration count (ADR-0003). Before
+        // AddIdentity, which adds its own only where none is registered.
+        services.AddScoped<IPasswordHasher<ApplicationUser>, AccountPasswordHasher>();
+
         services.AddIdentity<ApplicationUser, IdentityRole<Guid>>(options =>
         {
             // Password requirements (OWASP recommendations)

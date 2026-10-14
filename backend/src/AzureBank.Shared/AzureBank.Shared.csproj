@@ -10,9 +10,8 @@
   <ItemGroup>
     <!-- Identity stores for IdentityUser base class -->
     <PackageReference Include="Microsoft.Extensions.Identity.Stores" />
-    <!-- Argon2id PIN hashing (OWASP recommended). Passwords are NOT hashed with this: the API
-         registers Identity with no custom password hasher, so they use its PBKDF2 (ADR-0003's
-         correction). -->
+    <!-- Argon2id PIN hashing (OWASP recommended). Passwords are NOT hashed with this:
+         AccountPasswordHasher hashes them with Identity's PBKDF2 (ADR-0003). -->
     <PackageReference Include="Konscious.Security.Cryptography.Argon2" />
   </ItemGroup>
 

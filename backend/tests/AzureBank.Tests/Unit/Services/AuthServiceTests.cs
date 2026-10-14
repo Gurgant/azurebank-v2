@@ -41,6 +41,7 @@ public class AuthServiceTests : IDisposable
     private readonly Mock<IJwtService> _jwtServiceMock;
     private readonly Mock<IRefreshTokenService> _refreshTokenServiceMock;
     private readonly Mock<IPasswordHasher> _passwordHasherMock;
+    private readonly Mock<IPasswordHasher<ApplicationUser>> _accountPasswordHasherMock;
     private readonly UserMapper _userMapper;
     private readonly AccountMapper _accountMapper;
     private readonly Mock<ILogger<AuthService>> _loggerMock;
@@ -90,6 +91,7 @@ public class AuthServiceTests : IDisposable
             .Setup(x => x.IssueAsync(It.IsAny<ApplicationUser>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssuedGrant("refresh-token-plaintext", GrantExpiresAt));
         _passwordHasherMock = new Mock<IPasswordHasher>();
+        _accountPasswordHasherMock = new Mock<IPasswordHasher<ApplicationUser>>();
         _userMapper = new UserMapper();
         _accountMapper = new AccountMapper();
         _loggerMock = new Mock<ILogger<AuthService>>();
@@ -126,6 +128,7 @@ public class AuthServiceTests : IDisposable
             _jwtServiceMock.Object,
             _refreshTokenServiceMock.Object,
             _passwordHasherMock.Object,
+            _accountPasswordHasherMock.Object,
             _pinVerifierMock.Object,
             _userMapper,
             _accountMapper,
@@ -144,6 +147,9 @@ public class AuthServiceTests : IDisposable
 
     #region Helper Methods
 
+    /// <summary>The password hash every test user holds; the mocked hasher never reads it.</summary>
+    private const string StoredPasswordHash = "a-password-hash";
+
     private ApplicationUser CreateTestUser(string email = "test@example.com", string azureTag = "testuser")
     {
         var id = Guid.NewGuid();
@@ -159,11 +165,21 @@ public class AuthServiceTests : IDisposable
             FirstName = "Test",
             LastName = "User",
             EmailConfirmed = true,
+            PasswordHash = StoredPasswordHash,
             SecurityStamp = Guid.NewGuid().ToString(),
             ConcurrencyStamp = Guid.NewGuid().ToString(),
             CreatedAt = DateTime.UtcNow
         };
     }
+
+    /// <summary>
+    /// Makes <paramref name="password"/> the user's password, or not: what the hasher of account
+    /// passwords answers for it against the hash the user holds.
+    /// </summary>
+    private void PasswordIs(ApplicationUser user, string password, bool right) =>
+        _accountPasswordHasherMock
+            .Setup(x => x.VerifyHashedPassword(user, StoredPasswordHash, password))
+            .Returns(right ? PasswordVerificationResult.Success : PasswordVerificationResult.Failed);
 
     /// <summary>
     /// Seeds a user into the real InMemory context (so the atomic lockout writers'
@@ -196,7 +212,7 @@ public class AuthServiceTests : IDisposable
     public async Task LoginAsync_WrongPassword_IncrementsFailureCount()
     {
         var user = SeedUserInContext(failed: 0);
-        _userManagerMock.Setup(x => x.CheckPasswordAsync(user, "wrong")).ReturnsAsync(false);
+        PasswordIs(user, "wrong", right: false);
 
         var act = () => _sut.LoginAsync(new LoginRequest { Email = user.Email!, Password = "wrong" });
 
@@ -208,7 +224,7 @@ public class AuthServiceTests : IDisposable
     public async Task LoginAsync_WrongPasswordAtThreshold_LocksAccount()
     {
         var user = SeedUserInContext(failed: ValidationRules.MaxLoginAttempts - 1); // one away
-        _userManagerMock.Setup(x => x.CheckPasswordAsync(user, "wrong")).ReturnsAsync(false);
+        PasswordIs(user, "wrong", right: false);
 
         // Still the generic 401 (lock state is never leaked to a guesser)...
         await _sut.Invoking(s => s.LoginAsync(new LoginRequest { Email = user.Email!, Password = "wrong" }))
@@ -224,7 +240,7 @@ public class AuthServiceTests : IDisposable
     public async Task LoginAsync_LockedAccount_CorrectPassword_ThrowsAccountLocked()
     {
         var user = SeedUserInContext(lockoutEnd: DateTimeOffset.UtcNow.AddMinutes(10));
-        _userManagerMock.Setup(x => x.CheckPasswordAsync(user, "correct")).ReturnsAsync(true);
+        PasswordIs(user, "correct", right: true);
 
         var ex = (await _sut.Invoking(s => s.LoginAsync(new LoginRequest { Email = user.Email!, Password = "correct" }))
             .Should().ThrowAsync<AccountLockedException>()).Which;
@@ -240,7 +256,7 @@ public class AuthServiceTests : IDisposable
     {
         var lockUntil = DateTimeOffset.UtcNow.AddMinutes(10);
         var user = SeedUserInContext(failed: 0, lockoutEnd: lockUntil);
-        _userManagerMock.Setup(x => x.CheckPasswordAsync(user, "wrong")).ReturnsAsync(false);
+        PasswordIs(user, "wrong", right: false);
 
         // Generic 401 (NOT AccountLockedException) — no enumeration signal for a guesser.
         await _sut.Invoking(s => s.LoginAsync(new LoginRequest { Email = user.Email!, Password = "wrong" }))
@@ -256,7 +272,7 @@ public class AuthServiceTests : IDisposable
     public async Task LoginAsync_CorrectPasswordWithPriorFailures_ResetsCounter()
     {
         var user = SeedUserInContext(failed: 3);
-        _userManagerMock.Setup(x => x.CheckPasswordAsync(user, "correct")).ReturnsAsync(true);
+        PasswordIs(user, "correct", right: true);
         _jwtServiceMock.Setup(x => x.GenerateToken(user, null))
             .Returns(new TokenResult("jwt", DateTime.UtcNow.AddMinutes(15)));
 
@@ -270,7 +286,7 @@ public class AuthServiceTests : IDisposable
     public async Task LoginAsync_ExpiredLock_WrongPassword_StartsFreshWindow()
     {
         var user = SeedUserInContext(failed: 0, lockoutEnd: DateTimeOffset.UtcNow.AddMinutes(-1)); // expired
-        _userManagerMock.Setup(x => x.CheckPasswordAsync(user, "wrong")).ReturnsAsync(false);
+        PasswordIs(user, "wrong", right: false);
 
         await _sut.Invoking(s => s.LoginAsync(new LoginRequest { Email = user.Email!, Password = "wrong" }))
             .Should().ThrowAsync<AuthenticationException>();
@@ -284,7 +300,7 @@ public class AuthServiceTests : IDisposable
     public async Task LoginAsync_ExpiredLock_CorrectPassword_LogsInAndClearsLock()
     {
         var user = SeedUserInContext(failed: 3, lockoutEnd: DateTimeOffset.UtcNow.AddMinutes(-1)); // expired
-        _userManagerMock.Setup(x => x.CheckPasswordAsync(user, "correct")).ReturnsAsync(true);
+        PasswordIs(user, "correct", right: true);
         _jwtServiceMock.Setup(x => x.GenerateToken(user, null))
             .Returns(new TokenResult("jwt", DateTime.UtcNow.AddMinutes(15)));
 
@@ -304,7 +320,7 @@ public class AuthServiceTests : IDisposable
         var user = SeedUserInContext(failed: 3, lockoutEnd: DateTimeOffset.UtcNow.AddMinutes(10));
         user.LockoutEnabled = false;
         _context.SaveChanges();
-        _userManagerMock.Setup(x => x.CheckPasswordAsync(user, "correct")).ReturnsAsync(true);
+        PasswordIs(user, "correct", right: true);
         _jwtServiceMock.Setup(x => x.GenerateToken(user, null))
             .Returns(new TokenResult("jwt", DateTime.UtcNow.AddMinutes(15)));
 
@@ -319,7 +335,7 @@ public class AuthServiceTests : IDisposable
         var user = SeedUserInContext(failed: ValidationRules.MaxLoginAttempts - 1); // one away
         user.LockoutEnabled = false;
         _context.SaveChanges();
-        _userManagerMock.Setup(x => x.CheckPasswordAsync(user, "wrong")).ReturnsAsync(false);
+        PasswordIs(user, "wrong", right: false);
 
         await _sut.Invoking(s => s.LoginAsync(new LoginRequest { Email = user.Email!, Password = "wrong" }))
             .Should().ThrowAsync<AuthenticationException>();
@@ -349,9 +365,7 @@ public class AuthServiceTests : IDisposable
             .Setup(x => x.FindByEmailAsync(request.Email))
             .ReturnsAsync(user);
 
-        _userManagerMock
-            .Setup(x => x.CheckPasswordAsync(user, request.Password))
-            .ReturnsAsync(true);
+        PasswordIs(user, request.Password, right: true);
 
         var expiresAt = DateTime.UtcNow.AddMinutes(15);
         _jwtServiceMock
@@ -416,9 +430,7 @@ public class AuthServiceTests : IDisposable
             .Setup(x => x.FindByEmailAsync(request.Email))
             .ReturnsAsync(user);
 
-        _userManagerMock
-            .Setup(x => x.CheckPasswordAsync(user, request.Password))
-            .ReturnsAsync(false);
+        PasswordIs(user, request.Password, right: false);
 
         // Act
         var act = () => _sut.LoginAsync(request);
@@ -440,9 +452,7 @@ public class AuthServiceTests : IDisposable
         _userManagerMock
             .Setup(x => x.FindByEmailAsync(wrongPasswordRequest.Email))
             .ReturnsAsync(user);
-        _userManagerMock
-            .Setup(x => x.CheckPasswordAsync(user, wrongPasswordRequest.Password))
-            .ReturnsAsync(false);
+        PasswordIs(user, wrongPasswordRequest.Password, right: false);
         _userManagerMock
             .Setup(x => x.FindByEmailAsync(nonExistentRequest.Email))
             .ReturnsAsync((ApplicationUser?)null);
@@ -494,13 +504,13 @@ public class AuthServiceTests : IDisposable
     {
         var user = CreateTestUser($"{name}@example.com", name);
         user.DemoCopyId = copyId;
-        user.PasswordHash = hasPassword ? "a-password-hash" : null;
+        user.PasswordHash = hasPassword ? StoredPasswordHash : null;
         user.AccessFailedCount = 2;
         user.LockoutEnabled = true;
         _context.Users.Add(user);
         _context.SaveChanges();
         _userManagerMock.Setup(x => x.FindByEmailAsync(user.Email!)).ReturnsAsync(user);
-        _userManagerMock.Setup(x => x.CheckPasswordAsync(user, GatePassword)).ReturnsAsync(true);
+        PasswordIs(user, GatePassword, right: true);
         _jwtServiceMock.Setup(x => x.GenerateToken(user, null))
             .Returns(new TokenResult($"jwt-of-{name}", DateTime.UtcNow.AddMinutes(15)));
         return user;
@@ -532,7 +542,8 @@ public class AuthServiceTests : IDisposable
             .Select(call => $"{call.Arguments[0]}: {call.Arguments[2]}")];
 
     private int PasswordChecks() =>
-        _userManagerMock.Invocations.Count(call => call.Method.Name == nameof(UserManager<ApplicationUser>.CheckPasswordAsync));
+        _accountPasswordHasherMock.Invocations.Count(
+            call => call.Method.Name == nameof(IPasswordHasher<ApplicationUser>.VerifyHashedPassword));
 
     private int VerifyCostsSpentOn(string password) =>
         _timingEqualizerMock.Invocations.Count(call =>
@@ -724,7 +735,6 @@ public class AuthServiceTests : IDisposable
         var copyId = Guid.CreateVersion7();
         var owner = SeedGateUser("claimedowner", copyId);
         var contact = SeedGateUser("contact", copyId, hasPassword: false);
-        _userManagerMock.Setup(x => x.CheckPasswordAsync(contact, GatePassword)).ReturnsAsync(false);
         _context.DemoCopies.Add(new DemoCopy
         {
             Id = copyId,
@@ -781,12 +791,11 @@ public class AuthServiceTests : IDisposable
         mine.Counted.Should().Equal(Outcomes(("failed", 2)));
     }
 
-    // CONTROL: green before this change. With the demo off the gate reads nothing: the same four
-    // users reach the password check, which is what decides, as on every deployment that is not the
-    // demo. (The mock answers the check for the user without a password too; Identity itself would
-    // refuse it there, and count the attempt.)
+    // CONTROL: green before this change. With the demo off the gate reads nothing: for the same four
+    // users the password decides, as on every deployment that is not the demo. The one without a
+    // password has no hash to verify, so it is refused there as a wrong password is, and counted.
     [Fact]
-    public async Task WithTheDemoOff_TheSameUsersSignIn()
+    public async Task WithTheDemoOff_TheSameUsersSignIn_AndTheOneWithNoPasswordIsRefusedAndCounted()
     {
         var service = ServiceFor(new DemoOptions { Enabled = false }, new FakeTimeProvider(GateNow));
         var outsider = SeedGateUser("outsider", copyId: null);
@@ -794,7 +803,7 @@ public class AuthServiceTests : IDisposable
         var endedOwner = SeedCopyOwner("endedowner", claimedAt: GateNow.UtcDateTime.AddHours(-24));
         var withoutPassword = SeedCopyOwner("nopassword", claimedAt: GateNow.UtcDateTime.AddHours(-1), hasPassword: false);
 
-        foreach (var user in new[] { outsider, freeOwner, endedOwner, withoutPassword })
+        foreach (var user in new[] { outsider, freeOwner, endedOwner })
         {
             var signedIn = await service.LoginAsync(GateRequest(user));
 
@@ -802,9 +811,14 @@ public class AuthServiceTests : IDisposable
             signedIn.Token.AccessToken.Should().Be($"jwt-of-{user.AzureTag}");
         }
 
+        var refused = await Record.ExceptionAsync(() => service.LoginAsync(GateRequest(withoutPassword)));
+
         using (new AssertionScope())
         {
-            PasswordChecks().Should().Be(4, "each of the four reached the password check");
+            refused.Should().BeOfType<AuthenticationException>().Which.Message.Should().Be("Invalid email or password.");
+            PasswordChecks().Should().Be(3, "three have a hash to verify, and the fourth has none");
+            (await ReloadAsync(withoutPassword.Id)).AccessFailedCount.Should().Be(
+                3, "the attempt on the user with no password is counted on top of the two it had");
             VerifyCostsSpentOn(GatePassword).Should().Be(0, "and none was answered as an unknown email");
             LoggedLines().Should().NotContain(line => line.Contains("demo gate", StringComparison.Ordinal));
         }
@@ -1237,9 +1251,7 @@ public class AuthServiceTests : IDisposable
             .Setup(x => x.FindByIdAsync(user.Id.ToString()))
             .ReturnsAsync(user);
 
-        _userManagerMock
-            .Setup(x => x.CheckPasswordAsync(user, request.Password!))
-            .ReturnsAsync(true);
+        PasswordIs(user, request.Password!, right: true);
 
         _passwordHasherMock
             .Setup(x => x.HashPin(request.Pin))
@@ -1277,9 +1289,7 @@ public class AuthServiceTests : IDisposable
         _userManagerMock
             .Setup(x => x.FindByIdAsync(user.Id.ToString()))
             .ReturnsAsync(user);
-        _userManagerMock
-            .Setup(x => x.CheckPasswordAsync(user, request.Password!))
-            .ReturnsAsync(true);
+        PasswordIs(user, request.Password!, right: true);
         _passwordHasherMock
             .Setup(x => x.HashPin(request.Pin))
             .Returns("hashed-new-pin");
@@ -1397,9 +1407,7 @@ public class AuthServiceTests : IDisposable
             .Setup(x => x.FindByIdAsync(user.Id.ToString()))
             .ReturnsAsync(user);
 
-        _userManagerMock
-            .Setup(x => x.CheckPasswordAsync(user, request.Password!))
-            .ReturnsAsync(true);
+        PasswordIs(user, request.Password!, right: true);
 
         _passwordHasherMock
             .Setup(x => x.HashPin(request.Pin))

@@ -31,6 +31,7 @@ public class AuthService : IAuthService
     private readonly IJwtService _jwtService;
     private readonly IRefreshTokenService _refreshTokenService;
     private readonly IPasswordHasher _passwordHasher;
+    private readonly IPasswordHasher<ApplicationUser> _accountPasswordHasher;
     private readonly IPinVerifier _pinVerifier;
     private readonly UserMapper _userMapper;
     private readonly AccountMapper _accountMapper;
@@ -47,6 +48,7 @@ public class AuthService : IAuthService
         IJwtService jwtService,
         IRefreshTokenService refreshTokenService,
         IPasswordHasher passwordHasher,
+        IPasswordHasher<ApplicationUser> accountPasswordHasher,
         IPinVerifier pinVerifier,
         UserMapper userMapper,
         AccountMapper accountMapper,
@@ -65,6 +67,7 @@ public class AuthService : IAuthService
         _jwtService = jwtService;
         _refreshTokenService = refreshTokenService;
         _passwordHasher = passwordHasher;
+        _accountPasswordHasher = accountPasswordHasher;
         _pinVerifier = pinVerifier;
         _userMapper = userMapper;
         _accountMapper = accountMapper;
@@ -114,7 +117,7 @@ public class AuthService : IAuthService
         }
 
         var now = DateTimeOffset.UtcNow;
-        var passwordOk = await _userManager.CheckPasswordAsync(user, request.Password);
+        var passwordOk = await CheckPasswordAsync(user, request.Password, cancellationToken);
         // Respect Identity's per-user LockoutEnabled opt-out (matches IsLockedOutAsync):
         // an exempt account (e.g. a service account) is never treated as locked.
         var lockedUntil = user.LockoutEnabled && user.LockoutEnd is { } end && end > now
@@ -172,6 +175,85 @@ public class AuthService : IAuthService
         _logger.LogWarning("Failed login attempt for account {UserId}", user.Id);
         ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("azurebank.outcome", "failed"));
         throw new AuthenticationException("Invalid email or password.");
+    }
+
+    /// <summary>
+    /// Whether <paramref name="password"/> is the user's, as <c>UserManager.CheckPasswordAsync</c>
+    /// answers it: a user with no password hash has none to verify and is refused without a
+    /// verification. Identity's check is not called, because of what it writes.
+    /// </summary>
+    /// <remarks>
+    /// When the stored hash was made at a lower count than today's (ADR-0003), Identity's check
+    /// stores a new one by an update of the whole row as this request loaded it, guarded by the
+    /// concurrency stamp alone. A lock of the PIN, a counted wrong password or a password stored
+    /// between that load and that write does not change the stamp, and would be put back. So the
+    /// request's hasher verifies here, and <see cref="StoreNewPasswordHashAsync"/> writes the hash
+    /// and the row's update time, and nothing else.
+    /// </remarks>
+    private async Task<bool> CheckPasswordAsync(
+        ApplicationUser user, string password, CancellationToken cancellationToken)
+    {
+        if (user.PasswordHash is not { } verified)
+        {
+            return false;
+        }
+
+        var result = _accountPasswordHasher.VerifyHashedPassword(user, verified, password);
+        if (result == PasswordVerificationResult.SuccessRehashNeeded)
+        {
+            await StoreNewPasswordHashAsync(user, verified, password, cancellationToken);
+        }
+
+        return result != PasswordVerificationResult.Failed;
+    }
+
+    /// <summary>
+    /// Stores a hash of <paramref name="password"/> at today's count over
+    /// <paramref name="verified"/>, the hash this request loaded and proved the password against,
+    /// and over no other: one statement that writes the hash and the row's update time.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// No row written means the row no longer holds <paramref name="verified"/>: another request
+    /// stored the new hash first, or the password is another one now. Either is left as it is, and
+    /// this request goes on, having proved the password of the hash it loaded.
+    /// </para>
+    /// <para>
+    /// Identity's <c>SecurityStamp</c> is left alone: the password is the same one, and nothing
+    /// here reads that stamp. So is <c>ConcurrencyStamp</c>: a request that loaded the row before
+    /// this write and saves it afterwards, as a first PIN does, is not refused for it.
+    /// </para>
+    /// <para>
+    /// On a relational store the user leaves the change tracker holding the hash the row now
+    /// holds, as it does after <see cref="ResetLoginLockoutAsync"/>, and a caller that goes on to
+    /// save it attaches it again first.
+    /// </para>
+    /// </remarks>
+    private async Task StoreNewPasswordHashAsync(
+        ApplicationUser user, string verified, string password, CancellationToken cancellationToken)
+    {
+        var newHash = _accountPasswordHasher.HashPassword(user, password);
+
+        if (!_context.Database.IsRelational())
+        {
+            user.PasswordHash = newHash;
+            await _context.SaveChangesAsync(cancellationToken);   // UpdateTimestamps stamps UpdatedAt on this path
+            return;
+        }
+
+        var stored = await _context.Users
+            .Where(u => u.Id == user.Id && u.PasswordHash == verified)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(u => u.PasswordHash, newHash)
+                .SetProperty(u => u.UpdatedAt, (DateTime?)DateTime.UtcNow), cancellationToken);
+
+        user.PasswordHash = stored == 1
+            ? newHash
+            : await _context.Users.AsNoTracking()
+                .Where(u => u.Id == user.Id)
+                .Select(u => u.PasswordHash)
+                .FirstOrDefaultAsync(cancellationToken);
+        _context.Entry(user).State = EntityState.Detached;
     }
 
     // ---- The public demo's sign-in gate ----
@@ -955,7 +1037,7 @@ public class AuthService : IAuthService
         ApplicationUser user, string password, CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
-        var passwordOk = await _userManager.CheckPasswordAsync(user, password);
+        var passwordOk = await CheckPasswordAsync(user, password, cancellationToken);
         // Respect Identity's per-user LockoutEnabled opt-out, exactly as the login path does.
         var lockedUntil = user.LockoutEnabled && user.LockoutEnd is { } end && end > now
             ? end
@@ -983,24 +1065,23 @@ public class AuthService : IAuthService
                 */
                 user.AccessFailedCount = 0;
                 user.LockoutEnd = null;
+            }
 
-                /*
-                  THEN TRACK IT AGAIN, where the reset stopped tracking it. On a relational
-                  provider ResetLoginLockoutAsync detaches `user`, and the login path can leave it
-                  so because it never saves that user again. This caller does: UpdateAsync first
-                  runs Identity's user validators, which look the user up by name and by e-mail.
-                  With `user` detached those lookups track a SECOND instance of the row, the
-                  store's Attach(user) then finds two instances under one key and throws, and a
-                  first PIN after a wrong password answers 500 with nothing stored. Tracked, the
-                  lookups resolve to this instance.
+            /*
+              THEN TRACK IT AGAIN, where the reset or the new password hash stopped tracking it.
+              On a relational provider ResetLoginLockoutAsync and StoreNewPasswordHashAsync detach
+              `user`, and the login path can leave it so because it never saves that user again.
+              This caller does: UpdateAsync first runs Identity's user validators, which look the
+              user up by name and by e-mail. With `user` detached those lookups track a SECOND
+              instance of the row, the store's Attach(user) then finds two instances under one key
+              and throws, and a first PIN after a wrong password answers 500 with nothing stored.
+              Tracked, the lookups resolve to this instance.
 
-                  The InMemory branch of the reset never detaches, so there is nothing to attach
-                  there.
-                */
-                if (_context.Entry(user).State == EntityState.Detached)
-                {
-                    _context.Attach(user);
-                }
+              The InMemory branches of the two never detach, so there is nothing to attach there.
+            */
+            if (_context.Entry(user).State == EntityState.Detached)
+            {
+                _context.Attach(user);
             }
 
             return;
