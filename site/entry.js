@@ -1,5 +1,6 @@
 /*
- * The entry page's one script: the language switch, the start panel and the door at the thumb.
+ * The entry page's one script: the language switch, the start panel, the door at the thumb and
+ * the count of merged pull requests.
  *
  * It is loaded from <head> as a blocking classic script, so that the language is chosen before
  * the first paint. It is a file because the page's Content-Security-Policy allows no inline script.
@@ -29,6 +30,16 @@
  *   unknown   the probe cannot work from this browser: the keys work, with no promise
  *   asleep    the last answer is old: as without the script, and a press wakes the server first
  * <html data-queued> is there while a press waits for the answer.
+ *
+ * THE COUNT. The page says how many pull requests were merged, written with the day it was
+ * counted on. When the page has loaded, the script asks GitHub's search API once for today's
+ * count and writes it over the written one, in both languages, with a note after the date: that
+ * date is no longer this number's. Any other outcome leaves the page as it was written: no
+ * answer in four seconds, a refusal (GitHub answers ten anonymous searches a minute for each
+ * address), an answer that is not a whole number, or a number smaller than the written one.
+ *  - GitHub Pages serves this page, so GitHub already knows of the visit. The request carries no
+ *    cookie and no referrer.
+ *  - The policy in the page's head lets the script connect to api.github.com and nowhere else.
  */
 (function () {
   'use strict';
@@ -40,6 +51,9 @@
   var GIVE_UP_MS = 60000; // with no answer the keys are given back anyway
   var TRUST_MS = 240000; // the server goes back to sleep after about five idle minutes
   var LANGUAGE_KEY = 'azurebank-entry-language';
+  var COUNT_ADDRESS =
+    'https://api.github.com/search/issues?q=repo:Gurgant/azurebank-v2+is:pr+is:merged&per_page=1';
+  var COUNT_MS = 4000; // with no answer the written number stays
   // On a developer's own machine ?state=<one of these> shows that state and sends nothing. The
   // number is the second the preview shows.
   var PREVIEW = {
@@ -75,6 +89,7 @@
       ready: ['The demo is awake.', 'Invented money, no sign-up.'],
       late: ['This is taking longer than usual.', 'The code and pictures are below.'],
       unknown: ['The demo may be asleep.', 'If so, allow about {t} seconds.'],
+      countNote: '; the pull requests, as this page opened',
     },
     it: {
       title: 'AzureBank: una banca che funziona, online. Di Vladislav Aleshaev',
@@ -96,8 +111,74 @@
       ready: ['La demo è sveglia.', 'Denaro inventato, senza registrarsi.'],
       late: ['Ci sta mettendo più del solito.', 'Intanto il codice è qui sotto.'],
       unknown: ['La demo forse dorme.', 'Se dorme, circa {t} secondi.'],
+      countNote: "; le pull request, all'apertura di questa pagina",
     },
   };
+
+  // The number a figure of the page shows, or NaN: digits, in threes after a comma or a full stop.
+  function written(text) {
+    return /^[1-9]\d{0,2}([.,]\d{3})*$|^[1-9]\d*$/.test(text)
+      ? Number(text.replace(/[.,]/g, ''))
+      : NaN;
+  }
+
+  // The count in GitHub's answer when it may replace the written one, or null. A search that
+  // GitHub cut short says so, and counts fewer than there are.
+  function mergedCount(answer, floor) {
+    if (!answer || answer.incomplete_results !== false) return null;
+    var total = answer.total_count;
+    return Number.isSafeInteger(total) && total >= floor ? total : null;
+  }
+
+  function grouped(number, language) {
+    return String(number).replace(/\B(?=(\d{3})+$)/g, language === 'it' ? '.' : ',');
+  }
+
+  // figures: the elements that show the number, each with its language in data-merged-count.
+  // notes: the elements after the date, each with its language in data-count-note.
+  function countMerged(figures, notes) {
+    var floor = Math.max.apply(
+      null,
+      figures.map(function (figure) {
+        return written(figure.textContent);
+      }),
+    );
+    if (!(floor > 0) || typeof fetch !== 'function' || typeof AbortController !== 'function') {
+      return undefined;
+    }
+    var stop = new AbortController();
+    setTimeout(function () {
+      stop.abort();
+    }, COUNT_MS);
+    return fetch(COUNT_ADDRESS, {
+      credentials: 'omit',
+      referrerPolicy: 'no-referrer',
+      signal: stop.signal,
+    })
+      .then(function (response) {
+        return response.ok ? response.json() : null;
+      })
+      .then(function (answer) {
+        var total = mergedCount(answer, floor);
+        if (total === null) return;
+        figures.forEach(function (figure) {
+          figure.textContent = grouped(total, figure.getAttribute('data-merged-count'));
+        });
+        notes.forEach(function (note) {
+          var words = TEXT[note.getAttribute('data-count-note')];
+          if (words) note.textContent = words.countNote;
+        });
+      })
+      .catch(function () {
+        // The written number stays.
+      });
+  }
+
+  // The test of the count loads this file where there is no page.
+  if (typeof document === 'undefined') {
+    module.exports = { countMerged: countMerged };
+    return;
+  }
 
   var root = document.documentElement;
   var language = chooseLanguage();
@@ -147,6 +228,8 @@
     });
     var switches = all('[data-set-lang]');
     var dock = document.getElementById('dock');
+    var figures = all('[data-merged-count]');
+    var countNotes = all('[data-count-note]');
     var englishTitle = document.title;
 
     // What a picture or a list is called is an attribute, and an attribute holds one language:
@@ -282,8 +365,16 @@
       });
     }
 
+    function visit() {
+      probe();
+      afterLoad(function () {
+        countMerged(figures, countNotes);
+      });
+    }
+
     // An image asked for before the page's load event holds that event back, and the tab would
-    // show a page still loading for as long as the server takes to start.
+    // show a page still loading for as long as the server takes to start. The count waits for
+    // the same event: nothing of the page waits for it.
     function afterLoad(task) {
       if (document.readyState === 'complete') task();
       else
@@ -460,15 +551,9 @@
 
     // A page the browser loads ahead of a visit must not start the server for nobody.
     if (document.prerendering) {
-      document.addEventListener(
-        'prerenderingchange',
-        function () {
-          probe();
-        },
-        { once: true },
-      );
+      document.addEventListener('prerenderingchange', visit, { once: true });
     } else {
-      probe();
+      visit();
     }
   }
 

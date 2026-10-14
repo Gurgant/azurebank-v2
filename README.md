@@ -112,8 +112,10 @@ money rules. [How AzureBank works](docs/architecture/overview.md) follows one re
   five minutes after its end, and longer while somebody is still signed in to it; from 48 hours
   after its end a run deletes it whoever is signed in. So the deletion comes at a run of the job,
   not at a set time. **Start over** gives you a fresh one. Don't enter real personal data. The
-  entry page starts the server and shows the wait: about 25 seconds when it was asleep. The
-  journeys to try and the limits you can meet are in [Try the demo](docs/testing/try-the-demo.md).
+  entry page starts the server and shows the wait: about 25 seconds when it was asleep. It also
+  asks GitHub's API for today's count of merged pull requests: GitHub serves the page, so the
+  request tells it nothing that the visit has not. The journeys to try and the limits you can
+  meet are in [Try the demo](docs/testing/try-the-demo.md).
 - **The UI alone**, against a mock that runs in the browser — Node only:
   `cd frontend && npm ci && npm run dev:mock`, then sign in as `demo@azurebank.dev` / `Password1!`,
   PIN `123456`.

@@ -2,13 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <!-- Nothing is loaded from another host and nothing inline runs. The one request that leaves
-         the page is the image that wakes the demo, which is why img-src names the demo's origin.
-         That origin is written twice in this file and nowhere else: here and in the link
-         #open-demo, where entry.js reads it. Change both together. -->
+    <!-- Nothing is loaded from another host and nothing inline runs. Two requests leave the page.
+         One is the image that wakes the demo, which is why img-src names the demo's origin. That
+         origin is written twice in this file and nowhere else: here and in the link #open-demo,
+         where entry.js reads it. Change both together. The other asks GitHub's API for the count
+         of merged pull requests, which is why connect-src names it. -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' https://azurebank.lemonmoss-e3015c47.italynorth.azurecontainerapps.io; base-uri 'none'; form-action 'none'"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' https://azurebank.lemonmoss-e3015c47.italynorth.azurecontainerapps.io; connect-src https://api.github.com; base-uri 'none'; form-action 'none'"
     />
     <!-- viewport-fit=cover lets the dock keep clear of a phone's home indicator: entry.css reads
          the safe-area insets. -->
@@ -59,9 +60,9 @@
     <link rel="apple-touch-icon" href="apple-touch-icon.png" />
     <!-- The number after the name changes when the page and its two files change together, so
          that a browser never pairs this page with an older copy of them. -->
-    <link rel="stylesheet" href="entry.css?v=6" />
+    <link rel="stylesheet" href="entry.css?v=7" />
     <!-- A blocking script in the head, so that the language is chosen before the first paint. -->
-    <script src="entry.js?v=6"></script>
+    <script src="entry.js?v=7"></script>
   </head>
   <body>
     <a class="skip" href="#content">
@@ -215,7 +216,9 @@
           </div>
 
           <!-- Four figures, each a link to the place that shows it. They are counted from the
-               repository on the day written beside them. -->
+               repository on the day written beside them. entry.js asks GitHub for the first one
+               when the page opens: a count that is not smaller is written over this one, and the
+               note after the date then says so. Keep the two written numbers equal. -->
           <div class="proof">
             <ul
               class="proof__list"
@@ -225,8 +228,8 @@
             >
               <li>
                 <a href="https://github.com/Gurgant/azurebank-v2/pulls?q=is%3Apr+is%3Amerged">
-                  <span class="fig" lang="en" data-lang="en"><b>296</b><span>pull requests merged, each one by me</span></span>
-                  <span class="fig" lang="it" data-lang="it"><b>296</b><span>merge di pull request, tutti fatti da me</span></span>
+                  <span class="fig" lang="en" data-lang="en"><b data-merged-count="en">296</b><span>pull requests merged, each one by me</span></span>
+                  <span class="fig" lang="it" data-lang="it"><b data-merged-count="it">296</b><span>merge di pull request, tutti fatti da me</span></span>
                 </a>
               </li>
               <li>
@@ -265,8 +268,8 @@
               </li>
             </ul>
             <p class="proof__date">
-              <span lang="en" data-lang="en">Counted on <time datetime="2026-10-13">13 October 2026</time></span>
-              <span lang="it" data-lang="it">Contati il <time datetime="2026-10-13">13 ottobre 2026</time></span>
+              <span lang="en" data-lang="en">Counted on <time datetime="2026-10-13">13 October 2026</time><span data-count-note="en"></span></span>
+              <span lang="it" data-lang="it">Contati il <time datetime="2026-10-13">13 ottobre 2026</time><span data-count-note="it"></span></span>
             </p>
           </div>
 
