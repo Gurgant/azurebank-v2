@@ -146,7 +146,9 @@ every pull request.
   branch that has to be brought up to date takes a merge of `main`.
 - Delete a branch: a setting of the repository has GitHub delete a branch of this repository
   when its pull request is merged, and every other branch here is work that somebody has not
-  finished.
+  finished. The one exception is a pull request opened only for a review of a change already
+  on `main`, from two branches of this repository: once it is closed they are deleted, because
+  their commits are on `main`.
 - Dismiss a finding without a reason that will still convince in six months, skip a test, or
   weaken a check to reach green.
 - Install a tool, add a dependency or move a pinned version without asking first, naming the

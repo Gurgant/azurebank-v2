@@ -220,6 +220,10 @@ either saw it run.
   branch of a pull request that comes from a fork is the fork's, and stays there. A squash
   leaves one commit on `main`; the commits behind it stay on the pull request, which keeps them
   and can restore the branch.
+- **A pull request opened only for a review is closed, never merged, and its two branches are
+  deleted then.** It lets a review read, whole, a change already on `main`. Both its branches
+  are of this repository: the base points at `main` just before that change and the head just
+  after, so both point at commits that stay on `main`.
 - **Contract changes ship as two pull requests.** The endpoint, the regenerated OpenAPI document
   and the generated types land in the backend change; the UI that consumes them follows.
 - **Integration is verified against the real stack before a release.** A green mock-mode run
