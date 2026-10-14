@@ -62,7 +62,7 @@ public sealed class PinService : IPinVerifier
         if (user.PinLockoutEnd is { } lockedUntil && lockedUntil > now)
         {
             _logger.LogWarning("PIN verification refused for locked user {UserId} until {Until}", userId, lockedUntil);
-            throw PinLockedException.Until(lockedUntil, now);
+            throw PinLockedException.Until(lockedUntil, now, pinWasCompared: false);
         }
 
         if (string.IsNullOrEmpty(user.PinHash))
@@ -75,7 +75,7 @@ public sealed class PinService : IPinVerifier
         if (claim.LockedUntil is { } refusedUntil)
         {
             _logger.LogWarning("PIN verification refused for locked user {UserId} until {Until}", userId, refusedUntil);
-            throw PinLockedException.Until(refusedUntil, DateTimeOffset.UtcNow);
+            throw PinLockedException.Until(refusedUntil, DateTimeOffset.UtcNow, pinWasCompared: false);
         }
         if (!claim.Claimed)
         {
@@ -135,7 +135,7 @@ public sealed class PinService : IPinVerifier
         {
             _logger.LogWarning("PIN locked for user {UserId} until {Until} after too many wrong attempts",
                 userId, enforcedUntil);
-            throw PinLockedException.Until(enforcedUntil, now);
+            throw PinLockedException.Until(enforcedUntil, now, pinWasCompared: true);
         }
 
         _logger.LogWarning("Invalid PIN attempt for user {UserId}", userId);

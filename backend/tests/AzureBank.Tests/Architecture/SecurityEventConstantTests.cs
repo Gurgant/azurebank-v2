@@ -506,8 +506,8 @@ public class SecurityEventConstantTests
             + "which refusals survive their own rollback. Three were token paths; two were added "
             + "on 2026-08-29 for an absent step-up at both transfer kinds; the sixth on 2026-09-06 "
             + "for an account closure presenting no step-up (AccountDeletionRefused, ADR-0049); the "
-            + "seventh on 2026-09-11, one site in StepUpAuthorizationService for a wrong or locked "
-            + "PIN at every mint; the eighth on 2026-09-21 for a withdrawal presenting no step-up "
+            + "seventh on 2026-09-11, one site in StepUpAuthorizationService for a PIN found wrong "
+            + "at every mint; the eighth on 2026-09-21 for a withdrawal presenting no step-up "
             + "(ADR-0056). WENT DOWN FROM NINE, and that is the shape of ADR-0056 rather than a "
             + "deletion: the withdrawal's own locked-PIN and wrong-PIN sites LEFT with the PIN "
             + "itself, and the mint's single site already covers both for every operation — two "
@@ -515,7 +515,7 @@ public class SecurityEventConstantTests
             + "closure's two 422 guards. WENT DOWN TO SEVEN with PR-1: RefreshTokenReuseRevokeFailed's "
             + "MitigationFailed row went with the family revoke it reported on (ADR-0057 F3), so the token "
             + "paths hold two — the unknown grant and the tripwire. EIGHT with PinChangeRefused: "
-            + "one site in AuthService for a wrong or locked current PIN on a PIN change, which "
+            + "one site in AuthService for a current PIN found wrong on a PIN change, which "
             + "arms the same lockout as a wrong PIN at a mint. Moving this means moving "
             + "ADR-0044's \"What is wired\" section too");
 

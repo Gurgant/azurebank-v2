@@ -84,18 +84,19 @@ public class StepUpAuthorizationService : IStepUpAuthorizationService
         // authentication event, so the ADR-0010 lockout lives on this endpoint rather than on the
         // transfer that used to verify in-band.
         //
-        // Both outcomes are AUDITED since 2026-09-11, the way WithdrawAsync audits its own: a
-        // guessed PIN is the security signal ADR-0044 names "a wrong or locked PIN", and until then
-        // it left only a log line here while the same guess on a withdrawal wrote a row. Measured
-        // that day: three wrong PINs at the three mints, then three more against the lock, wrote
-        // no row at all. RecordRefusalAsync, never Record: every branch here throws, so a row in
-        // the caller's unit of work would be rolled back by the refusal it documents.
+        // A PIN that was compared and found wrong leaves a row, whether its answer is the 401 or
+        // the lock's 429 (ADR-0044): the rows of a window are then bounded by the comparisons
+        // ADR-0010 bounds. A request the lock refused unread is no guess and leaves none: a row
+        // for each would be a write the caller repeats at will for as long as the lock stands.
+        // The PIN change records on the same rule (AuthService.SetPinAsync).
+        // RecordRefusalAsync, never Record: every branch here throws, so a row in the caller's
+        // unit of work would be rolled back by the refusal it documents.
         bool pinOk;
         try
         {
             pinOk = await _pinVerifier.VerifyPinAsync(userId, pin, cancellationToken);
         }
-        catch (PinLockedException)
+        catch (PinLockedException locked) when (locked.PinWasCompared)
         {
             await RecordPinRefusalAsync(userId, operation, binding, ErrorCodes.PinLocked);
             throw;
