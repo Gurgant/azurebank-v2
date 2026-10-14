@@ -29,9 +29,10 @@ type Schemas = components['schemas'];
  *   list, the monthly summary) and the four step-up authorisations export STRICT schemas —
  *   validated fail-closed in every environment, because a silent drift there means wrong money
  *   on screen, or an operation refused for no reason shown.
- * - **C is when to validate the rest**: every other response validates only outside
- *   production (`devOnly`) — catching MSW mock-drift in vitest and local integration drift
- *   with zero production crash-surface.
+ * - **C is when to validate the rest**: every other `/api/*` response that carries data
+ *   validates only outside production (`devOnly`) — catching MSW mock-drift in vitest and
+ *   local integration drift with zero production crash-surface. Set-primary and account
+ *   deletion answer with a message and no data, which is thrown away without a schema.
  *
  * The `AssertExtends` checks make the generated types and the openapi-typescript types
  * (schema.d.ts) verify EACH OTHER at compile time — if either regeneration drifts, tsc

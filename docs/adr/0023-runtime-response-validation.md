@@ -16,17 +16,17 @@ SPA and the BFF flows into the auth slice with nothing to catch it.
 
 ## Decision
 
-What the BFF answers of its own under `/bff/auth/*` is fail-closed, because that surface is small
-and gates authentication; the API surface (`/api/*`) only for money and step-up authorisations.
+The BFF's own answers with data under `/bff/auth/*` are fail-closed, because that surface is small
+and gates authentication; `/api/*` only for money and step-up authorisations.
 
 1. **On the BFF surface the schemas are the source of truth and validation is fail-closed,
    production included**, because this boundary has no document behind it. `src/api/bffTypes.ts` is
    `z.infer` of the Zod schemas in `src/api/bffSchemas.ts`, so type and validator cannot disagree;
-   the responses are parsed with no environment gate, by `unwrap(envelope, schema?)` or, for the
-   bare session-status, directly. The AzureTag rename is the exception: its schema is generated from
-   the API's contract and is checked in development and test only. `location.state` and error bodies
-   use `safeParse` with a fallback, so that a garbled error payload does not replace the error it
-   carried.
+   the responses with data are parsed with no environment gate, by `unwrap(envelope, schema?)` or,
+   for the bare session-status, directly. The AzureTag rename is the exception: its schema is
+   generated from the API's contract and is checked in development and test only. `location.state`
+   and error bodies use `safeParse` with a fallback, so that a garbled error payload does not
+   replace the error it carried.
 2. **Zod for `/api/*` is generated, never hand-written**: `typed-openapi` with
    `--runtime zod --schemas-only`, its output committed to `src/api/generated/`, behind
    `npm run generate:zod`, because a hand-written validator for a surface that already has a
