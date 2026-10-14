@@ -111,6 +111,59 @@ public class PinServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task VerifyPinAsync_CountsTheAttemptBeforeComparing()
+    {
+        // The order is the bound (ADR-0010): an attempt that is compared first and counted after
+        // lets every request of a parallel burst be compared before any of them is counted.
+        var user = SeedUser();
+        var countWhenCompared = -1;
+        _hasherMock.Setup(x => x.VerifyPin("hashed-pin", "000000"))
+            .Callback(() => countWhenCompared = user.PinAccessFailedCount)
+            .Returns(false);
+
+        await _sut.VerifyPinAsync(user.Id, "000000");
+
+        countWhenCompared.Should().Be(1, "the attempt is on the row before the PIN is compared");
+    }
+
+    [Fact]
+    public async Task VerifyPinAsync_AttemptAtTheThreshold_IsComparedUnderItsOwnLock()
+    {
+        var user = SeedUser(failed: ValidationRules.MaxPinAttempts - 1);
+        DateTimeOffset? lockWhenCompared = null;
+        _hasherMock.Setup(x => x.VerifyPin("hashed-pin", "123456"))
+            .Callback(() => lockWhenCompared = user.PinLockoutEnd)
+            .Returns(true);
+
+        var result = await _sut.VerifyPinAsync(user.Id, "123456");
+
+        lockWhenCompared.Should().NotBeNull("the claim that reaches the threshold locks before it compares");
+        result.Should().BeTrue("the lock a right PIN's own claim applied is no refusal of that PIN");
+        _context.ChangeTracker.Clear();
+        var stored = await _context.Users.SingleAsync(u => u.Id == user.Id);
+        stored.PinLockoutEnd.Should().BeNull("a right PIN takes the lock back");
+        stored.PinAccessFailedCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task VerifyPinAsync_RightPin_LeavesNoAttemptCounted()
+    {
+        // Each right PIN claims an attempt too; left on the row, three right PINs would lock.
+        var user = SeedUser();
+        _hasherMock.Setup(x => x.VerifyPin("hashed-pin", "123456")).Returns(true);
+
+        for (var i = 0; i < ValidationRules.MaxPinAttempts + 1; i++)
+        {
+            (await _sut.VerifyPinAsync(user.Id, "123456")).Should().BeTrue();
+        }
+
+        _context.ChangeTracker.Clear();
+        var stored = await _context.Users.SingleAsync(u => u.Id == user.Id);
+        stored.PinAccessFailedCount.Should().Be(0);
+        stored.PinLockoutEnd.Should().BeNull();
+    }
+
+    [Fact]
     public async Task VerifyPinAsync_AttemptCrossingThreshold_LocksAndThrows()
     {
         var user = SeedUser(failed: ValidationRules.MaxPinAttempts - 1); // one away from the lock

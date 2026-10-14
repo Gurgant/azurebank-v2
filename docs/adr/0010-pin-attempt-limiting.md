@@ -1,7 +1,7 @@
 # ADR-0010: API-side PIN attempt-limiting (lockout)
 
-**Status:** Accepted · **Date:** 2026-07-14 · **Amended:** 2026-08-06, 2026-09-15 (ADR-0040) ·
-**Decision Makers:** Vladislav Aleshaev
+**Status:** Accepted · **Date:** 2026-07-14 · **Amended:** 2026-08-06, 2026-09-15 (ADR-0040),
+2026-10-13 (decision 5) · **Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
@@ -29,9 +29,12 @@ idempotency guarantees of ADR-0009.
    it in its own `DbContext` scope (`IServiceScopeFactory`), never the request's, because the count
    is security bookkeeping that must persist when the caller fails or rolls back, and must not
    finalise the caller's pending idempotency record (ADR-0009).
-5. **The wrong-PIN transition is one atomic set-based `ExecuteUpdate`**, increment and
-   threshold-lock together, because a parallel burst then loses no update and a late increment can
-   never clear a lock that was just applied.
+5. **An attempt is claimed on the user's row before the PIN is compared, in one atomic set-based
+   `ExecuteUpdate`**, increment and threshold-lock together and only where the row is not locked,
+   because requests sent at once then cannot each read "not locked" and each be compared: the row
+   gives out 3 comparisons a window and the rest are refused unread. A right PIN clears the count
+   and whatever lock is on the row: the one its own claim applied, or one that a wrong PIN sent
+   beside it applied while it was compared.
 6. **While locked, and on the attempt that crosses the threshold, the answer is HTTP 429** with a
    standard `Retry-After` header (RFC 9110 §10.2.3), `errorCode` `PIN_LOCKED`, and
    `retryAfterSeconds` and `lockedUntil` in the problem details (`PinLockedException`). A wrong PIN
@@ -49,13 +52,21 @@ idempotency guarantees of ADR-0009.
 
 ## Consequences
 
-- Online PIN guessing is bounded at 3 tries per 15 minutes on every path that checks a PIN.
+- Online PIN guessing is bounded at 3 tries per 15 minutes on every path that checks a PIN, sent
+  one by one or all at once: of a parallel burst 3 are compared with the stored PIN, and a right
+  PIN behind them is refused with the others. A right PIN among the 3 is accepted and resets the
+  count, as it does one by one, so up to 3 more of that burst are compared: 6 at most.
 - The lockout state is independent of the business transaction: a wrong PIN is counted even when
   the caller's own work rolls back, and no idempotency key is corrupted by it.
 - The PIN lockout and the password lockout (ADR-0012) are fully separate.
 - A locked PIN is refused before Argon2id runs, so the lock does not leak through verify latency.
-- It costs one small write per failed attempt, in its own scope, and a 429 with `Retry-After` on
-  every endpoint that checks a PIN, declared in the published document.
+- It costs one small write per attempt and a second for a right PIN, in its own scope, and a 429
+  with `Retry-After` on every endpoint that checks a PIN, declared in the published document.
+- The limiter fails closed: an attempt whose request dies between the claim and the comparison
+  stays counted. While the attempt at the threshold is compared the row is locked, so a further
+  request of the same user in that moment is answered 429 with the full 15 minutes, even when
+  every PIN in flight is right: of 6 right PINs sent at once 3 can be refused. A right PIN that
+  then ends clears that lock, so the wait the 429 announced is over before it has run.
 - The BFF holds no attempt limit. Its `SecurityOptions` keeps `PinValidityMinutes` alone; a
   `MaxPinAttempts` or `LockoutMinutes` key left in a local configuration file binds to nothing and
   is ignored.
@@ -64,8 +75,9 @@ idempotency guarantees of ADR-0009.
 
 ## Verified by
 
-- `PinServiceTests`: the increment, the lock on the crossing attempt, no hashing while locked.
-- `PinLockoutConcurrencySqlServerTests`: parallel wrong PINs always end locked (decision 5).
+- `PinServiceTests`: the claim before the comparison, the crossing lock, no hashing while locked.
+- `PinLockoutConcurrencySqlServerTests`: a parallel burst is compared 3 times at most, 6 with an
+  accepted right PIN in it; a right PIN leaves no count and no lock behind (decision 5).
 - `AuthEndpointTests.VerifyPin_AfterMaxWrongAttempts_Returns429PinLocked` (decision 6).
 
 ## Related
