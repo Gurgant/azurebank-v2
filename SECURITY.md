@@ -183,7 +183,8 @@ them in a minute.
 
 ### Runtime response validation
 
-Two surfaces, two rules, and they are not the same rule:
+What follows covers the successful responses the frontend reads. Two surfaces, two rules, and
+they are not the same rule:
 
 - **`/bff/auth/*`** has no OpenAPI contract behind it, so **every response of the BFF's own that
   carries data** is validated fail-closed at runtime, in production included — login, register, the
@@ -194,10 +195,11 @@ Two surfaces, two rules, and they are not the same rule:
   checked in development and test only.
 - **`/api/*`** is validated fail-closed in production only on the **money** responses and the
   step-up authorisations — the four mutation receipts, the accounts list, the transaction summary
-  and the four authorisations (two transfers, a withdrawal, an account closure). Everything else on
-  that surface validates in development and test only, deliberately: the contract there is already
-  guarded by generated types, a drift gate and contract tests, and a wrong field on a transaction
-  list should not take the page down.
+  and the four authorisations (two transfers, a withdrawal, an account closure). Every other
+  response on that surface that carries data validates in development and test only, deliberately:
+  the contract there is already guarded by generated types, a drift gate and contract tests, and a
+  wrong field on a transaction list should not take the page down. (Making an account the primary
+  one and closing an account answer with a message and no data, so there is nothing to validate.)
 
 See ADR-0023 for the reasoning and the CI gates that hold it.
 
