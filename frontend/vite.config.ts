@@ -1,5 +1,37 @@
-import { defineConfig } from 'vite';
+import { rmSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+
+/*
+  THE MOCK'S SERVICE WORKER STAYS OUT OF A BUILD.
+
+  `public/mockServiceWorker.js` is the script the mock registers in the browser. It has to be in
+  `public/`: the mock library's own tooling writes it there (`msw.workerDirectory` in
+  package.json), and the dev server of `npm run dev:mock` serves it from there. Vite copies
+  `public/` into `dist/` as it is, so a build would ship a service worker script that nothing in
+  the built app registers: src/main.tsx starts the mock in the `mock` mode alone. This plugin
+  takes the copy out when the bundle is closed. A build made in the `mock` mode keeps it.
+
+  `apply: 'build'`: the dev server never runs this, so `npm run dev:mock` finds the file where it
+  is. CI fails a build that holds the file (ci.yml, "No mock service worker in the build").
+*/
+function noMockWorkerInABuild(): Plugin {
+  let copy: string | undefined;
+  return {
+    name: 'azurebank-no-mock-worker-in-a-build',
+    apply: 'build',
+    configResolved(config) {
+      copy =
+        config.mode === 'mock'
+          ? undefined
+          : resolve(config.root, config.build.outDir, 'mockServiceWorker.js');
+    },
+    closeBundle() {
+      if (copy) rmSync(copy, { force: true });
+    },
+  };
+}
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -35,6 +67,7 @@ export default defineConfig({
           ? [{ tag: 'meta', attrs: { name: 'azurebank-demo', content: 'true' }, injectTo: 'head' }]
           : undefined,
     },
+    noMockWorkerInABuild(),
   ],
   server: {
     // Dev topology (D18): BOTH surfaces forward to the BFF origin so the session cookie
