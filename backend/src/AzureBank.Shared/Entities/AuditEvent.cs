@@ -55,9 +55,11 @@ public class AuditEvent
     public Guid Id { get; set; }
 
     /// <summary>
-    /// Monotonic insertion order, assigned by <c>AuditChain</c> as the tail's sequence plus one,
-    /// under the lock that reads the tail, and never by the database: the number is then the same
-    /// on every provider. The chain's ordering depends on this rather than on
+    /// Monotonic insertion order, assigned by <c>AuditChain</c> as the tail's sequence plus one and
+    /// never by the database, so it is assigned in the same way on every provider. On a relational
+    /// provider the tail is read under a lock that is held to the end of the transaction, so two
+    /// writers cannot take the same number; the InMemory provider has no lock, and nothing there
+    /// keeps two writers apart. The chain's ordering depends on this rather than on
     /// <see cref="OccurredAt"/>, because two rows can share a timestamp and a clock can move
     /// backwards.
     /// </summary>
