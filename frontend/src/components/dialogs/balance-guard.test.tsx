@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { Route, Routes } from 'react-router-dom';
-import { act, cleanup, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
@@ -270,6 +271,44 @@ describe('the balance guard', () => {
     const stated = await screen.findAllByText('Exceeds available balance of €100.00.');
     expect(stated).toHaveLength(2);
     // And the request never left.
+    expect(posts).toEqual([]);
+  });
+
+  it('is refused by the form itself when the balance falls in the render before the click', async () => {
+    /*
+      The dialog builds its bound while it renders, from the accounts the submit reads, so no
+      render holds a balance that the form has not been told of: the refusal is the form's, in the
+      field's own words, and the dialog makes no second check of its own. The two transfer pages
+      keep their bound in state, one render behind, and do make one
+      (`pages/transfer-last-look.test.tsx`).
+
+      The balance moves and the click lands in one synchronous stretch: `flushSync` commits the
+      render that holds the new balance, and nothing else runs before the click.
+    */
+    const posts: string[] = [];
+    serveBalance([START_BALANCE, START_BALANCE]);
+    server.use(
+      http.post('*/api/transactions/withdraw', async ({ request }) => {
+        posts.push(await request.text());
+        return HttpResponse.json({ data: null, message: 'should never be reached' });
+      }),
+    );
+    renderDialog();
+
+    await typeAmount('400');
+    await userEvent.click(continueButton());
+    await screen.findByText('Verify Withdrawal');
+    await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
+    await userEvent.paste('123456');
+
+    act(() => {
+      flushSync(() => dropBalanceTo(100));
+      fireEvent.click(screen.getByRole('button', { name: /^Withdraw/ }));
+    });
+
+    expect(await screen.findByLabelText('Withdraw amount')).toBeInTheDocument();
+    expect(await screen.findAllByText('Exceeds available balance of €100.00.')).toHaveLength(2);
+    expect(screen.queryByText(/Insufficient balance for this operation/)).not.toBeInTheDocument();
     expect(posts).toEqual([]);
   });
 });

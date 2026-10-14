@@ -1,5 +1,4 @@
 using AzureBank.Shared.Constants;
-using System.IO;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -317,17 +316,9 @@ public class TokenRefresher : ITokenRefresher
 
         using (response)
         {
-            string content;
-            try
-            {
-                content = await response.Content.ReadAsStringAsync(timeout.Token);
-            }
-            catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException)
-            {
-                _logger.LogWarning(ex,
-                    "Failed to read the refresh response for session {SessionId}", SecretPrefix.Of(sessionId));
-                return (RenewalResult.Transient, null);
-            }
+            // The call above returns with the whole body already read: one that breaks off, or
+            // outlasts the 30 s, has failed there. This only turns the bytes held into text.
+            var content = await response.Content.ReadAsStringAsync(timeout.Token);
 
             if (response.StatusCode == HttpStatusCode.Unauthorized)
             {

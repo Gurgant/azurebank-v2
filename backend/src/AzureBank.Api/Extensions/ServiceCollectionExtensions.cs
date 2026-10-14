@@ -577,11 +577,15 @@ public static class ServiceCollectionExtensions
                         System.Diagnostics.Activity.Current?.TraceId.ToString() ?? context.HttpContext.TraceIdentifier;
 
                     context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                    context.Response.ContentType = "application/problem+json";
 
+                    // WriteAsJsonAsync sets the content type itself: application/json, the media
+                    // type the contract declares for the refusals this application writes.
                     await context.Response.WriteAsJsonAsync(problemDetails);
                 },
 
+                // No endpoint asks for a role or a policy, so nothing reaches this today. It
+                // is what a refusal by authorisation itself answers: without it that 403 would
+                // leave in the framework's shape, with no errorCode (ForbiddenAnswerTests).
                 OnForbidden = async context =>
                 {
                     // Skip if response already started
@@ -604,8 +608,8 @@ public static class ServiceCollectionExtensions
                         System.Diagnostics.Activity.Current?.TraceId.ToString() ?? context.HttpContext.TraceIdentifier;
 
                     context.Response.StatusCode = StatusCodes.Status403Forbidden;
-                    context.Response.ContentType = "application/problem+json";
 
+                    // The content type is WriteAsJsonAsync's, as for the 401 above.
                     await context.Response.WriteAsJsonAsync(problemDetails);
                 }
             };

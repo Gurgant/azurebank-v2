@@ -1,6 +1,7 @@
 using System.Buffers.Text;
 using System.Collections.Concurrent;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
@@ -19,6 +20,8 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
+using Serilog.Core;
+using Serilog.Events;
 using Yarp.ReverseProxy.Forwarder;
 
 namespace AzureBank.Bff.Tests;
@@ -433,6 +436,68 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
             api.RefreshCalls.Should().Be(1, "no renewal starts within 15 s of a failed one");
             forwarder.Forwarded.Should().HaveCount(2).And.OnlyContain(f => f.Auth == $"Bearer {held}");
         }
+    }
+
+    /// <summary>A body that breaks off while it is read, as a connection lost in mid-answer does.</summary>
+    private sealed class BodyThatBreaksOff : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) =>
+            throw new IOException("the connection was lost while the body was read");
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
+    }
+
+    private sealed class QueueSink(ConcurrentQueue<LogEvent> events) : ILogEventSink
+    {
+        public void Emit(LogEvent logEvent) => events.Enqueue(logEvent);
+    }
+
+    [Theory]
+    // Measured 2026-10-13. The client reads the whole body before the call returns, so a body
+    // that breaks off fails the call itself; one that arrived whole and cannot be turned into
+    // text fails after it, as an error nobody expected. Both leave the session as it was.
+    [InlineData("breaks off", "Refresh call to API failed transiently", typeof(HttpRequestException))]
+    [InlineData("names no known charset", "Renewal failed unexpectedly", typeof(InvalidOperationException))]
+    public async Task ARefreshAnswerWhoseBodyCannotBeRead_IsTransient_AndKeepsTheSession(
+        string body, string logged, Type thrown)
+    {
+        var api = new FakeApi
+        {
+            OnRefresh = _ => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = body switch
+                {
+                    "breaks off" => new BodyThatBreaksOff(),
+                    "names no known charset" => new ByteArrayContent(Encoding.UTF8.GetBytes(
+                        FakeApi.RefreshJson("jwt-1", "rt-1", DateTime.UtcNow.AddMinutes(15))))
+                    {
+                        Headers = { ContentType = new MediaTypeHeaderValue("application/json") { CharSet = "no-such-charset" } }
+                    },
+                    _ => throw new ArgumentOutOfRangeException(nameof(body), body, "not a case of this test"),
+                }
+            }
+        };
+        var log = new ConcurrentQueue<LogEvent>();
+        var (factory, forwarder) = Build(
+            api, moreServices: services => services.AddSingleton<ILogEventSink>(new QueueSink(log)));
+        var (sessionId, cookieName, held) = NewJwtSession(factory, lifetimeSeconds: 900, leftSeconds: 30);
+        var client = factory.CreateClient();
+
+        await client.SendAsync(Proxied(HttpMethod.Get, "/api/accounts", cookieName, sessionId));
+
+        using var all = new AssertionScope();
+        api.RefreshCalls.Should().Be(1, "the foreground window must have tried a renewal");
+        Session(factory, sessionId).Value.Should().NotBeNull("an answer that cannot be read is not a dead grant");
+        forwarder.Forwarded.Should().ContainSingle()
+            .Which.Auth.Should().Be($"Bearer {held}", "no new token came and the held one has more than 5 s left");
+        var renewal = log.Where(e => e.MessageTemplate.Text.Contains("efresh", StringComparison.Ordinal)
+            || e.MessageTemplate.Text.Contains("Renewal", StringComparison.Ordinal)).ToList();
+        renewal.Should().ContainSingle("the failure is said once").Which.Should().Match<LogEvent>(
+            e => e.MessageTemplate.Text.StartsWith(logged, StringComparison.Ordinal) && e.Exception!.GetType() == thrown);
     }
 
     [Theory]
