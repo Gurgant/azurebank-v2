@@ -279,6 +279,36 @@ public static class SecurityEvents
     /// </remarks>
     public const string PinChanged = "PinChanged";
 
+    /// <summary>
+    /// A PIN change was refused because the current PIN it offered was wrong. Detail carries the
+    /// ErrorCodes reason: <c>INVALID_PIN</c>, or <c>PIN_LOCKED</c> for the attempt that arms the lock.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The same guess that <see cref="MoneyTransferRefused"/>, <see cref="MoneyWithdrawalRefused"/>
+    /// and <see cref="AccountDeletionRefused"/> record at a mint, made at the route that replaces
+    /// the PIN.
+    /// The attempts are counted by the same lockout (ADR-0010), so a PIN locked from this route
+    /// alone locks every money movement, and this row is what says where the guesses were made.
+    /// </para>
+    /// <para>
+    /// The subject is the USER, as for <see cref="PinChanged"/>: the request names no account.
+    /// Written with <c>RecordRefusalAsync</c> on its own connection, because the request writes
+    /// nothing else and its answer is the refusal. No notice is owed (ADR-0047 D4) and no
+    /// <c>SecurityEvent</c> log line is written, as at the mints.
+    /// </para>
+    /// <para>
+    /// NOT raised for a change that offers no current PIN (422 <c>PIN_REQUIRED</c>): nothing was
+    /// guessed and no attempt is spent. NOT raised for a request that finds the PIN already locked:
+    /// its PIN is not read, and a row for each such request would be a write the caller repeats at
+    /// will for as long as the lock stands (ADR-0044). NOT raised for a wrong password at an
+    /// enrolment: that proof is the account password's, and a wrong password writes no row at
+    /// sign-in either.
+    /// </para>
+    /// <para>OWASP: <c>authn_login_fail</c>.</para>
+    /// </remarks>
+    public const string PinChangeRefused = "PinChangeRefused";
+
     /// <summary>A self-registration was refused because the email or handle already exists.</summary>
     /// <remarks>
     /// No OWASP counterpart: <c>user_created</c> covers the success only. This exists because the
