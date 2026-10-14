@@ -196,10 +196,12 @@ remembered:
 - The API's OpenAPI spec generates the frontend's TypeScript types, and CI regenerates them and
   fails on any diff. A contract change that skips the frontend is a red build.
 - The same spec generates **Zod schemas**, so the shapes are checked at runtime too, not just at
-  compile time. Money responses are validated fail-closed in production; everything else validates
-  in development and test only, where a mismatch should be loud and in production it should not
-  take the page down. The whole `/bff/auth/*` surface is fail-closed everywhere, because it has no
-  spec behind it and it gates authentication.
+  compile time. Money responses and the step-up authorisations are validated fail-closed in
+  production; everything else validates in development and test only, where a mismatch should be
+  loud and in production it should not take the page down. What the BFF answers of its own under
+  `/bff/auth/*` is fail-closed everywhere, because it has no spec behind it and it gates
+  authentication; the AzureTag rename, also under that path, has a schema generated from the API's
+  contract and validates in development and test only.
 - Errors arrive as RFC 9457 ProblemDetails on one channel, carrying a `traceId` that pastes
   straight into the trace search.
 
