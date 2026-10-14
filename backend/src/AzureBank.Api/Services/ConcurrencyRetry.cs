@@ -32,10 +32,10 @@ internal static class ConcurrencyRetry
     /// <see cref="AccountBusyException"/> when it can show that nothing of the write was committed,
     /// and when nothing one of its attempts looks at refuses the write then: a deposit, a
     /// withdrawal and both transfers ask <see cref="ClaimIsOwnAndNothingCommittedAsync"/>, and a
-    /// closure and a change of the primary account, which hold no idempotency key, ask
+    /// closure, a change of the primary account and a rename, which hold no idempotency key, ask
     /// <see cref="NoCommitWasLetStart"/>; each then takes once more the looks its attempt takes
     /// before its save, with the attempt's answer, and validates again the step-up authorisation
-    /// it presents, with the validation's. A rename lets its last conflict propagate.
+    /// it presents, with the validation's.
     /// </remarks>
     public const int MaxAttempts = 8;
 
@@ -64,16 +64,16 @@ internal static class ConcurrencyRetry
     /// <remarks>
     /// <para>
     /// THE MARK IS THE WHOLE PROOF, so it is one only for a write whose every save lands at a
-    /// commit the gate marks before it starts (<c>CommitGateInterceptor</c>). A closure and a
-    /// change of the primary account save inside one transaction of their own, and each save that
-    /// lost was rolled back with it: no mark, nothing of the write in the store.
-    /// <c>BusyAccountWriteSqlServerTests</c> holds, for each of the two, that no save lands any
+    /// commit the gate marks before it starts (<c>CommitGateInterceptor</c>). A closure, a change
+    /// of the primary account and a rename save inside one transaction of their own, and each
+    /// save that lost was rolled back with it: no mark, nothing of the write in the store.
+    /// <c>BusyAccountWriteSqlServerTests</c> holds, for each of the three, that no save lands any
     /// other way.
     /// </para>
     /// <para>
-    /// NOT FOR A RENAME. Its save is one statement, which commits by itself, outside any
-    /// transaction, and passes no gate: a rename that is made leaves the mark unset, which the
-    /// same proofs hold. So a rename does not ask this, and its last conflict propagates.
+    /// NOT FOR A SAVE THAT COMMITS BY ITSELF. One statement outside a transaction passes no gate:
+    /// made or not, it leaves the mark unset. A rename is one statement, and opens a transaction
+    /// round it for this reason alone.
     /// </para>
     /// <para>
     /// ONLY ON A PROVIDER WITH TRANSACTIONS. The gate marks commits, and a provider that is not

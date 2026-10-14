@@ -13,10 +13,9 @@ namespace AzureBank.Api.Attributes;
 /// behind it raises the exception.
 /// </para>
 /// <para>
-/// Six endpoints carry it: the deposit, the withdrawal, both transfers, the closure of an account
-/// and the change of the primary account. The rename of an account does not: past its attempts
-/// its conflict propagates (<c>ConcurrencyRetry.NoCommitWasLetStart</c> says why).
-/// <c>PublishedErrorContractTests</c> lists the six against the published document.
+/// Seven endpoints carry it: the deposit, the withdrawal, both transfers, the closure of an
+/// account, the change of the primary account and the rename of an account.
+/// <c>PublishedErrorContractTests</c> lists the seven against the published document.
 /// </para>
 /// </remarks>
 [AttributeUsage(AttributeTargets.Method)]

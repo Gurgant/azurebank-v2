@@ -397,7 +397,7 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (its Cache-Control includes no-store). Send the request again after that many seconds. */
+                /** @description Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The operation also answers it when an account it writes is busy: every attempt the request is given lost the account to another write. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (its Cache-Control includes no-store). Send the request again after that many seconds. */
                 503: {
                     headers: {
                         [name: string]: unknown;
