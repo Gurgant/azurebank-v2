@@ -24,10 +24,12 @@
   </ItemGroup>
 
   <ItemGroup Label="Security patches">
-    <!-- Direct reference to lift a vulnerable transitive dependency
-         (EF SqlServer -> Microsoft.Data.SqlClient -> System.Security.Cryptography.Xml 9.0.0,
-         NU1903). Version pinned centrally in Directory.Packages.props. -->
+    <!-- Direct references to lift two vulnerable transitive dependencies
+         (EF SqlServer -> Microsoft.Data.SqlClient -> System.Security.Cryptography.Xml 9.0.0 and
+         System.Security.Cryptography.Pkcs 9.0.4; NU1902, NU1903). Versions pinned centrally in
+         Directory.Packages.props. -->
     <PackageReference Include="System.Security.Cryptography.Xml" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" />
   </ItemGroup>
 
   <ItemGroup Label="Hosting and Logging">
