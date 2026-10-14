@@ -34,7 +34,7 @@ limiter bounds neither the requests nor the log: a refused request is counted, a
 
 ## Before you start
 
-- Tools: the Azure CLI with no extension, the Bicep CLI on `PATH` (0.47.16), PowerShell 7,
+- Tools: the Azure CLI with no extension, the Bicep CLI on `PATH` (0.48.1), PowerShell 7,
   Python 3.12 or later, Docker, the GitHub CLI, the .NET SDK 10, and go-sqlcmd 1.10.0 or later
   at `C:\Program Files\sqlcmd\sqlcmd.exe` (`winget install --id Microsoft.Sqlcmd -e`).
 - Rights: an account with the Owner role on the subscription, which also becomes the database's

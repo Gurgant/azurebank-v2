@@ -60,8 +60,6 @@ param securityPinPepper string = ''
 @secure()
 param demoClientKeySecret string = ''
 
-// Bicep 0.47.16 has no types for this API version (BCP081): test_scripts.py checks the properties instead.
-#disable-next-line BCP081
 resource environment 'Microsoft.App/managedEnvironments@2026-07-01' = {
   name: 'azurebank-env'
   location: location
