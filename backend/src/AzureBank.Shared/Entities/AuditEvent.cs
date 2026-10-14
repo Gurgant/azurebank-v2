@@ -19,7 +19,8 @@ namespace AzureBank.Shared.Entities;
 /// <para>
 /// THE LOG IS NOT REPLACED. Two destinations, two jobs: the log stream is for DETECTION (alerting,
 /// volume, short life) and this table is the EVIDENCE (queried rarely, kept for years). Neither
-/// substitutes for the other, and the same event goes to both.
+/// substitutes for the other. Most events go to both; ADR-0044 names the ones that are a row with
+/// no log line and the ones that are a log line with no row.
 /// </para>
 /// <para>
 /// TAMPER-EVIDENCE, and what it does and does not buy. <see cref="RowHash"/> is a keyed HMAC over
@@ -37,9 +38,10 @@ namespace AzureBank.Shared.Entities;
 /// It is deferred because ledger rows do NOT survive a rollback (measured: BEGIN TRAN / INSERT /
 /// ROLLBACK leaves nothing, since APPEND_ONLY protects COMMITTED rows only), because its digest
 /// verification needs an anchor outside the database, because it permits only nullable columns to be
-/// added afterwards, and above all because the property would then be provable by the 38 SQL-Server
-/// tests and by none of the ~585 that run on the InMemory provider. A guarantee that almost every
-/// test is blind to is the "green and false" state this project treats as the worst one.
+/// added afterwards, and above all because the property would then be provable by the tests that
+/// need a SQL Server, which skip themselves where there is none, and by none of those that run on
+/// the InMemory provider. A guarantee that a plain test run is blind to is the "green and false"
+/// state this project treats as the worst one.
 /// </para>
 /// <para>
 /// NO PII, DELIBERATELY. Only pseudonymous identifiers and event names go in here. That is the one
@@ -53,9 +55,13 @@ public class AuditEvent
     public Guid Id { get; set; }
 
     /// <summary>
-    /// Monotonic insertion order, assigned by the database. The chain's ordering depends on this
-    /// rather than on <see cref="OccurredAt"/>, because two rows can share a timestamp and a clock
-    /// can move backwards.
+    /// Monotonic insertion order, assigned by <c>AuditChain</c> as the tail's sequence plus one and
+    /// never by the database, so it is assigned in the same way on every provider. On a relational
+    /// provider the tail is read under a lock that is held to the end of the transaction, so two
+    /// writers cannot take the same number; the InMemory provider has no lock, and nothing there
+    /// keeps two writers apart. The chain's ordering depends on this rather than on
+    /// <see cref="OccurredAt"/>, because two rows can share a timestamp and a clock can move
+    /// backwards.
     /// </summary>
     public long Sequence { get; set; }
 

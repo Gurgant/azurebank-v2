@@ -14,8 +14,9 @@ namespace AzureBank.Tests.Architecture;
 /// </summary>
 /// <remarks>
 /// <para>
-/// THE RULE, as ADR-0017 records it since 2026-09-11. Surrogate keys are logged in clear — they are
-/// the correlation key, not personal data. A secret appears only as its first eight characters,
+/// THE RULE, as ADR-0017 records it. Surrogate keys are logged in clear — they are the correlation
+/// key and name nobody without the database, though one that leads to a person is still
+/// pseudonymous personal data. A secret appears only as its first eight characters,
 /// through <c>SecretPrefix.Of</c>. An email appears only masked, through the PII redactor. A direct
 /// identifier — a handle, a name, anything a person chose to be known by — never appears. Neither
 /// does money. Everything else is operational: counts, codes, durations, event names.
@@ -53,7 +54,10 @@ public class LogPlaceholderClassTests
 {
     public enum PlaceholderClass
     {
-        /// <summary>An opaque key: not a credential, not personal data, useless without the database.</summary>
+        /// <summary>
+        /// An opaque key: not a credential, and it names nobody without the database. One that leads
+        /// to a person is still pseudonymous personal data (ADR-0017).
+        /// </summary>
         SurrogateKey,
 
         /// <summary>A secret, allowed only as its prefix through <c>SecretPrefix.Of</c>.</summary>

@@ -665,11 +665,14 @@ public static class VerifyCommand
               before walking, so a row committed in between was counted and fell outside the range --
               101 rows verified over a range ending at 100.
 
-              WHAT IT IS GOOD FOR IS NARROWER THAN THIS COMMENT USED TO CLAIM. It said the two
-              numbers let an operator spot a chain with gaps. They cannot, on an INTACT verdict: a
-              deleted prefix leaves the new first row pointing at a predecessor that is gone, which
-              is a break, and Sequence is assigned as tail + 1 with no gaps -- so an intact chain
-              always reads 1 to <count>, and the range there only confirms what the count says.
+              WHAT IT IS GOOD FOR IS NARROW. On an INTACT verdict of a chain that was only ever
+              appended to, the two numbers say nothing the count does not: a deleted prefix leaves
+              the new first row pointing at a predecessor that is gone, which is a break, and
+              Sequence is assigned as tail + 1 from an empty table, so the range reads 1 to
+              <count>. A range that spans more sequences than the count is a hole in the numbering:
+              the walk does not check that one sequence follows the last, so a row deleted from the
+              middle by a holder of the keys covering it, with the links behind it recomputed,
+              still reads INTACT.
 
               Where it earns its place is a BROKEN verdict, and that is where it was missing: the
               range then says which stretch was actually walked before the walk stopped, on a table

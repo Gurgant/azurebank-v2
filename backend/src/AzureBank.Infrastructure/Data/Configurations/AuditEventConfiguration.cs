@@ -21,8 +21,8 @@ public class AuditEventConfiguration : IEntityTypeConfiguration<AuditEvent>
         /*
           ASSIGNED BY AuditChain, NOT BY THE DATABASE, and that is a correction rather than a
           preference. An IDENTITY column exists only on a relational provider, so on the EF InMemory
-          provider — where ~585 of this project's tests run — Sequence would stay 0 on every row and
-          the chain would have no order at all. The first version ordered by Id instead and was
+          provider — the one the tests use where there is no SQL Server — Sequence would stay 0 on every
+          row and the chain would have no order at all. The first version ordered by Id instead and was
           wrong for a reason docs/engineering-traps.md records: Guid ordering in .NET is not
           creation order, and SQL Server collates uniqueidentifier differently again. Assigning the
           number ourselves under the same lock that reads the tail makes the order explicit,
@@ -122,8 +122,9 @@ public class AuditEventConfiguration : IEntityTypeConfiguration<AuditEvent>
           or RefreshTokens which both have sweepers. Every regime that binds this system states a
           MINIMUM retention — PCI DSS v4 10.5.1 twelve months, AMLD Art. 40 and PSD2 Art. 21 five
           years — and a minimum can never be violated by keeping more. The genuine conflict is GDPR
-          erasure, and the answer is upstream: this table holds pseudonymous ids only, so there is
-          nothing here to erase.
+          erasure, and it is not settled (ADR-0044, D6). What is done upstream narrows it: this table
+          holds pseudonymous ids only. Such an id is still personal data while anyone can link it to
+          a person, and no path here erases one.
         */
     }
 }

@@ -5,7 +5,8 @@ namespace AzureBank.Api.Attributes;
 ///
 /// <para>
 /// A DOCUMENTATION marker, not a gate. Enforcement lives in the service that owns the action —
-/// <c>TransferService</c> for the two transfers, <c>AccountService</c> for a closure (ADR-0049) —
+/// <c>TransferService</c> for the two transfers, <c>TransactionService</c> for a withdrawal
+/// (ADR-0056), <c>AccountService</c> for a closure (ADR-0049) —
 /// downstream of the idempotency replay lookup where there is one, because a replay must not be
 /// refused for a header it does not need — see the note on
 /// <c>TransferService.RequireAuthorization</c>. What this marker buys is that

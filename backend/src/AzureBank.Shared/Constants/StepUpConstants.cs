@@ -6,10 +6,9 @@ namespace AzureBank.Shared.Constants;
 public static class StepUpConstants
 {
     /// <summary>
-    /// Request header carrying the authorisation reference (UUID) minted by one of the three
-    /// mints: <c>POST /api/transfers/authorizations</c>,
-    /// <c>POST /api/transfers/internal/authorizations</c> and
-    /// <c>POST /api/accounts/{id}/deletion-authorizations</c>.
+    /// Request header carrying the authorisation reference (UUID) minted for the action it
+    /// authorises. Each such action has a mint of its own, a <c>POST</c> whose path ends in
+    /// <c>authorizations</c>: for a transfer, <c>POST /api/transfers/authorizations</c>.
     ///
     /// <para>
     /// A HEADER, never a body field, and the reason is measured rather than stylistic:

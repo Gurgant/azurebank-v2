@@ -206,7 +206,8 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
       user-initiated transactions", while the whole suite stayed green — because
       CustomWebApplicationFactory rebuilds the DbContext registration WITHOUT the retrying strategy.
       AuthService.RegisterAsync already had to solve exactly this; the idiom here is deliberately
-      the same one. AuditChainRetryingStrategySqlServerTests is what stops it coming back.
+      the same one. What stops it coming back is
+      AuditChainSqlServerTests.AnAuditedSave_WorksUnderTheRetryingStrategyProductionActuallyUses.
 
       AND A COMMIT THAT FAILS IS ASKED ABOUT, NEVER RE-RUN BLIND, which is a THIRD correction. The
       save used to accept its changes before the commit, as base.SaveChanges(true) does. A transient
@@ -244,7 +245,7 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
         - the save carries no audit row;
         - a caller already has an explicit transaction: it is the one holding the lock, and
           committing it here would end the caller's unit of work early;
-        - the provider is not relational (the InMemory provider, where ~585 tests run): it has no
+        - the provider is not relational (the InMemory provider of the tests): it has no
           transactions and no locks, and IsRelational() rather than IsInMemory() keeps the InMemory
           package out of the production API, the same choice IdempotencyCleanupService made.
     */

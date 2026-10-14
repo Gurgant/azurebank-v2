@@ -300,7 +300,7 @@ jobs:
       #
       # That left the ADR titled "making mock drift fail the build" delivering half of it. The real
       # target proves the ASSERTIONS match the backend; nothing proved the MOCK still matches those
-      # same assertions — while every one of the 596 unit tests uses that mock as its oracle. An
+      # same assertions — while the unit tests use that mock as their oracle. An
       # oracle nothing checks is the state ADR-0029 exists to prevent.
       #
       # It belongs here rather than beside `test:contract:real` because it needs nothing: node

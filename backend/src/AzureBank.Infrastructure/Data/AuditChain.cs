@@ -976,12 +976,12 @@ public sealed class AuditChain : IAuditChain
     }
 
     /*
-      The InMemory provider has no locks and no IDENTITY, so Sequence stays 0 on every row and cannot
-      order anything; Id — a UUIDv7 — can. Guarded on IsRelational() rather than IsInMemory() for the
-      reason IdempotencyCleanupService gives for the same choice: it keeps the InMemory provider
-      package out of the production API.
+      The InMemory provider has no locks, so the tail is read there with no hint: the row with the
+      highest Sequence, which this class assigns itself on every provider. Guarded on IsRelational()
+      rather than IsInMemory() for the reason IdempotencyCleanupService gives for the same choice:
+      it keeps the InMemory provider package out of the production API.
 
-      Be precise about what the ~585 InMemory tests can therefore prove: that the chain LINKS, and
+      Be precise about what the InMemory tests can therefore prove: that the chain LINKS, and
       that tampering breaks it. NOT that concurrent writers do not fork, because nothing there
       serialises. That property belongs to the SQL Server proofs, and claiming it from an InMemory
       test would be the "green and false" state this project refuses.
