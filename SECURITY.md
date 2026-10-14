@@ -183,8 +183,8 @@ them in a minute.
 
 ### Runtime response validation
 
-The frontend checks the successful responses it reads. Two surfaces, two rules, and they are not
-the same rule:
+What follows covers the successful responses the frontend reads. Two surfaces, two rules, and
+they are not the same rule:
 
 - **`/bff/auth/*`** has no OpenAPI contract behind it, so **every response of the BFF's own that
   carries data** is validated fail-closed at runtime, in production included — login, register, the
