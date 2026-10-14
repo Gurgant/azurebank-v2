@@ -209,8 +209,11 @@ Package versions are pinned in one place through Central Package Management (ADR
 analyses every pull request. Dependabot alerts are on (since 2026-09-25) and reach the frontend's
 npm packages and the GitHub Actions the workflows use, but not the backend: GitHub's dependency
 graph reads no version from `backend/Directory.Packages.props` and lists every NuGet package as
-`>= 0`, so no advisory is matched against the backend. Nothing updates a package on its own; a fix
-goes through a pull request like any other change.
+`>= 0`, so no advisory is matched against the backend. NuGet's own audit checks it instead: the
+required CI job "Backend build + tests" fails on a package with a known vulnerability, direct or
+transitive, so a pull request cannot bring one in, and on the day an advisory appears every pull
+request is red until a fix is merged. Nothing updates a package on its own; a fix goes through a
+pull request like any other change.
 
 ## See Also
 
