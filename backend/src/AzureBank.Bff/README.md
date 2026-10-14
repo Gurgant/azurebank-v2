@@ -58,7 +58,7 @@ Windows the build cannot replace an executable that is running.
 | `Extensions/SpaHostingExtensions.cs` | Serving the built SPA |
 | `ClientAddress.cs`, `StrictForwardedFor.cs` | The address a client is counted by |
 | `Options/` | The settings classes and their startup validators |
-| `Http/`, `Health/`, `Observability/` | The service key and the timeout on the road to the API, the readiness probe, the request log |
+| `Http/`, `Health/`, `Observability/` | The service key and the timeout on the road to the API, the readiness probe, the request log and the propagator that reads no trace from a request |
 
 ## BFF Endpoints
 
@@ -131,6 +131,16 @@ nothing it refuses (`AuthLevelMiddlewareTests`):
   breaks while a proxied body is sent. The BFF never sends a request again (ADR-0058 D11).
 - It forwards nothing to a destination that is neither https nor loopback: YARP answers 502
   (ADR-0055 D5).
+
+### The trace starts at the BFF
+
+The BFF starts a new trace for every request and reads no `traceparent`, `tracestate` or
+`baggage` from it. The trace id is written on the API's audit rows, in the `traceId` of every
+error answer and on each log line, and a caller does not choose it. On both roads to the API,
+the proxy and the BFF's own client, the API is sent one `traceparent`, of the BFF's trace and
+with the sampled flag the BFF's own sampler set, and no `tracestate` or `baggage`. The API
+continues that trace, so a request has one id on both hosts. `AddObservability` holds the two
+settings this takes (ADR-0016, decision 3; `TraceStartsAtTheBffTests`).
 
 ## Session Management
 

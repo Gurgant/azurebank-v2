@@ -1,7 +1,8 @@
 # ADR-0016: Observability — OpenTelemetry three pillars with a local Grafana LGTM stack
 
-**Status:** Accepted · **Date:** 2026-07-20 · **Amended:** 2026-09-25 (decision 6, probe log lines)
-· **Decision Makers:** Vladislav Aleshaev
+**Status:** Accepted · **Date:** 2026-07-20 · **Amended:** 2026-09-25 (decision 6, probe log
+lines), 2026-10-13 (decisions 3 and 7, the trace starts at the BFF) · **Decision Makers:**
+Vladislav Aleshaev
 
 ## Context
 
@@ -21,10 +22,15 @@ services) and quiet by default: tests and runs without a collector must not spra
    `trace_id` and `span_id` stamped from `Activity.Current`, so Grafana's log-to-trace pivot needs
    no manual wiring. The sink's resource mirrors the SDK's (name, version, namespace `azurebank`, a
    stable `service.instance.id`, environment), so all three signals join per instance.
-3. **One distributed trace crosses the BFF-to-API hop.** YARP propagates the W3C trace context by
-   default, and `AddSource("Yarp.ReverseProxy")` makes the forwarder span visible. There is no
-   `AddMeter` for YARP: v2.x ships no `System.Diagnostics.Metrics` meter, so proxy-traffic metrics
-   come from the ASP.NET Core and `System.Net.Http` meters.
+3. **One distributed trace crosses the BFF-to-API hop, and it starts at the BFF.** The trace id is
+   written on audit rows and in every error answer, so a caller does not choose it: the BFF reads
+   no `traceparent`, `tracestate` or `baggage` from a request, and passes none of the three on. Its
+   two clients write the W3C context of the BFF's own trace, which the API continues. Two settings
+   hold this, and with either alone the caller's trace is still adopted: the propagator the host
+   reads a request with, and the SDK's default propagator, which the ASP.NET Core instrumentation
+   reads it with again. `AddSource("Yarp.ReverseProxy")` makes the forwarder span visible. There is
+   no `AddMeter` for YARP: v2.x ships no `System.Diagnostics.Metrics` meter, so proxy-traffic
+   metrics come from the ASP.NET Core and `System.Net.Http` meters.
 4. **Export is opt-in: telemetry leaves the process only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set
    in its environment.** The endpoint is never set in code, because that disables the SDK's
    per-signal path append: batches POST to the bare URL and 404 silently. The gate does not read
@@ -48,7 +54,8 @@ services) and quiet by default: tests and runs without a collector must not spra
    only with namespaced low-cardinality outcomes (`azurebank.outcome`, `azurebank.kind`): never an
    account id, a user id, an amount or free text. Exemplars (`TraceBased`) link metric buckets to
    traces. Sampling stays the default `ParentBased(AlwaysOn)`, honest at demo volume and overridable
-   with the standard `OTEL_TRACES_SAMPLER` variables.
+   with the standard `OTEL_TRACES_SAMPLER` variables. At the BFF every request is a root, so the
+   sampled flag a caller writes decides nothing; the API follows the BFF's.
 8. **Errors are visible in traces.** `RecordException` is set on the instrumentation, and the global
    exception handler calls `Activity.AddException`, because it marks exceptions handled and the
    instrumentation alone would never see them. Every ProblemDetails carries the bare 32-hex
@@ -65,6 +72,8 @@ services) and quiet by default: tests and runs without a collector must not spra
 - `docker compose -f observability/docker-compose.yml up -d` and two environment variables per
   service show real traces, metrics and correlated logs in Grafana.
 - Everything is opt-in: the full test suite runs with no telemetry.
+- The BFF joins no trace begun in front of it: an ingress that writes its own `traceparent` gets a
+  trace of its own, and the trace of a request through the BFF always has its root there.
 - Not covered: `/health/ready` runs a live dependency check per request, unauthenticated. Accepted
   for a loopback stack; the fix is publisher or TTL memoisation.
 - Not covered: the production TLS guard covers `OTEL_EXPORTER_OTLP_ENDPOINT` and not the per-signal
@@ -78,6 +87,7 @@ services) and quiet by default: tests and runs without a collector must not spra
 - `HealthEndpointTests` (BFF): live is healthy, and ready reports Degraded but stays available.
 - `RequestLogRouteTests` and `RequestLogRouteLevelTests`: a probe's request line is dropped unless
   the probe failed. `OtlpEndpointGuardTests`: the TLS guard on the endpoint.
+- `TraceStartsAtTheBffTests`: a browser's trace id is on no audit row, answer or log line.
 
 ## Related
 
