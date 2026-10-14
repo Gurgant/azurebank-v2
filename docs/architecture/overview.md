@@ -200,7 +200,8 @@ remembered:
   production; everything else validates in development and test only, where a mismatch should be
   loud and in production it should not take the page down. What the BFF answers of its own under
   `/bff/auth/*` is fail-closed everywhere, because it has no spec behind it and it gates
-  authentication.
+  authentication; the AzureTag rename, also under that path, has a schema generated from the API's
+  contract and validates in development and test only.
 - Errors arrive as RFC 9457 ProblemDetails on one channel, carrying a `traceId` that pastes
   straight into the trace search.
 
