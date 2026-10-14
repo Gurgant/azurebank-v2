@@ -277,9 +277,10 @@ word in -ise or -yse whose American twin the list does not hold yet, and says wh
 
 ## Code style
 
-Follow the [Microsoft C# conventions][csharp]: PascalCase for classes and methods, `I` +
-PascalCase for interfaces, camelCase for locals and parameters, `_camelCase` for private fields.
-Beyond those:
+Follow the [Microsoft C# conventions][csharp]: PascalCase for classes, methods and constants,
+`I` + PascalCase for interfaces, camelCase for locals and parameters, `_camelCase` for private
+instance fields. One departure: a private `static readonly` member is PascalCase too, with no
+`s_` prefix. Beyond those:
 
 - Async methods carry the `Async` suffix, and `async void` appears only in event handlers.
 - Nullable reference types are on: return `null` explicitly, not an empty sentinel.
